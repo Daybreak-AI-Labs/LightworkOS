@@ -609,7 +609,10 @@ def _collect_artifacts(
     for raw_name, raw_value in sorted(exports.items(), key=lambda item: str(item[0])):
         name = str(raw_name or "").strip()
         if name not in allowed_exports:
-            attempts.append(BoundaryAttempt("artifact_export", name))
+            # The ledger refuses a NUL or over-long target, which would leave
+            # the spent evaluation without a receipt; record a placeholder.
+            target = name if len(name) <= 4096 and "\x00" not in name else "invalid-name"
+            attempts.append(BoundaryAttempt("artifact_export", target))
             continue
         try:
             value = _detached(
