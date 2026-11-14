@@ -46,6 +46,17 @@ def test_control_character_injection_is_rejected(tmp_path):
     assert not path.exists()
 
 
+def test_scope_with_unicode_line_separator_keeps_the_ledger_readable(tmp_path):
+    # Records are separated by "\n" only; reading them with splitlines() split
+    # a record at U+2028, so one such scope made every grant unreadable.
+    path = tmp_path / "consent.ledger"
+    consent.grant_persistent("deploy", "prod", path=path)
+    consent.grant_persistent("act", "file\u2028name\x85x", path=path)
+    assert consent._check_ledger("deploy", "prod", path=path) is True
+    assert consent._check_ledger("act", "file\u2028name\x85x", path=path) is True
+    consent.grant_persistent("later", "", path=path)
+
+
 def test_tampered_record_invalidates_the_authority(tmp_path):
     path = tmp_path / "consent.ledger"
     consent.grant_persistent("force-push", "main", path=path)
