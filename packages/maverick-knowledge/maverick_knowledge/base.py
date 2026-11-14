@@ -74,6 +74,14 @@ _SHIELD_WINDOW = 131_072
 _SHIELD_WINDOW_OVERLAP = 4_096
 
 
+def _source_label(source: str | None) -> str:
+    """A source name on one line with no brackets. The source is a file name
+    the uploader controls and is never screened, so a newline in it put text of
+    the uploader's choosing on its own line in the rendered result."""
+    label = " ".join(str(source or "").split()).replace("[", "(").replace("]", ")")
+    return label or "unknown"
+
+
 def _screen_text(text: str) -> str:
     text = _SCREEN_INVISIBLE.sub("", unicodedata.normalize("NFKC", text))
     return _WHITESPACE.sub(" ", text.translate(_SCREEN_HOMOGLYPHS))
@@ -743,8 +751,9 @@ class KnowledgeBase:
 
     def search_formatted(self, collections, query: str, k: int = 5) -> str:
         """Search one or more domain collections and render the top-k chunks with
-        their sources -- the string a domain agent's ``knowledge_search`` tool
-        returns. Merges across collections, then keeps the globally top-k.
+        their sources. (The kernel's ``knowledge_search`` tool does not call
+        this; it goes through ``KnowledgeAccessService``.) Merges across
+        collections, then keeps the globally top-k.
 
         The query is embedded once and the vector reused per collection, and
         redundant chunk content (the chunker's overlap, contained duplicates)
@@ -772,5 +781,5 @@ class KnowledgeBase:
         if not hits:
             return "No relevant documents found in this domain's knowledge base."
         return "\n\n".join(
-            f"[source: {h.source or 'unknown'}]\n{h.text}" for h in hits
+            f"[source: {_source_label(h.source)}]\n{h.text}" for h in hits
         )
