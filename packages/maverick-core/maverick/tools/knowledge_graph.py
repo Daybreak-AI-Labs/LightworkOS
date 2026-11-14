@@ -58,7 +58,9 @@ def _extract(text: str) -> list[list[str]]:
         if not line:
             continue
         # Structured "S | R | O" or "S -> R -> O" wins over the heuristic.
-        parts = re.split(r"\s*(?:\||->)\s*", line)
+        # Split on the bare separator; _clean trims the parts. Folding the
+        # surrounding \s* into the pattern made a long space run quadratic.
+        parts = re.split(r"\||->", line)
         if len(parts) == 3 and all(p.strip() for p in parts):
             triples.append([_clean(parts[0]), _clean(parts[1]), _clean(parts[2])])
             continue
@@ -108,10 +110,15 @@ def _neighbors(triples: list[list[str]], node: str) -> str:
     return "\n".join(out) if out else f"no edges touching {node!r}"
 
 
+def _dot_id(value: str) -> str:
+    """DOT accepts double-quoted IDs only; escape backslash and quote."""
+    return '"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 def _dot(triples: list[list[str]]) -> str:
     lines = ["digraph knowledge {"]
     for s, r, o in triples:
-        lines.append(f'  {s!r} -> {o!r} [label={r!r}];')
+        lines.append(f"  {_dot_id(s)} -> {_dot_id(o)} [label={_dot_id(r)}];")
     lines.append("}")
     return "\n".join(lines)
 

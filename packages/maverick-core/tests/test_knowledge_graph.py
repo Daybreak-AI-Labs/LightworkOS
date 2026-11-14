@@ -28,5 +28,15 @@ def test_kg_query_and_neighbors():
 
 def test_kg_dot_render():
     t = knowledge_graph()
-    out = t.fn({"op": "dot", "triples": [["a", "uses", "b"]]})
-    assert out.startswith("digraph knowledge {") and "'a' -> 'b'" in out
+    out = t.fn({"op": "dot", "triples": [["a", "uses", "b"], ["Alice", "uses", 'Bob\'s "tool"']]})
+    # DOT only accepts double-quoted IDs (Python repr gave 'a').
+    assert out.startswith("digraph knowledge {") and '"a" -> "b" [label="uses"];' in out
+    assert '"Alice" -> "Bob\'s \\"tool\\"" [label="uses"];' in out
+
+
+def test_kg_extract_is_linear_on_long_space_runs():
+    """``\\s*(?:\\||->)\\s*`` retried at every space of a long run (20,000
+    spaces took 2 s); the split now uses the bare separator."""
+    t = knowledge_graph()
+    assert t.fn({"op": "extract", "text": "a" + " " * 200_000 + "b"}) == "no triples extracted"
+    assert t.fn({"op": "extract", "text": "Alice  |  uses  |  Bob"}).count("Alice") == 1
