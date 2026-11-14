@@ -140,11 +140,13 @@ def _future_occurrence(queue, connection, row, payload, now):
 
 def change_definition(queue, identity, *, expected_revision, state, actor,
                       owner=None, cron=None, zone=None, title=None, rationale="Reviewed schedule change"):
-    from .scheduler import next_run
+    from .scheduler import next_run, require_zone
     from .task_file_recovery import mutation_gate
 
     if state not in {"active", "paused", "retired"}:
         raise ValueError("Choose active, paused or retired.")
+    if zone is not None:
+        require_zone(zone)
     now = time.time()
     with mutation_gate(), queue._transaction() as connection:
         row = connection.execute("SELECT * FROM schedule_definitions WHERE id=?", (identity,)).fetchone()

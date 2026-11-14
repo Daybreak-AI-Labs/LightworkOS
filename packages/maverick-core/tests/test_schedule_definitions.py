@@ -104,3 +104,17 @@ def test_reviewed_recovery_receipt_survives_later_changes_and_retention(tmp_path
     with pytest.raises(ValueError, match="different reviewed"):
         queue.reconcile_recurrence(first, confirm=True, **{**args, "rationale": "Changed explanation"})
     assert queue.recovery_receipt(first, **{**args, "actor": "user:other"}) is None
+
+
+def test_misspelled_zone_is_refused_not_run_at_utc(tmp_path):
+    # next_run maps an unknown zone to UTC, so the change used to be accepted
+    # and the schedule fired at UTC wall-clock time.
+    queue = JobQueue(tmp_path / "jobs.db")
+    queue.enqueue("noop", {"__cron__": "0 9 * * *", "owner": "user:a"}, run_at=100)
+    definition = list_definitions(queue)[0]
+    with pytest.raises(ValueError, match="unknown time zone"):
+        change_definition(queue, definition["definition_id"], expected_revision=1,
+                          state="active", zone="America/New_Yrok", owner="user:a", actor="user:a")
+    changed = change_definition(queue, definition["definition_id"], expected_revision=1,
+                                state="active", zone="America/New_York", owner="user:a", actor="user:a")
+    assert changed["revision"] == 2

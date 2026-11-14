@@ -123,6 +123,16 @@ def _resolve_zone(tz: str):
         return _dt.timezone.utc
 
 
+def require_zone(tz: str) -> None:
+    """Raise :class:`CronError` when ``tz`` is set but is not a known IANA zone.
+
+    :func:`next_run` falls back to UTC for an unknown zone so a stored schedule
+    never crashes; a caller accepting a new zone uses this so a misspelled one
+    is refused instead of running at UTC wall-clock time."""
+    if tz and _resolve_zone(tz) is _dt.timezone.utc:
+        raise CronError(f"unknown time zone {tz!r}")
+
+
 def next_run(expr: str, *, after: float | None = None, tz: str = "") -> float:
     """Return the next epoch timestamp matching ``expr`` strictly after
     ``after`` (default: now). Searches up to ~9 years forward.
@@ -254,5 +264,5 @@ def upcoming_runs(expr: str, *, tz: str = "", count: int = 3, after: float | Non
     return out
 
 
-__all__ = ["parse_cron", "next_run", "schedule_cron", "CronError", "TIMETABLE_REPEATS",
+__all__ = ["parse_cron", "next_run", "require_zone", "schedule_cron", "CronError", "TIMETABLE_REPEATS",
            "timetable_cron", "upcoming_runs"]
