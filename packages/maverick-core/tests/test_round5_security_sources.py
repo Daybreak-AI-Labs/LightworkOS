@@ -99,7 +99,8 @@ def test_governance_names_match_case_and_warn_on_unregistered(monkeypatch):
 
     monkeypatch.setattr(tools, "base_tool_names", lambda **kwargs: {"shell"})
     names = governance._policy_names({"deny_actions": [" SHELL ", "shel"]}, "deny_actions")
-    findings = config_lint._lint_governance_tool_names({"governance": {"deny_actions": [" SHELL ", "shel"]}})
+    monkeypatch.setattr(config_lint, "_builtin_tool_catalog", lambda: {"shell"})
+    findings = config_lint.governance_tool_name_notices({"governance": {"deny_actions": [" SHELL ", "shel"]}})
     assert [f.message for f in findings] == [
         'governance.deny_actions name "shel" is not a built-in tool; check its spelling or its plugin registration']
     policy = governance.Policy(deny_actions=names)

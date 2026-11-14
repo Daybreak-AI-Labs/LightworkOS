@@ -5178,26 +5178,47 @@ def lint_config(cfg: dict) -> list[Finding]:
     findings.extend(_lint_governance_nested_tables(cfg))
     findings.extend(_lint_inline_secrets(cfg))
     findings.extend(_lint_group_mappings(cfg))
-    findings.extend(_lint_governance_tool_names(cfg))
     return findings
 
 
-def _lint_governance_tool_names(cfg: dict) -> list[Finding]:
-    """Warn about ``[governance]`` deny/require-human names that match no
-    built-in tool (compared case-insensitively, as the policy matches them).
-    Lives here, not in ``governance.Policy.from_config``, because building the
-    tool registry is too slow and touches storage on the authorization path."""
+def _builtin_tool_catalog() -> set[str] | None:
+    """Every built-in tool name, optional ones included whether or not they are
+    switched on, built against an in-memory world (no ``world.db`` is created)
+    and without add-ons. ``None`` when the catalog cannot be assembled."""
+    try:
+        from .sandbox.local import LocalBackend
+        from .tools import base_registry
+        from .world_model import WorldModel
+
+        reg = base_registry(
+            WorldModel(":memory:"), LocalBackend(),
+            enable_computer_use=True, enable_browser=True, enable_web_search=True,
+            enable_mobile_tools=True, enable_ros=True,
+            _include_generated_tools=False, _skip_tool_acl=True, _include_plugins=False,
+        )
+        return {t.name for t in reg.all()}
+    except Exception:  # advisory introspection: report "could not be checked"
+        return None
+
+
+def governance_tool_name_notices(cfg: dict) -> list[Finding]:
+    """Advisory notices for ``[governance]`` deny/require-human names that match
+    no built-in tool (compared case-insensitively, as the policy matches them).
+
+    Not part of :func:`lint_config`: denying a tool that is not installed yet is
+    legitimate, so this must never stop a strict start. ``maverick doctor``
+    shows it. MCP tool names (``mcp_<server>__<tool>``) are not reported because
+    they are not in the built-in catalog."""
     gov = cfg.get("governance")
     if not isinstance(gov, dict):
         return []
-    named = {key: [item.strip() for item in value if isinstance(item, str) and item.strip()]
+    named = {key: sorted({item.strip() for item in value if isinstance(item, str) and item.strip()
+                          and not item.strip().casefold().startswith("mcp_")})
              for key in ("deny_actions", "require_human_actions")
              if isinstance(value := gov.get(key), list)}
     if not any(named.values()):
         return []
-    from .tools import base_tool_names
-
-    registered = base_tool_names(configured_optional=True, include_plugins=False)
+    registered = _builtin_tool_catalog()
     if registered is None:
         return [Finding("governance", None, "warning",
                         "governance tool names could not be checked against the tool catalog")]
@@ -5205,7 +5226,7 @@ def _lint_governance_tool_names(cfg: dict) -> list[Finding]:
     return [Finding("governance", key, "warning",
                     f'governance.{key} name "{name}" is not a built-in tool; '
                     "check its spelling or its plugin registration")
-            for key, names in named.items() for name in sorted(set(names))
+            for key, names in named.items() for name in names
             if name.casefold() not in known]
 
 
