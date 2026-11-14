@@ -127,13 +127,15 @@ def _error_message(status: int, raw: bytes) -> str:
     return f"request failed with HTTP {status}"
 
 
-def _parse_json(status: int, raw: bytes) -> Any:
-    if not raw:
-        return None
+def _parse_json(status: int, raw: bytes, response_type: type = dict) -> Any:
     try:
-        return json.loads(raw)
+        value = json.loads(raw) if raw else None
     except ValueError:
         raise LightworkError(status, "the server sent a response that is not valid JSON") from None
+    if (not isinstance(value, response_type)
+            or (response_type is list and any(not isinstance(item, dict) for item in value))):
+        raise LightworkError(status, "the server sent an unexpected JSON response type")
+    return value
 
 
 class Lightwork:
@@ -191,17 +193,17 @@ class Lightwork:
         except (OSError, http.client.HTTPException) as exc:
             reason = getattr(exc, "reason", None) or exc
             raise LightworkError(None, _scrub(
-                f"request to {self._origin} failed: {reason}", self._token)) from exc
+                f"request to {self._origin} failed: {reason}", self._token)) from None
         lowered = {str(name).lower(): str(value) for name, value in response_headers.items()}
         return status, lowered, raw
 
     def _call(self, method: str, path: str, *, expect: tuple[int, ...] = (200, 201),
               params: Mapping[str, Any] | None = None, body: Any = None,
-              headers: Mapping[str, str] | None = None) -> Any:
+              headers: Mapping[str, str] | None = None, response_type: type = dict) -> Any:
         status, _headers, raw = self._send(method, path, params=params, body=body, headers=headers)
         if status not in expect:
             raise LightworkError(status, _scrub(_error_message(status, raw), self._token))
-        return _parse_json(status, raw)
+        return _parse_json(status, raw, type(None) if status == 204 else response_type)
 
     # ------------------------------------------------------------ health
 
@@ -211,7 +213,7 @@ class Lightwork:
         if status not in (200, 503):
             raise LightworkError(status, _scrub(_error_message(status, raw), self._token))
         body = _parse_json(status, raw)
-        return Health(ok=status == 200, http_status=status, body=body if isinstance(body, dict) else {})
+        return Health(ok=status == 200, http_status=status, body=body)
 
     # ------------------------------------------------------------ goals
 
@@ -253,7 +255,8 @@ class Lightwork:
 
     def list_goals(self, *, status: str | None = None, limit: int = 50, offset: int = 0) -> list[GoalOut]:
         """``GET /api/v1/goals``, newest first."""
-        return self._call("GET", "/api/v1/goals", params={"status": status, "limit": limit, "offset": offset})
+        return self._call("GET", "/api/v1/goals", response_type=list,
+                          params={"status": status, "limit": limit, "offset": offset})
 
     def goal_events(self, goal_id: int, *, since: int = 0, limit: int = 200) -> GoalEventsResponse:
         """One page of ``GET /api/v1/goals/{id}/events`` after cursor ``since``.
