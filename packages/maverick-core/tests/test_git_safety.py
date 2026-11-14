@@ -85,6 +85,7 @@ class TestGitSafetyShared:
         assert env["GIT_CONFIG_KEY_0"] == "core.fsmonitor"
         assert env["GIT_CONFIG_VALUE_0"] == "false"
         assert env["GIT_CONFIG_NOSYSTEM"] == "1"
+        assert env["GIT_NO_LAZY_FETCH"] == "1"
 
     def test_scrubbed_env_stops_repo_local_hooks(self, tmp_path):
         """`git reset --hard` runs `.git/hooks/reference-transaction` (and

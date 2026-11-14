@@ -51,6 +51,10 @@ def git_env_without_user_config() -> dict[str, str]:
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_CONFIG_SYSTEM": os.devnull,
         "GIT_TERMINAL_PROMPT": "0",
+        # git 2.45+ never lazily fetches a missing object from a promisor
+        # remote with this set; older git ignores it, and the transport
+        # check in `git_metadata_may_execute_filters` covers them.
+        "GIT_NO_LAZY_FETCH": "1",
         "GIT_PAGER": "",
         "HOME": os.devnull,
         "PATH": os.environ.get("PATH", ""),
