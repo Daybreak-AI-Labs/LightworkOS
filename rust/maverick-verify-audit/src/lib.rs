@@ -106,6 +106,43 @@ fn is_truthy(value: Option<&serde_json::Value>) -> bool {
     }
 }
 
+// serde_json's arbitrary_precision Value visitor treats an object bearing this
+// internal key as a number. Inspect raw JSON string tokens before that visitor
+// can erase the distinction between a signed numeric value and a changed object.
+fn has_reserved_number_key(line: &str) -> bool {
+    let bytes = line.as_bytes();
+    let mut offset = 0;
+    while offset < bytes.len() {
+        if bytes[offset] != b'"' {
+            offset += 1;
+            continue;
+        }
+        let start = offset;
+        offset += 1;
+        while offset < bytes.len() && bytes[offset] != b'"' {
+            if bytes[offset] == b'\\' {
+                offset += 1;
+            }
+            offset += 1;
+        }
+        if offset >= bytes.len() {
+            break; // The ordinary JSON parser will reject the incomplete string.
+        }
+        offset += 1;
+        let end = offset;
+        while offset < bytes.len() && bytes[offset].is_ascii_whitespace() {
+            offset += 1;
+        }
+        if bytes.get(offset) == Some(&b':')
+            && serde_json::from_str::<String>(&line[start..end])
+                .is_ok_and(|key| key == "$serde_json::private::Number")
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// Verify the chain in `text` (already-decoded NDJSON). Returns the breaks in
 /// the order found; an empty vec means the chain is intact.
 ///
@@ -127,6 +164,14 @@ pub fn verify_chain_text(text: &str, keys: &KeySource) -> Vec<ChainBreak> {
         }
         let n = idx + 1;
         if line.trim().is_empty() {
+            continue;
+        }
+        if has_reserved_number_key(line) {
+            breaks.push(ChainBreak::new(
+                n,
+                "malformed",
+                "reserved JSON number key cannot represent an audit payload",
+            ));
             continue;
         }
         // arbitrary_precision keeps number literals verbatim for the rehash.

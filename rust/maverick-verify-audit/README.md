@@ -74,6 +74,9 @@ a historical `.pub` plus `.injected` marker without a private key is ignored.
   malformed, even when Python verifies their signatures. Reformatting numeric
   literals can also change this verifier's hash result. The verifier does not
   relax parsing or signature checks to accept these cases.
+  Objects with the reserved `$serde_json::private::Number` key are refused,
+  including escaped keys and nested objects, so the JSON parser cannot reinterpret
+  a changed object as the original signed number.
 - **Key sources.** The binary supports local disk keypairs or one explicit
   `--pubkey`. It does not load Python's configured operator pins, injected
   private keys, or KMS keys, nor apply Python's filesystem custody checks.
