@@ -71,3 +71,13 @@ def test_factory_shape():
     assert t.parallel_safe is True
     assert t.input_schema["required"] == ["events"]
     assert callable(t.fn)
+
+
+def test_secret_split_across_events_is_redacted_in_both():
+    out = _fmt(events=[
+        {"phase": "plan", "text": "key <secret>sk-AB12", "ts": 1},
+        {"phase": "plan", "text": "34SECRET</secret> done", "ts": 2},
+        {"phase": "act", "text": "after", "ts": 3},
+    ])
+    assert "sk-AB12" not in out and "34SECRET" not in out
+    assert "[REDACTED] done" in out and "after" in out
