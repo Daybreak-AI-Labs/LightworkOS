@@ -66,14 +66,23 @@ class DeliveryRejected(DeliveryNotSent):
     throttling, disconnection and outages stay plain DeliveryNotSent."""
 
 
-# HTTP statuses that refuse the message itself. 401, 408, 409, 429 and any
-# other status are ambiguous or temporary, so they stay retryable.
-_REJECTED_STATUSES = frozenset({400, 403, 404, 410, 413, 422})
+# Abandoning a deliverable reply is worse than retrying an undeliverable one,
+# so a rejection needs positive evidence. These statuses speak about the
+# message or its recipient. Providers also answer throttling, quotas and
+# expired credentials with 400/403, so those count only when the adapter read
+# a message-level refusal from the body; 401, 408, 409, 429 and the rest stay
+# retryable.
+_REJECTED_STATUSES = frozenset({404, 410, 413, 422})
 
 
-def provider_refusal(status, message):
-    """DeliveryRejected for a definitive refusal status, else DeliveryNotSent."""
-    return (DeliveryRejected if status in _REJECTED_STATUSES else DeliveryNotSent)(message)
+def provider_refusal(status, message, *, refused=False):
+    """DeliveryRejected for a definitive refusal, else DeliveryNotSent.
+
+    ``refused`` is the adapter's positive evidence, from the response body,
+    that a 400/403 refused this message or recipient.
+    """
+    definitive = status in _REJECTED_STATUSES or (refused and status in {400, 403})
+    return (DeliveryRejected if definitive else DeliveryNotSent)(message)
 
 
 class _DeliveryNotAuthorized(DeliveryNotSent):

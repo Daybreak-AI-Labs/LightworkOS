@@ -250,7 +250,8 @@ def test_temporary_not_sent_is_retried_past_the_rejection_allowance(journal):
     """Throttled, disconnected or unavailable sends were never refused: no limit applies."""
     assert type(delivery.provider_refusal(429, "throttled")) is delivery.DeliveryNotSent
     assert type(delivery.provider_refusal(401, "session expired")) is delivery.DeliveryNotSent
-    assert type(delivery.provider_refusal(400, "bad request")) is delivery.DeliveryRejected
+    assert type(delivery.provider_refusal(400, "bad request")) is delivery.DeliveryNotSent
+    assert type(delivery.provider_refusal(404, "no such recipient")) is delivery.DeliveryRejected
     calls = []
 
     async def handler(inbound):
@@ -275,3 +276,61 @@ def test_temporary_not_sent_is_retried_past_the_rejection_allowance(journal):
         assert row["delivery"] == "delivered"
         assert len(calls) == delivery.MAX_PROVIDER_ATTEMPTS + 3
     asyncio.run(run())
+
+
+class _Response:
+    def __init__(self, status_code, body):
+        self.status_code, self._body = status_code, body
+
+    def json(self):
+        if isinstance(self._body, Exception):
+            raise self._body
+        return self._body
+
+
+@pytest.mark.parametrize(("status", "refused", "expected"), [
+    (400, False, delivery.DeliveryNotSent), (403, False, delivery.DeliveryNotSent),
+    (401, True, delivery.DeliveryNotSent), (429, True, delivery.DeliveryNotSent),
+    (409, True, delivery.DeliveryNotSent), (400, True, delivery.DeliveryRejected),
+    (403, True, delivery.DeliveryRejected), (404, False, delivery.DeliveryRejected),
+    (410, False, delivery.DeliveryRejected), (413, False, delivery.DeliveryRejected),
+    (422, False, delivery.DeliveryRejected),
+])
+def test_bare_400_or_403_is_not_evidence_of_a_refused_message(status, refused, expected):
+    # Providers also answer throttling, quotas and expired credentials with 400/403.
+    assert type(delivery.provider_refusal(status, "refused", refused=refused)) is expected
+
+
+@pytest.mark.parametrize(("status", "body", "expected"), [
+    (400, {"error": {"code": 4, "message": "Application request limit reached"}}, delivery.DeliveryNotSent),
+    (400, {"error": {"code": 190, "message": "Session has expired"}}, delivery.DeliveryNotSent),
+    (400, {"error": {"code": 130429, "message": "Rate limit hit"}}, delivery.DeliveryNotSent),
+    (403, {"error": {"code": 131056}}, delivery.DeliveryNotSent),
+    (400, {"error": {"code": 100, "is_transient": True}}, delivery.DeliveryNotSent),
+    (400, ValueError("not json"), delivery.DeliveryNotSent),
+    (400, {"unexpected": "shape"}, delivery.DeliveryNotSent),
+    (400, {"error": {"code": 100, "message": "Invalid parameter"}}, delivery.DeliveryRejected),
+    (400, {"error": {"code": 131026, "message": "Message undeliverable"}}, delivery.DeliveryRejected),
+])
+def test_graph_refusal_needs_a_message_level_error_code(status, body, expected):
+    from maverick_channels.threads import ThreadsChannel
+    from maverick_channels.whatsapp_cloud import graph_refusal
+
+    response = _Response(status, body)
+    assert type(graph_refusal(response, "refused")) is expected
+    with pytest.raises(delivery.DeliveryNotSent) as raised:
+        ThreadsChannel._check_send(response)
+    assert type(raised.value) is expected
+
+
+@pytest.mark.parametrize(("body", "expected"), [
+    ({"error": "ExpiredToken", "message": "Token has expired"}, delivery.DeliveryNotSent),
+    ({"error": "InvalidToken"}, delivery.DeliveryNotSent),
+    ({"error": "InvalidRequest", "message": "Record/text must not be longer than 300 graphemes"},
+     delivery.DeliveryNotSent),
+])
+def test_bluesky_expired_token_is_temporary(body, expected):
+    from maverick_channels import bluesky
+
+    assert type(bluesky._reply_refusal(_Response(400, body))) is expected
+    assert type(bluesky._reply_refusal(_Response(404, {}))) is delivery.DeliveryRejected

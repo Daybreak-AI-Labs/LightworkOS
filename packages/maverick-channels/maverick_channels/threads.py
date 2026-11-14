@@ -54,8 +54,9 @@ from .base import (
     is_allowed,
     normalize_allowlist,
 )
-from .delivery import DeliveryUnknown, provider_refusal, send_chunk
+from .delivery import DeliveryUnknown, send_chunk
 from .polling import PollCheckpoint, PollPage, parse_timestamp, utc_timestamp
+from .whatsapp_cloud import graph_refusal
 
 log = logging.getLogger(__name__)
 
@@ -268,7 +269,7 @@ class ThreadsChannel(Channel):
     @staticmethod
     def _check_send(response):
         if 400 <= response.status_code < 500 and response.status_code != 408:
-            raise provider_refusal(response.status_code, "Threads rejected the request")
+            raise graph_refusal(response, "Threads rejected the request")
         if response.status_code >= 400:
             raise DeliveryUnknown("Threads request acceptance is unconfirmed")
 

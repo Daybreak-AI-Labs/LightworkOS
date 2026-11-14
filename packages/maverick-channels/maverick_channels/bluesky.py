@@ -42,6 +42,13 @@ _POLL_INTERVAL_SEC = 30.0
 _MAX_SEEN_URIS = 1000
 
 
+def _reply_refusal(response):
+    """A PDS answers an expired or invalid token with 400 (see
+    ``_drop_expired_session``), so only statuses about the record itself
+    reject a reply; a bare 400/403 stays retryable."""
+    return provider_refusal(response.status_code, "Bluesky rejected the reply")
+
+
 class BlueskyChannel(Channel):
     """Bluesky AT Proto channel.
 
@@ -252,7 +259,7 @@ class BlueskyChannel(Channel):
                         headers={"Authorization": f"Bearer {sess['accessJwt']}"}, json=body)
                 self._drop_expired_session(resp)
                 if 400 <= resp.status_code < 500 and resp.status_code != 408:
-                    raise provider_refusal(resp.status_code, "Bluesky rejected the reply")
+                    raise _reply_refusal(resp)
                 if resp.status_code >= 400:
                     raise DeliveryUnknown("Bluesky reply acceptance is unconfirmed")
                 return (resp.json() or {}).get("uri", "")
