@@ -95,3 +95,24 @@ def test_hf_image_classify_rejects_redirects(monkeypatch):
     from maverick.tools.huggingface import huggingface
     out = huggingface().fn({"op": "image_classify", "model": "x", "url": "https://example.com/i.png"})
     assert "image fetch 302" in out
+
+
+def test_hf_model_id_and_image_url_stay_within_policy(monkeypatch):
+    """The model id went into the URL unencoded (so '../../api/whoami-v2'
+    retargeted the bearer token), and the image URL ignored the network
+    posture that removes http_fetch under deny-all."""
+    import maverick.tenant.egress as egress
+    import maverick.tools._ssrf as ssrf
+    from maverick.tools.huggingface import huggingface
+
+    fake_httpx = types.ModuleType("httpx")
+    fake_httpx.post = MagicMock()
+    monkeypatch.setitem(sys.modules, "httpx", fake_httpx)
+    out = huggingface().fn({"op": "infer", "model": "../../api/whoami-v2?x=1#", "inputs": "y"})
+    assert out.startswith("ERROR:") and not fake_httpx.post.called
+
+    fetched = MagicMock()
+    monkeypatch.setattr(ssrf, "safe_get", fetched)
+    monkeypatch.setattr(egress, "egress_allowed", lambda tool, host: False)
+    out = huggingface().fn({"op": "image_classify", "model": "o/m", "url": "https://example.com/i.png"})
+    assert "egress policy blocks" in out and not fetched.called
