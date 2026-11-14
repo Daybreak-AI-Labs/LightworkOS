@@ -46,6 +46,19 @@ def test_allow_root_field_drops_user_flag(monkeypatch, tmp_path, Backend, verify
     assert "--user" not in args
 
 
+@pytest.mark.skipif(not hasattr(os, "geteuid"), reason="POSIX-only euid")
+def test_rootless_podman_keeps_the_host_uid_for_the_workspace(monkeypatch, tmp_path):
+    # Without keep-id, --user uid:gid maps to a subordinate uid that cannot
+    # write the bind-mounted workspace under rootless podman.
+    monkeypatch.delenv("MAVERICK_SANDBOX_ALLOW_ROOT", raising=False)
+    monkeypatch.setattr(os, "geteuid", lambda: 1000)
+    args = _capture_run_argv(monkeypatch, PodmanBackend, "_verify_podman", tmp_path)
+    assert "--userns=keep-id" in args and "--user" in args
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
+    args = _capture_run_argv(monkeypatch, PodmanBackend, "_verify_podman", tmp_path)
+    assert "--userns=keep-id" not in args
+
+
 def test_allow_root_env_var_drops_user_flag(monkeypatch, tmp_path):
     monkeypatch.setenv("MAVERICK_SANDBOX_ALLOW_ROOT", "1")
     args = _capture_run_argv(monkeypatch, DockerBackend, "_verify_docker", tmp_path)

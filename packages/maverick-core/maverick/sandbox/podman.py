@@ -27,6 +27,7 @@ smoke test catches it before the agent runs.
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import time
 import uuid
@@ -57,8 +58,8 @@ class PodmanBackend:
     # Run as the invoking user (uid:gid) by default instead of root, matching
     # DevcontainerBackend. Set ``[sandbox] allow_root = true`` (or
     # MAVERICK_SANDBOX_ALLOW_ROOT) to keep root for images that require it.
-    # (Rootless podman maps container-uid 0 to the host user already, but an
-    # explicit ``--user`` keeps parity with docker and the in-container view.)
+    # (Rootless podman maps container-uid 0 to the host user already; with
+    # ``--user`` it also needs ``--userns=keep-id``, see ``_user_args``.)
     allow_root: bool = False
     pending_cleanup: dict[str, ContainerCleanup] = field(default_factory=dict, init=False, repr=False)
     _pool_lease: BackendLease = field(default_factory=BackendLease, init=False, repr=False, compare=False)
@@ -80,6 +81,19 @@ class PodmanBackend:
                 "[sandbox] backend to 'local' / 'docker' in "
                 "~/.maverick/config.toml."
             ) from e
+
+    def _user_args(self) -> list[str]:
+        """``--user uid:gid``, plus ``--userns=keep-id`` under rootless podman.
+
+        Rootless podman maps container uid N to a subordinate host uid, which
+        does not own the bind-mounted workspace, so every write failed.
+        ``keep-id`` maps the invoking user to the same uid inside.
+        """
+        args = container_user_args(self.allow_root)
+        geteuid = getattr(os, "geteuid", None)
+        if args and geteuid is not None and geteuid() != 0:
+            args = ["--userns=keep-id", *args]
+        return args
 
     def exec(self, cmd: str, timeout: float | None = None) -> ExecResult:
         with operation_lease(self):
@@ -106,7 +120,7 @@ class PodmanBackend:
             # pip/npm/pytest, which need no capabilities.
             "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges",
-            *container_user_args(self.allow_root),
+            *self._user_args(),
         ]
         if self.pids_limit:
             args.extend(["--pids-limit", str(self.pids_limit)])
