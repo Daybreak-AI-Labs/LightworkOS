@@ -47,7 +47,7 @@ import threading
 import time
 from collections import OrderedDict
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 from ..config import env_flag
@@ -126,6 +126,7 @@ class LearningCache:
         self._lock = threading.Lock()
         self._hits = 0
         self._misses = 0
+        self._lock_warned = False
         self._entries: dict[str, dict] = self._load()
 
     # -- persistence -------------------------------------------------------
@@ -149,8 +150,21 @@ class LearningCache:
     def _synced(self) -> Iterator[None]:
         """Hold the thread and cross-process locks and reload from disk, so a
         read-modify-write starts from what other processes have saved instead
-        of overwriting their entries with this instance's stale copy."""
-        with self._lock, cross_process_lock(self.path):
+        of overwriting their entries with this instance's stale copy.
+
+        If the lock file cannot be created (read-only or foreign-owned data
+        directory), warn once and serialise within this process only, as
+        before cross-process locking: the cache stays usable.
+        """
+        with self._lock, ExitStack() as stack:
+            try:
+                stack.enter_context(cross_process_lock(self.path))
+            except OSError as exc:
+                if not self._lock_warned:
+                    self._lock_warned = True
+                    log.warning("learning cache: no cross-process lock for %s (%s); "
+                                "concurrent processes may overwrite each other's "
+                                "entries", self.path, exc)
             self._entries = self._load()
             yield
 
@@ -222,11 +236,11 @@ class LearningCache:
         bound_source = source_goal_id is not None or source_owner is not None
         if bound_source:
             entry.update(content_version=1, goal_id=source_goal_id, owner=source_owner)
+            # Checked outside the cross-process lock: the check queries the
+            # world model, and other processes must not wait on it.
             if not _source_current(entry, source_owner):
                 raise ValueError("Learning cache source authority is unavailable")
         with self._synced():
-            if bound_source and not _source_current(entry, source_owner):
-                raise ValueError("Learning cache source authority changed before saving")
             self._entries[key] = entry
             self._evict_locked()
             self._save_locked()
@@ -241,29 +255,47 @@ class LearningCache:
         """
         key = task_key(task)
         now = float(self._clock())
-        with self._synced():
+        from .eviction import is_expired
+
+        # A plain read: atomic writes make an unlocked reload safe, and only a
+        # change below takes the cross-process lock.
+        with self._lock:
+            self._entries = self._load()
             entry = self._entries.get(key)
             if entry is None:
                 self._misses += 1
                 return None
-            from .eviction import is_expired
-            expires_at = entry.get("expires_at", 0.0)
-            if (type(expires_at) not in (int, float) or not math.isfinite(expires_at)
-                    or is_expired(now, expires_at)):
-                del self._entries[key]
-                self._save_locked()
+            entry = dict(entry)
+        expires_at = entry.get("expires_at", 0.0)
+        if (type(expires_at) not in (int, float) or not math.isfinite(expires_at)
+                or is_expired(now, expires_at)):
+            with self._synced():
+                if self._entries.get(key) == entry:
+                    del self._entries[key]
+                    self._save_locked()
+                self._misses += 1
+            return None
+        # The source check queries the world model: run it outside the lock.
+        if source_owner is not None and not _source_current(entry, source_owner):
+            with self._lock:
+                self._misses += 1
+            return None
+        with self._synced():
+            current = self._entries.get(key)
+            if current is None or current.get("stored_at") != entry.get("stored_at"):
+                # Replaced or dropped by another process meanwhile.
                 self._misses += 1
                 return None
-            if source_owner is not None and not _source_current(entry, source_owner):
-                self._misses += 1
-                return None
-            entry["last_used"] = now
+            current["last_used"] = now
             self._save_locked()
-            if source_owner is not None and not _source_current(entry, source_owner):
+            entry = dict(current)
+        if source_owner is not None and not _source_current(entry, source_owner):
+            with self._lock:
                 self._misses += 1
-                return None
+            return None
+        with self._lock:
             self._hits += 1
-            return dict(entry)
+        return entry
 
     def invalidate(self, task: str) -> bool:
         """Drop ``task``'s entry (e.g. the fact changed). True if one existed."""

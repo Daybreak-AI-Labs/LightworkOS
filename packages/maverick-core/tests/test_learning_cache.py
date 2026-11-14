@@ -56,6 +56,27 @@ def test_two_instances_on_one_file_keep_each_others_entries(tmp_path, now):
     assert fresh.get("task two")["result"] == "r2"
 
 
+def test_unavailable_cross_process_lock_falls_back_with_one_warning(
+        tmp_path, now, monkeypatch, caplog):
+    # A data directory where the lock file cannot be created must not disable
+    # the cache; a read that changes nothing takes no cross-process lock.
+    calls = []
+
+    def _no_lock(path):
+        calls.append(path)
+        raise PermissionError("read-only data directory")
+
+    monkeypatch.setattr(lc, "cross_process_lock", _no_lock)
+    cache = lc.LearningCache(tmp_path / "lc.json", clock=lambda: now["t"])
+    assert cache.get("never stored") is None
+    assert calls == []
+    with caplog.at_level("WARNING", logger="maverick.cache.learning"):
+        cache.put("task", "result", verified_by="verifier:g1")
+        assert cache.get("task")["result"] == "result"
+    assert len(calls) == 2
+    assert caplog.text.count("no cross-process lock") == 1
+
+
 def test_prune_drops_an_entry_with_a_non_numeric_expiry(tmp_path, now):
     # get() already treated such an entry as expired; prune() raised ValueError.
     import json
