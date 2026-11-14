@@ -135,7 +135,7 @@ def _forecast(rows, executed):
     valid = [row["estimates"][-1] for row in executed if row["estimates"][-1]["avoided_minutes"] is not None]
     currencies = {row["assumptions"]["currency"] for row in valid}
     amounts = [sum(cost["amount"] for cost in row["source"]["costs"] if cost["amount"] is not None)
-               for row in executed if row["source"]["costs"] and all(cost["amount"] is not None and cost["currency"] in currencies for cost in row["source"]["costs"])]
+               for row in executed if len(currencies) == 1 and row["source"]["costs"] and all(cost["amount"] is not None and cost["currency"] in currencies for cost in row["source"]["costs"])]
     incremental = min(10, sum(row["avoided_minutes"] for row in valid) / len(valid) * 0.2) if valid else None
     rate = sum(row["assumptions"]["hourly_rate"] for row in valid) / len(valid) if valid else None
     cost = sum(amounts) / len(amounts) if amounts and len(currencies) == 1 else None
@@ -144,10 +144,10 @@ def _forecast(rows, executed):
             "incremental_minutes_per_run": round(incremental, 2) if incremental is not None else None,
             "incremental_labor_per_run": round(incremental * rate / 60, 2) if incremental is not None and len(currencies) == 1 else None,
             "execution_cost_per_run": round(cost, 4) if cost is not None else None,
-            "incremental_net_per_run": round(labor - cost, 2) if labor is not None and cost is not None else None,
+            "incremental_net_per_run": round(labor - cost, 2) if labor is not None and cost is not None and len(amounts) == len(executed) else None,
             "cost_coverage": "Incomplete; marginal automation cost and retained human effort require qualification.",
             "assumptions": "Provisional reusable setup benefit: 20% of the assisted effort estimate, capped at 10 minutes per run. Conservative planning net subtracts the entire observed known-cost mean from this incremental labor estimate. Marginal cost, external fees and retained effort remain unqualified; this is not a realized-savings claim.",
-            "sample_count": len(rows), "uncertainty": "High; validate the incremental effort and cost after adoption."}
+            "sample_count": len(amounts), "uncertainty": "High; validate the incremental effort and cost after adoption."}
 
 
 def _potential(rows):

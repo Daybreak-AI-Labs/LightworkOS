@@ -12,6 +12,7 @@ from __future__ import annotations
 import warnings
 from contextlib import contextmanager
 from pathlib import Path
+from threading import RLock
 
 DEFAULT_MAX_IMAGE_PIXELS = 20_000_000
 DEFAULT_MAX_IMAGE_BYTES = 20 * 1024 * 1024
@@ -20,6 +21,7 @@ DEFAULT_OCR_TIMEOUT_SECONDS = 15
 # file's content, not its name, so without this a ``.png`` holding EPS would be
 # handed to Ghostscript. Only these plugins may identify the file.
 OCR_IMAGE_FORMATS = ("PNG", "JPEG", "GIF", "WEBP", "BMP", "TIFF")
+_PIXEL_CAP_LOCK = RLock()
 
 
 def _open_allowed(Image, path):
@@ -37,14 +39,15 @@ def _pixel_cap(Image, max_image_pixels: int):
     """Enforce Lightwork's pixel cap and turn decompression-bomb warnings into
     errors for the duration of a decode. Pillow's global MAX_IMAGE_PIXELS is
     restored afterwards."""
-    previous_max_pixels = Image.MAX_IMAGE_PIXELS
-    Image.MAX_IMAGE_PIXELS = max_image_pixels
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", Image.DecompressionBombWarning)
-            yield
-    finally:
-        Image.MAX_IMAGE_PIXELS = previous_max_pixels
+    with _PIXEL_CAP_LOCK:
+        previous_max_pixels = Image.MAX_IMAGE_PIXELS
+        Image.MAX_IMAGE_PIXELS = max_image_pixels
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", Image.DecompressionBombWarning)
+                yield
+        finally:
+            Image.MAX_IMAGE_PIXELS = previous_max_pixels
 
 
 def _validate_image(path: str, Image, max_image_pixels: int, max_image_bytes: int):

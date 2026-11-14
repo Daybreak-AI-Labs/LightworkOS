@@ -163,9 +163,14 @@ def extract_document(path: str | Path) -> DocumentExtraction:
             if not data.startswith(b"%PDF-"):
                 raise ValueError("PDF signature does not match its extension")
             from pypdf import PdfReader
+
+            from .extraction import MAX_TEXT_CHARS
             reader = PdfReader(io.BytesIO(data))
             _check_pdf_page_count(reader)
             for index, page in enumerate(reader.pages, 1):
+                if builder.length + (2 if builder.blocks else 0) >= MAX_TEXT_CHARS:
+                    builder.omit(f"pdf/pages[{index}-{len(reader.pages)}]: extraction bound reached")
+                    break
                 text = page.extract_text() or ""
                 location = f"pdf/page[{index}]"
                 if text.strip():

@@ -795,6 +795,9 @@ def main(argv: list[str] | None = None) -> int:
                   "--text-sidecar. Refusing to train on the structural stand-in.",
                   file=sys.stderr)
             return 1
+    if not pairs:
+        print("no preference pairs to train on; nothing to do.", file=sys.stderr)
+        return 0
     # Optional: cross-check the verifier's labels with a learned reward model and
     # downweight pairs the two signals don't corroborate. Off unless --reward-model.
     if args.reward_model:
@@ -802,8 +805,9 @@ def main(argv: list[str] | None = None) -> int:
         try:
             rm_model = PreferenceRewardModel.load(args.reward_model)
         except (OSError, ValueError) as e:
-            print(f"reward model load failed ({e}); proceeding unweighted",
+            print(f"reward model load failed ({e}); refusing to train",
                   file=sys.stderr)
+            return 1
         else:
             rep = reweight_pairs_with_model(
                 pairs, rows_by_id, rm_model, disagree_penalty=args.disagree_penalty)
