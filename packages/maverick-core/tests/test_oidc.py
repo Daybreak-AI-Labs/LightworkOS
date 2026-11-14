@@ -456,8 +456,13 @@ def test_unreadable_config_keeps_oidc_enforced(monkeypatch, tmp_path):
     monkeypatch.delenv("MAVERICK_HOME", raising=False)
     monkeypatch.delenv("MAVERICK_OIDC_ENABLED", raising=False)
     assert oidc_enabled() is True
+    # Evidence and display callers can tell "configured on" from "unknown".
+    from maverick.oidc import oidc_enabled_as_configured
+    with pytest.raises(OIDCError):
+        oidc_enabled_as_configured()
     monkeypatch.setenv("MAVERICK_OIDC_ENABLED", "0")  # an explicit env decision still wins
     assert oidc_enabled() is False
+    assert oidc_enabled_as_configured() is False
 
 
 def test_config_algorithms_default_to_asymmetric(monkeypatch, tmp_path):

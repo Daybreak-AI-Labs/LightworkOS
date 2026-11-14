@@ -255,6 +255,23 @@ def oidc_enabled() -> bool:
     return load_oidc_config().enabled
 
 
+def oidc_enabled_as_configured() -> bool:
+    """For evidence and display: whether sign-in is turned on by the env or
+    by a readable config. Raises :class:`OIDCError` when the env does not
+    decide and a config source is unreadable, so callers can report
+    "unknown" instead of the fail-closed True of :func:`oidc_enabled`."""
+    from .config import single_read
+
+    with single_read():
+        enabled_env = _env_flag("MAVERICK_OIDC_ENABLED")
+        if enabled_env is not None:
+            return enabled_env
+        section = _load_oidc_section()
+    if section is None:
+        raise OIDCError("company sign-in settings are unreadable (configuration error)")
+    return bool(section.get("enabled", False))
+
+
 def login_enabled(config: OIDCConfig | None = None) -> bool:
     """True only when the built-in OIDC *browser-login* flow is fully configured.
 
@@ -522,6 +539,7 @@ __all__ = [
     "MAX_SUBJECT_LENGTH",
     "validate_subject",
     "oidc_enabled",
+    "oidc_enabled_as_configured",
     "login_enabled",
     "load_oidc_config",
     "resolve_endpoints",
