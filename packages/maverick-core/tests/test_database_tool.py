@@ -90,6 +90,15 @@ def test_select_forms_with_known_side_effects_need_confirm(monkeypatch):
         assert "DRY RUN" in database_tool().fn({"op": "query", "sql": sql}), sql
 
 
+def test_identifiers_resembling_effect_functions_stay_reads():
+    from maverick.tools.database_tool import _is_read_sql
+    for sql in ("SELECT lo_price FROM items", "SELECT * FROM user_sleep",
+                "SELECT 'asleep'", "SHOW CREATE TABLE lo_items"):
+        assert _is_read_sql(sql), sql
+    for sql in ("SELECT SLEEP(5)", "select lo_unlink(3)", "select pg_sleep_for('1s')"):
+        assert not _is_read_sql(sql), sql
+
+
 def test_comment_prefixed_write_needs_confirm(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://u:p@localhost/db")
     from maverick.tools.database_tool import database_tool

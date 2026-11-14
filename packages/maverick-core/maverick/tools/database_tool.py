@@ -86,7 +86,8 @@ _TOKEN_RE = re.compile(r"[a-zA-Z_]+")
 _SELECT_EFFECT_RE = re.compile(
     r"\b(?:into|for\s+(?:no\s+key\s+)?update|lock\s+in\s+share\s+mode|"
     r"pg_advisory_(?:xact_)?lock|pg_try_advisory_(?:xact_)?lock|nextval|setval|"
-    r"get_lock|release_lock|\w*sleep|benchmark|lo_\w+|dblink\w*|"
+    r"get_lock|release_lock|pg_sleep\w*|sleep(?=\s*\()|benchmark|"
+    r"lo_(?:import|export|from_bytea|put|unlink|create|creat|open|write)|dblink\w*|"
     r"pg_terminate_backend|pg_cancel_backend|pg_reload_conf|pg_read_\w+|"
     r"pg_ls_\w+|set_config|load_file)\b",
     re.IGNORECASE,
