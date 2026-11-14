@@ -17,7 +17,7 @@
 # update. Apt repositories remain mutable and must also be snapshotted before
 # the complete container can be described as reproducible.
 ARG PYTHON_DIGEST=@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
-FROM debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3 AS kubectl-builder
+FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS kubectl-builder
 ARG KUBECTL_VERSION=v1.36.4
 ARG TARGETARCH=amd64
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
