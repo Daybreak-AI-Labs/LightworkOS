@@ -739,8 +739,10 @@ class OpenAIClient:
                 return sync_physical_attempt(lambda: self._sync.chat.completions.create(**kwargs))
 
         resp = sync_retry(request, observe_attempts=False)
+        # Meter under the id the caller admitted. A subclass may send another
+        # wire id (Ollama's promoted adapter), which the facade would refuse.
         return self._from_response(
-            resp, budget, model=kwargs.get("model"),
+            resp, budget, model=model or kwargs.get("model"),
             price_model_prefix=self.PRICE_MODEL_PREFIX,
             usage_required=self.USAGE_REQUIRED,
         )
@@ -769,8 +771,10 @@ class OpenAIClient:
                 return await async_physical_attempt(lambda: self._async.chat.completions.create(**kwargs))
 
         resp = await async_retry(request, observe_attempts=False)
+        # Meter under the id the caller admitted. A subclass may send another
+        # wire id (Ollama's promoted adapter), which the facade would refuse.
         return self._from_response(
-            resp, budget, model=kwargs.get("model"),
+            resp, budget, model=model or kwargs.get("model"),
             price_model_prefix=self.PRICE_MODEL_PREFIX,
             usage_required=self.USAGE_REQUIRED,
         )
