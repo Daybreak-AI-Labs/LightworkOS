@@ -140,3 +140,12 @@ def test_kill_switch_holds_on_unreadable_config_and_true_env(monkeypatch):
     assert mailer.sending_disabled() is True
     monkeypatch.setenv("MAVERICK_EMAIL_DISABLE", "0")
     assert mailer.sending_disabled() is False
+
+
+def test_send_refuses_more_than_one_recipient(monkeypatch):
+    _creds(monkeypatch)
+    sent = []
+    with pytest.raises(mailer.MailerNotSent, match="single recipient"):
+        mailer.send("victim@x.com, attacker@y.com", "hi", "body",
+                    transport=lambda *a: sent.append(a))
+    assert sent == []

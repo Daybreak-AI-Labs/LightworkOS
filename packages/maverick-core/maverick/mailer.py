@@ -97,6 +97,14 @@ def configured() -> bool:
     return bool(_cfg("user", "EMAIL_USER") and _cfg("app_password", "EMAIL_APP_PASSWORD"))
 
 
+def _require_single_recipient(to: str) -> None:
+    """Platform email has exactly one recipient; "a@x, b@y" would reach both."""
+    from email.utils import getaddresses
+    recipients = [addr for _name, addr in getaddresses([to]) if addr]
+    if len(recipients) != 1 or "@" not in recipients[0]:
+        raise MailerNotSent("Send requires a single recipient address.")
+
+
 def send(to: str, subject: str, body: str, *, transport=None, before_effect=None) -> None:
     """Send a plain-text platform email. Raises :class:`MailerError` on any
     problem; never returns partial success. ``transport`` is injectable for
@@ -113,6 +121,7 @@ def send(to: str, subject: str, body: str, *, transport=None, before_effect=None
     for field, val in (("to", to), ("subject", subject)):
         if "\r" in val or "\n" in val:
             raise MailerNotSent(f"Invalid email {field}.")
+    _require_single_recipient(to)
 
     original_scope = sending_scope()
     provider = original_scope["provider"].lower()
