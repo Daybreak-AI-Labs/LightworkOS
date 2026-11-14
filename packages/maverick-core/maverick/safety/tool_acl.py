@@ -30,7 +30,8 @@ A ``max_risk`` ceiling (low/medium/high) can be set at the global,
 channel, or user layer; tools whose risk exceeds the tightest configured
 ceiling are dropped too. See ``tool_risk`` for the risk classification.
 Default: under **secure-by-default** the ceiling is ``high`` when none is
-configured, so CRITICAL-risk tools need an explicit raise; an explicit
+configured. ``high`` is the top level ``tool_risk`` assigns, so this default
+withholds no tool today; it reserves room for a higher level. An explicit
 ``[security] max_risk`` always wins, and ``secure_defaults = false`` /
 ``MAVERICK_SECURE_DEFAULT=0`` restores the uncapped ("no ceiling") default.
 
@@ -55,6 +56,28 @@ log = logging.getLogger(__name__)
 _FAIL_CLOSED = frozenset({"\x00acl-load-failed"})
 
 
+def _principal_config() -> dict:
+    """The config for a channel/user ACL; raises when a source is unreadable.
+
+    ``load_config()`` returns defaults for a file it cannot parse, so a
+    per-principal deny-list or ceiling would vanish silently. Raising sends
+    the caller down its fail-closed branch.
+    """
+    from ..config import config_source_errors, load_config
+    cfg = load_config() or {}
+    errors = config_source_errors(include_tenant=True)
+    if errors:
+        raise OSError("unreadable configuration: " + ", ".join(sorted(errors)))
+    return cfg
+
+
+def _names(value) -> set[str]:
+    """A tool-name list from config; a lone string is one name, not its letters."""
+    if isinstance(value, str):
+        return {value}
+    return set(value or [])
+
+
 def _load_lists() -> tuple[set[str], set[str]]:
     """Load global (allowed, denied) sets from ~/.maverick/config.toml."""
     try:
@@ -64,9 +87,7 @@ def _load_lists() -> tuple[set[str], set[str]]:
         log.debug("tool_acl: cannot load config: %s", e)
         return set(), set()
     sec = (cfg or {}).get("security") or {}
-    allowed = sec.get("allowed_tools") or []
-    denied = sec.get("denied_tools") or []
-    return set(allowed), set(denied)
+    return _names(sec.get("allowed_tools")), _names(sec.get("denied_tools"))
 
 
 def _load_lists_for_channel(channel: str) -> tuple[set[str], set[str]]:
@@ -78,14 +99,13 @@ def _load_lists_for_channel(channel: str) -> tuple[set[str], set[str]]:
     channel still returns empty (no per-channel restriction — unchanged).
     """
     try:
-        from ..config import load_config
-        cfg = load_config() or {}
+        cfg = _principal_config()
     except Exception as e:
         log.warning("tool_acl: cannot read channel ACL for %r; failing closed: %s",
                     channel, e)
         return set(_FAIL_CLOSED), set()
     sec = ((cfg.get("security") or {}).get("channels") or {}).get(channel) or {}
-    return set(sec.get("allowed_tools") or []), set(sec.get("denied_tools") or [])
+    return _names(sec.get("allowed_tools")), _names(sec.get("denied_tools"))
 
 
 def _load_lists_for_user(user_id: str) -> tuple[set[str], set[str]]:
@@ -96,15 +116,14 @@ def _load_lists_for_user(user_id: str) -> tuple[set[str], set[str]]:
     a config-read error, like :func:`_load_lists_for_channel`.
     """
     try:
-        from ..config import load_config
-        cfg = load_config() or {}
+        cfg = _principal_config()
     except Exception as e:
         log.warning("tool_acl: cannot read user ACL for %r; failing closed: %s",
                     user_id, e)
         return set(_FAIL_CLOSED), set()
     users = (cfg.get("security") or {}).get("users") or {}
     sec = users.get(user_id) or {}
-    return set(sec.get("allowed_tools") or []), set(sec.get("denied_tools") or [])
+    return _names(sec.get("allowed_tools")), _names(sec.get("denied_tools"))
 
 
 def resolve_max_risk(
@@ -121,8 +140,11 @@ def resolve_max_risk(
     """
     from .tool_risk import RISK_LEVELS, risk_rank
     try:
-        from ..config import load_config
-        cfg = load_config() or {}
+        if channel or user_id:
+            cfg = _principal_config()
+        else:
+            from ..config import load_config
+            cfg = load_config() or {}
     except Exception as e:
         # Fail closed for a restricted principal: if we can't read the config we
         # can't know its risk ceiling, so apply the tightest one rather than
@@ -134,24 +156,27 @@ def resolve_max_risk(
         return None
 
     sec = cfg.get("security") or {}
-    candidates: list[str] = []
-    g = sec.get("max_risk")
-    if isinstance(g, str) and g in RISK_LEVELS:
-        candidates.append(g)
+    raw = [sec.get("max_risk")]
     if channel:
-        c = ((sec.get("channels") or {}).get(channel) or {}).get("max_risk")
-        if isinstance(c, str) and c in RISK_LEVELS:
-            candidates.append(c)
+        raw.append(((sec.get("channels") or {}).get(channel) or {}).get("max_risk"))
     if user_id:
-        u = ((sec.get("users") or {}).get(user_id) or {}).get("max_risk")
-        if isinstance(u, str) and u in RISK_LEVELS:
-            candidates.append(u)
+        raw.append(((sec.get("users") or {}).get(user_id) or {}).get("max_risk"))
+    candidates: list[str] = []
+    for value in raw:
+        if value is None or value == "":
+            continue
+        level = value.strip().lower() if isinstance(value, str) else ""
+        if level not in RISK_LEVELS:
+            # A ceiling was set but cannot be read: apply the tightest one
+            # rather than dropping it.
+            log.warning("tool_acl: unknown max_risk %r; applying the tightest ceiling", value)
+            level = min(RISK_LEVELS, key=risk_rank)
+        candidates.append(level)
     if not candidates:
-        # Secure-by-default: with no configured ceiling, cap at 'high' so
-        # CRITICAL-risk tools (funds movement, mass-delete, prod writes) are not
-        # exposed without an explicit ceiling raise. High-risk tools stay
-        # available but are gated by the consent layer. No-op when secure
-        # defaults are off; an explicit [security] max_risk always wins above.
+        # Secure-by-default: with no configured ceiling, cap at 'high'. No tool
+        # is rated above 'high' (tool_risk.RISK_LEVELS stops there), so this
+        # withholds nothing today; high-risk tools stay available and are gated
+        # by the consent layer. An explicit [security] max_risk always wins.
         try:
             from ..security_defaults import secure_by_default
             if secure_by_default():
