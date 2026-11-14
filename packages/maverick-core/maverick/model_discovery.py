@@ -333,6 +333,7 @@ def _entry(
     fetched_at: float | None,
     free_models: list[str] | None = None,
     capabilities: dict | None = None,
+    truncated: bool = False,
 ) -> dict[str, Any]:
     return {
         "provider": provider,
@@ -342,6 +343,7 @@ def _entry(
         # budget prices those at zero instead of refusing them as unpriced.
         "free_models": list(free_models or []),
         "capabilities": capabilities or {},
+        "truncated": truncated,
         "detail": detail[:MAX_DETAIL_CHARS],
         "fetched_at": fetched_at,
     }
@@ -352,6 +354,57 @@ def _official_openrouter_listing(url: str) -> bool:
     return (parsed.scheme == "https" and parsed.hostname == "openrouter.ai"
             and parsed.port in (None, 443) and parsed.path == "/api/v1/models"
             and not parsed.query and not parsed.fragment and parsed.username is None)
+
+
+def _page_capabilities(style: str, payload: dict) -> dict:
+    from .model_guidance import parse_capabilities
+
+    key = "models" if style in {"gemini", "ollama"} else "data"
+    rows = payload.get(key)
+    if not isinstance(rows, list):
+        return {}
+    capabilities = {}
+    # The shared parser accepts at most 500 rows. Parse the already byte-bounded
+    # response in batches before choosing which model ids retain evidence.
+    for offset in range(0, len(rows), 500):
+        capabilities.update(parse_capabilities(style, {key: rows[offset:offset + 500]}))
+    return capabilities
+
+
+def _prioritize_models(provider: str, models: list[str], free: list[str]) -> list[str]:
+    """Keep verified pricing evidence first, then free/catalog picker evidence."""
+    from .llm import MODEL_CATALOG, MODEL_PRICES, model_price_quote
+    from .pricing import UnverifiedRateError
+
+    # As in Budget, a bare quote applies only to its evidence's own provider.
+    # Catalog membership is display guidance, never pricing authority.
+    evidence_prefix = {
+        "anthropic": "anthropic-", "openai": "openai-", "gemini": "google-",
+        "moonshot": "moonshot-", "deepseek": "deepseek-", "xai": "xai-",
+        "openrouter": "openrouter-",
+    }.get(provider)
+    priced = set()
+    for model in models:
+        qualified = f"{provider}:{model}"
+        for key in (qualified, model):
+            try:
+                quote = model_price_quote(key)
+            except UnverifiedRateError:
+                continue
+            if (quote is None or quote.currency != "USD"
+                    or MODEL_PRICES.get(key, quote.rates) != quote.rates):
+                continue
+            if key == qualified or (evidence_prefix is not None
+                                    and quote.evidence_id.startswith(evidence_prefix)):
+                priced.add(model)
+                break
+    free_ids = set(free)
+    catalog = set(MODEL_CATALOG.get(provider, ()))
+    # Metadata-free compatibility rates remain display hints, below verified
+    # quotes. Selection never changes Budget's independent admission checks.
+    hints = catalog | {model for model in models if spec_for(provider, model) in MODEL_PRICES}
+    return sorted(models, key=lambda model: (
+        0 if model in priced else 1 if model in free_ids else 2 if model in hints else 3, model))
 
 
 def discover(provider: str, *, fetch: Fetch | None = None, material: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -389,8 +442,7 @@ def discover(provider: str, *, fetch: Fetch | None = None, material: dict[str, A
                 return _entry(name, "unavailable", [], f"provider returned HTTP {int(status)} for the model list", now)
             payload = json.loads(body.decode("utf-8"), parse_float=Decimal)
             ids, token = parse_models(style, payload)
-            from .model_guidance import parse_capabilities
-            capabilities.update(parse_capabilities(style, payload))
+            capabilities.update(_page_capabilities(style, payload))
             if name == "openrouter" and _official_openrouter_listing(url):
                 free.extend(parse_free_models(style, payload))
             if name == "gemini":
@@ -409,16 +461,22 @@ def discover(provider: str, *, fetch: Fetch | None = None, material: dict[str, A
         return _entry(name, "unavailable", [], "provider returned an unreadable model list", now)
     except Exception as exc:
         return _entry(name, "unavailable", [], f"model list request failed ({type(exc).__name__})", now)
-    models = sorted(models)[:MAX_MODELS_PER_PROVIDER]
+    total_models = len(models)
+    truncated = total_models > MAX_MODELS_PER_PROVIDER
+    if truncated:
+        models = _prioritize_models(name, models, free)
+    models = sorted(models[:MAX_MODELS_PER_PROVIDER])
     kept = set(models)
     return _entry(
         name,
         "live",
         models,
-        f"{len(models)} models reachable with the configured key",
+        (f"{len(models)} of {total_models} reachable models shown; list truncated"
+         if truncated else f"{len(models)} models reachable with the configured key"),
         now,
         free_models=[m for m in _ids(free) if m in kept],
         capabilities={m: capabilities[m] for m in kept if m in capabilities},
+        truncated=truncated,
     )
 
 
@@ -464,7 +522,8 @@ def _load_cache(path: Path | None = None) -> dict[str, dict[str, Any]]:
         raw_caps = row.get("capabilities")
         capabilities = {m: clean_capabilities(raw_caps.get(m)) for m in _ids(models)} if isinstance(raw_caps, dict) else {}
         out[name] = _entry(name, status, _ids(models), detail, fetched,
-                           free_models=[m for m in _ids(free) if m in _ids(models)], capabilities=capabilities)
+                           free_models=[m for m in _ids(free) if m in _ids(models)], capabilities=capabilities,
+                           truncated=row.get("truncated") is True)
         out[name]["material_binding"] = binding
         out[name]["refresh_token"] = row.get("refresh_token") if isinstance(row.get("refresh_token"), str) and re.fullmatch(r"[a-f0-9]{32}", row["refresh_token"]) else ""
         attempted = row.get("last_attempt_at")

@@ -190,7 +190,9 @@ def _store_rank(shards: list[str], query: str, k: int, store) -> list[int]:
             hid = h.get("id") if isinstance(h, dict) else None
             if isinstance(hid, str) and hid.startswith("shard-"):
                 try:
-                    keep.add(int(hid.split("-", 1)[1]))
+                    index = int(hid.split("-", 1)[1])
+                    if 0 <= index < len(shards):
+                        keep.add(index)
                 except ValueError:  # pragma: no cover
                     pass
         if not keep:  # store returned nothing usable
