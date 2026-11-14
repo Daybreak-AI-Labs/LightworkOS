@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 
 
@@ -23,6 +24,24 @@ class _Pat:
     # Two linear searches replace a ``pat.*then`` regex, which rescans to the
     # end of the text from every start and is quadratic.
     then: re.Pattern | None = None
+    # When set, decides the hit instead of ``pat`` (which then documents it).
+    check: Callable[[str], bool] | None = None
+
+
+# ``curl ... | sh``: a fetch command and a pipe into a shell in the same
+# pipeline stage. Searched per stage (from the previous pipe or newline to the
+# pipe), so each character is scanned once however long the URL is.
+_PIPE_TO_SHELL = re.compile(r"\|\s*(?:sh|bash)", re.IGNORECASE)
+_SHELL_FETCH = re.compile(r"\b(?:curl|wget|nc|bash|sh)\s", re.IGNORECASE)
+
+
+def _pipes_fetch_to_shell(text: str) -> bool:
+    for m in _PIPE_TO_SHELL.finditer(text):
+        pipe = text.rfind("|", 0, m.start())
+        start = max(pipe, text.rfind("\n", pipe + 1, m.start())) + 1
+        if _SHELL_FETCH.search(text, start, m.start()):
+            return True
+    return False
 
 
 _PATTERNS: list[_Pat] = [
@@ -88,7 +107,9 @@ _PATTERNS: list[_Pat] = [
     _Pat("admin_override",
          re.compile(
              r"\[(?:ADMIN|SYSTEM|INST|OVERRIDE|SUDO|MAINTENANCE|START|END)"
-             r"\b[^\[\]]*\]",
+             # One nested bracket level ("[SYSTEM [x]]"); possessive, so a
+             # failed scan is not retried at every split.
+             r"\b(?:[^\[\]]++|\[[^\[\]]*+\])*+\]",
              re.IGNORECASE,
          ), 1.8),
     _Pat("api_key_extraction",
@@ -177,11 +198,7 @@ _PATTERNS: list[_Pat] = [
              r"everything\s+(?:above|before))\b",
              re.IGNORECASE,
          ), 1.5),
-    _Pat("execute_shell_string",
-         re.compile(
-             r"\b(?:curl|wget|nc|bash|sh)\s+[^|]{0,300}\|\s*(?:sh|bash)",
-             re.IGNORECASE,
-         ), 2.0),
+    _Pat("execute_shell_string", _PIPE_TO_SHELL, 2.0, check=_pipes_fetch_to_shell),
     _Pat("test_was_a_test",
          re.compile(
              r"(?:previous|prior)\s+(?:turn|instruction|prompt)s?\s+"
@@ -222,6 +239,8 @@ def _squeeze_whitespace(text: str) -> str:
 
 
 def _hit(p: _Pat, text: str) -> bool:
+    if p.check is not None:
+        return p.check(text)
     m = p.pat.search(text)
     if m is None:
         return False
