@@ -32,6 +32,29 @@ from .config import env_flag
 log = logging.getLogger(__name__)
 _MESSAGES_CONTEXT = "checkpoints.messages"
 
+
+def _open_messages(stored: str) -> str:
+    """The stored transcript as JSON text.
+
+    A sealed value is unsealed, and one that fails to open (wrong column,
+    tampered, no key) raises ``ValueError``. An unsealed value is a checkpoint
+    written before transcripts were sealed, whatever the strict-read posture:
+    ``maverick encryption migrate`` does not cover this table, so plaintext
+    here is not evidence of tampering and in-flight goals must still resume.
+    """
+    from .crypto_at_rest import EncryptionUnavailable, is_sealed_str
+    from .world_model import _UNSEALED_WITHHELD, _dec_field
+
+    if not isinstance(stored, str) or not is_sealed_str(stored):
+        return stored
+    try:
+        opened = _dec_field(stored, at_rest=True, context=_MESSAGES_CONTEXT)
+    except EncryptionUnavailable as exc:
+        raise ValueError("sealed checkpoint transcript could not be opened") from exc
+    if opened is None or opened == _UNSEALED_WITHHELD:
+        raise ValueError("sealed checkpoint transcript could not be opened")
+    return opened
+
 _CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS checkpoints (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -232,10 +255,9 @@ class Checkpointer:
         if row is None:
             return None
         try:
-            from .world_model import _dec_field
             saved = Checkpoint(
                 goal_id=row[0], episode_id=row[1], agent_id=row[2], step_seq=row[3],
-                messages=json.loads(_dec_field(row[4], context=_MESSAGES_CONTEXT)),
+                messages=json.loads(_open_messages(row[4])),
                 budget=json.loads(row[5]),
                 meta=json.loads(row[6]),
             )
@@ -368,10 +390,9 @@ class Checkpointer:
         if row is None:
             return None
         try:
-            from .world_model import _dec_field
             return Checkpoint(
                 goal_id=row[0], episode_id=row[1], agent_id=row[2], step_seq=row[3],
-                messages=json.loads(_dec_field(row[4], context=_MESSAGES_CONTEXT)),
+                messages=json.loads(_open_messages(row[4])),
                 budget=json.loads(row[5]),
                 meta=json.loads(row[6]),
             )
