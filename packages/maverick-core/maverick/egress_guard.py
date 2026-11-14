@@ -256,7 +256,11 @@ def _check(url: str) -> None:
     if reason is None:
         return
     from .enterprise import EgressBlocked
-    raise EgressBlocked(reason)
+    blocked = EgressBlocked(reason)
+    # The constructor words its message for a model-provider refusal ("route
+    # this role to a self-hosted model"); a blocked request says why instead.
+    blocked.args = (reason,)
+    raise blocked
 
 
 def _is_network_transport(transport: Any) -> bool:
@@ -509,9 +513,15 @@ def _patch_urllib(mod: Any) -> None:
 
     def _open(self, fullurl, data=None, timeout=_SENTINEL):
         # `fullurl` is a str or a Request; Request.full_url holds the target.
-        url = getattr(fullurl, "full_url", None) or (
-            fullurl if isinstance(fullurl, str) else "")
-        _check(str(url))
+        # A str is parsed the way `open` itself will (it unwraps `URL:...`
+        # and `<...>`), so the guard checks the host the request reaches.
+        url = getattr(fullurl, "full_url", None)
+        if url is None and isinstance(fullurl, str):
+            try:
+                url = mod.Request(fullurl).full_url
+            except ValueError:
+                url = fullurl
+        _check(str(url or ""))
         if timeout is _SENTINEL:
             return original_open(self, fullurl, data)
         return original_open(self, fullurl, data, timeout)

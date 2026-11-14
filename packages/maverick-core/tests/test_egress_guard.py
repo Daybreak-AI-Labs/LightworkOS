@@ -121,6 +121,17 @@ def test_a_urllib_request_object_is_blocked(guarded) -> None:
         urllib.request.urlopen(req, timeout=1.0)
 
 
+def test_a_wrapped_urllib_string_is_checked_on_its_real_host(unguarded_mode, monkeypatch) -> None:
+    """urllib unwraps `URL:http://h/` and `<http://h/>`; the guard must see
+    `h`, not an empty host that skips the tenant egress plane."""
+    monkeypatch.setattr("maverick.tenant.egress.host_allowed",
+                        lambda host: host != "169.254.169.254")
+    opener = urllib.request.build_opener()
+    for url in ("URL:http://169.254.169.254/latest", "<http://169.254.169.254/latest>"):
+        with pytest.raises(EgressBlocked):
+            opener.open(url, timeout=1.0)
+
+
 def test_a_raw_requests_call_is_blocked(guarded) -> None:
     requests = pytest.importorskip("requests")
     with pytest.raises(EgressBlocked):
