@@ -90,11 +90,12 @@ def test_reimport_with_activate_schedules_does_not_duplicate_the_cron_job(tmp_pa
     assert any("not duplicated" in n for n in again["notes"])
     assert len(list(job_queue.JobQueue().iter_pending("start_goal"))) == 1
 
-    # A changed automation replaces the pending job instead of keeping stale text.
+    # A changed automation is not silently "already active": the job (which
+    # may not be the import's own) is left alone and the note says the text differs.
     wf["nodes"][1]["name"] = "Send the nightly digest"
     f.write_text(json.dumps(wf))
     changed = _run(args)
     assert changed.exit_code == 0, changed.output
-    assert any("text changed" in n for n in json.loads(changed.output)[0]["notes"])
+    assert any("different text" in n for n in json.loads(changed.output)[0]["notes"])
     jobs = list(job_queue.JobQueue().iter_pending("start_goal"))
-    assert len(jobs) == 1 and "Send the nightly digest" in jobs[0].payload["text"]
+    assert len(jobs) == 1 and "Send the nightly digest" not in jobs[0].payload["text"]

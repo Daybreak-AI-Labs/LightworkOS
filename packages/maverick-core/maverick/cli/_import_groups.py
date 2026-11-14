@@ -74,9 +74,10 @@ def _reuse_or_replace(queue, active, automation) -> tuple[int | None, str | None
     """Decide what to do with an already-scheduled copy of ``automation``.
 
     Returns ``(job id to keep, note)``. Each activation mints a new schedule,
-    so an unchanged automation keeps its job. When the text changed, the old
-    pending job is cancelled so a fresh one carries the new text; a running
-    job cannot be cancelled and is left, saying so.
+    so a matching job is kept rather than duplicated. Import jobs carry no
+    marker that tells them apart from a dashboard or ``schedule`` job with
+    the same title and cron, so a job whose text differs is never cancelled
+    here: it is left, and the note says so.
     """
     title, body = automation.render()
     found = active.get((title[:200], automation.trigger.cron or ""))
@@ -85,10 +86,9 @@ def _reuse_or_replace(queue, active, automation) -> tuple[int | None, str | None
     job_id, text = found
     if text == body:
         return job_id, f"schedule already active (job {job_id}); not duplicated"
-    if queue.cancel(job_id):
-        return None, f"replaced schedule job {job_id}: the automation's text changed"
-    return job_id, (f"schedule job {job_id} has different text but is running; left "
-                    "unchanged -- re-run the import after it finishes to replace it")
+    return job_id, (f"schedule job {job_id} has the same title and cron but different "
+                    "text; it was left unchanged and no new schedule was created -- "
+                    "cancel that job and re-run the import to replace it")
 
 
 @import_group.command("run")
