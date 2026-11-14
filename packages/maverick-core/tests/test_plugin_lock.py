@@ -249,7 +249,7 @@ def test_write_lock_leaves_no_temp_residue(tmp_path):
     assert list(tmp_path.glob("*.tmp")) == []  # unique temp + replace, no leftover
 
 
-def test_enforce_refuses_when_content_hash_is_unavailable(tmp_path, monkeypatch):
+def test_enforce_refuses_when_content_hash_is_unavailable(tmp_path, monkeypatch, caplog):
     """A pinned hash that cannot be recomputed (a RECORD-listed source removed and
     replaced by a sourceless .pyc, say) is drift, not a free pass."""
     _fake_eps(monkeypatch, [("t1", "acme-tools", "1.0.0")])
@@ -260,7 +260,9 @@ def test_enforce_refuses_when_content_hash_is_unavailable(tmp_path, monkeypatch)
     monkeypatch.setenv("MAVERICK_PLUGIN_LOCK_POLICY", "enforce")
     pl.reset_warned()
     monkeypatch.setattr(pl, "_dist_content_hash", lambda d: None)
-    assert pl.dist_allowed_by_lock("acme-tools") is False
+    with caplog.at_level("WARNING", logger="maverick.plugin_lock"):
+        assert pl.dist_allowed_by_lock("acme-tools") is False
+    assert "maverick plugin lock" in caplog.text  # the refusal says how to recover
     # warn keeps loading (and says so).
     monkeypatch.setenv("MAVERICK_PLUGIN_LOCK_POLICY", "warn")
     pl.reset_warned()

@@ -335,6 +335,8 @@ def dist_allowed_by_lock(dist_name: str | None) -> bool:
                     f"(same version {pinned})" if current_hash is not None else
                     f"plugin {dist_name} content hash cannot be verified against "
                     f"the lock (same version {pinned})")
+            hmsg += ("; if this install is trusted, run `maverick plugin lock` "
+                     "to re-record the hashes")
             if policy == "enforce":
                 _warn_once(dist_name + ":hash", hmsg + "; refusing (enforce)")
                 return False
