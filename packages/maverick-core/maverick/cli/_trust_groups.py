@@ -358,7 +358,7 @@ def backup_group() -> None:
     Snapshots the client-scoped data root (world DB via the SQLite online backup
     API, signed audit chain, memory, fleet, managed trust registry) into a
     portable ``.tgz`` with an authenticated manifest. The at-rest encryption
-    key and audit signing key are excluded by default (escrow them
+    key, audit signing key and browser vault key are excluded by default (escrow them
     separately per docs/encryption.md; ``--include-keys`` opts back in). Set
     the same 32-byte ``MAVERICK_BACKUP_SIGNING_KEY`` on the active and
     standby nodes. Restore is transactional and fail-closed on
@@ -368,16 +368,16 @@ def backup_group() -> None:
 @backup_group.command("create")
 @click.option("--out", default=None, help="Destination .tgz (default: under data root).")
 @click.option("--include-keys", is_flag=True,
-              help="Bundle the at-rest encryption + audit signing key material "
-                   "in the archive. Off by default: escrow keys separately "
+              help="Bundle the at-rest encryption, audit signing and browser "
+                   "vault key material in the archive. Off by default: escrow keys separately "
                    "instead of storing them next to the data they unlock.")
 def backup_create_cmd(out, include_keys) -> None:
     """Create a consistent backup of this client's data."""
     from ..backup import BackupError, create_backup, withheld_key_files
     if include_keys:
         click.echo(click.style(
-            "WARNING: --include-keys bundles the at-rest encryption and audit "
-            "signing key material inside this archive. Anyone who obtains a "
+            "WARNING: --include-keys bundles the at-rest encryption, audit "
+            "signing and browser vault key material inside this archive. Anyone who obtains a "
             "copy (offsite backup, object storage, a lost disk) gets "
             "plaintext-equivalent access to everything it seals. Escrow keys "
             "separately unless you have a specific reason not to.",
