@@ -84,6 +84,22 @@ def _fold(text: str) -> tuple[str, list[int]]:
     return "".join(folded_parts), fold_map
 
 
+def _bounded(folded: str, lit: str, at: int) -> bool:
+    """True when ``lit`` at ``at`` does not start or end inside a word."""
+    end = at + len(lit)
+    if lit[0].isalnum() and at > 0 and folded[at - 1].isalnum():
+        return False
+    return not (lit[-1].isalnum() and end < len(folded) and folded[end].isalnum())
+
+
+def _find_word(folded: str, lit: str, pos: int) -> int:
+    """``folded.find(lit, pos)``, skipping hits inside a word ("to" in "auto")."""
+    at = folded.find(lit, pos)
+    while at >= 0 and not _bounded(folded, lit, at):
+        at = folded.find(lit, at + 1)
+    return at
+
+
 def _match(template: _Template, text: str) -> dict[str, str] | None:
     """Match a normalized utterance against a template in linear-ish time."""
     folded, fold_map = _fold(text)
@@ -96,7 +112,7 @@ def _match(template: _Template, text: str) -> dict[str, str] | None:
     captures: dict[str, str] = {}
     first = literals[0]
     if first:
-        if not folded.startswith(first):
+        if not folded.startswith(first) or not _bounded(folded, first, 0):
             return None
         pos = len(first)
 
@@ -106,7 +122,7 @@ def _match(template: _Template, text: str) -> dict[str, str] | None:
         # value is sliced from ``text`` via ``fold_map`` so its original case is
         # preserved; surrounding whitespace folds 1:1 so ``strip()`` is equivalent.
         if next_lit:
-            end = folded.find(next_lit, pos)
+            end = _find_word(folded, next_lit, pos)
             if end < 0:
                 return None
             value = text[fold_map[pos]:fold_map[end]].strip()

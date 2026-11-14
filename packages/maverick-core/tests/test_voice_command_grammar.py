@@ -70,3 +70,16 @@ def test_grammar_input_limits():
     assert t.fn({"grammar": _GRAMMAR * 22, "utterance": "pause goal 12"}).startswith("ERROR")
     assert t.fn({"grammar": _GRAMMAR, "utterance": "x" * 2049}).startswith("ERROR")
     assert t.fn({"grammar": [{"intent": "x", "pattern": "x" * 513}], "utterance": "x"}).startswith("ERROR")
+
+
+def test_grammar_literals_do_not_match_inside_words():
+    t = voice_command_grammar()
+    grammar = [
+        {"intent": "stop_goal", "pattern": "stop goal {n}"},
+        {"intent": "set", "pattern": "set {name} to {value}"},
+        {"intent": "pause", "pattern": "pause {what}"},
+    ]
+    assert "intent: stop_goal" not in t.fn({"grammar": grammar, "utterance": "stop goalkeeper 7"})
+    out = t.fn({"grammar": grammar, "utterance": "set auto mode to on"})
+    assert "intent: set" in out and "name=auto mode" in out and "value=on" in out
+    assert "intent: pause" not in t.fn({"grammar": grammar, "utterance": "paused by accident"})
