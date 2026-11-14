@@ -207,6 +207,74 @@ def test_collect_approved_security_evidence_preserves_review_provenance():
     assert imported[0]["source"] == "security_ops"
 
 
+def test_partial_security_evidence_does_not_count_as_coverage():
+    mapped = security_ops.map_evidence(
+        "MFA note",
+        "MFA",
+        control_ids=["IAM-02"],
+        submitted_by="grc-analyst",
+    )
+    assert [v["status"] for v in mapped["verdicts"]] == ["partial"]
+    approved = security_ops.decide_evidence(
+        mapped["id"],
+        "approved",
+        "Reviewed; the note only partly supports the control.",
+        "control-owner",
+        mapped["revision"],
+    )
+    assert approved is not None
+    projected = evidence_graph.collect_security_evidence(actor="collector")[0]
+    assert projected["controls"] == []
+    assert projected["attributes"]["partial_controls"] == ["IAM-02"]
+    report = evidence_graph.coverage_report(["IAM-02"])
+    assert report["coverage_percent"] == 0.0
+    assert report["missing_controls"] == ["IAM-02"]
+    assert report["partial_controls"] == ["IAM-02"]
+
+
+def test_collection_after_upgrade_supersedes_a_node_projected_by_older_code():
+    mapped = security_ops.map_evidence(
+        "MFA note", "MFA", control_ids=["IAM-02"], submitted_by="grc-analyst",
+    )
+    approved = security_ops.decide_evidence(
+        mapped["id"], "approved", "Reviewed; partial support only.",
+        "control-owner", mapped["revision"],
+    )
+    evidence = security_ops.get_evidence(mapped["id"])
+    decision = dict(evidence["decision"])
+    # Exactly what the earlier projection stored: unversioned id, the partial
+    # control counted in ``controls``, and no ``partial_controls`` attribute.
+    old = evidence_graph._ingest(
+        source="security_ops",
+        source_id=f"{evidence['id']}:review:{evidence['revision']}",
+        evidence_type="reviewed_control_evidence",
+        title=str(evidence.get("title") or "Security evidence"),
+        summary=(
+            "Human-approved deterministic control mapping; raw source content "
+            "remains in the governed Security/GRC evidence store."
+        ),
+        controls=["IAM-02"],
+        attributes={"source_sha256": str(evidence.get("source_sha256") or ""),
+                    "mapping_method": str(evidence.get("mapping_method") or ""),
+                    "present": 0, "partial": 1},
+        links=[{"relation": "projects", "target_type": "security_evidence",
+                "target_id": evidence["id"]}],
+        actor="collector",
+        observed_at=float(evidence["created_at"]),
+        persisted_review=evidence_graph._persisted_review(
+            evidence, decision=decision, reviewer=decision.get("decided_by"),
+            rationale=decision.get("rationale"), reviewed_at=decision.get("decided_at"),
+            authority_schema="maverick.security_ops.evidence.v1",
+        ),
+    )
+    assert approved is not None and old["controls"] == ["IAM-02"]
+    projected = evidence_graph.collect_security_evidence(actor="collector")
+    assert [node["controls"] for node in projected] == [[]]
+    assert evidence_graph.get(old["id"])["status"] == "authority_stale"
+    report = evidence_graph.coverage_report(["IAM-02"])
+    assert report["coverage_percent"] == 0.0 and report["stale_nodes"] == 1
+
+
 def test_inherited_security_approval_is_revalidated_for_get_coverage_and_pack():
     mapped = security_ops.map_evidence(
         "MFA policy",

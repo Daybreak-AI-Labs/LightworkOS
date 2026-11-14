@@ -144,9 +144,9 @@ def _op_terminate(device: str, bundle_id: str) -> str:
 def _op_screenshot(device: str, out_path: str, sandbox: Any = None) -> str:
     if not device or not out_path:
         return "ERROR: screenshot requires device_id and out_path"
-    from .ffmpeg_tool import _safe_path
+    from .ffmpeg_tool import _safe_output_path
     try:
-        out_path = _safe_path(sandbox, out_path)
+        out_path = _safe_output_path(sandbox, out_path)
     except ValueError as e:
         return f"ERROR: {e}"
     code, out, err = _simctl(["io", device, "screenshot", out_path])
@@ -173,6 +173,10 @@ def _run(args: dict[str, Any], sandbox: Any = None) -> str:
     if not _xcrun_present():
         return "ERROR: xcrun not found on PATH. Install Xcode + command-line tools."
     device = (args.get("device_id") or "booted").strip()
+    for name in ("device_id", "bundle_id", "url", "state"):
+        if str(args.get(name) or "").strip().startswith("-"):
+            # simctl would read a leading "-" as an option, not a value.
+            return f"ERROR: {name} must not start with '-'"
     try:
         if op == "list_devices":
             return _op_list(args.get("state") or "all")

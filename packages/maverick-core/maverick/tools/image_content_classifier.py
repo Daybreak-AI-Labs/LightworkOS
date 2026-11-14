@@ -104,6 +104,9 @@ def _safe_image_path(sandbox: Any | None, path: str) -> Path:
     return candidate
 
 
+_MAX_FULL_DECODE_PIXELS = 50_000_000
+
+
 def _classify_file(path: str, sandbox: Any | None = None) -> dict[str, Any] | str:
     try:
         target = _safe_image_path(sandbox, path)
@@ -120,7 +123,12 @@ def _classify_file(path: str, sandbox: Any | None = None) -> dict[str, Any] | st
     try:
         with Image.open(target) as im:
             # Downsample before converting so large inputs are bounded before
-            # materializing RGB pixels in the host process.
+            # materializing RGB pixels in the host process. Only JPEG can
+            # downsample while decoding (draft); other formats decode whole
+            # first, so their size is capped here.
+            if im.format != "JPEG" and im.width * im.height > _MAX_FULL_DECODE_PIXELS:
+                return (f"ERROR: image is {im.width}x{im.height}; non-JPEG images over "
+                        f"{_MAX_FULL_DECODE_PIXELS} pixels are not decoded")
             im.thumbnail((256, 256))
             im = im.convert("RGB")
             width, height = im.size

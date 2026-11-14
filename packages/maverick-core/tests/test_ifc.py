@@ -282,6 +282,30 @@ def test_labels_carry_into_follow_up_runs_of_the_goal_and_conversation():
     assert _tracker().labels("anyone") == frozenset()           # unrelated run is clean
 
 
+def test_a_torn_label_line_keeps_earlier_labels_and_an_unreadable_file_fails_closed():
+    first = _tracker()
+    first.resume(goal_id=9, conversation_id=None)
+    first.observe_output("a", "sql_query", PAYROLL)
+    path = ifc._labels_path("goal-9")
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write('{"label": "data:sec')                        # a crash mid-append
+    resumed = _tracker()
+    resumed.resume(goal_id=9, conversation_id=None)
+    assert "data:sql_query" in resumed.labels("anyone")
+    with path.open("ab") as fh:                                # crash mid-character
+        fh.write("\n{\"label\": \"data:caf\u00e9".encode()[:-1])
+    mid_char = _tracker()
+    mid_char.resume(goal_id=9, conversation_id=None)
+    assert "data:sql_query" in mid_char.labels("anyone")
+    assert ifc.UNREADABLE_LABELS not in mid_char.labels("anyone")
+    path.unlink()
+    path.mkdir()                                                # exists, cannot be read
+    unreadable = _tracker()
+    unreadable.resume(goal_id=9, conversation_id=None)
+    assert unreadable.decide("a", "email", {"body": "x"}) is not None
+    assert "could not be read" in ifc.describe_labels(unreadable.labels("a"))
+
+
 @pytest.mark.asyncio
 async def test_repeated_blocked_sends_are_one_ledger_row(tmp_path):
     agent, _ = _agent(tmp_path, "block")

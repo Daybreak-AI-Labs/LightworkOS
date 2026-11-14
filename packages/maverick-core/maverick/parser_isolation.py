@@ -41,8 +41,14 @@ DEFAULT_TIMEOUT = 60.0
 _EVIDENCE_OUTPUT_LIMIT = 16 * 1024 * 1024
 _POSIX_RESOURCE_LIMITS = os.name == "posix"
 _RESOURCE_LIMITED_PARSERS = {
-    "evidence_pdf_text", "spreadsheet_read", "spreadsheet_info", "spreadsheet_set_cell",
+    "pdf_text", "evidence_pdf_text", "image_meta",
+    "spreadsheet_read", "spreadsheet_info", "spreadsheet_set_cell",
 }
+# Channel-upload parsers that ran isolated without limits before: where POSIX
+# resource limits are unavailable they keep the bounded output and timeout and
+# run without rlimits, rather than refusing every document.
+_LIMITS_BEST_EFFORT = {"pdf_text", "image_meta"}
+_warned_no_limits = False
 
 # Applied inside the child, before loading data or importing the parser. A
 # preexec_fn in the multi-threaded parent can deadlock after fork.
@@ -163,13 +169,14 @@ def parse_isolated(name: str, data: bytes, *, timeout: float = DEFAULT_TIMEOUT,
     code = _CHILD_TEMPLATE.format(
         import_root=import_root, module=entry.module, func=entry.func,
         kwargs_json=json.dumps(kwargs, default=str),
-        resource_limits=_EVIDENCE_LIMITS if name in _RESOURCE_LIMITED_PARSERS else "",
+        resource_limits=(_EVIDENCE_LIMITS if name in _RESOURCE_LIMITED_PARSERS
+                         and _POSIX_RESOURCE_LIMITS else ""),
     )
     from .tools import scrub_child_env
     try:
         if name in _RESOURCE_LIMITED_PARSERS:
             if not _POSIX_RESOURCE_LIMITS:
-                raise RuntimeError("isolated document parsing requires POSIX resource limits")
+                _require_limits_or_warn(name)
             # stdout is a regular file so the child's RLIMIT_FSIZE bounds it;
             # stderr is discarded rather than buffered into the parent. Even an
             # erroring parser cannot fill the parent's memory through either.
@@ -205,6 +212,16 @@ def parse_isolated(name: str, data: bytes, *, timeout: float = DEFAULT_TIMEOUT,
     if not payload.get("ok"):
         raise RuntimeError(f"parser {name!r} failed: {payload.get('error')}")
     return payload.get("result")
+
+
+def _require_limits_or_warn(name: str) -> None:
+    global _warned_no_limits
+    if name not in _LIMITS_BEST_EFFORT:
+        raise RuntimeError("isolated document parsing requires POSIX resource limits")
+    if not _warned_no_limits:
+        _warned_no_limits = True
+        log.warning("parser isolation: this platform has no POSIX resource limits; "
+                    "PDF and image parsers run with a timeout and bounded output only")
 
 
 def _probe_image_meta(data: bytes) -> dict:

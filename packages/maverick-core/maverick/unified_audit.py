@@ -1603,6 +1603,13 @@ class UnifiedAuditStore:
                     raise UnifiedAuditLeaseLost(
                         "unified-audit source has an active reconciliation lease"
                     )
+                if (not state["complete"] and state["error_code"] == code
+                        and list(state["limitations"]) == [code]
+                        and state["success_generation"] == 0):
+                    # Already recorded: a poll every minute must not append a
+                    # history row each time a source stays unavailable.
+                    connection.execute("ROLLBACK")
+                    return state
                 current = dict(state)
                 current.update(
                     complete=False,
@@ -2431,6 +2438,15 @@ class UnifiedAuditProjector:
             raise UnifiedAuditConfigError("unified-audit signed sink lost readiness")
         return receipt
 
+    def _keep_lease(self, claim: ProjectionClaim) -> ProjectionClaim:
+        """Renew the source lease once less than half of it remains: each
+        signed append re-verifies the audit directory, so one page can outlast
+        a lease that was only taken at the start."""
+        remaining = claim.lease_until - _clock_value(self.store._clock)
+        if remaining * 2 >= self.config.lease_seconds:
+            return claim
+        return self.store.renew_claim(claim, lease_seconds=self.config.lease_seconds)
+
     def _mark_preclaim_failure(
         self,
         source_id: str,
@@ -2527,12 +2543,15 @@ class UnifiedAuditProjector:
             appended = 0
             for record in page.records:
                 event = _projection_record_event(self.store.tenant_sha256, authority, record)
+                claim = self._keep_lease(claim)
                 self._append(event)
                 appended += 1
             page_event = _projection_page_event(
                 self.store.tenant_sha256, authority, page, verification
             )
+            claim = self._keep_lease(claim)
             page_receipt = self._append(page_event)
+            claim = self._keep_lease(claim)
             current_authority = source.authority()
             if not isinstance(current_authority, SourceAuthority):
                 raise UnifiedAuditConflict("source authority changed during reconciliation")

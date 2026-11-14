@@ -2817,6 +2817,7 @@
       "governed_namespaces": [],
       "literal_path_hints": [
         "calibration.ndjson",
+        "calibration_checker_receipt.json",
         "calibration_verdict.json",
         "self_harness_calibration_receipt.json"
       ],
@@ -2841,6 +2842,12 @@
           "expression": "data_dir('self_harness_calibration_receipt.json')"
         },
         {
+          "line": 54,
+          "function": "module",
+          "kind": "data_dir",
+          "expression": "data_dir('calibration_checker_receipt.json')"
+        },
+        {
           "line": 60,
           "function": "_samples_path",
           "kind": "data_dir",
@@ -2857,6 +2864,12 @@
           "function": "_risk_verdict_path",
           "kind": "data_dir",
           "expression": "data_dir('self_harness_calibration_receipt.json')"
+        },
+        {
+          "line": 96,
+          "function": "_checker_verdict_path",
+          "kind": "data_dir",
+          "expression": "data_dir('calibration_checker_receipt.json')"
         },
         {
           "line": 424,

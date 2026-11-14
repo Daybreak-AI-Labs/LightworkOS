@@ -60,6 +60,21 @@ def test_dropbox_share_dry_run(monkeypatch):
     post.assert_not_called()
 
 
+def test_dropbox_share_fallback_never_returns_a_parent_folder_link(monkeypatch):
+    monkeypatch.setenv("DROPBOX_ACCESS_TOKEN", "tok")
+    post = MagicMock(side_effect=[
+        _resp(409, {"error_summary": "shared_link_already_exists/"}),
+        _resp(200, {"links": [
+            {"url": "https://db.example/folder", "path_lower": "/team"},
+        ]}),
+    ])
+    _fake_httpx(monkeypatch, post=post)
+    from maverick.tools.dropbox_tool import dropbox_tool
+    out = dropbox_tool().fn({"op": "share", "path": "/team/x.txt", "confirm": True})
+    assert "db.example/folder" not in out and out.startswith("ERROR")
+    assert post.call_args.kwargs["json"] == {"path": "/team/x.txt", "direct_only": True}
+
+
 def test_dropbox_list_renders(monkeypatch):
     monkeypatch.setenv("DROPBOX_ACCESS_TOKEN", "tok")
     body = {"entries": [

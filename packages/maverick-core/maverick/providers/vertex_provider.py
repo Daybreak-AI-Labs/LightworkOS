@@ -152,6 +152,8 @@ class VertexClient(AnthropicClient):
         timeout = sdk_http_timeout(anthropic, environment=environment)
         if timeout is not None:
             kw["timeout"] = timeout
+        # Non-streamed calls size their read timeout from the same settings.
+        self._timeout_environment = environment
         sync_cls, async_cls = _sdk_clients()
         self.client = sync_cls(**kw)
         self.aclient = async_cls(**kw)

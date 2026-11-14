@@ -2,7 +2,8 @@
 verification over the per-domain vector store.
 
 The kernel runs WITHOUT ``maverick-knowledge`` (it is an optional extra).
-Disabled knowledge contributes no records. Once configured, unavailable
+Disabled knowledge contributes no records unless a store from when it was
+enabled still exists; erasure and residual counts still look at that store. Once configured, unavailable
 storage raises ``KnowledgeUnavailable``; it cannot certify an erasure or zero
 residual records. When knowledge IS enabled, a subject's
 ingested documents are removed by provenance so a right-to-erasure request
@@ -54,16 +55,10 @@ def open_knowledge_base(
         kcfg = get_knowledge()
         if not kcfg.get("enable"):
             return None
-        from .workspace import Workspace
-        workspace = Workspace(tenant) if tenant is not None else Workspace.current()
-        configured_path = kcfg.get("path")
-        path = Path(configured_path or workspace.knowledge_path).expanduser().resolve()
-        if workspace.tenant and configured_path and not path.is_relative_to(workspace.root.resolve()):
-            raise KnowledgeUnavailable("knowledge path is outside the selected tenant workspace")
+        kcfg, path = _store_config(kcfg, tenant)
         if require_existing and str(kcfg.get("store", "sqlite")).lower() == "sqlite":
             if not path.is_file():
                 raise KnowledgeUnavailable("configured knowledge store is missing or unavailable")
-        kcfg = {**kcfg, "path": str(path)}
         from maverick_knowledge import KnowledgeBase, build_embedder, build_store
         embedder = build_embedder(kcfg)
         return KnowledgeBase(store=build_store(kcfg), embedder=embedder)
@@ -74,16 +69,89 @@ def open_knowledge_base(
         raise KnowledgeUnavailable("configured knowledge store is unavailable") from e
 
 
+def _store_config(kcfg: dict, tenant: str | None, *, confine: bool = True) -> tuple[dict, Path]:
+    """``kcfg`` with its resolved store path, confined to the tenant workspace
+    unless ``confine`` is false (an existence probe that opens nothing)."""
+    from .workspace import Workspace
+    workspace = Workspace(tenant) if tenant is not None else Workspace.current()
+    configured_path = kcfg.get("path")
+    path = Path(configured_path or workspace.knowledge_path).expanduser().resolve()
+    if confine and workspace.tenant and configured_path and not path.is_relative_to(workspace.root.resolve()):
+        raise KnowledgeUnavailable("knowledge path is outside the selected tenant workspace")
+    return {**kcfg, "path": str(path)}, path
+
+
+def _open_for_subject_admin(tenant: str | None) -> Any | None:
+    """The knowledge base erasure and residual counting must look at.
+
+    Turning ``[knowledge] enable`` off does not delete a populated store, so
+    a disabled plane still opens one that exists for erasure and counting:
+    the SQLite file at the resolved path, or pgvector rows for this workspace
+    (found with a read-only query; no DDL runs). ``None`` when knowledge is
+    disabled and no such store exists. A disabled Qdrant store is not
+    contacted: Lightwork refuses ingestion into Qdrant, so it holds no
+    documents this plane stamped with a subject. No embedder is built:
+    erasure and counting match provenance only.
+    """
+    kb = open_knowledge_base(tenant=tenant, require_existing=True)
+    if kb is not None:
+        return kb
+    from .config import get_knowledge
+    raw = get_knowledge()
+    kcfg, path = _store_config(raw, tenant, confine=False)
+    store = str(kcfg.get("store", "sqlite")).lower()
+    try:
+        if store == "sqlite":
+            if not path.is_file():
+                return None
+            _store_config(raw, tenant)  # an existing store must be this tenant's
+            from maverick_knowledge import KnowledgeBase, build_store
+            return KnowledgeBase(store=build_store(kcfg))
+        if store == "pgvector":
+            return _open_disabled_pgvector(raw, kcfg, tenant)
+        return None
+    except KnowledgeUnavailable:
+        raise
+    except Exception as e:
+        log.warning("knowledge admin: disabled store unavailable: %s", type(e).__name__)
+        raise KnowledgeUnavailable(
+            "knowledge is turned off, but its existing store could not be opened to "
+            "erase or count this subject's records"
+        ) from e
+
+
+def _open_disabled_pgvector(raw: dict, kcfg: dict, tenant: str | None) -> Any | None:
+    """pgvector rows left for this workspace, or ``None`` without any DDL."""
+    import os
+    if not (kcfg.get("dsn") or os.environ.get("MAVERICK_KNOWLEDGE_DSN")
+            or os.environ.get("MAVERICK_PG_DSN")):
+        return None
+    try:
+        from maverick_knowledge import KnowledgeBase
+        from maverick_knowledge.store import open_existing_pgvector
+    except ModuleNotFoundError:
+        return None  # without the package there is no reader for the table
+    pg = open_existing_pgvector(kcfg)
+    if pg is None:
+        return None
+    try:
+        _store_config(raw, tenant)
+    except KnowledgeUnavailable:
+        pg.close()
+        raise
+    return KnowledgeBase(store=pg)
+
+
 def erase_subject(channel: str, user_id: str, *,
                   tenant: str | None = None) -> dict[str, int]:
     """Delete a subject's document chunks from every knowledge collection.
 
-    Returns ``{collection: chunks_removed}`` (empty when knowledge is off or
-    the subject had no ingested documents) — the evidence the erase command
-    folds into its signed audit event.
+    Returns ``{collection: chunks_removed}`` (empty when knowledge is off and
+    no store exists, or the subject had no ingested documents) — the evidence
+    the erase command folds into its signed audit event.
     """
     subject = _validated_subject(channel, user_id)
-    kb = open_knowledge_base(tenant=tenant, require_existing=True)
+    kb = _open_for_subject_admin(tenant)
     if kb is None:
         _ensure_disabled()
         return {}
@@ -100,11 +168,13 @@ def count_subject(channel: str, user_id: str, *,
     """Residual document chunks for a subject across all collections.
 
     The erasure-verify primitive: should be 0 after :func:`erase_subject`.
-    Disabled knowledge contributes 0; unavailable or missing configured storage
-    raises rather than claiming that the residual count was observed.
+    Disabled knowledge with no existing store contributes 0; a store left on
+    disk after knowledge was disabled is still counted. Unavailable or missing
+    configured storage raises rather than claiming that the residual count was
+    observed.
     """
     subject = _validated_subject(channel, user_id)
-    kb = open_knowledge_base(tenant=tenant, require_existing=True)
+    kb = _open_for_subject_admin(tenant)
     if kb is None:
         _ensure_disabled()
         return 0

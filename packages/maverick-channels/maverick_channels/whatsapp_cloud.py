@@ -150,7 +150,7 @@ class WhatsAppCloudChannel(Channel):
         return hmac.compare_digest(expected, signature_bytes)
 
     @staticmethod
-    def _extract_messages(payload: dict) -> list[dict]:
+    def _extract_messages(payload: dict, phone_number_id: str | None = None) -> list[dict]:
         """Flatten Meta's entry/changes nesting to text-message dicts.
 
         Every level is type-guarded: a hostile (or merely unexpected) body
@@ -176,6 +176,12 @@ class WhatsAppCloudChannel(Channel):
                 value = change.get("value")
                 if not isinstance(value, dict):
                     continue
+                # One Meta app can serve several numbers: an event addressed to
+                # another number is not this channel's to answer.
+                metadata = value.get("metadata")
+                addressed = metadata.get("phone_number_id") if isinstance(metadata, dict) else None
+                if phone_number_id and addressed is not None and str(addressed) != str(phone_number_id):
+                    continue
                 for m in _as_list(value.get("messages")):
                     if isinstance(m, dict) and m.get("type") == "text":
                         out.append(m)
@@ -196,7 +202,7 @@ class WhatsAppCloudChannel(Channel):
         from starlette.responses import JSONResponse
 
         background, receipts = BackgroundTasks(), []
-        for m in self._extract_messages(payload):
+        for m in self._extract_messages(payload, self.phone_number_id):
             sender = str(m.get("from") or "")
             text = str(((m.get("text") or {}).get("body")) or "")
             msg_id = str(m.get("id") or "")

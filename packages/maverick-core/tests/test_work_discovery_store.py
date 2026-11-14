@@ -1321,3 +1321,20 @@ def test_a_full_audit_outbox_keeps_the_expired_rows_until_a_purge_can_record_the
     monkeypatch.setattr("maverick.work_discovery_store.MAX_AUDIT_OUTBOX", 2_000)
     assert later.purge_expired() == 1
     assert _raw_event_rows(later) == []
+
+
+def test_bounded_event_page_returns_the_newest_events(store):
+    # Discovery reads one bounded page; past the cap it must see the newest
+    # observations, not the oldest ones, still returned in ingestion order.
+    policy = _policy()
+    store.enroll(policy)
+    session = store.create_session(policy=policy)
+    events = [
+        _event(session.session_id, event_id=f"event-{n}", sequence=n)
+        for n in (1, 2, 3)
+    ]
+    for event in events:
+        _append(store, event, policy)
+
+    assert store.list_events(limit=2) == events[1:]
+    assert store.list_events() == events

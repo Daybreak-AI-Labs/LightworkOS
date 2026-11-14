@@ -147,6 +147,17 @@ def test_impact_of_finds_actions_that_used_a_skill_or_source(tmp_path):
     assert ga_mod.impact_of("nope", store_dir=tmp_path) == []
 
 
+def test_impact_of_keeps_scanning_past_an_unparseable_ledger(tmp_path):
+    for goal in (1, 2, 3):
+        ga_mod.record_tool_lineage(goal, "shell", {"cmd": str(goal)},
+                                   skills=("bad-skill",), store_dir=tmp_path)
+    with (tmp_path / "1.ndjson").open("a", encoding="utf-8") as fh:
+        fh.write("not json\n")
+    hits = ga_mod.impact_of("bad-skill", kind="skill", store_dir=tmp_path)
+    assert sorted(h["goal_id"] for h in hits) == [2, 3]
+    assert hits.skipped_ledgers == ["1.ndjson"]  # the gap is reported, not silent
+
+
 def test_lineage_is_tenant_scoped(monkeypatch, tmp_path):
     # With an active tenant, lineage lives under the tenant's data dir -- one
     # tenant's audit trail must never mix with another's (matches the other

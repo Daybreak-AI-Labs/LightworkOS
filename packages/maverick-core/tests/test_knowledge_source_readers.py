@@ -104,6 +104,33 @@ def test_a_drive_download_uses_the_configured_download_limit(monkeypatch, sectio
     assert calls[0]["max_bytes"] == expected
 
 
+def test_a_read_does_not_hold_the_authority_fence_across_the_network_call(monkeypatch):
+    _set_section(monkeypatch, {})
+    calls = _transport(monkeypatch)
+    held, guards = [], []
+
+    @contextmanager
+    def fence():
+        held.append(True)
+        try:
+            yield
+        finally:
+            held.pop()
+
+    monkeypatch.setattr(readers, "authority_effect_fence", fence)
+    real_read = automation_events._http_read_bytes
+
+    def http_read_bytes(url, **kwargs):
+        assert not held, "the global authority fence is held during the network read"
+        return real_read(url, **kwargs)
+
+    monkeypatch.setattr(automation_events, "_http_read_bytes", http_read_bytes)
+    assert readers.read_bytes(DRIVE, "user:alice", "/drive/v3/files/f1?alt=media",
+                              lambda: guards.append(1)) == b"x"
+    assert len(calls) == 1
+    assert len(guards) == 2  # checked before the read and re-checked after it
+
+
 class _Response:
     status_code = 200
     headers: dict = {}

@@ -1403,6 +1403,27 @@ def unframe_tool_output(framed: str) -> str:
     return inner
 
 
+_OBSERVATION_POST_CHARS = 500
+_FRAME_OPEN_RE = re.compile(r"<tool_output [^\n]*\bid=([0-9a-f]+)>")
+
+
+def _observation_post(output: str) -> str:
+    """The blackboard copy of a tool result, bounded to 500 characters.
+
+    Other agents (the orchestrator included) read blackboard posts, so a
+    framed result must stay framed: a plain ``output[:500]`` keeps the opening
+    ``<tool_output …>`` tag but cuts the closing one, which lets injected tool
+    text read as peer guidance. The excerpt is re-closed with the same
+    unforgeable nonce. Unframed (refusal/error) messages are cut as before."""
+    text = str(output or "")
+    match = _FRAME_OPEN_RE.match(text)
+    if match is None:
+        return text[:_OBSERVATION_POST_CHARS]
+    opener, close = match.group(0), f"</tool_output {match.group(1)}>"
+    room = max(0, _OBSERVATION_POST_CHARS - len(opener) - len(close) - 2)
+    return f"{opener}\n{unframe_tool_output(text)[:room]}\n{close}"
+
+
 def _tool_result_limit(model: str | None = None) -> int:
     """Effective per-result byte cap for ``model``.
 
@@ -3244,7 +3265,7 @@ class Agent:
             ifc.record(decision, agent=self.name, goal_id=goal_id, outcome="allowed_by_grant",
                        tracker=tracker)
             return None
-        labels = ", ".join(sorted(decision.labels))
+        labels = ifc.describe_labels(decision.labels)
         if decision.mode == "audit":
             ifc.record(decision, agent=self.name, goal_id=goal_id, outcome="recorded",
                        tracker=tracker)
@@ -5348,7 +5369,7 @@ class Agent:
         partial text already contains FINAL, and its incomplete tool arguments
         cannot be dispatched or kept as orphan tool-use history. Ask again;
         three cutoffs in a row end the run as incomplete."""
-        if resp.stop_reason not in {"max_tokens", "length"}:
+        if resp.stop_reason not in {"max_tokens", "length", "model_context_window_exceeded"}:
             st.truncated_responses = 0
             return None
         st.truncated_responses += 1
@@ -6118,7 +6139,7 @@ class Agent:
         for tc, output in zip(resp.tool_calls, outputs, strict=False):
             bb.post(
                 self.name, "observation",
-                f"tool={tc.name} -> {output[:500]}",
+                f"tool={tc.name} -> {_observation_post(output)}",
             )
             if not isinstance(output, _NotExecutedToolResult):
                 self._score_step(
@@ -6202,7 +6223,7 @@ class Agent:
                     blocked = True
             bb.post(
                 self.name, "observation",
-                f"tool={tc.name} -> {output[:500]}",
+                f"tool={tc.name} -> {_observation_post(output)}",
             )
             if not isinstance(output, _NotExecutedToolResult):
                 self._score_step(

@@ -59,6 +59,8 @@ class WorkbookPackage:
             self.comment = archive.comment
         if any(name.casefold().startswith("_xmlsignatures/") for name in self.parts):
             raise ValueError("Digitally signed workbooks require an unsigned reviewed copy before editing")
+        if "xl/workbook.xml" not in self.parts or "xl/_rels/workbook.xml.rels" not in self.parts:
+            raise ValueError("Workbook is missing its workbook part or relationships")
         self.book = _xml(self.parts["xl/workbook.xml"])
         relations = _xml(self.parts["xl/_rels/workbook.xml.rels"])
         targets = {rel.get("Id"): rel.get("Target", "") for rel in relations
@@ -119,6 +121,8 @@ class WorkbookPackage:
         if sheet_name is None:
             views = self.book.find(f"{_S}bookViews/{_S}workbookView")
             index = int(views.get("activeTab", "0")) if views is not None else 0
+            if not 0 <= index < len(self.sheets):
+                raise ValueError("Workbook's active sheet index does not name a worksheet")
             sheet_name = list(self.sheets)[index]
         if sheet_name not in self.sheets:
             raise ValueError("Macro-preserving edits require an existing worksheet")
@@ -197,7 +201,11 @@ class WorkbookPackage:
 
 def _insert_sorted(parent, node, position, key):
     for index, other in enumerate(parent):
-        if key(other) > position:
+        try:
+            other_position = key(other)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Workbook has a row or cell with a missing or invalid reference") from exc
+        if other_position > position:
             parent.insert(index, node)
             return
     parent.append(node)

@@ -62,7 +62,7 @@ import logging
 import os
 import re
 from collections.abc import Callable
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .embeddable import no_cli
@@ -461,7 +461,10 @@ def _ep_module_file(ep):
 # swapped ``.so`` ran as "verified" native code under a signed plugin. The
 # on-disk coverage scan (``_ondisk_files_covered``) flags any of these that a
 # tamperer dropped next to signed modules without touching the dist RECORD.
-_SIGNED_ONDISK_SUFFIXES = (".so", ".pyd", ".dylib", ".pth")
+# Python source and sourceless bytecode count too: a package directory wins
+# over a same-named module, so an unsigned ``pkg/sub/__init__.py`` beside a
+# signed ``pkg/sub.py`` would otherwise run unsigned code.
+_SIGNED_ONDISK_SUFFIXES = (".so", ".pyd", ".dylib", ".pth", ".py", ".pyc", ".pyw")
 
 
 def _ep_importable_files(ep) -> dict[str, str] | None:
@@ -512,9 +515,9 @@ def _ep_importable_files(ep) -> dict[str, str] | None:
 
 
 def _ondisk_files_covered(ep, signed_rels: dict) -> bool:
-    """Fail-closed: refuse if the on-disk package tree carries an auto-loading
-    or native file (``.so``/``.pyd``/``.dylib``/``.pth``) absent from the signed
-    manifest.
+    """Fail-closed: refuse if the on-disk package tree carries an importable,
+    auto-loading or native file (``.py``/``.pyc``/``.pyw``/``.so``/``.pyd``/
+    ``.dylib``/``.pth``) absent from the signed manifest.
 
     The manifest is recomputed from the dist RECORD, which is itself an on-disk,
     editable text file -- a tamperer could drop a rogue extension next to signed
@@ -537,6 +540,11 @@ def _ondisk_files_covered(ep, signed_rels: dict) -> bool:
     if not pkg_dir.is_dir():
         # Single-module plugin (top.py, no package dir): nothing extra to walk.
         return True
+    # Only directories this plugin owns are its responsibility: one holding a
+    # signed file, and everything below it. Another distribution's files in a
+    # shared namespace package (top/other/*.py) are not this plugin's.
+    owned = {PurePosixPath(rel).parent for rel in signed_rels}
+    owned.discard(PurePosixPath("."))
     try:
         for p in pkg_dir.rglob("*"):
             if "__pycache__" in p.parts or not p.is_file():
@@ -544,6 +552,9 @@ def _ondisk_files_covered(ep, signed_rels: dict) -> bool:
             if p.suffix.lower() not in _SIGNED_ONDISK_SUFFIXES:
                 continue
             rel = str(p.relative_to(base)).replace("\\", "/")
+            folder = PurePosixPath(rel).parent
+            if not any(folder == o or o in folder.parents for o in owned):
+                continue
             if rel not in signed_rels:
                 log.warning(
                     "plugin package %r carries un-signed file %s on disk; "

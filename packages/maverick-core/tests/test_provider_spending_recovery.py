@@ -20,6 +20,7 @@ def ledger(tmp_path, monkeypatch):
     monkeypatch.setattr(cap, "period_key", lambda now=None, period=None: "2026-09-06")
     monkeypatch.setattr(cap, "_shared_world", lambda: None)
     monkeypatch.setattr(cap, "_ledger_path", lambda: tmp_path / "provider_spend.json")
+    monkeypatch.setattr(cap, "_deployment_ledger_path", lambda: tmp_path / "provider_spend.json")
     monkeypatch.setattr(workspace_recovery, "_key", lambda: bytes(range(32)))
     monkeypatch.setattr(audit, "record", lambda *a, **kw: True)
     monkeypatch.setattr("maverick.installation_recovery.blockers", list)
@@ -239,3 +240,90 @@ def test_review_is_invalidated_when_shared_authority_identity_changes(ledger, mo
     with pytest.raises(spending.SpendingReviewError, match="workspace"):
         spending.apply(selected["id"], actor="user:owner", context="context-a", isolated=False, confirm=True)
     assert ledger.read_bytes() == before
+
+
+def test_reconciled_hold_also_settles_the_organization_admission_hold(ledger):
+    # An unknown zero-projection organization hold counts as infinite against
+    # today's cap. Reconciling the provider receipt must settle it as well, or
+    # the workspace stays blocked from provider calls until the day ends.
+    from maverick.tenant import provider_admission as organization
+
+    held = cap.reserve("openai", 0, request_id="unknown-cost")
+    assert held.organization_tenant == "review-workspace"
+    cap.settle(held, None)
+    assert organization.outstanding("review-workspace") == float("inf")
+    review = spending.prepare_hold("openai", held.period, held.request_id, 2,
+                                   "Final invoice INV-9, verified against this request.",
+                                   actor="user:owner", context="context-a")
+    spending.apply(review["id"], actor="user:owner", context="context-a", isolated=False, confirm=True)
+    assert organization.outstanding("review-workspace") < float("inf")
+    key = organization._key("openai", "unknown-cost")
+    call = organization._load("review-workspace", key=key)["calls"][key]
+    assert (call["state"], call["actual"]) == ("settled", 2.0)
+    # Re-applying a completed review stays idempotent for both authorities.
+    spending.apply(review["id"], actor="user:owner", context="context-a", isolated=False, confirm=True)
+    assert organization.outstanding("review-workspace") < float("inf")
+
+
+def test_hold_review_completes_when_the_organization_reference_was_never_attached(ledger, monkeypatch):
+    # A crash between the provider hold and publishing its reference leaves the
+    # organization call with no reference. The review must still complete and
+    # leave both ledgers settled at the reviewed cost.
+    from maverick.tenant import provider_admission as organization
+
+    with monkeypatch.context() as crash:
+        crash.setattr(organization, "attach_reference",
+                      lambda *a: (_ for _ in ()).throw(KeyboardInterrupt()))
+        crash.setattr(organization, "cancel_before_dispatch", lambda handle: None)
+        crash.setattr(cap, "_settle_provider", lambda *a, **k: None)  # the crash skipped cleanup
+        with pytest.raises(KeyboardInterrupt):
+            cap.reserve("openai", 0, request_id="crashed")
+    key = organization._key("openai", "crashed")
+    assert organization._load("review-workspace", key=key)["calls"][key]["reference"] is None
+    # The crashed process never settled its provider hold: reconcile it in
+    # isolated recovery mode.
+    review = spending.prepare_hold("openai", "2026-09-06", "crashed", 2,
+                                   "Final invoice INV-11, verified against this request.",
+                                   actor="user:owner", context="context-a", isolated=True)
+    done = spending.apply(review["id"], actor="user:owner", context="context-a", isolated=True, confirm=True)
+    assert done["state"] == "completed"
+    call = organization._load("review-workspace", key=key)["calls"][key]
+    assert (call["state"], call["actual"]) == ("settled", 2.0)
+    assert cap.check("openai").spent == 2
+
+
+def test_an_unreadable_earlier_tenant_ledger_is_named_and_repairable(tmp_path, monkeypatch):
+    """A corrupt pre-upgrade per-tenant ledger blocks calls (fail closed), the
+    refusal names the file, export still works, and a reviewed repair whose
+    confirmed totals include that spend lets the deployment resume."""
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    monkeypatch.setenv("MAVERICK_CONFIG", str(tmp_path / "config.toml"))
+    monkeypatch.setenv("MAVERICK_ENTERPRISE", "0")
+    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
+    (tmp_path / "config.toml").write_text("", encoding="utf-8")
+    config.reset_config_cache()
+    monkeypatch.setattr(cap, "caps_from_config", lambda: {"openai": 20.0})
+    monkeypatch.setattr(cap, "_admission_cap", lambda name: 20.0)
+    monkeypatch.setattr(cap, "period_key", lambda now=None, period=None: "2026-09-06")
+    monkeypatch.setattr(cap, "_shared_world", lambda: None)
+    monkeypatch.setattr(workspace_recovery, "_key", lambda: bytes(range(32)))
+    monkeypatch.setattr(audit, "record", lambda *a, **kw: True)
+    monkeypatch.setattr("maverick.installation_recovery.blockers", list)
+    cap.record("openai", 2.0)                                   # deployment ledger is healthy
+    old = tmp_path / "tenants" / "acme" / "provider_spend.json"
+    old.parent.mkdir(parents=True)
+    old.write_text("{damaged", encoding="utf-8")
+    cap._FOLDED.clear()
+    with pytest.raises(cap.EarlierTenantLedgerUnreadable, match="tenants/acme/provider_spend.json"):
+        cap.check("openai")
+    status = spending.status()
+    assert status["available"] is False and "tenants/acme" in status["message"]
+    exported = spending.export_accounting()
+    kwargs = {"actor": "user:owner", "context": "context-a", "isolated": True}
+    review = spending.prepare_repair(exported, [{"provider": "openai", "period": "2026-09-06", "confirmed": 9}],
+                                     "Final invoices include the earlier workspace", receipts_complete=True, **kwargs)
+    spending.apply(review["id"], confirm=True, **kwargs)
+    cap._FOLDED.clear()                                         # a fresh process
+    assert cap.check("openai").spent == 9
+    assert old.read_text(encoding="utf-8") == "{damaged"        # evidence kept
+    config.reset_config_cache()

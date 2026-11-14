@@ -404,6 +404,9 @@ def original_instruction_result(request, proposal_id, revision, operation_id, co
     message = ("Your original reviewed instructions were restored." if undo else
                "Your original approved instruction change was applied.") if confirmed else (
                    "The original decision started, but its result cannot be confirmed. Do not repeat it. Review current instructions with an administrator before another change.")
+    if value["status"] == "aborted":
+        message = ("The change could not be recorded in the activity record, so it was undone. "
+                   "Your instructions did not change; you can try again.")
     if value.get("resolved"):
         message = "The original result remains unconfirmed. A separately recorded human acceptance of the reviewed current instructions closed its hold. The original decision was not repeated."
     if confirmed:
@@ -412,7 +415,8 @@ def original_instruction_result(request, proposal_id, revision, operation_id, co
         elif value["current_matches"] is None:
             message += " This is the original receipt; current instructions could not be checked."
         message += " A recorded change does not prove better results or complete activity recording."
-    return {"status": "confirmed" if confirmed else "unconfirmed", "message": message,
+    status = "confirmed" if confirmed else "aborted" if value["status"] == "aborted" else "unconfirmed"
+    return {"status": status, "message": message,
             "title": str(value["name"]).replace("-", " ").replace("_", " "),
             "recorded_at": value.get("completed_at"), "current_matches": value["current_matches"],
             "hold_closed": bool(value.get("resolved")), "reconciled_at": (value.get("resolved") or {}).get("recorded_at")}

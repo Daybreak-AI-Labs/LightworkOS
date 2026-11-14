@@ -88,3 +88,8 @@ def test_tool_shape():
     assert t.name == "erp_read"
     assert t.parallel_safe is True                     # idempotent read
     assert t.input_schema["required"] == ["path"]
+
+
+def test_semicolon_dot_segment_is_rejected():
+    from maverick.tools.erp_tool import _contains_dot_segment
+    assert _contains_dot_segment("a/..;/admin") and _contains_dot_segment("a/%2e%2e;x/b")

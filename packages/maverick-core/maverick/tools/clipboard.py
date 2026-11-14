@@ -77,9 +77,12 @@ def _try_subprocess(cmd: list[str], stdin: str | None = None) -> str | None:
         return None
     try:
         if stdin is not None:
+            # A write needs no output, and xclip/wl-copy fork a holder that
+            # keeps any captured pipe open, so capturing would time out after
+            # the copy succeeded.
             proc = subprocess.run(
                 cmd, input=stdin.encode("utf-8"),
-                capture_output=True, timeout=5,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5,
             )
         else:
             proc = subprocess.run(cmd, capture_output=True, timeout=5)

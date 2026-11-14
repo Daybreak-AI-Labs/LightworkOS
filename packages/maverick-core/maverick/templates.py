@@ -471,7 +471,9 @@ def _strip_registry_budget_frontmatter(content: str) -> str:
     if not m:
         return content
     front, body = m.group(1), m.group(2)
-    budget_keys = {"budget_dollars", "budget_wall_seconds"}
+    # ``owner`` and ``generation`` are local publication state, outside the
+    # signature: a catalog entry must not name who may overwrite the template.
+    budget_keys = {"budget_dollars", "budget_wall_seconds", "owner", "generation"}
     kept: list[str] = []
     for line in front.splitlines():
         key = line.partition(":")[0].strip() if ":" in line else ""

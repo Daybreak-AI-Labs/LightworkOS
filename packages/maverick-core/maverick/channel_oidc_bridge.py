@@ -220,7 +220,7 @@ def begin(sub: str, issuer: str, audience: str, channel: str) -> dict:
 def observe(channel: str, account_sha256: str, provider_tenant: str,
             sender_id: str, text: str) -> str | None:
     """Record sender observed by authenticated first-party channel delivery."""
-    if not isinstance(text, str) or not text.startswith("LIGHTWORK CONNECT"):
+    if not isinstance(text, str) or not text.strip().startswith("LIGHTWORK CONNECT"):
         return None
     provider = _provider_identity(channel, account_sha256, provider_tenant, sender_id)
     match = re.fullmatch(r"LIGHTWORK CONNECT ([A-Za-z0-9_-]{43})", text.strip())

@@ -46,6 +46,19 @@ def test_allow_root_field_drops_user_flag(monkeypatch, tmp_path, Backend, verify
     assert "--user" not in args
 
 
+@pytest.mark.skipif(not hasattr(os, "geteuid"), reason="POSIX-only euid")
+def test_rootless_podman_keeps_the_host_uid_for_the_workspace(monkeypatch, tmp_path):
+    # Without keep-id, --user uid:gid maps to a subordinate uid that cannot
+    # write the bind-mounted workspace under rootless podman.
+    monkeypatch.delenv("MAVERICK_SANDBOX_ALLOW_ROOT", raising=False)
+    monkeypatch.setattr(os, "geteuid", lambda: 1000)
+    args = _capture_run_argv(monkeypatch, PodmanBackend, "_verify_podman", tmp_path)
+    assert "--userns=keep-id" in args and "--user" in args
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
+    args = _capture_run_argv(monkeypatch, PodmanBackend, "_verify_podman", tmp_path)
+    assert "--userns=keep-id" not in args
+
+
 def test_allow_root_env_var_drops_user_flag(monkeypatch, tmp_path):
     monkeypatch.setenv("MAVERICK_SANDBOX_ALLOW_ROOT", "1")
     args = _capture_run_argv(monkeypatch, DockerBackend, "_verify_docker", tmp_path)
@@ -84,6 +97,37 @@ def test_read_only_paths_fail_closed_on_unsafe_or_missing_entries(
     monkeypatch.setattr(DockerBackend, "_verify_docker", lambda self: None)
     with pytest.raises(ValueError, match="read_only_paths"):
         DockerBackend(workdir=tmp_path, read_only_paths=[configured])
+
+
+def test_read_only_path_swapped_between_execs_fails_closed(monkeypatch, tmp_path):
+    """A command may rename the folder holding a protected file and recreate
+    it; the next exec must not mount the replacement read-only and leave the
+    original writable. An editor-style save of the file itself must not
+    wedge the task."""
+    monkeypatch.setattr(DockerBackend, "_verify_docker", lambda self: None)
+    (tmp_path / "docs").mkdir()
+    protected = tmp_path / "docs" / "spec.md"
+    protected.write_text("v1", encoding="utf-8")
+    backend = DockerBackend(workdir=tmp_path, read_only_paths=["docs/spec.md"])
+    calls: list = []
+
+    class _R:
+        stdout = stderr = ""
+        returncode = 0
+
+    monkeypatch.setattr(subprocess, "run", lambda args, **k: calls.append(args) or _R())
+    assert backend.exec("echo hi").exit_code == 0
+    # Editor save on the host: write a temp file, then replace (new inode).
+    (tmp_path / "docs" / ".spec.md.tmp").write_text("v2", encoding="utf-8")
+    os.replace(tmp_path / "docs" / ".spec.md.tmp", protected)
+    assert backend.exec("echo hi").exit_code == 0
+    # Rename the parent and recreate it: refused, as a failed command.
+    (tmp_path / "docs").rename(tmp_path / "docs2")
+    (tmp_path / "docs").mkdir()
+    protected.write_text("decoy", encoding="utf-8")
+    refused = backend.exec("echo hi")
+    assert refused.exit_code != 0 and "Restart the task" in refused.stderr
+    assert len(calls) == 2
 
 
 def test_timeout_cleanup_failure_surfaced(monkeypatch, tmp_path):

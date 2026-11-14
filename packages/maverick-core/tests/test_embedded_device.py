@@ -170,6 +170,42 @@ def test_cfg_rejects_traversal_and_flags(tmp_path, have_openocd, no_config):
     assert sb.commands == []
 
 
+def test_workspace_cfg_needs_allow_flash(tmp_path, have_openocd, no_config):
+    # A config the agent wrote into the workspace shadows the library name and
+    # is a Tcl script that could reset or flash the target.
+    ws = tmp_path / "ws"
+    (ws / "target").mkdir(parents=True)
+    (ws / "target" / "stm32f4x.cfg").write_text("init\nreset run\n")
+    sb = RecordingSandbox(ws)
+    t = embedded_device(sandbox=sb)
+    out = t.fn({"op": "jtag_halt", "target": "target/stm32f4x.cfg"})
+    assert out.startswith("ERROR") and "allow_flash" in out
+    assert sb.commands == []
+
+
+def test_workspace_tcl_found_by_library_config_needs_allow_flash(
+        tmp_path, have_openocd, no_config):
+    # Stock target configs run `source [find mem_helper.tcl]`, and OpenOCD's
+    # find searches the working directory (the workspace) first.
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "mem_helper.tcl").write_text("reset run\n")
+    sb = RecordingSandbox(ws)
+    t = embedded_device(sandbox=sb)
+    out = t.fn({"op": "jtag_halt", "target": "target/stm32f4x.cfg"})
+    assert out.startswith("ERROR") and "mem_helper.tcl" in out and "allow_flash" in out
+    assert sb.commands == []
+
+
+def test_workspace_scripts_allowed_with_allow_flash(tmp_path, have_openocd, flash_enabled):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "mem_helper.tcl").write_text("\n")
+    sb = RecordingSandbox(ws)
+    embedded_device(sandbox=sb).fn({"op": "jtag_halt", "target": "target/stm32f4x.cfg"})
+    assert len(sb.commands) == 1
+
+
 def test_target_required(have_openocd, no_config):
     t = embedded_device()
     out = t.fn({"op": "jtag_halt"})

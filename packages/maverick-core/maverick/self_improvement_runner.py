@@ -511,6 +511,13 @@ def _fresh_calibration_receipt(
         from . import calibration
         receipt_path = (calibration._risk_verdict_path()
                         if evaluator_id is not None else None)
+        if receipt_path is None and general_evaluator_id is not None:
+            # A checker's narrowed assessment (the dashboard's checker
+            # calibration) is kept off the learning-freeze verdict; admission
+            # for that checker reads its receipt. Deployments that assessed
+            # before that receipt existed keep the general verdict.
+            checker = calibration._checker_verdict_path()
+            receipt_path = checker if checker.exists() else None
         verdict = (calibration._load_verdict(receipt_path)
                    if receipt_path is not None else calibration._load_verdict())
         if not isinstance(verdict, Mapping) or verdict.get("adequate") is not True:

@@ -110,13 +110,22 @@ def generate_program(pid: int, *, watchlist: Iterable[str] = DEFAULT_WATCHLIST) 
         "BEGIN {",
         f"  @tracked[{pid}] = 1;",
         "}",
+        # bpftrace's ``pid`` is the process (tgid) and ``tid`` the thread;
+        # the sched tracepoints' ``parent_pid``/``child_pid`` are thread ids.
+        # The fork probe runs in the parent, so a fork from any thread of a
+        # tracked process is followed, and only the main thread's exit
+        # (``tid == pid``) drops the process; another thread ending only
+        # clears the entry its own clone added.
         "tracepoint:sched:sched_process_fork {",
-        "  if (@tracked[args->parent_pid] == 1) {",
+        "  if (@tracked[pid] == 1) {",
         "    @tracked[args->child_pid] = 1;",
         "  }",
         "}",
-        "tracepoint:sched:sched_process_exit /@tracked[pid]/ {",
+        "tracepoint:sched:sched_process_exit /tid == pid && @tracked[pid]/ {",
         "  delete(@tracked[pid]);",
+        "}",
+        "tracepoint:sched:sched_process_exit /tid != pid && @tracked[tid]/ {",
+        "  delete(@tracked[tid]);",
         "}",
     ]
     for name in syscalls:

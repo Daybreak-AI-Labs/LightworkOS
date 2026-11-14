@@ -76,6 +76,10 @@ class TestWideningPolicy:
         p = _tiers()
         assert p.earned(promotions=100, had_rollback=True).name == "t0"
 
+    def test_an_unearned_first_tier_grants_nothing(self):
+        p = WideningPolicy(tiers=(SurfaceTier("t0", ("f.py",), 2),))
+        assert p.earned(promotions=0, had_rollback=False).editable_globs == ()
+
     def test_empty_policy_grants_nothing(self):
         t = WideningPolicy().earned(promotions=5, had_rollback=False)
         assert t.editable_globs == ()

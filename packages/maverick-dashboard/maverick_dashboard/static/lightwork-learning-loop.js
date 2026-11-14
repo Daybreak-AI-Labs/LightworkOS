@@ -80,7 +80,7 @@
   function showReceipt(receipt) {
     say('llp-ref-msg', receipt.message + (receipt.recorded_at ? ' Recorded ' + when(receipt.recorded_at) + '.' : ''));
     if ($('llp-original-resolve')) $('llp-original-resolve').hidden = receipt.status !== 'unconfirmed' || receipt.hold_closed;
-    if (receipt.status === 'confirmed' || receipt.hold_closed) {
+    if (receipt.status === 'confirmed' || receipt.status === 'aborted' || receipt.hold_closed) {
       clearPending(); showPending();
     } else showPending(receipt.message);
   }

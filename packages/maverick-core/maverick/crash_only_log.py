@@ -40,6 +40,7 @@ through it.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -251,13 +252,25 @@ class CrashOnlyLog:
             for k, v in fields.items():
                 rec.setdefault(k, v)
             line = _encode_line(rec)
-            # The sequence number is consumed only once its line is written,
-            # so a record that cannot be written leaves no gap.
-            self._seq = seq
+            # The sequence number is consumed once any of its line is written,
+            # so a record that cannot be written at all leaves no gap.
             view = memoryview(line)
             while view:
-                n = os.write(self._fd, view)
+                try:
+                    n = os.write(self._fd, view)
+                except OSError:
+                    if len(view) < len(line):
+                        # Seal the torn fragment so the next record starts on
+                        # its own line instead of joining onto it. The sealed
+                        # fragment may now read as a whole record, so its seq
+                        # is spent: a gap is the documented outcome, never a
+                        # duplicate.
+                        self._seq = seq
+                        with contextlib.suppress(OSError):
+                            os.write(self._fd, b"\n")
+                    raise
                 view = view[n:]
+            self._seq = seq
             if self._fsync:
                 os.fsync(self._fd)
         return seq
@@ -274,6 +287,7 @@ class CrashOnlyLog:
             os.close(self._fd)
         except OSError:  # pragma: no cover -- already closed
             pass
+        self._fd = -1
 
 
 __all__ = [

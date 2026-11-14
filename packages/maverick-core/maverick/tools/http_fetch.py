@@ -288,18 +288,22 @@ def _resolve_pinned(host: str) -> str:
     This closes the resolve-then-reconnect TOCTOU (DNS rebinding): the IP
     returned here is the exact IP the socket is opened to, with no second
     name resolution by the connection layer. Honors
-    ``MAVERICK_FETCH_ALLOW_PRIVATE=1`` (which skips validation and returns the
-    hostname unchanged, preserving the override's existing behavior). Fails
-    CLOSED otherwise — a resolution failure or any blocked address in the
+    ``MAVERICK_FETCH_ALLOW_PRIVATE=1``, which admits private addresses but
+    still refuses the metadata/link-local ranges and still pins the address
+    it validated. Fails CLOSED otherwise — a resolution failure or any blocked address in the
     result set raises ``ValueError`` rather than letting the connection layer
     re-resolve to an unvalidated address.
     """
     if allow_private():
         # The override admits private ranges but never the metadata service.
+        # The validated address is pinned here too: returning the name let the
+        # connection re-resolve it, so a rebinding resolver could swap in
+        # 169.254.169.254 after this check passed.
         try:
             addrs = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
-        except socket.gaierror:
-            return host
+        except socket.gaierror as e:
+            raise ValueError(f"refusing to fetch {host!r}: DNS resolution failed ({e}).") from e
+        allowed: str | None = None
         for _fam, _stype, _proto, _name, sockaddr in addrs:
             try:
                 ip = ipaddress.ip_address(sockaddr[0])
@@ -311,7 +315,11 @@ def _resolve_pinned(host: str) -> str:
                     "stays blocked even with private addresses allowed (link-local, "
                     "metadata, multicast, reserved or unspecified)."
                 )
-        return host
+            if allowed is None:
+                allowed = sockaddr[0]
+        if allowed is None:
+            raise ValueError(f"refusing to fetch {host!r}: no usable address resolved")
+        return allowed
     try:
         addrs = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
     except socket.gaierror as e:
@@ -348,7 +356,7 @@ def _make_pinned_connect(connect):
     def _connect(self):
         ip = _resolve_pinned(self.host)
         if ip == self.host:
-            # Override path (allow-private): no pinning, normal resolution.
+            # An IP literal: already the address to connect to.
             return connect(self)
         orig_create = self._create_connection
 

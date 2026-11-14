@@ -302,6 +302,7 @@ class OpenAIClient:
         # budgets, egress denials, and audit accounting.
         self._sync = OpenAI(max_retries=0, **kw)
         self._async = AsyncOpenAI(max_retries=0, **kw)
+        self._timeout_environment = environment
         if environment is not None or not openai_account:
             # Empty construction sentinels block SDK env fallback, then restore
             # absent metadata so no new empty headers are sent to any endpoint.
@@ -725,6 +726,16 @@ class OpenAIClient:
         kwargs["reasoning_effort"] = "none"
         return True
 
+    def _generation_timeout(self, kwargs: dict) -> dict:
+        import openai
+
+        from .base import generation_timeout
+
+        tokens = kwargs.get("max_completion_tokens") or kwargs.get("max_tokens")
+        return generation_timeout(
+            openai, tokens, environment=getattr(self, "_timeout_environment", None),
+        )
+
     def complete(
         self,
         system: str,
@@ -745,13 +756,15 @@ class OpenAIClient:
             system, messages, tools, max_tokens, model, thinking_budget,
             **({"tool_choice": tool_choice} if tool_choice else {}),
         )
+        wait = self._generation_timeout(kwargs)
+
         def request():
             try:
-                return sync_physical_attempt(lambda: self._sync.chat.completions.create(**kwargs))
+                return sync_physical_attempt(lambda: self._sync.chat.completions.create(**kwargs, **wait))
             except Exception as exc:
                 if not self._disable_rejected_tool_reasoning(kwargs, exc):
                     raise
-                return sync_physical_attempt(lambda: self._sync.chat.completions.create(**kwargs))
+                return sync_physical_attempt(lambda: self._sync.chat.completions.create(**kwargs, **wait))
 
         resp = sync_retry(request, observe_attempts=False)
         # Meter under the id the caller admitted. A subclass may send another
@@ -777,13 +790,15 @@ class OpenAIClient:
             system, messages, tools, max_tokens, model, thinking_budget,
             **({"tool_choice": tool_choice} if tool_choice else {}),
         )
+        wait = self._generation_timeout(kwargs)
+
         async def request():
             try:
-                return await async_physical_attempt(lambda: self._async.chat.completions.create(**kwargs))
+                return await async_physical_attempt(lambda: self._async.chat.completions.create(**kwargs, **wait))
             except Exception as exc:
                 if not self._disable_rejected_tool_reasoning(kwargs, exc):
                     raise
-                return await async_physical_attempt(lambda: self._async.chat.completions.create(**kwargs))
+                return await async_physical_attempt(lambda: self._async.chat.completions.create(**kwargs, **wait))
 
         resp = await async_retry(request, observe_attempts=False)
         # Meter under the id the caller admitted. A subclass may send another

@@ -1643,6 +1643,12 @@ def ensure_anchors(audit_dir: Path) -> int:
             # unreadable file itself.
             log.warning("audit anchors: cannot read %s; not anchored: %s", day_file.name, e)
             continue
+        if count and not tip:
+            # An unsigned day (written before crypto was available) has no tip.
+            # An empty-tip anchor would sit in the append-only ledger forever
+            # and fail every WORM push's ledger schema check.
+            log.warning("audit anchors: %s has no signed rows; not anchored", day_file.name)
+            continue
         if count and _append_anchor(audit_dir, day, tip, count):
             written += 1
     return written
@@ -1659,7 +1665,7 @@ def reanchor_day_after_erase(audit_dir: Path, day_file: Path) -> None:
     if not _DAY_RE.fullmatch(day) or day >= _today_utc():
         return  # not a completed day-file
     tip, count = _file_tip_and_count(day_file)
-    if count:
+    if count and tip:
         _append_anchor(audit_dir, day, tip, count)
 
 

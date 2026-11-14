@@ -211,7 +211,9 @@ def _denied(url: str) -> str | None:
             return None
     # failure-policy: fail_closed
     except Exception:
-        log.exception("egress guard: policy unavailable; refusing egress to %r", url)
+        # Log the host only: a URL query string can carry credentials.
+        log.exception("egress guard: policy unavailable; refusing egress to %r",
+                      host or "?")
         return ("egress policy could not be evaluated, so the boundary stays "
                 "closed")
     # Deliberate, narrow exception to the audit-refusal contract.
@@ -239,6 +241,12 @@ def _denied(url: str) -> str | None:
             "egress guard: blocked egress to %r but the audit subsystem "
             "refused to record it; the request is still refused",
             host or url)
+    except Exception:  # failure-policy: fail_closed -- the request is refused either way
+        # Any other audit failure gets the same treatment: keep the accurate
+        # egress reason.
+        log.exception(
+            "egress guard: blocked egress to %r but recording it failed; "
+            "the request is still refused", host or url)
     if tenant_denied:
         return (
             f"egress policy blocks this request to {host or url!r} "
@@ -342,11 +350,11 @@ def _httpx_degraded_check(request: Any, *, client_name: str) -> None:
         return
 
     url = str(getattr(request, "url", "") or "")
-    host = url
+    host = ""  # never the URL itself: its query string can carry credentials
     try:
         from .enterprise import _host_of
 
-        host = _host_of(url) or url
+        host = _host_of(url)
     except Exception:  # failure-policy: best_effort -- diagnostic label only
         pass
 
@@ -365,7 +373,7 @@ def _httpx_degraded_check(request: Any, *, client_name: str) -> None:
         log.exception(
             "egress guard: could not audit degraded %s refusal for %r",
             client_name,
-            host or url,
+            host or "?",
         )
 
     from .enterprise import EgressBlocked

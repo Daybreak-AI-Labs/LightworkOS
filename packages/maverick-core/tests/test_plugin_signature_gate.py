@@ -195,6 +195,35 @@ def test_untracked_ondisk_pth_refused(tmp_path):
     assert plugins._plugin_signature_ok(ep, ca.root_pub(), set()) is False
 
 
+def test_untracked_ondisk_package_init_shadowing_signed_module_refused(tmp_path):
+    # Python's path finder prefers a package directory over a same-named
+    # module, so myplugin/tools/__init__.py added beside the signed
+    # myplugin/tools.py (RECORD untouched) would run unsigned code.
+    ca, _ = _signed_plugin(tmp_path)
+    shadow = tmp_path / "myplugin" / "tools" / "__init__.py"
+    shadow.parent.mkdir()
+    shadow.write_text("def reg():\n    return ['unsigned']\n", encoding="utf-8")
+    ep = _FakeEP(_FakeDist(
+        tmp_path, ["myplugin/tools.py", "maverick_plugin.sig.json"],
+    ))
+    assert plugins._plugin_signature_ok(ep, ca.root_pub(), set()) is False
+
+
+def test_shared_namespace_files_owned_by_another_distribution_are_not_scanned(tmp_path):
+    # Namespace package "myplugin": this plugin owns myplugin/acme/, another
+    # distribution owns myplugin/other/. Only the plugin's own tree is scanned.
+    for rel in ("myplugin/acme/impl.py", "myplugin/other/mod.py"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text("X = 1\n", encoding="utf-8")
+    ep = _FakeEP(_FakeDist(tmp_path, ["myplugin/acme/impl.py"]))
+    ep.module = "myplugin.acme.impl"
+    signed = {"myplugin/acme/impl.py": "digest"}
+    assert plugins._ondisk_files_covered(ep, signed) is True
+    (tmp_path / "myplugin" / "acme" / "sub").mkdir()
+    (tmp_path / "myplugin" / "acme" / "sub" / "__init__.py").write_text("", encoding="utf-8")
+    assert plugins._ondisk_files_covered(ep, signed) is False
+
+
 def test_signed_native_and_data_files_pass(tmp_path):
     # A plugin that ships a native ext + data file, all present at signing time,
     # still verifies -- broadening the set didn't break legitimate signed plugins.

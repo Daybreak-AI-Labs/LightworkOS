@@ -382,7 +382,16 @@ def _fire_subscriptions(event: str, envelope: dict[str, Any], body: bytes,
     executor = _get_executor()
 
     def _start(delivery_id: str) -> None:
-        if not _submit(executor, subs.attempt_delivery, delivery_id):
+        # The delivery is already recorded: a submit failure (the pool is
+        # shutting down) leaves it for the retry pump, never for the one-shot
+        # fallback below, which would send it a second time.
+        try:
+            started = _submit(executor, subs.attempt_delivery, delivery_id)
+        except Exception as exc:
+            log.warning("webhooks: could not start delivery %s (%s); it waits for the retry pump",
+                        delivery_id, type(exc).__name__)
+            return
+        if not started:
             log.warning("webhooks: in-flight cap reached; delivery %s waits for the retry pump",
                         delivery_id)
 

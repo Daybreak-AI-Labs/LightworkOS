@@ -17,6 +17,7 @@ def _install_fake_boto3(monkeypatch, *, buckets=None, list_objects=None,
             return self._data[:n]
 
     class _Client:
+        meta = types.SimpleNamespace(endpoint_url="https://s3.us-east-1.amazonaws.com")
         def list_buckets(self):
             return {"Buckets": buckets or []}
 
@@ -39,8 +40,16 @@ def _install_fake_boto3(monkeypatch, *, buckets=None, list_objects=None,
         def generate_presigned_url(self, *a, **k):
             return presigned_url
 
-    boto3.client = lambda *a, **k: _Client()
+    created = []
+    boto3.client = lambda *a, **k: created.append(k) or _Client()
+    boto3.created = created
     monkeypatch.setitem(sys.modules, "boto3", boto3)
+    botocore = types.ModuleType("botocore")
+    botocore_config = types.ModuleType("botocore.config")
+    botocore_config.Config = lambda **k: k
+    botocore.config = botocore_config
+    monkeypatch.setitem(sys.modules, "botocore", botocore)
+    monkeypatch.setitem(sys.modules, "botocore.config", botocore_config)
 
 
 # ---------- S3 ----------
@@ -91,3 +100,42 @@ def test_s3_presign_returns_url(monkeypatch):
     from maverick.tools.s3_tool import s3_tool
     out = s3_tool().fn({"op": "presign", "bucket": "b", "key": "k"})
     assert "https://x.example/k?sig=abc" in out
+
+
+def test_s3_endpoint_is_checked_against_enterprise_egress(monkeypatch, tmp_path):
+    # botocore is outside the process egress guard, so the tool checks the
+    # client's endpoint itself: enterprise mode with no allowed host refuses.
+    _install_fake_boto3(monkeypatch, buckets=[{"Name": "b1"}])
+    monkeypatch.setenv("MAVERICK_CONFIG", str(tmp_path / "absent.toml"))
+    monkeypatch.setenv("MAVERICK_ENTERPRISE", "1")
+    from maverick import config
+    config.reset_config_cache()
+    from maverick.tools.s3_tool import s3_tool
+    out = s3_tool().fn({"op": "list_buckets"})
+    config.reset_config_cache()
+    assert out.startswith("ERROR") and "s3.us-east-1.amazonaws.com" in out
+    assert "b1" not in out
+    # Only the probe (static placeholder keys, so no credential provider
+    # runs) was built; it uses path-style addressing, so requests stay on the
+    # checked host instead of <bucket>.<host>.
+    created = sys.modules["boto3"].created
+    assert len(created) == 1 and created[0]["aws_access_key_id"] == "egress-probe"
+    assert created[0]["config"] == {"s3": {"addressing_style": "path"}}
+
+
+def test_s3_unreadable_config_names_the_network_policy(monkeypatch):
+    # With an invalid config the enterprise check can raise (for example
+    # ClientBindingError while recording the audit event); the refusal must
+    # say that the policy could not be read, not "request failed".
+    import maverick.enterprise as enterprise
+    from maverick.client import ClientBindingError
+
+    def _raise(*a, **k):
+        raise ClientBindingError("client binding unavailable: an active config source is invalid")
+
+    _install_fake_boto3(monkeypatch, buckets=[{"Name": "b1"}])
+    monkeypatch.setattr(enterprise, "enterprise_egress_denial", _raise)
+    from maverick.tools.s3_tool import s3_tool
+    out = s3_tool().fn({"op": "list_buckets"})
+    assert out.startswith("ERROR") and "network policy could not be read" in out
+    assert "b1" not in out

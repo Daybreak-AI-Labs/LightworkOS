@@ -421,6 +421,12 @@ def test_imap_password_env_trigger_requires_admin(monkeypatch, tmp_path):
         "config": {"host": "mail.example", "username": "u",
                    "password_env": "IMAP_PASSWORD"}})
     assert r2.status_code != 403
+    # Even an admin cannot name a product key; refused when saved, not at poll.
+    r3 = c.post("/api/v1/event-triggers", json={
+        "template": "triage", "source": "imap_email",
+        "config": {"host": "mail.example", "username": "u",
+                   "password_env": "OPENAI_API_KEY"}})  # pragma: allowlist secret
+    assert r3.status_code == 400 and "mail password name" in r3.text
 
 
 @pytest.mark.parametrize(

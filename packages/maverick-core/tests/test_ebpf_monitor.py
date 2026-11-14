@@ -23,6 +23,17 @@ def test_program_seeds_and_follows_the_pid_tree():
     assert "delete(@tracked[pid]);" in prog
 
 
+def test_program_keeps_a_process_tracked_when_one_of_its_threads_exits():
+    # ``pid`` is the tgid: a non-main thread exiting must not drop the whole
+    # process, and a fork from a non-main thread (parent_pid is that thread's
+    # id) must still be followed.
+    prog = generate_program(4242)
+    assert "tracepoint:sched:sched_process_exit /@tracked[pid]/" not in prog
+    assert "tracepoint:sched:sched_process_exit /tid == pid && @tracked[pid]/" in prog
+    assert "@tracked[args->parent_pid]" not in prog
+    assert "if (@tracked[pid] == 1) {" in prog
+
+
 def test_program_traces_base_syscalls_with_filenames():
     prog = generate_program(1)
     for name in ("execve", "connect", "openat"):

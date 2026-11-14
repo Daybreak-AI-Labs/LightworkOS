@@ -127,27 +127,31 @@ async def impact(
 
     from ._shared import _world
 
-    def _visible_hits() -> list[dict]:
+    def _visible_hits() -> tuple[list[dict], int]:
         world = _world()
         allowed: dict[object, bool] = {}
         visible = []
-        for hit in governed_actions.impact_of(selected, kind=kind):
+        found = governed_actions.impact_of(selected, kind=kind)
+        for hit in found:
             goal_id = hit.get("goal_id")
             if goal_id not in allowed:
                 goal = world.get_goal(goal_id) if isinstance(goal_id, int) else None
                 allowed[goal_id] = goal is not None and can_access_goal(request, goal)
             if allowed[goal_id]:
                 visible.append(hit)
-        return visible
+        # Only a count: a ledger's name is a task id the viewer may not see.
+        return visible, len(getattr(found, "skipped_ledgers", ()))
 
     try:
-        hits = await run_in_threadpool(_visible_hits)
+        hits, unreadable = await run_in_threadpool(_visible_hits)
     except Exception as exc:
         raise HTTPException(status_code=503, detail="impact search is unavailable") from exc
     return {
         "name": selected,
         "kind": kind,
         "count": len(hits),
+        "unreadable_ledgers": unreadable,
+        "complete": unreadable == 0,
         "items": [
             {
                 "goal_id": hit.get("goal_id"),

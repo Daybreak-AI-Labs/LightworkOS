@@ -22,6 +22,10 @@ _STORE = GovernedRecordStore("evidence_graph", "EGN", "evidence_graph_node")
 _SCHEMA = "lightwork.evidence-graph-node.v1"
 _PACK_SCHEMA = "lightwork.evidence-graph-pack.v1"
 _DECISIONS = frozenset({"approved", "rejected", "revoked"})
+# Security/GRC projections whose controls hold only fully supported ("present")
+# verdicts. Nodes projected under an earlier rule keep their immutable record
+# but read as stale, so they no longer count toward coverage.
+_SECURITY_PROJECTION_VERSION = ":v2"
 _MAX_MODEL_RISK_PROJECTIONS = 2048
 _MAX_GRAPH_NODES = 10_000
 _SAFE_KEY = re.compile(r"[A-Za-z][A-Za-z0-9_.:-]{0,127}\Z")
@@ -392,6 +396,13 @@ def _inherited_authority_validation(
     if review.get("status") != "approved" or bound_revision is None:
         state["reason"] = "binding_invalid"
         return state
+    if source == "security_ops" and not str(node.get("source_id") or "").endswith(
+        _SECURITY_PROJECTION_VERSION
+    ):
+        # Projected before partial verdicts stopped counting as coverage; the
+        # next collection writes the current projection under a new id.
+        state["reason"] = "projection_superseded"
+        return state
     try:
         authority, decision, expected_schema = _load_inherited_authority(
             node,
@@ -627,10 +638,16 @@ def _coverage_report(
     covered = sorted({control for node in usable for control in node.get("controls", [])})
     covered_required = [control for control in required if control in covered]
     missing = [control for control in required if control not in covered]
+    partial = {
+        control for node in usable
+        for control in (node.get("attributes") or {}).get("partial_controls") or []
+    }
     return {
         "required_controls": required,
         "covered_controls": covered_required,
         "missing_controls": missing,
+        # Missing controls that approved evidence supports only in part.
+        "partial_controls": [control for control in missing if control in partial],
         "coverage_percent": (
             round(100.0 * len(covered_required) / len(required), 1)
             if required else 100.0
@@ -660,10 +677,19 @@ def collect_security_evidence(*, actor: str) -> list[dict[str, Any]]:
         if not isinstance(evidence, dict) or evidence.get("status") != "approved":
             continue
         verdicts = list(evidence.get("verdicts") or [])
+        # Only fully supported controls count toward coverage; a "partial"
+        # mapping (one signal, or non-current language) is reported beside
+        # them so a pack cannot show a control as covered on partial proof.
         controls = sorted({
             str(verdict.get("control_id") or "")
             for verdict in verdicts
-            if verdict.get("status") in {"present", "partial"}
+            if verdict.get("status") == "present"
+            and str(verdict.get("control_id") or "")
+        })
+        partial_controls = sorted({
+            str(verdict.get("control_id") or "")
+            for verdict in verdicts
+            if verdict.get("status") == "partial"
             and str(verdict.get("control_id") or "")
         })
         decision = dict(evidence.get("decision") or {})
@@ -681,6 +707,7 @@ def collect_security_evidence(*, actor: str) -> list[dict[str, Any]]:
             source="security_ops",
             source_id=(
                 f"{evidence.get('id')}:review:{evidence.get('revision')}"
+                f"{_SECURITY_PROJECTION_VERSION}"
             ),
             evidence_type="reviewed_control_evidence",
             title=str(evidence.get("title") or "Security evidence"),
@@ -694,6 +721,7 @@ def collect_security_evidence(*, actor: str) -> list[dict[str, Any]]:
                 "mapping_method": str(evidence.get("mapping_method") or ""),
                 "present": int((evidence.get("counts") or {}).get("present") or 0),
                 "partial": int((evidence.get("counts") or {}).get("partial") or 0),
+                "partial_controls": partial_controls,
             },
             links=[{
                 "relation": "projects",

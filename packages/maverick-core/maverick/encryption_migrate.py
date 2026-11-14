@@ -57,6 +57,7 @@ _SEALED_COLUMNS: tuple[tuple[str, str], ...] = (
     ("projects", "description"),
     ("fact_history", "value"),
     ("goals", "connection_selection"),
+    ("webhook_deliveries", "body"),
 )
 
 # fact_history rows are copies of fact values and are read with the facts
@@ -177,7 +178,7 @@ def migrate_world_db(
                     # A store sealed before the index rebuild existed can still
                     # hold plaintext terms there; clear them on any re-run.
                     _clear_leftover_index(conn)
-                _mark_migrated(db_path)
+                _mark_if_sealed(conn, db_path)
             return report
         # Phase 2 -- optionally back up the plaintext, then reseal in place.
         if backup:
@@ -205,12 +206,18 @@ def migrate_world_db(
         _rebuild_message_index(conn)
         conn.commit()
         _shred_residue(conn, report)
-        if not _unsealed_remaining(conn):
-            _mark_migrated(db_path)
+        _mark_if_sealed(conn, db_path)
     finally:
         conn.close()
     log.info("encryption migrate (dry_run=%s): %s", dry_run, report)
     return report
+
+
+def _mark_if_sealed(conn: sqlite3.Connection, db_path: Path) -> None:
+    """Write the migrated marker only if no plaintext remains now: a write
+    that landed after the scan must not be covered by the strict-read marker."""
+    if not _unsealed_remaining(conn):
+        _mark_migrated(db_path)
 
 
 def _unsealed_remaining(conn: sqlite3.Connection) -> bool:
@@ -260,6 +267,15 @@ def _postgres_column_scope(table: str, tenant: str | None) -> tuple[str, list]:
     # Mutations require exact ownership, not compatibility reads' NULL fallback.
     if table in {"goals", "facts", "approvals", "projects", "fact_history"}:
         return "s.tenant_id IS NOT DISTINCT FROM %s", [tenant]
+    if table == "webhook_deliveries":
+        # Scoped by the raw tenant id in ``workspace`` ('' when unbound), the
+        # value webhook_subscriptions writes, not the path-encoded tenant_id.
+        from .webhook_subscriptions import workspace_id
+
+        workspace = workspace_id()
+        if (tenant is None) != (workspace == ""):
+            raise EncryptionUnavailable("the webhook workspace does not match the migrated tenant")
+        return "s.workspace = %s", [workspace]
     parent, foreign_key = (("conversations", "conversation_id") if table == "turns"
                            else ("goals", "goal_id"))
     predicate = (f"EXISTS (SELECT 1 FROM {parent} p WHERE p.id=s.{foreign_key} "

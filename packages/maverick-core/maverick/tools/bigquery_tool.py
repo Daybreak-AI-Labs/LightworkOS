@@ -67,6 +67,14 @@ def _op_query(sql: str, limit: int, confirm: bool) -> str:
         return f"ERROR: query ({r.status_code}): {(r.text or '')[:500]}"
     if r.status_code >= 400:
         return f"ERROR: query ({r.status_code}): {data.get('error', data)}"
+    if data.get("jobComplete") is False:
+        # jobs.query returns before the job finishes once its wait elapses;
+        # an absent `rows` then means "not done yet", not "no data". The job
+        # is unfinished, not failed, so it is reported INDETERMINATE.
+        job = data.get("jobReference") or {}
+        return (f"INDETERMINATE: query still running (job {job.get('jobId', '?')}, "
+                f"location {job.get('location', '?')}); results are not available "
+                "yet. Do not re-run a write; check the job in BigQuery first.")
     cols = [f.get("name") for f in (data.get("schema") or {}).get("fields", [])]
     rows = data.get("rows") or []
     if not rows:

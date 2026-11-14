@@ -391,3 +391,35 @@ async def test_bluesky_session_created_and_cached():
         sess2 = await ch._ensure_session()
         assert sess2["accessJwt"] == "tok-123"
         assert fake_client.post.call_count == 1
+
+
+@pytest.mark.skipif(not _have_deps(), reason="httpx not installed")
+def test_bluesky_expired_access_token_creates_a_new_session(monkeypatch):
+    """A PDS answers an expired access JWT with 400 ExpiredToken, not 401.
+    The adapter must drop the session so the next poll logs in again instead
+    of failing on every pass until restart."""
+    from maverick_channels.bluesky import BlueskyChannel
+
+    state = {"expired": True}
+
+    def _responder(method, url, body):
+        if "createSession" in url:
+            return _FakeResponse(json_data={"accessJwt": "fresh", "did": "did:plc:me"})
+        if "listNotifications" in url:
+            if state["expired"]:
+                state["expired"] = False
+                return _FakeResponse(400, {"error": "ExpiredToken", "message": "Token has expired"})
+            return _FakeResponse(json_data={"notifications": []})
+        return _FakeResponse()
+
+    calls = []
+    _install_fake_httpx(monkeypatch, calls, _responder)
+    chan = BlueskyChannel(handler=_noop, handle="me.bsky.social",
+                          password="app-pw", allowed_user_ids={"did:plc:owner"})
+    chan._session = {"accessJwt": "stale", "did": "did:plc:me"}
+
+    with pytest.raises(RuntimeError, match="http 400"):
+        asyncio.run(chan._poll_once())
+    assert asyncio.run(chan._poll_once()) == []
+    polls = [c for c in calls if "listNotifications" in c["url"]]
+    assert polls[-1]["headers"]["Authorization"] == "Bearer fresh"

@@ -1006,12 +1006,18 @@ def _completion_cap(
             copied[selected_key] = value
         else:
             return copied, 0
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, int)
-        or not 1 <= value <= _MAX_COMPLETION_TOKENS
-    ):
-        raise ValueError("the request completion-token cap must be between 1 and 1000000")
+    # An OpenAI-compatible upstream may honour either key, so reserve for the
+    # larger of every cap the body sends, not only the first one found.
+    values = [value, *(copied[key] for key in keys
+                       if key != selected_key and copied.get(key) is not None)]
+    for candidate in values:
+        if (
+            isinstance(candidate, bool)
+            or not isinstance(candidate, int)
+            or not 1 <= candidate <= _MAX_COMPLETION_TOKENS
+        ):
+            raise ValueError("the request completion-token cap must be between 1 and 1000000")
+    value = max(values)
     # OpenAI ``n`` asks for that many completions, each up to the cap.
     choices = copied.get("n", 1) if provider != "anthropic" else 1
     if choices is None:
@@ -1381,8 +1387,12 @@ def _handle_completion(  # noqa: C901 - the request boundary is deliberately lin
     current = time.time() if now is None else float(now)
     original_sha = hashlib.sha256(encoded).hexdigest()
     if settings["allowed_models"] and model not in settings["allowed_models"]:
+        # The refused name is caller-chosen and bounded only by the body cap;
+        # keep the ledger row small and still distinct per name.
+        recorded_model = model if len(model) <= 128 else (
+            f"{model[:64]}...sha256:{hashlib.sha256(model.encode()).hexdigest()[:16]}")
         _record_call(
-            caller=caller, team=team, model=model, status="blocked_model",
+            caller=caller, team=team, model=recorded_model, status="blocked_model",
             prompt_sha256=original_sha, usage=None, now=current,
         )
         return _provider_error(

@@ -12,6 +12,7 @@ Hardening:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -618,7 +619,17 @@ class MCPClient:
         assert self._proc is not None and self._proc.stdin is not None
         line = (json.dumps(payload) + "\n").encode()
         self._proc.stdin.write(line)
-        await self._proc.stdin.drain()
+        try:
+            # A server that stops reading stdin would otherwise hold self._lock,
+            # and with it every later request, forever.
+            await asyncio.wait_for(self._proc.stdin.drain(), timeout=self.timeout)
+        except asyncio.TimeoutError:
+            # A partly written message leaves the stream unusable: stop the
+            # server so pending callers fail instead of waiting on it.
+            with contextlib.suppress(ProcessLookupError):
+                self._proc.kill()
+            raise MCPClientError(
+                f"MCP server {self.spec.name!r} stopped reading its input") from None
 
     def _fail_all_pending(self, exc: Exception) -> None:
         """Resolve every awaiting caller with `exc` so none hang forever.
@@ -1370,7 +1381,12 @@ def load_mcp_specs_from_config() -> list[MCPServerSpec]:
     for name, server_cfg in servers.items():
         if not isinstance(server_cfg, dict):
             continue
-        if not server_cfg.get("enabled", True):
+        enabled = server_cfg.get("enabled", True)
+        if type(enabled) is not bool:
+            # bool("false") is True: refuse a non-boolean rather than spawn it.
+            log.warning("mcp_servers.%s enabled must be true or false; skipping", name)
+            continue
+        if not enabled:
             continue
         if "command" not in server_cfg and "url" not in server_cfg:
             log.warning("mcp_servers.%s needs 'command' (stdio) or 'url' (http); skipping", name)

@@ -19,9 +19,13 @@ from .templates import Template, _validate_template_name, load_template, user_te
 
 
 def enabled():
+    from ._envparse import coerce_bool
     from .config import config_source_errors, load_config
 
-    return not config_source_errors(include_tenant=True) and (load_config().get("workflows") or {}).get("versioning", True) is True
+    # A string such as "true" (or an unrecognized value) keeps the review gate
+    # on; only an explicit false turns it off.
+    value = (load_config().get("workflows") or {}).get("versioning", True)
+    return not config_source_errors(include_tenant=True) and coerce_bool(value, default=True)
 
 
 def _path(name):

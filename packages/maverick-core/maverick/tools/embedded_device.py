@@ -29,6 +29,7 @@ All ops return strings; failures are "ERROR: ..." strings, never exceptions.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import shutil
 from pathlib import Path
@@ -51,7 +52,8 @@ _OPENOCD_MISSING = "ERROR: openocd not found — install OpenOCD and connect a p
 
 # OpenOCD -f arguments: either a name from OpenOCD's bundled script library
 # ("target/stm32f4x.cfg", "interface/stlink.cfg") or a plain relative file in
-# the workspace. Reject traversal, absolute paths, leading dashes (option
+# the workspace (only with allow_flash; see _workspace_cfg_denial). Reject
+# traversal, absolute paths, leading dashes (option
 # injection) and shell/Tcl metacharacters.
 _CFG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_./-]*\.cfg$")
 
@@ -164,9 +166,55 @@ def _openocd_argv(args: dict, commands: list[str]) -> list[str]:
     return argv
 
 
+# Upper bound on workspace entries scanned for OpenOCD scripts; a larger tree
+# is refused rather than partly checked.
+_MAX_SCRIPT_SCAN_ENTRIES = 20_000
+
+
+def _workspace_script(base: Path) -> str | None:
+    """The first ``*.cfg``/``*.tcl`` under ``base`` (or a reason it is unknown)."""
+    seen = 0
+    for root, dirs, files in os.walk(base):
+        seen += len(dirs) + len(files)
+        if seen > _MAX_SCRIPT_SCAN_ENTRIES:
+            return "(workspace too large to check)"
+        for name in files:
+            if name.lower().endswith((".cfg", ".tcl")):
+                return os.path.relpath(os.path.join(root, name), base)
+    return None
+
+
+def _workspace_cfg_denial(sandbox) -> str | None:
+    """Refuse OpenOCD while the workspace holds any ``*.cfg``/``*.tcl`` file,
+    unless flashing is allowed.
+
+    OpenOCD runs in the workspace, and both ``-f`` and the ``[find ...]`` that
+    stock library configs use (``source [find mem_helper.tcl]``,
+    ``[find target/swj-dp.tcl]``) search the working directory before the
+    script library. A script the agent wrote there is Tcl that can run
+    ``reset`` or ``flash write_image``, the destructive ops ``allow_flash``
+    gates. The sandbox exec API cannot set a working directory, so OpenOCD
+    cannot be started outside the workspace; refusing is the safe option.
+    """
+    if _flash_allowed():
+        return None
+    base = Path(sandbox.workdir) if sandbox is not None else Path.cwd()
+    found = _workspace_script(base)
+    if found is None:
+        return None
+    return (
+        f"ERROR: the workspace holds the OpenOCD script {found!r}; OpenOCD would "
+        "load workspace scripts before its own library, and a script can reset "
+        "or flash the target, so this needs [embedded] allow_flash = true in "
+        "~/.maverick/config.toml (or remove the *.cfg/*.tcl files)"
+    )
+
+
 def _run_openocd(sandbox, argv: list[str], *, timeout: float = 60.0) -> str:
     if shutil.which("openocd") is None:
         return _OPENOCD_MISSING
+    if denial := _workspace_cfg_denial(sandbox):
+        return denial
     from . import sandbox_run
     try:
         code, out, err = sandbox_run(sandbox, argv, timeout=timeout)

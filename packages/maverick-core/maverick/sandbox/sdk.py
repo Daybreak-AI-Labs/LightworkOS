@@ -224,6 +224,12 @@ def load_entry_point_backend(name: str, *, workdir, timeout: float,
             f"sandbox entry point {name!r} not found "
             f"(installed: {available or 'none'}). Install the backend package "
             "or fix [sandbox] backend.")
+    if len(matches) > 1 and len({getattr(ep, "value", ep) for ep in matches}) > 1:
+        owners = sorted(str(getattr(getattr(ep, "dist", None), "name", None) or getattr(ep, "value", "?"))
+                        for ep in matches)
+        raise RuntimeError(
+            f"sandbox entry point {name!r} is provided by more than one package "
+            f"({', '.join(owners)}); uninstall all but one so the backend is unambiguous.")
     factory = matches[0].load()
     backend = factory(workdir=workdir, timeout=timeout, **(options or {}))
     if isinstance(getattr(backend, "legacy_execution_policy", None), LegacyExecutionPolicy):

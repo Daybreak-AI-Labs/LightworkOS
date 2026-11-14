@@ -544,13 +544,18 @@ def _to_pgvector(vec: list[float]) -> str:
     return "[" + ",".join(repr(x) for x in floats) + "]"
 
 
+_PG_INDEX_MAX_DIM = 2000  # pgvector's limit for indexing the vector type
+
+
 class PgVectorStore:
     """pgvector-backed scale-out vector store -- the opt-in backend for corpora
     too large for the brute-force SQLite index.
 
     Same surface + collection-scoped compartments as :class:`SqliteVectorStore`,
-    but cosine search runs in Postgres via the ``<=>`` operator (with an IVFFlat
-    index), so retrieval doesn't scan every row in the process. Vectors are
+    but cosine search runs in Postgres via the ``<=>`` operator, so retrieval
+    doesn't scan every row in the process. The search uses the IVFFlat index
+    and falls back to an exact scan of the collection when the index returns
+    fewer rows than requested (see ``search``). Vectors are
     passed as text literals cast to ``::vector``; only ``psycopg`` and the
     Postgres ``vector`` extension are required (no numpy / pgvector-python).
 
@@ -566,6 +571,7 @@ class PgVectorStore:
         dim: int = 1024,
         table: str = "knowledge_chunks",
         namespace: str = "default",
+        create_schema: bool = True,
     ) -> None:
         try:
             import psycopg
@@ -607,7 +613,52 @@ class PgVectorStore:
             self._db = provider_call(
                 lambda: psycopg.connect(self._dsn, autocommit=True)
             )
-            self._initialize_schema(provider_call)
+            if create_schema:
+                self._initialize_schema(provider_call)
+
+    @classmethod
+    def open_existing(
+        cls,
+        dsn: str | None = None,
+        *,
+        dim: int = 1024,
+        table: str = "knowledge_chunks",
+        namespace: str = "default",
+    ) -> PgVectorStore | None:
+        """Open a store that already holds rows for ``namespace``, running no DDL.
+
+        For administration (erasure, residual counts) while knowledge is
+        switched off: a database where knowledge was never used must not gain
+        an extension, table or index as a side effect. Returns ``None`` when
+        the table does not exist or holds no rows for this namespace.
+        """
+        store = cls(dsn, dim=dim, table=table, namespace=namespace, create_schema=False)
+
+        def dispatch() -> bool:
+            with store._lock, store._db.cursor() as cur:
+                exists = cur.execute("SELECT to_regclass(%s)", (table,)).fetchone()
+                if not exists or exists[0] is None:
+                    return False
+                return cur.execute(
+                    f"SELECT 1 FROM {table} WHERE namespace = %s LIMIT 1",
+                    (store._namespace,),
+                ).fetchone() is not None
+
+        try:
+            with metered_operation(
+                "pgvector",
+                category="retrieval",
+                service="vector-store:pgvector",
+                operation="knowledge-pgvector-open-existing",
+            ) as provider_call:
+                has_rows = provider_call(dispatch)
+        except BaseException:
+            store.close()
+            raise
+        if not has_rows:
+            store.close()
+            return None
+        return store
 
     def _initialize_schema(self, provider_call) -> None:
         try:
@@ -677,7 +728,12 @@ class PgVectorStore:
                     "PRIMARY KEY (namespace, collection, id)"
                 )
             )
-        # Cosine IVFFlat index -- approximate but the point of the scale backend.
+        if self._dim > _PG_INDEX_MAX_DIM:
+            # pgvector cannot build an IVFFlat or HNSW index on a vector over
+            # 2,000 dimensions; searches stay exact without one.
+            return
+        # Cosine IVFFlat index; search falls back to an exact scan when a
+        # filtered index scan comes back short (see ``search``).
         provider_call(
             lambda: self._db.execute(
                 f"CREATE INDEX IF NOT EXISTS {self._table}_embedding_idx "
@@ -798,16 +854,37 @@ class PgVectorStore:
 
         def dispatch():
             with self._lock, self._db.cursor() as cur:
+                # The index-backed query runs first. IVFFlat probes 1 of its
+                # lists and applies the namespace/collection filter afterwards,
+                # so it can return fewer than k rows, or none. Only then does
+                # the exact branch run: OFFSET 0 keeps its filtered subquery
+                # from being flattened, so it orders the collection's rows
+                # (narrowed by the primary key) without the ANN index. Its
+                # gate references only the CTE, so PostgreSQL plans it as a
+                # one-time filter and skips the exact sort when the index
+                # query already found k rows. One statement, one round trip.
+                t = self._table
                 return cur.execute(
-                    f"SELECT text, meta, 1 - (embedding <=> %s::vector) AS score "
-                    f"FROM {self._table} WHERE namespace = %s AND collection = %s "
-                    "ORDER BY embedding <=> %s::vector LIMIT %s",
+                    "SELECT text, meta, 1 - distance AS score FROM ("
+                    "WITH approx AS ("
+                    f"SELECT text, meta, embedding <=> %s::vector AS distance FROM {t} "
+                    "WHERE namespace = %s AND collection = %s "
+                    "ORDER BY embedding <=> %s::vector LIMIT %s) "
+                    "SELECT text, meta, distance FROM approx "
+                    "WHERE (SELECT count(*) FROM approx) >= %s "
+                    "UNION ALL "
+                    "SELECT text, meta, distance FROM ("
+                    "SELECT text, meta, embedding <=> %s::vector AS distance FROM ("
+                    f"SELECT text, meta, embedding FROM {t} "
+                    "WHERE namespace = %s AND collection = %s OFFSET 0) AS scoped "
+                    "ORDER BY distance LIMIT %s) AS exact "
+                    "WHERE (SELECT count(*) FROM approx) < %s"
+                    ") AS hits ORDER BY distance LIMIT %s",
                     (
-                        vector_literal,
-                        self._namespace,
-                        collection,
-                        vector_literal,
+                        vector_literal, self._namespace, collection, vector_literal, int(k),
                         int(k),
+                        vector_literal, self._namespace, collection, int(k),
+                        int(k), int(k),
                     ),
                 ).fetchall()
 
@@ -1301,6 +1378,16 @@ def _namespace_from_cfg(cfg: dict) -> str:
     namespace = str(raw)
     digest = hashlib.sha256(namespace.encode("utf-8")).hexdigest()[:16]
     return f"workspace:{digest}"
+
+
+def open_existing_pgvector(cfg: dict) -> PgVectorStore | None:
+    """``build_store``'s pgvector store, opened read-only only if it already
+    holds rows for this workspace (see :meth:`PgVectorStore.open_existing`)."""
+    return PgVectorStore.open_existing(
+        dsn=cfg.get("dsn") or None,
+        dim=int(cfg.get("dim", 1024)),
+        namespace=_namespace_from_cfg(cfg),
+    )
 
 
 def build_store(cfg: dict | None = None):

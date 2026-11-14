@@ -102,6 +102,11 @@ class TestInstallSkill:
         assert (skills_dir / "my-test-skill.md").exists()
         assert "test thing" in s.triggers
 
+    def test_from_local_path_with_windows_line_endings(self, tmp_path: Path):
+        source = tmp_path / "crlf.md"
+        source.write_bytes(SKILL_BODY.replace("\n", "\r\n").encode())
+        assert install_skill(str(source), skills_dir=tmp_path / "skills").name == "my-test-skill"
+
     def test_local_missing_raises(self, tmp_path: Path):
         with pytest.raises(ValueError, match="does not exist"):
             install_skill(str(tmp_path / "nope.md"), skills_dir=tmp_path / "skills")

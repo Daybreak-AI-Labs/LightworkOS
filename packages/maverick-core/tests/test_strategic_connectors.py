@@ -118,6 +118,21 @@ def test_snowflake_write_needs_confirm(monkeypatch):
     post.assert_not_called()
 
 
+def test_snowflake_still_running_statement_is_not_reported_as_done(monkeypatch):
+    # The SQL API answers 202 with only a handle when the statement outlives
+    # the server-side wait; that is not "ok (0 rows)".
+    monkeypatch.setenv("SNOWFLAKE_ACCOUNT", "acct")
+    monkeypatch.setenv("SNOWFLAKE_TOKEN", "t")
+    post = MagicMock(return_value=_resp(202, {
+        "code": "333334", "message": "Asynchronous execution in progress.",
+        "statementHandle": "01b2-handle",
+    }))
+    _fake_httpx(monkeypatch, post=post)
+    from maverick.tools.snowflake_tool import snowflake_tool
+    out = snowflake_tool().fn({"op": "query", "statement": "SELECT 1"})
+    assert out.startswith("ERROR") and "01b2-handle" in out and "ok (" not in out
+
+
 # --------------------------------- Databricks ------------------------------
 
 def test_databricks_requires_config(monkeypatch):
@@ -127,6 +142,24 @@ def test_databricks_requires_config(monkeypatch):
     from maverick.tools.databricks_tool import databricks_tool
     out = databricks_tool().fn({"op": "jobs_list"})
     assert "ERROR" in out and "DATABRICKS" in out
+
+
+def test_databricks_unfinished_or_failed_statement_is_not_success(monkeypatch):
+    monkeypatch.setenv("DATABRICKS_HOST", "https://w.cloud.databricks.com")
+    monkeypatch.setenv("DATABRICKS_TOKEN", "t")
+    from maverick.tool_results import ToolResultState, classify_tool_result
+    from maverick.tools import databricks_tool as mod
+    for state, err, want in (
+        ("PENDING", None, ToolResultState.INDETERMINATE),
+        ("FAILED", {"message": "boom"}, ToolResultState.FAILED),
+        ("CANCELED", None, ToolResultState.FAILED),
+    ):
+        status = {"state": state, **({"error": err} if err else {})}
+        monkeypatch.setattr(mod, "_req", lambda *a, _s=status, **k: (
+            200, {"statement_id": "st_1", "status": _s}))
+        out = mod.databricks_tool().fn({"op": "sql", "statement": "DELETE FROM t",
+                                        "warehouse_id": "wh", "confirm": True})
+        assert classify_tool_result(out) is want and "st_1" in out, (state, out)
 
 
 def test_databricks_jobs_list(monkeypatch):
@@ -441,6 +474,20 @@ def test_bigquery_trailing_semicolon_read_runs(monkeypatch):
     out = bigquery_tool().fn({"op": "query", "sql": "SELECT ';' AS semi;"})
     assert "ok" in out
     assert post.call_args.kwargs["json"]["query"] == "SELECT ';' AS semi;"
+
+
+def test_bigquery_incomplete_job_is_not_reported_as_empty(monkeypatch):
+    monkeypatch.setenv("BIGQUERY_ACCESS_TOKEN", "t")
+    monkeypatch.setenv("BIGQUERY_PROJECT", "proj")
+    post = MagicMock(return_value=_resp(200, {
+        "jobComplete": False,
+        "jobReference": {"projectId": "proj", "jobId": "job_123", "location": "US"},
+    }))
+    _fake_httpx(monkeypatch, post=post)
+    from maverick.tools.bigquery_tool import bigquery_tool
+    out = bigquery_tool().fn({"op": "query", "sql": "SELECT * FROM d.big"})
+    assert out.startswith("INDETERMINATE:")
+    assert "still running" in out and "job_123" in out
 
 
 # ---------------------------------- Dynamics -------------------------------

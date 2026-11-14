@@ -234,44 +234,76 @@ class GovernedActions:
                 "approver": link.approver, "hash": link.hash[:12]}
 
 
+class ImpactResult(list):
+    """The impact hits (a plain list of dicts) plus ``skipped_ledgers``: the
+    names of lineage ledgers that could not be read or failed verification.
+    A non-empty ``skipped_ledgers`` means the answer may be incomplete."""
+
+    def __init__(self, *args) -> None:
+        super().__init__(*args)
+        self.skipped_ledgers: list[str] = []
+
+
 def impact_of(identifier: str, *, kind: str = "any",
-              store_dir: str | Path | None = None) -> list[dict]:
+              store_dir: str | Path | None = None) -> ImpactResult:
     """Impact analysis: every recorded consequential action that depended on a
     given skill or source. Use when a skill/source is revoked or found bad --
     "what did it touch?" -- the inverse of lineage. Scans all per-goal ledgers;
-    ``kind`` is ``skill`` | ``source`` | ``any``. Read-only, fail-open."""
-    out: list[dict] = []
+    ``kind`` is ``skill`` | ``source`` | ``any``. Read-only, fail-open: a
+    ledger that is unreadable or fails verification is skipped with a warning
+    and named in ``skipped_ledgers``, and the scan continues with the rest."""
+    out = ImpactResult()
     try:
         d = _lineage_dir(store_dir)
         if not d.exists():
             return out
-        want_skill = kind in ("skill", "any")
-        want_source = kind in ("source", "any")
-        for f in sorted(d.glob("*.ndjson")):
-            try:
-                goal_id: object = int(f.stem)
-            except ValueError:
-                goal_id = f.stem
-            links = [json.loads(line) for line in f.read_text(encoding="utf-8").splitlines()
-                     if line.strip()]
-            if _verify_links(links).startswith("BROKEN"):
-                continue
-            for link in links:
-                skills = link.get("skills") or []
-                sources = link.get("sources") or []
-                via = ("skill" if (want_skill and identifier in skills)
-                       else "source" if (want_source and identifier in sources)
-                       else None)
-                if via:
-                    out.append({"goal_id": goal_id, "action": link.get("action"),
-                                "ts": link.get("ts"), "via": via,
-                                "hash": str(link.get("hash", ""))[:12]})
+        files = sorted(d.glob("*.ndjson"))
     except Exception:  # pragma: no cover -- impact analysis never raises
         return out
+    for f in files:
+        try:
+            hits = _ledger_impact(f, identifier, kind)
+        except Exception as exc:
+            log.warning("impact analysis skipped unreadable lineage ledger %s: %s",
+                        f.name, type(exc).__name__)
+            hits = None
+        if hits is None:
+            out.skipped_ledgers.append(f.name)
+        else:
+            out.extend(hits)
+    return out
+
+
+def _ledger_impact(f: Path, identifier: str, kind: str) -> list[dict] | None:
+    """One ledger's hits, or None when it fails verification."""
+    try:
+        goal_id: object = int(f.stem)
+    except ValueError:
+        goal_id = f.stem
+    links = [json.loads(line) for line in f.read_text(encoding="utf-8").splitlines()
+             if line.strip()]
+    if _verify_links(links).startswith("BROKEN"):
+        log.warning("impact analysis skipped lineage ledger %s: it fails verification",
+                    f.name)
+        return None
+    want_skill = kind in ("skill", "any")
+    want_source = kind in ("source", "any")
+    out: list[dict] = []
+    for link in links:
+        skills = link.get("skills") or []
+        sources = link.get("sources") or []
+        via = ("skill" if (want_skill and identifier in skills)
+               else "source" if (want_source and identifier in sources)
+               else None)
+        if via:
+            out.append({"goal_id": goal_id, "action": link.get("action"),
+                        "ts": link.get("ts"), "via": via,
+                        "hash": str(link.get("hash", ""))[:12]})
     return out
 
 
 __all__ = ["ActionSpec", "Preview", "LineageLink", "GovernedActions", "ActionError",
+           "ImpactResult",
            "enabled", "record_tool_lineage", "load_lineage", "verify_lineage_file",
            "impact_of"]
 

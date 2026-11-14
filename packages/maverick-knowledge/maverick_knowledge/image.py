@@ -16,6 +16,20 @@ from pathlib import Path
 DEFAULT_MAX_IMAGE_PIXELS = 20_000_000
 DEFAULT_MAX_IMAGE_BYTES = 20 * 1024 * 1024
 DEFAULT_OCR_TIMEOUT_SECONDS = 15
+# The formats ``parse.IMAGE_EXTS`` routes here. Pillow picks a decoder from the
+# file's content, not its name, so without this a ``.png`` holding EPS would be
+# handed to Ghostscript. Only these plugins may identify the file.
+OCR_IMAGE_FORMATS = ("PNG", "JPEG", "GIF", "WEBP", "BMP", "TIFF")
+
+
+def _open_allowed(Image, path):
+    try:
+        return Image.open(path, formats=list(OCR_IMAGE_FORMATS))
+    except OSError as exc:  # PIL.UnidentifiedImageError is an OSError
+        raise ValueError(
+            "OCR refused the image: it is not a readable PNG, JPEG, GIF, WebP, "
+            "BMP or TIFF file"
+        ) from exc
 
 
 @contextmanager
@@ -44,7 +58,7 @@ def _validate_image(path: str, Image, max_image_pixels: int, max_image_bytes: in
     # Pillow only warns for many decompression-bomb cases; fail closed and also
     # enforce Lightwork's own pixel cap before any full decode/OCR work occurs.
     with _pixel_cap(Image, max_image_pixels):
-        with Image.open(image_path) as img:
+        with _open_allowed(Image, image_path) as img:
             width, height = img.size
             if width <= 0 or height <= 0:
                 raise ValueError("image has invalid dimensions")
@@ -93,7 +107,7 @@ def build_ocr_describer(
         # so the bomb guard must still be in force here (not just at validation),
         # which also bounds the decode if the file was swapped after validation.
         with _pixel_cap(Image, max_image_pixels):
-            with Image.open(path) as img:
+            with _open_allowed(Image, path) as img:
                 text = (
                     pytesseract.image_to_string(img, timeout=ocr_timeout_seconds) or ""
                 ).strip()

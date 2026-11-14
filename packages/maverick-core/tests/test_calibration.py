@@ -86,6 +86,25 @@ class TestLedgerAndVerdict:
         assert report.adequate is True
         assert vp.exists()
 
+    def test_narrow_assessment_leaves_the_learning_freeze_verdict_alone(
+        self, tmp_path, monkeypatch,
+    ):
+        """A one-source, one-checker assessment must not unfreeze (or freeze)
+        tenant-wide learning by overwriting the general verdict."""
+        general, receipt = tmp_path / "verdict.json", tmp_path / "receipt.json"
+        monkeypatch.setattr(calibration, "_verdict_path", lambda: general)
+        monkeypatch.setattr(calibration, "_checker_verdict_path", lambda: receipt)
+        sp = tmp_path / "cal.ndjson"
+        for _ in range(15):
+            calibration.record_sample(0.9, True, source="s", evaluator_id="judge:A", path=sp)
+            calibration.record_sample(0.2, False, source="s", evaluator_id="judge:A", path=sp)
+        general.write_text('{"adequate": false}', encoding="utf-8")
+        report = calibration.run_assessment(
+            samples_path=sp, evaluator_id="judge:A", sources={"s"}, min_samples=20)
+        assert report.adequate is True
+        assert json.loads(general.read_text(encoding="utf-8")) == {"adequate": False}
+        assert json.loads(receipt.read_text(encoding="utf-8"))["evaluator_id"] == "judge:A"
+
     def test_load_samples_skips_non_object_json_lines(self, tmp_path):
         p = tmp_path / "cal.ndjson"
         p.write_text(

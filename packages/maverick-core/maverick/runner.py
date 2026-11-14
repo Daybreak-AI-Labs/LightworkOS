@@ -407,20 +407,29 @@ def configured_goal_ceiling_wall_seconds() -> float | None:
 
 
 def requested_goal_dollars(requested: float | None) -> float | None:
-    if requested is None:
+    if _absent_limit(requested):
         return configured_max_dollars()
     return clamp_task_limit(requested, configured_goal_ceiling_dollars())
 
 
 def requested_goal_wall_seconds(requested: float | None) -> float | None:
-    if requested is None:
+    if _absent_limit(requested):
         return configured_max_wall_seconds()
     return clamp_task_limit(requested, configured_goal_ceiling_wall_seconds())
 
 
+def _absent_limit(requested: float | None) -> bool:
+    """A non-finite request (NaN from model JSON, infinity) carries no limit."""
+    return requested is None or not math.isfinite(requested)
+
+
 def clamp_task_limit(requested: float | None, configured: float | None) -> float | None:
-    """An absent task ceiling is not an invented deployment allowance."""
-    if requested is None:
+    """An absent task ceiling is not an invented deployment allowance.
+
+    A non-finite request is treated as absent: ``min(nan, cap)`` is NaN, and a
+    NaN reaching ``Budget`` falls back to a default that can exceed ``cap``.
+    """
+    if _absent_limit(requested):
         return configured
     return min(requested, configured) if configured is not None else requested
 

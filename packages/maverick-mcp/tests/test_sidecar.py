@@ -247,6 +247,18 @@ def test_sidecar_durable_budget_refuses_second_call(tmp_path):
     assert len(upstream.calls) == 1
 
 
+def test_sidecar_principal_budget_of_zero_refuses_instead_of_unlimited(tmp_path):
+    for global_max in (0, 5):
+        config = _config(max_calls_per_window=global_max, principal_max_calls={"alpha": 0})
+        budget = SidecarCallBudget(config, path=tmp_path / f"b{global_max}" / "budget.json")
+        gateway, upstream, _audits = _gateway(config, budget=budget)
+
+        result = gateway.handle_rpc("alpha", _call(request_id=1))
+
+        assert result["error"]["data"]["rule"] == "budget_exhausted"
+        assert upstream.calls == []
+
+
 def test_sidecar_http_surface_requires_per_agent_bearer_and_serves_manifest():
     fastapi = pytest.importorskip("fastapi")
     del fastapi

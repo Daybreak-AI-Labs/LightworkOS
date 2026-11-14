@@ -35,7 +35,7 @@ _RPC = re.compile(
     r"\(\s*(stream\s+)?([\w.]+)\s*\)")
 _MESSAGE = re.compile(r"^\s*message\s+(\w+)\s*\{")
 _FIELD = re.compile(
-    r"^\s*(repeated\s+|optional\s+)?([\w.<>, ]+?)\s+(\w+)\s*=\s*(\d+)\s*;")
+    r"^\s*(repeated\s+|optional\s+)?([\w.<>, ]+?)\s+(\w+)\s*=\s*(\d+)\s*(?:\[[^\]]*\]\s*)?;")
 _PACKAGE = re.compile(r"^\s*package\s+([\w.]+)\s*;")
 
 

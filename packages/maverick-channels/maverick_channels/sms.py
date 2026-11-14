@@ -34,6 +34,8 @@ from .base import (
 
 log = logging.getLogger(__name__)
 
+TWILIO_BODY_LIMIT = 1600
+
 try:
     from fastapi import FastAPI, Form, HTTPException, Request, Response
     from twilio.request_validator import RequestValidator
@@ -176,20 +178,32 @@ class SMSChannel(Channel):
         import asyncio
 
         from .delivery import DeliveryNotSent, send_chunk
+        from .formatting import split_utf16
 
-        async def create():
-            try:
-                message = await asyncio.to_thread(self._twilio.messages.create,
-                                                  body=text, from_=self.from_number, to=user_id)
-                return getattr(message, "sid", "")
-            except Exception as exc:
-                # An explicit provider 4xx rejects this request. Transport
-                # timeouts and server failures may have accepted it upstream.
-                status = getattr(exc, "status", None)
-                if isinstance(status, int) and 400 <= status < 500 and status != 408:
-                    raise DeliveryNotSent("Provider rejected the message") from exc
-                raise
-        return await send_chunk("text-0", text, create)
+        # Twilio rejects a body over 1,600 characters, so a long reply goes
+        # out as several messages (counted in UTF-16 units, the stricter
+        # count); each chunk has its own receipt, so a retry never re-sends a
+        # chunk Twilio already accepted. A reply over the limit even in code
+        # points was always rejected when it was saved as one "text-0" body,
+        # so its chunks use "part-N" keys and such a saved row can finish.
+        prefix = "part-" if len(text) > TWILIO_BODY_LIMIT else "text-"
+        result = ""
+        for index, chunk in enumerate(split_utf16(text, TWILIO_BODY_LIMIT)):
+
+            async def create(chunk=chunk):
+                try:
+                    message = await asyncio.to_thread(self._twilio.messages.create,
+                                                      body=chunk, from_=self.from_number, to=user_id)
+                    return getattr(message, "sid", "")
+                except Exception as exc:
+                    # An explicit provider 4xx rejects this request. Transport
+                    # timeouts and server failures may have accepted it upstream.
+                    status = getattr(exc, "status", None)
+                    if isinstance(status, int) and 400 <= status < 500 and status != 408:
+                        raise DeliveryNotSent("Provider rejected the message") from exc
+                    raise
+            result = await send_chunk(f"{prefix}{index}", chunk, create)
+        return result
 
     async def stop(self) -> None:
         if self._uvicorn_server is not None:

@@ -332,7 +332,7 @@ def enroll(
     max_wall_seconds: float | None = None,
     data_scopes: list[str] | None = None,
     expires_days: float | None = None,
-    budget_period: str = "monthly",
+    budget_period: str | None = None,
     enrolled_by: str = "",
 ) -> dict:
     """Enroll one external agent across every plane in a single call.
@@ -340,15 +340,17 @@ def enroll(
     Creates/replaces the managed Agent Trust entry (direction ``inbound`` —
     the agent calls us; we never dial an enrolled foreign runtime), registers
     the agent on the fleet-memory roster when that plane is enabled, and
-    stamps the enrollment metadata sidecar. Returns a summary; raises
-    :class:`ExternalAgentsError` on bad input."""
+    stamps the enrollment metadata sidecar. Re-enrolling keeps every ceiling
+    (tools, risk, dollar and wall caps, data scopes) and the budget period it
+    does not set (``budget_period=None``; a new agent gets "monthly"). Returns
+    a summary; raises :class:`ExternalAgentsError` on bad input."""
     from .agent_trust import AgentTrustError, put_agent
     platform = str(platform or "").strip().lower()
     if platform not in PLATFORMS:
         raise ExternalAgentsError(
             f"unknown platform {platform!r}; expected one of "
             f"{', '.join(sorted(PLATFORMS))}")
-    if budget_period not in BUDGET_PERIODS:
+    if budget_period is not None and budget_period not in BUDGET_PERIODS:
         raise ExternalAgentsError(
             f"unknown budget_period {budget_period!r}; expected one of "
             f"{', '.join(BUDGET_PERIODS)}")
@@ -363,6 +365,7 @@ def enroll(
             if tool_risk:
                 tool_risks[name] = tool_risk
     sidecar = _load_sidecar()
+    _require_period_change_allowed(sidecar.get(agent_id), budget_period)
     if agent_id not in sidecar and len(sidecar) >= _seat_limit():
         raise ExternalAgentsError(
             f"enrollment limit reached ({_seat_limit()} seats); raise "
@@ -400,6 +403,7 @@ def enroll(
     with _sidecar_locked():
         sidecar = _load_sidecar()
         prior = sidecar.get(agent.id, {})
+        _require_period_change_allowed(sidecar.get(agent.id), budget_period)
         # Re-enrollment updates the enrollment fields and keeps everything
         # else the entry carries (execution and mint ledgers, last contact).
         sidecar[agent.id] = {
@@ -415,10 +419,12 @@ def enroll(
             "last_run_at": prior.get("last_run_at"),
             # v1.1 governance state (re-enrollment preserves the meters and
             # NEVER silently lifts a containment — that's the release action).
-            "period": budget_period,
+            "period": budget_period or (prior.get("period", "total") if prior else "monthly"),
             "period_key": prior.get("period_key") or _month_key(),
             "period_spent": float(prior.get("period_spent") or 0.0),
-            "tool_risks": tool_risks,
+            # A re-enrollment that names no tools keeps the allow-list (see
+            # agent_trust.put_agent), so it keeps the tools' ratings too.
+            "tool_risks": tool_risks if tool_names else dict(prior.get("tool_risks") or {}),
             "run_keys": dict(prior.get("run_keys") or {}),
             "denials": list(prior.get("denials") or []),
             "contained": bool(prior.get("contained")),
@@ -431,6 +437,22 @@ def enroll(
                 department=department, enrolled_by=enrolled_by)
     return {"id": agent.id, "platform": platform, "trust": "registered",
             "fleet_memory": fleet, "expires_at": agent.expires_at}
+
+
+def _require_period_change_allowed(prior: dict | None, budget_period: str | None) -> None:
+    """A re-enrollment keeps the budget period unless it names a new one, and
+    may not move a lifetime ("total") cap to a monthly one: the monthly meter
+    starts from what was recorded this month, which would lift the lifetime
+    cap without the audited reset. Moving monthly to total only tightens."""
+    if prior is None or budget_period is None:
+        return
+    if prior.get("period", "total") == "total" and budget_period == "monthly":
+        raise ExternalAgentsError(
+            "This agent's spending limit applies in total, and "
+            "re-enrolling cannot change the period. To switch it to a monthly "
+            "limit, reset its budget (`maverick external-agents reset-budget "
+            "<id>`, or Reset spending on the External agents page): that action "
+            "is recorded and moves the agent to a monthly limit from now on.")
 
 
 def unenroll(agent_id: str) -> bool:
@@ -2936,6 +2958,24 @@ class _ExecutionEnforcement:
         return verdict
 
 
+def _abort_receipt(record_tool_lineage, goal_id, tool, receipt, principal,
+                   digest, verdict) -> None:
+    """Close an open PREPARE receipt with ABORT for a refused execution."""
+    try:
+        record_tool_lineage(
+            goal_id,
+            tool,
+            receipt,
+            actor=principal,
+            transaction_id=digest[:16],
+            phase="abort",
+            result=str(verdict.get("rule") or "denied")[:200],
+            force=True,
+        )
+    except Exception:  # pragma: no cover - no effect already assured
+        log.warning("external_agents: ABORT receipt failed", exc_info=True)
+
+
 def _perform_execution(agent_id: str, connector: str, op: str, path: str,
                        body: dict | None, *, goal_id: int | None,
                        digest: str, tool: str, approved: bool,
@@ -2990,21 +3030,8 @@ def _perform_execution(agent_id: str, connector: str, op: str, path: str,
                     "no effect occurred",
                 )
             if boundary_verdict is not None:
-                try:
-                    record_tool_lineage(
-                        goal_id,
-                        tool,
-                        receipt,
-                        actor=principal,
-                        transaction_id=digest[:16],
-                        phase="abort",
-                        result=str(boundary_verdict.get("rule") or "denied")[:200],
-                        force=True,
-                    )
-                except Exception:  # pragma: no cover - no effect already assured
-                    log.warning(
-                        "external_agents: ABORT receipt failed", exc_info=True
-                    )
+                _abort_receipt(record_tool_lineage, goal_id, tool, receipt, principal,
+                               digest, boundary_verdict)
                 return boundary_verdict
             try:
                 conn = GOVERNED_REST_FACTORIES[connector]()
@@ -3034,6 +3061,8 @@ def _perform_execution(agent_id: str, connector: str, op: str, path: str,
                 return verdict
             boundary_verdict = enforcement.prepare(final_authority)
             if boundary_verdict is not None:
+                _abort_receipt(record_tool_lineage, goal_id, tool, receipt, principal,
+                               digest, boundary_verdict)
                 return enforcement.observed(boundary_verdict, effect_started=False)
             effect_started = True
             if op == "get":

@@ -200,3 +200,23 @@ def test_allow_list_accepts_user_ids_too_and_a_post_runs_once(stub):
     asyncio.run(channel._poll_once())
     assert runs == ["5" * 26]
     assert len(stub.created) == 1
+
+
+def test_reply_text_cannot_notify_the_channel_or_other_people(stub):
+    async def handler(msg):
+        return "ping @channel @all @here and @mallory; mail bob@example.com"
+
+    stub.add("z" * 26, ALICE, DM, "hello")
+    asyncio.run(_started(_channel(handler))._poll_once())
+    [post] = stub.created
+    import re
+
+    from maverick_channels.formatting import neutralize_mentions
+
+    assert not re.search(r"(?<![\w/=])@\w", post["message"])
+    assert post["message"].replace("\u2060", "") == "ping @channel @all @here and @mallory; mail bob@example.com"
+    assert post["message"].endswith("mail bob@example.com")
+    for kept in ("bob@example.com", "https://mastodon.social/@alice/1", "[me](https://x.com/@bob)"):
+        assert neutralize_mentions(kept) == kept
+    for live in ("@channel", "x (@all)", "hi\n@here", "@someone", "cc @user@host"):
+        assert not re.search(r"(?<![\w/=])@\w", neutralize_mentions(live))

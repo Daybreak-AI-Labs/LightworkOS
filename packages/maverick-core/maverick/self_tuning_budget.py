@@ -121,7 +121,8 @@ class SelfTuningBudget:
         margin gives head-room so a typical run of this class isn't strangled;
         the ceiling stops a runaway class from learning an unsafe cap.
         """
-        with self._lock:
+        with self._lock, self._cplock():
+            self._reload_locked()  # other processes record samples too
             c = self._classes.get(task_class)
             if c is None or c.count < self.min_samples:
                 return None

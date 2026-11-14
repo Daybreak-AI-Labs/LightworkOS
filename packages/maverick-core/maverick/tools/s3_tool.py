@@ -27,7 +27,6 @@ Requires::
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
 from . import Tool, as_bool
@@ -56,12 +55,14 @@ _S3_SCHEMA: dict[str, Any] = {
 
 
 def _client():
-    import boto3
-    return boto3.client(
-        "s3",
-        endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or None,
-        region_name=os.environ.get("AWS_REGION") or None,
-    )
+    from botocore.config import Config
+
+    from ._sdk_egress import aws_client
+    # botocore is outside the process egress guard, so the endpoint is checked
+    # before the client exists. Path-style addressing keeps every request on
+    # that checked host; virtual-hosted style would send it to
+    # <bucket>.<endpoint host>, a host the check never saw.
+    return aws_client("s3", "s3", config=Config(s3={"addressing_style": "path"}))
 
 
 def _op_list_buckets() -> str:

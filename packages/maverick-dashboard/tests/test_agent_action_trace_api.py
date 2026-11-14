@@ -72,7 +72,20 @@ def test_lineage_and_impact_come_from_the_workspace_store(client) -> None:
     hits = test_client.get(f"{BASE}/impact", params={"name": "triage", "kind": "skill"}).json()
     assert [(hit["goal_id"], hit["via"]) for hit in hits["items"]] == [(7, "skill")]
     assert "hash" not in hits["items"][0]
+    assert (hits["unreadable_ledgers"], hits["complete"]) == (0, True)
     assert set(permissions) == {"view"}
+
+
+def test_impact_reports_ledgers_it_could_not_read(client) -> None:
+    test_client, _, store = client
+    for goal_id in (7, 8):
+        assert governed_actions.record_tool_lineage(goal_id, "send_email", {}, skills=("triage",), force=True)
+    with (store / "8.ndjson").open("a", encoding="utf-8") as fh:
+        fh.write("not json\n")
+    hits = test_client.get(f"{BASE}/impact", params={"name": "triage", "kind": "skill"}).json()
+    assert [hit["goal_id"] for hit in hits["items"]] == [7]
+    assert (hits["unreadable_ledgers"], hits["complete"]) == (1, False)
+    assert "8.ndjson" not in str(hits)
 
 
 def test_a_broken_lineage_chain_is_reported(client, monkeypatch) -> None:

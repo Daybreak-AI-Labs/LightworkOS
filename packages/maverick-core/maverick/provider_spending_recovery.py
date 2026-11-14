@@ -50,7 +50,7 @@ def _state(provider, period):
     if shared is not None:
         total, receipts = shared.read_provider_cap(period, provider)
     else:
-        ledger_path = cap._ledger_path()
+        ledger_path = cap._deployment_ledger_path()
         if cap._use_indexed_ledger(ledger_path):
             from . import provider_spend_sqlite
             total, receipts = provider_spend_sqlite.read_bucket(
@@ -90,6 +90,13 @@ def status(period=None, *, provider=None, offset=0, limit=100):
     result = {"period": current, "target": target(), "providers": [], "available": True,
               "offset": offset, "limit": limit, "holds_expire_automatically": False, "provider_calls_retried": False}
     try:
+        cap._ledger_path()  # an unreadable earlier per-tenant ledger blocks calls
+    except cap.EarlierTenantLedgerUnreadable as exc:
+        result.update(available=False, providers=[], message=str(exc))
+        names = {}
+    except cap.ProviderAccountingUnavailable:
+        pass  # reported below by the per-provider read
+    try:
         for name, ceiling in names.items():
             total, receipts, _ = _state(name, current)
             state = cap._status(total, receipts, ceiling)
@@ -116,7 +123,7 @@ def status(period=None, *, provider=None, offset=0, limit=100):
     else:
         try:
             from . import provider_spend_sqlite
-            ledger_path = cap._ledger_path()
+            ledger_path = cap._deployment_ledger_path()
             if cap._use_indexed_ledger(ledger_path):
                 result["ledger_health"] = provider_spend_sqlite.health(ledger_path, cap)
             else:
@@ -155,9 +162,9 @@ def diagnostics():
 
 def _local_sha():
     from . import provider_spend_sqlite
-    path = (provider_spend_sqlite.database_path(cap._ledger_path())
-            if provider_spend_sqlite.is_active(cap._ledger_path())
-            else cap._ledger_path())
+    path = (provider_spend_sqlite.database_path(cap._deployment_ledger_path())
+            if provider_spend_sqlite.is_active(cap._deployment_ledger_path())
+            else cap._deployment_ledger_path())
     try:
         file_lock.ensure_private_file(path)
         with path.open("rb") as stream:
@@ -217,6 +224,7 @@ def prepare_hold(provider, period, identity, actual, evidence, *, actor, context
     if row["state"] == "held" and not isolated:
         raise SpendingReviewError("This reservation may still be running. Reconcile it only in isolated desktop recovery mode.")
     actual = cap._amount(actual)
+    _organization_hold(provider, period, identity, actual)
     record = _review({"kind": "hold", "provider": provider, "period": period, "receipt": identity,
                       "actual": actual, "evidence": _evidence(evidence),
                       "expected": digest([total, receipts]), "requires_isolation": row["state"] == "held"}, actor, context, target_binding=binding)
@@ -226,8 +234,8 @@ def prepare_hold(provider, period, identity, actual, evidence, *, actor, context
 def export_accounting():
     if cap._shared_world() is not None:
         raise SpendingReviewError("Use the shared database's verified export and recovery procedure.")
-    with file_lock.cross_process_lock(cap._ledger_path(), strict=True):
-        data = cap._load(cap._ledger_path())
+    with file_lock.cross_process_lock(cap._deployment_ledger_path(), strict=True):
+        data = cap._load(cap._deployment_ledger_path())
         payload = {"schema": "lightwork.provider-accounting-export.v1", "target": target(),
                    "created_at": time.time(), "ledger": data}
         signed = backup._authenticate_for_write(payload, workspace_recovery._key())
@@ -251,7 +259,7 @@ def inspect_import(upload, *, isolated):
         raise SpendingReviewError("Select a complete accounting export no larger than16 MiB.")
     try:
         payload = json.loads(upload)
-        with backup.recovery_scope(cap._ledger_path().parent, current_tenant_id_strict(), workspace_recovery._key()):
+        with backup.recovery_scope(cap._deployment_ledger_path().parent, current_tenant_id_strict(), workspace_recovery._key()):
             backup._verify_authentication(payload, allow_unsigned=False, label="provider accounting export")
         if payload.get("schema") != "lightwork.provider-accounting-export.v1" or payload.get("target") != target():
             raise SpendingReviewError("The accounting export belongs to a different workspace or format.")
@@ -296,6 +304,8 @@ def prepare_repair(upload, totals, evidence, *, actor, context, isolated, receip
     if receipts_complete is not True:
         raise SpendingReviewError("Confirm that final provider receipts cover every call since the export, including later providers and periods. If any cost remains unknown, do not repair from this copy.")
     try:
+        # _ledger_path() also folds earlier per-tenant ledgers; an unreadable
+        # one blocks accounting and is repaired here.
         cap._load(cap._ledger_path())
     except cap.ProviderAccountingUnavailable:
         pass
@@ -331,7 +341,7 @@ def prepare_repair(upload, totals, evidence, *, actor, context, isolated, receip
 
 
 def _apply_repair(record, identifier, intent):
-    path = cap._ledger_path()
+    path = cap._deployment_ledger_path()
     with file_lock.cross_process_lock(path, strict=True):
         if record["target"] != target():
             raise SpendingReviewError("The accounting authority changed. Reload before continuing.")
@@ -346,6 +356,7 @@ def _apply_repair(record, identifier, intent):
         except cap.ProviderAccountingUnavailable:
             already_replaced = False
         if already_replaced:
+            cap.mark_tenant_fold_reviewed(path)
             return
         if current_sha != record["expected"]:
             raise RecordConflict("The failed accounting state changed. Prepare a new repair review.")
@@ -357,6 +368,59 @@ def _apply_repair(record, identifier, intent):
             if hashlib.sha256(file_lock.atomic_read_bytes(failed)).hexdigest() != record["expected"]:
                 raise SpendingReviewError("The preserved failed accounting copy does not match the review.")
         cap._save(path, replacement)
+        # The confirmed totals cover the spend in earlier per-tenant ledgers.
+        cap.mark_tenant_fold_reviewed(path)
+
+
+def _reference(provider, period, receipt):
+    return cap.reservation_reference(cap.Reservation(provider, period, receipt, 0.0, None))
+
+
+def _organization_hold(provider, period, receipt, actual, *, attach=False):
+    """Refuse before any ledger change unless the matching organization hold
+    can be settled with ``actual``.
+
+    A crash between the provider hold and publishing its reference leaves the
+    organization call with no reference; the call key already binds it to this
+    provider and request, so ``attach`` publishes the reference first.
+    """
+    from .tenant import provider_admission as organization
+
+    tenant = current_tenant_id_strict()
+    if not tenant:
+        return
+    key = organization._key(provider, receipt)
+    call = organization._load(tenant, key=key)["calls"].get(key)
+    if call is None:
+        return  # legacy receipt with no organization hold
+    reference = _reference(provider, period, receipt)
+    if (call["state"] == "not_dispatched" or call["reference"] not in (None, reference)
+            or (call["state"] == "settled" and call["actual"] != actual)):
+        raise SpendingReviewError(
+            "The workspace's spending hold for this reservation does not match it. "
+            "Review the workspace's provider holds before reconciling.")
+    if attach and call["reference"] is None:
+        organization.attach_reference((tenant, key), reference)
+
+
+def _settle_organization_hold(record):
+    """Settle the matching organization admission hold with the reviewed cost.
+
+    An unknown zero-projection organization hold counts as unlimited against
+    today's cap, so leaving it would keep provider calls blocked after the
+    receipt itself was reconciled. Repeating this for a settled hold with the
+    same cost is a no-op, so an interrupted apply can be retried.
+    """
+    from .tenant.provider_admission import settle_call
+
+    reference = _reference(record["provider"], record["period"], record["receipt"])
+    try:
+        settle_call(record["provider"], record["receipt"], reference, record["actual"])
+    except ValueError as exc:
+        raise SpendingReviewError(
+            "The provider receipt was reconciled, but the workspace's matching spending "
+            "hold could not be settled with the same cost. Review the workspace's provider "
+            "holds before retrying.") from exc
 
 
 def apply(identifier, *, actor, context, isolated, confirm):
@@ -382,6 +446,10 @@ def apply(identifier, *, actor, context, isolated, confirm):
                             expected_revision=current["revision"], action="apply", actor=actor)
 
     if record["kind"] == "hold":
+        # Before any ledger change, so a hold that cannot be settled leaves
+        # both ledgers as they were.
+        _organization_hold(record["provider"], record["period"], record["receipt"],
+                           record["actual"], attach=True)
         _, _, shared = _state(record["provider"], record["period"])
         def reconcile(total, receipts):
             if record["target"] != target():
@@ -396,7 +464,8 @@ def apply(identifier, *, actor, context, isolated, confirm):
             row.update(state="settled", actual=record["actual"], reconciliation=identifier)
             return total, receipts, None
         cap._mutate(record["provider"], record["period"], reconcile,
-                    path=cap._ledger_path(), shared=shared)
+                    path=cap._deployment_ledger_path(), shared=shared)
+        _settle_organization_hold(record)
     else:
         _apply_repair(record, identifier, intent)
     current = _REVIEWS.get(identifier)

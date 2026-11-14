@@ -48,6 +48,16 @@ def test_set_cell_rejects_csv(tmp_path):
     assert "xlsx-only" in ss._run({"op": "set_cell", "path": str(p), "cell": "A1", "value": 1})
 
 
+def test_set_cell_rejects_a_range_before_opening_a_new_workbook(tmp_path):
+    # A new file is written in the host process, where ws["A1:XFD1048576"]
+    # materialises every cell of the sheet before failing.
+    p = tmp_path / "new.xlsx"
+    for cell in ("A1:XFD1048576", "A:A", "XFD1048577", "A0"):
+        out = ss._run({"op": "set_cell", "path": str(p), "cell": cell, "value": 1})
+        assert out.startswith("ERROR") and "single A1 cell" in out, cell
+    assert not p.exists()
+
+
 def test_errors():
     assert ss._run({"op": "read"}).startswith("ERROR: path is required")
     assert ss._run({"op": "", "path": "x"}).startswith("ERROR: op is required")

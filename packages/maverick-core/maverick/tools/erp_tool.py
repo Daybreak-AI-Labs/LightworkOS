@@ -83,15 +83,20 @@ def _config() -> tuple[str, str, str]:
 
 def _contains_dot_segment(path: str) -> bool:
     """Return true when a path contains dot segments, including encoded variants."""
+    def has_dot(text: str) -> bool:
+        # ``..;`` is ``..`` to Java servlet containers (SAP, Oracle).
+        return any(segment.split(";", 1)[0] in (".", "..")
+                   for segment in text.replace("\\", "/").split("/"))
+
     decoded = path
     for _ in range(8):
-        if any(segment in (".", "..") for segment in decoded.replace("\\", "/").split("/")):
+        if has_dot(decoded):
             return True
         next_decoded = unquote(decoded)
         if next_decoded == decoded:
             return False
         decoded = next_decoded
-    return any(segment in (".", "..") for segment in decoded.replace("\\", "/").split("/"))
+    return has_dot(decoded)
 
 
 def _safe_path(raw: Any) -> str:

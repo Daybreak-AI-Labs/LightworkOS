@@ -27,7 +27,7 @@ import logging
 
 from ..context_compactor import _message_text
 from ..llm import model_for_role
-from . import KEEP_RECENT_TURNS, compact_messages, digest_cutoff
+from . import KEEP_RECENT_TURNS, compact_messages, digest_cutoff, frame_digest_body
 from .requests import request, run_async, run_sync
 
 log = logging.getLogger(__name__)
@@ -122,7 +122,8 @@ def render_digest(triples: list[list[str]], *, turns: int) -> str:
     lines = [f"{s} --{r}--> {o}" for s, r, o in triples]
     return (
         f'<graph-digest turns="{turns}" entities="{len(entities)}" '
-        f'triples="{len(triples)}">\n' + "\n".join(lines) + "\n</graph-digest>"
+        f'triples="{len(triples)}">\n' + frame_digest_body("\n".join(lines))
+        + "\n</graph-digest>"
     )
 
 

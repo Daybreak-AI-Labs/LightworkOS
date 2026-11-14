@@ -46,6 +46,10 @@ def _seed(world, tenant):
             "projects": dict(name="project", description="project description", created_at=1, tenant_id=tenant),
             "fact_history": dict(key="legacy", value="history", valid_from=1, tenant_id=tenant),
             "harness_corpus": dict(kind="pending", key="case", seq=1, row='{"prompt":"private"}', tenant_id=tenant),
+            "webhook_deliveries": dict(id=f"whd_{tenant}", workspace=tenant or "", subscription_id="s",
+                                       event_id="e", event_type="dsar.opened", url="https://a.example.com/h",
+                                       body='{"subject":"private"}', status="pending", created_at=1,
+                                       updated_at=1),
         }
         for table, values in specs.items():
             columns = ",".join(values)
@@ -161,7 +165,7 @@ def test_rls_rebinding_records_only_visible_tenant_and_refuses_unbound_scope(wor
             make_conninfo(world._dsn, user=role, password=password)
         ) as scoped:
             assert scoped.rls_bypass_reason is None
-            assert sum(migration.migrate_postgres_world(scoped).values()) == 21
+            assert sum(migration.migrate_postgres_world(scoped).values()) == len(migration._SEALED_COLUMNS) + 1
             assert scoped.get_fact("legacy") == "fact"
             with scoped._tx() as cur:
                 cur.execute("SELECT tenant_id FROM encryption_migrations")

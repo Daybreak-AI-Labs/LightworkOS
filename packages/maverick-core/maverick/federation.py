@@ -669,6 +669,33 @@ def _shield_block(text: str) -> str | None:
     return scan_block(text)
 
 
+def _screen_result(result: str) -> str:
+    """Screen a delegated goal's result before it is returned to the peer.
+
+    The result was produced here and may quote local tools or files, so when
+    the trust plane is engaged it gets the same egress screening as outbound
+    delegation text: Shield-scanned, then redacted. A block, a detector
+    failure or an unreadable trust state withholds the result (fail closed);
+    disengaged keeps the pass-through behaviour (kernel rule 1).
+    """
+    if not result:
+        return result
+    from . import agent_trust
+    try:
+        enforced, _ = agent_trust.load_trust_state()
+    except Exception:
+        return "result withheld: the agent trust configuration could not be read"
+    if not enforced:
+        return result
+    try:
+        block = _shield_block(result)
+        if block:
+            return f"result withheld: blocked by the safety screen ({block})"
+        return _redact(result)
+    except Exception:
+        return "result withheld: the outbound safety screen is unavailable"
+
+
 # -- signed identity -------------------------------------------------------
 
 def require_signed() -> bool:
@@ -1489,7 +1516,7 @@ class FederationService:
         # a non-existent id, so cross-peer probing can't even confirm existence.
         if getattr(st, "owner", "") != f"federation:{peer.name}":
             return {"status": "unknown", "result": ""}
-        return {"status": str(st.status), "result": str(st.result or "")}
+        return {"status": str(st.status), "result": _screen_result(str(st.result or ""))}
 
     @staticmethod
     def _refuse(reason: str) -> dict[str, Any]:

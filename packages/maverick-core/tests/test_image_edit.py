@@ -237,6 +237,18 @@ def test_local_ops_validate_args(monkeypatch, tmp_path):
     assert "degrees" in t.fn({"op": "rotate", "input_path": "a", "output_path": "b"})
 
 
+def test_local_ops_refuse_oversized_output(monkeypatch, tmp_path):
+    # Resize and crop run in the host process; a 40000x40000 target would
+    # allocate gigabytes before Pillow failed.
+    img = _fake_pil(monkeypatch)
+    (tmp_path / "in.png").write_bytes(b"x")
+    t = image_edit(_SB(tmp_path))
+    big = {"input_path": "in.png", "output_path": "o.png"}
+    assert "at most 8192" in t.fn({"op": "resize", "width": 40000, "height": 40000, **big})
+    assert "at most 8192" in t.fn({"op": "crop", "box": [0, 0, 40000, 10], **big})
+    assert img.calls == []
+
+
 def test_local_output_path_confined(monkeypatch, tmp_path):
     _fake_pil(monkeypatch)
     out = image_edit(_SB(tmp_path)).fn(

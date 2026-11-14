@@ -659,7 +659,11 @@ def import_archive(staged: Path) -> dict:
         identifier = secrets.token_hex(16)
         destination = _store() / (identifier + ".tgz")
         backup._copy_verified_file(staged, destination)
-        return _inspect(identifier)
+        try:
+            return _inspect(identifier)
+        except Exception:
+            destination.unlink(missing_ok=True)  # never keep an uninspected archive
+            raise
 
 
 def download_path(identifier: str) -> Path:
@@ -2085,10 +2089,13 @@ def _reconcile_additional_json_authorities(
                 raise RecoveryError(
                     "A restored identity-governance scheduler record is malformed. Nothing was restored."
                 )
-            attempted = (
-                isinstance(record.get("callback_lease"), dict)
-                or int(record.get("callback_attempts") or 0) > 0
-            )
+            try:
+                attempts = int(record.get("callback_attempts") or 0)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise RecoveryError(
+                    "A restored identity-governance scheduler record is malformed. Nothing was restored."
+                ) from exc
+            attempted = isinstance(record.get("callback_lease"), dict) or attempts > 0
             path.unlink()
             removed.add(relative)
             items.append(_reconciliation_item(

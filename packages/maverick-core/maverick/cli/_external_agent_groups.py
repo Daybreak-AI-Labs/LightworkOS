@@ -80,9 +80,10 @@ def xa_list_cmd() -> None:
 @click.option("--max-dollars", type=float, default=None,
               help="Reported-spend ceiling (see --budget-period).")
 @click.option("--budget-period", type=click.Choice(["monthly", "total"]),
-              default="monthly", show_default=True,
+              default=None,
               help="Whether the spend cap resets each calendar month (UTC) "
-                   "or is a lifetime cap.")
+                   "or is a lifetime cap. When omitted, a new agent gets "
+                   "monthly and a re-enrolled agent keeps its current period.")
 @click.option("--max-wall-seconds", type=float, default=None,
               help="Wall-clock ceiling per run (violations are flagged).")
 @click.option("--data-scope", multiple=True,

@@ -171,6 +171,31 @@ IMAP_CONFIG = {"host": "mail.invalid", "username": "synthetic",
                "allowed_senders": "synthetic@example.invalid"}  # pragma: allowlist secret - synthetic environment-variable name
 
 
+def test_imap_password_name_cannot_point_at_another_process_secret(mailbox, monkeypatch):
+    """A saved source must not send an unrelated process secret (a provider key)
+    to the mail host it names."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "synthetic-provider-key")  # pragma: allowlist secret
+    attempts = []
+    monkeypatch.setattr("imaplib.IMAP4_SSL", lambda *a, **k: attempts.append(a) or mailbox)
+    refused = ("ANTHROPIC_API_KEY", "MAVERICK_DASHBOARD_TOKEN", "DATABASE_PASSWORD",
+               "MAVERICK_EMAIL_PASSWORD", "MAIL_TOKEN", "mail_password", "EMAIL_APP_PASSWORD",
+               "SMTP_PASSWORD", "DATABASE_PASSWORD_MAIL", "OPENAI_API_KEY_MAIL_PASS",
+               "GMAIL_CLIENT_SECRET", "OUTLOOK_CLIENT_SECRET", "MAIL_SECRET_KEY",
+               "AWS_SECRET_ACCESS_KEY_MAIL", "OUTLOOK_SECRET", "IMAPPASSWORD")
+    for name in refused:
+        assert ev.imap_password_name_problem(name), name
+        with pytest.raises(ev.EventSourceError, match="mail password name"):
+            ev.ImapEmailSource().poll({**IMAP_CONFIG, "password_env": name}, "")
+    assert attempts == []
+    # Working mail setups keep their existing variable names.
+    for name in ("MAIL_PASSWORD", "GMAIL_APP_PASSWORD", "SYNTHETIC_IMAP_PASSWORD", "IMAP_PW",
+                 "ICLOUD_APP_PASSWORD", "YAHOO_APP_PASSWORD", "SYNTHETIC_MAIL_PASSWORD"):
+        assert ev.imap_password_name_problem(name) is None, name
+    monkeypatch.setenv("GMAIL_APP_PASSWORD", "synthetic-offline")  # pragma: allowlist secret
+    ev.ImapEmailSource().poll({**IMAP_CONFIG, "password_env": "GMAIL_APP_PASSWORD"}, "")  # pragma: allowlist secret
+    assert len(attempts) == 1
+
+
 def test_imap_requires_sender_verification_and_an_explicit_people_list(mailbox):
     source = ev.ImapEmailSource()
     with pytest.raises(ev.EventSourceError, match="server that checks"):

@@ -401,6 +401,7 @@ class AnthropicClient:
             kw["timeout"] = timeout
         self.client = anthropic.Anthropic(max_retries=0, **kw)
         self.aclient = anthropic.AsyncAnthropic(max_retries=0, **kw)
+        self._timeout_environment = environment
 
     def _build_request(
         self,
@@ -737,6 +738,14 @@ class AnthropicClient:
             raw=resp,
         )
 
+    def _generation_timeout(self, kwargs: dict) -> dict:
+        from .base import generation_timeout
+
+        return generation_timeout(
+            anthropic, kwargs.get("max_tokens"),
+            environment=getattr(self, "_timeout_environment", None),
+        )
+
     def complete(
         self,
         system: str,
@@ -763,7 +772,8 @@ class AnthropicClient:
         endpoint = self.client.beta.messages if is_fast else self.client.messages
         billing_model = model if is_fast else kwargs.get("model")
         if on_delta is None:
-            resp = sync_retry(lambda: endpoint.create(**kwargs))
+            wait = self._generation_timeout(kwargs)
+            resp = sync_retry(lambda: endpoint.create(**kwargs, **wait))
             return self._parse_response(resp, budget, model=billing_model)
 
         # Wrapping the streaming path in sync_retry
@@ -798,7 +808,8 @@ class AnthropicClient:
         endpoint = self.aclient.beta.messages if is_fast else self.aclient.messages
         billing_model = model if is_fast else kwargs.get("model")
         if on_delta is None:
-            resp = await async_retry(lambda: endpoint.create(**kwargs))
+            wait = self._generation_timeout(kwargs)
+            resp = await async_retry(lambda: endpoint.create(**kwargs, **wait))
             return self._parse_response(resp, budget, model=billing_model)
         # Streaming mirrors complete(): no retry wrapper, so a mid-stream
         # failure never replays deltas the caller has already shown.

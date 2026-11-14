@@ -22,6 +22,32 @@ def test_purge_audit_files_disabled():
     assert res["reason"] == "disabled"
 
 
+def test_purge_audit_files_refuses_boolean_days(tmp_path: Path):
+    # `audit_days = true` is int(True) == 1; it must not purge every day but today.
+    from maverick.audit.retention import purge_audit_files
+    audit_dir = tmp_path / "audit"
+    _make_audit_file(audit_dir, "2025-06-01")
+    fixed_now = time.mktime(time.strptime("2025-06-30", "%Y-%m-%d"))
+    for bad in (True, 1.5, "thirty", [30]):
+        with pytest.raises(ValueError, match="whole number of days"):
+            purge_audit_files(days=bad, audit_dir=audit_dir, now=fixed_now)
+    assert (audit_dir / "2025-06-01.ndjson").exists()
+    for good in ("10", 10.0):  # accepted before through int(); still accepted
+        assert purge_audit_files(days=good, audit_dir=audit_dir, dry_run=True, now=fixed_now)["removed"]
+
+
+def test_enforce_validates_every_period_before_deleting(tmp_path: Path):
+    # A bad episodes_days must not surface only after the audit purge ran.
+    from maverick.audit.retention import enforce
+    audit_dir = tmp_path / "audit"
+    _make_audit_file(audit_dir, "2025-06-01")
+    fixed_now = time.mktime(time.strptime("2025-06-30", "%Y-%m-%d"))
+    with pytest.raises(ValueError, match="episodes_days"):
+        enforce(config={"audit_days": 10, "episodes_days": "ninety"},
+                audit_dir=audit_dir, db_path=tmp_path / "w.db", now=fixed_now)
+    assert (audit_dir / "2025-06-01.ndjson").exists()
+
+
 def test_purge_audit_files_no_dir(tmp_path: Path):
     from maverick.audit.retention import purge_audit_files
     res = purge_audit_files(days=30, audit_dir=tmp_path / "nope")

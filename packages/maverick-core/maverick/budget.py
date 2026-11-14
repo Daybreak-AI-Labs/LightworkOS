@@ -168,6 +168,8 @@ def _coerce_count(v: object) -> int:
     if v is None:
         return 0
     try:
+        if isinstance(v, bool):
+            raise TypeError("boolean")
         if isinstance(v, float) and not math.isfinite(v):
             raise ValueError("non-finite")
         n = int(v or 0)
@@ -1105,6 +1107,9 @@ class Budget:
             # duration and reconstruct a compatible baseline on restore.
             state["_elapsed_at_pickle"] = self.elapsed()
             state.pop("_started_monotonic", None)
+            # A hold belongs to an in-flight call in this process; a copy
+            # restored elsewhere has no call that would ever release it.
+            state["_reserved"] = 0.0
         return state
 
     def __setstate__(self, state):

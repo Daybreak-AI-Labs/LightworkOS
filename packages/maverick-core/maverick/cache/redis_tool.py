@@ -51,6 +51,7 @@ log = logging.getLogger(__name__)
 
 DEFAULT_NAMESPACE = "mvk:toolcache"
 DEFAULT_URL = "redis://localhost:6379/0"
+_SOCKET_TIMEOUT_S = 2.0  # a cache miss is cheaper than a stalled tool call
 _SCAN_COUNT = 500  # SCAN hint / DEL chunk size: bounded round-trips on big caches
 
 
@@ -78,7 +79,13 @@ class RedisToolCache:
     def _client(self):
         if self._cli is None:
             import redis  # lazy -- the `redis` extra: python -m pip install -e './packages/maverick-core[redis]'
-            self._cli = redis.Redis.from_url(self.url, decode_responses=True)
+            # Bounded socket waits: cache lookups run under the process-wide
+            # snapshot lock, so an unreachable Redis with redis-py's default
+            # (no timeout) would stall every cacheable tool call.
+            self._cli = redis.Redis.from_url(
+                self.url, decode_responses=True,
+                socket_timeout=_SOCKET_TIMEOUT_S, socket_connect_timeout=_SOCKET_TIMEOUT_S,
+            )
         return self._cli
 
     def _redis_key(self, tool_name: str, args: dict, scope: str = "") -> str:

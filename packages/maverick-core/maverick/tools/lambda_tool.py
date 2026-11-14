@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import time
 from typing import Any
 
@@ -44,12 +43,10 @@ _LAMBDA_SCHEMA: dict[str, Any] = {
 
 
 def _client(service: str):
-    import boto3
-    return boto3.client(
-        service,
-        endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or None,
-        region_name=os.environ.get("AWS_REGION") or None,
-    )
+    from ._sdk_egress import aws_client
+    # botocore is outside the process egress guard; the endpoint is checked
+    # before the client (and its credential resolution) exists.
+    return aws_client("lambda", service)
 
 
 def _op_list_functions(args: dict) -> str:
@@ -71,6 +68,10 @@ def _op_invoke(args: dict) -> str:
     if not name:
         return "ERROR: invoke requires function_name"
     itype = (args.get("invocation_type") or "RequestResponse").strip()
+    if itype.lower() == "dryrun":
+        # Governance treats any casing of DryRun as read-only, so only the
+        # real DryRun type may be sent for it.
+        itype = "DryRun"
     payload = args.get("payload") if isinstance(args.get("payload"), dict) else {}
     if itype != "DryRun" and not as_bool(args.get("confirm")):
         return (

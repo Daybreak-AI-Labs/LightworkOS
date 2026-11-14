@@ -67,6 +67,37 @@ def test_purpose_inventory_pages_past_250_and_omits_revoked_sources(access):
     assert service.available_purposes("tenant-a", "user:employee") == []
 
 
+def test_purpose_inventory_does_not_hold_the_fence_or_recheck_found_purposes(access, monkeypatch):
+    from contextlib import contextmanager
+
+    service, registry, rights, calls = access
+    _dataset(registry, rights, "tenant-a", "first-authorized-source")
+    _dataset(registry, rights, "tenant-a", "second-authorized-source")
+    depth = [0]
+    fenced_pages = []
+    real_fence, real_page = registry.effect_fence, registry.knowledge_candidate_page
+
+    @contextmanager
+    def fence():
+        depth[0] += 1
+        try:
+            with real_fence():
+                yield
+        finally:
+            depth[0] -= 1
+
+    def page(*args, **kwargs):
+        fenced_pages.append(depth[0])
+        return real_page(*args, **kwargs)
+
+    monkeypatch.setattr(registry, "effect_fence", fence)
+    monkeypatch.setattr(registry, "knowledge_candidate_page", page)
+    calls.clear()
+    assert service.available_purposes("tenant-a", "user:employee") == [PURPOSE]
+    assert fenced_pages == [0]
+    assert len(calls) == 1  # the purpose was proven once, not once per source
+
+
 def test_employee_feedback_is_exact_authorized_source_and_owner_only_receipt(access):
     service, registry, rights, _calls = access
     source = _dataset(registry, rights, "tenant-a", "policy-source")

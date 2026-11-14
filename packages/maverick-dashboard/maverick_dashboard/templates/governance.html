@@ -1407,7 +1407,8 @@
       try {
         const body = await get(actions, "/impact?" + new URLSearchParams({name: skill, kind: "skill"}));
         listInto("agent-impact-result", (body.items || []).map(hit => "Task " + hit.goal_id + ": " + human(hit.action) + (hit.ts ? " (" + when(hit.ts) + ")" : "")),
-          body.count ? body.count + " recorded action" + (body.count === 1 ? "" : "s") + " used " + human(skill) + "." : "Nothing recorded has used " + human(skill) + ".");
+          (body.count ? body.count + " recorded action" + (body.count === 1 ? "" : "s") + " used " + human(skill) + "." : "Nothing recorded has used " + human(skill) + ".") +
+          (body.unreadable_ledgers ? " " + body.unreadable_ledgers + " ledger" + (body.unreadable_ledgers === 1 ? "" : "s") + " could not be read; the result may be incomplete." : ""));
       } catch (error) { say("agent-impact-result", error, "search the actions"); }
     });
   }

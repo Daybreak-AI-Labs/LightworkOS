@@ -22,6 +22,7 @@ from . import Tool
 
 _DEFAULT_URL = "http://127.0.0.1:8765"
 _VERSION = 6
+_MAX_RESPONSE_BYTES = 1_000_000
 
 
 def _endpoint() -> str:
@@ -59,7 +60,10 @@ def _invoke(payload: dict) -> tuple[Any, Any]:
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
-        raw = resp.read().decode("utf-8", errors="replace")
+        body = resp.read(_MAX_RESPONSE_BYTES + 1)
+    if len(body) > _MAX_RESPONSE_BYTES:
+        raise ValueError("AnkiConnect response exceeds 1 MB")
+    raw = body.decode("utf-8", errors="replace")
     obj = json.loads(raw)
     return obj.get("result"), obj.get("error")
 

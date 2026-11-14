@@ -36,7 +36,7 @@ from ..context_compactor import _message_text
 from ..file_lock import _retry_permission_error, atomic_read_text
 from ..llm import model_for_role
 from ..paths import data_dir
-from . import KEEP_RECENT_TURNS, digest_cutoff
+from . import KEEP_RECENT_TURNS, _canonical_tool_result_text, digest_cutoff, frame_digest_body
 from .requests import request, run_async, run_sync
 
 log = logging.getLogger(__name__)
@@ -355,7 +355,9 @@ def _own_summary(msg: dict) -> tuple[int, str] | None:
     if not isinstance(content, str):
         return None
     m = _SUMMARY_RE.fullmatch(content)
-    return (int(m.group(1)), m.group(2)) if m else None
+    # The body is framed as data (frame_digest_body); continue from the raw
+    # summary so frames do not nest on every refold.
+    return (int(m.group(1)), _canonical_tool_result_text(m.group(2))) if m else None
 
 
 def _default_key(messages: list[dict]) -> str:
@@ -416,7 +418,7 @@ def _compact_streaming_steps(
     summary_msg = {
         "role": "user",
         "content": (
-            f'<stream-summary turns="{turns}">\n{summary}\n</stream-summary>'
+            f'<stream-summary turns="{turns}">\n{frame_digest_body(summary)}\n</stream-summary>'
         ),
     }
     return [messages[0], summary_msg, *messages[cutoff:]]

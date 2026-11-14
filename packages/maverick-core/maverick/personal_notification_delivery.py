@@ -482,12 +482,20 @@ def remove_link_history(principal: str, link: dict) -> None:
 
 def remove_personal_history(principal: str) -> None:
     folder = _folder(principal)
+    failure = None
     if folder.is_dir():
         for path in folder.glob("*.enc"):
             if re.fullmatch(r"[0-9a-f]{32}\.enc", path.name):
-                with cross_process_lock(path):
-                    DeliveryStore(principal, {}, path=path)._read()
-                    path.unlink(missing_ok=True)
+                # One unreadable ledger must not stop erasure of the others;
+                # it is kept, and the failure is still reported at the end.
+                try:
+                    with cross_process_lock(path):
+                        DeliveryStore(principal, {}, path=path)._read()
+                        path.unlink(missing_ok=True)
+                except Exception as exc:  # noqa: BLE001 -- re-raised below
+                    failure = failure or exc
+    if failure is not None:
+        raise failure
 
 
 def personal_history_inventory(principal: str) -> dict:

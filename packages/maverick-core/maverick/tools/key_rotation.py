@@ -101,8 +101,11 @@ def _plan(args: dict[str, Any]) -> str:
         lines.append("  - none due")
     else:
         for i, (kid, _age, _off, status) in enumerate(needs):
-            rotate_on = today + timedelta(days=i * stagger)
-            retire_on = rotate_on + timedelta(days=overlap)
+            try:
+                rotate_on = today + timedelta(days=i * stagger)
+                retire_on = rotate_on + timedelta(days=overlap)
+            except OverflowError:
+                return "ERROR: stagger_days/overlap_days push the schedule past the year 9999"
             lines.append(
                 f"  - {kid}: rotate {rotate_on.isoformat()}, "
                 f"retire old {retire_on.isoformat()} ({status})"

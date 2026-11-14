@@ -16,10 +16,21 @@ def _content_name(data: bytes, filename: str = "zz.txt") -> str:
 
 
 def _fake_boto3(monkeypatch):
+    import types
+
     client = MagicMock(name="s3 client")
+    # The endpoint is checked against the egress policy before the client is
+    # used, so the fake reports one, and botocore's Config is faked with it.
+    client.meta.endpoint_url = "https://s3.us-east-1.amazonaws.com"
     boto3 = MagicMock(name="boto3")
     boto3.client.return_value = client
     monkeypatch.setitem(sys.modules, "boto3", boto3)
+    botocore = types.ModuleType("botocore")
+    botocore_config = types.ModuleType("botocore.config")
+    botocore_config.Config = lambda **k: k
+    botocore.config = botocore_config
+    monkeypatch.setitem(sys.modules, "botocore", botocore)
+    monkeypatch.setitem(sys.modules, "botocore.config", botocore_config)
     return client
 
 

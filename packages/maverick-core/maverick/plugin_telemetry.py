@@ -15,12 +15,12 @@ from __future__ import annotations
 
 import inspect
 import json
-import os
 import threading
 import time
 from pathlib import Path
 
 from .config import env_flag
+from .file_lock import atomic_write_text, cross_process_lock
 
 _lock = threading.Lock()
 
@@ -52,21 +52,17 @@ def record(tool_name: str, dist: str | None = None, *, path: Path | None = None)
     """Count one invocation of a plugin tool. Best-effort, never raises."""
     try:
         p = path or telemetry_path()
-        with _lock:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        # Several processes may count at once: serialize across processes and
+        # write through a unique temp file so no tick or tally is lost.
+        with _lock, cross_process_lock(p):
             data = _load(p)
             entry = data.setdefault(str(tool_name), {"calls": 0, "dist": dist or ""})
             entry["calls"] = int(entry.get("calls", 0)) + 1
             entry["last_used"] = time.time()
             if dist:
                 entry["dist"] = dist
-            p.parent.mkdir(parents=True, exist_ok=True)
-            tmp = p.with_suffix(".tmp")
-            tmp.write_text(json.dumps(data, sort_keys=True), encoding="utf-8")
-            os.replace(tmp, p)
-            try:
-                os.chmod(p, 0o600)
-            except OSError:
-                pass
+            atomic_write_text(p, json.dumps(data, sort_keys=True), mode=0o600)
     except Exception:  # telemetry must never break a tool call
         pass
 

@@ -10,6 +10,7 @@ def _install_fake_boto3_sns(monkeypatch, *, topics=None, message_id="m-1"):
     boto3 = types.ModuleType("boto3")
 
     class _Client:
+        meta = types.SimpleNamespace(endpoint_url="https://sns.us-east-1.amazonaws.com")
         def list_topics(self):
             return {"Topics": topics or []}
 

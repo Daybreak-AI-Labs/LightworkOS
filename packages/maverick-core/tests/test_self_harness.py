@@ -991,6 +991,19 @@ def test_retire_keeps_refreshed_line(monkeypatch, store):
     assert "kept line" in sh.recall_addendum("M", store)
 
 
+def test_strict_retire_on_pre_metadata_store_retires_nothing_but_refuses_corruption(store):
+    import time
+    # A store from before line metadata existed: lines have no age, so none retire.
+    sh._write_addenda({"M": sh._ADDENDUM_HEADER + "\n- legacy line"}, store)
+    assert not sh._meta_path(store).exists()
+    assert sh.retire_stale(older_than_days=1, now=time.time() + 86400, path=store,
+                           strict=True) == 0
+    assert "legacy line" in sh.load_addenda(store)["M"]
+    sh._meta_path(store).write_text("{not json", encoding="utf-8")
+    with pytest.raises(ValueError):
+        sh.retire_stale(older_than_days=1, path=store, strict=True)
+
+
 # ---------- conflict detection (advisory) ----------
 
 def test_find_conflicts_flags_opposite_polarity_same_topic():
@@ -1221,6 +1234,41 @@ def test_risk_limited_profile_requires_fresh_adequate_calibration(monkeypatch):
         "n_incorrect": 25, "discrimination": 0.7, "brier": 0.1,
         "ts": 1.0})
     assert runner._fresh_calibration_receipt(st, now=100_000.0) is False
+
+
+def test_initial_gate_reads_the_checker_receipt_the_dashboard_writes(
+    monkeypatch, tmp_path,
+):
+    """A narrow checker assessment writes the checker receipt, not the
+    general learning-freeze verdict; the initial gate for that evaluator must
+    read it: adequate admits the run, inadequate does not."""
+    from maverick import calibration
+    from maverick import self_improvement_runner as runner
+
+    general, receipt = tmp_path / "verdict.json", tmp_path / "receipt.json"
+    monkeypatch.setattr(calibration, "_verdict_path", lambda: general)
+    monkeypatch.setattr(calibration, "_checker_verdict_path", lambda: receipt)
+    # Each cycle rewrites its own receipt from too few samples; that must not
+    # shut the initial gate.
+    monkeypatch.setattr(calibration, "_risk_verdict_path", lambda: tmp_path / "cycle.json")
+    (tmp_path / "cycle.json").write_text('{"adequate": false}', encoding="utf-8")
+    monkeypatch.setattr(calibration, "_settings", lambda: {
+        **calibration._DEFAULTS, "min_samples": 20, "min_discrimination": 0.15})
+    samples = tmp_path / "cal.ndjson"
+    for _ in range(15):
+        calibration.record_sample(0.9, True, source="s", evaluator_id="judge:A", path=samples)
+        calibration.record_sample(0.1, False, source="s", evaluator_id="judge:A", path=samples)
+    calibration.run_assessment(samples_path=samples, evaluator_id="judge:A",
+                               sources={"s"}, min_samples=20)
+    st = {"risk_limited": True, "calibration_max_age_hours": 24.0}
+    assert not general.exists()
+    assert runner._fresh_calibration_receipt(st, general_evaluator_id="judge:A") is True
+    assert runner._fresh_calibration_receipt(st, general_evaluator_id="judge:B") is False
+    for _ in range(150):                                  # now overconfident when wrong
+        calibration.record_sample(0.9, False, source="s", evaluator_id="judge:A", path=samples)
+    calibration.run_assessment(samples_path=samples, evaluator_id="judge:A",
+                               sources={"s"}, min_samples=20)
+    assert runner._fresh_calibration_receipt(st, general_evaluator_id="judge:A") is False
 
 
 def test_risk_profile_resolver_failures_never_fall_back_to_development(monkeypatch):

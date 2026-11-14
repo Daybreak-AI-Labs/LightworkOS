@@ -327,3 +327,15 @@ def test_remove_reports_its_own_failure_not_a_containment_outage(monkeypatch):
     assert removed.exit_code == 1
     assert "registry write denied" in removed.output
     assert "containment authority" not in removed.output
+
+
+def test_reenroll_without_budget_period_keeps_a_lifetime_cap():
+    """Omitting --budget-period on re-enrollment keeps the current period; an
+    explicit change to monthly is refused and names the audited reset."""
+    assert _enroll_cli("--budget-period", "total").exit_code == 0
+    r = _enroll_cli("--allow-tool", "search")
+    assert r.exit_code == 0, r.output
+    assert xa.roster()[0]["period"] == "total"
+    r = _enroll_cli("--budget-period", "monthly")
+    assert r.exit_code == 1 and "reset-budget" in r.output
+    assert xa.roster()[0]["period"] == "total"

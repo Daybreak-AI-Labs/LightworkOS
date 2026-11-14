@@ -64,7 +64,11 @@ def parse_report(text: str) -> set[str]:
         for prefix in _PREFIXES:
             if line.startswith(prefix):
                 node = line[len(prefix):].split(" - ", 1)[0].strip()
-                if "::" in node:
+                # A collection error names only its file ("ERROR path.py"); it
+                # hides every test in that file, so it counts as a failure too.
+                collection_error = (prefix == "ERROR " and node.endswith(".py")
+                                    and " " not in node)
+                if "::" in node or collection_error:
                     out.add(node)
                 break
     return out

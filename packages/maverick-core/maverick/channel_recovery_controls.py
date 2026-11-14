@@ -120,7 +120,9 @@ def descriptor(marker, item, path, **kwargs):
     elif kind == "imessage_position":
         result["minimum_position"] = str(record["last_rowid"])
     elif kind == "notification_position":
-        result["minimum_position"] = str(record.get("candidate") or record["watermark"])
+        position = record.get("candidate") or record.get("watermark")
+        _require(position not in (None, ""), "This source has no saved position. Keep recovery open.")
+        result["minimum_position"] = str(position)
     hold = record["restore_hold"]
     if item.get("state") == "resolved":
         result["status"] = "recorded"
@@ -171,8 +173,9 @@ def readback(marker, item, answers, expected_token, path, **kwargs):
         result["chunks"] = copy.deepcopy(chunks)
     elif kind in {"imessage_position", "notification_position"}:
         position = answers["position"]
-        limit = 4096 if kind == "imessage_position" else 40
-        _require(isinstance(position, str) and re.fullmatch(r"[0-9]{1," + str(limit) + "}", position),
+        limit = 19 if kind == "imessage_position" else 40  # a row id is a signed 64-bit SQLite INTEGER
+        _require(isinstance(position, str) and re.fullmatch(r"[0-9]{1," + str(limit) + "}", position)
+                 and (kind != "imessage_position" or int(position) <= 2**63 - 1),
                  "Enter the complete current position shown by the source.")
         result["checkpoint"] = ({"last_rowid": int(position)} if kind == "imessage_position" else {"watermark": position})
     elif kind == "poll_time":

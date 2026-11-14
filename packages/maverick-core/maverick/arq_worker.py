@@ -35,6 +35,23 @@ async def _run_queued_goal(
     return await asyncio.to_thread(run_queued_goal, payload)
 
 
+# ARQ cancels a job after ``job_timeout`` (300 s by default) but cannot stop
+# the thread running the goal, so a long goal would be marked failed and its
+# slot freed while it kept running. The job deadline therefore follows the
+# worker's wall-clock ceiling, with a grace period for the goal's own wind-down.
+_JOB_TIMEOUT_GRACE_SECONDS = 600.0
+_UNBOUNDED_JOB_TIMEOUT_SECONDS = 30 * 86400.0
+
+
+def _job_timeout_seconds() -> float:
+    """ARQ job deadline: the worker wall ceiling plus grace, or 30 days
+    when no wall ceiling is configured."""
+    _dollars, wall, _depth = _configured_worker_ceilings()
+    if not wall:
+        return _UNBOUNDED_JOB_TIMEOUT_SECONDS
+    return wall + _JOB_TIMEOUT_GRACE_SECONDS
+
+
 async def _preflight(_ctx: dict[str, Any]) -> None:
     """Refuse to poll jobs unless fleet authentication and replay state exist."""
     _require_network_signing_key()
@@ -51,6 +68,7 @@ class WorkerSettings:
             name=JOB_NAME,
             keep_result=0,
             max_tries=1,
+            timeout=_job_timeout_seconds(),
         )
     ]
     redis_settings = _configured_arq_redis_settings(RedisSettings)
@@ -61,3 +79,4 @@ class WorkerSettings:
     max_tries = 1
     retry_jobs = False
     keep_result = 0
+    job_timeout = _job_timeout_seconds()

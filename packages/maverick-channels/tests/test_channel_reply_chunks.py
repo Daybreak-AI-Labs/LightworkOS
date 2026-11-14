@@ -80,3 +80,94 @@ def test_long_reply_retries_only_rejected_chunk(provider, monkeypatch, tmp_path)
         assert all(payload["record"]["reply"]["parent"] == {"uri": "at://parent", "cid": "parent-cid"} for payload in calls)
     else:
         assert all(payload["root_id"] == "parent" and payload["channel_id"] == "room" for payload in calls)
+
+
+@pytest.mark.parametrize("provider", ["sms", "whatsapp"])
+def test_twilio_long_reply_is_chunked_and_retries_only_rejected_chunk(provider, monkeypatch, tmp_path):
+    from maverick_channels import sms, whatsapp
+
+    monkeypatch.setattr(world_model, "DEFAULT_DB", tmp_path / "world.db")
+    module, cls = (sms, sms.SMSChannel) if provider == "sms" else (whatsapp, whatsapp.WhatsAppChannel)
+    calls = []
+
+    class Rejected(Exception):
+        status = 400
+
+    class Messages:
+        def create(self, *, body, from_, to):
+            calls.append(body)
+            if len(calls) == 2:
+                raise Rejected("body too long")
+            return type("Message", (), {"sid": f"SM{len(calls)}"})()
+
+    handler = AsyncMock()
+    channel = cls.__new__(cls)
+    channel.handler = handler
+    channel.from_number = "+15550000000"
+    channel._twilio = type("Client", (), {"messages": Messages()})()
+    limit = module.TWILIO_BODY_LIMIT
+    text = "a" * (limit * 2) + "tail"
+    handler.return_value = Reply(text)
+    message = IncomingMessage(user_id="+15551111111", text="question", channel=provider, message_id="SMevent")
+    journal = DeliveryJournal()
+
+    async def send(reply):
+        return await channel.send(message.user_id, reply.text)
+
+    async def run():
+        args = dict(external_id="SMevent", account="account", authorize=lambda: True, send=send, journal=journal)
+        first = await channel.process_message(message, **args)
+        assert first["delivery"] == "retryable"
+        second = await channel.process_message(message, **args)
+        assert second["delivery"] == "delivered"
+
+    asyncio.run(run())
+    handler.assert_awaited_once()
+    assert len(calls) == 4
+    successful = [body for index, body in enumerate(calls) if index != 1]
+    assert all(len(body) <= limit for body in successful)
+    assert "".join(successful) == text
+
+
+@pytest.mark.parametrize("provider", ["sms", "whatsapp"])
+def test_twilio_reply_saved_as_one_rejected_body_still_finishes(provider, monkeypatch, tmp_path):
+    """A long reply saved under the old single ``text-0`` key (rejected by
+    Twilio) is sent in chunks on the next pass instead of being refused as a
+    changed chunk; chunks are counted in UTF-16 units."""
+    from maverick_channels import sms, whatsapp
+    from maverick_channels.delivery import DeliveryNotSent, send_chunk
+
+    monkeypatch.setattr(world_model, "DEFAULT_DB", tmp_path / "world.db")
+    cls = sms.SMSChannel if provider == "sms" else whatsapp.WhatsAppChannel
+    bodies = []
+
+    class Messages:
+        def create(self, *, body, from_, to):
+            bodies.append(body)
+            return type("Message", (), {"sid": f"SM{len(bodies)}"})()
+
+    handler = AsyncMock()
+    channel = cls.__new__(cls)
+    channel.handler, channel.from_number = handler, "+15550000000"
+    channel._twilio = type("Client", (), {"messages": Messages()})()
+    text = "\U0001F600" * 1000 + "a" * 700  # 1,700 characters, 2,700 UTF-16 units
+    handler.return_value = Reply(text)
+    message = IncomingMessage(user_id="+15551111111", text="question", channel=provider, message_id="SMold")
+    journal = DeliveryJournal()
+
+    async def old_style(reply):
+        async def rejected():
+            raise DeliveryNotSent("Provider rejected the message")
+        return await send_chunk("text-0", reply.text, rejected)
+
+    async def send(reply):
+        return await channel.send(message.user_id, reply.text)
+
+    async def run():
+        args = dict(external_id="SMold", account="account", authorize=lambda: True, journal=journal)
+        assert (await channel.process_message(message, send=old_style, **args))["delivery"] == "retryable"
+        assert (await channel.process_message(message, send=send, **args))["delivery"] == "delivered"
+
+    asyncio.run(run())
+    assert "".join(bodies) == text
+    assert all(len(body.encode("utf-16-le")) // 2 <= 1600 for body in bodies)

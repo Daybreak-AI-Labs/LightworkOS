@@ -169,6 +169,11 @@ class PluginCA:
         ensure_private_directory(self.dir)
         with cross_process_lock(self._crl_path):
             crl = self._load_crl()
+            # Re-signing an edited CRL would launder dropped serials into a
+            # valid one; only extend a CRL whose signature still verifies.
+            if not _verify(self.root_pub(), crl["sig"],
+                           _canonical({"revoked": crl["revoked"]})):
+                raise RuntimeError("CRL signature invalid; refusing to re-sign it")
             crl["revoked"][serial] = {"at": time.time(), "reason": reason}
             self._write_crl(crl)
 

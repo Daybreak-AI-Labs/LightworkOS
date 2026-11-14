@@ -707,6 +707,48 @@ def _email_body_text(msg) -> str:
     return ""
 
 
+_MAIL_WORDS = frozenset({
+    "IMAP", "MAIL", "EMAIL", "GMAIL", "OUTLOOK", "MAILBOX", "INBOX", "ICLOUD",
+    "YAHOO", "FASTMAIL", "PROTON", "ZOHO", "EXCHANGE", "O365", "OFFICE365"})
+_PASSWORD_WORDS = frozenset({"PASSWORD", "PASS", "PW", "PWD"})
+_CREDENTIAL_WORDS = frozenset({
+    "KEY", "TOKEN", "API", "CLIENT", "ACCESS", "SECRET", "DSN", "DATABASE",
+    "DB", "AWS", "OPENAI", "ANTHROPIC"})
+# Password variables the product reads for its own connections (mailer.py and
+# tools/email_tool.py send and read mail as EMAIL_USER / EMAIL_APP_PASSWORD;
+# the rest are channel, connector and store credentials).
+_PRODUCT_PASSWORD_NAMES = frozenset({
+    "EMAIL_APP_PASSWORD", "BITBUCKET_APP_PASSWORD", "BLUESKY_PASSWORD",
+    "CALDAV_PASSWORD", "ES_PASSWORD", "IRC_PASSWORD", "REDIS_PASSWORD",
+    "TEAMS_APP_PASSWORD"})
+
+
+def imap_password_name_problem(name: object) -> str | None:
+    """Why ``name`` cannot be an IMAP source's ``password_env``, or None.
+
+    The value is sent to the host the source names, so the name, read as its
+    underscore-separated words, must say it is a mailbox password: a password
+    word and a mail word or mail provider, and no word of another kind of
+    credential. The product's own credential variables are refused. Checked
+    when a source is saved and on every poll."""
+    text = str(name or "")
+    words = set(text.split("_"))
+    if (not re.fullmatch(r"[A-Z0-9_]{1,128}", text)
+            or not words & _PASSWORD_WORDS
+            or not words & _MAIL_WORDS
+            or words & _CREDENTIAL_WORDS
+            or text.startswith("MAVERICK")
+            or text in _PRODUCT_PASSWORD_NAMES):
+        return ("The mail password name must name this inbox's own password "
+                "variable: upper-case words joined by underscores, including a "
+                "password word (PASSWORD, PASS, PW or PWD) and a mail word or "
+                "provider (such as IMAP, MAIL, GMAIL, OUTLOOK or ICLOUD), for "
+                "example IMAP_PASSWORD. Keys, tokens, client secrets and the "
+                "product's own credentials, such as EMAIL_APP_PASSWORD, cannot "
+                "be used.")
+    return None
+
+
 def _fetch_imap(config: dict, since_uid: int | None,
                 uidvalidity: str | None = None) -> tuple[list[dict], int, str]:
     """Fetch messages with UID > ``since_uid`` from an IMAP mailbox. Returns
@@ -725,6 +767,9 @@ def _fetch_imap(config: dict, since_uid: int | None,
     pw_env = str((config or {}).get("password_env") or "").strip()
     if not (host and user and pw_env):
         raise EventSourceError("imap_email source needs 'host', 'username', 'password_env'")
+    problem = imap_password_name_problem(pw_env)
+    if problem:
+        raise EventSourceError(problem)
     trusted_server = str((config or {}).get("trusted_authserv_id") or "").strip()
     if not valid_trusted_mail_server(trusted_server):
         raise EventSourceError("Choose the server that checks incoming mail before this automation can start work")

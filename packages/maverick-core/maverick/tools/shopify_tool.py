@@ -278,19 +278,22 @@ def _op_refund_create(order_id: int, amount_cents: int, currency: str,
                       confirm: bool) -> str:
     if not order_id:
         return "ERROR: refund_create requires order_id"
-    amount = f"{amount_cents/100:.2f}" if amount_cents else "FULL"
+    if amount_cents <= 0:
+        # A refund with no transactions moves no money, so a "full" refund
+        # without an amount would notify the customer and refund nothing.
+        return ("ERROR: refund_create requires a positive amount_cents; "
+                "no refund was created")
+    amount = f"{amount_cents/100:.2f}"
     if not confirm:
         return (
             f"DRY RUN: would refund {amount} {currency or '?'} on order {order_id}. "
             "Re-run with confirm=true."
         )
     store, c = _client()
-    body: dict = {"refund": {"notify": True}}
-    if amount_cents:
-        body["refund"]["transactions"] = [{
-            "amount": amount, "kind": "refund",
-            "currency": (currency or "USD").upper(),
-        }]
+    body: dict = {"refund": {"notify": True, "transactions": [{
+        "amount": amount, "kind": "refund",
+        "currency": (currency or "USD").upper(),
+    }]}}
     with c:
         r = c.post(
             f"https://{store}/admin/api/{_API_VERSION}/orders/{order_id}/refunds.json",

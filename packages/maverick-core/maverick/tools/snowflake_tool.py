@@ -109,6 +109,11 @@ def _op_query(statement: str, ctx: dict, limit: int, confirm: bool) -> str:
         return f"ERROR: query ({r.status_code}): {(r.text or '')[:500]}"
     if r.status_code >= 400:
         return f"ERROR: query ({r.status_code}): {data.get('message', data)}"
+    if r.status_code == 202:
+        # Still executing after the server-side wait: there is no result yet,
+        # and a write may still complete.
+        return (f"ERROR: statement {data.get('statementHandle', '?')} is still running; "
+                "no result was returned and its outcome is unknown")
     meta = (data.get("resultSetMetaData") or {})
     cols = [c.get("name") for c in (meta.get("rowType") or [])]
     rows = data.get("data") or []

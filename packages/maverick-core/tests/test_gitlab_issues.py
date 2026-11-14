@@ -133,3 +133,10 @@ def test_cross_host_redirect_strips_private_token(monkeypatch):
     finally:
         sink.shutdown()
         redir.shutdown()
+
+
+def test_redirect_keeps_token_only_on_same_host_upgrade():
+    from maverick.tools.gitlab_issues import _redirect_keeps_credentials as keeps
+    assert keeps("http://gl.local/api/v4/x", "https://gl.local/api/v4/x")
+    assert not keeps("https://gl.local/a", "http://gl.local/a")
+    assert not keeps("https://gl.local/a", "https://gl.local:8443/a")

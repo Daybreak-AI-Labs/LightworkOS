@@ -705,7 +705,12 @@ def install_skill(
         p = Path(source).expanduser()
         if not p.exists():
             raise ValueError(f"local file {source!r} does not exist")
-        content = p.read_text(encoding="utf-8")
+        with p.open("rb") as stream:  # same cap as a download (/dev/zero never ends)
+            raw = stream.read(MAX_SKILL_DOWNLOAD_BYTES + 1)
+        if len(raw) > MAX_SKILL_DOWNLOAD_BYTES:
+            raise ValueError(f"local file {source!r} is larger than {MAX_SKILL_DOWNLOAD_BYTES} bytes")
+        # Text mode used to normalize Windows and old-Mac line endings.
+        content = raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
 
     if expected_sha256 is not None and _text_sha256(content) != expected_sha256:
         raise ValueError(

@@ -151,11 +151,18 @@ class ContextualBandit:
             raw = json.loads(atomic_read_text(Path(self.path)))
         except (OSError, ValueError):
             return
-        for ctx, arms in (raw or {}).items():
-            self._table[ctx] = {
-                a: _Arm(pulls=int(d.get("pulls", 0)), total_reward=float(d.get("total_reward", 0.0)))
-                for a, d in arms.items()
-            }
+        if not isinstance(raw, dict):
+            return  # a corrupt state file starts the bandit fresh, like unreadable JSON
+        for ctx, arms in raw.items():
+            if not isinstance(arms, dict):
+                continue
+            try:
+                self._table[ctx] = {
+                    a: _Arm(pulls=int(d.get("pulls", 0)), total_reward=float(d.get("total_reward", 0.0)))
+                    for a, d in arms.items()
+                }
+            except (AttributeError, TypeError, ValueError):
+                continue
 
     def _save(self) -> None:
         if self.path is None:

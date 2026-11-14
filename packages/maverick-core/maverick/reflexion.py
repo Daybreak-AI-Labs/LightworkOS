@@ -431,9 +431,12 @@ def clear(path: Path | None = None) -> bool:
     if not path.exists():
         return False
     try:
-        path.unlink()
+        # Same locks as record(): an append racing the unlink would otherwise
+        # land on the removed inode and be lost.
+        with _lock, cross_process_lock(path, strict=True):
+            path.unlink()
         return True
-    except OSError:
+    except (OSError, RuntimeError):
         return False
 
 

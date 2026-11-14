@@ -1167,6 +1167,24 @@ def test_a_single_approver_decision_is_announced_after_commit_and_a_refusal_is_n
     assert told == []
 
 
+def test_a_single_approver_decision_locks_the_row_before_reading_the_outbox(monkeypatch):
+    # The audited path locks the approval FOR UPDATE and inserts the outbox row
+    # without touching the approval. A legacy UPDATE that waited on that lock
+    # keeps its old snapshot, so the outbox must be read AFTER taking the lock.
+    from maverick.world_model import Approval
+
+    appr = Approval(id=5, action="payment", risk="high", scope=None, detail=None, provenance=None,
+                    status="pending", requested_at=1.0, decided_at=None, approvals_required=1)
+    audited = _ScriptedCursor([(1,)])  # the outbox row committed while we waited
+    world, told = _approval_world(monkeypatch, audited)
+    monkeypatch.setattr(world, "get_approval", lambda approval_id: appr)
+    assert world.decide_approval(5, "denied", decided_by="system:consent") is False
+    statements = [sql for sql, _ in audited.calls]
+    assert "FOR UPDATE" in statements[0] and "approval_audit_outbox" in statements[1]
+    assert not any(sql.startswith("UPDATE approvals") for sql in statements)
+    assert told == []
+
+
 def _delivery_answers():
     event = ("evt", 7, "approved", "user:dana", "approved", 10.0, None)
     return [event, None, ("approved", "user:dana", 10.0)]  # event, nothing else pending, the final vote

@@ -187,6 +187,11 @@ def dispatch_stdio_message(server, method, request_id, params, is_notification) 
     from .protocol import METHOD_HANDLERS
 
     handler_name = METHOD_HANDLERS.get(method) if isinstance(method, str) else None
+    if handler_name is not None and is_notification:
+        # A request method sent without an id is owed no reply, so running it
+        # (e.g. tools/call) would cause side effects whose result nobody
+        # receives. Ignore it, as the HTTP transport does.
+        return
     if handler_name is not None:
         server._send_result(request_id, getattr(server, handler_name)(params))
         if method == "tools/call":

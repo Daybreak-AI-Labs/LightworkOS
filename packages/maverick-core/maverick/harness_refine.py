@@ -170,7 +170,7 @@ def _load_store() -> dict:
     decisions = data.get("decisions", {})
     if (not isinstance(decisions, dict) or len(decisions) > _MAX_DECISIONS
             or any(not re.fullmatch(r"[0-9a-f]{32}", key) or not isinstance(row, dict)
-                   or row.get("status") not in {"reserved", "confirmed"}
+                   or row.get("status") not in {"reserved", "confirmed", "aborted"}
                    for key, row in decisions.items())):
         raise RefineError("the original instruction decision records are unreadable; refusing")
     store["decisions"] = decisions
@@ -691,6 +691,23 @@ def _reserve_decision(store, record, operation_id, actor, context, revision, *, 
     _save_store(store)
 
 
+def _abort_decision(store, operation_id):
+    """Close a reservation whose change was undone, so a new attempt is allowed.
+
+    Used only after the snapshot restore succeeded: nothing of the request
+    remains in force. If saving fails, the reservation stays held (the prior,
+    fail-closed state) and reconciliation is still required.
+    """
+    if operation_id is None or operation_id not in store["decisions"]:
+        return
+    store["decisions"][operation_id].update(
+        status="aborted", completed_at=time.time(), reason="audit_unavailable")
+    try:
+        _save_store(store)
+    except Exception:
+        log.warning("harness_refine: could not record the aborted decision", exc_info=True)
+
+
 def _confirm_decision(store, operation_id, completed_at):
     if operation_id is not None:
         store["decisions"][operation_id].update(
@@ -920,18 +937,32 @@ def apply(proposal_id: str, *, applied_by: str = "",
             raise RefineError(
                 f"applying refinement {proposal_id!r} failed ({e}); the "
                 f"harness was restored from snapshot {snapshot}") from e
+        # Record the change before it is published as applied: a refinement
+        # that cannot be recorded is rolled back, as propose() discards one.
+        from .audit import EventKind, audit_event
+        try:
+            audit_event(EventKind.HARNESS_REFINEMENT_APPLIED, agent="harness_refine",
+                        goal_id=record.get("goal_id"), proposal=record["id"],
+                        target=record["target"], name=record["name"],
+                        digest=record["digest"], snapshot=snapshot,
+                        approval_id=record.get("approval_id"),
+                        applied_by=entry["applied_by"])
+        except Exception as e:
+            try:
+                _restore_snapshot(snapshot)
+            except Exception as restore_error:
+                raise RefineError(
+                    f"refinement {proposal_id!r} could not be recorded in the "
+                    f"audit log ({e}) AND the restore from snapshot {snapshot} "
+                    f"failed ({restore_error}); the harness may still carry the "
+                    "change — restore it by hand before running again") from e
+            _abort_decision(store, operation_id)
+            raise  # restored: the change is not in force
         record.update(status="applied", applied_at=entry["applied_at"],
                       applied_by=entry["applied_by"], snapshot=snapshot)
         _confirm_decision(store, operation_id, entry["applied_at"])
         _save_store(store)
 
-    from .audit import EventKind, audit_event
-    audit_event(EventKind.HARNESS_REFINEMENT_APPLIED, agent="harness_refine",
-                goal_id=record.get("goal_id"), proposal=record["id"],
-                target=record["target"], name=record["name"],
-                digest=record["digest"], snapshot=snapshot,
-                approval_id=record.get("approval_id"),
-                applied_by=record["applied_by"])
     # Learned-state verification covers a self-refinement like any other
     # learned write — the same row shape the dream loop emits.
     audit_event(EventKind.LEARNING_UPDATE, agent="harness_refine",

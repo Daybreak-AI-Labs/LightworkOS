@@ -259,7 +259,7 @@ def attach_reference(handle, reference):
     if current_tenant_id_strict() != tenant:
         raise ValueError('organization attempt tenant changed')
     with _locked(tenant):
-        data = _load(tenant)
+        data = _load(tenant, key=key)  # an earlier day's hold may be archived
         call = data['calls'][key]
         if call['reference'] not in (None, reference):
             raise ValueError('organization provider receipt changed')
@@ -273,7 +273,7 @@ def cancel_before_dispatch(handle):
         return
     tenant, key = handle
     with _locked(tenant):
-        data = _load(tenant)
+        data = _load(tenant, key=key)  # an earlier day's hold may be archived
         call = data['calls'][key]
         if call['state'] != 'held':
             raise ValueError('cannot cancel a dispatched organization attempt')

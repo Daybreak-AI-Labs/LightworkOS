@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 from maverick.governed_tools import (
+    _is_governable_op_tool,
     _is_governed_write,
     apply_governed_connectors,
     governance_enabled,
@@ -562,6 +563,19 @@ class TestEnterpriseBoundary:
     def test_reviewed_mutating_inventory_is_governed(self, name, operation):
         tool = _op_tool(name, [operation], [], confirm=name != "replicate")
         assert _is_governed_write(tool, {"op": operation}) is True
+
+    def test_serial_and_ros_device_commands_are_governed(self):
+        # Both command physical hardware and carry no confirm field, so their
+        # mutating ops reached devices with no human step.
+        from maverick.tools.ros_tool import ros_tool
+        from maverick.tools.serial_tool import serial_tool
+
+        serial, ros = serial_tool(), ros_tool()
+        for tool, op in ((serial, "write"), (serial, "query"),
+                         (ros, "publish"), (ros, "call_service")):
+            assert _is_governable_op_tool(tool) and _is_governed_write(tool, {"op": op}), op
+        for op in ("list_ports", "read"):
+            assert _is_governed_write(serial, {"op": op}) is False, op
 
     def test_confirm_schema_unknown_operation_fails_closed(self, monkeypatch):
         monkeypatch.delenv("MAVERICK_GOVERNED_APPROVER", raising=False)

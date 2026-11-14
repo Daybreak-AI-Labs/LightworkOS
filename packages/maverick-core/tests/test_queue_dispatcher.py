@@ -1027,6 +1027,34 @@ def test_packaged_arq_worker_has_matching_async_named_function(monkeypatch):
         sys.modules.pop("maverick.arq_worker", None)
 
 
+def test_packaged_arq_worker_job_timeout_follows_the_wall_ceiling(monkeypatch):
+    """ARQ's 300 s default would cancel a long goal's job while its thread
+    kept running; the deadline must cover the worker wall ceiling."""
+    captured = {}
+
+    def func(coroutine, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(coroutine=coroutine, **kwargs)
+
+    connections_module = ModuleType("arq.connections")
+    connections_module.RedisSettings = _FakeRedisSettings
+    worker_module = ModuleType("arq.worker")
+    worker_module.func = func
+    monkeypatch.setitem(sys.modules, "arq", ModuleType("arq"))
+    monkeypatch.setitem(sys.modules, "arq.connections", connections_module)
+    monkeypatch.setitem(sys.modules, "arq.worker", worker_module)
+    monkeypatch.setattr(qd, "_queue_redis_config", dict)
+    monkeypatch.delenv("MAVERICK_QUEUE_REDIS_DSN", raising=False)
+    monkeypatch.setenv("MAVERICK_QUEUE_WORKER_MAX_WALL_SECONDS", "7200")
+    sys.modules.pop("maverick.arq_worker", None)
+    try:
+        packaged = importlib.import_module("maverick.arq_worker")
+        assert captured["timeout"] > 7200
+        assert packaged.WorkerSettings.job_timeout == captured["timeout"]
+    finally:
+        sys.modules.pop("maverick.arq_worker", None)
+
+
 def test_real_arq_worker_constructs_with_safe_named_function(monkeypatch):
     arq_worker = pytest.importorskip("arq.worker")
     monkeypatch.setattr(qd, "_queue_redis_config", dict)

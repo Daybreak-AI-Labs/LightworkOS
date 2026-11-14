@@ -36,6 +36,21 @@ class RatingsLedger:
         except (OSError, ValueError):
             return {}
 
+    def _load_for_update(self) -> dict:
+        """The ledger to add to. A file that does not parse or is not a JSON
+        object is moved aside (``<name>.corrupt-<time>``) instead of being
+        overwritten by the next rating."""
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {}
+        except ValueError:  # includes UnicodeDecodeError
+            data = None
+        if isinstance(data, dict):
+            return data
+        self.path.replace(self.path.with_name(f"{self.path.name}.corrupt-{int(time.time())}"))
+        return {}
+
     def _cplock(self):
         from ..file_lock import cross_process_lock
         return cross_process_lock(self.path)
@@ -57,7 +72,7 @@ class RatingsLedger:
         # In-process lock + cross-process flock: two processes both load the
         # ledger and the second save clobbers the first's rating otherwise.
         with self._lock, self._cplock():
-            data = self._load()
+            data = self._load_for_update()
             data.setdefault(kind, {})[name] = entry
             self._save(data)
         return entry

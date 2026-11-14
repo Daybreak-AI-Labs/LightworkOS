@@ -80,6 +80,78 @@ def test_admin_erase_and_count_when_enabled(tmp_path, monkeypatch):
 
 # ---- seed corpus -------------------------------------------------------------
 
+def test_admin_erases_a_store_left_after_knowledge_was_disabled(tmp_path, monkeypatch):
+    # Turning knowledge off leaves the populated store on disk; erasure and the
+    # residual count must still look at it instead of reporting zero.
+    cfg = tmp_path / "config.toml"
+    body = ("embedder = \"deterministic\"\nstore = \"sqlite\"\n"
+            f'path = {json.dumps(str(tmp_path / "knowledge.db"))}\n')
+    cfg.write_text("[knowledge]\nenable = true\n" + body, encoding="utf-8")
+    monkeypatch.setenv("MAVERICK_CONFIG", str(cfg))
+    kb = knowledge_admin.open_knowledge_base()
+    kb.ingest_text("itgrc", "Dana's private document.", source="dana.txt",
+                   subject=knowledge_admin.subject_key("slack", "UDANA"))
+    kb.close()
+    cfg.write_text("[knowledge]\nenable = false\n" + body, encoding="utf-8")
+    assert knowledge_admin.open_knowledge_base() is None
+    assert knowledge_admin.count_subject("slack", "UDANA") == 1
+    assert knowledge_admin.erase_subject("slack", "UDANA") == {"itgrc": 1}
+    assert knowledge_admin.count_subject("slack", "UDANA") == 0
+
+
+def test_disabled_admin_neither_raises_nor_runs_ddl_when_no_store_exists(tmp_path, monkeypatch):
+    import sys
+    import types
+
+    from maverick import config
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "home"))
+    # Tenant install, knowledge off, explicit path outside the workspace and
+    # no file: nothing to look at, so no confinement error.
+    monkeypatch.setattr(config, "get_knowledge", lambda: {
+        "enable": False, "store": "sqlite", "path": str(tmp_path / "shared.db")})
+    assert knowledge_admin.count_subject("slack", "U1", tenant="customer-a") == 0
+    assert knowledge_admin.erase_subject("slack", "U1", tenant="customer-a") == {}
+
+    # pgvector off on a Postgres install (MAVERICK_PG_DSN is the world-model
+    # database) where knowledge was never used: read-only probe, no DDL.
+    sqls = []
+
+    class _Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return None
+
+        def execute(self, sql, params=None):
+            sqls.append(sql)
+            return self
+
+        def fetchone(self):
+            return (None,)  # to_regclass: the knowledge table does not exist
+
+    class _Conn:
+        def execute(self, sql, params=None):
+            sqls.append(sql)
+
+        def cursor(self):
+            return _Cursor()
+
+        def close(self):
+            sqls.append("close")
+
+    monkeypatch.setitem(sys.modules, "psycopg",
+                        types.SimpleNamespace(connect=lambda *a, **k: _Conn()))
+    monkeypatch.setenv("MAVERICK_PG_DSN", "postgresql://world-model")
+    monkeypatch.setattr(config, "get_knowledge", lambda: {
+        "enable": False, "store": "pgvector", "path": "", "dim": 4})
+    assert knowledge_admin.count_subject("slack", "U1") == 0
+    assert knowledge_admin.erase_subject("slack", "U1") == {}
+    assert sqls and all(sql.startswith("SELECT") or sql == "close" for sql in sqls)
+    assert not any("CREATE" in sql or "ALTER" in sql for sql in sqls)
+
+
 def test_available_corpora_shape():
     corpora = available_corpora()
     assert corpora, "starter corpora must ship"

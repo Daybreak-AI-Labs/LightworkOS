@@ -284,3 +284,33 @@ def test_bogus_period_falls_back_to_day(monkeypatch, tmp_path):
     cfg.write_text('[budget]\nprovider_caps_period = "week"\n', encoding="utf-8")
     monkeypatch.setenv("MAVERICK_CONFIG", str(cfg))
     assert pcc.period_from_config() == "day"
+
+
+def test_ledger_is_deployment_wide_under_a_tenant(monkeypatch, tmp_path):
+    """The cap is a deployment-wide ceiling (the Postgres table is not tenant
+    scoped either): N tenants on SQLite must not get N times the cap."""
+    from maverick.paths import tenant_scope
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "home"))
+    shared = pcc._ledger_path()
+    with tenant_scope(tenant="acme"):
+        assert pcc._ledger_path() == shared
+
+
+def test_spend_in_an_old_per_tenant_ledger_still_counts_after_upgrade(monkeypatch, tmp_path):
+    """Before d7b87fe each tenant had its own ledger. Spend already recorded
+    there is folded into the deployment ledger once, so a tenant at its cap
+    stays refused, and a second process does not count it again."""
+    from maverick.paths import tenant_scope
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(pcc, "_admission_cap", lambda name: 1.0)
+    legacy = tmp_path / "home" / "tenants" / "acme" / "provider_spend.json"
+    pcc.record("openai", 1.5, path=legacy)                   # the pre-upgrade layout
+    pcc._FOLDED.clear()
+    with tenant_scope(tenant="acme"):
+        status = pcc.check("openai")
+    assert status.allowed is False and status.spent == 1.5
+    pcc._FOLDED.clear()                                       # another process starts
+    assert pcc.check("openai").spent == 1.5
+    assert legacy.exists()                                    # left in place

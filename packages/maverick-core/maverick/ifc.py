@@ -459,12 +459,40 @@ def _labels_path(key: str):
     return data_dir("immune", "ifc-labels", f"{key}.jsonl")
 
 
+UNREADABLE_LABELS = "ifc:earlier-labels-unreadable"
+
+
 def _load(key: str) -> set[str]:
-    from .immune import _ledger
+    """Labels earlier runs persisted under ``key``. A torn line (a crash during
+    an append) loses that line only; a file that cannot be read at all yields a
+    label of its own, so the run is gated as if it held the data."""
     try:
-        return {str(r["label"]) for r in _ledger.read(_labels_path(key)) if "label" in r}
-    except (OSError, ValueError):
+        raw = _labels_path(key).read_bytes()
+    except FileNotFoundError:
         return set()
+    except OSError:
+        return {UNREADABLE_LABELS}
+    labels: set[str] = set()
+    for line in raw.splitlines():
+        try:  # per line: a crash mid-character spoils that line only
+            row = json.loads(line.decode("utf-8"))
+        except ValueError:
+            continue
+        if isinstance(row, dict) and "label" in row:
+            labels.add(str(row["label"]))
+    return labels
+
+
+def describe_labels(labels: Iterable[str]) -> str:
+    """Labels for a person: the restored-but-unreadable marker becomes a
+    plain sentence instead of an internal name."""
+    labels = set(labels)
+    named = ", ".join(sorted(labels - {UNREADABLE_LABELS}))
+    if UNREADABLE_LABELS not in labels:
+        return named
+    note = ("earlier runs of this task (Earlier information-flow labels for this "
+            "task could not be read)")
+    return f"{named} and {note}" if named else note
 
 
 def _persist(keys: tuple[str, ...], labels: Iterable[str]) -> None:

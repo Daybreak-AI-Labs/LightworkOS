@@ -345,10 +345,18 @@ def _lock_maps(lock: object) -> tuple[dict[str, str], dict[str, int]] | None:
 
 
 def load_lock() -> dict | None:
+    """The committed lock; None only when it does not exist.
+
+    A lock that exists but cannot be read or parsed is returned as a
+    non-empty object with no checksums, so it reports an invalid schema
+    (which ``--regen`` refuses) instead of looking absent.
+    """
     try:
         return json.loads(anchor_lock_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except FileNotFoundError:
         return None
+    except (OSError, ValueError):
+        return {"unreadable": True}
 
 
 def write_lock(anchors: Mapping[str, Anchor] | None = None) -> Path:

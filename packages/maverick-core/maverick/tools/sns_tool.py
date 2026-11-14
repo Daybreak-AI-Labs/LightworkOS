@@ -12,7 +12,6 @@ ops:
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
 from . import Tool, as_bool
@@ -41,12 +40,10 @@ _SNS_SCHEMA: dict[str, Any] = {
 
 
 def _client():
-    import boto3
-    return boto3.client(
-        "sns",
-        endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or None,
-        region_name=os.environ.get("AWS_REGION") or None,
-    )
+    from ._sdk_egress import aws_client
+    # botocore is outside the process egress guard; the endpoint is checked
+    # before the client (and its credential resolution) exists.
+    return aws_client("sns", "sns")
 
 
 def _op_topics(_args: dict) -> str:

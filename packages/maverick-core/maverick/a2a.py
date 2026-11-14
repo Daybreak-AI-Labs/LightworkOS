@@ -21,6 +21,7 @@ wired onto ``/a2a/v1`` by ``mount()`` below.
 """
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import os
 from typing import Any
@@ -343,9 +344,11 @@ async def _a2a_dispatch_unary(engine, _RpcError, JSONResponse, method, params,
         if method == "message/send":
             result = await engine.send(params, principal)
         elif method == "tasks/get":
-            result = engine.get(params, principal)
+            # Loading a task takes a blocking cross-process file lock; keep it
+            # off the event loop (to_thread carries the request context).
+            result = await asyncio.to_thread(engine.get, params, principal)
         elif method == "tasks/cancel":
-            result = engine.cancel(params, principal)
+            result = await asyncio.to_thread(engine.cancel, params, principal)
         elif method == "tasks/pushNotificationConfig/set":
             result = engine.set_push_config(params, principal)
         elif method == "tasks/pushNotificationConfig/get":

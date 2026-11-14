@@ -655,3 +655,22 @@ def test_store_reopens_after_history_and_sweep(tmp_path: Path) -> None:
     assert reopened.verify_integrity()["valid"] is True
     with pytest.raises(UnifiedAuditIntegrityError):
         UnifiedAuditStore(tmp_path / "tenant-a.sqlite3", tenant_id="tenant-b", clock=clock)
+
+
+def test_a_slow_signed_sink_keeps_the_source_lease_alive(tmp_path: Path) -> None:
+    # Each signed append re-reads the audit directory; on a large directory one
+    # page can outlast the lease. The worker renews it while appending, so the
+    # page still commits instead of failing with a lost lease on every run.
+    clock = Clock()
+
+    class SlowSink(FakeSignedSink):
+        def append(self, event) -> ProjectionReceipt:
+            clock.now += 50
+            return super().append(event)
+
+    source = FakeSource("tenant-a", "ai_governance", count=4)
+    projector, _store_value, _sink = _projector(
+        tmp_path, clock, sources=(source,), sink=SlowSink(),
+    )
+    result = projector.run_source("ai_governance", worker_id="scheduler:slow")
+    assert result.outcome == "committed" and result.projected == 4

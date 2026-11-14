@@ -777,6 +777,11 @@ def build_app(server) -> FastAPI:
         params = body.get("params", {}) or {}
         if not isinstance(params, dict):
             raise HTTPException(status_code=400, detail="params must be a JSON object")
+        if is_notification and method in METHOD_HANDLERS:
+            # A request method sent as a notification is owed no reply, so
+            # running it (e.g. tools/call) would cause side effects whose
+            # result nobody receives. Acknowledge and ignore it.
+            return Response(status_code=204)
         accepts_sse = "text/event-stream" in (request.headers.get("accept") or "")
         supplied_sid = _supplied_session_id(request, caller_scope)
         resource_sid = _resource_session_id(

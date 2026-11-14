@@ -586,3 +586,8 @@ def test_anthropic_endpoint_requires_its_own_fixed_upstream():
             {"model": "claude-test", "max_tokens": 8, "messages": []},
             caller_token="gw-secret",
         )
+
+
+def test_completion_reservation_covers_every_cap_key_sent():
+    body = {"max_completion_tokens": 10, "max_tokens": 5000}
+    assert gw._completion_cap(body, provider="openai", require_cap=True, default_cap=100)[1] == 5000

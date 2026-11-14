@@ -332,14 +332,13 @@ async def hindsight(request: Request, body: HindsightIn) -> dict:
     def _run():
         report = _h.replay(world, before=dreaming.snapshots_dir() / chosen, after=None,
                            limit=100, status=None if body.all_tasks else "blocked")
-        if body.record:
-            _h.write_ledger(report, before_label=chosen)
-        return report
-    report = await run_in_threadpool(_run)
+        recorded = bool(body.record) and _h.write_ledger(report, before_label=chosen) is True
+        return report, recorded
+    report, recorded = await run_in_threadpool(_run)
     return {"compared_with": snapshot_label(chosen), "tasks": report.n_goals,
             "covered_before": report.covered_before, "covered_now": report.covered_now,
             "gained": list(report.gained)[:50], "lost": list(report.regressed)[:50],
-            "recorded": bool(body.record)}
+            "recorded": recorded}
 
 
 @router.post("/learning/prove")

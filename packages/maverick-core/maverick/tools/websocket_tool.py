@@ -11,6 +11,7 @@ testable without it. Requires ``python -m pip install -e './packages/maverick-co
 from __future__ import annotations
 
 import asyncio
+import math
 from typing import Any
 from urllib.parse import urlparse
 
@@ -90,8 +91,9 @@ def _preflight_egress(url: str, parsed: Any) -> str | None:
         if not egress_allowed("websocket", parsed.hostname or ""):
             return (f"ERROR: egress policy blocks websocket from reaching "
                     f"{parsed.hostname!r} (see [egress] / [sandbox.tool.websocket]).")
-    except Exception:  # pragma: no cover -- policy never breaks a connection
-        pass
+    except Exception as exc:  # an unreadable policy must not allow every host
+        return (f"ERROR: the egress policy could not be evaluated ({type(exc).__name__}); "
+                "no connection was opened")
     return None
 
 
@@ -114,7 +116,12 @@ async def _run(args: dict[str, Any]) -> str:
                 "Run: python -m pip install -e './packages/maverick-core[websocket]'")
     except Exception:
         return "ERROR: installed websockets cannot enforce the connection safety policy"
-    timeout = float(args.get("timeout") or 30)
+    try:
+        timeout = float(args.get("timeout") or 30)
+    except (TypeError, ValueError):
+        timeout = math.nan
+    if not math.isfinite(timeout) or timeout <= 0:
+        return "ERROR: timeout must be a positive, finite number of seconds"
     want_recv = args.get("recv", True)
     # SSRF: _check_url resolved the host once to validate it, but
     # websockets.connect(url) would re-resolve the SAME name independently --

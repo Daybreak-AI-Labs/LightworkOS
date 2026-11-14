@@ -14,7 +14,6 @@ ops:
 from __future__ import annotations
 
 import logging
-import os
 from decimal import Decimal
 from typing import Any
 
@@ -45,12 +44,10 @@ _DDB_SCHEMA: dict[str, Any] = {
 
 
 def _client():
-    import boto3
-    return boto3.resource(
-        "dynamodb",
-        endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or None,
-        region_name=os.environ.get("AWS_REGION") or None,
-    )
+    from ._sdk_egress import aws_client
+    # botocore is outside the process egress guard; the endpoint is checked
+    # before the resource (and its credential resolution) exists.
+    return aws_client("dynamodb", "dynamodb", resource=True)
 
 
 def _serialize(obj: Any, _depth: int = 0) -> Any:
@@ -159,10 +156,10 @@ def _op_query(args: dict) -> str:
     vals = args.get("expression_values") if isinstance(
         args.get("expression_values"), dict) else {}
     limit = max(1, min(int(args.get("limit") or 25), 1000))
-    items = _paginate(_client().Table(table).query, {
-        "KeyConditionExpression": expr,
-        "ExpressionAttributeValues": vals,
-    }, limit)
+    kwargs: dict = {"KeyConditionExpression": expr}
+    if vals:  # DynamoDB rejects an empty ExpressionAttributeValues map
+        kwargs["ExpressionAttributeValues"] = vals
+    items = _paginate(_client().Table(table).query, kwargs, limit)
     if not items:
         return "no items"
     return f"count={len(items)}\n" + _dump(items)
@@ -179,7 +176,8 @@ def _op_scan(args: dict) -> str:
         kwargs["FilterExpression"] = f
         vals = args.get("expression_values") if isinstance(
             args.get("expression_values"), dict) else {}
-        kwargs["ExpressionAttributeValues"] = vals
+        if vals:  # DynamoDB rejects an empty ExpressionAttributeValues map
+            kwargs["ExpressionAttributeValues"] = vals
     items = _paginate(_client().Table(table).scan, kwargs, limit)
     if not items:
         return "no items"

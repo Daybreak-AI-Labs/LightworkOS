@@ -568,7 +568,8 @@ class ExternalAgentIn(BaseModel):
     # "monthly" resets the spend meter each calendar month (UTC); "total"
     # is a lifetime cap. allow_tools entries may carry the operator's risk
     # rating as "name:risk", which floors whatever the agent declares.
-    budget_period: str = Field(default="monthly", pattern="^(monthly|total)$")
+    # None keeps the agent's current period on re-enrollment ("monthly" for a new one).
+    budget_period: str | None = Field(default=None, pattern="^(monthly|total)$")
 
 
 class ExternalCredentialIn(BaseModel):

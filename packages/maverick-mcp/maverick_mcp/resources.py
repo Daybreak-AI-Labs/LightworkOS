@@ -1,6 +1,7 @@
 """Authorized MCP resource projection, independent of transport routing."""
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
@@ -127,8 +128,9 @@ class ResourceService:
         else:
             raise _ProtocolError(-32602, f"unknown resource path: {uri}")
 
-        from maverick.fastjson import dumps_compact
-        text = dumps_compact(data)
+        # ensure_ascii=False so the Shield scan sees the real characters, not
+        # \uXXXX escapes that defeat its normalization.
+        text = json.dumps(data, separators=(",", ":"), default=str, ensure_ascii=False)
         required = self.dependencies.shield_required()
         try:
             from maverick.secrets import scrub

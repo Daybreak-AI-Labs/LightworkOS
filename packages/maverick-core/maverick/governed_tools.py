@@ -112,7 +112,11 @@ _BESPOKE_WRITE_OPS: dict[str, frozenset[str]] = {
     # makes the tool governable and prevents a paid remote effect from falling
     # outside the transaction boundary.
     "replicate": frozenset({"cancel", "run"}),
+    # Device commands: serial writes and ROS publishes/service calls act on
+    # physical hardware, so they need the same human step.
+    "ros": frozenset({"call_service", "publish"}),
     "sentry": frozenset({"resolve"}),
+    "serial": frozenset({"query", "write"}),
     "ses": frozenset({"send"}),
     "shopify": frozenset({"refund_create"}),
     "sns": frozenset({"publish", "sms", "subscribe", "unsubscribe"}),
