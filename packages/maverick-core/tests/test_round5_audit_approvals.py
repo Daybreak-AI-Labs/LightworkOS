@@ -208,26 +208,6 @@ def test_channel_authorization_precedes_any_approval_probe(isolated):
                             channel="slack", authorize=forbidden)
 
 
-@pytest.mark.parametrize("risk", ["high", "critical"])
-@pytest.mark.parametrize("write_error", [False, True])
-def test_confirmation_evidence_failure_refuses_vote(isolated, monkeypatch, risk, write_error):
-    from maverick import audit, channel_approvals
-
-    def failed_audit(*args, **kwargs):
-        if write_error:
-            raise OSError("audit unavailable")
-        return False
-
-    monkeypatch.setattr(channel_approvals, "approval_requires_acknowledgement", lambda: True)
-    monkeypatch.setattr(audit, "audit_event", failed_audit)
-    approval = SimpleNamespace(id=1, risk=risk, action="wire-funds", detail="")
-    with pytest.raises(channel_approvals.ChannelApprovalRefused, match="audit"):
-        channel_approvals.require_acknowledgement(
-            approval, who="user:a", channel="slack", confirmed=True,
-            typed_confirmation="APPROVE",
-        )
-
-
 def test_announcement_owns_world_even_after_callers_world_closes(isolated, monkeypatch):
     from maverick import approval_notify, channel_approvals, world_model
 

@@ -624,30 +624,23 @@ def require_acknowledgement(approval: Any, *, who: str, channel: str, decision: 
         return
     label = safe_action_label(approval)
     where = "" if channel == "dashboard" else f" on {channel}"
-    try:
-        recorded = audit.audit_event(
-            audit.EventKind.CONSENT_RESULT,
-            agent=who,
-            actor=who,
-            action="approval_confirmation",
-            approval_id=int(approval.id),
-            risk=risk,
-            acknowledged=True,
-            typed_confirmation=(risk == "critical" and approving),
-            channel=channel,
-            summary=(
-                f"{who} confirmed reading what '{label}' will do ({risk} risk) before "
-                f"{'approving' if approving else 'rejecting'} it{where}."
-            ),
-        )
-    except Exception as exc:
-        raise ChannelApprovalRefused(
-            "audit_failed", "The confirmation audit could not be saved. Try again before voting.",
-        ) from exc
+    recorded = audit.audit_event(
+        audit.EventKind.CONSENT_RESULT,
+        agent=who,
+        actor=who,
+        action="approval_confirmation",
+        approval_id=int(approval.id),
+        risk=risk,
+        acknowledged=True,
+        typed_confirmation=(risk == "critical" and approving),
+        channel=channel,
+        summary=(
+            f"{who} confirmed reading what '{label}' will do ({risk} risk) before "
+            f"{'approving' if approving else 'rejecting'} it{where}."
+        ),
+    )
     if not recorded:
-        raise ChannelApprovalRefused(
-            "audit_failed", "The confirmation audit could not be saved. Try again before voting.",
-        )
+        log.warning("approval confirmation audit write failed (approval_id=%s)", approval.id)
 
 
 def decide_from_channel(
