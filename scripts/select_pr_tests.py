@@ -70,7 +70,10 @@ FULL_SUITE_PREFIXES = (
     "scripts/",
     "benchmarks/",
 )
-FULL_SUITE_FILES = frozenset({"conftest.py", "pyproject.toml", "release-cohort.toml"})
+FULL_SUITE_FILES = frozenset({
+    "conftest.py", "pyproject.toml", "release-cohort.toml", "pytest.ini", "setup.cfg", "sitecustomize.py",
+    "packages/maverick-core/pyproject.toml",
+})
 
 #: Import package name per distribution directory.
 PACKAGE_MODULES = {

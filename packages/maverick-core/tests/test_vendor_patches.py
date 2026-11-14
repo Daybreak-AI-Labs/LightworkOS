@@ -56,8 +56,14 @@ def test_frontend_override_removal_is_rejected(source_copy):
     assert any("does not use the reviewed local source" in error for error in checker.validate(source_copy))
 
 
+def _clean_results(root):
+    from scripts.check_osv_results import EXPECTED_LOCKFILES
+    return [{"source": {"path": str(root / name), "type": "lockfile"}, "packages": []}
+            for name in sorted(EXPECTED_LOCKFILES)]
+
+
 def _glib_report(root, *, advisory="RUSTSEC-2024-0429", lockfile="apps/desktop/src-tauri/Cargo.lock"):
-    return {"results": [{"source": {"path": str(root / lockfile), "type": "lockfile"}, "packages": [{
+    return {"results": [*_clean_results(root), {"source": {"path": str(root / lockfile), "type": "lockfile"}, "packages": [{
         "package": {"name": "glib", "version": "0.18.5", "ecosystem": "crates.io"},
         "vulnerabilities": [{"id": advisory}],
     }]}]}
@@ -96,7 +102,7 @@ def test_osv_cannot_clear_registry_glib(source_copy):
     assert errors and not repaired
 
 
-@pytest.mark.parametrize("report,status", [({}, 0), ({"results": []}, 1), ({"results": []}, 2)])
+@pytest.mark.parametrize("report,status", [({}, 0), ({"results": []}, 0), ({"results": []}, 1), ({"results": []}, 2)])
 def test_osv_missing_evidence_and_scanner_errors_fail_closed(report, status):
     from scripts.check_osv_results import evaluate
     errors, repaired, _accepted = evaluate(report, status)
@@ -105,10 +111,31 @@ def test_osv_missing_evidence_and_scanner_errors_fail_closed(report, status):
 
 def _npm_report(root, *, name="tar", version="6.2.1", advisory="GHSA-23hp-3jrh-7fpw",
                 lockfile="apps/mobile-companion/package-lock.json"):
-    return {"results": [{"source": {"path": str(root / lockfile), "type": "lockfile"}, "packages": [{
+    return {"results": [*_clean_results(root), {"source": {"path": str(root / lockfile), "type": "lockfile"}, "packages": [{
         "package": {"name": name, "version": version, "ecosystem": "npm"},
         "vulnerabilities": [{"id": advisory}],
     }]}]}
+
+
+def test_osv_requires_every_scanned_lockfile_including_clean_and_copied_inputs(tmp_path):
+    from scripts.check_osv_results import evaluate
+    report = {"results": _clean_results(ROOT)}
+    assert evaluate(report, 0)[0] == []
+    omitted = report["results"].pop()
+    report["results"].append(report["results"][0])  # A duplicate cannot replace another source.
+    assert evaluate(report, 0)[0] == [
+        f"OSV report missing lockfile coverage: {Path(omitted['source']['path']).relative_to(ROOT)}",
+    ]
+    report = {"results": _clean_results(ROOT)}
+    python_lock, docs_lock = tmp_path / "requirements.txt", tmp_path / "docs/requirements.txt"
+    for result in report["results"]:
+        source = result["source"]
+        if source["path"] == str(ROOT / "requirements/ci.txt"):
+            source["path"] = str(python_lock)
+        elif source["path"] == str(ROOT / "requirements/docs.txt"):
+            source["path"] = str(docs_lock)
+    assert len(evaluate(report, 0)[0]) == 2  # Matching basenames do not establish provenance.
+    assert evaluate(report, 0, python_lock=python_lock, docs_lock=docs_lock)[0] == []
 
 
 def test_osv_records_a_reviewed_unfixable_advisory_as_accepted_not_repaired():

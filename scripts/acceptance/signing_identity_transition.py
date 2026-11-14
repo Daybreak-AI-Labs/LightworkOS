@@ -53,8 +53,10 @@ def exercise(cli: Path):
         document = root / "policy.json"
         document.write_text(bridge.canonical(policy), encoding="utf-8", newline="")
         envelope = {"policy": policy, "from_signature": sign(document, "old"), "to_signature": sign(document, "new")}
-        assert bridge.verify(envelope, installed=policy["from"]) == envelope
-        assert verify_minisign(artifact, keys["old"][1], artifact_signature) == policy["new_installer_sha256"]
+        if not (bridge.verify(envelope, installed=policy["from"]) == envelope):
+            raise RuntimeError("Identity bridge verification failed")
+        if not (verify_minisign(artifact, keys["old"][1], artifact_signature) == policy["new_installer_sha256"]):
+            raise RuntimeError("Artifact signature verification failed")
         unrelated = {**envelope, "to_signature": sign(document, "unrelated")}
         try:
             bridge.verify(unrelated, installed=policy["from"])

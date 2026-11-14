@@ -374,6 +374,7 @@ jobs:
           scan_status=0
           "$scanner" scan source \
             --config osv-scanner.toml \
+            --all-packages \
             --lockfile "$python_lock" \
             --lockfile "$docs_lock" \
             --lockfile rust/Cargo.lock \
@@ -405,6 +406,8 @@ jobs:
             --output-file "$report" || scan_status=$?
           python -m scripts.check_osv_results "$report" \
             --scanner-exit "$scan_status" \
+            --python-lockfile "$python_lock" \
+            --docs-lockfile "$docs_lock" \
             --output "$GITHUB_WORKSPACE/osv-remediation.json"
       - name: Upload cross-ecosystem vulnerability report
         if: always()
