@@ -42,8 +42,12 @@ function client(response) {
     path.resolve(__dirname, "../../maverick_dashboard/static/lightwork-ai-evidence-analysis.js"),
     "utf8",
   );
-  vm.runInContext(source, context, { filename: "lightwork-ai-evidence-analysis.js" });
-  return () => vm.runInContext('apiRequest("/probe")', context);
+  // Expose only the helper under test inside the page's function scope.
+  const close = source.lastIndexOf("})();");
+  const instrumented = close < 0 ? `${source}\nglobalThis.__requestUnderTest = apiRequest;`
+    : `${source.slice(0, close)}globalThis.__requestUnderTest = apiRequest;\n${source.slice(close)}`;
+  vm.runInContext(instrumented, context, { filename: "lightwork-ai-evidence-analysis.js" });
+  return () => context.__requestUnderTest("/probe");
 }
 
 test("malformed 2xx evidence response rejects generically without echoing its body", async () => {
@@ -119,7 +123,7 @@ function page(t) {
     return json({ detail: "not found" }, 404);
   };
   shell(w);
-  w.eval(pageSource);
+  vm.runInContext(pageSource, dom.getInternalVMContext(), { filename: "lightwork-ai-evidence-analysis.js" });
   const settle = async () => { for (let i = 0; i < 40; i += 1) await new Promise((r) => setImmediate(r)); };
   return { w, calls, settle, setConfirm: (v) => { confirmAnswer = v; }, $: (id) => w.document.getElementById(id) };
 }
@@ -127,6 +131,9 @@ function page(t) {
 test("the page lists analyses and offers documents and criteria as choices", async (t) => {
   const h = page(t);
   await h.settle();
+  for (const helper of ["apiRequest", "setStatus", "human", "loadAll"]) {
+    assert.equal(h.w[helper], undefined, `${helper} stays private to the page`);
+  }
   const rows = h.$("analyses-rows").textContent;
   assert.match(rows, /Supplier contract pdf/i);
   assert.match(rows, /Waiting for review/);
@@ -190,7 +197,7 @@ function settledPage(t, status, moduleEnabled = "true") {
   const calls = [];
   w.fetch = async (url) => { calls.push(url); return status(); };
   shell(w);
-  w.eval(pageSource);
+  vm.runInContext(pageSource, dom.getInternalVMContext(), { filename: "lightwork-ai-evidence-analysis.js" });
   const settle = async () => { for (let i = 0; i < 40; i += 1) await new Promise((r) => setImmediate(r)); };
   const loaders = () => ["artifact-select", "criteria-select", "analyses-rows"].map((id) => w.document.getElementById(id).textContent).join(" | ");
   return { calls, settle, loaders, $: (id) => w.document.getElementById(id) };

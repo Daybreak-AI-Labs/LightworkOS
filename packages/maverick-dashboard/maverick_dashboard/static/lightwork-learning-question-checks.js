@@ -144,6 +144,6 @@
     var entered = stamp(), loaded = await load(isCurrent); if (!loaded || state.context !== context || entered !== stamp() || isCurrent && !isCurrent()) return false;
     root.scrollIntoView({block:'start'}); model.focus(); return true;
   }};
-  ['workspace-changed','account-context-changed','lightwork:workspace-changed','lightwork:account-context-changed'].forEach(function (name) { window.addEventListener(name, clear); document.addEventListener(name, clear); });
+  ['lightwork:workspace-changed','lightwork:account-context-changed'].forEach(function (name) { window.addEventListener(name, clear); document.addEventListener(name, clear); });
   load();
 })();

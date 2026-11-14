@@ -1,3 +1,4 @@
+(function () {
 "use strict";
 
 /* AI evidence analysis page. Documents and review criteria are chosen from
@@ -337,8 +338,6 @@ async function revoke(record) {
   });
 }
 
-// Not named "history": a top-level function in a classic script becomes a
-// window property, and that name would replace the browser's window.history.
 async function showHistory(record) {
   await run("Loading history", async () => {
     const payload = await apiRequest(`/analyses/${encodeURIComponent(record.analysis_id)}/history`, {}, "load the history");
@@ -573,3 +572,4 @@ if (purgeButton) {
 if (shell && apiBase && shell.dataset.moduleEnabled !== "false") {
   loadAll().catch(() => {});
 }
+})();

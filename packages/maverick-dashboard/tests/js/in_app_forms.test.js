@@ -211,14 +211,15 @@ test('Facts current selection reaches Copilot without copying values and clears 
 
 test('Facts bulk review sends the current exact key selection and workspace switch clears it',async()=>{
   const dom=fixture(factsHTML,'lightwork-facts.js',async(url)=>{
-    if(String(url).includes('/records?'))return response({context:'workspace',snapshot:'v1',has_more:false,items:['a','b'].map(key=>({key,value:'detail',revision:1}))});
+    if(String(url).includes('/records?'))return response({context:'workspace',snapshot:'v1',has_more:false,items:['office_hours','review_date'].map(key=>({key,value:'detail',revision:1}))});
     const key=new URL(url,'http://localhost').searchParams.get('key');return response({context:'workspace',item:{key,value:'detail',revision:1},history:[],history_notice:'Retained',tags_enabled:false});
   });
   const w=dom.window,d=w.document,selections=[];
   d.addEventListener('lightwork:copilot-selection',event=>selections.push(JSON.parse(JSON.stringify(event.detail.selection))));
   d.getElementById('fact-search').dispatchEvent(new w.Event('submit',{cancelable:true}));await tick();
+  assert.deepEqual([...d.querySelectorAll('[data-select-fact]')].map(input=>input.getAttribute('aria-label')),['Select Office hours','Select Review date']);
   d.querySelectorAll('[data-select-fact]').forEach(input=>input.checked=true);
   d.getElementById('fact-review-selection').click();await tick();await tick();
-  assert.deepEqual(selections.at(-1),{kind:'facts',keys:['a','b']});
+  assert.deepEqual(selections.at(-1),{kind:'facts',keys:['office_hours','review_date']});
   d.dispatchEvent(new w.Event('lightwork:workspace-changed'));assert.deepEqual(selections.at(-1),{});w.close();
 });

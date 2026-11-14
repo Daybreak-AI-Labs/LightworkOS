@@ -154,7 +154,7 @@
     if(!setup||!preview)throw problem("Preview the selected result before sending.");
     const payload={goal_id:preview.snapshot.goal_id,reviewer:el("reviewer").value,note:el("note").value,due_at:new Date(el("due").value).getTime()/1000,source_version:preview.source_version,expected_team_revision:setup.team.revision,request_id:reference("send")};
     if(resubmission){if(Number(el("project").value)!==resubmission.project_id)throw problem("Choose the original project for this resubmission.");payload.previous_packet_id=resubmission.id;payload.change_summary=el("change-summary").value;if(!payload.change_summary.trim())throw problem("Explain what changed before resubmitting.");}
-    if(!payload.reviewer||!payload.note.trim()||!Number.isFinite(payload.due_at))throw problem("Choose a reviewer, future due date and review note.");
+    if(!payload.reviewer||!payload.note.trim()||!Number.isFinite(payload.due_at)||payload.due_at<=Date.now()/1000)throw problem("Choose a reviewer, future due date and review note.");
     if(!(await ask("Share exactly the captured result shown above with {name}?","Share for review",{name:who(payload.reviewer)})))return;
     const saved=await api("/projects/"+el("project").value+"/packets",{method:"POST",body:JSON.stringify(payload)});savedRequestNote=el("note").value;resubmission=null;el("change-summary").value="";el("resubmit").hidden=true;resetReference("send");await refresh();packet=saved;renderPacket();status("Sent for review. No task was started or approved.");
   });});

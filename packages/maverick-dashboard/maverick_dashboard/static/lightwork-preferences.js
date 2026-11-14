@@ -18,6 +18,9 @@
   var compare = document.getElementById('preference-compare');
   var aiModel = document.getElementById('preference-chat_model'), aiEffort = document.getElementById('preference-chat_effort');
   var specialist = document.getElementById('preference-chat_specialist');
+  var modelDefault = aiModel && aiModel.querySelector('option[value=""]');
+  var effortDefault = aiEffort && aiEffort.querySelector('option[value=""]');
+  var specialistDefault = specialist && specialist.querySelector('option[value=""]');
   var originalPanel = document.getElementById('preference-original'), originalStatus = document.getElementById('preference-original-status');
   var originalRead = document.getElementById('preference-original-read'), originalNew = document.getElementById('preference-original-new');
   var original = null, recoveryKey = 'lightwork-preference-original:' + (thread || 'account'), editRevision = 0;
@@ -25,7 +28,7 @@
   function syncAI(wanted) {
     if (!aiModel || !aiEffort) return;
     var row = (model.chat_models || []).find(function (item) { return item.value === aiModel.value; });
-    aiEffort.replaceChildren(option('', 'Use the model’s usual thinking depth'));
+    aiEffort.replaceChildren(effortDefault);
     (row ? row.efforts : []).forEach(function (item) { aiEffort.append(option(item.value, item.label)); });
     if (wanted && !Array.from(aiEffort.options).some(function (item) { return item.value === wanted; })) aiEffort.append(option(wanted, 'Saved thinking depth — no longer available'));
     aiEffort.value = wanted || '';
@@ -77,8 +80,8 @@
   }
   function render() {
     var effective = model.effective_by_scope[thread ? "conversation" : scope.value] || model;
-    if (aiModel) { aiModel.replaceChildren(option('', 'Use workspace settings')); (model.chat_models || []).forEach(function (row) { aiModel.append(option(row.value, row.label)); }); }
-    if (specialist) { specialist.replaceChildren(option('', 'Let Lightwork choose the team')); (model.chat_specialists || []).forEach(function (row) { var item = option(row.value, row.label); item.dataset.revision = row.revision; specialist.append(item); }); }
+    if (aiModel) { aiModel.replaceChildren(modelDefault); (model.chat_models || []).forEach(function (row) { aiModel.append(option(row.value, row.label)); }); }
+    if (specialist) { specialist.replaceChildren(specialistDefault); (model.chat_specialists || []).forEach(function (row) { var item = option(row.value, row.label); item.dataset.revision = row.revision; specialist.append(item); }); }
     form.querySelectorAll('[data-pref]').forEach(function (field) {
       var key = field.dataset.pref;
       if (key === 'chat_model' && effective.values[key] && !Array.from(field.options).some(function (item) { return item.value === effective.values[key]; })) field.append(option(effective.values[key], 'Saved model — no longer available'));

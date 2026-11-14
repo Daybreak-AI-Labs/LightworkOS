@@ -54,7 +54,7 @@
     items.forEach(function (item) {
       var row = document.createElement('tr'); row.dataset.key = item.key; row.dataset.revision = item.revision;
       var selectCell = document.createElement('td'), checkbox = document.createElement('input');
-      checkbox.type = 'checkbox'; checkbox.setAttribute('data-select-fact', ''); checkbox.setAttribute('aria-label', 'Select ' + item.key); selectCell.append(checkbox);
+      checkbox.type = 'checkbox'; checkbox.setAttribute('data-select-fact', ''); checkbox.setAttribute('aria-label', 'Select ' + label(item.key)); selectCell.append(checkbox);
       var keyCell = node('td', label(item.key)); keyCell.className = 'fact-key';
       var valueCell = node('td', item.value); valueCell.className = 'fact-value'; valueCell.style.whiteSpace = 'pre-wrap'; valueCell.style.overflowWrap = 'anywhere';
       var actions = document.createElement('td'); actions.className = 'mv-row__actions';
