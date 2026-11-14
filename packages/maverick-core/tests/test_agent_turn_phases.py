@@ -363,3 +363,10 @@ def test_budget_subclasses_are_stop_signals_after_an_effect():
     exc = UnpricedModelError("no price for model")
     assert _post_effect_control_stop(exc, True) is True
     assert exc.tool_execution_unknown is True
+
+
+def test_loop_guard_key_ignores_kernel_injected_host_scope():
+    plain = Agent._tool_call_key("http_fetch", {"url": "https://a.example"})
+    scoped = Agent._tool_call_key(
+        "http_fetch", {"url": "https://a.example", "_capability_allow_hosts": ("a.example",)})
+    assert plain == scoped

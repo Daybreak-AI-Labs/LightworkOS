@@ -4208,6 +4208,11 @@ class Agent:
 
     @staticmethod
     def _tool_call_key(name: str, args: dict) -> str:
+        # Kernel-injected scope (``_capability_*``) is added after the
+        # suppression check, so it must not make the same call look different.
+        if isinstance(args, dict):
+            args = {k: v for k, v in args.items()
+                    if not (isinstance(k, str) and k.startswith("_capability_"))}
         try:
             blob = json.dumps(args, sort_keys=True, default=str)
         except Exception:  # pragma: no cover -- unserializable args
