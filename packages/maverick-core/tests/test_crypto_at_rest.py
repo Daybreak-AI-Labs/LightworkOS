@@ -619,6 +619,7 @@ def test_a_stray_keyring_file_is_not_an_active_key(tmp_path):
     ring.mkdir(parents=True)
     (ring / "backup.key").write_text("00" * 32)
     (ring / "ab.key").write_text("00" * 32)
+    (ring / "ABCDEF0123456789.key").write_text("00" * 32)  # lookup is lower-case
     blob = car.seal(b"x")
     assert car.unseal(blob) == b"x"
 

@@ -753,7 +753,8 @@ def _active_keyring_key() -> tuple[bytes, bytes] | None:
         keys = sorted(
             path for path in _keyring_dir().glob("*.key")
             if len(path.stem) == 2 * _KEYID_BYTES
-            and all(c in "0123456789abcdef" for c in path.stem.lower())
+            # Lower-case only: lookup by key id opens ``<id.hex()>.key``.
+            and all(c in "0123456789abcdef" for c in path.stem)
         )
     except OSError:
         return None
