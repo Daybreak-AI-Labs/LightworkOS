@@ -6,9 +6,7 @@ import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
-import aiohttp
 import pytest
-from aiohttp.base_protocol import BaseProtocol
 from maverick_channels import matrix, slack
 from maverick_channels.delivery import DeliveryNotSent
 
@@ -23,6 +21,10 @@ from maverick_channels.delivery import DeliveryNotSent
     (100 * 1024 * 1024 + 1, [b"first", b"end"], None),
 ])
 def test_slack_download_waits_for_eof_and_checks_advertised_size(monkeypatch, declared, blocks, expected):
+    # aiohttp comes with the channel extras; without it only this test skips.
+    aiohttp = pytest.importorskip("aiohttp")
+    from aiohttp.base_protocol import BaseProtocol
+
     async def run():
         protocol = BaseProtocol(asyncio.get_running_loop())
         protocol.connection_made(MagicMock(spec=asyncio.Transport))
