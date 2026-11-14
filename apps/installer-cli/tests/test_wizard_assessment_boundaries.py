@@ -60,3 +60,39 @@ def test_secret_prompts_reask_for_an_environment_name(monkeypatch, kind, capsys)
         result = assessments._pick_privacy_automation(assessments._ConsentChoices())
         assert result["drop_management"]["principal_binding_key_ref"] == "env:SAFE_TOKEN"
     assert "pasted-token.value" not in capsys.readouterr().out
+
+
+_DROP_KEY_REFERENCES = [
+    "env:SAFE_TOKEN", "kms://drop/key", "secret://drop/key", "vault://drop/key",
+    "aws-kms://alias/drop", "azure-keyvault://vault/drop", "gcp-kms://projects/p/keys/k",
+]
+_NOT_DROP_KEY_REFERENCES = [
+    "pasted-token.value", "${bad-name}", "env:bad", "vault://", "http://drop/key",
+    "vault://drop key", "k" * 64,
+]
+
+
+@pytest.mark.parametrize("reference", _DROP_KEY_REFERENCES)
+def test_drop_prompt_accepts_every_key_reference_the_consumer_accepts(monkeypatch, reference):
+    answers = iter(["pasted-token.value", reference])
+
+    def text(prompt, *, default="", **kwargs):
+        return next(answers) if prompt.startswith("DROP principal-binding") else default
+
+    monkeypatch.setattr(wizard, "_q_text", text)
+    monkeypatch.setattr(wizard, "_q_confirm", lambda prompt, **_: prompt.startswith((
+        "Enable provider-neutral Privacy Automation rights-request", "Enable California DROP")))
+    result = assessments._pick_privacy_automation(assessments._ConsentChoices())
+    assert result["drop_management"]["principal_binding_key_ref"] == reference
+
+
+@pytest.mark.parametrize("reference", _DROP_KEY_REFERENCES + _NOT_DROP_KEY_REFERENCES)
+def test_drop_key_reference_matches_the_dashboard_consumer(reference):
+    from maverick.config_lint import _is_drop_principal_key_reference
+    composition = pytest.importorskip("maverick_dashboard.privacy_drop_management_composition")
+    try:
+        composition._key_reference(reference)
+        consumer_accepts = True
+    except composition.DROPManagementConfigError:
+        consumer_accepts = False
+    assert _is_drop_principal_key_reference(reference) is consumer_accepts

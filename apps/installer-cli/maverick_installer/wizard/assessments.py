@@ -17,6 +17,11 @@ from ._seams import _q_checkbox, _q_confirm, _q_select, _q_text, console
 _ENVIRONMENT_REFERENCE = re.compile(
     r"(?:[A-Z][A-Z0-9_]{0,127}|\$(?:\{[A-Z][A-Z0-9_]{0,127}\}|[A-Z][A-Z0-9_]{0,127}))"
 )
+_DROP_KEY_REFERENCE_ERROR = (
+    "[yellow]Enter an environment variable name (or env:NAME) or a key-store "
+    "address (kms://, secret://, vault://, aws-kms://, azure-keyvault:// or "
+    "gcp-kms://). Do not paste the key itself.[/yellow]"
+)
 _ENVIRONMENT_REFERENCE_ERROR = (
     "[yellow]Enter the environment variable name, using uppercase letters, "
     "digits and underscores, starting with a letter (up to 128 characters). "
@@ -872,16 +877,20 @@ def _pick_privacy_automation(consent: _ConsentChoices) -> dict[str, Any] | None:
     privacy_drop_key_ref = "env:MAVERICK_PRIVACY_RIGHTS_DIGEST_KEY"
     privacy_drop_scheduler = False
     if privacy_drop_management:
+        from maverick.config_lint import _is_drop_principal_key_reference
+
         while True:
             value = _q_text(
-                "DROP principal-binding environment variable reference (never key material)",
+                "DROP principal-binding key reference: environment variable or "
+                "key-store address (never key material)",
                 default=privacy_drop_key_ref,
             ).strip() or privacy_drop_key_ref
-            match = re.fullmatch(r"(?:env:)?([A-Z][A-Z0-9_]{0,127})", value)
-            if match:
-                privacy_drop_key_ref = "env:" + match[1]
+            if re.fullmatch(r"[A-Z][A-Z0-9_]{0,127}", value):
+                value = "env:" + value
+            if _is_drop_principal_key_reference(value):
+                privacy_drop_key_ref = value
                 break
-            console.print(_ENVIRONMENT_REFERENCE_ERROR)
+            console.print(_DROP_KEY_REFERENCE_ERROR)
         privacy_drop_scheduler = _q_confirm(
             "Enable the managed DROP reconciliation and retention scheduler? "
             "This runs bounded tenant-local maintenance; California delivery and "
