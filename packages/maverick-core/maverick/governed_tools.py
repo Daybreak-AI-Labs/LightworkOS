@@ -273,7 +273,7 @@ def _enterprise_mode() -> bool:
         return True
 
 
-class _ApproverPolicyUnavailable(RuntimeError):
+class _ApproverPolicyUnavailable(ApprovalCardError):
     """The configured standing approver could not be read."""
 
 
@@ -288,11 +288,14 @@ def _approver() -> str:
         return a
     from .config import config_source_errors, get_governed_connectors
 
+    # Load first: the error seam reflects the most recent load.
+    approver = str(get_governed_connectors().get("approver", "")).strip()
     if config_source_errors(include_tenant=True):
         raise _ApproverPolicyUnavailable(
-            "governed connector approver policy is unreadable",
+            "the configuration could not be read, so the required approver "
+            "is unknown",
         )
-    return str(get_governed_connectors().get("approver", "")).strip()
+    return approver
 
 
 def _is_governable_op_tool(tool: Tool) -> bool:
@@ -739,6 +742,8 @@ def _approval_request_parts(args: dict, *, sized: bool = False) -> list[str]:
 
 
 def _approval_card_error_reason(exc: ApprovalCardError) -> str:
+    if isinstance(exc, _ApproverPolicyUnavailable):
+        return str(exc)
     lowered = str(exc).lower()
     if "expired" in lowered:
         return "approval expired"

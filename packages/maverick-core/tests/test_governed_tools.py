@@ -852,7 +852,8 @@ class TestEnterpriseBoundary:
         out = wrap_connector_tool(_fake_tool(calls), enterprise=True).fn(
             {"op": "post", "path": "/accounts"})
 
-        assert out.startswith("ERROR (governed)")
+        assert out.startswith("REFUSED (governed)")
+        assert "configuration could not be read" in out
         assert calls == []
 
     def test_approval_card_redacts_nested_sensitive_values(self, monkeypatch):

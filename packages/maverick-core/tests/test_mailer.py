@@ -135,6 +135,9 @@ def test_kill_switch_holds_on_unreadable_config_and_true_env(monkeypatch):
     import maverick.config as cfg
     monkeypatch.setattr(cfg, "config_source_errors", lambda **_k: {"config.toml": "bad"})
     assert mailer.sending_disabled() is True
+    assert mailer.unavailable_reason() == "configuration unreadable"
+    with pytest.raises(mailer.MailerNotSent, match="configuration unreadable"):
+        mailer.send("to@x.co", "hi", "body", transport=lambda *a: None)
     monkeypatch.setattr(cfg, "config_source_errors", lambda **_k: {})
     monkeypatch.setenv("MAVERICK_EMAIL_DISABLE", "true")
     assert mailer.sending_disabled() is True

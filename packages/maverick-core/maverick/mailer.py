@@ -97,6 +97,30 @@ def configured() -> bool:
     return bool(_cfg("user", "EMAIL_USER") and _cfg("app_password", "EMAIL_APP_PASSWORD"))
 
 
+def unavailable_reason() -> str:
+    """Why platform email cannot be sent right now, or "" when it can.
+
+    "configuration unreadable" when a config source cannot be read (sending is
+    held off because the source may hold the kill switch), "sending disabled"
+    for the kill switch, "no sending account configured" otherwise.
+    """
+    if sending_disabled():
+        try:
+            from .config import config_source_errors
+            unreadable = bool(config_source_errors(include_tenant=True))
+        except Exception:  # noqa: BLE001 - the seam itself failing is the same answer
+            unreadable = True
+        return "configuration unreadable" if unreadable else "sending disabled"
+    return "" if configured() else "no sending account configured"
+
+
+_DISABLED_MESSAGES = {
+    "configuration unreadable": (
+        "Email sending is paused: the configuration could not be read "
+        "(configuration unreadable). Fix the settings file to resume."),
+}
+
+
 def _require_single_recipient(to: str) -> None:
     """Platform email has exactly one recipient; "a@x, b@y" would reach both."""
     from email.utils import getaddresses
@@ -110,7 +134,8 @@ def send(to: str, subject: str, body: str, *, transport=None, before_effect=None
     problem; never returns partial success. ``transport`` is injectable for
     tests: a callable ``(host, port, user, password, msg) -> None``."""
     if sending_disabled():
-        raise MailerNotSent("Email sending is disabled.")
+        raise MailerNotSent(_DISABLED_MESSAGES.get(
+            unavailable_reason(), "Email sending is disabled."))
 
     to = (to or "").strip()
     subject = (subject or "").strip()
