@@ -421,6 +421,28 @@ def _rows(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _erasure_rewrote(files: Sequence[Path], day: str) -> bool:
+    """Whether signed evidence shows an authorized erasure rewrote ``day``: a
+    superseding re-anchor of that day in the anchor ledger, or an ``erase``
+    marker on or after it. Chains and anchors were verified before this."""
+    if not files:
+        return False
+    ledger = files[0].parent / signing.ANCHOR_FILENAME
+    if ledger.exists():
+        anchors = [
+            row for row in signing._ledger_rows(ledger)
+            if row.get("kind") == "anchor" and row.get("day") == day
+        ]
+        if len(anchors) > 1:
+            return True
+    return any(
+        row.get("kind") == "erase"
+        for path in files
+        if path.stem >= day
+        for row in _rows(path)
+    )
+
+
 def _siem_batch(
     files: Sequence[Path],
     *,
@@ -467,9 +489,13 @@ def _siem_batch(
         rows = _rows(path)
         offset = 0
         if path.stem == start_day:
-            if start_line > len(rows) or rows[start_line - 1].get("hash") != start_hash:
-                raise UnifiedAuditCustodyError("custody SIEM cursor no longer matches audit evidence")
             offset = start_line
+            if start_line > len(rows) or rows[start_line - 1].get("hash") != start_hash:
+                if not _erasure_rewrote(files, start_day):
+                    raise UnifiedAuditCustodyError("custody SIEM cursor no longer matches audit evidence")
+                # An authorized erasure re-signed the day: replay it from the
+                # start (delivery is at-least-once).
+                offset = 0
         for line_number, row in enumerate(rows[offset:], start=offset + 1):
             row_hash = row.get("hash")
             if not isinstance(row_hash, str) or not _DIGEST.fullmatch(row_hash):

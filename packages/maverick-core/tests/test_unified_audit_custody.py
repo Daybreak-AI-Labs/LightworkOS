@@ -190,3 +190,25 @@ def test_authority_revision_rollback_and_same_revision_rewrite_are_refused() -> 
             revision=2,
             digest="c" * 64,
         )
+
+
+def test_siem_cursor_resyncs_after_an_authorized_erasure_rewrite(tmp_path, monkeypatch):
+    # An erasure removes rows and re-signs the day, so the saved cursor row no
+    # longer matches. With a signed erase marker the day is replayed (delivery
+    # is at-least-once); without one the mismatch still stops the export.
+    tenant = "c" * 64
+    projection = {"kind": "unified_audit_projection", "tenant_sha256": tenant,
+                  "projection_event_id": "d" * 64, "hash": "e" * 64}
+    day, later = tmp_path / "2026-09-01.ndjson", tmp_path / "2026-09-02.ndjson"
+    rows = {day: [{"kind": "goal", "hash": "f" * 64}, projection], later: []}
+    monkeypatch.setattr(custody, "_rows", lambda path: rows[path])
+    cursor = {"day": "2026-09-01", "line": 2, "row_sha256": "a" * 64}
+
+    with pytest.raises(custody.UnifiedAuditCustodyError, match="no longer matches"):
+        custody._siem_batch((day, later), cursor=cursor, tenant_sha256=tenant, limit=10)
+
+    rows[later] = [{"kind": "erase", "hash": "b" * 64}]
+    lines, new_cursor = custody._siem_batch(
+        (day, later), cursor=cursor, tenant_sha256=tenant, limit=10)
+    assert ['"projection_event_id":"' + "d" * 64 in line.replace(" ", "") for line in lines] == [True]
+    assert new_cursor == {"day": "2026-09-02", "line": 1, "row_sha256": "b" * 64}
