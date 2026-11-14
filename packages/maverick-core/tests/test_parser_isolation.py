@@ -241,3 +241,20 @@ def test_pdf_reader_isolated_failure_refuses_inprocess_fallback(monkeypatch, tmp
     from maverick.tools.pdf_reader import _run_read_pdf
     out = _run_read_pdf({"source": "x.pdf"})
     assert out.startswith("ERROR: isolated PDF parse failed")
+
+
+def test_channel_parsers_without_posix_limits_keep_bounded_output(monkeypatch):
+    # Without POSIX rlimits (Windows) channel PDFs/images still parse, with the
+    # file-backed bounded output and timeout but no rlimit preamble.
+    monkeypatch.setattr(pi, "_POSIX_RESOURCE_LIMITS", False)
+    seen = {}
+
+    def fake_run(args, **kwargs):
+        seen.update(kwargs)
+        assert "RLIMIT_AS" not in args[-1]
+        kwargs["stdout"].write(b'{"ok": true, "result": "ok"}')
+        return subprocess.CompletedProcess(args, 0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert pi.parse_isolated("pdf_text", b"document") == "ok"
+    assert seen["stderr"] == subprocess.DEVNULL and "timeout" in seen
