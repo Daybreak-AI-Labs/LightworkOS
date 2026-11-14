@@ -21,8 +21,13 @@ from . import Tool
 # FIRST `git` in it: text after a later `git` in the same segment is also
 # after the first, so the set of matched commands is unchanged. Rules with a
 # trailing `.*?` likewise commit to the first subcommand occurrence.
-_GIT = r"(?:^|(?<=[\n;&|]))(?>[^\n;&|]*?\bgit\s)[^\n;&|]*?"
-_GIT_ATOMIC = r"(?:^|(?<=[\n;&|]))(?>[^\n;&|]*?\bgit\s)(?>[^\n;&|]*?"
+# The one case that argument misses is a `git` whose `\s` is a newline: the
+# old rule then carried on onto the NEXT line (`git -c "a.b=git\n" show`), so
+# `\bgit\n` is a second entry point. Each such start scans only the line
+# after it, so the work stays linear.
+_GIT_START = r"(?:(?:^|(?<=[\n;&|]))(?>[^\n;&|]*?\bgit\s)|\bgit\n)"
+_GIT = _GIT_START + r"[^\n;&|]*?"
+_GIT_ATOMIC = _GIT_START + r"(?>[^\n;&|]*?"
 
 _GIT_GOLD_LEAK_PATTERNS = [
     # Porcelain commands — most leak vectors. We accept that any of
@@ -150,7 +155,7 @@ _NETWORK_LEAK_PATTERNS = [
 # unpatched code from the original. We surface the right pattern
 # instead of letting the agent burn cycles on a silent failure.
 _EDITABLE_INSTALL_PATTERN = re.compile(
-    r"\bpip\s+install\s+(?:[^|;&]*\s+)?-e\b",
+    r"\bpip\s+install\b[^|;&\n]*?\s-e\b",
     re.IGNORECASE,
 )
 
