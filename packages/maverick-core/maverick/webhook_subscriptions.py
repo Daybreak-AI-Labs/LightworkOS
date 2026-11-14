@@ -112,11 +112,11 @@ def _with_world(fn):
 
 
 def workspace_id() -> str:
-    try:
-        from .paths import current_tenant_id
-        return current_tenant_id() or ""
-    except Exception:
-        return ""
+    """The tenant every webhook query is scoped to; ``""`` only when the
+    deployment is genuinely unbound. A corrupt or invalid tenant binding
+    raises instead of selecting the shared workspace."""
+    from .paths import current_tenant_id_strict
+    return current_tenant_id_strict() or ""
 
 
 def _is_sqlite(world: Any) -> bool:

@@ -353,3 +353,16 @@ def test_a_call_without_a_world_closes_the_world_it_opened(monkeypatch, tmp_path
     assert subs.list_subscriptions() == []
     assert subs.attempt_delivery("missing") is None
     assert len(opened) == 3 and closed == opened
+
+
+def test_workspace_id_fails_closed_on_invalid_client_binding(monkeypatch):
+    """Regression: a corrupt client binding resolved to the shared workspace
+    ``""``, scoping a tenant's webhook rows to the shared root."""
+    from maverick import client, paths, webhook_subscriptions
+
+    monkeypatch.setattr(paths, "explicit_tenant_id", lambda: None)
+    monkeypatch.setattr(client, "_raw_client_id", lambda: "Not A Valid Id")
+    monkeypatch.setattr(client, "_cached", client._UNSET)
+    monkeypatch.setattr(client, "_strict_cached", client._UNSET)
+    with pytest.raises(client.ClientBindingError):
+        webhook_subscriptions.workspace_id()
