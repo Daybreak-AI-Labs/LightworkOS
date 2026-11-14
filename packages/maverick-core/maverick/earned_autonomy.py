@@ -147,7 +147,7 @@ class _ChainedLog:
         # last full verification (or our own anchored append after it), and
         # the row count of the day-file our last signed head went to.
         self._verified: tuple | None = None
-        self._day_count: tuple[Path, int] | None = None
+        self._day_count: tuple[Path, int, str] | None = None
         if self.path is not None:
             with self._lock:
                 self._refresh_unlocked()
@@ -301,10 +301,13 @@ class _ChainedLog:
             },
         ).to_dict()
         cached, self._day_count = self._day_count, None
+        # The cached count only holds while the day-file still ends at the tip
+        # this object anchored (another writer may have appended since).
+        prior_tip = signer._last_hash
         if not signer.write(event):
             return False
         tip = signer._last_hash
-        if cached is not None and cached[0] == path:
+        if cached is not None and cached[0] == path and cached[2] == prior_tip:
             rows = cached[1] + 1
         else:
             file_tip, rows = signing._file_tip_and_count(path)
@@ -316,7 +319,7 @@ class _ChainedLog:
         # prevents.
         if not signing._append_anchor(directory, day, tip, rows):
             return False
-        self._day_count = (path, rows)
+        self._day_count = (path, rows, tip)
         return True
 
     def _fingerprint_unlocked(self) -> tuple | None:
@@ -555,6 +558,7 @@ class _ChainedLog:
             if self.path is None:
                 return self._verify_rows_unlocked()
             self._verified = None
+            self._day_count = None
             try:
                 # Match append's lock order and verify exact fresh bytes, even
                 # after a same-size rewrite. Unreadable/torn rows fail closed.

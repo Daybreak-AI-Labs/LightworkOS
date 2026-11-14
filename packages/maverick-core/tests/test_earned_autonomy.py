@@ -248,6 +248,17 @@ def test_failed_signed_head_withdraws_the_row_and_keeps_the_ledger_usable(tmp_pa
     assert ledger.verify().startswith("VALID: 3")
 
 
+def test_two_ledger_objects_keep_the_signed_day_count_in_step(tmp_path):
+    path = tmp_path / "trust.ndjson"
+    a, b = ea.TrustLedger(path=path), ea.TrustLedger(path=path)
+    assert a.record_event("hit", "deploy", card_id="a1", ts=1.0)
+    assert b.record_event("hit", "deploy", card_id="b1", ts=2.0)
+    assert a.verify().startswith("VALID: 2")
+    assert a.record_event("hit", "deploy", card_id="a2", ts=3.0)
+    assert ea.TrustLedger(path=path).verify().startswith("VALID: 3")
+    assert b.record_event("hit", "deploy", card_id="b2", ts=4.0)
+
+
 def test_append_does_not_reverify_earlier_signed_heads(tmp_path, monkeypatch):
     from maverick.audit import signing
 
