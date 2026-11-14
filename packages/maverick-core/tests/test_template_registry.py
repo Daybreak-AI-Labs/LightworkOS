@@ -24,7 +24,7 @@ _INDEX = {
 @pytest.fixture
 def fake_registry(monkeypatch):
     monkeypatch.setattr(catalog, "_fetch_index_raw", lambda url: _INDEX)
-    monkeypatch.setattr(skills, "_fetch_skill_source", lambda source: _BODY)
+    monkeypatch.setattr(skills, "_fetch_skill_source_bytes", lambda source: _BODY.encode())
     return ["https://templates.test"]
 
 
@@ -68,6 +68,18 @@ def test_install_fetches_verifies_parses_writes(tmp_path, fake_registry, monkeyp
     assert "Lisbon" in body
 
 
+def test_install_verifies_the_pin_over_raw_bytes(tmp_path, monkeypatch):
+    # A correctly pinned file with a non-UTF-8 byte must still install.
+    raw = _BODY.replace("Plan a trip to", "Plan a trip (\xe9t\xe9) to").encode("latin-1")
+    index = {**_INDEX, "entries": [{**_INDEX["entries"][0], "sha256": hashlib.sha256(raw).hexdigest()}]}
+    monkeypatch.setattr(catalog, "_fetch_index_raw", lambda url: index)
+    monkeypatch.setattr(skills, "_fetch_skill_source_bytes", lambda source: raw)
+    monkeypatch.setattr(templates, "_verify_registry_template_signature", lambda *a, **k: True)
+    t = templates.install_template_from_catalog(
+        "trip-plan", indexes=["https://templates.test"], dest=tmp_path)
+    assert t.title == "Plan a trip"
+
+
 def test_install_unknown_name_raises(tmp_path, fake_registry):
     with pytest.raises(ValueError, match="no template named"):
         templates.install_template_from_catalog(
@@ -76,7 +88,7 @@ def test_install_unknown_name_raises(tmp_path, fake_registry):
 
 def test_install_hash_mismatch_refuses(tmp_path, monkeypatch):
     monkeypatch.setattr(catalog, "_fetch_index_raw", lambda url: _INDEX)
-    monkeypatch.setattr(skills, "_fetch_skill_source", lambda source: "TAMPERED")
+    monkeypatch.setattr(skills, "_fetch_skill_source_bytes", lambda source: b"TAMPERED")
     with pytest.raises(ValueError, match="hash mismatch"):
         templates.install_template_from_catalog(
             "trip-plan", indexes=["https://t.test"], dest=tmp_path)
@@ -109,7 +121,7 @@ def test_catalog_install_drops_remote_budget_overrides(tmp_path, monkeypatch):
         }],
     }
     monkeypatch.setattr(catalog, "_fetch_index_raw", lambda url: index)
-    monkeypatch.setattr(skills, "_fetch_skill_source", lambda source: body)
+    monkeypatch.setattr(skills, "_fetch_skill_source_bytes", lambda source: body.encode())
     monkeypatch.setattr(templates, "_verify_registry_template_signature", lambda *a, **k: True)
 
     t = templates.install_template_from_catalog(
