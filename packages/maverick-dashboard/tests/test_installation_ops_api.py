@@ -372,6 +372,7 @@ def test_release_check_with_an_unmeasured_baseline_metric_fails_plainly(client):
     body = r.json()
     row = next(row for row in body["rows"] if row["result"] == "Not measured")
     assert body["passed"] is False and row["ok"] is False and row["now"] is None
+    assert "missing" in body["summary"] and "got worse" not in body["summary"]
 
 
 def test_connection_components_run_as_a_job_and_refuse_read_only_installs(client, monkeypatch):

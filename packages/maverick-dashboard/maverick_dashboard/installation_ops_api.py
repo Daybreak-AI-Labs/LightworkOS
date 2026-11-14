@@ -628,10 +628,16 @@ async def compare_release(request: Request, baseline: str, tolerance: float = 0.
              "change": v.rel_change if abs(v.rel_change) != float("inf") else None,
              "result": _VERDICTS.get(v.verdict, _words(v.verdict)), "ok": v.verdict not in {"regressed", "missing", "invalid"}}
             for v in result.verdicts]
-    worse = len(result.regressions)
-    summary = ("Performance held up against the baseline." if result.passed else
-               f"{worse} measure{'s' if worse != 1 else ''} got worse than the baseline by more than "
-               f"{round(tolerance * 100)}%.")
+    worse = sum(v.verdict == "regressed" for v in result.verdicts)
+    unmeasured = len(result.regressions) - worse
+    problems = []
+    if worse:
+        problems.append(f"{worse} measure{'s' if worse != 1 else ''} got worse than the baseline by more "
+                        f"than {round(tolerance * 100)}%.")
+    if unmeasured:
+        problems.append(f"{unmeasured} measure{'s' if unmeasured != 1 else ''} from the baseline "
+                        f"{'are' if unmeasured != 1 else 'is'} missing or not a valid number now.")
+    summary = "Performance held up against the baseline." if result.passed else " ".join(problems)
     return {"passed": result.passed, "summary": summary, "rows": rows}
 
 
