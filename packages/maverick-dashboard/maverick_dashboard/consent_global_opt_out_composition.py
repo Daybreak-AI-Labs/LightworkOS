@@ -253,13 +253,9 @@ def _resolve_admin_application(
     if not _same(principal_ref, expected_principal):
         raise opt_out.GlobalOptOutPermissionDenied("operator principal authority changed")
     dependencies = _public_dependencies(app, selected)
-    listed = dependencies.credential_store.list_clients(tenant, limit=500)
-    items = listed.get("items") if isinstance(listed, Mapping) else None
-    if not isinstance(items, list) or listed.get("truncated") is not False:
-        raise opt_out.GlobalOptOutAuthorityStale("public client authority is unavailable")
     matches = [
         item
-        for item in items
+        for item in dependencies.credential_store.iter_clients(tenant)
         if isinstance(item, Mapping)
         and item.get("credential_id") == application_ref
         and item.get("status") == "active"

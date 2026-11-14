@@ -271,8 +271,8 @@
     async function openConnect() {
       var form = $("tca-connect"), f = form.elements;
       try {
-        var both = await Promise.all([run("GET", "?limit=500", undefined, "/api/v1/consent/public-clients"), run("GET", "/profiles?limit=500", undefined, "/api/v1/consent/public-clients"), run("GET", "/profiles?limit=500", undefined, "/api/v1/consent")]);
-        state.clients = (both[0].items || []).filter(function (c) { return c.status === "active"; });
+        var both = await Promise.all([CW.publicClients(), run("GET", "/profiles?limit=500", undefined, "/api/v1/consent/public-clients"), run("GET", "/profiles?limit=500", undefined, "/api/v1/consent")]);
+        state.clients = both[0].filter(function (c) { return c.status === "active"; });
         state.profiles = (both[1].items || []).filter(function (p) { return p.profile_status === "active" && p.client_status === "active"; });
         state.consentProfiles = both[2].profiles || [];
       } catch (error) { fail(error, "load websites and people"); return; }
@@ -585,7 +585,7 @@
       var form = $("tcb-project"), f = form.elements;
       var live = state.assets.filter(function (a) { return a.state === "active"; });
       if (!live.length) { say("Approve a logo and make it live first.", true); return; }
-      try { state.clients = ((await run("GET", "?limit=500", undefined, "/api/v1/consent/public-clients")).items || []).filter(function (c) { return c.status === "active"; }); }
+      try { state.clients = (await CW.publicClients()).filter(function (c) { return c.status === "active"; }); }
       catch (error) { fail(error, "load your websites"); return; }
       form.reset();
       CW.fill(f.client, state.clients.map(function (c) { return {value: c.credential_id, label: CW.human(c.property_id) + " (" + (c.browser_origin || c.target_origin || c.target_bundle_id || "") + ")"}; }));

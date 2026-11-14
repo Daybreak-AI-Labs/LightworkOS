@@ -26,7 +26,7 @@ import sqlite3
 import threading
 import time
 from collections import deque
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -955,17 +955,21 @@ class PublicConsentCredentialStore:
                     connection.execute("ROLLBACK")
                 raise
 
-    def list_clients(self, tenant_id: str, *, limit: int = 100) -> dict[str, Any]:
+    def list_clients(
+        self, tenant_id: str, *, limit: int = 100, offset: int = 0
+    ) -> dict[str, Any]:
         """List bounded safe client metadata without credential digests."""
 
         tenant = _ref(tenant_id, "tenant_id")
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
             raise PublicConsentValidationError("limit must be between 1 and 500")
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise PublicConsentValidationError("offset must be a non-negative integer")
         with self._connect() as connection:
             rows = connection.execute(
                 "SELECT * FROM public_consent_clients WHERE tenant_id = ? "
-                "ORDER BY updated_at DESC, credential_id LIMIT ?",
-                (tenant, limit + 1),
+                "ORDER BY updated_at DESC, credential_id LIMIT ? OFFSET ?",
+                (tenant, limit + 1, offset),
             ).fetchall()
         items: list[dict[str, Any]] = []
         for row in rows[:limit]:
@@ -975,7 +979,23 @@ class PublicConsentCredentialStore:
             body["status"] = str(row["status"])
             body["updated_at"] = float(row["updated_at"])
             items.append(body)
-        return {"items": items, "truncated": len(rows) > limit}
+        truncated = len(rows) > limit
+        return {
+            "items": items,
+            "truncated": truncated,
+            "next_offset": offset + limit if truncated else None,
+        }
+
+    def iter_clients(self, tenant_id: str) -> Iterator[dict[str, Any]]:
+        """Read every page of safe client metadata for one tenant."""
+
+        offset = 0
+        while True:
+            page = self.list_clients(tenant_id, limit=500, offset=offset)
+            yield from page["items"]
+            if not page["truncated"]:
+                return
+            offset = page["next_offset"]
 
     def list_profile_bindings(
         self,

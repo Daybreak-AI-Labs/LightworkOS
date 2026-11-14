@@ -93,19 +93,15 @@ def _public_dependencies(request: Request):
 def _publication_resolver(request: Request, tenant_id: str):
     from maverick.trust_center_branding import (
         BrandingConflict,
-        BrandingExternalAuthorityError,
         BrandPublicationAuthority,
     )
 
     dependencies = _public_dependencies(request)
 
     def resolve(property_id: str, client_credential_id: str) -> BrandPublicationAuthority:
-        listed = dependencies.credential_store.list_clients(tenant_id, limit=500)
-        if listed.get("truncated") is not False or not isinstance(listed.get("items"), list):
-            raise BrandingExternalAuthorityError("branding_public_client_authority_unavailable")
         matches = [
             item
-            for item in listed["items"]
+            for item in dependencies.credential_store.iter_clients(tenant_id)
             if isinstance(item, Mapping)
             and item.get("credential_id") == client_credential_id
             and item.get("property_id") == property_id

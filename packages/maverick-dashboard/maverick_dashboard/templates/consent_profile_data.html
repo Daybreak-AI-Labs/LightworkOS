@@ -203,8 +203,8 @@
       CW.fill(f.jurisdiction, CW.JURISDICTIONS); CW.fill(f.country_code, CW.COUNTRIES); CW.fill(f.locale, CW.LOCALES);
       CW.open(catalogForm, "[name=credential_id]");
       try {
-        var keys = await CW.client("/api/v1/consent/public-clients")("?limit=500");
-        state.keys = (keys.items || []).filter(function (k) { return k.status === "active"; });
+        var keys = await CW.publicClients();
+        state.keys = keys.filter(function (k) { return k.status === "active"; });
         CW.fill(f.credential_id, state.keys.map(function (k) { return {value: k.credential_id, label: CW.human(k.property_id) + " · " + (k.browser_origin || k.target_origin || k.target_bundle_id || "")}; }), state.keys.length ? "Choose a website key" : "Create a website key first");
       } catch (error) { CW.fail(status, error, "load website keys"); }
     }

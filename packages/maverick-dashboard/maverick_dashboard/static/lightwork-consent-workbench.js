@@ -34,6 +34,19 @@
     };
   }
 
+  async function publicClients(loadPage) {
+    var read = loadPage || client('/api/v1/consent/public-clients');
+    var items = [], offset = 0;
+    while (true) {
+      var page = await read('?limit=100&offset=' + offset);
+      if (!page || !Array.isArray(page.items)) throw new Error(INVALID);
+      items = items.concat(page.items);
+      if (!page.truncated) return items;
+      if (!page.items.length || !Number.isSafeInteger(page.next_offset) || page.next_offset <= offset) throw new Error(INVALID);
+      offset = page.next_offset;
+    }
+  }
+
   function errorText(failure, action) {
     if (typeof root.mvErrorText === 'function') return root.mvErrorText(failure, action);
     return (action ? 'Could not ' + action + '. ' : '') + 'Something went wrong. Try again.';
@@ -259,7 +272,7 @@
 
   root.LightworkConsentWorkbench = Object.freeze({
     COUNTRIES: COUNTRIES, JURISDICTIONS: JURISDICTIONS, LOCALES: LOCALES, CHANNELS: CHANNELS,
-    labelFor: labelFor, INVALID: INVALID, el: el, client: client, errorText: errorText, say: say, fail: fail,
+    labelFor: labelFor, INVALID: INVALID, el: el, client: client, publicClients: publicClients, errorText: errorText, say: say, fail: fail,
     slug: slug, reference: reference, toSeconds: toSeconds, toInput: toInput, when: when,
     human: human, sha256: sha256, sha256File: sha256File, fill: fill, table: table,
     badge: badge, busy: busy, facts: facts, confirm: confirm, open: open,

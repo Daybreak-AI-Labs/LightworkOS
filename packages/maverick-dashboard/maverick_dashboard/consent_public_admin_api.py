@@ -254,11 +254,14 @@ async def create_client(request: Request, body: PublicClientCreateIn) -> dict[st
 async def list_clients(
     request: Request,
     limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
     require_global_permission(request, "audit")
     _require_enabled()
     try:
-        return await run_in_threadpool(_registry().list_clients, _tenant_id(), limit=limit)
+        return await run_in_threadpool(
+            _registry().list_clients, _tenant_id(), limit=limit, offset=offset
+        )
     except Exception as exc:
         from .consent_public_api import PublicConsentError
 
