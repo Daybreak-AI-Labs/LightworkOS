@@ -378,6 +378,9 @@ def _diff_paths(patch: str) -> list[str]:
             paths.append(p)
 
     for line in _patch_lines(patch):
+        # A CRLF patch ends each header with "\r"; git does not read it as
+        # part of the path. Only header lines are inspected here.
+        line = line.removesuffix("\r")
         if line.startswith("diff --git "):
             # diff --git a/X b/Y
             bits = line.split()
@@ -457,6 +460,7 @@ def _unsafe_apply_prefix(patch: str) -> str | None:
     repository-relative and is classified separately by :func:`_diff_paths`.
     """
     for line in _patch_lines(patch or ""):
+        line = line.removesuffix("\r")  # CRLF header; see _diff_paths
         if line.startswith("diff --git "):
             pair = _split_diff_git_paths(line)
             if pair is None:

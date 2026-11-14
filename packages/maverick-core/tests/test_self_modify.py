@@ -230,6 +230,15 @@ class TestReviewPatch:
         assert result.ok is False
         assert p not in result.touched
 
+    def test_crlf_patch_to_an_allowed_path_is_reviewed_by_its_real_path(self):
+        p = "packages/maverick-core/maverick/domains/a.toml"
+        patch = (f"diff --git a/{p} b/{p}\r\n--- a/{p}\r\n+++ b/{p}\r\n"
+                 "@@ -1 +1 @@\r\n-x\r\n+y\r\n")
+        surface = sm.EditableSurface(
+            editable_globs=("packages/maverick-core/maverick/domains/*.toml",))
+        result = sm.review_patch(patch, surface)
+        assert result.ok is True and result.touched == (p,)
+
     def test_custom_surface_authority_is_refused_even_if_it_says_editable(self):
         class FakeSurface:
             @staticmethod
