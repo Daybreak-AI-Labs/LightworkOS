@@ -73,7 +73,7 @@ def emit(
         return 0
     record = {"type": record_type, "id": str(record_id), "title": str(title or "")[:300]}
     if summary:
-        record.update({k: v for k, v in summary.items() if k not in ("type", "id")})
+        record.update({k: v for k, v in summary.items() if k not in ("type", "id", "title")})
     try:
         from .webhooks import fire
         return fire(event_type, dict(payload or {}), record=record, link=link,
