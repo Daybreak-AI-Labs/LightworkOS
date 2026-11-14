@@ -231,6 +231,7 @@ class GrpcDispatcher:
             request = pb2.RunGoalRequest(
                 goal_id=int(goal_id),
                 max_dollars=float(max_dollars or 0),
+                has_max_dollars=max_dollars is not None,
                 max_wall_seconds=float(max_wall_seconds or 0),
                 channel=channel or "",
                 user_id=user_id or "",

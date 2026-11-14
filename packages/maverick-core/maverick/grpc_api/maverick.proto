@@ -42,6 +42,7 @@ message StartGoalRequest {
   double max_wall_seconds = 4;  // 0 = use server/config default
   string channel = 5;
   string user_id = 6;
+  bool has_max_dollars = 7;     // true preserves an explicit zero dollar cap
 }
 
 message StartGoalResponse {
@@ -83,6 +84,7 @@ message RunGoalRequest {
   string user_id = 5;
   int32 max_depth = 6;          // 0 = config/default dispatcher depth
   string capability_json = 7;   // JSON-encoded explicit Capability grant
+  bool has_max_dollars = 8;     // true preserves an explicit zero dollar cap
 }
 
 message GoalStatus {

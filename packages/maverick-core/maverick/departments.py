@@ -394,8 +394,10 @@ def deploy_department(key: str, owner: str, *, cfg: dict | None = None,
     fleet = fleet_from_department(dept, owner, cfg=cfg, name=name)
     if save:
         from .file_lock import cross_process_lock
-        from .fleet import fleets_dir, load_fleet, save_fleet
+        from .fleet import fleets_dir, load_fleet, save_fleet, valid_name
 
+        if not valid_name(fleet.name):
+            raise ValueError(f"invalid fleet name: {fleet.name!r}")
         target_tenant = tenant or "__active__"
         with cross_process_lock(fleets_dir(tenant=target_tenant) / f"{fleet.name}.json"):
             fleet, _added = merge_department_fleet(

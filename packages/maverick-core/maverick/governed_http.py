@@ -2,12 +2,14 @@
 
 This complements the process-wide egress guard, which remains necessary for
 third-party libraries and for integrations that have not migrated. Callers
-must validate model-supplied destinations and pin DNS separately where needed;
-this module enforces tenant and enterprise egress policy, not SSRF policy.
+must validate initial model-supplied destinations and pin their DNS separately
+where needed. This module enforces tenant and enterprise egress policy, and
+the redirect helper additionally validates and pins network redirect targets.
 """
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import nullcontext
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -80,10 +82,9 @@ def guarded_redirect_get(
 ) -> Callable[..., Any]:
     """Follow GET redirects with a policy decision before every HTTP hop.
 
-    HTTPX builds each next request, including its URL, cookies, headers and
-    cross-origin credential stripping. The original sender is used for the
-    first hop; subsequent requests use one client with redirects disabled so
-    this boundary can check each prepared destination before sending it.
+    HTTPX builds each next request. Redirects reuse the original client's
+    transport configuration and strip credentials on an origin change. Each
+    network redirect is checked and pinned to a public address before sending.
     """
     def guarded(url: str, *args: Any, **kwargs: Any) -> Any:
         if require_https and urlsplit(str(url)).scheme.lower() != "https":
@@ -99,16 +100,18 @@ def guarded_redirect_get(
 
         import httpx
 
-        from .egress_guard import _check
-
         history = []
-        # Carry cookies set on the initial response into the redirect client.
-        # Its subsequent responses update the same jar through HTTPX itself.
-        with httpx.Client(
-            cookies=response.cookies,
-            follow_redirects=False,
-            timeout=options.get("timeout", 5.0),
-        ) as client:
+        owner = getattr(send, "__self__", None)
+        # Bound clients retain their actual CA, client certificate, proxies,
+        # mounts and custom transport. Top-level httpx.get passes these options
+        # to a short-lived client, so preserve them for its redirect client.
+        if owner is not None and callable(getattr(owner, "send", None)):
+            context = nullcontext(owner)
+        else:
+            client_options = {key: options[key] for key in ("verify", "cert", "proxy", "trust_env") if key in options}
+            context = httpx.Client(cookies=response.cookies, follow_redirects=False,
+                                   timeout=options.get("timeout", 5.0), **client_options)
+        with context as client:
             while next_request is not None:
                 if len(history) >= 20:
                     response.close()
@@ -122,18 +125,66 @@ def guarded_redirect_get(
                     response.close()
                     raise ValueError("HTTPS is required for every redirect")
                 try:
-                    _check(str(next_request.url))
+                    previous = response.request.url
+                    target = next_request.url
+                    if (previous.scheme, previous.host, previous.port) != (target.scheme, target.host, target.port):
+                        # Keep only ordinary representation/transport headers.
+                        # Credential header names are not enumerable (API keys,
+                        # signed headers and vendor tokens all occur in practice).
+                        # HTTPX already removed the source Cookie header and
+                        # rebuilt it from cookies scoped to the destination.
+                        allowed = {"accept", "accept-encoding", "accept-language", "cache-control",
+                                   "connection", "cookie", "host", "user-agent"}
+                        for header in list(next_request.headers):
+                            if header.lower() not in allowed:
+                                del next_request.headers[header]
+                    following = _send_pinned_redirect(client, next_request)
                 except BaseException:
                     response.close()
                     raise
                 history.append(response)
                 response.close()
-                response = client.send(next_request, follow_redirects=False)
+                response = following
                 next_request = response.next_request
         response.history = history
         return response
 
     return guarded
+
+
+def _send_pinned_redirect(client: Any, request: Any) -> Any:
+    """Borrow the selected transport without mutating or closing its owner."""
+    import httpx
+
+    from .egress_guard import _check, _reaches_the_network
+    from .tools._ssrf import _host_header, _PinnedTransport, resolve_pinned_ip
+
+    _check(str(request.url))
+    if not _reaches_the_network(client, request):
+        return client.send(request, follow_redirects=False, auth=None)
+    host = request.url.host
+    ip = resolve_pinned_ip(host, require_public=True)
+    inner = client._transport_for_url(request.url)
+
+    class BorrowedPinnedTransport(_PinnedTransport):
+        def handle_request(self, request):
+            original = request.url
+            try:
+                return super().handle_request(request)
+            finally:
+                # HTTPX resolves relative Location headers after transport
+                # return; that base must remain the original hostname.
+                request.url = original
+
+        def close(self):
+            pass  # The caller owns the underlying transport and connection pool.
+
+    transport = BorrowedPinnedTransport(host, _host_header(urlsplit(str(request.url)), host), ip, inner)
+    with httpx.Client(transport=transport, cookies=client.cookies,
+                      event_hooks=client.event_hooks, follow_redirects=False) as pinned:
+        response = pinned.send(request, follow_redirects=False, auth=None)
+        client.cookies.extract_cookies(response)
+        return response
 
 
 class GuardedClient:

@@ -266,6 +266,17 @@ def _validate_http_spec(spec: MCPServerSpec) -> None:
     if spec.oauth and parsed.scheme != "https":
         raise ValueError(
             f"MCP server {spec.name!r} url must be https:// when oauth is configured; got {url!r}")
+    if spec.auth_token or any(key.lower() == "authorization" for key in spec.headers):
+        import ipaddress
+
+        host = (parsed.hostname or "").lower()
+        try:
+            loopback = ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            loopback = host == "localhost"
+        if parsed.scheme != "https" and not loopback:
+            raise ValueError(
+                f"MCP server {spec.name!r} credentials require https:// or a loopback host")
 
 
 def _validate_subprocess_inputs(spec: MCPServerSpec) -> None:
