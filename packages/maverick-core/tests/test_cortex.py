@@ -365,6 +365,9 @@ def test_deposit_provenance_is_the_authenticated_caller(sources, events):
                                 caller=cortex.Caller(principal="user:operator"))
     assert ok, reason
     assert sources["kb"].ingested == [("finance", "Unreviewed text", "user:operator")]
+    kind, payload = events[-1]
+    assert kind == audit.EventKind.CORTEX_DEPOSIT
+    assert payload["source"] == payload["caller"] == "user:operator"
 
 
 def test_external_deposit_only_reaches_fleet_memory(sources, events):

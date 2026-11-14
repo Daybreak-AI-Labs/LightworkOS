@@ -407,7 +407,7 @@ def deposit(
             if callable(close):
                 close()
         return _done(True, "ingested", collection=collection, chunks=int(chunks or 0),
-                     source=source or caller.principal)
+                     source=caller.principal)
     if kind == "fleet":
         from . import fleet_memory
         payload = {"agent_id": caller.agent_id, "vendor": caller.vendor,
