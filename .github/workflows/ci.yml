@@ -752,8 +752,8 @@ jobs:
             opentelemetry-sdk opentelemetry-exporter-otlp-proto-http \
             pandas pyarrow playwright prometheus-client pysaml2 pyXMLSecurity python-docx \
             python-telegram-bot qdrant-client slack-sdk sympy websockets
-          # The learned PRM round-trip needs CPU tensors, not a CUDA runtime.
-          python -m pip install --extra-index-url https://download.pytorch.org/whl/cpu torch
+          # Keep the public build auditable at its exact version; tests use CPU tensors.
+          python -m pip install --no-cache-dir torch
           # Install the headless executable, too, so the local egress test runs.
           python -m playwright install --with-deps --only-shell chromium
           python -m pip check
@@ -814,8 +814,8 @@ jobs:
             opentelemetry-sdk opentelemetry-exporter-otlp-proto-http \
             pandas pyarrow playwright prometheus-client pysaml2 pyXMLSecurity python-docx \
             python-telegram-bot qdrant-client slack-sdk sympy websockets
-          # The learned PRM round-trip needs CPU tensors, not a CUDA runtime.
-          python -m pip install --extra-index-url https://download.pytorch.org/whl/cpu torch
+          # Keep the public build auditable at its exact version; tests use CPU tensors.
+          python -m pip install --no-cache-dir torch
           # Install the headless executable, too, so the local egress test runs.
           python -m playwright install --with-deps --only-shell chromium
           python -m pip check
@@ -986,8 +986,8 @@ jobs:
             opentelemetry-sdk opentelemetry-exporter-otlp-proto-http \
             pandas pyarrow playwright prometheus-client pysaml2 pyXMLSecurity python-docx \
             python-telegram-bot qdrant-client slack-sdk sympy websockets
-          # The learned PRM round-trip needs CPU tensors, not a CUDA runtime.
-          python -m pip install --extra-index-url https://download.pytorch.org/whl/cpu torch
+          # Keep the public build auditable at its exact version; tests use CPU tensors.
+          python -m pip install --no-cache-dir torch
           # Install the headless executable, too, so the local egress test runs.
           python -m playwright install --with-deps --only-shell chromium
           python -m pip check
