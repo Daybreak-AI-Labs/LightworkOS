@@ -2586,7 +2586,9 @@ def review_efficacy(model_id: str, cases: list[str], *,
     """Re-measure each current line's CAUSAL lift with a live A/B and DEMOTE the
     dead weight -- a line whose lift has fallen to ``<= min_lift`` over at least
     ``min_samples`` cases no longer earns its place in every prompt (the model,
-    tools, or APIs moved on). Returns the demoted lines.
+    tools, or APIs moved on). Returns the demoted lines. A measurement whose
+    arms report themselves unclean or incomplete demotes nothing, and a line is
+    removed only from the scope it was measured in.
 
     Demotion uses the audited `forget` path (reversible), NOT the promotion gate.
     Scorers are injected (a real eval needs a real model); without ``cases`` it is
@@ -2599,17 +2601,24 @@ def review_efficacy(model_id: str, cases: list[str], *,
         # mid-loop, so iterating a live view would skip lines. Spans every scope.
         for _k, ln in list(_iter_model_lines(shared_addenda(path), str(model_id))):
             try:
-                w, *_ = _score_parts(score_with(ln, cases))
-                wo, *_ = _score_parts(score_without(ln, cases))
+                with_result, without_result = score_with(ln, cases), score_without(ln, cases)
+                w, *_ = _score_parts(with_result)
+                wo, *_ = _score_parts(without_result)
             except Exception:  # a bad scorer can't drop a line
                 continue
             if not (isinstance(w, (int, float)) and isinstance(wo, (int, float))
                     and math.isfinite(w) and math.isfinite(wo)):
                 continue
+            # A degraded or partial arm (a provider outage scores both arms 0)
+            # is no evidence that the line stopped helping.
+            if not all(_structured_evidence(r, len(cases))[3]
+                       for r in (with_result, without_result)):
+                continue
             if len(cases) >= min_samples and (w - wo) <= min_lift:
                 with effect_scope() if effect_scope is not None else nullcontext() as advance:
-                    if forget_addendum(model_id, line=ln, path=path):
-                        demoted.append(ln)
+                    if forget_addendum(model_id, line=ln, scope=_split_key(_k)[1], path=path):
+                        if ln not in demoted:
+                            demoted.append(ln)
                         if callable(advance):
                             advance()
     except Exception:  # pragma: no cover -- review never perturbs a run

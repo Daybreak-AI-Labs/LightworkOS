@@ -2993,6 +2993,20 @@ def test_review_efficacy_demotes_dead_weight(monkeypatch, store):
     assert "good guidance line" in recalled and "dead guidance line" not in recalled
 
 
+def test_review_efficacy_ignores_unclean_or_incomplete_measurements(monkeypatch, store):
+    # A provider outage scores both arms 0.0 (lift 0) but marks them unclean;
+    # that is no evidence, so no learned line may be demoted.
+    ctrl = _enable(monkeypatch)
+    _promote_line(store, "M", "c0", "kept guidance line", ctrl)
+    outage = {"success": 0.0, "samples": 2, "attempted": 2, "complete": True, "clean": False}
+    partial = {"success": 0.4, "samples": 1, "attempted": 2}
+    for arm in (outage, partial):
+        assert sh.review_efficacy("M", ["c1", "c2"], score_with=lambda _ln, c, a=arm: a,
+                                  score_without=lambda _ln, c, a=arm: a,
+                                  min_lift=0.0, min_samples=2, path=store) == []
+    assert "kept guidance line" in sh.recall_addendum("M", store)
+
+
 def test_review_efficacy_no_cases_is_noop(monkeypatch, store):
     ctrl = _enable(monkeypatch)
     _promote_line(store, "M", "c0", "kept line", ctrl)
