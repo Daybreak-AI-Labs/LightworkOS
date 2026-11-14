@@ -21,6 +21,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from ..budget import BudgetExceeded, UsageAccountingError
+from ..killswitch import Halted
 from . import Tool
 from .ffmpeg_tool import _need, _run_cmd, _safe_path
 
@@ -50,10 +52,6 @@ _VIEW_VIDEO_INPUT_SCHEMA: dict[str, Any] = {
         "transcribe": {
             "type": "boolean",
             "description": "Also transcribe the audio track and include it (needs a Whisper backend). Default false.",
-        },
-        "model": {
-            "type": "string",
-            "description": "Override vision model (provider:model). Defaults to MAVERICK_VISION_MODEL env or the configured vision model ([models].vision, default claude-sonnet-4-6).",
         },
     },
     "required": ["source"],
@@ -123,11 +121,9 @@ def _run_view_video(args: dict[str, Any], sandbox, *, budget=None) -> str:
         return "ERROR: source is required"
     prompt = (args.get("prompt") or "Describe what happens in this video.").strip()
     from ..llm import model_for_role
-    model = (
-        args.get("model")
-        or os.environ.get("MAVERICK_VISION_MODEL")
-        or model_for_role("vision")
-    )
+    if "model" in args:
+        return "ERROR: the vision model is configured by the operator"
+    model = os.environ.get("MAVERICK_VISION_MODEL") or model_for_role("vision")
     try:
         num_frames = int(args.get("num_frames") or _DEFAULT_FRAMES)
     except (TypeError, ValueError):
@@ -192,6 +188,9 @@ def _run_view_video(args: dict[str, Any], sandbox, *, budget=None) -> str:
             budget=budget,
         )
         return (resp.text or "").strip() or "(no description returned)"
+    except (BudgetExceeded, UsageAccountingError, Halted):
+        # Stop signals must propagate or the cap / kill switch is not enforced.
+        raise
     except Exception as e:
         return f"ERROR: vision call failed: {type(e).__name__}: {e}"
 
