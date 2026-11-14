@@ -239,35 +239,50 @@ def impact_of(identifier: str, *, kind: str = "any",
     """Impact analysis: every recorded consequential action that depended on a
     given skill or source. Use when a skill/source is revoked or found bad --
     "what did it touch?" -- the inverse of lineage. Scans all per-goal ledgers;
-    ``kind`` is ``skill`` | ``source`` | ``any``. Read-only, fail-open."""
+    ``kind`` is ``skill`` | ``source`` | ``any``. Read-only, fail-open: a
+    ledger that is unreadable or fails verification is skipped with a warning,
+    and the scan continues with the remaining ledgers."""
     out: list[dict] = []
     try:
         d = _lineage_dir(store_dir)
         if not d.exists():
             return out
-        want_skill = kind in ("skill", "any")
-        want_source = kind in ("source", "any")
-        for f in sorted(d.glob("*.ndjson")):
-            try:
-                goal_id: object = int(f.stem)
-            except ValueError:
-                goal_id = f.stem
-            links = [json.loads(line) for line in f.read_text(encoding="utf-8").splitlines()
-                     if line.strip()]
-            if _verify_links(links).startswith("BROKEN"):
-                continue
-            for link in links:
-                skills = link.get("skills") or []
-                sources = link.get("sources") or []
-                via = ("skill" if (want_skill and identifier in skills)
-                       else "source" if (want_source and identifier in sources)
-                       else None)
-                if via:
-                    out.append({"goal_id": goal_id, "action": link.get("action"),
-                                "ts": link.get("ts"), "via": via,
-                                "hash": str(link.get("hash", ""))[:12]})
+        files = sorted(d.glob("*.ndjson"))
     except Exception:  # pragma: no cover -- impact analysis never raises
         return out
+    for f in files:
+        try:
+            out.extend(_ledger_impact(f, identifier, kind))
+        except Exception as exc:
+            log.warning("impact analysis skipped unreadable lineage ledger %s: %s",
+                         f.name, type(exc).__name__)
+    return out
+
+
+def _ledger_impact(f: Path, identifier: str, kind: str) -> list[dict]:
+    try:
+        goal_id: object = int(f.stem)
+    except ValueError:
+        goal_id = f.stem
+    links = [json.loads(line) for line in f.read_text(encoding="utf-8").splitlines()
+             if line.strip()]
+    if _verify_links(links).startswith("BROKEN"):
+        log.warning("impact analysis skipped lineage ledger %s: it fails verification",
+                     f.name)
+        return []
+    want_skill = kind in ("skill", "any")
+    want_source = kind in ("source", "any")
+    out: list[dict] = []
+    for link in links:
+        skills = link.get("skills") or []
+        sources = link.get("sources") or []
+        via = ("skill" if (want_skill and identifier in skills)
+               else "source" if (want_source and identifier in sources)
+               else None)
+        if via:
+            out.append({"goal_id": goal_id, "action": link.get("action"),
+                        "ts": link.get("ts"), "via": via,
+                        "hash": str(link.get("hash", ""))[:12]})
     return out
 
 
