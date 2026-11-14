@@ -25,7 +25,7 @@ import (
 // lowercase; lookups lowercase the candidate first. Mirrors _HOP_BY_HOP.
 var hopByHop = map[string]struct{}{
 	"connection": {}, "keep-alive": {}, "proxy-authenticate": {},
-	"proxy-authorization": {}, "te": {}, "trailers": {}, "transfer-encoding": {},
+	"proxy-authorization": {}, "te": {}, "trailer": {}, "trailers": {}, "transfer-encoding": {},
 	"upgrade": {}, "host": {}, "content-length": {},
 }
 
