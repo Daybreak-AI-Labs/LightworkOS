@@ -1326,6 +1326,33 @@ def test_commit_after_approval_fires_exactly_once(monkeypatch):
     assert len(conn.writes) == 1
 
 
+def test_external_agent_approvals_carry_the_dual_control_quorum(monkeypatch):
+    monkeypatch.setenv("MAVERICK_APPROVALS_REQUIRED", "2")
+    _wire_fakecrm(monkeypatch)
+    _enroll(max_risk="high")
+    from maverick.world_model import WorldModel
+    parked = xa.execute("sf-quotebot", _write_request())
+    screened = xa.screen("sf-quotebot", "send_contract", risk="high")
+    for approval_id in (parked["approval_id"], screened["approval_id"]):
+        assert WorldModel().get_approval(approval_id).approvals_required == 2
+    WorldModel().decide_approval(parked["approval_id"], "approved",
+                                 decided_by="admin@corp.test")
+    assert WorldModel().get_approval(parked["approval_id"]).status == "pending"
+
+
+def test_unreadable_config_keeps_the_mint_and_approval_gates_strict(tmp_path):
+    from maverick import config
+    path = tmp_path / "config.toml"
+    path.write_text("[actions]\nrequire_approval_at = \"high\"\n")
+    config.reset_config_cache()
+    assert xa._mint_approval_required() is False
+    assert xa._approval_floor() == "high"
+    path.write_text(path.read_text() + "this is not toml\n")
+    config.reset_config_cache()
+    assert xa._mint_approval_required() is True
+    assert xa._approval_floor() == "low"
+
+
 def test_commit_digest_mismatch_voids_and_counts_toward_containment(
         monkeypatch):
     conn = _wire_fakecrm(monkeypatch)

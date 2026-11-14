@@ -515,8 +515,10 @@ def _mint_approval_required() -> bool:
     """``[external_agents] mint_approval``: step-up re-auth on credential
     minting — a mint parks a world approval a decision-maker must approve."""
     try:
-        from .config import get_external_agents
-        return bool(get_external_agents()["mint_approval"])
+        from .config import config_source_errors, get_external_agents
+        required = bool(get_external_agents()["mint_approval"])
+        # An unreadable config may have lost the policy: park the approval.
+        return required or bool(config_source_errors(include_tenant=True))
     except Exception as exc:
         raise ExternalAgentsError(
             "credential mint approval policy is unavailable; refusing to "
@@ -1230,6 +1232,7 @@ def screen(
             decode_approval_detail,
             encode_operation_approval_detail,
         )
+        from .safety.dual_control import required_approvals
         from .world_model import open_world
         action = f"external:{agent_id}:{tool}"
         target = {"agent_id": agent_id, "tool": tool}
@@ -1265,6 +1268,7 @@ def screen(
             scope=meta.get("department") or None,
             detail=approval_detail,
             provenance="external_agents",
+            approvals_required=required_approvals(req_risk),
             requested_by=f"agent:{agent_id}")
         _notify_approval(approval_id, agent_id, tool, req_risk,
                          meta.get("department") or "")
@@ -1397,9 +1401,12 @@ def _notify_approval(approval_id: int, agent_id: str, tool: str,
 def _approval_floor() -> str:
     from .safety.tool_risk import RISK_LEVELS
     try:
-        from .config import load_config
+        from .config import config_source_errors, load_config
         v = str((load_config() or {}).get("actions", {}).get(
             "require_approval_at", "high")).strip().lower()
+        if config_source_errors(include_tenant=True):
+            # An unreadable policy cannot lower the floor: every risk parks.
+            return RISK_LEVELS[0]
         return v if v in RISK_LEVELS else "high"
     except Exception:
         return "high"
@@ -2180,6 +2187,7 @@ def _park_execution(agent_id: str, conn, meta: dict, *, tool: str,
                                         "body": body or {}})
                     if op != "get" else f"would GET {connector}{path}")
         from .approval_cards import encode_operation_approval_detail
+        from .safety.dual_control import required_approvals
         from .world_model import open_world
         target = {
             "agent_id": agent_id,
@@ -2220,7 +2228,9 @@ def _park_execution(agent_id: str, conn, meta: dict, *, tool: str,
                 irreversible=op != "get",
                 ttl_seconds=_EXECUTION_TTL_SECONDS,
             ),
-            provenance="external_agents", requested_by=f"agent:{agent_id}")
+            provenance="external_agents",
+            approvals_required=required_approvals(req_risk),
+            requested_by=f"agent:{agent_id}")
     except Exception:
         # Nothing was authorized and nothing will fire — hand the reserved
         # slot back instead of stranding a 24h pending entry that has no
