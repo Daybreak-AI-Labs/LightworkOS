@@ -716,6 +716,16 @@ def _resolved_columns(
     return tuple(columns)
 
 
+def _note_unreadable_containment(row: dict[str, Any]) -> None:
+    """Containment is on while a source that may hold it cannot be read; say
+    so instead of showing the default "off" the readable layers give."""
+    from maverick import containment
+
+    current = containment.status()
+    if current["reason"] == "unreadable_configuration":
+        row.update(value=None, locked=True, value_text=current["message"])
+
+
 def _row(setting: catalog.Setting, layers: dict[str, Any]) -> dict[str, Any]:
     state = _resolve(setting, layers)
     value = state["value"]
@@ -763,6 +773,8 @@ def _row(setting: catalog.Setting, layers: dict[str, Any]) -> dict[str, Any]:
     else:
         row["value"] = _form_value(setting, value)
         row["value_text"] = catalog.display_value(setting, value)
+    if setting.id == "containment.enabled":
+        _note_unreadable_containment(row)
     periods = [{"value": s, "label": f"Every {n}"} for s, n in catalog.RATE_PERIODS]
     if setting.control == "rate":
         parsed = catalog.parse_rate(value) if state["known"] else None

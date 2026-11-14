@@ -69,6 +69,19 @@ def _row(setting_id):
     raise AssertionError(setting_id)
 
 
+def test_locked_down_mode_row_says_it_is_on_when_its_source_is_unreadable(monkeypatch):
+    from maverick import containment
+
+    assert _row("containment.enabled")["value"] is False
+    message = "Locked-down mode is on because config.toml could not be read."
+    monkeypatch.setattr(containment, "status", lambda: {
+        "enabled": True, "reason": "unreadable_configuration",
+        "sources": ["config.toml"], "message": message})
+    row = _row("containment.enabled")
+    assert row["value"] is None and row["locked"] is True
+    assert row["value_text"] == message
+
+
 def test_work_value_controls_round_trip_into_live_report_authority():
     from maverick.intent_value.settings import policy
 
