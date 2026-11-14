@@ -24,9 +24,9 @@ Comparing coverage between two snapshots yields three sets:
 
 `maverick dream` already snapshots every learned store before each cycle, so
 those timestamped snapshot dirs ARE the history this replays against -- no
-new state. Output is a deterministic report, optionally written as a signed
-ledger line so the improvement/regression record is tamper-evident. Opt-in,
-read-only, fail-open.
+new state. Output is a deterministic report, optionally appended (counts only)
+to a local NDJSON summary file, with a separate audit event recording the
+write; the summary file itself is not signed. Opt-in, read-only, fail-open.
 """
 from __future__ import annotations
 
@@ -133,7 +133,7 @@ def _skill_match(goal_text: str, skills_dir: Path, *, min_overlap: float = 0.34)
     for md in sorted(skills_dir.glob("*.md")):
         try:
             st = _sk_tokens(md.read_text(encoding="utf-8"))
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             continue
         if not st:
             continue

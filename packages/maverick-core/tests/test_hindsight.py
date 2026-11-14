@@ -59,6 +59,14 @@ class TestCoverage:
         cov = hindsight.coverage_under("x", tmp_path / "nope")
         assert cov.covered is False
 
+    def test_non_utf8_skill_file_is_skipped(self, tmp_path):
+        d = _make_state(tmp_path, "s", skills=[
+            ("ledger-reconcile", "reconcile quarterly ledger totals"),
+        ])
+        (d / "learned-skills" / "broken.md").write_bytes(b"\xff\xfe reconcile")
+        cov = hindsight.coverage_under("reconcile the quarterly ledger totals", d)
+        assert cov.skill == "ledger-reconcile"
+
 
 class _World:
     def __init__(self, goals):
