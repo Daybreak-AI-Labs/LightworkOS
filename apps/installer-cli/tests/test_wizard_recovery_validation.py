@@ -104,3 +104,23 @@ def test_config_publication_failure_preserves_a_containing_workspace(monkeypatch
     assert wizard._advanced_write_failed(PermissionError(13, "denied", str(config_dir / "work" / "probe"))) == 1
     assert asked == ["Workspace directory"]
     assert json.loads(partial.read_text())["sandbox"]["workdir"] == str(tmp_path / "other")
+
+
+def test_missing_or_locked_workspace_ancestor_reasks_the_workspace(monkeypatch, tmp_path, prompts):
+    # mkdir(parents=True) reports the ancestor it could not create, not the
+    # work folder itself; an unrelated path still keeps answers without asking.
+    partial = tmp_path / "wizard-partial.json"
+    work = tmp_path / "locked" / "ws"
+    state = {"providers": ["anthropic"], "sandbox": {"backend": "docker", "workdir": str(work)}}
+    monkeypatch.setattr(wizard, "CONFIG_DIR", tmp_path / "config")
+    monkeypatch.setattr(wizard, "PARTIAL_STATE_PATH", partial)
+    asked = []
+    monkeypatch.setattr(wizard, "_q_text", lambda *a, **kw: asked.append(a[0]) or str(tmp_path / "good-work"))
+    partial.write_text(json.dumps(state))
+    assert wizard._advanced_write_failed(PermissionError(13, "denied", str(tmp_path / "elsewhere"))) == 1
+    assert asked == [] and json.loads(partial.read_text()) == state
+    assert wizard._advanced_write_failed(PermissionError(13, "denied", str(tmp_path / "locked"))) == 1
+    assert asked == ["Workspace directory"]
+    saved = json.loads(partial.read_text())
+    assert saved["providers"] == state["providers"]
+    assert saved["sandbox"]["workdir"] == str(tmp_path / "good-work")

@@ -6203,7 +6203,10 @@ def _reask_failed_workspace(exc: OSError) -> None:
         # its own preparation failures.
         if (failed == config_dir or config_dir in failed.parents) and config_dir not in workdir.parents:
             return
-        if failed != workdir and workdir not in failed.parents:
+        # mkdir(parents=True) names the ancestor it could not create; one the
+        # configuration location shares is not attributed to the work folder.
+        ancestor = failed in workdir.parents and failed not in (config_dir, *config_dir.parents)
+        if failed != workdir and workdir not in failed.parents and not ancestor:
             return
     except (OSError, ValueError, TypeError):
         return  # An unclassified filesystem failure must not discard answers.
