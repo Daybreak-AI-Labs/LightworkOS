@@ -71,6 +71,13 @@ class WormUnavailable(RuntimeError):
     """WORM export was requested but no usable target is configured/available."""
 
 
+class WormAttemptHeld(WormUnavailable):
+    """One file's earlier copy has an unknown result and awaits review.
+
+    Held per file: other days are still exported.
+    """
+
+
 def _valid_day_name(name: object) -> bool:
     if not isinstance(name, str) or not _DAY_NAME_RE.fullmatch(name):
         return False
@@ -641,7 +648,7 @@ def _attempt_fence(audit_dir, name, sha256, request_id, retain_until, sink, reco
             _release_attempts(audit_dir, name, sha256, request_id, retain_until, sink, pending, authorization)
             pending = []
     if pending:
-        raise WormUnavailable("an earlier WORM copy has an unknown result; no copy was repeated. Review its original proof and the current source and destination before a separate intentional attempt")
+        raise WormAttemptHeld("an earlier WORM copy has an unknown result; no copy was repeated. Review its original proof and the current source and destination before a separate intentional attempt")
     payload = {"kind": "worm_push_attempt", "schema": 1, "name": name, "sha256": sha256,
                "request_id": request_id, "attempted_at": _utcnow().isoformat(), "retain_until": retain_until.isoformat(),
                "destination": _attempt_destination(sink)}
@@ -1062,7 +1069,14 @@ def push_closed_dayfiles(
                 continue
             if before_effect:
                 before_effect(p.name, digest)
-            if not _attempt_fence(audit_dir, p.name, digest, native_request_id, retain_until, sink, reconcile):
+            try:
+                fenced = _attempt_fence(audit_dir, p.name, digest, native_request_id, retain_until, sink, reconcile)
+            except WormAttemptHeld:
+                # Fail closed for this file only: one unresolved upload must not
+                # stop every later day from being exported.
+                report[p.name] = "refused: held -- an earlier copy has an unknown result; review it before retrying"
+                continue
+            if not fenced:
                 report[p.name] = "already pushed"
                 continue
             try:

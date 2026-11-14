@@ -98,6 +98,28 @@ def test_push_is_idempotent(tmp_path):
     assert len(sink.puts) == 1   # no second shipment
 
 
+def test_failed_upload_holds_only_that_file(tmp_path):
+    # An upload with an unknown result is held for review, but it must not
+    # stop every later day from being exported.
+    ad = _audit_dir(tmp_path, {"2020-01-01.ndjson": "a\n"})
+
+    class _Flaky(FakeSink):
+        def put(self, name, data, *, retain_until):
+            raise ConnectionRefusedError("collector down")
+
+    rep = worm.push_closed_dayfiles(audit_dir=ad, today="2025-01-01", sink=_Flaky())
+    assert rep == {"2020-01-01.ndjson": "error (ConnectionRefusedError)"}
+
+    signer = AuditSigner(ad / "2020-01-02.ndjson")
+    assert signer.write({"kind": "test", "content": "b"})
+    ensure_anchors(ad)
+    sink = FakeSink()
+    rep = worm.push_closed_dayfiles(audit_dir=ad, today="2025-01-01", sink=sink)
+    assert rep["2020-01-01.ndjson"].startswith("refused: held")
+    assert rep["2020-01-02.ndjson"] == "pushed"
+    assert [n for n, _, _ in sink.puts] == ["2020-01-02.ndjson"]
+
+
 def test_changed_file_is_repushed(tmp_path):
     ad = _audit_dir(tmp_path, {"2020-01-01.ndjson": "a\n"})
     f = ad / "2020-01-01.ndjson"
