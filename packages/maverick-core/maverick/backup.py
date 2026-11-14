@@ -1031,8 +1031,8 @@ def create_backup(
     Existing destination paths are refused rather than overwritten.
 
     ``include_keys`` defaults to ``False``: the at-rest encryption key (and
-    rotation keyring) and the audit signing key, those of the data root and of
-    every workspace folder under it, are excluded from the
+    rotation keyring), the audit signing key and the browser vault key, those
+    of the data root and of every workspace folder under it, are excluded from the
     archive, matching docs/encryption.md's escrow guidance to keep key
     material off the same copy as the data it decrypts. Pass
     ``include_keys=True`` only when the operator has explicitly chosen to
