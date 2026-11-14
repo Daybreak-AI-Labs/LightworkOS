@@ -17,8 +17,10 @@ Config (opt-in; nothing configured = no caps = behavior unchanged)::
     openai    = 20.0
 
 ``MAVERICK_PROVIDER_CAPS_PERIOD`` overrides the period knob (env wins, the
-house convention). Config readers are fail-soft: an unreadable config means
-no caps, never a crash.
+house convention). :func:`caps_from_config` is fail-soft for displays, but
+admission (:func:`check`, :func:`reserve`) refuses with
+:class:`ProviderAccountingUnavailable` while any config source is unreadable:
+the caps may have been lost with the file, so "no caps" cannot be assumed.
 
 The ledger (``data_dir("provider_spend.json")``) maps
 ``{period_key: {provider: dollars}}`` — period keys are ``YYYY-MM-DD`` (day)
@@ -222,6 +224,19 @@ def caps_from_config() -> dict[str, float]:
         if provider and math.isfinite(normalized) and normalized > 0:
             caps[provider] = normalized
     return caps
+
+
+def _admission_cap(provider: str) -> float | None:
+    """The configured cap for admission; refuses when the config is unreadable."""
+    caps = caps_from_config()
+    try:
+        from .config import config_source_errors
+        unreadable = bool(config_source_errors(include_tenant=True))
+    except Exception:
+        unreadable = True
+    if unreadable:
+        raise ProviderAccountingUnavailable
+    return caps.get(provider)
 
 
 def period_from_config() -> str:
@@ -1073,7 +1088,7 @@ def _status(total, receipts, cap):
 def check(provider: str, *, now: float | None = None,
           path: Path | None = None) -> CapStatus:
     name = _canon(provider)
-    cap = caps_from_config().get(name)
+    cap = _admission_cap(name)
     try:
         shared = _shared_world() if path is None else None
         if shared is not None:
@@ -1134,7 +1149,7 @@ def _reserve_provider(
     name = _canon(provider)
     if not name:
         raise ProviderAccountingUnavailable
-    cap = caps_from_config().get(name)
+    cap = _admission_cap(name)
     if type(projection_known) is not bool or (cap is not None and not projection_known):
         raise ProviderAccountingUnavailable
     work_item = _current_work_item() if work_item_id is None else work_item_id
