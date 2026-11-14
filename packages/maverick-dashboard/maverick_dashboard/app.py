@@ -12437,9 +12437,9 @@ def _load_paused_approval_run(token: str):
     """Verify a signed approval ``token`` and return ``(run, decision)`` when it
     points at a run currently paused on an approval; else ``(None, reason)``."""
     from maverick.flow import store
-    from maverick.flow.approvals import verify_token
+    from maverick.flow.approvals import approval_value_digest, verify_token
 
-    claim = verify_token(token)
+    claim = verify_token(token, digest_values=True)
     if not claim:
         return None, "This approval link is invalid or has expired.", "", ""
     tenant = str(claim.get("tenant") or "")
@@ -12466,14 +12466,14 @@ def _load_paused_approval_run(token: str):
     if run.status != "paused_approval":
         return None, f"This run is no longer awaiting approval (status: {run.status}).", tenant, ""
     if (
-        str(run.cursor or "") != claim.get("cursor")
-        or str(run.prompt or "") != claim.get("prompt")
+        not hmac.compare_digest(approval_value_digest(str(run.cursor or "")), claim["cursor"])
+        or not hmac.compare_digest(approval_value_digest(str(run.prompt or "")), claim["prompt"])
         or float(run.updated or 0.0) != float(claim.get("updated", -1.0))
     ):
         return None, "This approval link is for an older approval step.", tenant, ""
-    if str((run.human or {}).get("assignee") or "") != claim.get("assignee", "") or str(
-        run.owner or ""
-    ) != claim.get("owner", ""):
+    if not hmac.compare_digest(
+        approval_value_digest(str((run.human or {}).get("assignee") or "")), claim["assignee"],
+    ) or not hmac.compare_digest(approval_value_digest(str(run.owner or "")), claim["owner"]):
         return None, "This approval link is for a different approver scope.", tenant, ""
     from maverick_dashboard import automation_queue as aq
 

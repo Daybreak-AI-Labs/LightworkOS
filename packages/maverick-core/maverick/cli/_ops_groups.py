@@ -105,7 +105,14 @@ def retention_enforce_cmd(
         v is not None
         for v in (audit_days, episodes_days, events_days, messages_days, usage_days)
     ):
-        cfg = {}
+        from ..config import load_config
+        try:
+            configured = load_config().get("retention") or {}
+            if not isinstance(configured, dict):
+                raise ValueError("[retention] must be a table")
+            cfg = dict(configured)
+        except (OSError, ValueError) as exc:
+            raise click.ClickException(f"Cannot read retention rules: {exc}") from exc
         if audit_days is not None:
             cfg["audit_days"] = audit_days
         if episodes_days is not None:

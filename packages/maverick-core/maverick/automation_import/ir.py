@@ -296,7 +296,8 @@ class ImportedTrigger:
         if self.description:
             return _complete_text(self.description) if complete else _safe_line(self.description)
         if self.kind == TRIGGER_SCHEDULE:
-            return f"on a schedule{f' ({self.cron})' if self.cron else ''}"
+            cron = _complete_text(self.cron) if complete else _safe_line(self.cron, max_chars=120)
+            return f"on a schedule{f' ({cron})' if cron else ''}"
         if self.kind == TRIGGER_WEBHOOK:
             return "when an inbound webhook is received"
         if self.kind == TRIGGER_EVENT:

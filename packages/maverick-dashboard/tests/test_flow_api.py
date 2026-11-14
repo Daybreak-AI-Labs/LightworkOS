@@ -2703,6 +2703,29 @@ def test_live_authoring_tool_cache_is_execution_identity_scoped(monkeypatch, tmp
     assert seen == [("api", "alice"), ("api", "bob")]
 
 
+@pytest.mark.parametrize(("stop", "words"), [
+    ("halted", "kill switch"), ("budget", "budget"),
+])
+def test_draft_names_a_kill_switch_or_budget_stop(monkeypatch, tmp_path, stop, words):
+    _isolate(monkeypatch, tmp_path)
+    import maverick.flow.draft as draft_mod
+    from maverick.budget import BudgetExceeded
+    from maverick.killswitch import Halted
+
+    monkeypatch.setattr(
+        "maverick_dashboard._shared.require_provider_or_400",
+        lambda **_kwargs: None,
+    )
+
+    def stopped(*_args, **_kwargs):
+        raise Halted("operator", "file") if stop == "halted" else BudgetExceeded("dollars")
+
+    monkeypatch.setattr(draft_mod, "draft_flow", stopped)
+    r = _client().post("/api/v1/flows/draft", json={"description": "x"})
+    assert r.status_code == 409, r.text
+    assert words in r.json()["detail"]
+
+
 def test_draft_requires_provider(monkeypatch, tmp_path):
     _isolate(monkeypatch, tmp_path)
     from fastapi import HTTPException

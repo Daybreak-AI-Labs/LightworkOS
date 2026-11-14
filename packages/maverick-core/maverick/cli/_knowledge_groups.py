@@ -145,6 +145,11 @@ def knowledge_seed(collection: str | None, tenant: str | None,
         for c in corpora:
             click.echo(f"  {c['collection']}: {c['title']} ({c['documents']} docs)")
         return
+    if collection is not None and collection not in {c["collection"] for c in corpora}:
+        raise click.BadParameter(
+            "unknown collection; use knowledge seed --list to see available corpora",
+            param_hint="--collection",
+        )
     from ..knowledge_admin import open_knowledge_base
     kb = open_knowledge_base(tenant=tenant)
     if kb is None:

@@ -409,6 +409,8 @@ def _bound_value(binding, inputs, prior_results):
 
 def resolve_step(artifact: dict, index: int, inputs: dict, prior_results: list) -> Decision:
     """Resolve native arguments only on complete binding agreement; dispatch nothing."""
+    if type(artifact) is not dict or type(artifact.get("schema")) is not str:
+        return Decision(False, reason="invalid_artifact")
     if type(artifact) is dict and artifact.get("schema") in WORKFLOW_SCHEMAS:
         # A transducer requires the exact tools, arguments and results of the
         # completed prefix. Positional results alone cannot identify its state.

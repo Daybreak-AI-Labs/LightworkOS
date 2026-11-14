@@ -16,6 +16,7 @@ bootstrap CI is seeded, so a reported lift is reproducible for a given seed.
 """
 from __future__ import annotations
 
+import math
 import os
 import random
 from contextlib import contextmanager
@@ -51,8 +52,9 @@ class LiftResult:
     wins: int
     losses: int
     ties: int
-    significant: bool          # 95% CI for the paired delta excludes 0
+    significant: bool          # requested CI for the paired delta excludes 0
     improved: bool             # significant AND delta > 0
+    confidence: float = 0.95
 
     def summary(self) -> str:
         verdict = (
@@ -63,10 +65,15 @@ class LiftResult:
         return (
             f"Learning lift: {verdict}. n={self.n}, "
             f"frozen={self.baseline_mean:.3f} -> live={self.treatment_mean:.3f} "
-            f"(delta {self.delta:+.3f}, 95% CI [{self.ci_low:+.3f}, "
+            f"(delta {self.delta:+.3f}, {self.confidence * 100:g}% CI [{self.ci_low:+.3f}, "
             f"{self.ci_high:+.3f}]); {self.wins} win / {self.losses} loss / "
             f"{self.ties} tie."
         )
+
+
+def _validate_confidence(confidence: float) -> None:
+    if not math.isfinite(confidence) or not 0 < confidence < 1:
+        raise ValueError("confidence must be finite and strictly between 0 and 1")
 
 
 def paired_lift(
@@ -81,6 +88,7 @@ def paired_lift(
     ``significant`` means the CI excludes 0; a single observation never counts
     as significant.
     """
+    _validate_confidence(confidence)
     if len(baseline) != len(treatment):
         raise ValueError("baseline and treatment must be paired (equal length)")
     n = len(baseline)
@@ -113,6 +121,7 @@ def paired_lift(
         wins=wins, losses=losses, ties=ties,
         significant=significant,
         improved=significant and mean_delta > 0,
+        confidence=confidence,
     )
 
 
@@ -130,6 +139,7 @@ def measure_lift(
     testable without a live agent. Each task is run once per arm, in order, so a
     deterministic ``run``/``score`` yields a deterministic result.
     """
+    _validate_confidence(confidence)
     baseline: list[float] = []
     treatment: list[float] = []
     for task in tasks:

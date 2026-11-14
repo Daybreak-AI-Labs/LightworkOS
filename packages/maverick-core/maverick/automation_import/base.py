@@ -86,8 +86,12 @@ def get_importer(source: str) -> Importer:
     return factory()
 
 
-def translate_all(source: str, raws: list[dict[str, Any]]) -> list[ImportedAutomation]:
-    """Translate a batch of raw definitions, skipping (and logging) bad ones."""
+def translate_all(source: str, raws: list[dict[str, Any]],
+                  skipped: list[tuple[str, str]] | None = None) -> list[ImportedAutomation]:
+    """Translate a batch of raw definitions, skipping (and logging) bad ones.
+
+    When ``skipped`` is given, each skipped definition's name and reason is
+    appended to it so the caller can tell the person what was not imported."""
     import logging
 
     imp = get_importer(source)
@@ -99,4 +103,7 @@ def translate_all(source: str, raws: list[dict[str, Any]]) -> list[ImportedAutom
             logging.getLogger(__name__).warning(
                 "automation_import: skipped a %s definition: %s", source, e
             )
+            if skipped is not None:
+                name = raw.get("name") if isinstance(raw, dict) else None
+                skipped.append((str(name or "unnamed definition"), str(e)))
     return out
