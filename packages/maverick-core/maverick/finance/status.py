@@ -109,7 +109,10 @@ def _sanctions_active() -> tuple[bool, str]:
             return False, f"governed sanctions screening is unavailable ({type(e).__name__})"
     from ..tools.sanctions_screen import _list_path, load_list
     path = _list_path()
-    names = load_list(path)
+    try:
+        names = load_list(path)
+    except ValueError as e:
+        return False, f"sanctions list at {path} is unusable: {e}"
     if names:
         return True, f"sanctions list loaded ({len(names)} names) at {path}"
     return False, f"add an OFAC SDN list at {path} (or set [screening] sdn_path)"
