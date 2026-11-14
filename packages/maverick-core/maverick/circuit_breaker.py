@@ -104,8 +104,13 @@ class CircuitBreaker:
 
     def record_success(self) -> None:
         with self._lock:
-            self._stats.consecutive_failures = 0
             self._stats.total_successes += 1
+            self._tick()
+            if self._state is CircuitState.OPEN:
+                # A call admitted before the breaker opened that completes
+                # inside the cooldown must not reopen traffic early.
+                return
+            self._stats.consecutive_failures = 0
             self._state = CircuitState.CLOSED
             self._probe_in_flight = False
 

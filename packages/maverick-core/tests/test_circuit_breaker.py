@@ -134,3 +134,11 @@ def test_circuit_breaker_snapshot():
     br.record_success()
     rows = snapshot()
     assert any(r["key"] == "snap-key" for r in rows)
+
+
+def test_late_success_does_not_close_an_open_breaker_inside_its_cooldown():
+    br = CircuitBreaker("late-success", failure_threshold=2, cooldown_seconds=1000)
+    br.record_failure()
+    br.record_failure()
+    br.record_success()
+    assert br.state is CircuitState.OPEN
