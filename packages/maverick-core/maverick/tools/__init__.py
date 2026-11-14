@@ -1847,12 +1847,66 @@ def _apply_tool_acl(reg: ToolRegistry, *, channel: str | None, user_id: str | No
     # An unreadable operator policy must stop registry construction.
     # Swallowing that security error would leave every tool registered after
     # a deny-list became corrupt.
-    # Any failure here (a mistyped [security] value included) propagates: a
-    # warning would leave the registry with no allow-list, deny-list or
-    # risk ceiling at all.
+    # Any failure here (a mistyped [security] value included) stops the build:
+    # a warning would leave the registry with no allow-list, deny-list or risk
+    # ceiling at all. A malformed value is reported by its setting name rather
+    # than as a bare TypeError from deep inside the ACL code.
     from ..safety.tool_acl import apply_to_registry
 
-    apply_to_registry(reg, channel=channel, user_id=user_id)
+    try:
+        apply_to_registry(reg, channel=channel, user_id=user_id)
+    except (TypeError, AttributeError, ValueError) as exc:
+        raise ToolAclConfigError(_acl_config_problem()) from exc
+
+
+class ToolAclConfigError(RuntimeError):
+    """The ``[security]`` tool ACL in config.toml has a malformed value."""
+
+
+_ACL_LIST_KEYS = ("allowed_tools", "denied_tools")
+
+
+def _acl_table_problem(table: Any, where: str) -> str | None:
+    if not isinstance(table, dict):
+        return f"{where} must be a table"
+    for key in _ACL_LIST_KEYS:
+        value = table.get(key)
+        if value is not None and not (
+            isinstance(value, str)
+            or (isinstance(value, list) and all(isinstance(v, str) for v in value))
+        ):
+            return f"{where} {key} must be a list of tool names"
+    risk = table.get("max_risk")
+    if risk is not None and not isinstance(risk, str):
+        return f"{where} max_risk must be one of \"low\", \"medium\", \"high\""
+    return None
+
+
+def _acl_config_problem() -> str:
+    """Name the malformed ``[security]`` ACL setting, as far as it can be found."""
+    generic = ("the [security] tool ACL in config.toml could not be applied; "
+               "check allowed_tools, denied_tools, max_risk, [security.channels.*] "
+               "and [security.users.*]")
+    try:
+        from ..config import load_config
+
+        sec = (load_config() or {}).get("security")
+    except Exception:
+        return generic
+    if sec is None:
+        return generic
+    if problem := _acl_table_problem(sec, "[security]"):
+        return f"config.toml: {problem}"
+    for section in ("channels", "users"):
+        entries = sec.get(section)
+        if entries is None:
+            continue
+        if not isinstance(entries, dict):
+            return f"config.toml: [security.{section}] must be a table of tables"
+        for key, table in entries.items():
+            if problem := _acl_table_problem(table, f"[security.{section}.{key}]"):
+                return f"config.toml: {problem}"
+    return generic
 
 
 def _apply_containment(reg: ToolRegistry) -> None:

@@ -300,6 +300,9 @@ allowed_tools = ["read_file"]
 denied_tools = 5
 max_risk = "low"
 ''')
-    from maverick.tools import base_registry
-    with pytest.raises(TypeError):
+    from maverick.tools import ToolAclConfigError, base_registry
+    with pytest.raises(ToolAclConfigError, match=r"\[security\] denied_tools must be a list"):
         base_registry(world=_FakeWorld(), sandbox=_FakeSandbox())
+    _write_config(tmp_path, '[security]\nchannels = "x"\n')
+    with pytest.raises(ToolAclConfigError, match=r"\[security.channels\] must be a table"):
+        base_registry(world=_FakeWorld(), sandbox=_FakeSandbox(), channel="slack")
