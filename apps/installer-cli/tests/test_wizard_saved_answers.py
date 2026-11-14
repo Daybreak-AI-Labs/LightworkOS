@@ -226,7 +226,8 @@ def test_blank_or_padded_secret_answers_keep_or_trim_the_value(monkeypatch):
     q_secret = wizard._q_secret
     monkeypatch.setenv("WIZARD_TEST_SECRET", "existing-value")
     monkeypatch.setattr(wizard, "_q_secret", lambda prompt: "   ")
-    assert wizard.collect_api_keys([], {"WIZARD_TEST_SECRET"}) == {"WIZARD_TEST_SECRET": "existing-value"}
+    kept = wizard.collect_api_keys([], {"WIZARD_TEST_SECRET"})
+    assert kept == {"WIZARD_TEST_SECRET": "existing-value"}  # pragma: allowlist secret
     monkeypatch.setattr(wizard, "questionary", None)
     monkeypatch.setattr(getpass, "getpass", lambda prompt: "  pasted-value \t")
     assert q_secret("Key") == "pasted-value"
