@@ -155,7 +155,8 @@ def _records_status(records: list, today: date, policy: dict, flat: int) -> str:
         elif remaining <= 0:
             # The deadline day itself ends the embargo, as in the single form
             # (today >= disclose-on is EXPIRED).
-            status, detail = "OVERDUE", f"deadline {deadline.isoformat()} passed {-remaining}d ago; disclosure permitted"
+            when = "is due today" if remaining == 0 else f"passed {-remaining}d ago"
+            status, detail = "OVERDUE", f"deadline {deadline.isoformat()} {when}; disclosure permitted"
         elif remaining <= _DUE_SOON:
             status, detail = "DUE_SOON", f"{remaining}d to deadline {deadline.isoformat()}"
         else:

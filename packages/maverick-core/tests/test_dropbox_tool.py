@@ -81,3 +81,10 @@ def test_dropbox_download_requests_only_the_preview_range(monkeypatch):
     out = dropbox_tool().fn({"op": "download", "path": "/big.bin"})
     assert post.call_args.kwargs["headers"]["Range"] == "bytes=0-4096"
     assert out.startswith("size=99999") and out.endswith("(truncated)")
+
+
+def test_dropbox_download_of_empty_file_is_not_an_error(monkeypatch):
+    monkeypatch.setenv("DROPBOX_ACCESS_TOKEN", "tok")
+    _fake_httpx(monkeypatch, post=MagicMock(return_value=_resp(416, "")))
+    from maverick.tools.dropbox_tool import dropbox_tool
+    assert dropbox_tool().fn({"op": "download", "path": "/empty.txt"}).startswith("size=0")

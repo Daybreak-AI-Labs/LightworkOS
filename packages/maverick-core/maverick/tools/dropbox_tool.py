@@ -99,6 +99,9 @@ def _op_download(args: dict) -> str:
             "Range": "bytes=0-4096",
         }, timeout=30.0,
     )
+    if r.status_code == 416:
+        # A range starting at byte 0 is unsatisfiable only for an empty file.
+        return "size=0\n"
     if r.status_code >= 400:
         return f"ERROR: download ({r.status_code}): {r.text[:300]}"
     content = r.content
