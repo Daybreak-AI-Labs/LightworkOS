@@ -5,6 +5,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
+import pytest
 from maverick_knowledge import extraction
 from maverick_knowledge.base import KnowledgeBase
 from maverick_knowledge.image import _pixel_cap
@@ -72,6 +73,15 @@ def test_qdrant_workspace_collection_name_uses_supported_characters(monkeypatch)
     store._namespace = _namespace_from_cfg({"path": "/workspace/owner/knowledge.db"})
     assert store._cname("general").startswith("workspace_")
     assert ":" not in store._cname("general")
+    assert store._cname("safe_private").endswith("__safe_private")
+    with pytest.raises(ValueError, match="collection name.*colon"):
+        store._cname("safe:private")
+    custom = QdrantStore.__new__(QdrantStore)
+    custom._namespace = "custom_namespace"
+    assert custom._cname("general") == "custom_namespace__general"
+    custom._namespace = "custom:namespace"
+    with pytest.raises(ValueError, match="namespace.*colon"):
+        custom._cname("general")
     other = QdrantStore.__new__(QdrantStore)
     other._namespace = _namespace_from_cfg({"path": "/workspace/other/knowledge.db"})
     legacy = QdrantStore.__new__(QdrantStore)
