@@ -57,3 +57,16 @@ def test_non_python_share(monkeypatch):
 
 def test_non_python_share_zero_when_empty():
     assert ma.non_python_share() == 0.0
+
+
+def test_concurrent_records_do_not_lose_counts(monkeypatch):
+    import threading
+
+    monkeypatch.setenv("MAVERICK_MCP_ANALYTICS", "1")
+    threads = [threading.Thread(target=ma.record_client, args=("python-httpx",))
+               for _ in range(16)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert ma.client_language_counts() == {"python": 16}

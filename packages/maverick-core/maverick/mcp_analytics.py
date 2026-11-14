@@ -80,16 +80,16 @@ def record_client(user_agent: str | None) -> None:
     if not analytics_enabled():
         return
     try:
+        from .file_lock import atomic_write_text, cross_process_lock
         lang = classify_user_agent(user_agent)
-        data = _load()
-        data[lang] = int(data.get(lang, 0)) + 1
         path = _tally_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".json.tmp")
-        fd = os.open(tmp, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f)
-        os.replace(tmp, path)
+        # One locked read-modify-write with a unique temp file, so concurrent
+        # requests neither lose a count nor collide on a shared temp name.
+        with cross_process_lock(path):
+            data = _load()
+            data[lang] = int(data.get(lang, 0)) + 1
+            atomic_write_text(path, json.dumps(data), mode=0o600)
     except Exception as e:  # pragma: no cover -- fully fail-soft
         log.debug("mcp analytics record failed: %s", e)
 
