@@ -120,6 +120,7 @@ def test_short_secret_suffixes_are_stripped_but_path_and_pwd_kept():
 
     names = ("MYSQL_PWD", "DB_PASS", "GITHUB_PAT", "STRIPE_SK", "SESSION_SALT",
              "PRIVATE_PEM", "JWT_SIGNING", "WALLET_MNEMONIC", "BORG_PASSCOMMAND")
-    kept = ("PATH", "PWD", "OLDPWD", "HOME", "LANG", "MAVERICK_PASS_TO_PASS")
+    kept = ("PATH", "PWD", "OLDPWD", "HOME", "LANG", "MAVERICK_PASS_TO_PASS",
+            "GOPRIVATE", "PRIVATE_REGISTRY_HOST", "CODESIGNING_IDENTITY")
     out = scrub_env(dict.fromkeys(names + kept, "v"))
     assert sorted(out) == sorted(kept)

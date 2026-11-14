@@ -25,10 +25,12 @@ from pathlib import Path
 # so leaking it into a sandboxed shell is a full data-at-rest compromise).
 # Short secret suffixes (MYSQL_PWD, DB_PASS, GITHUB_PAT, STRIPE_SK, ...) need the
 # underscore so PWD, OLDPWD and PATH are kept; *_TO_PASS names test ids.
+# PRIVATE/SIGNING alone are not secrets (GOPRIVATE, CODESIGNING_IDENTITY);
+# *_PRIVATE_KEY and *_SIGNING_KEY are covered by KEY.
 _SECRET_ENV_RE = re.compile(
     r"(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|CREDENTIAL|APIKEY|DSN|URI|URL|CONN"
-    r"|OAUTH|BEARER|HEADER|NETRC|COOKIE|AUTH|KEK|DEK|PASSCOMMAND|PRIVATE|SIGNING"
-    r"|MNEMONIC|_(?:PWD|PAT|SK|SALT|PEM)$|(?<!_TO)_PASS$)",
+    r"|OAUTH|BEARER|HEADER|NETRC|COOKIE|AUTH|KEK|DEK|PASSCOMMAND"
+    r"|MNEMONIC|_(?:PWD|PAT|SK|SALT|PEM|SIGNING)$|(?<!_TO)_PASS$)",
     re.IGNORECASE,
 )
 # Stripped explicitly even though the pattern already covers them — kept
