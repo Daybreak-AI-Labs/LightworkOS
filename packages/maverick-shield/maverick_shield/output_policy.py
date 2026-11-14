@@ -85,6 +85,8 @@ _CARD_IIN_RE = re.compile(
     r"|35(?:2[89]|[3-8]\d)\d{12,15}"                         # JCB
     r"|6(?:011|5\d{2}|4[4-9]\d)\d{12,15}"                    # Discover
     r"|62\d{14,17}"                                         # UnionPay
+    r"|220[0-4]\d{12}"                                      # Mir
+    r"|(?:50|5[6-8]|6\d)\d{10,17}"                           # Maestro, other 6-series
 )
 
 

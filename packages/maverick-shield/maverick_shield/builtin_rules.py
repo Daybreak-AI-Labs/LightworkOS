@@ -92,6 +92,11 @@ def _has_flag(letter: str, long_name: str) -> str:
     return rf"(?:-[a-zA-Z]*{letter}[a-zA-Z]*\b|--{long_name}\b)"
 
 
+# A later `![alt](http` that can start its own markdown-image match (alt text
+# bounded and bracket-free, so the check is cheap).
+_MD_IMAGE_START = r"!\[[^\]\[\n]{0,256}\]\(https?:"
+
+
 # --- de-obfuscation pre-pass -----------------------------------------------
 # The regex rules below only match literal text. A trivial obfuscation
 # (fullwidth chars, a zero-width space mid-word, a Cyrillic look-alike, a
@@ -117,6 +122,12 @@ _HOMOGLYPHS = str.maketrans({
     "і": "i", "ѕ": "s", "ԁ": "d", "ո": "n", "ⅼ": "l", "ӏ": "l", "ʟ": "l",
     "α": "a", "ο": "o", "ρ": "p", "ν": "v", "ϲ": "c", "ѐ": "e", "ƽ": "s",
     "ɡ": "g", "ⅰ": "i", "ｉ": "i", "ι": "i",
+    # Capitals too: the case-sensitive "DAN" match must still see "DАN" with a
+    # Cyrillic capital А (casefold would lowercase it out of that match).
+    "А": "A", "В": "B", "Е": "E", "К": "K", "М": "M", "Н": "H", "О": "O",
+    "Р": "P", "С": "C", "Т": "T", "Х": "X", "Ѕ": "S", "І": "I", "Ј": "J",
+    "Ԁ": "D", "Α": "A", "Β": "B", "Ε": "E", "Η": "H", "Ι": "I", "Κ": "K",
+    "Μ": "M", "Ν": "N", "Ο": "O", "Ρ": "P", "Τ": "T", "Χ": "X", "Ζ": "Z",
 })
 
 # ``\\xHH`` escapes written inline ("\\x69\\x67nore all previous ...").
@@ -336,21 +347,24 @@ RULES: list[Rule] = [
          "Persona takeover"),
 
     # Data exfiltration
-    # The variable-length runs in the three URL rules below are "tempered":
-    # they stop where the next possible match start begins (`![` or
-    # `http(s):`). Unbounded runs let every start position scan to the end of
-    # the text, which made these patterns cubic/quadratic on a repeated
-    # unterminated prefix (8,000 chars of `![](http://a?` took ~27 s). A match
-    # that would have run across a later start is still found from that start.
+    # The variable-length runs in the URL and shell rules below are
+    # "tempered": they stop where a later start can itself complete the rule's
+    # fixed prefix (`![...](http`, `http://x`, `curl x`, ...). Unbounded runs
+    # let every start position scan to the end of the text, which made these
+    # patterns cubic/quadratic on a repeated unterminated prefix (8,000 chars of
+    # `![](http://a?` took ~27 s). A match that would have run across such a
+    # later start is still found from that start; a later start that cannot
+    # complete the prefix (`?q=![]&token=`, `-A wget | bash`) does not stop the
+    # run. Each stop check is bounded, so the scan stays linear.
     Rule("markdown_image_exfil", "high",
          _compile(
-             r"!\[(?:(?!!\[)[^\]])*\]\(https?:\/\/(?:(?!!\[)[^)?])+\?"
-             r"(?:(?!!\[)[^)])*?(token|key|password|secret|api)"
+             r"!\[(?:(?!!\[)[^\]])*\]\(https?:\/\/(?:(?!" + _MD_IMAGE_START + r")[^)?])+\?"
+             r"(?:(?!" + _MD_IMAGE_START + r")[^)])*?(token|key|password|secret|api)"
          ),
          "Markdown image URL with credentials in query"),
     Rule("base64_url_exfil", "high",
          _compile(
-             r"https?:\/\/(?:(?!https?:)[^\s?])+\?(?:(?!https?:)\S)*?"
+             r"https?:\/\/(?:(?!https?:\/\/[^\s?])[^\s?])+\?(?:(?!https?:\/\/[^\s?])\S)*?"
              r"=[A-Za-z0-9+\/]{40,}={0,2}"
          ),
          "URL parameter with base64 payload"),
@@ -363,7 +377,7 @@ RULES: list[Rule] = [
     # markdown rule's ``?``-only check misses.
     Rule("credential_in_url", "high",
          _compile(
-             r"https?:\/\/(?:(?!https?:)\S)*?(?:"
+             r"https?:\/\/(?:(?!https?:\/\/)\S)*?(?:"
              r"sk-ant-[A-Za-z0-9_-]{12,}"        # Anthropic
              r"|sk-[A-Za-z0-9]{20,}"             # OpenAI-style
              r"|gh[posru]_[A-Za-z0-9]{20,}"      # GitHub PAT/OAuth/refresh/server/user
@@ -394,7 +408,7 @@ RULES: list[Rule] = [
     Rule("disk_overwrite", "critical",
          _compile(
              r"\b(dd\s+(?:(?!\bdd\s)[^\n])*?\bof=\/dev\/(sd[a-z]|nvme\d|disk\d|hd[a-z])"
-             r"|mkfs(\.[a-z0-9]+)?\s+(?:(?!\bmkfs)[^\n])*?\/dev\/)"
+             r"|mkfs(\.[a-z0-9]+)?\s+(?:(?!\bmkfs(?:\.[a-z0-9]+)?\s)[^\n])*?\/dev\/)"
          ),
          "Raw disk overwrite via dd/mkfs against a block device"),
     Rule(
@@ -402,7 +416,9 @@ RULES: list[Rule] = [
         _compile(
             r"\bch(mod|own)\s+"
             rf"(?=(?:{_FLAG_TOKEN}\s+){{0,5}}{_has_flag('R', 'recursive')})"
-            r"(?:(?!\bch(?:mod|own)\s)[^\n])*\s(\/|~|\$HOME|\$\{HOME\})(\s|;|&|\||$)"
+            r"(?:(?!\bch(?:mod|own)\s+"
+            rf"(?=(?:{_FLAG_TOKEN}\s+){{0,5}}{_has_flag('R', 'recursive')}))[^\n])*"
+            r"\s(\/|~|\$HOME|\$\{HOME\})(\s|;|&|\||$)"
         ),
         "Recursive chmod/chown (contiguous OR split across flags, e.g. "
         "`chmod -c -R 777 /`) against /, ~, or $HOME",
@@ -414,7 +430,7 @@ RULES: list[Rule] = [
          _compile(r"(\/etc\/+(passwd|shadow|ssh|sudoers)|\bNOPASSWD\b|~?\/\.ssh\/|~?\/\.aws\/credentials|\.env\b)"),
          "Read of /etc/passwd, ssh keys, sudoers, AWS creds, or .env"),
     Rule("curl_pipe_shell", "critical",
-         _compile(r"(curl|wget)\s+(?:(?!(?:curl|wget)\s)[^|])+\|\s*(sudo\s+)?(sh|bash|zsh|python)\b"),
+         _compile(r"(curl|wget)\s+(?:(?!(?:curl|wget)\s+[^|\s])[^|])+\|\s*(sudo\s+)?(sh|bash|zsh|python)\b"),
          "curl-pipe-to-shell remote code execution"),
     Rule("reverse_shell", "critical",
          _compile(r"(bash\s+-i\s+>&\s+\/dev\/tcp\/|nc\s+-e\s+\/bin\/(sh|bash))"),
@@ -422,7 +438,7 @@ RULES: list[Rule] = [
 
     # Social engineering markers
     Rule("urgency_authority", "medium",
-         _compile(r"\bthis\s+is\s+(an?\s+)?(emergency|urgent|critical)\b(?:(?!\bthis\s+is\s)[^\n])*\b(execute|run|do)\s+(immediately|now|asap)"),
+         _compile(r"\bthis\s+is\s+(an?\s+)?(emergency|urgent|critical)\b(?:(?!\bthis\s+is\s+(?:an?\s+)?(?:emergency|urgent|critical)\b)[^\n])*\b(execute|run|do)\s+(immediately|now|asap)"),
          "Urgency + authority pressure"),
     Rule("false_preapproval", "medium",
          _compile(r"\b(the\s+user|admin|operator)\s+(has\s+)?already\s+(approved|authorized|allowed)"),
