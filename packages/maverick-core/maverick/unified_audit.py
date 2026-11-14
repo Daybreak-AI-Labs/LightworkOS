@@ -1603,6 +1603,13 @@ class UnifiedAuditStore:
                     raise UnifiedAuditLeaseLost(
                         "unified-audit source has an active reconciliation lease"
                     )
+                if (not state["complete"] and state["error_code"] == code
+                        and list(state["limitations"]) == [code]
+                        and state["success_generation"] == 0):
+                    # Already recorded: a poll every minute must not append a
+                    # history row each time a source stays unavailable.
+                    connection.execute("ROLLBACK")
+                    return state
                 current = dict(state)
                 current.update(
                     complete=False,
