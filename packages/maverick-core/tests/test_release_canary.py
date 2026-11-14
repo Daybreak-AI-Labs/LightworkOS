@@ -1,6 +1,7 @@
 """Cost/perf release canary: direction-aware comparison, store, CLI."""
 from __future__ import annotations
 
+import pytest
 from click.testing import CliRunner
 from maverick import release_canary as rc
 from maverick.cli import main
@@ -55,6 +56,17 @@ def test_zero_baseline_negative_candidate_signs_the_sentinel():
 def test_non_numeric_metrics_skipped():
     res = rc.compare({"cost_usd": 1.0}, {"cost_usd": 1.0, "note": "x"})
     assert [v.metric for v in res.verdicts] == ["cost_usd"]
+
+
+def test_dropped_or_non_finite_metric_fails_the_gate(tmp_path):
+    # A candidate that omits a baseline metric or records NaN used to pass.
+    res = rc.compare({"cost_per_task": 1.0, "success_rate": 0.9},
+                     {"cost_per_task": float("nan")})
+    assert not res.passed
+    assert {v.metric: v.verdict for v in res.verdicts} == {
+        "cost_per_task": "invalid", "success_rate": "missing"}
+    with pytest.raises(ValueError):
+        rc.CanaryStore(tmp_path / "c.json").record("v1", {"cost_per_task": float("inf")})
 
 
 def test_multiple_metrics_any_regression_fails():
