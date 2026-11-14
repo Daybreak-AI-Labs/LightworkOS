@@ -19,7 +19,7 @@ Registered in ``base_registry`` only after an explicit operator opt-in.
 """
 from __future__ import annotations
 
-import importlib
+import importlib.machinery
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -53,24 +53,24 @@ def _safe_import_path(entry: str) -> bool:
 
 
 def _psutil() -> Any | None:
-    cached = sys.modules.get("psutil")
-    if cached is not None:
-        if _path_in_cwd(getattr(cached, "__file__", None)):
+    # Resolve against a filtered search list without replacing process-wide
+    # sys.path. The import machinery owns publication and the per-module lock.
+    from importlib import _bootstrap
+
+    with _bootstrap._ModuleLockManager("psutil"):
+        if "psutil" in sys.modules:
+            cached = sys.modules["psutil"]
+            if cached is None or _path_in_cwd(getattr(cached, "__file__", None)):
+                return None
+            return cached
+        paths = [entry for entry in sys.path if _safe_import_path(entry)]
+        try:
+            spec = importlib.machinery.PathFinder.find_spec("psutil", paths)
+            if spec is None or spec.loader is None or _path_in_cwd(spec.origin):
+                return None
+            return _bootstrap._load(spec)
+        except ImportError:
             return None
-        return cached
-
-    original_path = list(sys.path)
-    try:
-        sys.path = [entry for entry in original_path if _safe_import_path(entry)]
-        psutil = importlib.import_module("psutil")
-    except ImportError:
-        return None
-    finally:
-        sys.path = original_path
-
-    if _path_in_cwd(getattr(psutil, "__file__", None)):
-        return None
-    return psutil
 
 
 def _temps_psutil(ps: Any) -> list[str]:

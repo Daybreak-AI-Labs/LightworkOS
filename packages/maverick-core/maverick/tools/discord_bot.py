@@ -106,21 +106,24 @@ def _put(path: str) -> tuple[int, Any]:
 
 def _op_post(channel: str, content: str) -> str:
     code, data = _post_json(f"/channels/{channel}/messages",
-                            {"content": content[:2000]})
+                            {"content": content[:2000], "allowed_mentions": {"parse": []}})
     if code >= 400:
         return f"ERROR: post ({code}): {data}"
-    return f"posted to {channel} (id={data.get('id')})"
+    suffix = "; content truncated to 2000 characters" if len(content) > 2000 else ""
+    return f"posted to {channel} (id={data.get('id')}){suffix}"
 
 
 def _op_reply(channel: str, message_id: str, content: str) -> str:
     body = {
         "content": content[:2000],
         "message_reference": {"message_id": message_id},
+        "allowed_mentions": {"parse": [], "replied_user": False},
     }
     code, data = _post_json(f"/channels/{channel}/messages", body)
     if code >= 400:
         return f"ERROR: reply ({code}): {data}"
-    return f"replied in {channel} (id={data.get('id')})"
+    suffix = "; content truncated to 2000 characters" if len(content) > 2000 else ""
+    return f"replied in {channel} (id={data.get('id')}){suffix}"
 
 
 def _op_history(channel: str, limit: int) -> str:

@@ -81,9 +81,15 @@ def _headers() -> dict[str, str]:
 def _req(method: str, path: str, *, params: dict | None = None,
          body: dict | None = None) -> tuple[int, Any]:
     import httpx
+
+    from ..governed_http import guarded_sender
+
     host, _t = _config()
-    r = httpx.request(method, f"{host}{path}", headers=_headers(),
-                      params=params or {}, json=body, timeout=90.0)
+    def send(url, **kwargs):
+        return httpx.request(method, url, **kwargs)
+
+    r = guarded_sender(send)(f"{host}{path}", headers=_headers(),
+                             params=params or {}, json=body, timeout=90.0)
     try:
         return r.status_code, r.json()
     except ValueError:

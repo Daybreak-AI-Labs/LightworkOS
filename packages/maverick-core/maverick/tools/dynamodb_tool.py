@@ -14,6 +14,7 @@ ops:
 from __future__ import annotations
 
 import logging
+import math
 from decimal import Decimal
 from typing import Any
 
@@ -48,6 +49,21 @@ def _client():
     # botocore is outside the process egress guard; the endpoint is checked
     # before the resource (and its credential resolution) exists.
     return aws_client("dynamodb", "dynamodb", resource=True)
+
+
+def _request_value(value: Any, depth: int = 0) -> Any:
+    """Preserve JSON numbers in boto3's Decimal-only request representation."""
+    if depth > 64:
+        raise ValueError("DynamoDB request nesting exceeds 64 levels")
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("DynamoDB numbers must be finite")
+        return Decimal(str(value))
+    if isinstance(value, dict):
+        return {key: _request_value(item, depth + 1) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_request_value(item, depth + 1) for item in value]
+    return value
 
 
 def _serialize(obj: Any, _depth: int = 0) -> Any:
@@ -86,6 +102,7 @@ def _op_get(args: dict) -> str:
     key = args.get("key") if isinstance(args.get("key"), dict) else None
     if not table or not key:
         return "ERROR: get requires table and key"
+    key = _request_value(key)
     t = _client().Table(table)
     r = t.get_item(Key=key)
     item = r.get("Item")
@@ -101,6 +118,7 @@ def _op_put(args: dict) -> str:
         return "ERROR: put requires table and item"
     if not as_bool(args.get("confirm")):
         return f"DRY RUN: would put item in {table}. Re-run with confirm=true."
+    item = _request_value(item)
     _client().Table(table).put_item(Item=item)
     return f"put item in {table}"
 
@@ -112,6 +130,7 @@ def _op_delete(args: dict) -> str:
         return "ERROR: delete requires table and key"
     if not as_bool(args.get("confirm")):
         return f"DRY RUN: would delete item from {table}. Re-run with confirm=true."
+    key = _request_value(key)
     _client().Table(table).delete_item(Key=key)
     return f"deleted item from {table}"
 
@@ -158,7 +177,7 @@ def _op_query(args: dict) -> str:
     limit = max(1, min(int(args.get("limit") or 25), 1000))
     kwargs: dict = {"KeyConditionExpression": expr}
     if vals:  # DynamoDB rejects an empty ExpressionAttributeValues map
-        kwargs["ExpressionAttributeValues"] = vals
+        kwargs["ExpressionAttributeValues"] = _request_value(vals)
     items = _paginate(_client().Table(table).query, kwargs, limit)
     if not items:
         return "no items"
@@ -177,7 +196,7 @@ def _op_scan(args: dict) -> str:
         vals = args.get("expression_values") if isinstance(
             args.get("expression_values"), dict) else {}
         if vals:  # DynamoDB rejects an empty ExpressionAttributeValues map
-            kwargs["ExpressionAttributeValues"] = vals
+            kwargs["ExpressionAttributeValues"] = _request_value(vals)
     items = _paginate(_client().Table(table).scan, kwargs, limit)
     if not items:
         return "no items"

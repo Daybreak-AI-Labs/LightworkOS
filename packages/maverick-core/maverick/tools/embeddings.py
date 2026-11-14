@@ -67,6 +67,7 @@ def _load_model(name: str):
             return _model_cache[name]
         from fastembed import TextEmbedding
         m = TextEmbedding(model_name=name)
+        _model_cache.clear()  # A single retained model; active callers hold their own reference.
         _model_cache[name] = m
         return m
 
