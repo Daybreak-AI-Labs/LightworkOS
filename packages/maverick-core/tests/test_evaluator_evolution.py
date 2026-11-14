@@ -179,6 +179,12 @@ def _cli_env(tmp_path, monkeypatch):
     return anchor_dir, lock_path
 
 
+def test_check_with_no_lock_and_no_anchor_reports_nothing_governed(tmp_path, monkeypatch, capsys):
+    _cli_env(tmp_path, monkeypatch)
+    assert ee.main(["--ci"]) == 0
+    assert "NO ANCHORS COMMITTED" in capsys.readouterr().out
+
+
 def test_regen_refuses_to_launder_an_edited_released_anchor(tmp_path, monkeypatch):
     anchor_dir, lock_path = _cli_env(tmp_path, monkeypatch)
     f = anchor_dir / "reviewer.ndjson"

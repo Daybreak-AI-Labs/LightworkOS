@@ -712,7 +712,7 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover -- CLI shell
             print(f"  - {prob}")
     else:
         anchors = discover_anchors()
-        lock = load_lock()
+        lock = load_lock() or {}
         locked = len(lock.get("checksums") or {})
         # Anti-vacuity. With no anchors committed and an empty lock this printed
         # "OK / 0 anchor(s)" and exited 0 -- a governance gate reporting success
