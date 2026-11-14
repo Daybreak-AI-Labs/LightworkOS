@@ -75,3 +75,9 @@ def test_registered():
 def test_grant_dated_after_now_is_not_valid():
     out = _c([{"purpose": "p", "granted": True, "granted_at": "2030-01-01"}], now="2026-01-01")
     assert out.startswith("INVALID") and "NOT_YET_GRANTED" in out
+
+
+def test_future_record_does_not_hide_a_current_grant():
+    recs = [{"purpose": "p", "granted": True, "granted_at": "2026-01-01"},
+            {"purpose": "p", "granted": True, "granted_at": "2026-12-01"}]
+    assert _c(recs, now="2026-11-14").startswith("VALID")

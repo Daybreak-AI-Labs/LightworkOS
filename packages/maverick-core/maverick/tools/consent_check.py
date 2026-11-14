@@ -49,8 +49,10 @@ def _status(rec: dict, now: date) -> tuple[str, str]:
 
 
 def _check(consents: list, now: date, only: str | None) -> str:
-    # Most recent grant per purpose governs.
-    latest: dict[str, dict] = {}
+    # Most recent grant at or before ``now`` per purpose governs. A record
+    # dated after ``now`` cannot hide a current grant: it is considered only
+    # when the purpose has no record at or before ``now`` (NOT_YET_GRANTED).
+    latest: dict[str, tuple[tuple[int, int], dict]] = {}
     for i, rec in enumerate(consents):
         if not isinstance(rec, dict) or "purpose" not in rec:
             return f"ERROR: consent {i} needs a 'purpose'"
@@ -58,10 +60,10 @@ def _check(consents: list, now: date, only: str | None) -> str:
         if only is not None and purpose != only:
             continue
         ga = rec.get("granted_at")
-        key = _parse(ga, f"consent {i} granted_at").toordinal() if ga else -1
+        when = _parse(ga, f"consent {i} granted_at").toordinal() if ga else -1
+        key = (0 if when > now.toordinal() else 1, when)
         prev = latest.get(purpose)
-        prev_key = prev[0] if prev else -2
-        if key >= prev_key:
+        if prev is None or key >= prev[0]:
             latest[purpose] = (key, rec)
 
     if only is not None and only not in latest:
