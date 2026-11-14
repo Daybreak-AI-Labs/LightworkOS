@@ -1041,3 +1041,15 @@ async def test_wasm_run_module_outside_scope_denied(tmp_path):
     assert "DENIED by capability" in out
     assert "cannot enforce" in out
     assert calls == []
+
+
+@pytest.mark.parametrize("header", [
+    "--- x/evidence/f.txt\n+++ x/evidence/f.txt\n",          # any prefix, stripped by git -p1
+    '--- "a/evid\\145nce/f.txt"\n+++ "b/evid\\145nce/f.txt"\n',  # C-quoted name
+])
+def test_sandbox_read_only_path_reads_patch_names_as_git_apply_does(tmp_path, header):
+    agent = _agent(tmp_path)
+    agent.ctx.sandbox.read_only_paths = ("evidence",)
+    patch = header + "@@ -1 +1 @@\n-old\n+new\n"
+
+    assert "DENIED by sandbox policy" in agent._read_only_path_denial("apply_patch", {"patch": patch})

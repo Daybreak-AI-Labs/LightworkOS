@@ -796,6 +796,35 @@ def _normalize_file_tool_args(
     return normalized
 
 
+_PATCH_HEADER_RE = re.compile(r"^(\+\+\+|---|rename from|rename to|copy from|copy to) (.+)$",
+                              re.MULTILINE)
+
+
+def _git_apply_targets(patch_text: str) -> list[str]:
+    """The paths ``git apply`` (default ``-p1``) will touch, as it reads them.
+
+    ``_files_in_patch`` strips only an ``a/``/``b/`` prefix and keeps a quoted
+    name quoted, while git strips any first component (``--- x/f``) and
+    unquotes C-style names (``"b/pro\\164ected"``). Gates check both readings."""
+    import codecs
+
+    out: list[str] = []
+    for kind, value in _PATCH_HEADER_RE.findall(patch_text):
+        value = value.split("\t", 1)[0].strip()
+        if len(value) >= 2 and value[0] == value[-1] == '"':
+            try:
+                value = codecs.escape_decode(value[1:-1].encode("latin-1", "backslashreplace"))[0].decode(
+                    "utf-8", "replace")
+            except Exception:
+                continue  # an undecodable name: _files_in_patch still reports the raw one
+        if not value or value == "/dev/null":
+            continue
+        if kind in ("+++", "---") and "/" in value:
+            value = value.split("/", 1)[1]
+        out.append(value)
+    return out
+
+
 def _one_workspace_access(
     sandbox: Any,
     target: str | Path,
@@ -991,10 +1020,8 @@ def _workspace_path_accesses_for_tool(
             return None
         from .tools.apply_patch import _files_in_patch
 
-        return [
-            _one_workspace_access(sandbox, raw)
-            for raw in _files_in_patch(patch_text)
-        ]
+        raws = dict.fromkeys([*_files_in_patch(patch_text), *_git_apply_targets(patch_text)])
+        return [_one_workspace_access(sandbox, raw) for raw in raws]
 
     custom = {
         "obsidian": _obsidian_path_accesses,
