@@ -157,7 +157,7 @@ def _render(results: dict, eva: dict) -> str:
         "",
         "> **Not the public number.** `train` TPR is a regression check on the "
         "corpus the rules were tuned on — not detection skill. The honest "
-        "capability signal is `heldout` TPR / F1. See README and RUNBOOK for the "
+        "capability signal is `heldout` TPR / F1. See README for the "
         "credible held-out + end-to-end methodology (v2).",
         "",
         "| backend | TPR train | TPR heldout (95% CI) | FPR benign (95% CI) | F1 heldout |",
