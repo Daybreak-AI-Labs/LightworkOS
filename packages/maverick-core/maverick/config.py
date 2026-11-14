@@ -1840,6 +1840,10 @@ def get_auth_local_owner_totp() -> str:
     return "optional"
 
 
+# Bad MAVERICK_IP_ALLOWLIST values already logged (one line per distinct value).
+_IP_ALLOWLIST_REPORTED: set[str] = set()
+
+
 def get_ip_allowlist() -> dict:
     """``[auth.ip_allowlist]``: network addresses allowed to use the dashboard.
 
@@ -1869,9 +1873,11 @@ def get_ip_allowlist() -> dict:
     cidrs = _str_list(env, ()) if env is not None and env.strip() else entries("cidrs")
     if env is not None and env.strip() and not cidrs:
         # "," lists nothing; an empty list would allow every address.
-        logging.getLogger(__name__).error(
-            "MAVERICK_IP_ALLOWLIST is set but lists no addresses or ranges; "
-            "the dashboard allows only this computer until it is fixed or unset")
+        if env not in _IP_ALLOWLIST_REPORTED:  # this runs on every request: say it once
+            _IP_ALLOWLIST_REPORTED.add(env)
+            logging.getLogger(__name__).error(
+                "MAVERICK_IP_ALLOWLIST is set but lists no addresses or ranges; "
+                "the dashboard allows only this computer until it is fixed or unset")
         raise ValueError("MAVERICK_IP_ALLOWLIST lists no addresses or ranges")
     return {
         "cidrs": cidrs,

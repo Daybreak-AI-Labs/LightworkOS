@@ -72,9 +72,14 @@ def test_environment_wins(tmp_path, monkeypatch, caplog):
     assert mfa["require"] is False and mfa["step_up_minutes"] == 3
     assert config.get_ip_allowlist()["cidrs"] == ["192.0.2.0/24", "198.51.100.7"]
     monkeypatch.setenv("MAVERICK_IP_ALLOWLIST", " , ")  # lists nothing: never "allow everyone"
+    monkeypatch.setattr(config, "_IP_ALLOWLIST_REPORTED", set())
     with caplog.at_level("ERROR"), pytest.raises(ValueError):
         config.get_ip_allowlist()
     assert "MAVERICK_IP_ALLOWLIST" in caplog.text
+    caplog.clear()
+    with caplog.at_level("ERROR"), pytest.raises(ValueError):
+        config.get_ip_allowlist()  # the same bad value on the next request
+    assert "MAVERICK_IP_ALLOWLIST" not in caplog.text
 
 
 def test_bad_values_fail_closed_or_fall_back(tmp_path):
