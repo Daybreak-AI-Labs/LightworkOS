@@ -12,6 +12,7 @@ from pathlib import Path
 
 from ..authority_effects import authority_effect_fence
 from ..file_lock import (
+    _unsafe_lock_alias,
     _validate_open_lock_file,
     _windows_open_private_file_is_restricted,
     atomic_create_text,
@@ -37,14 +38,26 @@ def prepare_result_target(value, *, repeat, dry_cost, key_file=None):
         raise click.BadParameter(str(exc), param_hint="--result-file") from exc
 
 
+def _require_safe_key_directory(path: Path) -> os.stat_result:
+    """Refuse a key directory that another user could write to or that redirects."""
+    getuid = getattr(os, "getuid", None)
+    if getuid is None:
+        return require_private_directory(path).stat()
+    info = path.lstat()
+    if (_unsafe_lock_alias(path, info) or not stat.S_ISDIR(info.st_mode)
+            or info.st_uid != getuid() or info.st_mode & 0o022):
+        raise PermissionError(
+            f"The result key directory must belong to the current user and must not "
+            f"be writable by group or others: {path}")
+    return info
+
+
 def read_result_key(path):
     """Verify a caller-owned key without claiming its file or directory."""
     if path is None:
         return None
     path = Path(path)
-    parent = require_private_directory(path.parent).stat()
-    if os.name != "nt" and parent.st_uid != os.getuid():
-        raise PermissionError("The result key directory must belong to the current user.")
+    parent = _require_safe_key_directory(path.parent)
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
     flags |= getattr(os, "O_NONBLOCK", 0)
     fd = os.open(path, flags)
@@ -66,7 +79,7 @@ def read_result_key(path):
         key = os.read(fd, 33)
         if inspect_key() != before:
             raise PermissionError("The result key changed while being read.")
-        current_parent = require_private_directory(path.parent).stat()
+        current_parent = _require_safe_key_directory(path.parent)
         if (parent.st_dev, parent.st_ino) != (current_parent.st_dev, current_parent.st_ino):
             raise PermissionError("The result key directory changed while being read.")
     finally:

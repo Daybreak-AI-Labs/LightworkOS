@@ -133,7 +133,9 @@ def test_learning_confidence_is_validated_and_reported(tmp_path):
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX permission-mode controls")
-@pytest.mark.parametrize("parent_mode,key_mode", [(0o755, 0o600), (0o700, 0o644), (0o700, 0o640)])
+@pytest.mark.parametrize("parent_mode,key_mode", [
+    (0o775, 0o600), (0o757, 0o600), (0o700, 0o644), (0o700, 0o640),
+])
 def test_result_key_refuses_unsafe_modes_without_claiming_files(tmp_path, parent_mode, key_mode):
     from maverick.cli.run_result import read_result_key
 
@@ -157,6 +159,22 @@ def test_result_key_refuses_unsafe_modes_without_claiming_files(tmp_path, parent
     alias.symlink_to(key)
     with pytest.raises((PermissionError, OSError)):
         read_result_key(alias)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission-mode controls")
+def test_result_key_accepts_private_key_in_ordinary_project_folder(tmp_path, monkeypatch):
+    from maverick.cli.run_result import read_result_key
+
+    project = tmp_path / "project"
+    project.mkdir()
+    project.chmod(0o755)
+    key = project / "key"
+    key.write_bytes(b"k" * 32)
+    key.chmod(0o600)
+    assert read_result_key(key) == b"k" * 32
+    monkeypatch.chdir(project)
+    assert read_result_key("key") == b"k" * 32
+    assert project.stat().st_mode & 0o777 == 0o755
 
 
 @pytest.mark.parametrize("option", ["--estimated-payments", "--prior-year-overpayment"])
