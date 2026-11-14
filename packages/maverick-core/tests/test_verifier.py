@@ -524,7 +524,8 @@ class TestMAVCombine:
             VerifierVerdict(confidence=0.95, accepts=False, critique="strong veto"),
         ]
         v = _combine(verdicts, weighted=True)
-        # accept_weight = 1.0; a reject weighs (1 - confidence) = 0.05.
+        # accept_weight = 1.0; reject_weight = 0.95 -> still accepts by 0.05.
+        # The point is the weighted scheme actually considers magnitude.
         assert v.accepts is True
 
     def test_weighted_failed_and_weak_rejects_outvote_one_accept(self):
@@ -537,6 +538,10 @@ class TestMAVCombine:
         assert _combine([accept, *failed], weighted=True).accepts is False
         assert _combine([accept, *weak], weighted=True).accepts is False
         assert _combine([accept, failed[0]], weighted=True).accepts is False
+        # A confident reject (high confidence in its verdict) counts too.
+        sure = [VerifierVerdict(confidence=0.9, accepts=False, critique="bug")] * 2
+        assert _combine([accept, *sure], weighted=True).accepts is False
+        assert _combine([accept, sure[0]], weighted=True).accepts is False
 
     def test_unweighted_majority_wins(self):
         from maverick.verifier import VerifierVerdict, _combine
