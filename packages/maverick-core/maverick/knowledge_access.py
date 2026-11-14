@@ -77,6 +77,7 @@ _ACTION_DENIAL_CONSTRAINTS = {
     "export": frozenset(
         {
             "analysis_only",
+            "analyze_only",  # the label knowledge_sources registers
             "no_export",
             "no_redistribution",
             "not_for_export",
@@ -87,6 +88,7 @@ _ACTION_DENIAL_CONSTRAINTS = {
     "train": frozenset(
         {
             "analysis_only",
+            "analyze_only",
             "export_only",
             "no_training",
             "no_ai_training",
