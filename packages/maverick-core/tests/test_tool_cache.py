@@ -340,3 +340,17 @@ class TestWarmOnStart:
         assert tc.warm_on_start() == 1
         assert tc.warm_on_start() == 0  # second call no-ops
         tc.reset()
+
+
+def test_workspaces_never_share_cached_output(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("MAVERICK_TOOL_CACHE", "1")
+    tool_a, calls_a = _counting_tool()
+    tool_b, calls_b = _counting_tool()
+    reg_a = ToolRegistry(workspace="LocalBackend:/work/a")
+    reg_b = ToolRegistry(workspace="LocalBackend:/work/b")
+    reg_a.register(tool_a)
+    reg_b.register(tool_b)
+    _run(reg_a, "read_file", {"path": "notes.txt"})
+    _run(reg_b, "read_file", {"path": "notes.txt"})
+    assert calls_a["n"] == 1 and calls_b["n"] == 1  # same args, two workspaces

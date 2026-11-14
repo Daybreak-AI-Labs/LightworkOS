@@ -372,8 +372,12 @@ class ToolRegistry:
     # Deferred-loading meta-tool name (see enable_deferred / find_tools.py).
     META_TOOL = "find_tools"
 
-    def __init__(self, *, principal: str | None = None):
+    def __init__(self, *, principal: str | None = None, workspace: str | None = None):
         self._tools: dict[str, Tool] = {}
+        # The sandbox workspace the registry's file tools are bound to. Part of
+        # the tool-output cache scope: the same relative path in two
+        # workspaces is two different files.
+        self._workspace = str(workspace or "").strip() or None
         # Authenticated execution identity used by credential-bearing tools.
         # Stored on the registry and rebound with a ContextVar per invocation so
         # sync tools running in worker threads cannot borrow another run's saved
@@ -608,12 +612,14 @@ class ToolRegistry:
 
     def cache_namespace(self) -> str:
         """The tool-output cache scope of this registry's calls: the active
-        tenant and the principal, so two users never share a read result."""
+        tenant, the principal and the workspace, so two users never share a
+        read result and a read in one workspace is never served in another."""
         from ..paths import current_tenant_id
 
         return (
             f"tenant={current_tenant_id() or '<shared>'}\0"
-            f"principal={self._principal or '<anonymous>'}"
+            f"principal={self._principal or '<anonymous>'}\0"
+            f"workspace={self._workspace or '<none>'}"
         )
 
     def speculate_reads(self, predictions, *, budget_guard=None):
@@ -1022,7 +1028,11 @@ def base_registry(
     from .str_edit import str_replace_editor
 
     principal = _registry_principal(user_id)
-    reg = ToolRegistry(principal=principal or None)
+    workdir = getattr(sandbox, "workdir", None)
+    reg = ToolRegistry(
+        principal=principal or None,
+        workspace=f"{type(sandbox).__name__}:{workdir}" if workdir else None,
+    )
     from ..sandbox.sdk import workdir_is_local
 
     # These tools use local pathlib operations rather than sandbox.exec().
@@ -1834,20 +1844,15 @@ def _register_optional_tools(
 
 def _apply_tool_acl(reg: ToolRegistry, *, channel: str | None, user_id: str | None) -> None:
     # Apply allow/deny lists from ~/.maverick/config.toml [security].
-    # Operational discovery errors remain fail-soft, but an unreadable
-    # operator policy must stop registry construction. Swallowing that
-    # security error would leave every tool registered after a deny-list
-    # became corrupt.
-    from ..runtime_overrides import RuntimeOverridesSecurityError
+    # An unreadable operator policy must stop registry construction.
+    # Swallowing that security error would leave every tool registered after
+    # a deny-list became corrupt.
+    # Any failure here (a mistyped [security] value included) propagates: a
+    # warning would leave the registry with no allow-list, deny-list or
+    # risk ceiling at all.
+    from ..safety.tool_acl import apply_to_registry
 
-    try:
-        from ..safety.tool_acl import apply_to_registry
-        apply_to_registry(reg, channel=channel, user_id=user_id)
-    except RuntimeOverridesSecurityError:
-        raise
-    except Exception as e:  # pragma: no cover
-        import logging as _logging
-        _logging.getLogger(__name__).warning("tool_acl: %s", e)
+    apply_to_registry(reg, channel=channel, user_id=user_id)
 
 
 def _apply_containment(reg: ToolRegistry) -> None:
