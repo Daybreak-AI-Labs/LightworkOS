@@ -321,6 +321,10 @@ class RcsChannel(Channel):
                     response = await client.post(url,
                         params={"agentId": self.agent_id, "messageId": chunk_idempotency_key(key)},
                         headers={"Authorization": f"Bearer {token}"}, json={"contentMessage": {"text": chunk}})
+                if response.status_code == 409:
+                    # ALREADY_EXISTS: this messageId (the chunk's stable
+                    # idempotency key) was accepted by an earlier attempt.
+                    return chunk_idempotency_key(key)
                 if 400 <= response.status_code < 500 and response.status_code not in {408, 409}:
                     raise DeliveryNotSent("Provider rejected the message")
                 if response.status_code >= 400:
