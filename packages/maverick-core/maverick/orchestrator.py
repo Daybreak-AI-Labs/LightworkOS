@@ -3473,9 +3473,10 @@ async def run_goal_best_of_n(
                     orchestrator_model_override=per_model or None,
                 )
             except Exception as e:
-                # A budget cap or killswitch is a STOP signal, not a normal
-                # attempt failure -- re-raise so it propagates instead of being
-                # downgraded to a zero-score candidate (matches agent.py).
+                # A budget cap or killswitch raised here is a STOP signal, not
+                # a normal attempt failure -- re-raise it. run_goal usually
+                # reports both as a returned message instead, so the ladder
+                # continues and each later attempt stops at its own check.
                 from . import killswitch as _ks
                 if isinstance(e, (BudgetExceeded, _ks.Halted)):
                     raise

@@ -616,6 +616,8 @@ def _resolve_model_for_role(role: str, *, domain_models: Mapping[str, str] | Non
     """Return the model spec for a role (may be 'provider:id' or bare id).
 
     Resolution order:
+      0. The task-level model choice (``task_model_selection.current_model``),
+         when one is set for the running task.
       1. Per-role env override `MAVERICK_MODEL_OVERRIDE_<ROLE>` (set by
          best-of-N to swap models per attempt).
       2. Global override `MAVERICK_MODEL_OVERRIDE` (set by the CLI's
