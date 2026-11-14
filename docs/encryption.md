@@ -88,10 +88,31 @@ maverick encryption migrate --dry-run # report how much would be sealed
 maverick encryption migrate --backup  # opt in to a plaintext rollback snapshot
 ```
 
-It is **idempotent** (already-sealed values are skipped, so it is safe to re-run)
-and requires at-rest encryption to be enabled first.
+It is **idempotent** (already-bound values are skipped; legacy unbound sealed
+values are decrypted and rebound) and requires at-rest encryption to be enabled first.
 
-**Backups are opt-in:** the reseal happens *in place* and shreds the
+The command uses the configured world backend. On **Postgres**, run it in each
+workspace's tenant context (`MAVERICK_TENANT=<tenant> maverick encryption migrate`).
+It binds the same content columns to their column and tenant, including the
+`facts.value` binding for fact history. A named tenant never migrates another
+tenant's rows or legacy rows with `NULL` ownership. Migrate legacy rows separately
+with no active tenant and RLS disabled, or assign their ownership before migrating.
+A missing tenant with RLS enabled is refused.
+
+Postgres writes a per-tenant completion row in `encryption_migrations` in the same
+transaction as the resealing. Failures roll back both. The transaction blocks
+writes to the affected tables, so schedule it as maintenance; reads remain
+available. Dry runs change neither values nor completion records. Opening or using
+a migrated tenant refreshes the process's read posture: unbound tokens and plaintext
+in sealed columns are withheld when all stores opened for that context are migrated.
+Another open legacy store keeps the existing conservative, lenient policy.
+
+Postgres does not support `--backup`; take a database-native backup if needed.
+Old plaintext may remain in PostgreSQL WAL, dead tuples, replicas and backups;
+manage those through your database retention and backup policies. The command
+reseals current rows, not historical database copies.
+
+**SQLite backups are opt-in:** the reseal happens *in place* and shreds the
 pre-encryption plaintext residue (`secure_delete` + VACUUM). By default the
 command does **not** leave a plaintext rollback copy on disk. If your rollback
 plan requires one, pass `--backup` to write a transactionally-consistent snapshot

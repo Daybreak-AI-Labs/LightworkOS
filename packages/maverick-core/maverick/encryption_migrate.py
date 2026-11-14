@@ -3,13 +3,13 @@
 Enabling at-rest encryption (``[encryption] at_rest``) only seals **new** writes;
 rows written before are left plaintext and read back transparently (lazy
 migration). This module force-seals that pre-existing plaintext so the whole
-store is encrypted, not just new data. It is **idempotent** — already-sealed
-values are skipped — so it is safe to re-run.
+store is encrypted, not just new data. It is **idempotent** — already-bound
+values are skipped and legacy sealed values are rebound — so it is safe to re-run.
 
-The reseal happens **in place** and shreds the pre-encryption plaintext residue
-(``secure_delete`` + VACUUM). Operators who need a rollback copy may explicitly
-opt in to a transactionally-consistent **plaintext backup** of the DB
-(:func:`backup_world_db`).
+The reseal happens **in place**. SQLite shreds the pre-encryption plaintext residue
+(``secure_delete`` + VACUUM); Postgres uses a tenant-scoped transaction and marker.
+SQLite operators who need a rollback copy may explicitly opt in to a
+transactionally-consistent **plaintext backup** (:func:`backup_world_db`).
 
 Exposed as ``maverick encryption migrate [--dry-run] [--backup]``.
 """
@@ -246,6 +246,84 @@ def _mark_migrated(db_path: Path) -> None:
                     "lenient until [encryption] strict is set", marker, exc)
 
 
+def postgres_migration_scope(tenant: str | None) -> str:
+    """Collision-free marker identity, including legacy rows without a tenant."""
+    return "n:" if tenant is None else "t:" + tenant
+
+
+def _postgres_column_scope(table: str, tenant: str | None) -> tuple[str, list]:
+    # Mutations require exact ownership, not compatibility reads' NULL fallback.
+    if table in {"goals", "facts", "approvals", "projects", "fact_history"}:
+        return "s.tenant_id IS NOT DISTINCT FROM %s", [tenant]
+    parent, foreign_key = (("conversations", "conversation_id") if table == "turns"
+                           else ("goals", "goal_id"))
+    predicate = (f"EXISTS (SELECT 1 FROM {parent} p WHERE p.id=s.{foreign_key} "
+                 "AND p.tenant_id IS NOT DISTINCT FROM %s)")
+    # A NULL parent is legacy/unbound, but a parent hidden by RLS is NOT.
+    if tenant is None and table in {"messages", "questions"}:
+        predicate = f"(s.{foreign_key} IS NULL OR {predicate})"
+    return predicate, [tenant]
+
+
+def migrate_postgres_world(world, *, dry_run: bool = False) -> dict[str, int]:
+    """Rebind the active tenant's sealed columns and atomically record completion.
+
+    Locks the affected tables against writes during resealing, so a concurrent
+    legacy writer cannot insert a missed row before the marker commits. Other
+    tenants and legacy NULL-owned rows are never claimed by a named tenant.
+    PostgreSQL retains old bytes in WAL/backups under its own retention policy.
+    """
+    if not at_rest_enabled():
+        raise EncryptionUnavailable(
+            "at-rest encryption is not enabled; set [encryption] at_rest = true "
+            "(or MAVERICK_ENCRYPT_AT_REST=1) before migrating"
+        )
+    from .world_model_backends.postgres import _active_tenant
+
+    tenant = _active_tenant()
+    if world._rls and tenant is None:
+        raise EncryptionUnavailable("Postgres RLS migration requires an active tenant")
+    report: dict[str, int] = {}
+    with world._tx() as cur:
+        if not dry_run:
+            tables = sorted({table for table, _ in _SEALED_COLUMNS}
+                            | {"conversations", "harness_corpus", "encryption_migrations"})
+            cur.execute("LOCK TABLE " + ", ".join(tables) + " IN SHARE ROW EXCLUSIVE MODE")
+        for table, column in _SEALED_COLUMNS:
+            scope, params = _postgres_column_scope(table, tenant)
+            row_key = "goal_id" if table == "signoffs" else "id"
+            cur.execute(f"SELECT s.{row_key}, s.{column} FROM {table} s WHERE {scope}", params)
+            rows = [(key, value) for key, value in cur.fetchall()
+                    if value is not None and not is_bound_str(value)]
+            report[f"{table}.{column}"] = len(rows)
+            if dry_run:
+                continue
+            for key, value in rows:
+                plain = unseal_from_str(value) if is_sealed_str(value) else value
+                sealed = seal_bound_to_str(plain, bound_context(table, column), bind_tenant=True)
+                cur.execute(f"UPDATE {table} s SET {column}=%s WHERE s.{row_key}=%s AND {scope}",
+                            [sealed, key, *params])
+        # Pending/rejected corpus entries share SQLite's unbound sealing format.
+        cur.execute("SELECT kind, key, seq, row FROM harness_corpus "
+                    "WHERE tenant_id IS NOT DISTINCT FROM %s AND kind IN ('pending','rejected')",
+                    (tenant,))
+        corpus = [row for row in cur.fetchall() if not is_sealed_str(row[3])]
+        report["harness_corpus.row"] = len(corpus)
+        if not dry_run:
+            for kind, key, seq, value in corpus:
+                cur.execute("UPDATE harness_corpus SET row=%s WHERE kind=%s AND key=%s AND seq=%s "
+                            "AND tenant_id IS NOT DISTINCT FROM %s",
+                            (seal_to_str(value), kind, key, seq, tenant))
+            cur.execute("INSERT INTO encryption_migrations(scope, tenant_id, migrated_at) "
+                        "VALUES(%s,%s,%s) ON CONFLICT (scope) DO NOTHING",
+                        (postgres_migration_scope(tenant), tenant, time.time()))
+    if not dry_run:
+        # Publish only after COMMIT; a failed decrypt/write must not enable strict reads.
+        from .world_model import _POSTGRES_STORE_POSTURES
+        _POSTGRES_STORE_POSTURES[(world._posture_identity, tenant)] = True
+    return report
+
+
 def _shred_residue(conn: sqlite3.Connection, report: dict[str, int]) -> None:
     """Make the pre-encryption plaintext unrecoverable from the DB file.
 
@@ -269,4 +347,4 @@ def _shred_residue(conn: sqlite3.Connection, report: dict[str, int]) -> None:
         )
 
 
-__all__ = ["backup_world_db", "migrate_world_db"]
+__all__ = ["backup_world_db", "migrate_world_db", "migrate_postgres_world"]

@@ -129,7 +129,7 @@ def encryption_group() -> None:
 @click.option("--dry-run", is_flag=True,
               help="Report what would be sealed without writing.")
 @click.option("--backup/--no-backup", default=False,
-              help="Opt in to a pre-migration plaintext backup next to the DB.")
+              help="Opt in to a pre-migration plaintext backup next to a SQLite DB.")
 @click.pass_context
 def encryption_migrate_cmd(ctx, dry_run: bool, backup: bool) -> None:
     """Seal existing plaintext in the world DB (turns, facts, messages, questions).
@@ -140,14 +140,23 @@ def encryption_migrate_cmd(ctx, dry_run: bool, backup: bool) -> None:
     The reseal is in place. By default no plaintext backup is written; pass
     --backup to write a timestamped plaintext snapshot alongside the DB first
     (mode 0600), and delete that backup once you have verified the migration.
+    Postgres migrates the active tenant; --backup is SQLite-only.
     """
     from pathlib import Path
 
     from ..crypto_at_rest import EncryptionUnavailable
-    from ..encryption_migrate import backup_world_db, migrate_world_db
+    from ..encryption_migrate import backup_world_db, migrate_postgres_world, migrate_world_db
+    from ..world_model_backends.postgres import is_postgres_configured, open_postgres_world
+
+    postgres = is_postgres_configured()
     db = Path(ctx.obj["db"])
     try:
-        if not dry_run and backup and db.exists():
+        if postgres:
+            if backup:
+                raise click.ClickException("--backup is SQLite-only; take a Postgres database backup before migrating")
+            with open_postgres_world() as world:
+                report = migrate_postgres_world(world, dry_run=dry_run)
+        elif not dry_run and backup and db.exists():
             # Only snapshot when there is plaintext left to seal, so idempotent
             # re-runs don't litter identical backups. The CLI owns the backup
             # (so it can echo the path); the real run below skips its own.
@@ -155,7 +164,8 @@ def encryption_migrate_cmd(ctx, dry_run: bool, backup: bool) -> None:
                 bpath = backup_world_db(db)
                 click.echo(f"backed up plaintext world DB to {bpath} "
                            "(mode 0600; delete once the migration is verified)")
-        report = migrate_world_db(db, dry_run=dry_run, backup=False)
+        if not postgres:
+            report = migrate_world_db(db, dry_run=dry_run, backup=False)
     except EncryptionUnavailable as e:
         raise click.ClickException(str(e)) from e
     verb = "would seal" if dry_run else "sealed"
@@ -172,7 +182,9 @@ def encryption_migrate_cmd(ctx, dry_run: bool, backup: bool) -> None:
         try:
             from ..crypto_at_rest import strict_at_rest
             from ..world_model import migrated_marker_path
-            if migrated_marker_path(db).exists():
+            if postgres:
+                click.echo("active Postgres tenant rebound; completion recorded in the database")
+            elif migrated_marker_path(db).exists():
                 click.echo("every sealed column is bound to its table, column and "
                            "tenant; unsealed values in sealed columns are now withheld "
                            "(strict) for this store")
