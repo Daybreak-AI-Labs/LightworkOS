@@ -63,3 +63,29 @@ def test_import_from_file_dry_run(tmp_path):
     assert r.exit_code == 0, r.output
     assert "Would import" in r.output
     assert "Traceback" not in r.output
+
+
+def test_reimport_with_activate_schedules_does_not_duplicate_the_cron_job(tmp_path, monkeypatch):
+    from maverick import job_queue
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / ".maverick"))
+    monkeypatch.setattr(job_queue, "DEFAULT_DB", tmp_path / "jobs.db")
+    wf = {"id": "7", "name": "Nightly", "active": True,
+          "nodes": [{"name": "Cron", "type": "n8n-nodes-base.cron",
+                     "parameters": {"cronExpression": "0 3 * * *"}},
+                    {"name": "Do", "type": "n8n-nodes-base.set", "parameters": {}}],
+          "connections": {"Cron": {"main": [[{"node": "Do"}]]}}}
+    f = tmp_path / "wf.json"
+    f.write_text(json.dumps(wf))
+    args = ["import", "run", "n8n", "--from-file", str(f), "--activate-schedules", "--json"]
+
+    first = _run(args)
+    assert first.exit_code == 0, first.output
+    assert json.loads(first.output)[0]["schedule"]["cron"] == "0 3 * * *"
+    second = _run(args)
+    assert second.exit_code == 0, second.output
+    again = json.loads(second.output)[0]
+    assert again["schedule"] is None
+    assert any("not duplicated" in n for n in again["notes"])
+    assert len(list(job_queue.JobQueue().iter_pending("start_goal"))) == 1

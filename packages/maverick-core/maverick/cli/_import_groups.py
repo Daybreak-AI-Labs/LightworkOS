@@ -58,6 +58,17 @@ def _load_raws(from_file: str | None, source: str) -> list[dict]:
     return get_importer(source).fetch()
 
 
+def _active_cron_jobs(queue) -> dict[tuple[str, str], int]:
+    """``(title, cron) -> job id`` for the pending or running cron goal jobs."""
+    active: dict[tuple[str, str], int] = {}
+    for job in queue.iter_pending("start_goal", include_running=True):
+        payload = job.payload if isinstance(job.payload, dict) else {}
+        cron = payload.get("__cron__")
+        if cron:
+            active.setdefault((str(payload.get("title") or ""), str(cron)), job.id)
+    return active
+
+
 @import_group.command("run")
 @click.argument("source")
 @click.option("--from-file", "from_file", default=None,
@@ -86,13 +97,23 @@ def import_run_cmd(ctx, source, from_file, dry_run, activate_schedules, as_json)
         raise click.ClickException(f"no importable automations found from {source!r}")
 
     queue = None
+    active: dict[tuple[str, str], int] = {}
     if activate_schedules and not dry_run:
         from ..job_queue import JobQueue
         queue = JobQueue()  # default queue DB path
+        active = _active_cron_jobs(queue)
 
     results = []
     for a in automations:
-        res = materialize(a, save=not dry_run, queue=queue)
+        # Each activation mints a new schedule, so a repeated import would
+        # enqueue a second copy of every recurring job.
+        existing = active.get((a.render()[0][:200], a.trigger.cron or ""))
+        res = materialize(a, save=not dry_run,
+                          queue=None if existing is not None else queue)
+        if existing is not None:
+            res.suggested_trigger = None
+            res.notes = [n for n in res.notes if not n.startswith("schedule recovered;")]
+            res.notes.append(f"schedule already active (job {existing}); not duplicated")
         results.append({
             "source": a.source, "name": a.name, "template": res.template_name,
             "created": res.created_template, "trigger": a.trigger.kind,
