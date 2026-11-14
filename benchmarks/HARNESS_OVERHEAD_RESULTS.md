@@ -2,7 +2,7 @@
 
 > **MEASURED:** the governed arm added **no** model calls, tokens, or task steps
 > and returned a byte-identical answer and effect in 36/36 paired instances, at a median measured cost of
-> **18.69 ms per task** for 6 durable evidence
+> **98.77 ms per task** for 6 durable evidence
 > artifacts per task.
 >
 > This is an offline deterministic overhead measurement on one host. It is **not**
@@ -34,8 +34,8 @@ is caused by governance and nothing else.
 ## Run identity
 
 - Suite: `harness-overhead-v1`
-- Started: `2026-11-13T20:45:33.209547+00:00`
-- Git commit: `8055ac1c31a3d1d1ee0c2cb24545dab0a1299337`
+- Started: `2026-11-14T01:07:39.963535+00:00`
+- Git commit: `3f36fedfe68083fc87f2efa25b43433a2c22a4de`
 - Working tree dirty during run: `false`
 - Paired instances: 36 (36 governed, 36 ungoverned)
 - Model in loop: `false`; network used: `false`
@@ -44,7 +44,7 @@ is caused by governance and nothing else.
 - Shield: installed `true`, backend `builtin_rules`, required `false`
 - Input digest: `357355946ba031cc6a6f336e42ae152e99c431d869632221434d1aad8dbbd8be`
 - Manifest signature: `ed25519` (self-signed run integrity)
-- Signed manifest file SHA-256 (UTF-8/LF): `253a6086632b2a185393d415fa1a3f6a300533c2b5542e687bfea33ac49a24cb`
+- Signed manifest file SHA-256 (UTF-8/LF): `35711edbfa1a2cdfacb5a541c72c68d2dcb1be8a7487f0d467692307e751661f`
 - Public evidence: [signed measured manifest](./results/harness-overhead-v1/measured-manifest.json) and [trusted publisher key](./results/harness-overhead-v1/trusted-publisher.pub)
 
 ## Headline: what governance did not cost
@@ -68,19 +68,19 @@ add no model calls.
 
 | Path | Samples | Median | p95 |
 |---|---:|---:|---:|
-| Ungoverned task | 36 | 318.3 µs | 1.43 ms |
-| Governed task | 36 | 19.63 ms | 35.09 ms |
-| Paired governance overhead | 36 | 18.69 ms | 34.02 ms |
+| Ungoverned task | 36 | 476.0 µs | 22.11 ms |
+| Governed task | 36 | 101.06 ms | 243.19 ms |
+| Paired governance overhead | 36 | 98.77 ms | 242.30 ms |
 
-- Median governed/ungoverned wall ratio: 61.6719×
-- Median overhead per durable evidence artifact: 3.11 ms
+- Median governed/ungoverned wall ratio: 212.2966×
+- Median overhead per durable evidence artifact: 16.46 ms
 
 **Read the ratio carefully.** The ungoverned denominator here is pure local
 computation against a stubbed model — microseconds. A large ratio against a
 microsecond baseline is arithmetic, not a finding. The defensible number is the
 absolute overhead in the table above. As a clearly-labelled projection (an
 assumption, not a measurement): if each step of a real task cost 1.0 s of model
-latency, the measured per-task overhead would be 0.5311% of wall time.
+latency, the measured per-task overhead would be 2.7444% of wall time.
 
 ## Evidence produced in exchange
 
@@ -106,8 +106,8 @@ latency, the measured per-task overhead would be 0.5311% of wall time.
 
 | Shape | Instances | Evidence/task | Ungoverned median | Governed median | Overhead median |
 |---|---:|---:|---:|---:|---:|
-| `actuation` | 18 | 8 | 859.1 µs | 22.61 ms | 21.62 ms |
-| `analysis` | 18 | 4 | 25.7 µs | 11.65 ms | 11.62 ms |
+| `actuation` | 18 | 8 | 2.38 ms | 134.59 ms | 118.55 ms |
+| `analysis` | 18 | 4 | 30.2 µs | 84.14 ms | 84.11 ms |
 
 The `actuation` shape ends on a high-risk posting action, so it pays for an
 approval and a PREPARE/COMMIT receipt pair that the read-only `analysis` shape
@@ -127,7 +127,7 @@ governed, this number would not be zero.
 
 - Audit rows counted by the harness: 171; rows read back off the signed chain: 171
 - Total signed audit events on the chain: 172 (the measured rows plus one chain-initialisation row written before the first task)
-- Audit-chain SHA-256: `d51b895ce1fd6a6ac5606254daaf56acf87fe4ebd111840eaba6767a00b7e53f`
+- Audit-chain SHA-256: `dad971fc1e5c77db396e9e70db331fdafc35355f6e649627fa258c2ac79ba91b`
 - Audit chain verified in-run: `true`
 - Lineage chains carrying receipts: 18; verified: 18
 - Injection tripwires fired by the memory guard: 9
@@ -187,5 +187,5 @@ and recorded, never asserted.
 > ungoverned baselines, Lightwork's control plane added no model calls, no tokens,
 > and no task steps (100% of paired instances
 > produced a byte-identical answer and effect), at a median measured cost of
-> 18.69 ms per task, while producing 6 durable
+> 98.77 ms per task, while producing 6 durable
 > evidence artifacts per task. This measures overhead, not capability.
