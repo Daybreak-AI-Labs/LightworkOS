@@ -78,6 +78,13 @@ def _stop_reason(agent) -> str | None:
         killswitch.check()
     except killswitch.Halted as e:
         return str(e)
+    # Cancellation is the agent's own check (Agent._goal_cancelled), consulted
+    # only when there is a goal and a world model to read it from: with no
+    # world there is nothing that could have cancelled the goal, and the
+    # agent's check would read the missing world as an unreadable handoff hold.
+    ctx = getattr(agent, "ctx", None)
+    if getattr(ctx, "goal_id", None) is None or getattr(ctx, "world", None) is None:
+        return None
     cancelled = getattr(agent, "_goal_cancelled", None)
     if callable(cancelled) and cancelled():
         return "goal cancelled"
