@@ -118,6 +118,21 @@ def test_snowflake_write_needs_confirm(monkeypatch):
     post.assert_not_called()
 
 
+def test_snowflake_still_running_statement_is_not_reported_as_done(monkeypatch):
+    # The SQL API answers 202 with only a handle when the statement outlives
+    # the server-side wait; that is not "ok (0 rows)".
+    monkeypatch.setenv("SNOWFLAKE_ACCOUNT", "acct")
+    monkeypatch.setenv("SNOWFLAKE_TOKEN", "t")
+    post = MagicMock(return_value=_resp(202, {
+        "code": "333334", "message": "Asynchronous execution in progress.",
+        "statementHandle": "01b2-handle",
+    }))
+    _fake_httpx(monkeypatch, post=post)
+    from maverick.tools.snowflake_tool import snowflake_tool
+    out = snowflake_tool().fn({"op": "query", "statement": "SELECT 1"})
+    assert out.startswith("ERROR") and "01b2-handle" in out and "ok (" not in out
+
+
 # --------------------------------- Databricks ------------------------------
 
 def test_databricks_requires_config(monkeypatch):
