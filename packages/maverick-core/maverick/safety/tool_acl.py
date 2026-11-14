@@ -72,10 +72,40 @@ def _principal_config() -> dict:
 
 
 def _names(value) -> set[str]:
-    """A tool-name list from config; a lone string is one name, not its letters."""
+    """A tool-name list from config; a lone string is one name, not its letters.
+
+    An empty or blank string means the list is not set.
+    """
     if isinstance(value, str):
-        return {value}
+        return {value.strip()} if value.strip() else set()
     return set(value or [])
+
+
+def _risk_level(value) -> str | None:
+    """A configured ``max_risk``: ``None`` when unset, the tightest level when unreadable."""
+    from .tool_risk import RISK_LEVELS, risk_rank
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    level = value.strip().lower() if isinstance(value, str) else ""
+    if level not in RISK_LEVELS:
+        # A ceiling was set but cannot be read: apply the tightest one
+        # rather than dropping it.
+        log.warning("tool_acl: unknown max_risk %r; applying the tightest ceiling", value)
+        level = min(RISK_LEVELS, key=risk_rank)
+    return level
+
+
+def layer_policy(section) -> tuple[set[str], set[str], str | None]:
+    """``(allowed, denied, max_risk)`` of one config table, read as the kernel reads it.
+
+    ``section`` is ``[security]``, ``[security.channels.<name>]`` or
+    ``[security.users."<id>"]``. Views that explain a decision should call this
+    rather than reading the raw values, which may be a string or mixed case.
+    """
+    if not isinstance(section, dict):
+        return set(), set(), None
+    return (_names(section.get("allowed_tools")), _names(section.get("denied_tools")),
+            _risk_level(section.get("max_risk")))
 
 
 def _load_lists() -> tuple[set[str], set[str]]:
@@ -161,17 +191,7 @@ def resolve_max_risk(
         raw.append(((sec.get("channels") or {}).get(channel) or {}).get("max_risk"))
     if user_id:
         raw.append(((sec.get("users") or {}).get(user_id) or {}).get("max_risk"))
-    candidates: list[str] = []
-    for value in raw:
-        if value is None or value == "":
-            continue
-        level = value.strip().lower() if isinstance(value, str) else ""
-        if level not in RISK_LEVELS:
-            # A ceiling was set but cannot be read: apply the tightest one
-            # rather than dropping it.
-            log.warning("tool_acl: unknown max_risk %r; applying the tightest ceiling", value)
-            level = min(RISK_LEVELS, key=risk_rank)
-        candidates.append(level)
+    candidates = [level for level in map(_risk_level, raw) if level is not None]
     if not candidates:
         # Secure-by-default: with no configured ceiling, cap at 'high'. No tool
         # is rated above 'high' (tool_risk.RISK_LEVELS stops there), so this

@@ -137,3 +137,13 @@ def test_unparseable_config_and_malformed_values_fail_closed(tmp_path, monkeypat
         assert tool_acl.resolve_max_risk(channel="slack") == "low"
     finally:
         config.reset_config_cache()
+
+
+def test_layer_policy_normalises_like_the_kernel():
+    # An empty allowed_tools string means no allow-list (not "allow nothing"),
+    # and views get the same normalised lists and ceiling the kernel applies.
+    assert tool_acl.layer_policy({"allowed_tools": "  ", "denied_tools": "shell",
+                                  "max_risk": "Low"}) == (set(), {"shell"}, "low")
+    assert tool_acl.layer_policy({"max_risk": "lo"})[2] == "low"
+    assert tool_acl.layer_policy({"max_risk": ""}) == (set(), set(), None)
+    assert tool_acl.layer_policy(None) == (set(), set(), None)
