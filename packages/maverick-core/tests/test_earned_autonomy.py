@@ -248,6 +248,28 @@ def test_failed_signed_head_withdraws_the_row_and_keeps_the_ledger_usable(tmp_pa
     assert ledger.verify().startswith("VALID: 3")
 
 
+def test_forced_rows_after_one_anchor_failure_are_re_anchored_by_the_next_append(
+        tmp_path, monkeypatch):
+    path = tmp_path / "trust.ndjson"
+    ledger = ea.TrustLedger(path=path)
+    assert ledger.record_event("hit", "deploy", card_id="a", ts=1.0)
+    real_anchor = ledger._log._record_anchor
+    monkeypatch.setattr(ledger._log, "_record_anchor", lambda *a, **k: False)
+    assert ledger.record_event("demote", "deploy", ts=2.0)  # lands unverified
+    monkeypatch.setattr(ledger._log, "_record_anchor", real_anchor)
+    assert ledger.verify().startswith("BROKEN")
+    assert ledger.record_event("hit", "deploy", card_id="b", ts=3.0)
+    assert ledger.verify().startswith("VALID: 3")
+    # Only unverified demote/revoke rows are ever tolerated past the head.
+    lines = path.read_text().splitlines(keepends=True)
+    row = {**_event("graduate", 4.0), "unverified_ledger": "BROKEN: forged"}
+    prev = json.loads(lines[-1])["hash"]
+    row = {**row, "prev": prev, "hash": ea._ChainedLog._row_hash(row, prev)}
+    path.write_text("".join(lines) + json.dumps(row, sort_keys=True) + "\n")
+    assert not ledger.record_event("hit", "deploy", card_id="c", ts=5.0)
+    assert ledger.verify().startswith("BROKEN: head does not match")
+
+
 def test_two_ledger_objects_keep_the_signed_day_count_in_step(tmp_path):
     path = tmp_path / "trust.ndjson"
     a, b = ea.TrustLedger(path=path), ea.TrustLedger(path=path)

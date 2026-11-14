@@ -25,6 +25,11 @@ log = logging.getLogger(__name__)
 
 _GENESIS = "0" * 64
 #: Why :meth:`_ChainedLog.verify` fails for evidence that was never anchored.
+#: Why verify fails while only forced rows recorded unverified follow the head.
+_REANCHOR = (
+    "unverified demote/revoke row(s) follow the signed head; the next append "
+    "re-anchors them"
+)
 #: Main-audit-log decision recording a store's first signed head.
 _FIRST_ANCHOR = "evidence_anchored"
 _UNANCHORED = (
@@ -143,6 +148,10 @@ class _ChainedLog:
         self._rows: list[dict] = []
         self._size = -1
         self._lock = threading.RLock()
+        #: Row kinds that may be re-anchored when recorded unverified right
+        #: after the signed head (the trust ledger's demote/revoke). Such rows
+        #: only take authority away, so anchoring them hides nothing.
+        self.reanchorable_kinds: frozenset[str] = frozenset()
         # Fingerprint of the evidence file and its signed namespace at the
         # last full verification (or our own anchored append after it), and
         # the row count of the day-file our last signed head went to.
@@ -227,8 +236,25 @@ class _ChainedLog:
                         "evidence was anchored before")
             return _UNANCHORED
         if latest.get("head") != head or latest.get("row_count") != len(self._rows):
+            if self._only_forced_rows_after(latest):
+                return _REANCHOR
             return "head does not match the signed audit record"
         return None
+
+    def _only_forced_rows_after(self, latest: dict) -> bool:
+        """The signed head names an exact prefix and only unverified forced rows follow.
+
+        That is what one failed anchor of a forced demote/revoke leaves. A
+        deleted, edited or added row of any other kind never matches.
+        """
+        count = latest.get("row_count")
+        if (not self.reanchorable_kinds or type(count) is not int
+                or not 0 <= count < len(self._rows)):
+            return False
+        prefix = self._rows[count - 1]["hash"] if count else _GENESIS
+        return prefix == latest.get("head") and all(
+            row.get("kind") in self.reanchorable_kinds and "unverified_ledger" in row
+            for row in self._rows[count:])
 
     @staticmethod
     def _never_anchored(directory: Path) -> bool:
@@ -378,14 +404,28 @@ class _ChainedLog:
         log.warning("earned-autonomy: adopted %d row(s) of unanchored legacy evidence", count)
         return True
 
+    def _repair_status_unlocked(self, status: str) -> str:
+        """Adopt never-anchored evidence, or re-anchor trailing forced rows."""
+        try:
+            if status == f"BROKEN: {_UNANCHORED}":
+                return ("VALID: adopted" if self._adopt_unlocked()
+                        else "BROKEN: legacy evidence could not be anchored")
+            if status == f"BROKEN: {_REANCHOR}":
+                return ("VALID: re-anchored" if self._record_anchor(
+                    self._rows[-1]["hash"], len(self._rows), reanchored_forced_rows=True)
+                    else "BROKEN: forced rows could not be re-anchored")
+        except AuditRefused:
+            raise
+        except Exception:
+            log.debug("earned-autonomy anchor repair failed", exc_info=True)
+            return "BROKEN: signed audit head could not be recorded"
+        return status
+
     def _append_unlocked(self, fields: dict, *, force: bool) -> bool:
         if self.path is None:
             return self._write_row_unlocked(fields, force=force) is not None
         try:
-            status = self._writable_status_unlocked()
-            if status == f"BROKEN: {_UNANCHORED}":
-                status = ("VALID: adopted" if self._adopt_unlocked()
-                          else "BROKEN: legacy evidence could not be anchored")
+            status = self._repair_status_unlocked(self._writable_status_unlocked())
         except AuditRefused:
             if not force:
                 raise
@@ -721,6 +761,7 @@ class TrustLedger:
     def __post_init__(self) -> None:
         if self._log is None:
             self._log = _ChainedLog(self.path, max_rows=self.max_rows)
+        self._log.reanchorable_kinds = frozenset(_FORCED_KINDS)
 
     def record_event(self, kind: str, action: str, *, principal: str = "",
                      card_id: str = "", predicted: float | None = None,
