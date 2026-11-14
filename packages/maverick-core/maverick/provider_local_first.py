@@ -73,6 +73,8 @@ def local_model_for_role(role: str) -> str | None:
     except Exception:  # pragma: no cover
         return None
     models = cfg.get("models") or {}
+    if not isinstance(models, dict):  # a non-table [local_first] models is ignored
+        models = {}
     spec = models.get(role) or cfg.get("model")
     spec = str(spec).strip() if spec else ""
     return spec if spec and is_local(spec) else None
