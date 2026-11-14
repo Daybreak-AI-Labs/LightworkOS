@@ -281,7 +281,7 @@ _dek_lock = threading.Lock()
 _dek_tenant_locks: dict[str, threading.Lock] = {}
 
 
-def _dek_cache_ttl(tenant_id: str | None) -> float:
+def _dek_cache_ttl(tenant_id: str | None = None) -> float:
     """Seconds a tenant DEK stays cached before it must be re-unwrapped by the
     KMS. ``0`` (default) = cache for the process lifetime, unchanged behavior. A
     positive TTL bounds how long a *revoked* cloud-KMS key keeps opening data:

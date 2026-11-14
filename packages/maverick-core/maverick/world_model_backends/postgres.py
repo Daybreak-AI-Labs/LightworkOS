@@ -3666,19 +3666,6 @@ class PostgresWorldModel:
         now = time.time()
         tenant = _active_tenant()
         with self._tx() as cur:
-            self._lock_fact_subject(cur, key, shared=True)
-            if episode_id is not None:
-                # These legacy provenance columns have no foreign key. Hold
-                # their parent explicitly so erasure cannot delete the episode
-                # and then accept a late fact carrying its private output.
-                scope, scoped = _mutation_tenant_scope("g.tenant_id")
-                cur.execute(
-                    "SELECT e.id FROM episodes e JOIN goals g ON g.id=e.goal_id "
-                    "WHERE e.id=%s AND " + scope + " FOR SHARE OF e",
-                    (episode_id, *scoped),
-                )
-                if cur.fetchone() is None:
-                    raise ValueError("The fact's source episode is unavailable in this workspace.")
             self._check_fact_revision(cur, key, expected_revision)
             if _temporal_memory_enabled():
                 # Serialize concurrent writers for THIS key across replicas: the
@@ -5510,57 +5497,6 @@ class PostgresWorldModel:
             for store in RECEIPT_STORES
         }
 
-    @staticmethod
-    def _lock_fact_subject(cur, key: str, *, shared: bool) -> None:
-        # User-scoped facts can have no episode, and a new key has no row to
-        # lock. Only these writers need a scoped advisory fence in addition to
-        # the parent-row locks used by every foreign-key-backed child table.
-        parts = key.split(":", 3)
-        if len(parts) != 4 or parts[0] != "user":
-            return
-        tenant = _active_tenant()
-        tenants = [tenant]
-        if not shared and tenant is not None and not _strict_tenant_isolation():
-            # Compatibility erasure includes NULL-owned facts. Fence their
-            # unbound writers too, in a stable order before the named scope.
-            tenants.insert(0, None)
-        function = "pg_advisory_xact_lock_shared" if shared else "pg_advisory_xact_lock"
-        for owner in tenants:
-            identity = json.dumps(["fact-erasure", owner, *parts[:3]])
-            cur.execute(f"SELECT {function}(hashtextextended(%s, 0))", (identity,))
-
-    def _locked_conversation_erasure_plan_cursor(self, cur, requested: list[int]) -> dict:
-        from ..erasure_receipts import ErasurePlanChanged
-
-        scope, scoped = _erasure_tenant_scope()
-        cur.execute(
-            "SELECT id, channel, user_id FROM conversations WHERE id=ANY(%s) "
-            "AND " + scope + " ORDER BY id FOR UPDATE", (requested, *scoped),
-        )
-        conversations = cur.fetchall()
-        # Match the writer's lock order: subject, then episode, then fact. The
-        # stable ordering also permits overlapping erasures to serialize.
-        subjects = sorted({f"user:{quote(str(channel), safe='')}:{quote(str(user), safe='')}:"
-                           for _, channel, user in conversations})
-        for subject in subjects:
-            self._lock_fact_subject(cur, subject, shared=False)
-        plan = self._conversation_erasure_plan_cursor(cur, requested)
-        for _ in range(8):
-            cur.execute("SELECT id FROM goals WHERE id=ANY(%s) ORDER BY id FOR UPDATE",
-                        (plan["goal_ids"],))
-            cur.fetchall()
-            cur.execute("SELECT id FROM episodes WHERE goal_id=ANY(%s) ORDER BY id FOR UPDATE",
-                        (plan["goal_ids"],))
-            cur.fetchall()
-            current = self._conversation_erasure_plan_cursor(cur, requested)
-            if (current["goal_ids"] == plan["goal_ids"]
-                    and current["episode_ids"] == plan["episode_ids"]):
-                return current
-            # A child may commit between the first read and its parent's lock.
-            # Lock that newly observed closure, then reread before any delete.
-            plan = current
-        raise ErasurePlanChanged("The conversation's task tree kept changing while erasure was being prepared. Retry the review.")
-
     def erase_conversations(
         self,
         conversation_ids: list[int],
@@ -5599,7 +5535,17 @@ class PostgresWorldModel:
         from ..erasure_receipts import ErasurePlanChanged
 
         with self._tx() as cur:
-            plan = self._locked_conversation_erasure_plan_cursor(cur, requested)
+            # Erasure is rare and correctness-sensitive. Block concurrent
+            # inserts into every participating table while the durable plan is
+            # re-read, compared, and deleted; otherwise a child could appear
+            # after receipt issuance but before its table's DELETE.
+            cur.execute(
+                "LOCK TABLE conversations, turns, goals, episodes, artifacts, "
+                "attachments, goal_events, goal_origins, goal_mutation_receipts, messages, "
+                "processed_messages, questions, share_links, signoffs, "
+                "fact_history, facts IN SHARE ROW EXCLUSIVE MODE"
+            )
+            plan = self._conversation_erasure_plan_cursor(cur, requested)
             if (
                 expected_conversations is not None
                 and plan["conversation_ids"] != expected_conversations
