@@ -70,13 +70,17 @@ def _remaining_allowance(cap: int | None, used: int) -> int | None:
 
 def _attempt_allowances(budget: Budget) -> dict[str, int | None] | None:
     """The token and tool-call caps for the next best-of-N attempt: what is
-    left of the parent's. ``None`` when any of them is used up."""
+    left of the parent's. ``None`` when a positive allowance is used up: no
+    tokens left, or tool calls made up to the limit. A tool-call limit set to 0
+    still allows a tools-free attempt."""
     allowances = {
         "max_input_tokens": _remaining_allowance(budget.max_input_tokens, budget.input_tokens),
         "max_output_tokens": _remaining_allowance(budget.max_output_tokens, budget.output_tokens),
         "max_tool_calls": _remaining_allowance(budget.max_tool_calls, budget.tool_calls),
     }
-    return None if 0 in allowances.values() else allowances
+    tokens_used_up = 0 in (allowances["max_input_tokens"], allowances["max_output_tokens"])
+    tools_used_up = budget.tool_calls > 0 and allowances["max_tool_calls"] == 0
+    return None if tokens_used_up or tools_used_up else allowances
 
 
 def _parse_bon_ladder(raw_ladder: str) -> list[tuple[str, float]]:

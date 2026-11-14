@@ -511,6 +511,8 @@ def test_best_of_n_ladder_and_per_attempt_allowance():
     spent.tool_calls = 3
     assert _attempt_allowances(spent) is None  # no attempt launches on a zero cap
     assert _attempt_allowances(Budget(max_dollars=10.0, max_tool_calls=3))["max_tool_calls"] == 3
+    # A limit of 0 set on purpose still allows a tools-free attempt.
+    assert _attempt_allowances(Budget(max_dollars=10.0, max_tool_calls=0))["max_tool_calls"] == 0
 
 
 def test_persisted_prompt_text_is_redacted_before_it_is_cut():
