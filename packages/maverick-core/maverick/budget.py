@@ -170,8 +170,8 @@ def _coerce_count(v: object) -> int:
     try:
         if isinstance(v, bool):
             raise TypeError("boolean")
-        if isinstance(v, float) and (not math.isfinite(v) or not v.is_integer()):
-            raise ValueError("non-finite or fractional")
+        if isinstance(v, float) and not math.isfinite(v):
+            raise ValueError("non-finite")
         n = int(v or 0)
     except (TypeError, ValueError, OverflowError) as exc:
         raise UsageAccountingError(f"invalid token usage count: {v!r}") from exc
