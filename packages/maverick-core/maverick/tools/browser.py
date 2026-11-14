@@ -1195,9 +1195,13 @@ def _browser_observe(page) -> str:
             _redact_browser_text(e),
         )
     try:
-        ax_json = json.dumps(ax, ensure_ascii=False, default=str) if ax else ""
+        # Raw text for the injection scan; the returned tree has each of its
+        # strings cleaned before it is serialised, so it stays valid JSON.
+        ax_raw = json.dumps(ax, ensure_ascii=False, default=str) if ax else ""
+        ax_json = (json.dumps(_clean_page_strings(ax), ensure_ascii=False, default=str)
+                   if ax else "")
     except (TypeError, ValueError):
-        ax_json = ""
+        ax_raw = ax_json = ""
     ax_truncated = len(ax_json) > _MAX_OBSERVE_AXTREE_CHARS
     if ax_truncated:
         ax_json = ax_json[:_MAX_OBSERVE_AXTREE_CHARS]
@@ -1250,7 +1254,39 @@ def _browser_observe(page) -> str:
         "accessibility_tree": ax_json,
         "accessibility_truncated": ax_truncated,
     }
-    return _scanned_page_text(json.dumps(snapshot, ensure_ascii=False, default=str))
+    _scan_observe_snapshot(snapshot, ax_raw[:_MAX_OBSERVE_AXTREE_CHARS])
+    return _redact_browser_text(json.dumps(snapshot, ensure_ascii=False, default=str))
+
+
+def _clean_page_strings(value: Any) -> Any:
+    """``value`` with every string cleaned by the injection scan's normaliser."""
+    if isinstance(value, str):
+        return _scan_fetched(value)[0]
+    if isinstance(value, dict):
+        return {k: _clean_page_strings(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_clean_page_strings(v) for v in value]
+    return value
+
+
+def _scan_observe_snapshot(snapshot: dict[str, Any], ax_raw: str) -> None:
+    """Run the injection scan on the page text of an observe snapshot.
+
+    Each text field (title, element names; the accessibility tree is cleaned
+    before it is serialised) is cleaned separately, before ``json.dumps``, so
+    the result stays valid JSON (the scan's normalisation turns full-width
+    quotes into ``"``) and selector hints are never rewritten. A warning for
+    the page as a whole goes in an ``injection_warning`` key instead of a
+    line in front of the JSON.
+    """
+    elements = snapshot["interactive_elements"]
+    raw = [str(snapshot["title"]), ax_raw, *(e["name"] for e in elements)]
+    warning = _scan_fetched("\n".join(raw))[1]
+    snapshot["title"] = _scan_fetched(str(snapshot["title"]))[0]
+    for entry in elements:
+        entry["name"] = _scan_fetched(entry["name"])[0]
+    if warning:
+        snapshot["injection_warning"] = warning.strip()
 
 
 def _browser_save_session(session) -> str:
