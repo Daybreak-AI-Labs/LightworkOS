@@ -217,6 +217,7 @@ def prepare_hold(provider, period, identity, actual, evidence, *, actor, context
     if row["state"] == "held" and not isolated:
         raise SpendingReviewError("This reservation may still be running. Reconcile it only in isolated desktop recovery mode.")
     actual = cap._amount(actual)
+    _organization_hold(provider, period, identity, actual)
     record = _review({"kind": "hold", "provider": provider, "period": period, "receipt": identity,
                       "actual": actual, "evidence": _evidence(evidence),
                       "expected": digest([total, receipts]), "requires_isolation": row["state"] == "held"}, actor, context, target_binding=binding)
@@ -359,6 +360,37 @@ def _apply_repair(record, identifier, intent):
         cap._save(path, replacement)
 
 
+def _reference(provider, period, receipt):
+    return cap.reservation_reference(cap.Reservation(provider, period, receipt, 0.0, None))
+
+
+def _organization_hold(provider, period, receipt, actual, *, attach=False):
+    """Refuse before any ledger change unless the matching organization hold
+    can be settled with ``actual``.
+
+    A crash between the provider hold and publishing its reference leaves the
+    organization call with no reference; the call key already binds it to this
+    provider and request, so ``attach`` publishes the reference first.
+    """
+    from .tenant import provider_admission as organization
+
+    tenant = current_tenant_id_strict()
+    if not tenant:
+        return
+    key = organization._key(provider, receipt)
+    call = organization._load(tenant, key=key)["calls"].get(key)
+    if call is None:
+        return  # legacy receipt with no organization hold
+    reference = _reference(provider, period, receipt)
+    if (call["state"] == "not_dispatched" or call["reference"] not in (None, reference)
+            or (call["state"] == "settled" and call["actual"] != actual)):
+        raise SpendingReviewError(
+            "The workspace's spending hold for this reservation does not match it. "
+            "Review the workspace's provider holds before reconciling.")
+    if attach and call["reference"] is None:
+        organization.attach_reference((tenant, key), reference)
+
+
 def _settle_organization_hold(record):
     """Settle the matching organization admission hold with the reviewed cost.
 
@@ -369,8 +401,7 @@ def _settle_organization_hold(record):
     """
     from .tenant.provider_admission import settle_call
 
-    reference = cap.reservation_reference(
-        cap.Reservation(record["provider"], record["period"], record["receipt"], 0.0, None))
+    reference = _reference(record["provider"], record["period"], record["receipt"])
     try:
         settle_call(record["provider"], record["receipt"], reference, record["actual"])
     except ValueError as exc:
@@ -403,6 +434,10 @@ def apply(identifier, *, actor, context, isolated, confirm):
                             expected_revision=current["revision"], action="apply", actor=actor)
 
     if record["kind"] == "hold":
+        # Before any ledger change, so a hold that cannot be settled leaves
+        # both ledgers as they were.
+        _organization_hold(record["provider"], record["period"], record["receipt"],
+                           record["actual"], attach=True)
         _, _, shared = _state(record["provider"], record["period"])
         def reconcile(total, receipts):
             if record["target"] != target():

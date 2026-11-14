@@ -262,3 +262,30 @@ def test_reconciled_hold_also_settles_the_organization_admission_hold(ledger):
     # Re-applying a completed review stays idempotent for both authorities.
     spending.apply(review["id"], actor="user:owner", context="context-a", isolated=False, confirm=True)
     assert organization.outstanding("review-workspace") < float("inf")
+
+
+def test_hold_review_completes_when_the_organization_reference_was_never_attached(ledger, monkeypatch):
+    # A crash between the provider hold and publishing its reference leaves the
+    # organization call with no reference. The review must still complete and
+    # leave both ledgers settled at the reviewed cost.
+    from maverick.tenant import provider_admission as organization
+
+    with monkeypatch.context() as crash:
+        crash.setattr(organization, "attach_reference",
+                      lambda *a: (_ for _ in ()).throw(KeyboardInterrupt()))
+        crash.setattr(organization, "cancel_before_dispatch", lambda handle: None)
+        crash.setattr(cap, "_settle_provider", lambda *a, **k: None)  # the crash skipped cleanup
+        with pytest.raises(KeyboardInterrupt):
+            cap.reserve("openai", 0, request_id="crashed")
+    key = organization._key("openai", "crashed")
+    assert organization._load("review-workspace", key=key)["calls"][key]["reference"] is None
+    # The crashed process never settled its provider hold: reconcile it in
+    # isolated recovery mode.
+    review = spending.prepare_hold("openai", "2026-09-06", "crashed", 2,
+                                   "Final invoice INV-11, verified against this request.",
+                                   actor="user:owner", context="context-a", isolated=True)
+    done = spending.apply(review["id"], actor="user:owner", context="context-a", isolated=True, confirm=True)
+    assert done["state"] == "completed"
+    call = organization._load("review-workspace", key=key)["calls"][key]
+    assert (call["state"], call["actual"]) == ("settled", 2.0)
+    assert cap.check("openai").spent == 2
