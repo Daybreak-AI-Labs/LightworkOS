@@ -76,16 +76,6 @@ def _headers(json_body: bool = True) -> dict[str, str]:
     return h
 
 
-def _check(resp, action: str) -> str | None:
-    if resp.status_code >= 400:
-        try:
-            body = resp.json()
-        except ValueError:
-            body = resp.text
-        return f"ERROR: discord {action} ({resp.status_code}): {body}"
-    return None
-
-
 def _post_json(path: str, body: dict) -> tuple[int, Any]:
     import httpx
     r = _governed_sender(httpx.post)(f"{_API}{path}", headers=_headers(), json=body, timeout=30.0)

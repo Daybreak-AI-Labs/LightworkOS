@@ -2,7 +2,7 @@
 
 Auth:
   - ``DATADOG_API_KEY`` (required for all ops)
-  - ``DATADOG_APP_KEY`` (required for read ops: monitors, slos)
+  - ``DATADOG_APP_KEY`` (required for read ops: monitors)
   - ``DATADOG_SITE`` (default ``datadoghq.com``; use ``datadoghq.eu``
     or other regional sites as needed)
 

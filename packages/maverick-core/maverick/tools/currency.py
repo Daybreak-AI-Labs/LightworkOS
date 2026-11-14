@@ -7,7 +7,8 @@ common cases:
   - convert(amount, from_, to)       — convert a single amount
   - rates(base, symbols)             — fetch rates for a base currency
 
-All values are decimals; ISO 4217 codes (USD, EUR, JPY, etc.).
+Amounts and rates are Python floats (binary, not Decimal); ISO 4217 codes
+(USD, EUR, JPY, etc.).
 """
 from __future__ import annotations
 

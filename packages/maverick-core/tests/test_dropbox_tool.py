@@ -69,3 +69,15 @@ def test_dropbox_list_renders(monkeypatch):
     from maverick.tools.dropbox_tool import dropbox_tool
     out = dropbox_tool().fn({"op": "list", "path": ""})
     assert "/a.txt" in out
+
+
+def test_dropbox_download_requests_only_the_preview_range(monkeypatch):
+    monkeypatch.setenv("DROPBOX_ACCESS_TOKEN", "tok")
+    resp = _resp(206, b"x" * 4097)
+    resp.headers = {"Dropbox-API-Result": '{"size": 99999}'}
+    post = MagicMock(return_value=resp)
+    _fake_httpx(monkeypatch, post=post)
+    from maverick.tools.dropbox_tool import dropbox_tool
+    out = dropbox_tool().fn({"op": "download", "path": "/big.bin"})
+    assert post.call_args.kwargs["headers"]["Range"] == "bytes=0-4096"
+    assert out.startswith("size=99999") and out.endswith("(truncated)")

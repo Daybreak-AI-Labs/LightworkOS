@@ -56,3 +56,16 @@ def test_cross_repo_rejects_workspace_escape(tmp_path):
 
     assert out.startswith("ERROR")
     assert "escapes the workspace" in out
+
+
+def test_cross_repo_cycles_long_chain_and_unparsable_file(tmp_path):
+    from maverick.tools.cross_repo_deps import _cycles
+    chain = {(f"p{i}", f"p{i + 1}"): 1 for i in range(3000)}
+    chain[("p3000", "p0")] = 1
+    assert len(_cycles(chain)[0]) == 3001  # recursive Tarjan hit RecursionError
+    root = tmp_path / "mono"
+    _write(root, "p/__init__.py", "import q\n")
+    _write(root, "q/__init__.py", "import p\n")
+    _write(root, "q/deep.py", "x = " + "-" * 200_000 + "1\n")
+    out = cross_repo_deps(_FakeSandbox(tmp_path)).fn({"op": "cycles", "paths": ["mono"]})
+    assert "p <-> q" in out or "q <-> p" in out

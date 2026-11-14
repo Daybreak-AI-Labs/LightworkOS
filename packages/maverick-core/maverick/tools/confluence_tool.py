@@ -1,4 +1,4 @@
-"""Confluence tool — pages + search (Cloud REST v2 + CQL search).
+"""Confluence tool — pages + search (REST API v1 ``/rest/api/content`` + CQL search).
 
 Auth: ``CONFLUENCE_URL`` (e.g. https://your-org.atlassian.net/wiki) +
 ``CONFLUENCE_USER`` + ``CONFLUENCE_API_TOKEN`` (Basic auth, same token

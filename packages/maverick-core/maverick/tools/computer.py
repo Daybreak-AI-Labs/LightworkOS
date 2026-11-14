@@ -16,7 +16,7 @@ Safety:
   - The agent kernel runs this through the same Shield checks as other
     tools, so blocked-tool-call rules apply.
   - Coordinates clamped to the active display's bounds.
-  - ``MAVERICK_COMPUTER_DISABLE=1`` env var disables the tool entirely
+  - ``MAVERICK_COMPUTER_DISABLE=1`` (or true/yes/on) env var disables the tool entirely
     (kill switch for production deployments where the user wants the
     agent capability but not actual mouse control).
   - Host-safety guard (opt-in): when sandboxing is required --
@@ -162,7 +162,9 @@ def _ocr_enabled() -> bool:
 
 
 def _ocr_png_b64(b64: str) -> str:
-    """Best-effort OCR of a base64 PNG via sandboxed tesseract.
+    """Best-effort OCR of a base64 PNG via tesseract, run on the host
+    (``sandbox_run(None, ...)``: a direct subprocess with a scrubbed
+    environment, not a sandbox backend).
 
     Returns "" on ANY failure (bad base64, tesseract missing, timeout, or
     subprocess error). OCR is a fallback for when the model can't see a DOM /
@@ -623,8 +625,10 @@ def _run_computer_action(args: dict[str, Any]) -> str:
         args = copy.deepcopy(dict(args))
     except Exception:
         return "ERROR: computer action input could not be frozen; no input was sent"
-    if os.environ.get("MAVERICK_COMPUTER_DISABLE") == "1":
-        return "ERROR: computer-use tool disabled by MAVERICK_COMPUTER_DISABLE=1"
+    # Same spellings as every other flag in this file (1/true/yes/on): a kill
+    # switch that ignores "true" fails open.
+    if (os.environ.get("MAVERICK_COMPUTER_DISABLE") or "").strip().lower() in _TRUTHY:
+        return "ERROR: computer-use tool disabled by MAVERICK_COMPUTER_DISABLE"
     action = args.get("action")
     if not action:
         return "ERROR: action is required"
