@@ -21,6 +21,8 @@ from collections.abc import Iterable, Mapping
 from itertools import islice
 from typing import Any
 
+from ..budget import BudgetExceeded
+from ..killswitch import Halted
 from .ir import (
     Flow,
     ensure_high_risk_approvals,
@@ -99,7 +101,7 @@ Each node is one of these kinds (include only the fields for its kind):
 - {"id","kind":"subflow","flow_ref":"<a saved flow id to run here>","subflow_inputs":{"<child key>":"<value or {{expr}}>"},"output":"<key>","next":"<id|null>"}
 - {"id","kind":"setvar","assignments":{"<key>":"<value or {{expr}}>",...},"next":"<id|null>"}
 
-Any "agent" or "action" node may also set "retries":<n> (re-try on failure; optional "retry_backoff":<seconds> for exponential wait), "on_error":"<id>" (route there if it fails), and "timeout":<seconds> (per-node execution cap).
+An "action" node may set "retries":<n> (re-try definite failures when the tool is retry-safe; optional "retry_backoff":<seconds>) and "on_error":"<id>" (route eligible failures there). Agent failures require reconciliation: do not give agent nodes retries or on_error. An agent's "timeout":<seconds> bounds its goal's own wall clock; the flow waits for the result. An action's timeout has no effect.
 
 Reference earlier results with {{key}} where a node's "output" set that key. Set "output" on nodes whose result a later node needs. Transforms: text (upper lower trim title concat replace split join slice regex), data (default length first last index keys json), number (add sub mul div round abs int), time (now today add_days datefmt -- UTC, ISO-formatted so dates compare lexically). E.g. {{datefmt(now(),"%Y-%m-%d")}}, {{add_days('', 3)}} (3 days from today), {{regex(email,"@(.+)$")}}, {{join(split(csv,","),"; ")}}.
 Regex patterns permit at most one quantifier and no counted repetitions; unsupported patterns fail the step.
@@ -509,7 +511,8 @@ def _run(complete, tools, description: str, tool_docs=None, tool_schemas=None) -
 def draft_flow(description: str, *, tools=None, tool_docs=None, tool_schemas=None, complete=None,
                flow_id: str = "") -> tuple[Flow, list[str]]:
     """Draft a flow from ``description``. Returns ``(flow, notes)``. Falls back to
-    a single agent node (never fails to return something runnable). ``complete``
+    a single agent node for malformed model output. Halt and budget stops
+    propagate without a runnable fallback. ``complete``
     defaults to a real LLM call (orchestrator model) when not injected. ``tool_docs``
     (name -> description) grounds the drafter so action nodes name a real tool."""
     description = _safe_provider_text(
@@ -557,6 +560,8 @@ def draft_flow(description: str, *, tools=None, tool_docs=None, tool_schemas=Non
                 "preview only; install and risk-classify each action tool before "
                 "save or execution: " + "; ".join(unclassified[:3]))
         return flow, notes
+    except (Halted, BudgetExceeded):
+        raise
     except Exception:
         missing = []
         if _SCHEDULE_INTENT_RE.search(description):

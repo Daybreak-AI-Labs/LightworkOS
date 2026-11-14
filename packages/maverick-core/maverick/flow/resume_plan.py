@@ -81,6 +81,14 @@ def prepare_resume(
         if not valid_continuation(resume, continuation):
             return ResumePlan({}, None, result=FlowRunResult(
                 status=STATUS_FAILED, error="unsupported flow continuation"))
+        saved_data = continuation["frame"].get("data")
+        supplied = resume.get("data") or data or {}
+        if isinstance(saved_data, dict) and supplied.keys() - saved_data.keys():
+            return ResumePlan(dict(saved_data), None, result=FlowRunResult(
+                status=STATUS_FAILED, data=dict(saved_data),
+                cursor=continuation["frame"].get("cursor"), continuation=continuation,
+                error="A retry with saved work cannot accept new inputs. Retry without new inputs or start a new run.",
+            ))
         return ResumePlan(dict(data or {}), flow.start, frame=continuation["frame"])
 
     if not resume:

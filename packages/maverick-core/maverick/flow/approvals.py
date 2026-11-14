@@ -131,6 +131,44 @@ def _sign(material: bytes, secret: str) -> str:
     return hmac.new(secret.encode("utf-8"), material, hashlib.sha256).hexdigest()
 
 
+def approval_value_digest(value: str) -> str:
+    """Bind a complete pause or approver value without truncation."""
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _claim_preview(value: str, maximum: int) -> str:
+    """Keep legacy inspection text within the token's encoded-size budget."""
+    text = str(value)[:maximum]
+    low, high = 0, len(text)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if len(json.dumps(text[:middle], ensure_ascii=True)) - 2 <= maximum:
+            low = middle
+        else:
+            high = middle - 1
+    return text[:low]
+
+
+def _token_text_claims(payload: dict, *, digest_values: bool) -> dict | None:
+    fields = {"cursor": "c", "prompt": "p", "assignee": "a", "owner": "o"}
+    values = {"cursor": str(payload["c"]), "prompt": str(payload.get("p", "")),
+              "assignee": str(payload.get("a") or ""), "owner": str(payload.get("o") or "")}
+    hashes = payload.get("h")
+    if "h" in payload and (
+        not isinstance(hashes, dict) or set(hashes) != set(fields.values())
+        or any(not isinstance(value, str) or len(value) != 64
+               or any(char not in "0123456789abcdef" for char in value)
+               for value in hashes.values())
+    ):
+        return None
+    if digest_values:
+        # Legacy short links remain valid. A formerly truncated legacy value
+        # still cannot match a longer current value and therefore fails closed.
+        return {name: hashes[key] if hashes is not None else approval_value_digest(values[name])
+                for name, key in fields.items()}
+    return values
+
+
 def mint_token(run_id: str, decision: str, *, cursor: str | None = None,
                prompt: str = "", updated: float | None = None,
                assignee: str = "", owner: str = "",
@@ -154,18 +192,27 @@ def mint_token(run_id: str, decision: str, *, cursor: str | None = None,
         return None
     exp = int((now if now is not None else time.time()) + ttl)
     raw = json.dumps({"r": str(run_id), "d": decision, "e": exp,
-                      "c": str(cursor)[:256], "p": str(prompt)[:2000],
+                      "c": _claim_preview(str(cursor), 256), "p": _claim_preview(str(prompt), 2000),
                       "u": float(updated), "t": tenant,
-                      "a": str(assignee)[:500], "o": str(owner)[:500],
+                      "a": _claim_preview(str(assignee), 500), "o": _claim_preview(str(owner), 500),
+                      "h": {"c": approval_value_digest(str(cursor)),
+                            "p": approval_value_digest(str(prompt)),
+                            "a": approval_value_digest(str(assignee)),
+                            "o": approval_value_digest(str(owner))},
                       "b": binding_sha256},
                      separators=(",", ":"), sort_keys=True).encode("utf-8")
     body = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
     return f"{body}.{_sign(body.encode('ascii'), secret)}"
 
 
-def verify_token(token: str, *, now: float | None = None) -> dict | None:
+def verify_token(token: str, *, now: float | None = None, digest_values: bool = False) -> dict | None:
     """Return the approval claim for a valid, unexpired, correctly-signed token;
-    ``None`` otherwise (no secret / bad format / bad signature / expired)."""
+    ``None`` otherwise (no secret / bad format / bad signature / expired).
+
+    Pause matching uses ``digest_values=True`` to return the full-value hashes
+    for cursor, prompt, assignee and owner. The default keeps the historical
+    bounded text view for callers that only inspect a claim.
+    """
     if not token or len(token) > 16_384 or "." not in token:
         return None
     body, _, sig = token.partition(".")
@@ -195,11 +242,12 @@ def verify_token(token: str, *, now: float | None = None) -> dict | None:
         len(binding) != 64 or any(char not in "0123456789abcdef" for char in binding)
     ):
         return None
+    values = _token_text_claims(payload, digest_values=digest_values)
+    if values is None:
+        return None
     return {"run_id": str(run_id), "decision": str(decision),
-            "cursor": str(cursor), "prompt": str(payload.get("p", "")),
+            **values,
             "updated": float(updated), "tenant": tenant,
-            "assignee": str(payload.get("a") or ""),
-            "owner": str(payload.get("o") or ""),
             "binding_sha256": binding}
 
 
@@ -714,7 +762,7 @@ def review_expired_paused_approval(run, flow, *, decided_by: str) -> dict:
 
 
 __all__ = [
-    "mint_token", "verify_token", "approval_links", "paused_operation_binding",
+    "mint_token", "verify_token", "approval_links", "approval_value_digest", "paused_operation_binding",
     "current_flow_runtime_authority", "require_current_flow_approver",
     "flow_decision_attestation_material", "verify_flow_decision_attestation",
     "require_current_paused_operation", "review_expired_paused_approval",

@@ -258,9 +258,11 @@ _RLS_TABLES = (
     "encryption_migrations",
 )
 # Tables whose tenant column is not called ``tenant_id``. The webhook and
-# deadline-alert tables (v42) scope rows by ``workspace`` (the same active
-# tenant id, written by ``paths.current_tenant_id``), so their RLS policy keys
-# on that column; the policy itself is identical.
+# deadline-alert tables (v42) scope rows by ``workspace``, which holds the RAW
+# tenant id (``webhook_subscriptions.workspace_id``), while every ``tenant_id``
+# column holds the path-encoded segment (``slack:U1`` is stored as
+# ``slack%3AU1``). Their RLS policy therefore keys on that column and on its
+# own session setting, ``maverick.workspace``, which carries the raw id.
 _RLS_TENANT_COLUMN: dict[str, str] = {
     "webhook_subscriptions": "workspace",
     "webhook_deliveries": "workspace",
@@ -803,6 +805,14 @@ def _active_tenant() -> str | None:
     # mode: swallowing one here removes every app-layer tenant predicate.
     from ..paths import current_tenant_strict
     return current_tenant_strict()
+
+
+def _active_workspace() -> str | None:
+    """The raw tenant id the ``workspace`` columns are written with, or ``None``
+    when unbound. It must be exactly ``webhook_subscriptions.workspace_id()``:
+    the RLS policy on those tables compares the column with this value."""
+    from ..paths import current_tenant_id_strict
+    return current_tenant_id_strict()
 
 
 def _truthy(value: object) -> bool:
@@ -1500,9 +1510,18 @@ class PostgresWorldModel:
             return
         tenant = _active_tenant()
         value = str(tenant) if tenant is not None else "__maverick_no_tenant__"
+        # The workspace-keyed tables store the raw id, which differs from the
+        # encoded segment for an id such as ``slack:U1``; both are bound in the
+        # same statement so neither can be left over from an earlier scope.
+        workspace = _active_workspace() if tenant is not None else None
+        raw = str(workspace) if workspace else "__maverick_no_tenant__"
         # set_config(name, value, is_local=true) is the parameterizable form of
         # SET LOCAL — transaction-scoped, cleared at commit/rollback.
-        cur.execute("SELECT set_config('maverick.tenant', %s, true)", (value,))
+        cur.execute(
+            "SELECT set_config('maverick.tenant', %s, true), "
+            "set_config('maverick.workspace', %s, true)",
+            (value, raw),
+        )
 
     def _preflight_rls_or_die(self) -> None:
         """Refuse to boot when enterprise auto-on RLS would silently hide rows.
@@ -1599,28 +1618,51 @@ class PostgresWorldModel:
                         table, e,
                     )
                     continue
+                if table in _RLS_TENANT_COLUMN and self._rls_policy_is_active(
+                    table, setting="maverick.tenant",
+                ):
+                    # The policy an earlier version installed is still forced,
+                    # so isolation holds; refusing to start would take a
+                    # working deployment down over a role it cannot change.
+                    log.warning(
+                        "RLS on %s still uses the policy an earlier version installed, and "
+                        "this database role cannot replace it (%s). Tenant isolation stays "
+                        "enforced, but a workspace whose id contains characters outside "
+                        "A-Z a-z 0-9 . _ - cannot use its webhooks and deadline alerts "
+                        "until Lightwork is started once as the table owner.",
+                        table, e,
+                    )
+                    continue
                 raise RuntimeError(
                     f"MAVERICK_PG_RLS is enabled but fail-closed RLS could not "
                     f"be installed or verified on {table}: {e}"
                 ) from e
 
     @staticmethod
+    def _rls_setting(table: str) -> str:
+        """The session setting ``table``'s policy compares its column with."""
+        return "maverick.workspace" if table in _RLS_TENANT_COLUMN else "maverick.tenant"
+
+    @staticmethod
     def _rls_policy_sql(table: str) -> str:
         column = _RLS_TENANT_COLUMN.get(table, "tenant_id")
+        setting = PostgresWorldModel._rls_setting(table)
         return (
             f"CREATE POLICY mvk_tenant_isolation ON {table} "
             "USING ("
-            f"  {column} = nullif(current_setting('maverick.tenant', true), '')"
+            f"  {column} = nullif(current_setting('{setting}', true), '')"
             ") WITH CHECK ("
-            f"  {column} = nullif(current_setting('maverick.tenant', true), '')"
+            f"  {column} = nullif(current_setting('{setting}', true), '')"
             ")"
         )
 
-    def _rls_policy_is_active(self, table: str, *, cursor=None) -> bool:
+    def _rls_policy_is_active(self, table: str, *, cursor=None, setting: str | None = None) -> bool:
         """Verify FORCE and the complete stock policy before skipping DDL.
 
         Extra restrictive policies can narrow access. Another permissive policy
         can OR around isolation, so it is never evidence of a safe fast path.
+        ``setting`` checks for the policy keyed on that session setting instead
+        of the table's current one (the earlier workspace-table policy).
         """
         sql = (
             "SELECT c.relrowsecurity,c.relforcerowsecurity,p.polname,p.polcmd,"
@@ -1631,16 +1673,16 @@ class PostgresWorldModel:
         try:
             if cursor is not None:
                 cursor.execute(sql, (table,))
-                return self._rls_policy_rows_are_active(table, cursor.fetchall())
+                return self._rls_policy_rows_are_active(table, cursor.fetchall(), setting=setting)
             with self._tx() as cur:
                 cur.execute(sql, (table,))
                 rows = cur.fetchall()
         except Exception:
             return False
-        return self._rls_policy_rows_are_active(table, rows)
+        return self._rls_policy_rows_are_active(table, rows, setting=setting)
 
     @staticmethod
-    def _rls_policy_rows_are_active(table, rows) -> bool:
+    def _rls_policy_rows_are_active(table, rows, *, setting: str | None = None) -> bool:
         if not rows or not all(row[0] and row[1] for row in rows):
             return False
         policies = [row for row in rows if row[2] == "mvk_tenant_isolation"]
@@ -1650,7 +1692,8 @@ class PostgresWorldModel:
         if policy[3] != "*" or policy[4] is not True or list(policy[5] or ()) != [0]:
             return False
         column = _RLS_TENANT_COLUMN.get(table, "tenant_id")
-        expected = f"({column}=nullif(current_setting('maverick.tenant'::text,true),''::text))"
+        setting = setting or PostgresWorldModel._rls_setting(table)
+        expected = f"({column}=nullif(current_setting('{setting}'::text,true),''::text))"
         return all("".join(str(expr).lower().split()) == expected for expr in policy[6:8])
 
     @staticmethod

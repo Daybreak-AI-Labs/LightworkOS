@@ -22,6 +22,7 @@ import copy
 import hashlib
 import json
 import math
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -292,8 +293,8 @@ class FlowNode:
     # error handling ----------------------------------------------------------
     retries: int = 0                 # re-run a failed work node up to N more times
     retry_backoff: float = 0.0       # base seconds between retries; exponential (0 = tight loop)
-    on_error: str | None = None      # route here when the node fails (else `next`)
-    timeout: float = 0.0             # per-node soft wall-clock cap in seconds (0 = none)
+    on_error: str | None = None      # eligible failures route here; otherwise fail (not supported on agents)
+    timeout: float = 0.0             # agent goal's wall allowance; no effect on actions (0 = none)
     # common ------------------------------------------------------------------
     output: str = ""                 # flow-data key to store this node's result under
     label: str = ""                  # human label (provenance / UI)
@@ -427,13 +428,28 @@ class Flow:
     recipe_lineage: dict | None = None  # admitted signed evidence; never caller run data
     recipe_teaching: dict | None = None  # explicit native human teaching, not general guard bypass
     notify_on: str = "all"           # all opted-in events, or problems only
+    _duplicate_node_ids: tuple[str, ...] = field(default_factory=tuple, repr=False)
 
     def node(self, node_id: str | None) -> FlowNode | None:
         return self.nodes.get(node_id) if node_id else None
 
     def copy(self) -> Flow:
         """A deep, independent copy (round-trips through the dict form)."""
-        return Flow.from_dict(self.to_dict())
+        result = Flow.from_dict(self.to_dict())
+        result._retain_duplicate_ids_from(self)
+        return result
+
+    def _retain_duplicate_ids_from(self, source: Flow) -> None:
+        # Authoring copies must not erase parse errors before validation. These
+        # diagnostics are not part of the collapsed, persisted definition form.
+        self._duplicate_node_ids = tuple(dict.fromkeys(
+            (*self._duplicate_node_ids, *source._duplicate_node_ids)))
+        for node in source.nodes.values():
+            target = self.nodes[node.id]
+            if node.body is not None and target.body is not None:
+                target.body._retain_duplicate_ids_from(node.body)
+            for child, copied in zip(node.branches, target.branches, strict=True):
+                copied._retain_duplicate_ids_from(child)
 
     def to_dict(self) -> dict:
         return {
@@ -462,6 +478,7 @@ class Flow:
             id=str(d.get("id", "")), name=str(d.get("name", "")),
             start=str(d.get("start", "")),
             nodes={n.id: n for n in nodes},
+            _duplicate_node_ids=tuple(nid for nid, count in Counter(n.id for n in nodes).items() if count > 1),
             version=int(d.get("version", 1) or 1),
             revision=str(d.get("revision", "") or ""),
             notify=bool(d.get("notify", False)),
@@ -521,7 +538,7 @@ class Flow:
 
     def validate(self, *, _inherited_approval: bool = False) -> list[str]:
         """Structural problems (empty list = valid). Not an execution check."""
-        errs: list[str] = []
+        errs: list[str] = [f"duplicate node id {nid!r}" for nid in self._duplicate_node_ids]
         if not isinstance(self.notify_on, str) or self.notify_on not in {"all", "problems"}:
             errs.append("Choose alerts for all updates or problems only.")
         if self.recipe_lineage is not None and self.learned_recipe is None:
@@ -898,7 +915,7 @@ def _gate_before(flow: Flow, target: FlowNode, *, nested: bool) -> None:
     incoming = flow._incoming_edges(target.id)
     bypasses = [
         (source, edge_label) for source, edge_label in incoming
-        if source.kind != NODE_APPROVAL or edge_label != "next"
+        if source.kind != NODE_APPROVAL or edge_label != "next" or source.choices
     ]
     if flow.start != target.id and incoming and not bypasses:
         return

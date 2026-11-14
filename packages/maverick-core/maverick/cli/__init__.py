@@ -4,10 +4,12 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
+import math
 import os
 import re
 import sys
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import quote
 
@@ -42,6 +44,13 @@ _TERMINAL_CONTROL_RE = re.compile(
 def _strip_terminal_control(text: str) -> str:
     """Remove terminal control bytes before rendering untrusted text."""
     return _TERMINAL_CONTROL_RE.sub("", text)
+
+
+def _strip_result_terminal_control(text: str) -> str:
+    """Remove escape sequences and unsafe controls, keeping answer layout."""
+    return _TERMINAL_CONTROL_RE.sub(
+        lambda match: match.group() if match.group() in {"\n", "\t"} else "", text,
+    )
 
 
 def _default_model(role: str = "orchestrator") -> str:
@@ -262,16 +271,77 @@ def _kernel():
 
 
 def _run_outcome_blocked(world, goal_id: int) -> bool:
-    """True if the goal ended in the kernel's ``blocked`` state -- paused
-    awaiting a user answer, stopped by a budget/time cap, or refused by an
-    input guard. ``start`` reads this before closing the world DB so it can
-    exit nonzero for a halted/paused run; a genuine
-    ``done`` completion stays 0."""
+    """Report blocked or unsuccessful terminal outcomes to CLI automation."""
     try:
-        g = world.get_goal(goal_id)
-    except Exception:  # pragma: no cover -- a status read must not mask the result
-        return False
-    return bool(g and g.status == "blocked")
+        goal = world.get_goal(goal_id)
+    except Exception:
+        # An unreadable verdict cannot certify a successful run.
+        return True
+    return bool(goal and goal.status in {"blocked", "failed", "cancelled"})
+
+
+@contextmanager
+def _cli_sandbox(kernel, **kwargs):
+    """Release the CLI-owned work area on success, refusal and exceptions."""
+    sandbox = kernel.build_sandbox(**kwargs)
+    try:
+        yield sandbox
+    finally:
+        close = getattr(sandbox, "close", None)
+        if close is not None:
+            close()
+
+
+def _write_cli_result(write, *args, **kwargs) -> None:
+    """Do not replace an active run exception with an export failure."""
+    run_error = sys.exc_info()[1]
+    try:
+        write(*args, **kwargs)
+    except Exception as exc:
+        if run_error is None:
+            raise
+        click.echo(f"Could not write the run result: {exc}", err=True)
+
+
+def _require_cli_execution_allowed() -> None:
+    from .. import killswitch
+    from ..paths import current_tenant_id_strict
+    from ..tenant.registry import TenantSuspended, assert_tenant_active
+
+    try:
+        killswitch.check()
+    except killswitch.Halted:
+        click.echo(
+            "Stopped: Lightwork is halted (a HALT file is present).\n"
+            "Run `maverick unhalt` to clear it, then try again.", err=True,
+        )
+        raise SystemExit(3) from None
+    try:
+        assert_tenant_active(current_tenant_id_strict())
+    except TenantSuspended as exc:
+        click.echo(f"Stopped: {exc}", err=True)
+        raise SystemExit(3) from None
+
+
+def _require_known_cli_tenant(tenant: str | None) -> None:
+    from ..tenant.registry import (
+        _is_implicit_default,
+        _lookup_id,
+        ensure_default_tenant_registered,
+        get_tenant,
+        list_tenants,
+        tenant_retired,
+    )
+
+    if not tenant or not list_tenants() or get_tenant(tenant) is not None:
+        return
+    # The registry admits the deployment's own tenant (MAVERICK_TENANT or the
+    # client binding) and lists it on first use, so it is never "unknown" here.
+    if not tenant_retired(tenant) and _is_implicit_default(_lookup_id(tenant)):
+        ensure_default_tenant_registered(actor="cli")
+    if get_tenant(tenant) is None:
+        click.echo(f"ERROR: no such tenant {tenant!r}. Check the tenant id.", err=True)
+        raise SystemExit(2)
 
 
 def _maybe_start_progress_poller(world_path, goal_id, stop_poll):
@@ -415,6 +485,14 @@ def main(ctx: click.Context, db: str | None, model: str | None) -> None:
             raise click.ClickException(
                 f"refusing unsafe tagged MCP launch: {exc}"
             ) from exc
+    if ctx.invoked_subcommand not in {
+        "tenant", "config-lint", "doctor", "gen-stubs", "init",
+        "installation-maintenance", "launch-check", "preflight", "version",
+        "halt", "unhalt",
+    }:
+        from ..paths import current_tenant_id_strict
+
+        _require_known_cli_tenant(current_tenant_id_strict())
     # Default the world DB to the ACTIVE TENANT's world.db (selected via
     # MAVERICK_TENANT) so one business's run history / goals / facts never pool
     # into another's -- the same isolation the channel server already gets via
@@ -881,7 +959,7 @@ def safety(as_json: bool) -> None:
     """
     import json as _json
 
-    from ..config import get_sandbox
+    from ..config import get_sandbox, load_config
     try:
         from maverick_shield import Shield
         shield = {"installed": True,
@@ -893,7 +971,26 @@ def safety(as_json: bool) -> None:
 
     sb = get_sandbox()
     backend = str(sb.get("backend", "local") or "local").strip().lower()
-    isolated = backend not in ("local", "")
+    from ..sandbox import (
+        SandboxPolicyError,
+        _container_backend_required,
+        _deployment_policy,
+        _offline_policy,
+        _resolve_local_under_policy,
+    )
+    try:
+        full = load_config().get("sandbox", {})
+        resolved, full = _deployment_policy(sb, full, None, None)
+        backend = str(resolved.get("backend") or "local").strip().lower()
+        full = _offline_policy(full, backend)
+        backend = _resolve_local_under_policy(backend, full)
+        if backend not in BUILTIN_SANDBOX_BACKENDS and not backend.startswith("ep:"):
+            if _container_backend_required(full):
+                raise SandboxPolicyError("Unknown sandbox backend cannot satisfy the container policy")
+            backend = "local"
+        isolated = backend in BUILTIN_SANDBOX_BACKENDS and backend != "local"
+    except (SandboxPolicyError, ValueError):
+        isolated = False
 
     try:
         from ..enterprise import enterprise_enabled
@@ -932,7 +1029,11 @@ def safety(as_json: bool) -> None:
         click.echo(f"  {mark(False)} shield   not installed — kernel fails open "
                    "(built-in fallback rules screen tool calls)")
     if isolated:
-        click.echo(f"  {mark(True)} sandbox  {backend} (container-isolated)")
+        isolation = {
+            "ssh": "remote host", "modal": "cloud sandbox",
+            "firecracker": "microVM-isolated",
+        }.get(backend, "container-isolated")
+        click.echo(f"  {mark(True)} sandbox  {backend} ({isolation})")
     else:
         click.echo(f"  {mark(False)} sandbox  {backend} — model-generated shell runs "
                    "on this host with NO container isolation")
@@ -1201,12 +1302,12 @@ def learn_demo(ctx: click.Context, demo_file, name, industry, source, no_llm, ye
     _apply_capability_plan(profile, plan, llm)
 
 
-def _learning_cli_preflight(job: str) -> None:
+def _learning_cli_preflight(job: str, phase: str = "cli-start") -> None:
     """Translate the strict learning stop into a stable automation failure."""
     from ..learning_guard import Halted, check_learning_halt
 
     try:
-        check_learning_halt(job, "cli-start")
+        check_learning_halt(job, phase)
     except Halted as exc:
         raise click.ClickException(
             f"{job} refused: global learning HALT is active") from exc
@@ -1665,7 +1766,7 @@ def harness_efficacy(model: str) -> None:
 @click.option("--model", required=True, help="Model whose canaries to inspect/advance.")
 @click.option("--review", is_flag=True,
               help="Advance the lifecycle now: graduate proven canaries, demote failing ones.")
-@click.option("--graduate-after", type=int, default=3, show_default=True,
+@click.option("--graduate-after", type=click.IntRange(min=1), default=3, show_default=True,
               help="Successes before a canary graduates to permanent.")
 @click.option("--demote-after", type=int, default=2, show_default=True,
               help="Failures before a canary is pulled.")
@@ -1689,7 +1790,7 @@ def harness_canary(model: str, review: bool, graduate_after: int, demote_after: 
 
 
 @harness.command("retire")
-@click.option("--older-than-days", type=float, required=True,
+@click.option("--older-than-days", type=click.FloatRange(min=0, min_open=True), required=True,
               help="Retire lines not refreshed (re-promoted) within this many days.")
 @click.option("--model", default=None, help="Only retire this model's lines.")
 @click.option("--yes", is_flag=True, help="Skip the confirmation prompt.")
@@ -1703,6 +1804,8 @@ def harness_retire(older_than_days: float, model: str | None, yes: bool) -> None
     audited.
     """
     from ..self_harness import retire_stale
+    if not math.isfinite(older_than_days) or older_than_days <= 0:
+        raise click.BadParameter("must be finite and greater than zero", param_hint="--older-than-days")
     scope = f"{model!r}" if model else "all models"
     if not yes and not click.confirm(
             f"Retire guidance older than {older_than_days} days for {scope}?"):
@@ -1940,6 +2043,7 @@ def corpus_harvest_cmd(ctx, model: str | None, auto: bool) -> None:
         raise click.ClickException("no [self_harness] eval_corpus configured.")
     # Key/path defaulting is run_corpus_harvest's job (the one owner of the
     # harvest policy) -- the CLI only supplies the operator's explicit choice.
+    _learning_cli_preflight("self_harness", "corpus")
     n = runner.run_corpus_harvest(
         open_world(ctx.obj["db"]), mode=("auto" if auto else "propose"),
         key=model, raise_errors=True)
@@ -1980,6 +2084,7 @@ def corpus_review_cmd(model: str | None, accepts: tuple[int, ...],
                        f"{_strip_terminal_control(c['goal'].splitlines()[0][:70])}")
             click.echo(f"     expected: {_strip_terminal_control(c['expected'])}")
         return
+    _learning_cli_preflight("self_harness", "corpus")
     try:
         res = ev.resolve_pending(corpus_path, key, accept=list(accepts),
                                  reject=list(rejects), accept_all=accept_all)
@@ -2015,12 +2120,16 @@ def corpus_export_cmd(out_path: str) -> None:
     if not cpath:
         raise click.ClickException("no [self_harness] eval_corpus configured.")
     raw = ev._load_raw(cpath)
-    Path(out_path).write_text(_json.dumps(raw, indent=2, sort_keys=True),
-                              encoding="utf-8")
+    try:
+        streamed = _write_private_export(
+            out_path, _json.dumps(raw, indent=2, sort_keys=True), overwrite=False,
+        )
+    except OSError as exc:
+        raise click.ClickException(f"could not write {out_path}: {exc}") from exc
     n = sum(len(v) for v in raw.values() if isinstance(v, list))
     click.echo(f"exported {n} case(s) across "
                f"{sum(1 for v in raw.values() if isinstance(v, list))} key(s) "
-               f"to {out_path}")
+               f"to {out_path}", err=streamed)
 
 
 @harness_corpus.command("import")
@@ -2044,8 +2153,13 @@ def corpus_import_cmd(src: str, replace: bool) -> None:
         data = _json.loads(Path(src).read_text(encoding="utf-8"))
     except ValueError as e:
         raise click.ClickException(f"{src} is not valid JSON: {e}") from e
+    _learning_cli_preflight("self_harness", "corpus")
     try:
-        n = ev.import_corpus(cpath, data, replace=replace)
+        n = ev.import_corpus(
+            cpath, data, replace=replace,
+            before_write=lambda: _learning_cli_preflight("self_harness", "corpus"),
+            effect_guard=lambda: _learning_cli_preflight("self_harness", "corpus"),
+        )
     except ValueError as e:
         raise click.ClickException(str(e)) from e
     click.echo(f"{'replaced the live corpus with' if replace else 'merged'} "
@@ -2069,6 +2183,8 @@ def corpus_quality_cmd(model: str | None, samples: int, retire: bool) -> None:
     from .. import self_harness_eval as ev
     from .. import self_improvement_runner as runner
     key, corpus_path = _corpus_key_and_path(model)
+    if retire:
+        _learning_cli_preflight("self_harness", "corpus")
     rows = runner.run_corpus_quality(key=key, corpus_path=corpus_path,
                                      samples=samples, raise_errors=True)
     if not rows:
@@ -2084,6 +2200,7 @@ def corpus_quality_cmd(model: str | None, samples: int, retire: bool) -> None:
                    f"{_strip_terminal_control(r['goal'].splitlines()[0][:60])}")
     click.echo(f"{len(rows)} case(s); {len(dead)} non-discriminative.")
     if retire and dead:
+        _learning_cli_preflight("self_harness", "corpus")
         n = ev.retire_corpus_cases(corpus_path, key, [r["goal"] for r in dead])
         click.echo(f"retired {n} case(s) from the live corpus.")
 
@@ -2366,8 +2483,10 @@ def fleet_run(ctx, fleet_name: str, agent_name: str, prompt: str,
     record_run(fleet_name, agent.name, goal_id)
     click.echo(f"goal #{goal_id} created for {principal} (role {agent.role})")
     status = run_goal_in_thread(goal_id, max_dollars=max_dollars,
-                                capability=cap, user_id=principal)
+                                capability=cap, user_id=principal, db_path=ctx.obj["db"])
     click.echo(f"goal #{goal_id}: {status or 'did not start'}")
+    if status != "done":
+        raise SystemExit(2 if status == "blocked" else 1)
 
 
 @fleet.command("status")
@@ -2675,11 +2794,13 @@ def canary_record(release: str, metrics: tuple[str, ...]) -> None:
 @canary_group.command("compare")
 @click.argument("baseline")
 @click.argument("candidate")
-@click.option("--tolerance", type=float, default=0.10,
+@click.option("--tolerance", type=click.FloatRange(min=0), default=0.10,
               help="Relative move allowed before flagging a regression.")
 def canary_compare(baseline: str, candidate: str, tolerance: float) -> None:
     """Compare CANDIDATE release metrics against BASELINE; exit 1 on regression."""
     from ..release_canary import CanaryStore, compare, render
+    if not math.isfinite(tolerance):
+        raise click.BadParameter("must be finite and nonnegative", param_hint="--tolerance")
     store = CanaryStore()
     base, cand = store.get(baseline), store.get(candidate)
     if base is None:
@@ -2718,10 +2839,19 @@ def calibrate(sample, as_json) -> None:
         try:
             conf = float(conf_s)
         except ValueError as e:
-            raise click.ClickException(
-                f"confidence must be a number in [0,1], got {conf_s!r}"
+            raise click.BadParameter(
+                "confidence must be a finite number in [0,1]", param_hint="--sample",
             ) from e
-        correct = correct_s.strip().lower() in {"1", "true", "yes", "y", "pass"}
+        if not math.isfinite(conf) or not 0 <= conf <= 1:
+            raise click.BadParameter(
+                "confidence must be a finite number in [0,1]", param_hint="--sample",
+            )
+        word = correct_s.strip().lower()
+        true_words = {"1", "true", "yes", "y", "pass"}
+        false_words = {"0", "false", "no", "n", "fail"}
+        if word not in true_words | false_words:
+            raise click.BadParameter("correct must be an explicit true/false word", param_hint="--sample")
+        correct = word in true_words
         ok = calibration.record_sample(conf, correct, source="cli")
         click.echo("recorded calibration sample" if ok else "failed to record sample")
         return
@@ -2975,6 +3105,36 @@ def _dashboard_public_url() -> str:
         return ""
 
 
+def _require_unfinished_onboarding(tenant_id: str) -> None:
+    try:
+        from maverick_dashboard import invites, rbac
+    except ImportError as exc:
+        raise ValueError(
+            f"tenant {tenant_id!r} already exists, and the dashboard package is "
+            f"unavailable so its setup cannot be checked or continued ({exc}). "
+            "Install maverick-dashboard, then re-run `maverick tenant onboard`."
+        ) from exc
+
+    from ..tenant.registry import get_tenant
+
+    record = get_tenant(tenant_id)
+    if (record is None or not record.active or rbac.list_tenant_roles(tenant_id)
+            or any(inv.tenant == tenant_id for inv in invites.list_invites())):
+        raise ValueError("tenant already exists with members or an invitation; use the dashboard to manage access")
+
+
+def _note_unapplied_onboard_options() -> None:
+    ctx = click.get_current_context()
+    given = [
+        flag for name, flag in (("plan", "--plan"), ("display_name", "--name"),
+                                ("max_daily_dollars", "--max-daily-dollars"))
+        if ctx.get_parameter_source(name) is not click.core.ParameterSource.DEFAULT
+    ]
+    if given:
+        click.echo(f"  NOTE: these options were not applied to the existing tenant: "
+                   f"{', '.join(given)}", err=True)
+
+
 @tenant.command("onboard")
 @click.argument("tenant_id")
 @click.option("--admin-email", "admin_email", required=True,
@@ -2999,17 +3159,23 @@ def tenant_onboard(tenant_id: str, admin_email: str, plan: str, display_name: st
     failure to mint the invite leaves the (already provisioned) tenant in place
     and exits non-zero so the operator can retry ``maverick tenant onboard``.
     """
-    from ..tenant.registry import create_tenant
+    from ..tenant.registry import create_tenant, get_tenant
     try:
-        rec = create_tenant(tenant_id, plan=plan, display_name=display_name,
-                             max_daily_dollars=max_daily_dollars)
+        rec = get_tenant(tenant_id)
+        if rec is not None:
+            _require_unfinished_onboarding(rec.id)
+            click.echo(f"continuing unfinished setup for tenant {rec.id!r}")
+            _note_unapplied_onboard_options()
+        else:
+            rec = create_tenant(tenant_id, plan=plan, display_name=display_name,
+                                 max_daily_dollars=max_daily_dollars)
+            click.echo(f"created tenant {rec.id!r} (plan {rec.plan}, status {rec.status})")
     except ValueError as e:
         click.echo(f"ERROR: {e}", err=True)
         sys.exit(2)
     except PermissionError as e:
         click.echo(f"ERROR: {e}", err=True)
         sys.exit(2)
-    click.echo(f"created tenant {rec.id!r} (plan {rec.plan}, status {rec.status})")
     from ..billing import known_plan_names
     if rec.plan not in known_plan_names():
         click.echo(
@@ -3029,7 +3195,8 @@ def tenant_onboard(tenant_id: str, admin_email: str, plan: str, display_name: st
         sys.exit(2)
     try:
         inv, token = invites.create_invite(admin_email, role, created_by="operator",
-                                           tenant=rec.id)
+                                           tenant=rec.id,
+                                           before_effect=lambda: _require_unfinished_onboarding(rec.id))
     except ValueError as e:
         click.echo(f"ERROR: tenant created, but the invite was rejected: {e}",
                    err=True)
@@ -3528,11 +3695,15 @@ def diag_ratelimits(as_json: bool) -> None:
 
 @diag.command("health")
 @click.argument("goal_id", type=int)
-def diag_health(goal_id: int) -> None:
+@click.pass_context
+def diag_health(ctx, goal_id: int) -> None:
     """Compute a 0-100 health score for a finished goal from its episode."""
     from ..health_score import goal_health, render
     from ..world_model import close_world_if_owned, open_world
-    w = open_world()
+    # An explicit --db selects this diagnostic's database; otherwise retain
+    # open_world's canonical default/backend and active-tenant resolution.
+    path = ctx.obj["db"] if ctx.find_root().params.get("db") is not None else None
+    w = open_world(path)
     try:
         found = goal_health(w, goal_id)
     finally:
@@ -3564,13 +3735,15 @@ def diag_replay(trace_file: str, kind: str | None) -> None:
 
 @diag.command("cost-by-tag")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
-def diag_cost_by_tag(as_json: bool) -> None:
+@click.pass_context
+def diag_cost_by_tag(ctx, as_json: bool) -> None:
     """Split run cost across tags (from priced episodes)."""
     import json as _json
 
     from ..cost.by_tag import gather, render
     from ..world_model import close_world_if_owned, open_world
-    world = open_world()
+    path = ctx.obj["db"] if ctx.find_root().params.get("db") is not None else None
+    world = open_world(path)
     try:
         buckets = gather(world)
     finally:
@@ -3858,8 +4031,12 @@ def start(
         except ValueError as e:
             click.echo(f"ERROR: {e}", err=True)
             sys.exit(2)
-        max_dollars = tpl.budget_dollars if max_dollars is None else max_dollars
-        max_wall_seconds = tpl.budget_wall_seconds if max_wall_seconds is None else max_wall_seconds
+        from ..runner import requested_goal_dollars, requested_goal_wall_seconds
+
+        if max_dollars is None:
+            max_dollars = requested_goal_dollars(tpl.budget_dollars)
+        if max_wall_seconds is None:
+            max_wall_seconds = requested_goal_wall_seconds(tpl.budget_wall_seconds)
         click.echo(f"[template {tpl.name}] {title}")
     elif not title:
         click.echo("ERROR: pass TITLE or --template <name>", err=True)
@@ -3881,28 +4058,7 @@ def start(
 
     # Refuse BEFORE creating the goal row, so neither refusal leaves an
     # orphan blocked/failed row per attempt after `goal #N created`.
-    from .. import killswitch as _ks
-    try:
-        _ks.check()
-    except _ks.Halted:
-        click.echo(
-            "Stopped: Lightwork is halted (a HALT file is present).\n"
-            "Run `maverick unhalt` to clear it, then try again.",
-            err=True,
-        )
-        sys.exit(3)  # distinct from misuse (2) so scripts can tell "refused"
-    # Refuse a SUSPENDED tenant here too. The channel/HTTP server path enforces
-    # assert_tenant_active (server.py); without this check `maverick start`
-    # would run goals freely for a suspended tenant. No-op for None tenant / no
-    # registry, so single-tenant flows are unchanged. Same pre-goal-creation
-    # chokepoint as the killswitch above.
-    from ..paths import current_tenant_id as _ctid
-    from ..tenant.registry import TenantSuspended, assert_tenant_active
-    try:
-        assert_tenant_active(_ctid())
-    except TenantSuspended as e:
-        click.echo(f"Stopped: {e}", err=True)
-        sys.exit(3)
+    _require_cli_execution_allowed()
     from .. import providers as _providers
     from ..config import load_config as _load_config
     from ..operator_preflight import _model_specs
@@ -3925,84 +4081,87 @@ def start(
 
     _validate_sample_backend(sample, sandbox_backend)
     k = _kernel()
-    sandbox = k.build_sandbox(workdir=workdir, backend=sandbox_backend)
-    # Containment and devcontainer settings can change the actual work folder.
-    # Use the constructed backend's directory, not the CLI/config input.
-    _place_sample(sample, sandbox)
-    llm = k.LLM(model=_cli_model(ctx, "orchestrator"))
-    import threading
-    import types as _types
+    with _cli_sandbox(k, workdir=workdir, backend=sandbox_backend) as sandbox:
+        # Containment and devcontainer settings can change the actual work folder.
+        # Use the constructed backend's directory, not the CLI/config input.
+        _place_sample(sample, sandbox)
+        llm = k.LLM(model=_cli_model(ctx, "orchestrator"))
+        import threading
+        import types as _types
 
-    from ..budget import budget_from_config
-    from ..orchestrator import _budget_task_class
-    from ..runner import goal_budget_defaults
+        from ..budget import budget_from_config
+        from ..orchestrator import _budget_task_class
+        from ..runner import goal_budget_defaults
 
-    # --repeat N runs the SAME task N times so its attempts share a task_family
-    # and form DPO preference pairs. A fresh goal row + budget per run.
-    n_runs = max(1, repeat)
-    for _run_i in range(n_runs):
-        world = open_world(ctx.obj["db"])
-        goal_id = world.create_goal(title, description)
-        _mark_sample(world, goal_id, sample)
-        _label = f" [{_run_i + 1}/{n_runs}]" if n_runs > 1 else ""
-        click.echo(f"goal #{goal_id} created{_label}: {title}")
-        # Honor [budget] in config.toml (building Budget() directly would
-        # silently ignore config caps). Precedence: built-in defaults
-        # < config < explicit CLI flags. A None flag passes through as "unset".
-        bud = budget_from_config(
-            defaults=goal_budget_defaults(),
-            # Learned per-class default cap (default-on, lowest precedence; via
-            # [budget] self_tuning). Department runs use their own class so
-            # finance runs are sized by finance history.
-            task_class=_budget_task_class(
-                _types.SimpleNamespace(title=title), domain,
-            ),
-            max_dollars=max_dollars,
-            max_wall_seconds=max_wall_seconds,
-        )
+        # --repeat N runs the SAME task N times so its attempts share a task_family
+        # and form DPO preference pairs. A fresh goal row + budget per run.
+        n_runs = max(1, repeat)
+        for _run_i in range(n_runs):
+            world = open_world(ctx.obj["db"])
+            goal_id = world.create_goal(title, description)
+            _mark_sample(world, goal_id, sample)
+            _label = f" [{_run_i + 1}/{n_runs}]" if n_runs > 1 else ""
+            click.echo(f"goal #{goal_id} created{_label}: {title}")
+            # Honor [budget] in config.toml (building Budget() directly would
+            # silently ignore config caps). Precedence: built-in defaults
+            # < config < explicit CLI flags. A None flag passes through as "unset".
+            bud = budget_from_config(
+                defaults=goal_budget_defaults(),
+                # Learned per-class default cap (default-on, lowest precedence; via
+                # [budget] self_tuning). Department runs use their own class so
+                # finance runs are sized by finance history.
+                task_class=_budget_task_class(
+                    _types.SimpleNamespace(title=title), domain,
+                ),
+                max_dollars=max_dollars,
+                max_wall_seconds=max_wall_seconds,
+            )
 
-        # So that `maverick start "..."` does not look hung between "goal
-        # created" and the final printout, a background poller
-        # streams goal_events to stderr so the user sees the swarm thinking
-        # in real time. Non-tty output (e.g. piped to a file) skips the
-        # poller so logs aren't littered with progress lines.
-        stop_poll = threading.Event()
-        poller = _maybe_start_progress_poller(world.path, goal_id, stop_poll)
+            # So that `maverick start "..."` does not look hung between "goal
+            # created" and the final printout, a background poller
+            # streams goal_events to stderr so the user sees the swarm thinking
+            # in real time. Non-tty output (e.g. piped to a file) skips the
+            # poller so logs aren't littered with progress lines.
+            stop_poll = threading.Event()
+            poller = _maybe_start_progress_poller(world.path, goal_id, stop_poll)
 
-        try:
-            if coding_mode and best_of_n > 1:
-                import asyncio as _asyncio
-
-                from ..orchestrator import run_goal_best_of_n
-                result = _asyncio.run(run_goal_best_of_n(
-                    llm, world, bud, goal_id,
-                    sandbox=sandbox, max_depth=max_depth, n=best_of_n,
-                ))
-            else:
-                result = k.run_goal_sync(
-                    llm, world, bud, goal_id,
-                    sandbox=sandbox, max_depth=max_depth, domain=domain,
-                )
-            # Capture the kernel's final verdict before the DB is closed so the
-            # exit code can reflect it (see _run_outcome_blocked).
-            _blocked = _run_outcome_blocked(world, goal_id)
-        finally:
-            stop_poll.set()
-            if poller is not None:
-                poller.join(timeout=2.0)
-            # Close so WorldModel.close()'s WAL TRUNCATE checkpoint runs; the
-            # poller thread (already joined) used its own connection.
             try:
-                write_if_requested(result_file, world, goal_id, bud, domain=domain, key=result_key)
+                if coding_mode and best_of_n > 1:
+                    import asyncio as _asyncio
+
+                    from ..orchestrator import run_goal_best_of_n
+                    result = _asyncio.run(run_goal_best_of_n(
+                        llm, world, bud, goal_id,
+                        sandbox=sandbox, max_depth=max_depth, n=best_of_n,
+                    ))
+                else:
+                    result = k.run_goal_sync(
+                        llm, world, bud, goal_id,
+                        sandbox=sandbox, max_depth=max_depth, domain=domain,
+                    )
+                # Capture the kernel's final verdict before the DB is closed so the
+                # exit code can reflect it (see _run_outcome_blocked).
+                _blocked = _run_outcome_blocked(world, goal_id)
             finally:
-                world.close()
-        click.echo("")
-        click.echo(result)
-        # Single-run keeps the exit-2-on-blocked contract (scripts/CI rely on
-        # it). In repeat mode a non-clean run is EXPECTED (it's what produces
-        # the worse-attempt half of a preference pair), so keep going.
-        if _blocked and n_runs == 1:
-            sys.exit(2)
+                stop_poll.set()
+                if poller is not None:
+                    poller.join(timeout=2.0)
+                # Close so WorldModel.close()'s WAL TRUNCATE checkpoint runs; the
+                # poller thread (already joined) used its own connection.
+                try:
+                    _write_cli_result(
+                        write_if_requested, result_file, world, goal_id, bud,
+                        domain=domain, key=result_key,
+                    )
+                finally:
+                    world.close()
+            click.echo("")
+            click.echo(_strip_result_terminal_control(str(result)))
+            # Single-run keeps the exit-2-on-blocked contract (scripts/CI rely on
+            # it). In repeat mode a non-clean run is EXPECTED (it's what produces
+            # the worse-attempt half of a preference pair), so keep going.
+            if _blocked and n_runs == 1:
+                sys.exit(2)
 
 
 @main.command("report-issue")
@@ -4117,90 +4276,90 @@ def chat(ctx, max_depth: int, max_dollars: float, workdir) -> None:
     k = _kernel()
     world = open_world(ctx.obj["db"])
     llm = k.LLM(model=_cli_model(ctx, "orchestrator"))
-    sandbox = k.build_sandbox(workdir=workdir)
-    # Thread turns through a conversation scoped to this REPL process.
-    # Do not use a fixed (channel, user_id) key here: conversations are
-    # persistent, so a global CLI key would replay prior chat sessions into
-    # unrelated future prompts.
-    session_user_id = f"local:{uuid.uuid4().hex}"
-    conversation = world.get_or_create_conversation("cli", session_user_id)
-    click.echo(click.style("Lightwork chat. Type 'exit' to leave.", fg="cyan"))
-    click.echo(click.style(
-        "Multi-line: end a line with \\ or wrap a block in \"\"\".",
-        fg="bright_black",
-    ))
-    while True:
-        try:
-            line = click.prompt("", prompt_suffix="> ", default="", show_default=False)
-        except (EOFError, click.exceptions.Abort):
-            click.echo("")
-            return
-        line = line.rstrip()
-        if not line:
-            continue
-        if line in ("exit", "quit", "/exit", "/quit"):
-            return
+    with _cli_sandbox(k, workdir=workdir) as sandbox:
+        # Thread turns through a conversation scoped to this REPL process.
+        # Do not use a fixed (channel, user_id) key here: conversations are
+        # persistent, so a global CLI key would replay prior chat sessions into
+        # unrelated future prompts.
+        session_user_id = f"local:{uuid.uuid4().hex}"
+        conversation = world.get_or_create_conversation("cli", session_user_id)
+        click.echo(click.style("Lightwork chat. Type 'exit' to leave.", fg="cyan"))
+        click.echo(click.style(
+            "Multi-line: end a line with \\ or wrap a block in \"\"\".",
+            fg="bright_black",
+        ))
+        while True:
+            try:
+                line = click.prompt("", prompt_suffix="> ", default="", show_default=False)
+            except (EOFError, click.exceptions.Abort):
+                click.echo("")
+                return
+            line = line.rstrip()
+            if not line:
+                continue
+            if line in ("exit", "quit", "/exit", "/quit"):
+                return
 
-        # Paste-block mode: """ ... """
-        if line.startswith('"""'):
-            buf = [line[3:]] if len(line) > 3 else []
-            while True:
-                try:
-                    nxt = click.prompt(
-                        "", prompt_suffix="... ", default="", show_default=False,
-                    )
-                except (EOFError, click.exceptions.Abort):
-                    click.echo("")
-                    return  # canceled input is never a submitted task
-                if nxt.rstrip().endswith('"""'):
-                    tail = nxt.rstrip()[:-3].rstrip()
-                    if tail:
-                        buf.append(tail)
-                    break
-                buf.append(nxt)
-            full = "\n".join(buf).strip()
-        # Line-continuation mode: trailing backslash.
-        elif line.endswith("\\"):
-            buf = [line[:-1].rstrip()]
-            while True:
-                try:
-                    nxt = click.prompt(
-                        "", prompt_suffix="... ", default="", show_default=False,
-                    ).rstrip()
-                except (EOFError, click.exceptions.Abort):
-                    click.echo("")
-                    return  # discard the partial buffer on cancellation
-                if nxt.endswith("\\"):
-                    buf.append(nxt[:-1].rstrip())
-                else:
+            # Paste-block mode: """ ... """
+            if line.startswith('"""'):
+                buf = [line[3:]] if len(line) > 3 else []
+                while True:
+                    try:
+                        nxt = click.prompt(
+                            "", prompt_suffix="... ", default="", show_default=False,
+                        )
+                    except (EOFError, click.exceptions.Abort):
+                        click.echo("")
+                        return  # canceled input is never a submitted task
+                    if nxt.rstrip().endswith('"""'):
+                        tail = nxt.rstrip()[:-3].rstrip()
+                        if tail:
+                            buf.append(tail)
+                        break
                     buf.append(nxt)
-                    break
-            full = "\n".join(b for b in buf if b)
-        else:
-            full = line
+                full = "\n".join(buf).strip()
+            # Line-continuation mode: trailing backslash.
+            elif line.endswith("\\"):
+                buf = [line[:-1].rstrip()]
+                while True:
+                    try:
+                        nxt = click.prompt(
+                            "", prompt_suffix="... ", default="", show_default=False,
+                        ).rstrip()
+                    except (EOFError, click.exceptions.Abort):
+                        click.echo("")
+                        return  # discard the partial buffer on cancellation
+                    if nxt.endswith("\\"):
+                        buf.append(nxt[:-1].rstrip())
+                    else:
+                        buf.append(nxt)
+                        break
+                full = "\n".join(b for b in buf if b)
+            else:
+                full = line
 
-        if not full.strip():
-            continue
+            if not full.strip():
+                continue
 
-        title = full.splitlines()[0][:80]
-        goal_id = world.create_goal(title, full)
-        # Record the user's turn so run_goal threads it (and the assistant's
-        # reply, which run_goal appends) into the next turn's context.
-        world.append_turn(conversation.id, "user", full, goal_id=goal_id)
-        click.echo(click.style(f"  ... goal #{goal_id}", fg="bright_black"))
-        from ..budget import budget_from_config
-        from ..runner import goal_budget_defaults
+            title = full.splitlines()[0][:80]
+            goal_id = world.create_goal(title, full)
+            # Record the user's turn so run_goal threads it (and the assistant's
+            # reply, which run_goal appends) into the next turn's context.
+            world.append_turn(conversation.id, "user", full, goal_id=goal_id)
+            click.echo(click.style(f"  ... goal #{goal_id}", fg="bright_black"))
+            from ..budget import budget_from_config
+            from ..runner import goal_budget_defaults
 
-        bud = budget_from_config(defaults=goal_budget_defaults(), max_dollars=max_dollars)
-        try:
-            result = k.run_goal_sync(llm, world, bud, goal_id,
-                                   sandbox=sandbox, max_depth=max_depth,
-                                   conversation_id=conversation.id)
-        except Exception as e:
-            click.echo(click.style(f"  ✗ {e}", fg="red"))
-            continue
-        click.echo(result)
-        click.echo("")
+            bud = budget_from_config(defaults=goal_budget_defaults(), max_dollars=max_dollars)
+            try:
+                result = k.run_goal_sync(llm, world, bud, goal_id,
+                                       sandbox=sandbox, max_depth=max_depth,
+                                       conversation_id=conversation.id)
+            except Exception as e:
+                click.echo(click.style(f"  ✗ {e}", fg="red"))
+                continue
+            click.echo(result)
+            click.echo("")
 
 
 @main.group()
@@ -4324,6 +4483,7 @@ def debate(ctx, question: str, rounds: int, max_dollars: float | None,
     # anthropic-SDK TypeError traceback here), and route
     # through the configured role models instead of hard DEFAULT_MODEL
     # (kernel rule 2) -- debaters argue at the analyst tier.
+    _require_cli_execution_allowed()
     selected_model = ctx.obj["model"] or model_for_role("analyst")
     _require_llm_key(selected_model)
     k = _kernel()
@@ -4484,6 +4644,7 @@ def plan_reflect(ctx, goal: str, max_iterations: int, max_dollars: float | None)
     # Same preflight + role routing as `debate`: planning
     # belongs to the orchestrator tier, and a missing provider must refuse
     # cleanly, not traceback inside the anthropic client constructor.
+    _require_cli_execution_allowed()
     selected_model = ctx.obj["model"] or model_for_role("orchestrator")
     _require_llm_key(selected_model)
     k = _kernel()
@@ -4998,6 +5159,36 @@ def answer(ctx, question_id: int, answer: tuple[str, ...]) -> None:
     click.echo(f"answered #{question_id}")
 
 
+def _apply_resume_spend(world, goal_id: int, budget) -> None:
+    """Reserve earlier non-durable episode costs without charging them twice."""
+    from .. import checkpoint
+
+    if checkpoint.enabled() or budget.max_dollars is None:
+        return
+    limit = 1000
+    episodes = world.list_episodes(goal_id=goal_id, limit=limit)
+    while len(episodes) == limit:
+        limit *= 2
+        episodes = world.list_episodes(goal_id=goal_id, limit=limit)
+    costs = [episode.cost_dollars for episode in episodes]
+    if any(isinstance(cost, bool) or not isinstance(cost, (float, int))
+           or not math.isfinite(cost) or cost < 0 for cost in costs):
+        raise click.ClickException("Cannot resume: the goal's recorded spend is invalid.")
+    spent = math.fsum(costs)
+    if not math.isfinite(spent):
+        raise click.ClickException("Cannot resume: the goal's recorded spend is invalid.")
+    if spent >= budget.max_dollars:
+        click.echo(
+            f"Cannot resume: this goal has already spent ${spent:.2f} of its "
+            f"${budget.max_dollars:.2f} cap. Raise --max-dollars to continue.", err=True,
+        )
+        raise SystemExit(2)
+    # Episode and tenant ledgers record this invocation's counters. Reducing
+    # the remaining allowance preserves that accounting while enforcing the
+    # full goal cap across non-durable resumes.
+    budget.max_dollars -= spent
+
+
 @main.command()
 @click.argument("goal_id_arg", required=False, type=int, metavar="[GOAL_ID]")
 @click.option("--goal-id", "goal_id", type=int, default=None,
@@ -5058,15 +5249,16 @@ def resume(ctx, goal_id_arg, goal_id, max_depth: int, max_dollars, max_wall_seco
         max_dollars=max_dollars,
         max_wall_seconds=max_wall_seconds,
     )
+    _apply_resume_spend(world, goal_id, bud)
     # Honor the configured [sandbox] backend on resume too, rather than
     # falling back to run_goal's default local backend and ignoring a user who
     # configured docker/podman. --sandbox overrides it, so an operator who ran
     # `start --sandbox docker` keeps the same isolation on resume; None = config.
-    sandbox = k.build_sandbox(backend=sandbox_backend)
-    result = k.run_goal_sync(llm, world, bud, goal_id,
-                             sandbox=sandbox, max_depth=max_depth,
-                             resume=True)
-    click.echo(result)
+    with _cli_sandbox(k, backend=sandbox_backend) as sandbox:
+        result = k.run_goal_sync(llm, world, bud, goal_id,
+                                 sandbox=sandbox, max_depth=max_depth,
+                                 resume=True)
+    click.echo(_strip_result_terminal_control(str(result)))
     if _run_outcome_blocked(world, goal_id):
         sys.exit(2)
 
@@ -5143,7 +5335,7 @@ def facts(ctx) -> None:
         click.echo('no facts yet. set one with `maverick fact <key> "<value>"`')
         return
     for k, v in items.items():
-        click.echo(f"  {k}: {v}")
+        click.echo(_strip_terminal_control(f"  {k}: {v}"))
 
 
 @main.group(invoke_without_command=True)
@@ -6421,7 +6613,7 @@ def record_verify(capsule: str, pubkeys: tuple[str, ...], trusted_file: str | No
 
 
 
-def _write_private_export(output, text: str) -> bool:
+def _write_private_export(output, text: str, *, overwrite: bool = True) -> bool:
     """Write an export as a new 0600 file, never through a symlink.
 
     Returns True when the output went to a stream rather than a file, so the
@@ -6433,12 +6625,13 @@ def _write_private_export(output, text: str) -> bool:
     symlinked parent such as ``/tmp`` on macOS is fine) and the final
     component is opened without following links: a FIFO or character device
     the caller owns is written in place; a symlink is refused; anything else is
-    replaced atomically with a new 0600 file.
+    replaced atomically with a new 0600 file. With ``overwrite=False``, regular
+    files are instead created exclusively and an existing pathname is refused.
     """
     import errno as _errno
     import stat as _stat
 
-    from ..file_lock import atomic_write_text
+    from ..file_lock import atomic_create_text, atomic_write_text
 
     if str(output) in ("-", "/dev/stdout", "/dev/stderr"):
         click.echo(text, nl=False, err=str(output) == "/dev/stderr")
@@ -6447,8 +6640,9 @@ def _write_private_export(output, text: str) -> bool:
     target = given.parent.resolve() / given.name
     if target.is_symlink():
         raise OSError(_errno.ELOOP, "refusing to write through a symlink", str(target))
-    if os.name == "nt":  # no FIFOs, O_NOFOLLOW or uids: always a new file
-        atomic_write_text(target, text, mode=0o600)
+    writer = atomic_write_text if overwrite else atomic_create_text
+    if os.name == "nt":  # no FIFOs, O_NOFOLLOW or uids
+        writer(target, text, mode=0o600)
         return False
     try:
         # No O_CREAT/O_TRUNC: this open only finds an existing stream. Non-
@@ -6469,7 +6663,7 @@ def _write_private_export(output, text: str) -> bool:
         os.close(fd)
         if not _stat.S_ISREG(info.st_mode):
             raise OSError(_errno.EPERM, "not a regular file or a stream you own", str(target))
-    atomic_write_text(target, text, mode=0o600)
+    writer(target, text, mode=0o600)
     return False
 
 
@@ -6515,7 +6709,11 @@ def export_user(ctx, channel: str, user: str, output) -> None:
         },
     }
     for c in convs:
-        turns = world.recent_turns(c.id, limit=10_000)
+        limit = 10_000
+        turns = world.recent_turns(c.id, limit=limit)
+        while len(turns) == limit:
+            limit *= 2
+            turns = world.recent_turns(c.id, limit=limit)
         conv_data = {
             "id": c.id,
             "created_at": c.created_at,
@@ -6707,6 +6905,7 @@ def watch(ctx, path: str, run: bool, max_dollars: float | None) -> None:
     matches = scan_file(p) if p.is_file() else scan_dir(p)
 
     count = 0
+    unsuccessful = False
     for m in matches:
         count += 1
         click.echo(
@@ -6744,33 +6943,42 @@ def watch(ctx, path: str, run: bool, max_dollars: float | None) -> None:
                     "'maverick preflight'.",
                     err=True,
                 )
+                unsuccessful = True
                 continue
             k = _kernel()
-            world = open_world(ctx.obj["db"])
-            llm = k.LLM(model=selected_model)
-            sandbox = k.build_sandbox(workdir=str(p.parent if p.is_file() else p))
             title = (m.text or (m.follow_lines[0] if m.follow_lines else "")).strip()[:80]
             goal_text = m.to_goal()
             allowed, reason = _watch_goal_allowed(goal_text)
             if not allowed:
                 click.echo(click.style(f"  skipped: {reason}", fg="yellow"), err=True)
+                unsuccessful = True
                 continue
+            world = open_world(ctx.obj["db"])
             budget = _cli_task_budget(title, max_dollars, 2.0)
             goal_id = world.create_goal(title or "watch-mode goal", goal_text)
             click.echo(click.style(f"  -> goal #{goal_id}", fg="bright_black"))
             try:
-                result = k.run_goal_sync(
-                    llm, world, budget,
-                    goal_id, sandbox=sandbox, max_depth=2,
-                )
+                with _cli_sandbox(k, workdir=str(p.parent if p.is_file() else p)) as sandbox:
+                    llm = k.LLM(model=selected_model)
+                    result = k.run_goal_sync(
+                        llm, world, budget,
+                        goal_id, sandbox=sandbox, max_depth=2,
+                    )
+                unsuccessful = _run_outcome_blocked(world, goal_id) or unsuccessful
                 click.echo(result)
             except Exception as e:
+                unsuccessful = True
                 click.echo(click.style(f"  goal #{goal_id} failed: {e}", fg="red"))
+            finally:
+                world.close()
 
     if count == 0:
         click.echo(f"no AI markers found in {path}")
     else:
         click.echo(f"\nfound {count} marker(s)")
+
+    if unsuccessful:
+        raise SystemExit(1)
 
 
 # ----- Audit log ---------------------------------------------------------
@@ -6863,6 +7071,7 @@ def audit_verify(
     from pathlib import Path as _Path
 
     _require_day_opt(day)
+    _require_known_cli_tenant(tenant)
     from ..audit import verify_anchors, verify_chain
     from ..paths import data_dir
 
@@ -7574,7 +7783,7 @@ def _local_halt_command(command: str, reason: str, json_output: bool) -> None:
 # ----- Cost / export / logs --------------------------------------------
 
 @main.command()
-@click.option("--month", default=None, help="YYYY-MM (default: lifetime totals).")
+@click.option("--month", default=None, help="UTC YYYY-MM within the most recent 10,000 episodes (100,000 with --csv).")
 @click.option("--model", default=None, help="Filter to one model id.")
 @click.option("--csv", "csv_out", is_flag=True,
               help="Output one row per episode in CSV format.")
@@ -7589,7 +7798,7 @@ def cost(ctx, month: str | None, model: str | None, csv_out: bool) -> None:
     if month:
         import datetime as _dt
         try:
-            m_start = _dt.datetime.strptime(month, "%Y-%m")
+            m_start = _dt.datetime.strptime(month, "%Y-%m").replace(tzinfo=_dt.timezone.utc)
         except ValueError:
             raise click.ClickException("--month must be YYYY-MM (e.g. 2026-05)") from None
         start = m_start.timestamp()
@@ -7598,7 +7807,7 @@ def cost(ctx, month: str | None, model: str | None, csv_out: bool) -> None:
         end = _dt.datetime(
             m_start.year + (m_start.month == 12),
             (m_start.month % 12) + 1,
-            1,
+            1, tzinfo=_dt.timezone.utc,
         ).timestamp()
         episodes = [
             e for e in episodes
@@ -7613,6 +7822,10 @@ def cost(ctx, month: str | None, model: str | None, csv_out: bool) -> None:
             "cost, and tokens, but not a model id. Use per-role cost projection "
             "for model-level spend.")
 
+    click.echo(
+        f"Window: most recent {100_000 if csv_out else 10_000:,} episodes"
+        + (f"; filtered to {month} UTC" if month else ""), err=csv_out,
+    )
     if csv_out:
         import csv as _csv
         writer = _csv.writer(sys.stdout)
@@ -7666,10 +7879,10 @@ def export_goal(ctx, goal_id: int, output: str | None) -> None:
         world.close()
     out_path = Path(output) if output else Path(f"goal-{goal_id}.json")
     try:
-        out_path.write_text(_json.dumps(bundle, default=str, indent=2))
+        streamed = _write_private_export(out_path, _json.dumps(bundle, default=str, indent=2), overwrite=False)
     except OSError as e:
         raise click.ClickException(f"could not write {out_path}: {e}") from e
-    click.echo(f"wrote {out_path}")
+    click.echo(f"wrote {out_path}", err=streamed)
 
 
 @main.command("logs")

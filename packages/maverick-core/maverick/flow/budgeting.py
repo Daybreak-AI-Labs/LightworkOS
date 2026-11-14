@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from functools import wraps
 from typing import Any
 
 from .run_events import FlowBudgetExceeded
@@ -35,6 +36,7 @@ def _budget_gated(agent_runner: AgentRunner, cap: float, per_call: float, spent:
     import threading
     lock = threading.Lock()
 
+    @wraps(agent_runner, updated=())
     def run(brief: str, data: dict, **kw) -> tuple:
         with lock:
             if getattr(agent_runner, "_meters_usage", False):
@@ -58,6 +60,7 @@ def _spend_tracked(agent_runner: AgentRunner, per_call: float, spent: list) -> A
     import threading
     lock = threading.Lock()
 
+    @wraps(agent_runner, updated=())
     def run(brief: str, data: dict, **kw) -> tuple:
         if getattr(agent_runner, "_meters_usage", False):
             result = agent_runner(brief, data, **kw)

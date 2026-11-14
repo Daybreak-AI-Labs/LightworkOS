@@ -7,15 +7,23 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from collections.abc import Callable
 from pathlib import Path
 from typing import TypeVar
 
 import click
 
-from . import _strip_terminal_control, harness, main, open_world
+from . import _strip_terminal_control, _write_private_export, harness, main, open_world
 
 _T = TypeVar("_T")
+
+
+def _write_export(output: str, text: str) -> bool:
+    try:
+        return _write_private_export(output, text)
+    except OSError as exc:
+        raise click.ClickException(f"could not write {output}: {exc}") from exc
 
 
 def _ensure_dreaming_allowed() -> None:
@@ -78,6 +86,8 @@ def finance_lint_sod_cmd() -> None:
     """Lint the finance roster for segregation-of-duties conflicts (CI gate)."""
     from ..finance.sod_linter import lint_finance_roster
     packs, conflicts = lint_finance_roster()
+    if not packs:
+        raise click.ClickException("no finance packs were linted")
     if not conflicts:
         click.echo(f"OK: {len(packs)} finance packs are segregation-of-duties clean.")
         return
@@ -149,6 +159,7 @@ def _run_self_harness_nightly(world) -> None:
 @click.option("--rollback", default=None, metavar="SNAPSHOT",
               help="Restore every learned store from a snapshot "
                    "('latest' or a name from --list-snapshots), then exit.")
+@click.option("--yes", is_flag=True, help="Confirm restoring a learning snapshot.")
 @click.option("--donations-dir", default=None, type=click.Path(),
               help="Also replay donated trajectory records from this "
                    "directory (fleet-level aggregation on a central "
@@ -156,7 +167,7 @@ def _run_self_harness_nightly(world) -> None:
 @click.pass_context
 def dream(ctx, max_goals: int, rehearse: bool, rehearse_budget: float,
           dry_run: bool, list_snaps: bool, rollback: str | None,
-          donations_dir: str | None) -> None:
+          donations_dir: str | None, yes: bool) -> None:
     """Run one offline dreaming cycle (experience consolidation).
 
     Replays recent successes and failure reflexions, groups them by
@@ -182,9 +193,11 @@ def dream(ctx, max_goals: int, rehearse: bool, rehearse_budget: float,
         click.echo("\n".join(snaps) if snaps else "(no snapshots yet)")
         return
     if rollback:
+        if not yes:
+            click.confirm("Restore learned state from the selected snapshot?", abort=True)
         try:
             restored = dreaming.rollback_learning_state(rollback)
-        except ValueError as e:
+        except (ValueError, OSError, RuntimeError) as e:
             raise click.ClickException(str(e)) from e
         if not restored:
             raise click.ClickException("no snapshots to roll back to.")
@@ -497,9 +510,9 @@ def tax_group() -> None:
 @click.option("--state", "state_code", default=None, metavar="XX",
               help="Resident state for the state return (default: inferred "
                    "from W-2 box 15).")
-@click.option("--estimated-payments", default=0.0, show_default=True,
+@click.option("--estimated-payments", default=0.0, show_default=True, type=click.FloatRange(min=0),
               help="Federal estimated tax already paid (Form 1040-ES).")
-@click.option("--prior-year-overpayment", default=0.0, show_default=True,
+@click.option("--prior-year-overpayment", default=0.0, show_default=True, type=click.FloatRange(min=0),
               help="Prior-year overpayment applied to this year.")
 @click.option("--taxpayer-65", is_flag=True,
               help="Taxpayer is 65 or older (additional standard deduction).")
@@ -533,6 +546,10 @@ def tax_prepare(docs_dir: str, filing_status: str, dependents: int,
     files anything.
     """
     from .. import tax_constants, tax_prep
+    for option, value in (("--estimated-payments", estimated_payments),
+                          ("--prior-year-overpayment", prior_year_overpayment)):
+        if not math.isfinite(value):
+            raise click.BadParameter("must be a finite nonnegative amount", param_hint=option)
     try:
         from ..config import get_tax
         if get_tax()["auto_update"]:
@@ -568,11 +585,12 @@ def tax_prepare(docs_dir: str, filing_status: str, dependents: int,
     else:
         package = tax_prep.render_review_package(draft, state)
         package += f"\n\nConstants: TY{federal['year']} {provenance}"
-    click.echo(package)
+    streamed = _write_export(out_path, package + "\n") if out_path else False
+    if not streamed:
+        click.echo(package)
     if out_path:
-        Path(out_path).write_text(package + "\n", encoding="utf-8")
         click.echo(f"\nWrote review package -> {out_path}",
-                   err=(fmt == "json"))
+                   err=(streamed or fmt == "json"))
 
 
 @tax_group.command("backtest")
@@ -606,10 +624,11 @@ def tax_backtest(cases_dir: str, tolerance: float | None, fmt: str,
         text = json.dumps(bt.backtest_dict(report), indent=2)
     else:
         text = bt.render_backtest(report)
-    click.echo(text)
+    streamed = _write_export(out_path, text + "\n") if out_path else False
+    if not streamed:
+        click.echo(text)
     if out_path:
-        Path(out_path).write_text(text + "\n", encoding="utf-8")
-        click.echo(f"\nWrote back-test report -> {out_path}")
+        click.echo(f"\nWrote back-test report -> {out_path}", err=streamed)
 
 
 @tax_group.command("onboard")

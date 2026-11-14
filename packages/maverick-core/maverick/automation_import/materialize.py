@@ -124,6 +124,10 @@ def materialize(
                 "__cron__": trig.cron,
                 "schedule_id": schedule_id,
             }
+            if budget_dollars is not None:
+                payload["max_dollars"] = budget_dollars
+            if budget_wall_seconds is not None:
+                payload["max_wall_seconds"] = budget_wall_seconds
             owner_value = str(owner or "").strip()
             if owner_value:
                 payload["owner"] = owner_value
