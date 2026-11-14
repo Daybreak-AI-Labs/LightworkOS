@@ -1274,7 +1274,13 @@ def reserve(
         # is known not to have spent externally; no TTL or crash inference.
         try:
             if hold is not None:
-                _settle_provider(hold, 0.0)
+                # Never dispatched: an operation's attempt is cancelled, not a
+                # $0 success.
+                operation = _reservation_operation(
+                    operation_id=operation_id, category=category,
+                    parent_category=parent_category, attempt_no=attempt_no, service=service)
+                _settle_provider(hold, 0.0,
+                                 attempt_state=None if operation is None else "cancelled")
             organization.cancel_before_dispatch(handle)
         except Exception as exc:
             raise ProviderAccountingUnavailable from exc

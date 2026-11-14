@@ -367,6 +367,10 @@ class JobQueue:
         claimed_at = time.time() if now is None else float(now)
         if not math.isfinite(claimed_at):
             raise ValueError("now must be finite")
+        if expiry <= claimed_at:
+            # The prune below would delete this envelope's original claim, so
+            # an expired envelope must never be claimable here.
+            return False
         nonce_hash = hashlib.sha256(nonce.encode("utf-8")).hexdigest()
         try:
             with self._lock, self._conn() as c:
