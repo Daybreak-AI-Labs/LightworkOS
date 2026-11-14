@@ -616,12 +616,12 @@ class TeamTokenBudget:
         window_seconds: int,
         now: float | None = None,
     ) -> None:
-        """Release only confirmed unused reservation capacity.
+        """Settle a reservation against confirmed provider usage.
 
-        Reconciliation never increases a cap after an indeterminate result;
-        it executes only after a bounded valid success payload.  Provider usage
-        larger than the pre-reserved amount is retained at the reservation so
-        a nonconforming upstream cannot silently expand a team ceiling.
+        Reconciliation runs only after a bounded valid success payload.
+        Unused reserved capacity is released; provider usage larger than the
+        reservation is charged, so the overage counts against the team
+        ceiling (later requests are refused) instead of being dropped.
         """
 
         if not reservation.allowed or reservation.window_started is None:
@@ -641,6 +641,18 @@ class TeamTokenBudget:
             if completion_tokens is not None
             else 0
         )
+        prompt_over = (
+            max(0, _safe_usage_int(prompt_tokens) - reservation.prompt_reserved)
+            if prompt_tokens is not None
+            else 0
+        )
+        completion_over = (
+            max(0, _safe_usage_int(completion_tokens) - reservation.completion_reserved)
+            if completion_tokens is not None
+            else 0
+        )
+        prompt_release -= prompt_over
+        completion_release -= completion_over
         if not prompt_release and not completion_release:
             return
         current_time = float(self._clock() if now is None else now)
@@ -690,6 +702,7 @@ class TeamTokenBudget:
                     or not isinstance(completion_used, int)
                 ):
                     return
+                # A negative release charges provider usage above the reservation.
                 row["prompt_tokens"] = max(0, prompt_used - prompt_release)
                 row["completion_tokens"] = max(
                     0, completion_used - completion_release
@@ -755,10 +768,15 @@ def _provider_error(provider: str, status: int, message: str) -> tuple[int, dict
     }
 
 
+# Tool descriptions and schemas are shown to the model too, so they are
+# screened, redacted and counted like message text.
 _PROMPT_TEXT_KEYS = frozenset({
-    "arguments", "content", "input", "instructions", "prompt", "system", "text",
+    "arguments", "content", "description", "input", "input_schema",
+    "instructions", "parameters", "prompt", "system", "text",
 })
-_RESPONSE_TEXT_KEYS = frozenset({"content", "output_text", "refusal", "text"})
+_RESPONSE_TEXT_KEYS = frozenset({
+    "arguments", "content", "input", "output_text", "refusal", "text",
+})
 
 
 def _json_copy(value: Mapping[str, Any]) -> dict[str, Any]:
@@ -918,7 +936,13 @@ def _completion_cap(
         or not 1 <= value <= _MAX_COMPLETION_TOKENS
     ):
         raise ValueError("the request completion-token cap must be between 1 and 1000000")
-    return copied, int(value)
+    # OpenAI ``n`` asks for that many completions, each up to the cap.
+    choices = copied.get("n", 1) if provider != "anthropic" else 1
+    if choices is None:
+        choices = 1
+    if isinstance(choices, bool) or not isinstance(choices, int) or not 1 <= choices <= 128:
+        raise ValueError("the request choice count n must be between 1 and 128")
+    return copied, int(value) * choices
 
 
 def _usage_for_provider(
@@ -1075,6 +1099,7 @@ def _record_call(
 
 
 _SCREEN_MAX_CHARS = 200_000
+_SCREEN_OVERLAP_CHARS = 4_096
 
 
 def _screen_messages(body: Mapping[str, Any]):
@@ -1086,22 +1111,22 @@ def _screen_messages(body: Mapping[str, Any]):
     still blocks). Returns the verdict, or None when there is no text.
     """
 
-    parts: list[str] = []
-    total = 0
-    for chunk in _collect_prompt_text(body):
-        if not chunk:
-            continue
-        take = chunk[: max(0, _SCREEN_MAX_CHARS - total)]
-        parts.append(take)
-        total += len(take)
-        if total >= _SCREEN_MAX_CHARS:
-            break
-    if not parts:
+    text = "\n".join(chunk for chunk in _collect_prompt_text(body) if chunk)
+    if not text:
         return None
     try:
         from .shield_ensemble import ShieldEnsemble
 
-        return ShieldEnsemble().evaluate("\n".join(parts))
+        # Every character is screened, in overlapping windows so a pattern
+        # that straddles a window edge is still seen. Deny wins.
+        ensemble = ShieldEnsemble()
+        step = _SCREEN_MAX_CHARS - _SCREEN_OVERLAP_CHARS
+        verdict = None
+        for start in range(0, len(text), step):
+            verdict = ensemble.evaluate(text[start:start + _SCREEN_MAX_CHARS])
+            if not verdict.allowed:
+                break
+        return verdict
     except Exception as exc:
         error_type = re.sub(r"[^A-Za-z0-9_.-]", "_", type(exc).__name__)[:64]
         log.warning("llm_gateway: content screen unavailable; blocking (%s)", error_type)
