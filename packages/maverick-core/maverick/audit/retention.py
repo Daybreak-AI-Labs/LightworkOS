@@ -18,6 +18,7 @@ exposes ``maverick retention enforce [--dry-run]``.
 from __future__ import annotations
 
 import logging
+import math
 import sqlite3
 import time
 from datetime import datetime, timezone
@@ -40,19 +41,37 @@ def _config() -> dict:
         return {}
 
 
-def _disabled(days: object) -> bool:
-    """True when a rule is off; refuse a value that is not a whole number.
+def _whole_days(days: object, setting: str = "retention period") -> int | None:
+    """``days`` as a whole number of days (``None`` when unset).
 
-    ``int(True)`` is 1, so a config typo such as ``audit_days = true`` would
-    otherwise purge everything older than one day.
+    Accepts an int, a digit string (``"30"``) or an integral float (``30.0``),
+    as ``int()`` did. Refuses a boolean (``int(True)`` is 1, so a config typo
+    such as ``audit_days = true`` would purge everything older than one day),
+    a fraction and anything else. Zero or a negative stays "disabled", as
+    before (``test_purge_helpers_disabled_with_bad_days`` pins it).
     """
     if days is None:
-        return True
-    if isinstance(days, bool) or not isinstance(days, int):
+        return None
+    value: int | None = None
+    if isinstance(days, bool):
+        value = None
+    elif isinstance(days, int):
+        value = days
+    elif isinstance(days, float) and math.isfinite(days) and days.is_integer():
+        value = int(days)
+    elif isinstance(days, str) and days.strip().lstrip("+-").isdigit():
+        value = int(days.strip())
+    if value is None:
         raise ValueError(
-            f"Retention period {days!r} is not a whole number of days; nothing was deleted."
+            f"{setting} = {days!r} is not a whole number of days; nothing was deleted."
         )
-    return days <= 0
+    return value
+
+
+def _disabled(days: object) -> bool:
+    """True when a rule is off; refuse a value that is not a whole number."""
+    value = _whole_days(days)
+    return value is None or value <= 0
 
 
 def _cutoff_for_days(days: int, *, now: float | None = None) -> float:
@@ -581,11 +600,12 @@ def _enforce(
         raise RetentionScopeError("A reviewed retention step requires one scoped native store.")
 
     binding = {"review_binding": _review_binding} if _review_binding is not None else {}
-    audit_days = cfg.get("audit_days")
-    episodes_days = cfg.get("episodes_days")
-    events_days = cfg.get("events_days")
-    messages_days = cfg.get("messages_days")
-    usage_days = cfg.get("usage_days")
+    # Validate every period before any purge runs, so a bad value in one
+    # setting cannot leave another setting's deletion unrecorded.
+    audit_days, episodes_days, events_days, messages_days, usage_days = (
+        _whole_days(cfg.get(key), f"[retention] {key}")
+        for key in ("audit_days", "episodes_days", "events_days", "messages_days", "usage_days")
+    )
 
     from .preservation import preservation_snapshot
 
