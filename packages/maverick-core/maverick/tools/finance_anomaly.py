@@ -74,6 +74,7 @@ def _run(args: dict[str, Any]) -> str:
     transactions = args.get("transactions")
     if not isinstance(transactions, list):
         return "ERROR: transactions must be a list"
+    cases = []
     try:
         from ..connections import current_principal
         from ..finance.anomaly_engine import (
@@ -89,34 +90,42 @@ def _run(args: dict[str, Any]) -> str:
             config=with_configured_materiality(_config(args.get("config"))),
         )
         actor = str(current_principal() or "agent:finance_anomaly")
-        cases = []
         if args.get("enqueue_findings", True) is True:
             queue = FinanceAnomalyCaseQueue()
-            cases = [queue.enqueue(finding, opened_by=actor) for finding in report.findings]
+            for finding in report.findings:
+                cases.append(queue.enqueue(finding, opened_by=actor))
         signals = [finding_to_signal(finding).to_dict() for finding in report.findings]
+        result = {
+            "schema": "lightwork.finance-anomaly-tool-result.v1",
+            "transactions_scanned": report.transactions_scanned,
+            "input_sha256": report.input_sha256,
+            "config_sha256": report.config_sha256,
+            "scan_sha256": report.scan_sha256,
+            "config": report.config,
+            "finding_count": len(report.findings),
+            "signals": signals[:_MAX_TOOL_SIGNALS],
+            "signals_truncated": len(signals) > _MAX_TOOL_SIGNALS,
+            "scan_truncated": report.truncated,
+            "omitted_findings": report.omitted_findings,
+            "evaluations": [row.to_dict() for row in report.evaluations],
+            "enqueued_case_ids": [str(row["id"]) for row in cases[:_MAX_TOOL_SIGNALS]],
+            "case_ids_truncated": len(cases) > _MAX_TOOL_SIGNALS,
+            "workspace": "/finance",
+        }
+        return json.dumps(result, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     except (FinanceAnomalyInputLimit, KeyError, TypeError, ValueError) as exc:
-        return f"ERROR: invalid finance anomaly scan: {exc}"
+        return _scan_failure(f"invalid finance anomaly scan: {exc}", cases)
     except Exception:
-        return "ERROR: finance anomaly scan failed safely"
+        return _scan_failure("finance anomaly scan failed", cases)
 
-    result = {
-        "schema": "lightwork.finance-anomaly-tool-result.v1",
-        "transactions_scanned": report.transactions_scanned,
-        "input_sha256": report.input_sha256,
-        "config_sha256": report.config_sha256,
-        "scan_sha256": report.scan_sha256,
-        "config": report.config,
-        "finding_count": len(report.findings),
-        "signals": signals[:_MAX_TOOL_SIGNALS],
-        "signals_truncated": len(signals) > _MAX_TOOL_SIGNALS,
-        "scan_truncated": report.truncated,
-        "omitted_findings": report.omitted_findings,
-        "evaluations": [row.to_dict() for row in report.evaluations],
-        "enqueued_case_ids": [str(row["id"]) for row in cases[:_MAX_TOOL_SIGNALS]],
-        "case_ids_truncated": len(cases) > _MAX_TOOL_SIGNALS,
-        "workspace": "/finance",
-    }
-    return json.dumps(result, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+def _scan_failure(message: str, cases: list[dict]) -> str:
+    ids = [str(row.get("id", "unknown")) for row in cases]
+    if ids:
+        return (f"ERROR: {message}; already enqueued case ids: "
+                + json.dumps(ids, ensure_ascii=True)
+                + ". Review these cases before repeating the scan.")
+    return f"ERROR: {message}; no case ids were returned"
 
 
 _TRANSACTION = {

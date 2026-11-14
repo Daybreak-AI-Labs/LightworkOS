@@ -505,6 +505,10 @@ class _BrowserSession:
         )
         if len(targets) != expected_count or not targets:
             return "ERROR: browser target could not be pinned; no action was sent"
+        if action == "press" and str(supplied.get("text") or "").lower() not in {
+            "enter", "return", "space", " ",
+        }:
+            return "ERROR: this key is not supported by approved browser dispatch; no action was sent"
         values = []
         if action == "type":
             values = [str(supplied.get("text") or "")]
@@ -602,6 +606,10 @@ class _BrowserSession:
               if (!fill(elements[index], payload.values[index])) return 'unsupported';
           } else if (payload.action === 'press') {
             const target = elements[0]; const key = payload.key;
+            const enter = /^(Enter|Return)$/i.test(key);
+            const space = /^(Space| )$/i.test(key);
+            if (!(enter && (/^(BUTTON|A)$/.test(target.tagName) || target.form)) &&
+                !(space && target.tagName === 'BUTTON')) return 'unsupported';
             target.focus();
             const down = new KeyboardEvent('keydown', {key, bubbles: true, cancelable: true});
             const allowed = target.dispatchEvent(down);
