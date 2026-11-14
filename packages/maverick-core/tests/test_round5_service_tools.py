@@ -64,6 +64,26 @@ def test_robots_multiple_agents_and_allow_rules(monkeypatch):
     assert fetched == ["https://example.com/robots.txt"] * 2
 
 
+@pytest.mark.parametrize("body", [
+    "User-agent: *\nAllow: /\nDisallow: /private\n",
+    "User-agent: *\nDisallow: /private\nAllow: /\n",
+])
+def test_robots_most_specific_rule_wins_in_either_order(monkeypatch, body):
+    from maverick.tools import _ssrf, http_fetch
+
+    monkeypatch.setattr(_ssrf, "safe_get", lambda url, **_: SimpleNamespace(status_code=200, text=body))
+    assert not http_fetch._check_robots("https://example.com/private/data")
+    assert http_fetch._check_robots("https://example.com/public/data")
+
+
+def test_robots_equal_length_tie_goes_to_allow(monkeypatch):
+    from maverick.tools import _ssrf, http_fetch
+
+    body = "User-agent: *\nDisallow: /page\nAllow: /page\n"
+    monkeypatch.setattr(_ssrf, "safe_get", lambda url, **_: SimpleNamespace(status_code=200, text=body))
+    assert http_fetch._check_robots("https://example.com/page")
+
+
 def test_mongodb_database_is_operator_selected(monkeypatch):
     from maverick.tools import mongodb_tool as mongo
 
