@@ -156,3 +156,36 @@ class TestSwarmFanoutCap:
         assert "NOTE" not in out
         errs = ctx.blackboard.by_kind("error")
         assert not any("fan-out capped" in e.content for e in errs)
+
+
+@pytest.mark.asyncio
+async def test_sealed_swarm_child_final_not_leaked_into_subagent_stop_hook(tmp_path, monkeypatch):
+    import maverick.tools.spawn as spawn_mod
+    from maverick.agent import Agent
+    from maverick.sandbox import LocalBackend
+    from maverick.swarm import SwarmContext
+    from maverick.world_model import WorldModel
+
+    quarantine = QuarantineRegistry()
+
+    async def _run(self):
+        quarantine.seal(self.name, "compromised mid-run")
+        return SimpleNamespace(final="SHOULD NOT LEAK", blocked_on_user=False, error=None)
+
+    finals = []
+
+    async def _capture_hook(event, **kwargs):
+        finals.append((kwargs.get("extra") or {}).get("final"))
+
+    monkeypatch.setattr(Agent, "run", _run)
+    monkeypatch.setattr("maverick.hooks.emit", _capture_hook)
+    world = WorldModel(tmp_path / "w.db")
+    ctx = SwarmContext(llm=None, world=world, budget=Budget(), blackboard=Blackboard(),
+                       sandbox=LocalBackend(workdir=tmp_path),
+                       goal_id=world.create_goal("seal", ""), max_depth=2)
+    ctx.quarantine = quarantine
+    parent = Agent(ctx=ctx, role="orchestrator", brief="x", depth=0)
+    out = await spawn_mod.spawn_swarm_tool(parent).fn(
+        {"agents": [{"role": "researcher", "task": "t"}]})
+    assert "SHOULD NOT LEAK" not in out
+    assert finals and all("SHOULD NOT LEAK" not in f and "withheld" in f for f in finals)
