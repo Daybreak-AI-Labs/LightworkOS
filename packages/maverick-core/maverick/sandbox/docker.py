@@ -34,6 +34,31 @@ def _kill_container(name: str, engine: str = "docker") -> str:
     return cleanup_container(name, engine).note
 
 
+class ReadOnlyPathChanged(ValueError):
+    """A protected path changed in a way that could unprotect the original."""
+
+    def __init__(self, relative: str, what: str) -> None:
+        super().__init__(
+            f"read_only_paths entry {relative!r} {what} since the task started, so "
+            "the command was not run. Restart the task to re-read the protected paths."
+        )
+
+
+def _identity(path: Path) -> tuple[int, int]:
+    stat = path.stat()
+    return (stat.st_dev, stat.st_ino)
+
+
+def _ancestor_identities(workspace: Path, path: Path) -> tuple[tuple[int, int], ...]:
+    """(device, inode) of the workspace and of each folder down to ``path``'s parent."""
+    node = workspace
+    chain = [_identity(node)]
+    for part in path.relative_to(workspace).parts[:-1]:
+        node = node / part
+        chain.append(_identity(node))
+    return tuple(chain)
+
+
 @dataclass
 class DockerBackend:
     workdir: Path
@@ -88,7 +113,7 @@ class DockerBackend:
         ):
             raise ValueError("read_only_paths must be a list of relative paths")
         workspace = self.workdir.resolve()
-        validated: list[tuple[Path, str, tuple[int, int]]] = []
+        validated: list[tuple] = []
         normalized: list[str] = []
         for raw in self.read_only_paths:
             if not isinstance(raw, str) or not raw.strip():
@@ -103,9 +128,9 @@ class DockerBackend:
                 raise ValueError(
                     f"read_only_paths entry escapes or is missing: {raw!r}"
                 ) from exc
-            stat = source.stat()
             validated.append(
-                (source, f"/workspace/{contained.as_posix()}", (stat.st_dev, stat.st_ino))
+                (source, f"/workspace/{contained.as_posix()}", _identity(source),
+                 _ancestor_identities(workspace, source))
             )
             normalized.append(contained.as_posix())
         self.read_only_paths = tuple(normalized)
@@ -144,10 +169,11 @@ class DockerBackend:
         # helper tolerant of legacy/unpickled instances (and focused timeout
         # tests) that predate that private cache; the public default is no
         # read-only overlays, so an absent cache is equivalent to ``()``.
-        for entry in getattr(self, "_read_only_mounts", ()):
-            source, destination = entry[0], entry[1]
-            self._recheck_read_only_mount(source, destination, entry[2] if len(entry) > 2 else None)
-            flags.extend(["-v", f"{source}:{destination}:ro"])
+        mounts = getattr(self, "_read_only_mounts", ())
+        if mounts:
+            self._read_only_mounts = tuple(self._recheck_read_only_mount(entry) for entry in mounts)
+        for entry in mounts:
+            flags.extend(["-v", f"{entry[0]}:{entry[1]}:ro"])
         if self.runtime:
             flags.extend(["--runtime", str(self.runtime)])
         if self.pids_limit:
@@ -163,37 +189,49 @@ class DockerBackend:
             flags.extend(["--network", "none"])
         return flags
 
-    def _recheck_read_only_mount(
-        self, source: Path, destination: str, identity: tuple[int, int] | None
-    ) -> None:
-        """Refuse when a protected path was moved, replaced or relinked.
+    def _recheck_read_only_mount(self, entry: tuple) -> tuple:
+        """Refuse when a protected path was moved or relinked; return the entry.
 
-        A command can rename a protected folder and create a new one in its
-        place. Mounting the stored host path again would protect the
-        replacement and leave the renamed original writable.
+        A command can rename a folder that contains a protected path and
+        create a new one in its place. Mounting the stored host path again
+        would protect the replacement and leave the renamed original writable,
+        and a symlink in its place would mount a host path. So the resolved
+        path and the identity of every folder from the workspace down to the
+        protected path's parent must be unchanged.
+
+        The protected path's OWN inode may change: an editor save (write a
+        temporary file, then rename it over the original) or a host-side
+        ``git checkout`` does that. Inside the container the protected path is
+        a read-only bind mount, and a mount point cannot be renamed or unlinked
+        from inside (EBUSY), so with its path and every parent unchanged an
+        in-place replacement can only have come from the host side. Its new
+        identity is recorded and the run continues.
         """
+        source, destination = Path(entry[0]), entry[1]
+        ancestors = entry[3] if len(entry) > 3 else None
         workspace = self.workdir.resolve()
         relative = destination[len("/workspace/"):]
         try:
             current = (workspace / relative).resolve(strict=True)
             current.relative_to(workspace)
-            stat = current.stat()
+            current_ancestors = _ancestor_identities(workspace, current)
+            identity = _identity(current)
         except (OSError, ValueError) as exc:
-            raise ValueError(
-                f"read_only_paths entry {relative!r} was moved or removed; "
-                "the command was not run"
-            ) from exc
-        if current != Path(source) or (
-            identity is not None and (stat.st_dev, stat.st_ino) != identity
-        ):
-            raise ValueError(
-                f"read_only_paths entry {relative!r} was replaced since the "
-                "sandbox started; the command was not run"
-            )
+            raise ReadOnlyPathChanged(relative, "was moved or removed") from exc
+        if current != source:
+            raise ReadOnlyPathChanged(relative, "was replaced by a link or moved")
+        if ancestors is not None and current_ancestors != ancestors:
+            raise ReadOnlyPathChanged(relative, "is inside a folder that was moved or replaced")
+        return (source, destination, identity, current_ancestors)
 
     def exec(self, cmd: str, timeout: float | None = None) -> ExecResult:
         with operation_lease(self):
-            return self._exec_owned(cmd, timeout)
+            try:
+                return self._exec_owned(cmd, timeout)
+            except ReadOnlyPathChanged as exc:
+                # An ordinary failed command (nothing ran), so the shell tool
+                # reports it to the agent instead of raising out of the turn.
+                return ExecResult(stdout="", stderr=str(exc), exit_code=126)
 
     def _exec_owned(self, cmd: str, timeout: float | None = None) -> ExecResult:
         if getattr(self, "pending_cleanup", {}):
