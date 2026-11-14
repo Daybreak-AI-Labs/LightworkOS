@@ -109,6 +109,23 @@ class BlueskyChannel(Channel):
             self._session = resp.json()
         return self._session
 
+    def _drop_expired_session(self, response) -> None:
+        """Forget the session when the PDS refuses its access token.
+
+        A PDS answers an expired or invalid access JWT with 400 and an
+        ``ExpiredToken`` / ``InvalidToken`` error (not only 401), so both
+        make the next call create a fresh session instead of failing forever.
+        """
+        if response.status_code == 401:
+            self._session = {}
+        elif response.status_code == 400:
+            try:
+                error = (response.json() or {}).get("error")
+            except Exception:
+                error = None
+            if error in {"ExpiredToken", "InvalidToken"}:
+                self._session = {}
+
     def _account(self):
         did = self._session.get("did")
         if not isinstance(did, str) or not did:
@@ -135,8 +152,7 @@ class BlueskyChannel(Channel):
             async with httpx.AsyncClient(timeout=15.0) as client:
                 response = await client.get(f"{_API_BASE}/app.bsky.notification.listNotifications",
                     headers={"Authorization": f"Bearer {session['accessJwt']}"}, params=params)
-                if response.status_code == 401:
-                    self._session = {}
+                self._drop_expired_session(response)
                 response.raise_for_status()
                 payload = response.json() or {}
             # No early stop at the floor: indexedAt is not monotonic (see
@@ -234,6 +250,7 @@ class BlueskyChannel(Channel):
                 async with httpx.AsyncClient(timeout=30.0) as client:
                     resp = await client.post(f"{_API_BASE}/com.atproto.repo.createRecord",
                         headers={"Authorization": f"Bearer {sess['accessJwt']}"}, json=body)
+                self._drop_expired_session(resp)
                 if 400 <= resp.status_code < 500 and resp.status_code != 408:
                     raise DeliveryNotSent("Bluesky rejected the reply")
                 if resp.status_code >= 400:
