@@ -194,7 +194,7 @@ def sandbox_run(
 
     Through a sandbox, the argv is shell-quoted with ``shlex.join`` and handed
     to ``exec()`` (which runs ``sh -c``); ``stdin`` is fed via a base64 pipe so
-    arbitrary text reaches the process without shell-quoting hazards. Windows
+    arbitrary text reaches the process without shell-quoting hazards. The
     LocalBackend runs the argv directly with a bounded stdin pipe. When no
     sandbox is wired in, falls back to a scrubbed-env ``subprocess.run`` of the
     raw argv list (no shell interpolation -- the chokepoint guard forbids that
@@ -206,18 +206,18 @@ def sandbox_run(
         from ..sandbox.sdk import execution_callable
 
         execute = execution_callable(sandbox)
-        if os.name == "nt":
-            from ..sandbox.local import LocalBackend
+        from ..sandbox.local import LocalBackend
 
-            if type(sandbox) is LocalBackend:
-                # cmd.exe has no printf/base64 -d pipeline and an 8191-char
-                # command limit. Direct argv avoids shell interpolation; the
-                # bounded stdin pipe keeps notebook contents off the command line.
-                res = execute(argv, timeout=timeout, stdin=stdin)
-                return res.exit_code, res.stdout, res.stderr
+        if type(sandbox) is LocalBackend:
+            # Direct argv and stdin avoid both Windows' command limit and
+            # POSIX's per-argument limit. Never retry an effect on TypeError.
+            res = execute(argv, timeout=timeout, stdin=stdin)
+            return res.exit_code, res.stdout, res.stderr
         import shlex
         cmd = shlex.join(argv)
         if stdin is not None:
+            if len(stdin.encode("utf-8")) > 64 * 1024:
+                return _sandbox_run_large_input(sandbox, execute, cmd, stdin, timeout)
             import base64
             b64 = base64.b64encode(stdin.encode("utf-8")).decode("ascii")
             cmd = f"printf %s {shlex.quote(b64)} | base64 -d | {cmd}"
@@ -233,6 +233,27 @@ def sandbox_run(
         return r.returncode, r.stdout, r.stderr
     except subprocess.TimeoutExpired:
         return 124, "", f"TIMEOUT after {timeout}s"
+
+
+def _sandbox_run_large_input(sandbox, execute, cmd, stdin, timeout):
+    """Keep large input out of shell arguments on workspace-sharing backends."""
+    import shlex
+    import tempfile
+    from pathlib import Path
+
+    from ..sandbox.sdk import workdir_is_local
+
+    if not workdir_is_local(sandbox):
+        return 1, "", "large stdin requires a backend stdin channel or a local workspace"
+    workdir = Path(sandbox.workdir).resolve()
+    with tempfile.TemporaryDirectory(prefix=".maverick-stdin-", dir=workdir) as directory:
+        path = Path(directory) / "input"
+        with path.open("x", encoding="utf-8", newline="") as stream:
+            os.chmod(path, 0o600)
+            stream.write(stdin)
+        relative = path.relative_to(workdir).as_posix()
+        result = execute(f"{cmd} < {shlex.quote(relative)}", timeout=timeout)
+        return result.exit_code, result.stdout, result.stderr
 
 
 def host_exec(
@@ -1405,8 +1426,8 @@ def base_registry(
     reg.register(diagnose())
     reg.register(differential_privacy())
     if enable_mobile_tools:
-        reg.register(android(sandbox))
-        reg.register(ios_sim(sandbox))
+        _register_local_workspace_tool(reg, sandbox, android, has_local_workdir)
+        _register_local_workspace_tool(reg, sandbox, ios_sim, has_local_workdir)
     reg.register(spend_report())
     reg.register(budget_status(budget=budget))
     reg.register(test_impact(sandbox))
@@ -2040,6 +2061,12 @@ def _apply_rate_limits(reg: ToolRegistry, *, fail_silently: bool = False) -> Non
         _logging.getLogger(__name__).warning("rate_limiter: %s", e)
 
 
+def _plugin_name_reserved(reg: ToolRegistry, name: str) -> bool:
+    from ..safety.tool_risk import _DEFAULT_RISK
+
+    return name in reg._tools or name in _DEFAULT_RISK or name in CORE_TOOL_NAMES
+
+
 def _apply_python_plugins(reg: ToolRegistry) -> None:
     # Plugin tools registered via the `maverick.tools` entry point. Each
     # factory is called with no args and must return a Tool. A broken
@@ -2052,10 +2079,10 @@ def _apply_python_plugins(reg: ToolRegistry) -> None:
                 # Never let a plugin shadow a built-in (or an MCP) tool: an
                 # allowlisted plugin returning Tool(name="shell") would silently
                 # replace the real shell and run attacker code under that name.
-                if t.name in reg._tools:
+                if _plugin_name_reserved(reg, t.name):
                     import logging
                     logging.getLogger(__name__).warning(
-                        "plugin tool %r conflicts with an existing tool; skipping",
+                        "plugin tool %r conflicts with a reserved tool name; skipping",
                         t.name,
                     )
                     continue
@@ -2077,10 +2104,10 @@ def _apply_ts_plugins(reg: ToolRegistry) -> None:
     try:
         from ..ts_plugin_host import load_configured_ts_plugins
         for t in load_configured_ts_plugins():
-            if t.name in reg._tools:
+            if _plugin_name_reserved(reg, t.name):
                 import logging
                 logging.getLogger(__name__).warning(
-                    "ts plugin tool %r conflicts with an existing tool; skipping",
+                    "ts plugin tool %r conflicts with a reserved tool name; skipping",
                     t.name,
                 )
                 continue
@@ -2095,10 +2122,10 @@ def _apply_grpc_plugins(reg: ToolRegistry) -> None:
     try:
         from ..grpc_plugin_host import load_configured_grpc_plugins
         for t in load_configured_grpc_plugins():
-            if t.name in reg._tools:
+            if _plugin_name_reserved(reg, t.name):
                 import logging
                 logging.getLogger(__name__).warning(
-                    "grpc plugin tool %r conflicts with an existing tool; skipping",
+                    "grpc plugin tool %r conflicts with a reserved tool name; skipping",
                     t.name,
                 )
                 continue

@@ -24,6 +24,9 @@ denies every host instead. ``host_allowed`` is the pure decision
 """
 from __future__ import annotations
 
+import ipaddress
+import socket
+
 from ..sandbox.network_policy import _matches
 from ..sandbox.network_policy import host_allowed as _tool_host_allowed
 
@@ -62,6 +65,32 @@ def load_tenant_egress(tenant: str | None = "__active__") -> dict:
     return default if isinstance(default, dict) else {}
 
 
+def _canonical_ip(host: str) -> str:
+    value = host.strip().lower().removesuffix(".")
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        try:
+            # inet_aton covers shortened, decimal, hexadecimal and octal IPv4
+            # literals accepted by system resolvers, without performing DNS.
+            address = ipaddress.IPv4Address(socket.inet_aton(value))
+        except (OSError, ValueError):
+            return host
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+        return str(address.ipv4_mapped)
+    return str(address)
+
+
+def _ip_matches(host: str, patterns) -> bool:
+    if isinstance(patterns, str):
+        patterns = [patterns]
+    # Preserve the original wildcard match as well: canonicalization must not
+    # erase a deny written against an alternate literal's original spelling.
+    return _matches(host, patterns) or _matches(
+        _canonical_ip(host), [_canonical_ip(str(p)) for p in (patterns or [])],
+    )
+
+
 def host_allowed(host: str, *, tenant: str | None = "__active__", policy: dict | None = None) -> bool:
     """True iff the tenant plane permits egress to ``host``.
 
@@ -70,11 +99,11 @@ def host_allowed(host: str, *, tenant: str | None = "__active__", policy: dict |
     pol = policy if policy is not None else load_tenant_egress(tenant)
     if not isinstance(pol, dict):
         return True
-    if _matches(host, pol.get("deny")):
+    if _ip_matches(host, pol.get("deny")):
         return False
     allow = pol.get("allow")
     if allow:
-        return _matches(host, allow)
+        return _ip_matches(host, allow)
     return True
 
 

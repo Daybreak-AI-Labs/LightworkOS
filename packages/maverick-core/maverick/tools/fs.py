@@ -11,6 +11,8 @@ that's its purpose. Shield's `scan_tool_call` chokepoint guards it.
 from __future__ import annotations
 
 import os
+import stat
+from contextlib import contextmanager
 from pathlib import Path
 
 from ..tool_results import confirmed_success_text
@@ -114,8 +116,93 @@ def read_text_contained(
 def write_text_contained(sandbox, target: Path, content: str) -> None:
     from ..task_file_recovery import capture, mutation_gate
     with mutation_gate():
+        _require_regular_target(target)
         protected = capture(Path(sandbox.workdir).resolve(), target)
         _write_text_contained(sandbox, target, content, legacy_journal=not protected)
+
+
+def _require_regular_target(target: Path) -> None:
+    try:
+        info = target.lstat()
+    except FileNotFoundError:
+        return
+    if not stat.S_ISREG(info.st_mode):
+        raise ValueError("refusing non-regular write target (possible symlink race)")
+
+
+def _verify_write_fd(workdir: Path, fd: int) -> None:
+    real = _fd_real_path(fd)
+    if real is not None and not real.is_relative_to(workdir):
+        raise ValueError("write target escaped the workspace (symlink race)")
+
+
+def _remove_created_entry(parent: int, name: str, info: os.stat_result) -> None:
+    """Clean up only entries still identifying an inode created by this walk."""
+    try:
+        current = os.stat(name, dir_fd=parent, follow_symlinks=False)
+        if (current.st_dev, current.st_ino) != (info.st_dev, info.st_ino):
+            return
+        if stat.S_ISDIR(info.st_mode):
+            os.rmdir(name, dir_fd=parent)
+        else:
+            os.unlink(name, dir_fd=parent)
+    except OSError:
+        # A replacement or a non-empty directory belongs to another writer.
+        pass
+
+
+@contextmanager
+def _write_descriptor(workdir: Path, target: Path):
+    rel = target.relative_to(workdir)
+    if not rel.parts or ".." in rel.parts:
+        raise ValueError("write target escapes the workspace")
+    flags = os.O_WRONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    if os.open not in os.supports_dir_fd:
+        # Windows does not expose openat. Preserve its existing descriptor
+        # check; POSIX uses the no-follow directory walk below.
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd = _open_contained(workdir, target, flags | os.O_CREAT)
+        try:
+            yield fd
+        finally:
+            os.close(fd)
+        return
+    directories = []
+    created = []
+    fd = None
+    try:
+        directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        directories.append(os.open(workdir, directory_flags))
+        for name in rel.parts[:-1]:
+            parent = directories[-1]
+            _verify_write_fd(workdir, parent)
+            try:
+                child = os.open(name, directory_flags, dir_fd=parent)
+            except FileNotFoundError:
+                os.mkdir(name, dir_fd=parent)
+                info = os.stat(name, dir_fd=parent, follow_symlinks=False)
+                created.append((parent, name, info))
+                child = os.open(name, directory_flags, dir_fd=parent)
+            directories.append(child)
+            _verify_write_fd(workdir, child)
+        parent = directories[-1]
+        _verify_write_fd(workdir, parent)
+        try:
+            fd = os.open(rel.name, flags | os.O_CREAT | os.O_EXCL, dir_fd=parent)
+            created.append((parent, rel.name, os.fstat(fd)))
+        except FileExistsError:
+            fd = os.open(rel.name, flags, dir_fd=parent)
+        _verify_write_fd(workdir, fd)
+        yield fd
+    except BaseException:
+        for parent, name, info in reversed(created):
+            _remove_created_entry(parent, name, info)
+        raise
+    finally:
+        if fd is not None:
+            os.close(fd)
+        for directory in reversed(directories):
+            os.close(directory)
 
 
 def _write_text_contained(sandbox, target: Path, content: str, *, legacy_journal=True) -> None:
@@ -151,18 +238,12 @@ def _write_text_contained(sandbox, target: Path, content: str, *, legacy_journal
     from ..workspace_journal import record_pre_image
     if legacy_journal:
         record_pre_image(workdir, target)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    fd = _open_contained(workdir, target, os.O_WRONLY | os.O_CREAT)
-    # fdopen takes ownership of fd; close fd ourselves only if it (or ftruncate)
-    # fails before that hand-off, to avoid a double close.
-    try:
+    with _write_descriptor(workdir, target) as fd:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ValueError("refusing to write a non-regular file")
         os.ftruncate(fd, 0)
-        fh = os.fdopen(fd, "w", encoding="utf-8")
-    except BaseException:
-        os.close(fd)
-        raise
-    with fh:
-        fh.write(content)
+        with os.fdopen(fd, "w", encoding="utf-8", closefd=False) as fh:
+            fh.write(content)
 
 
 
