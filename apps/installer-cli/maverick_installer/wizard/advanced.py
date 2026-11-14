@@ -549,6 +549,14 @@ def _drop_self_connect_without_connections(advanced: dict[str, Any]) -> None:
                       "That answer was not saved. Turn on named connections to use it.[/yellow]")
 
 
+def _drop_per_tenant_keys_without_at_rest(advanced: dict[str, Any]) -> None:
+    """Per-tenant keys are written only with at-rest encryption; say so when dropped."""
+    if advanced.get("encrypt_per_tenant") and not advanced.get("encrypt_at_rest"):
+        advanced["encrypt_per_tenant"] = False
+        console.print("[yellow]Per-tenant encryption keys require at-rest encryption. "
+                      "That answer was not saved. Turn on at-rest encryption to use them.[/yellow]")
+
+
 def pick_advanced() -> dict[str, Any]:
     """Configure advanced reasoning, learning, and governance features.
 
@@ -573,10 +581,7 @@ def pick_advanced() -> dict[str, Any]:
         **_pick_runtime_toggles(),
     }
     _drop_self_connect_without_connections(advanced)
-    if advanced.get("encrypt_per_tenant") and not advanced.get("encrypt_at_rest"):
-        advanced["encrypt_per_tenant"] = False
-        console.print("[yellow]Per-tenant encryption keys require at-rest encryption. "
-                      "That answer was not saved. Turn on at-rest encryption to use them.[/yellow]")
+    _drop_per_tenant_keys_without_at_rest(advanced)
     # The governed sidecar is an extension of the external-agent boundary: its
     # clients authenticate through per-agent MCP credentials and then inherit
     # the same trust/revocation/control-plane posture. Keep the deployment

@@ -117,6 +117,7 @@ from .advanced import (
     _cfg_advanced_verification_and_rewards as _cfg_advanced_verification_and_rewards,
 )
 from .advanced import _collect_group_pairs as _collect_group_pairs
+from .advanced import _drop_per_tenant_keys_without_at_rest as _drop_per_tenant_keys_without_at_rest
 from .advanced import (
     _drop_self_connect_without_connections as _drop_self_connect_without_connections,
 )
@@ -6182,6 +6183,19 @@ def show_compliance_commands(advanced: dict[str, Any]) -> None:
     )
 
 
+def _advanced_write_failed(exc: Exception) -> int:
+    """Report a failed final write. A file-system error is often temporary (a full
+    disk, a locked file), so its saved answers are kept for ``--resume``; any other
+    failure comes from the answers themselves, so they are cleared."""
+    show_install_failure(exc)
+    if isinstance(exc, OSError):
+        console.print(f"Your answers are kept in {PARTIAL_STATE_PATH}. Fix the problem, then run:\n"
+                      "  maverick init --resume")
+    else:
+        _clear_partial()
+    return 1
+
+
 def _saved_advanced(state: dict[str, Any]) -> dict[str, Any] | None:
     """Saved advanced answers, or None when the config writer would reject them.
 
@@ -6197,6 +6211,9 @@ def _saved_advanced(state: dict[str, Any]) -> dict[str, Any] | None:
         console.print(f"[yellow]A saved advanced setting is not valid: {escape(str(exc))} "
                       "Answer the advanced questions again; your other answers are kept.[/yellow]")
         return None
+    # The writer drops these silently; a fresh answer is told, so tell a saved one too.
+    _drop_self_connect_without_connections(advanced)
+    _drop_per_tenant_keys_without_at_rest(advanced)
     return advanced
 
 
@@ -6814,9 +6831,7 @@ def run(fast: bool = False, resume: bool = False) -> int:
             protect_existing=True,
         )
     except Exception as exc:
-        _clear_partial()
-        show_install_failure(exc)
-        return 1
+        return _advanced_write_failed(exc)
     _clear_partial()
     ok = smoke_test()
     if ok:

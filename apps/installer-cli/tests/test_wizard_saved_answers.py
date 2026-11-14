@@ -146,6 +146,16 @@ def test_advanced_write_failure_reports_and_clears_bad_resume_state(monkeypatch,
     assert "invalid saved answer" in wizard.console.file.getvalue()
 
 
+def test_temporary_write_failure_keeps_the_resume_answers(monkeypatch, tmp_path):
+    _advanced(monkeypatch, tmp_path)
+    def fail(*args, **kwargs):
+        raise OSError("No space left on device")
+    monkeypatch.setattr(wizard, "write_config", fail)
+    assert wizard.run() == 1
+    assert json.loads(wizard.PARTIAL_STATE_PATH.read_text())["providers"] == ["anthropic"]
+    assert "maverick init --resume" in wizard.console.file.getvalue()
+
+
 def test_existing_secret_prompts_never_show_any_prefix(monkeypatch):
     from maverick.tools import enterprise_connectors
 
@@ -236,3 +246,10 @@ def test_resume_reasks_saved_advanced_answers_the_writer_rejects(monkeypatch, tm
     assert asked == [1]
     assert "advanced questions again" in wizard.console.file.getvalue()
     assert config.load_config(wizard.CONFIG_FILE)["privacy"]["anonymous"] is True
+
+
+def test_resume_says_when_saved_per_tenant_keys_are_dropped(monkeypatch, tmp_path):
+    _paths(monkeypatch, tmp_path)
+    state = {"advanced": {"encrypt_per_tenant": True, "anonymous_logs": True}}
+    assert wizard._saved_advanced(state) == {"encrypt_per_tenant": False, "anonymous_logs": True}
+    assert "require at-rest encryption" in wizard.console.file.getvalue()
