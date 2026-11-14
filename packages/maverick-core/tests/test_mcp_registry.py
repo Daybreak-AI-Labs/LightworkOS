@@ -240,6 +240,18 @@ def test_remove_preserves_unrelated_config(tmp_path):
     assert parsed["budget"]["max_dollars"] == 5.0
 
 
+@pytest.mark.parametrize("text", [
+    '[mcp_servers]\nfoo = { command = "srv" }\n',
+    '[mcp_servers.foo]\ncommand = "srv"\nargs = [\n["nested"],\n]\n',
+])
+def test_remove_refuses_instead_of_reporting_a_false_or_corrupting_removal(tmp_path, text):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(text, encoding="utf-8")
+    with pytest.raises(ValueError, match="by hand"):
+        mcp_registry.remove_mcp_server_from_config("foo", path=cfg)
+    assert cfg.read_text(encoding="utf-8") == text
+
+
 def test_operator_configured_http_server_roundtrip(tmp_path):
     # Operator-authored config stays available independently of the registry.
     cfg = tmp_path / "config.toml"

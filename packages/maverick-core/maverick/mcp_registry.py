@@ -324,18 +324,22 @@ def remove_mcp_server_from_config(name: str, *, path=None) -> bool:
     config.toml by text scan. Returns True if it was present and removed.
 
     Text-scan (not a full TOML round-trip) so the rest of the file — comments,
-    ordering, unrelated tables — is preserved byte-for-byte."""
+    ordering, unrelated tables — is preserved byte-for-byte. The result is
+    parsed before it is written: if the server is still declared (for example
+    inline under ``[mcp_servers]``) or the file would no longer parse, nothing
+    is written and ``ValueError`` asks the operator to edit the file."""
     p = _config_path(path)
     if not p.exists():
         return False
     if name not in (_load_config_dict(p).get("mcp_servers") or {}):
         return False
     header_re = re.compile(r"^\s*\[")
-    # Matches [mcp_servers.<name>] and [mcp_servers.<name>.<sub>], with the name
-    # optionally quoted, tolerating inner whitespace.
+    # Matches [mcp_servers.<name>] and [mcp_servers.<name>.<sub>] (and their
+    # [[...]] array forms), with the name optionally quoted, tolerating inner
+    # whitespace.
     key = re.escape(name)
     target_re = re.compile(
-        rf'^\s*\[\s*mcp_servers\s*\.\s*(?:{key}|"{key}"|\'{key}\')\s*(?:\..*)?\]')
+        rf'^\s*\[\[?\s*mcp_servers\s*\.\s*(?:{key}|"{key}"|\'{key}\')\s*(?:\..*)?\]')
     out: list[str] = []
     skipping = False
     for line in p.read_text(encoding="utf-8").splitlines(keepends=True):
@@ -343,7 +347,21 @@ def remove_mcp_server_from_config(name: str, *, path=None) -> bool:
             skipping = bool(target_re.match(line))
         if not skipping:
             out.append(line)
-    p.write_text("".join(out), encoding="utf-8")
+    text = "".join(out)
+    try:
+        import tomllib  # 3.11+
+    except ModuleNotFoundError:  # Python 3.10
+        import tomli as tomllib  # type: ignore[no-redef]
+    try:
+        remaining = tomllib.loads(text).get("mcp_servers") or {}
+    except tomllib.TOMLDecodeError:
+        remaining = None
+    if remaining is None or name in remaining:
+        raise ValueError(
+            f"MCP server {name!r} could not be removed automatically; "
+            f"edit {p} by hand (the file was not changed)")
+    from .file_lock import atomic_write_text
+    atomic_write_text(p, text, mode=0o600)
     return True
 
 
