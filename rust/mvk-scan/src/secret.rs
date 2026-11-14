@@ -1,11 +1,13 @@
 //! Native port of `maverick.safety.secret_detector.scan`.
 //!
-//! Reproduces the Python matching rules and emission order, including the
+//! Follows the Python patterns and emission order, including the
 //! "redact the `val` sub-group when present, else the whole match" rule and
 //! global exact-span de-duplication. We return
 //! only `(name, codepoint_start, codepoint_end)` for direct native callers.
 //! Python detection and redaction use the pure-Python implementation; parity
 //! tests compare its spans with this engine. Patterns are compiled once.
+//! Regex Unicode classes differ between engines; see the workspace README's
+//! compatibility limits before relying on arbitrary-Unicode parity.
 //!
 //! Lookaround-free patterns compile to the linear regex backend. Capability
 //! token boundaries are checked against the original input outside the engine.

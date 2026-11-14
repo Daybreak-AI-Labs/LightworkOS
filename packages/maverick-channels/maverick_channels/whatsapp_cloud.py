@@ -61,6 +61,26 @@ except ImportError:
 GRAPH_BASE = "https://graph.facebook.com"
 API_VERSION = "v19.0"
 
+# Graph error codes that refuse the message or its recipient (invalid
+# parameter, required parameter missing, parameter value invalid, recipient
+# cannot be sender, message undeliverable, unsupported message type). Graph
+# also reports rate limits, quotas and expired tokens as 400/403, so any other
+# code, an ``is_transient`` error or an unreadable body stays retryable.
+_GRAPH_REFUSAL_CODES = frozenset({100, 131008, 131009, 131021, 131026, 131051})
+
+
+def graph_refusal(response, message):
+    """Classify a Meta Graph 4xx answer from its ``error`` body."""
+    from .delivery import provider_refusal
+
+    try:
+        error = (response.json() or {}).get("error")
+    except Exception:  # noqa: BLE001 -- an unreadable body is no evidence of refusal
+        error = None
+    refused = (isinstance(error, dict) and error.get("code") in _GRAPH_REFUSAL_CODES
+               and error.get("is_transient") is not True)
+    return provider_refusal(response.status_code, message, refused=refused)
+
 
 class WhatsAppCloudChannel(Channel):
     name = "whatsapp_cloud"
@@ -241,7 +261,7 @@ class WhatsAppCloudChannel(Channel):
     async def send(self, user_id: str, text: str) -> None:
         import httpx
         url = f"{GRAPH_BASE}/{self.api_version}/{self.phone_number_id}/messages"
-        from .delivery import DeliveryNotSent, DeliveryUnknown, send_chunk
+        from .delivery import DeliveryUnknown, send_chunk
 
         for index, chunk in enumerate([text[i:i + 4000] for i in range(0, max(len(text), 1), 4000)]):
             async def create(chunk=chunk):
@@ -249,7 +269,7 @@ class WhatsAppCloudChannel(Channel):
                     response = await client.post(url, headers={"Authorization": f"Bearer {self.access_token}"},
                         json={"messaging_product": "whatsapp", "to": user_id, "type": "text", "text": {"body": chunk}})
                 if 400 <= response.status_code < 500 and response.status_code != 408:
-                    raise DeliveryNotSent("Provider rejected the message")
+                    raise graph_refusal(response, "Provider rejected the message")
                 if response.status_code >= 400:
                     raise DeliveryUnknown("Provider acceptance could not be confirmed")
                 payload = response.json()

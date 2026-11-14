@@ -16,7 +16,8 @@ The safety scanners run on **every** agent input and tool output and are pure
 CPU — exactly the kind of hot, GIL-bound work that belongs in native code. The
 unicode scanner (`maverick.safety.unicode_filter`) is a faithful port, and
 Python keeps a **fallback shim**, so a build *without* the native wheel behaves
-identically. The native module is a drop-in accelerator, never a new hard
+alike for the covered inputs. Unicode normalization also depends on the Unicode
+version in each runtime. The native module is an optional accelerator, never a new hard
 dependency.
 
 ## Measured speedup (native vs pure Python, same machine)
@@ -129,3 +130,18 @@ code-unit** offsets for JavaScript string slicing, including non-ASCII text.
   Python too.
 
 Both bindings use the same `mvk-scan` core; parity tests also cover their offset conversions.
+
+### Compatibility limits
+
+The parity batteries cover specific inputs, not every Unicode string. Rust's
+regex Unicode classes differ from Python's: a combining mark before a key or
+email can suppress a native match that Python finds, while a superscript digit
+before a key can produce a native match Python does not find. U+001C also differs
+as whitespace and can change an environment-secret span. Existing detection
+patterns remain unchanged; the native scanners are not a lossless replacement
+for the Python scanners on arbitrary Unicode input. They also do not implement
+the separate Shield output-policy rules, which use different kinds and bounds.
+
+Credit-card candidates containing non-ASCII digits raise an error in the native
+API. Consumers must handle scan errors as incomplete checks, not clean results.
+The Python hot path continues to use its own secret and PII detectors.

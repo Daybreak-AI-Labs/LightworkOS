@@ -27,7 +27,13 @@ import uuid
 from dataclasses import dataclass
 
 from .base import Channel, IncomingMessage, is_allowed, normalize_allowlist
-from .delivery import DeliveryNotSent, DeliveryUnknown, delivery_active, send_chunk
+from .delivery import (
+    DeliveryNotSent,
+    DeliveryRejected,
+    DeliveryUnknown,
+    delivery_active,
+    send_chunk,
+)
 from .transport_worker import TransportWorker
 
 log = logging.getLogger(__name__)
@@ -219,7 +225,7 @@ class IRCChannel(Channel):
         line = line.replace("\r", "").replace("\n", "")
         data = (line + "\r\n").encode("utf-8", errors="replace")
         if len(data) > 512:
-            raise DeliveryNotSent("IRC line exceeds the wire byte bound")
+            raise DeliveryRejected("IRC line exceeds the wire byte bound")
         # Construction-only test callers may bypass __init__.
         if not hasattr(self, "_write_lock"):
             self._write_lock = asyncio.Lock()

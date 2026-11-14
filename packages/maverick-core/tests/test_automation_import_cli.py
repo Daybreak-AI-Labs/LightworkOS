@@ -121,3 +121,17 @@ def test_untranslatable_n8n_schedule_is_reported_not_silently_dropped(tmp_path):
     assert r.exit_code != 0
     assert "Not imported: Fortnightly report" in r.output
     assert "interval cannot be represented exactly by cron" in r.output
+
+
+def test_not_imported_line_is_one_clean_bounded_line(tmp_path):
+    fortnightly = {"id": "2", "name": "Evil\x1b]0;FORGED\x07\nname " + "x" * 200, "active": True,
+                   "nodes": [{"name": "Schedule", "type": "n8n-nodes-base.scheduleTrigger",
+                              "parameters": {"rule": {"interval": [{"field": "weeks", "weeksInterval": 2}]}}}],
+                   "connections": {}}
+    f = tmp_path / "wf.json"
+    f.write_text(json.dumps([fortnightly]))
+    r = _run(["import", "run", "n8n", "--from-file", str(f), "--dry-run"])
+    line = next(row for row in r.output.splitlines() if row.startswith("Not imported:"))
+    assert "\x1b" not in r.output and "\x07" not in r.output
+    assert "Evil ]0;FORGED name" in line and "x" * 100 not in line
+    assert "interval cannot be represented exactly by cron" in line

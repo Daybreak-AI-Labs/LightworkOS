@@ -544,18 +544,25 @@ def _end_episode_with_spend(
     world: WorldModel, episode_id: int, summary: str, outcome: str, budget: Budget,
     goal_id: int | None = None,
 ) -> None:
+    import inspect
+
+    spend = {
+        "cost_dollars": budget.dollars,
+        "input_tokens": budget.input_tokens,
+        "output_tokens": budget.output_tokens,
+        "tool_calls": budget.tool_calls,
+        "cache_read_tokens": budget.cache_read_tokens,
+        "cache_write_tokens": budget.cache_write_tokens,
+    }
+    signature = inspect.signature(world.end_episode)
     try:
-        world.end_episode(
-            episode_id, summary, outcome,
-            cost_dollars=budget.dollars,
-            input_tokens=budget.input_tokens,
-            output_tokens=budget.output_tokens,
-            tool_calls=budget.tool_calls,
-            cache_read_tokens=budget.cache_read_tokens,
-            cache_write_tokens=budget.cache_write_tokens,
-        )
+        signature.bind(episode_id, summary, outcome, **spend)
     except TypeError:
-        world.end_episode(episode_id, summary, outcome)
+        # Only a legacy signature may omit spend. Errors inside a supported
+        # writer must surface without retrying an incomplete record.
+        signature.bind(episode_id, summary, outcome)
+        spend = {}
+    world.end_episode(episode_id, summary, outcome, **spend)
     # Signed per-goal spend receipt (opt-in): activates the dormant
     # budget_receipts ledger so each finished goal appends a tamper-evident
     # tokens+cache+cost record — the regression baseline for token
@@ -1523,7 +1530,12 @@ class _RunLifecycle:
     def finish(self, error: BaseException | None) -> None:
         if not self.started:
             return
-        if error is not None:
+        goal = self.world.get_goal(self.goal_id)
+        if goal is not None and goal.status == "done":
+            # Paid learning can stop after success was already persisted.
+            # Keep the durable execution result and still settle episode spend.
+            self.outcome = "success"
+        elif error is not None:
             cancelled = isinstance(error, asyncio.CancelledError)
             allowance_stop = isinstance(error, BudgetExceeded)
             accounting_stop = isinstance(error, UsageAccountingError)
@@ -2353,8 +2365,6 @@ def _record_goal_success(*, world: WorldModel, goal: Any, goal_id: int, summary:
             )
         except Exception:  # pragma: no cover -- observability is best-effort
             pass
-    lifecycle.end_episode(summary, "success")
-    world.set_goal_status(goal_id, "done", result=summary)
     # Success-path audit: GOAL_END on the signed chain records the outcome,
     # closing the GOAL_START..GOAL_END pair for a completed run. Block/denial
     # exits are already covered by their own audit events. A write error is
@@ -2365,6 +2375,8 @@ def _record_goal_success(*, world: WorldModel, goal: Any, goal_id: int, summary:
     audit_event(EventKind.GOAL_END, goal_id=goal_id, agent="orchestrator",
                 status="succeeded",
                 result=(_res[:500] + "…") if _res and len(_res) > 500 else _res)
+    world.set_goal_status(goal_id, "done", result=summary)
+    lifecycle.end_episode(summary, "success")
     # Index this finished goal into the semantic store so future
     # runs recall it via vector search. No-op unless a [memory] backend is
     # configured; re-reads the goal so the indexed status/result reflect
@@ -3026,7 +3038,7 @@ async def run_goal(
         return f"BLOCKED: {exc}"
     from .federation_admission import FederationAdmissionRequired, require_execution
     try:
-        require_execution(world, goal_id, capability=capability, budget=budget, consume=True)
+        require_execution(world, goal_id, capability=capability, budget=budget, consume=False)
     except FederationAdmissionRequired as exc:
         return f"BLOCKED: {exc}"
     # A prepared outcome-pilot task is still a normal goal row and can be
@@ -3075,6 +3087,7 @@ async def run_goal(
             with bind_goal(world, goal_id, _execution_principal(user_id=user_id, capability=capability)), run_scope(world, goal_id, sandbox), organization_run_scope(
                 budget, _execution_principal(user_id=user_id, capability=capability),
             ):
+                require_execution(world, goal_id, capability=capability, budget=budget, consume=True)
                 return await _run_goal_accounted(
                     llm, world, budget, goal_id, sandbox, max_depth, conversation_id,
                     channel, user_id, capability, orchestrator_model_override, resume,
@@ -3084,7 +3097,7 @@ async def run_goal(
         if goal is not None and goal.owner == _execution_principal(user_id=user_id, capability=capability):
             world.set_goal_status(goal_id, "blocked", result=str(exc))
         return f"BLOCKED: {exc}"
-    except (TaskBusy, GoalMutationConflict, StarterWorkerAlreadyAdmitted) as exc:
+    except (TaskBusy, GoalMutationConflict, StarterWorkerAlreadyAdmitted, FederationAdmissionRequired) as exc:
         return f"BLOCKED: {exc}"
 
 

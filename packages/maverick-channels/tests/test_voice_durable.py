@@ -95,3 +95,46 @@ def test_vapi_tool_calls_in_the_documented_nested_shape_are_accepted():
     with pytest.raises(ValueError, match="not supported"):
         parse_request({"message": {"type": "tool-calls", "call": call, "toolCallList": [other]}},
                       provider="vapi", assistant_id="assistant-1", callers={"+12025550111"})
+
+
+def test_voice_invocation_runs_after_a_busy_activity_stripe_clears(monkeypatch, tmp_path):
+    # 256 lock stripes are shared by every channel: an unrelated live handler
+    # can hold this invocation's stripe. The invocation must still run once.
+    from maverick import world_model
+    from maverick_channels import delivery
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    monkeypatch.setenv("MAVERICK_GOVERNED_RECORD_BACKEND", "local")
+    monkeypatch.setattr(world_model, "DEFAULT_DB", tmp_path / "world.db")
+    monkeypatch.setattr(delivery, "ACTIVITY_WAIT_SECONDS", 0.05)
+
+    async def run():
+        handler = AsyncMock(return_value="saved response")
+        channel = VoiceChannel(handler, api_key="fixture", webhook_token="fixture", assistant_id="fixture-assistant",  # pragma: allowlist secret -- test fixture values
+                               allowed_callers={"+12025550111"})
+        record_id = delivery._record_id(channel.name, channel._delivery_account(), "5:call1:event1")
+        saved = {"results": [{"name": "lightwork_request", "toolCallId": "event1", "result": "saved response"}]}
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=channel._app), base_url="http://fixture",
+                                     headers={"Authorization": "Bearer fixture"}) as client:
+            with delivery._receipt_activity(record_id) as idle:  # A long unrelated handler.
+                assert idle
+                busy = await client.post("/webhook/voice", json=voice_event())
+                assert "still processing" in busy.json()["results"][0]["result"]
+            handler.assert_not_awaited()
+            assert (await client.post("/webhook/voice", json=voice_event())).json() == saved
+            assert (await client.post("/webhook/voice", json=voice_event())).json() == saved
+            handler.assert_awaited_once()
+            # A stripe released within the bound is waited for, not deferred.
+            monkeypatch.setattr(delivery, "ACTIVITY_WAIT_SECONDS", 5.0)
+            later = delivery._record_id(channel.name, channel._delivery_account(), "5:call1:event2")
+
+            async def brief_owner():
+                with delivery._receipt_activity(later):
+                    await asyncio.sleep(0.2)
+            owner = asyncio.create_task(brief_owner())
+            await asyncio.sleep(0)
+            response = await client.post("/webhook/voice", json=voice_event(id="event2"))
+            await owner
+            assert response.json()["results"][0]["result"] == "saved response"
+            assert handler.await_count == 2
+    asyncio.run(run())

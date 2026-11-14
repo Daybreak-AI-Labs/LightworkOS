@@ -1,0 +1,488 @@
+"""Definitive rejection is bounded; crashed intake and live work stay distinct."""
+import asyncio
+from types import SimpleNamespace
+
+import pytest
+from maverick import file_lock, paths, world_model
+from maverick_channels import delivery, transport_worker
+from maverick_channels.base import Channel, IncomingMessage
+
+
+class Adapter(Channel):
+    name = "fixture"
+
+    async def start(self):
+        pass
+
+    async def stop(self):
+        pass
+
+    async def send(self, user_id, text):
+        pass
+
+
+@pytest.fixture
+def journal(monkeypatch, tmp_path):
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    monkeypatch.setenv("MAVERICK_GOVERNED_RECORD_BACKEND", "local")
+    monkeypatch.setattr(world_model, "DEFAULT_DB", tmp_path / "world.db")
+    return delivery.DeliveryJournal()
+
+
+def message(identity):
+    return IncomingMessage(user_id="person", text=identity, channel="fixture", message_id=identity)
+
+
+def test_provider_rejections_back_off_across_restart_then_release_conversation(journal, monkeypatch):
+    calls, handled = [], []
+    now = [delivery.time.time()]
+    monkeypatch.setattr(delivery, "time", SimpleNamespace(time=lambda: now[0]))
+    monkeypatch.setattr(transport_worker, "_wall_clock", lambda: now[0])
+
+    async def handler(inbound):
+        handled.append(inbound.text)
+        return inbound.text
+
+    async def send(inbound, reply, route):
+        calls.append(reply.text)
+        if reply.text == "first":
+            raise delivery.DeliveryRejected("provider refused")
+        return "accepted"
+
+    def worker():
+        return transport_worker.TransportWorker(Adapter(handler), account="acct", authorize=lambda _: True,
+                                                send=send, journal=journal)
+
+    async def run():
+        first = journal.admit(message("first"), external_id="first", account="acct")
+        second = journal.admit(message("second"), external_id="second", account="acct")
+        current = worker()
+        await current._process(first["id"])
+        prior_delay = 0
+        for attempt in range(1, 9):
+            row = journal.get(first["id"])
+            assert row["chunks"]["reply"]["attempts"] == attempt
+            if attempt == 8:
+                assert row["delivery"] == "delivery_failed"
+                break
+            delay = row["chunks"]["reply"]["retry_at"] - now[0]
+            assert delay >= 30 and delay > prior_delay
+            prior_delay = delay
+            current = worker()  # No in-memory timer survives the restart.
+            await current._process(first["id"])
+            assert calls == ["first"] * attempt
+            await current._process(second["id"])
+            assert handled == ["first"]
+            now[0] += delay + 1
+            await current._process(first["id"])
+        await current._process(first["id"])
+        await current._process(second["id"])
+        assert calls == ["first"] * 8 + ["second"]
+        assert handled == ["first", "second"]
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("sweep", ["recovery", "compaction"])
+def test_abandoned_staging_is_released_without_executing(journal, monkeypatch, sweep):
+    row = journal.admit(message("staged"), external_id="staged", account="acct")
+    row = journal.change(row, execution="staging")
+    future = row["updated_at"] + delivery.STALE_CLAIM_SECONDS + 1
+    monkeypatch.setattr(delivery, "time", SimpleNamespace(time=lambda: future))
+    if sweep == "recovery":
+        rows, _ = journal.recovery_window(channel="fixture", account="acct")
+        assert rows == []
+    else:
+        journal.compact_delivered()
+    assert journal.get(row["id"]) is None
+
+
+def test_stale_sweep_does_not_change_a_running_handler(journal, monkeypatch):
+    async def handler(inbound):
+        row = journal.get(delivery._record_id("fixture", "acct", "live"))
+        future = row["updated_at"] + delivery.STALE_CLAIM_SECONDS + 1
+        monkeypatch.setattr(delivery, "time", SimpleNamespace(time=lambda: future))
+        journal.recovery_window(channel="fixture", account="acct")
+        assert journal.get(row["id"])["execution"] == "execution_started_unconfirmed"
+        return "done"
+
+    async def send(reply):
+        return "accepted"
+    result = asyncio.run(Adapter(handler).process_message(message("live"), external_id="live", account="acct",
+                         authorize=lambda: True, send=send, journal=journal))
+    assert result["execution"] == "completed" and result["delivery"] == "delivered"
+
+
+@pytest.mark.parametrize("uncertainty", ["remote", "lock_unavailable", "workspace_changed", "identity_missing", "identity_corrupt"])
+def test_stale_claim_retains_uncertain_ownership(journal, monkeypatch, uncertainty):
+    row = journal.admit(message("uncertain"), external_id="uncertain", account="acct")
+    row = journal.claim_execution(row)
+    if uncertainty == "remote":
+        row = journal.change(row, activity_scope="another-replica-and-home")
+    elif uncertainty == "lock_unavailable":
+        def unavailable(*args, **kwargs):
+            raise OSError("filesystem locking unavailable")
+        monkeypatch.setattr(delivery, "_receipt_activity", unavailable)
+    else:
+        identity = paths.data_dir("channels", "receipt-activity", "workspace-id")
+        if uncertainty == "identity_missing":
+            identity.unlink()
+        else:
+            replacement = b"b" * 32 if uncertainty == "workspace_changed" else b"invalid"
+            file_lock.atomic_write_bytes(identity, replacement)
+            if uncertainty == "workspace_changed":
+                assert delivery._activity_scope() != row["activity_scope"]  # Same host/path, different lock volume.
+    future = row["updated_at"] + delivery.STALE_CLAIM_SECONDS + 1
+    monkeypatch.setattr(delivery, "time", SimpleNamespace(time=lambda: future))
+    rows, _ = journal.recovery_window(channel="fixture", account="acct")
+    assert rows == []
+    assert journal.get(row["id"])["execution"] == "execution_started_unconfirmed"
+    if uncertainty == "identity_missing":
+        assert not identity.exists()
+    elif uncertainty == "identity_corrupt":
+        assert identity.read_bytes() == b"invalid"
+
+
+
+def test_source_withheld_never_uses_the_provider_rejection_allowance(journal, monkeypatch):
+    allowed = [False]
+
+    def require_source(row):
+        if not allowed[0]:
+            raise PermissionError("Source access withdrawn")
+    monkeypatch.setattr(delivery, "_require_reply_source", require_source)
+    calls = []
+
+    async def handler(inbound):
+        return "answer"
+
+    async def send(reply):
+        calls.append(reply.text)
+        return "accepted"
+
+    async def run():
+        channel = Adapter(handler)
+        for _ in range(10):
+            row = await channel.process_message(message("held"), external_id="held", account="acct",
+                      authorize=lambda: True, send=send, journal=journal)
+            assert row["delivery"] == "retryable"
+            assert row["chunks"]["reply"]["attempts"] == 0
+            assert delivery.retry_delay(row) == 0
+        assert calls == []
+        allowed[0] = True
+        row = await channel.process_message(message("held"), external_id="held", account="acct",
+                  authorize=lambda: True, send=send, journal=journal)
+        assert row["delivery"] == "delivered" and calls == ["answer"]
+    asyncio.run(run())
+
+
+
+def test_automatic_recovery_waits_but_explicit_recovery_remains_immediate(journal, monkeypatch):
+    now = delivery.time.time()
+    monkeypatch.setattr(delivery, "time", SimpleNamespace(time=lambda: now))
+    calls, handled = [], []
+
+    async def handler(inbound):
+        handled.append(inbound.text)
+        return "answer"
+
+    async def send(reply):
+        calls.append(reply.text)
+        if len(calls) == 1:
+            raise delivery.DeliveryRejected("provider refused")
+        return "accepted"
+
+    async def send_saved(inbound, reply, route):
+        return await send(reply)
+
+    async def run():
+        channel = Adapter(handler)
+        row = await channel.process_message(message("recover"), external_id="recover", account="acct",
+                    authorize=lambda: True, send=send, journal=journal)
+        assert row["delivery"] == "retryable"
+        kwargs = dict(account="acct", authorize=lambda _: True, send=send_saved, journal=journal)
+        assert await delivery.recover_messages(channel, respect_retry_at=True, **kwargs) == []
+        assert calls == ["answer"]
+        result = await delivery.recover_messages(channel, **kwargs)
+        assert result[0]["delivery"] == "delivered"
+        assert calls == ["answer", "answer"] and handled == ["recover"]
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("phase", ["execution", "staging"])
+def test_live_legacy_owner_without_scope_is_never_declared_abandoned(journal, monkeypatch, phase):
+    incoming = message("legacy")
+    incoming.attachments = [{"filename": "note.txt", "mime": "text/plain", "data": b"live legacy input"}]
+    row = journal.admit(incoming, external_id="legacy", account="acct")
+    row = journal.claim_execution(row) if phase == "execution" else journal.change(row, execution="staging")
+    # An earlier build persisted this protocol without the new ownership field
+    # or activity locks. Its still-running handler/publisher owns this revision.
+    row = journal.store.update(row["id"], lambda record: record.pop("activity_scope"),
+                               expected_revision=row["revision"], action="legacy_fixture", actor="test")
+    blob = delivery._blob_path(row["id"], row["message"]["attachments"][0]["sha256"])
+    later = row["updated_at"] + delivery.STALE_CLAIM_SECONDS + 1
+    monkeypatch.setattr(delivery, "time", SimpleNamespace(time=lambda: later))
+
+    async def run():
+        ready, finish = asyncio.Event(), asyncio.Event()
+
+        async def legacy_owner():
+            ready.set()
+            await finish.wait()
+            return journal.change(row, execution="completed" if phase == "execution" else "received")
+
+        owner = asyncio.create_task(legacy_owner())
+        await ready.wait()
+        try:
+            if phase == "execution":
+                journal._surface_stale_claim(row)
+            else:
+                journal._compact_receipt(row, later)
+            assert not owner.done()
+            assert journal.get(row["id"]) == row
+            assert blob.exists()
+        finally:
+            finish.set()
+            await owner
+    asyncio.run(run())
+
+
+def test_temporary_not_sent_is_retried_past_the_rejection_allowance(journal):
+    """Throttled, disconnected or unavailable sends were never refused: no limit applies."""
+    assert type(delivery.provider_refusal(429, "throttled")) is delivery.DeliveryNotSent
+    assert type(delivery.provider_refusal(401, "session expired")) is delivery.DeliveryNotSent
+    assert type(delivery.provider_refusal(400, "bad request")) is delivery.DeliveryRefusedUnclear
+    assert type(delivery.provider_refusal(404, "no such recipient")) is delivery.DeliveryRejected
+    calls = []
+
+    async def handler(inbound):
+        return "answer"
+
+    async def send(reply):
+        calls.append(reply.text)
+        if len(calls) <= delivery.MAX_PROVIDER_ATTEMPTS + 2:
+            raise delivery.DeliveryNotSent("provider is throttling; nothing was sent")
+        return "accepted"
+
+    async def run():
+        channel = Adapter(handler)
+        for _ in range(delivery.MAX_PROVIDER_ATTEMPTS + 2):
+            row = await channel.process_message(message("busy"), external_id="busy", account="acct",
+                      authorize=lambda: True, send=send, journal=journal)
+            assert row["delivery"] == "retryable"
+            assert row["chunks"]["reply"]["attempts"] == 0
+            assert delivery.retry_delay(row) == 0
+        row = await channel.process_message(message("busy"), external_id="busy", account="acct",
+                  authorize=lambda: True, send=send, journal=journal)
+        assert row["delivery"] == "delivered"
+        assert len(calls) == delivery.MAX_PROVIDER_ATTEMPTS + 3
+    asyncio.run(run())
+
+
+class _Response:
+    def __init__(self, status_code, body):
+        self.status_code, self._body = status_code, body
+
+    def json(self):
+        if isinstance(self._body, Exception):
+            raise self._body
+        return self._body
+
+
+@pytest.mark.parametrize(("status", "refused", "expected"), [
+    (400, False, delivery.DeliveryRefusedUnclear), (403, False, delivery.DeliveryRefusedUnclear),
+    (401, True, delivery.DeliveryNotSent), (429, True, delivery.DeliveryNotSent),
+    (409, True, delivery.DeliveryNotSent), (400, True, delivery.DeliveryRejected),
+    (403, True, delivery.DeliveryRejected), (404, False, delivery.DeliveryRejected),
+    (410, False, delivery.DeliveryRejected), (413, False, delivery.DeliveryRejected),
+    (422, False, delivery.DeliveryRejected),
+])
+def test_bare_400_or_403_is_not_evidence_of_a_refused_message(status, refused, expected):
+    # Providers also answer throttling, quotas and expired credentials with 400/403.
+    assert type(delivery.provider_refusal(status, "refused", refused=refused)) is expected
+
+
+@pytest.mark.parametrize(("status", "body", "expected"), [
+    (400, {"error": {"code": 4, "message": "Application request limit reached"}}, delivery.DeliveryRefusedUnclear),
+    (400, {"error": {"code": 190, "message": "Session has expired"}}, delivery.DeliveryRefusedUnclear),
+    (400, {"error": {"code": 130429, "message": "Rate limit hit"}}, delivery.DeliveryRefusedUnclear),
+    (403, {"error": {"code": 131056}}, delivery.DeliveryRefusedUnclear),
+    (400, {"error": {"code": 100, "is_transient": True}}, delivery.DeliveryRefusedUnclear),
+    (400, ValueError("not json"), delivery.DeliveryRefusedUnclear),
+    (400, {"unexpected": "shape"}, delivery.DeliveryRefusedUnclear),
+    (429, {"error": {"code": 4}}, delivery.DeliveryNotSent),
+    (400, {"error": {"code": 100, "message": "Invalid parameter"}}, delivery.DeliveryRejected),
+    (400, {"error": {"code": 131026, "message": "Message undeliverable"}}, delivery.DeliveryRejected),
+])
+def test_graph_refusal_needs_a_message_level_error_code(status, body, expected):
+    from maverick_channels.threads import ThreadsChannel
+    from maverick_channels.whatsapp_cloud import graph_refusal
+
+    response = _Response(status, body)
+    assert type(graph_refusal(response, "refused")) is expected
+    with pytest.raises(delivery.DeliveryNotSent) as raised:
+        ThreadsChannel._check_send(response)
+    assert type(raised.value) is expected
+
+
+@pytest.mark.parametrize(("body", "expected"), [
+    ({"error": "ExpiredToken", "message": "Token has expired"}, delivery.DeliveryNotSent),
+    ({"error": "InvalidToken"}, delivery.DeliveryNotSent),
+    ({"error": "InvalidRequest", "message": "Record/text must not be longer than 300 graphemes"},
+     delivery.DeliveryRefusedUnclear),
+])
+def test_bluesky_expired_token_is_temporary(body, expected):
+    from maverick_channels import bluesky
+
+    assert type(bluesky._reply_refusal(_Response(400, body))) is expected
+    assert type(bluesky._reply_refusal(_Response(404, {}))) is delivery.DeliveryRejected
+
+
+@pytest.mark.parametrize(("replies", "expected"), [
+    ([(550, b"5.1.1 The email account that you tried to reach does not exist")], delivery.DeliveryRejected),
+    ([(553, b"5.1.3 Invalid recipient address syntax")], delivery.DeliveryRejected),
+    ([(552, b"5.3.4 Message size exceeds fixed maximum message size")], delivery.DeliveryRejected),
+    ([(550, b"5.4.5 Daily user sending quota exceeded")], delivery.DeliveryRefusedUnclear),
+    ([(554, b"5.2.0 STOREDRV.Submission.Exception:SubmissionQuotaExceededException")], delivery.DeliveryRefusedUnclear),
+    ([(550, b"5.7.1 Message rejected by policy")], delivery.DeliveryRefusedUnclear),
+    ([(550, b"no such user")], delivery.DeliveryRefusedUnclear),
+    ([(450, b"4.1.1 Mailbox temporarily unavailable")], delivery.DeliveryNotSent),
+    ([(550, b"5.1.1 unknown user"), (450, b"4.2.1 try later")], delivery.DeliveryRefusedUnclear),
+    ([], delivery.DeliveryNotSent),
+])
+def test_smtp_quota_and_policy_refusals_stay_retryable(replies, expected):
+    from maverick_channels.email import _smtp_refusal
+
+    assert type(_smtp_refusal(replies, "refused")) is expected
+
+
+def test_refusals_decided_from_the_message_itself_are_definitive(journal):
+    """Identical on every attempt: they must reach the limit, not loop for ever."""
+    import json
+
+    from maverick_channels import teams
+    from maverick_channels.irc import IRCChannel
+    from maverick_channels.mastodon import MastodonChannel
+    from maverick_channels.signal import SignalChannel
+    from maverick_channels.slack import SlackChannel
+
+    async def run():
+        irc = IRCChannel.__new__(IRCChannel)
+        irc._writer = object()
+        with pytest.raises(delivery.DeliveryRejected):
+            await irc._send_line("x" * 600)
+        with pytest.raises(delivery.DeliveryRejected):
+            await SlackChannel.__new__(SlackChannel).send_threaded("C1", "")
+        with pytest.raises(delivery.DeliveryRejected):
+            await MastodonChannel.__new__(MastodonChannel)._post_reply({"id": "1"}, {"acct": "a" * 480}, "hi")
+        with pytest.raises(delivery.DeliveryRejected):
+            teams.TeamsConnector._base("http://smba.example/")
+        with pytest.raises(delivery.DeliveryRejected):
+            await teams.default_transport("POST", "http://smba.example/v3/conversations")
+
+        signal = SignalChannel.__new__(SignalChannel)
+        signal._req_id, signal._pending_rpc, signal._stopping = 0, {}, False
+        signal._write_lock = asyncio.Lock()
+
+        class Stdin:
+            def write(self, data):
+                request = json.loads(data)
+                signal._pending_rpc[request["id"]].set_result({"error": {"code": -32601}})
+
+            async def drain(self):
+                pass
+        signal._proc = SimpleNamespace(stdin=Stdin())
+        with pytest.raises(delivery.DeliveryRejected):
+            await signal._send_rpc("send", {"message": "hi"})
+
+        row = journal.admit(message("many"), external_id="many", account="acct")
+        row = journal.change(row, chunks={f"c{i}": {} for i in range(delivery.MAX_CHUNKS)})
+        attempt = delivery._DeliveryAttempt(journal, row["id"], lambda: True)
+        with pytest.raises(delivery.DeliveryRejected):
+            await attempt.send_chunk("one-more", "text", lambda: None)
+    asyncio.run(run())
+
+
+def test_only_a_caller_that_asks_waits_for_a_busy_activity_stripe(journal, monkeypatch):
+    monkeypatch.setattr(delivery, "ACTIVITY_WAIT_SECONDS", 30.0)
+    handled = []
+
+    async def handler(inbound):
+        handled.append(inbound.text)
+        return "answer"
+
+    async def send(reply):
+        return "accepted"
+
+    async def run():
+        channel = Adapter(handler)
+        row = journal.admit(message("busy"), external_id="busy", account="acct")
+        with delivery._receipt_activity(row["id"]) as idle:  # An unrelated live handler.
+            assert idle
+            started = delivery._monotonic()
+            result = await channel.process_message(message("busy"), external_id="busy", account="acct",
+                         authorize=lambda: True, send=send, receipt=row, journal=journal)
+            assert delivery._monotonic() - started < 5
+            assert result["execution"] == "received" and handled == []
+
+            async def erase():
+                await asyncio.sleep(0.1)
+                journal.store.delete(row["id"], expected_revision=row["revision"])
+            eraser = asyncio.create_task(erase())
+            with pytest.raises(delivery.DeliveryUnknown):
+                await channel.process_message(message("busy"), external_id="busy", account="acct",
+                    authorize=lambda: True, send=send, receipt=row, journal=journal, wait_for_activity=True)
+            await eraser
+        assert handled == []
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(("refusal", "persisted", "limited"), [
+    (lambda: delivery.provider_refusal(403, "forbidden, cause unknown"), True, False),
+    (lambda: delivery.provider_refusal(404, "no such recipient"), True, True),
+    (lambda: delivery.provider_refusal(429, "throttled"), False, False),
+])
+def test_unclear_refusal_backs_off_but_is_never_abandoned(journal, monkeypatch, refusal, persisted, limited):
+    now = [delivery.time.time()]
+    monkeypatch.setattr(delivery, "time", SimpleNamespace(time=lambda: now[0]))
+    calls = []
+
+    async def handler(inbound):
+        return "answer"
+
+    async def send(reply):
+        calls.append(reply.text)
+        raise refusal()
+
+    async def send_saved(inbound, reply, route):
+        return await send(reply)
+
+    async def run():
+        channel = Adapter(handler)
+        row = await channel.process_message(message("unclear"), external_id="unclear", account="acct",
+                    authorize=lambda: True, send=send, journal=journal)
+        kwargs = dict(account="acct", authorize=lambda _: True, send=send_saved, journal=journal,
+                      respect_retry_at=True)
+        delays = []
+        for _ in range(delivery.MAX_PROVIDER_ATTEMPTS + 3):
+            delay = delivery.retry_delay(row)
+            if not persisted:
+                assert delay == 0 and row["delivery"] == "retryable"
+            elif limited and row["delivery"] == "delivery_failed":
+                break
+            else:
+                assert delay > 0 and row["delivery"] == "retryable"
+                delays.append(delay)
+                before = len(calls)
+                assert await delivery.recover_messages(channel, **kwargs) == []  # Not yet due.
+                assert len(calls) == before
+                now[0] += delay + 1
+            await delivery.recover_messages(channel, **kwargs)
+            row = journal.get(row["id"])
+        if limited:
+            assert row["delivery"] == "delivery_failed" and len(calls) == delivery.MAX_PROVIDER_ATTEMPTS
+        else:
+            assert row["delivery"] == "retryable"
+            assert len(calls) == delivery.MAX_PROVIDER_ATTEMPTS + 4
+        if persisted and not limited:
+            assert delays[1] > delays[0] and delays[-1] <= 30 * 2 ** (delivery.MAX_PROVIDER_ATTEMPTS - 2)
+    asyncio.run(run())

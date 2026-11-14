@@ -39,6 +39,7 @@ import re
 from .base import Channel, IncomingMessage, is_allowed, normalize_allowlist
 from .delivery import (
     DeliveryNotSent,
+    DeliveryRejected,
     DeliveryUnknown,
     delivery_active,
     read_reply_file,
@@ -482,12 +483,15 @@ class SlackChannel(Channel):
         self, user_id: str, text: str, *, reply_to: str | None = None,
     ) -> None:
         from maverick.slack_interactive import _slack_literal_chunks
-        rejected = {"not_authed", "invalid_auth", "account_inactive", "token_revoked",
-                    "missing_scope", "channel_not_found", "not_in_channel", "is_archived",
-                    "msg_too_long", "no_text", "restricted_action", "ratelimited"}
+        # These refuse the message itself; the rest (credentials, scopes,
+        # throttling) can clear without changing the reply.
+        rejected = {"channel_not_found", "not_in_channel", "is_archived",
+                    "msg_too_long", "no_text", "restricted_action"}
+        not_sent = {"not_authed", "invalid_auth", "account_inactive", "token_revoked",
+                    "missing_scope", "ratelimited"}
         receipt = None
         if not text:
-            raise DeliveryNotSent("Slack cannot deliver an empty reply")
+            raise DeliveryRejected("Slack cannot deliver an empty reply")
         # Format before splitting so escaping cannot expand a chunk past its
         # bound. Slack otherwise silently truncates a long successful post.
         for index, chunk in enumerate(_slack_literal_chunks(text, limit=4000)):
@@ -501,11 +505,15 @@ class SlackChannel(Channel):
                 except Exception as exc:
                     response = getattr(exc, "response", None)
                     if response is not None and response.get("error") in rejected:
-                        raise DeliveryNotSent("Slack rejected the reply") from exc
+                        raise DeliveryRejected("Slack rejected the reply") from exc
+                    if response is not None and response.get("error") in not_sent:
+                        raise DeliveryNotSent("Slack did not accept the reply") from exc
                     raise
                 if result.get("ok") is False:
                     if result.get("error") in rejected:
-                        raise DeliveryNotSent("Slack rejected the reply")
+                        raise DeliveryRejected("Slack rejected the reply")
+                    if result.get("error") in not_sent:
+                        raise DeliveryNotSent("Slack did not accept the reply")
                     raise DeliveryUnknown("Slack reply acceptance is uncertain")
                 provider_id = result.get("ts")
                 if delivery_active() and not isinstance(provider_id, str):

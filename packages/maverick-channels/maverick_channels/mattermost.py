@@ -40,7 +40,7 @@ from .base import (
     is_allowed,
     normalize_allowlist,
 )
-from .delivery import DeliveryNotSent, DeliveryUnknown, send_chunk
+from .delivery import DeliveryUnknown, provider_refusal, send_chunk
 from .formatting import neutralize_mentions
 
 log = logging.getLogger(__name__)
@@ -227,7 +227,7 @@ class MattermostChannel(Channel):
                     response = await client.post(self.base_url + _API + "/posts",
                                                  headers=self._headers(), json=body)
                 if 400 <= response.status_code < 500 and response.status_code not in {408, 429}:
-                    raise DeliveryNotSent("Mattermost rejected the reply")
+                    raise provider_refusal(response.status_code, "Mattermost rejected the reply")
                 if response.status_code >= 400:
                     raise DeliveryUnknown("Mattermost reply acceptance is unconfirmed")
                 return str((response.json() or {}).get("id", ""))
@@ -263,7 +263,7 @@ class MattermostChannel(Channel):
             account = self._account()
             try:
                 await self.recover_messages(
-                    account=account, send=send_saved,
+                    account=account, send=send_saved, respect_retry_at=True,
                     authorize=lambda msg, account=account: account == self._account() and self._allowed(
                         msg.sender_id, self._usernames.get(msg.sender_id or "", "")))
             except Exception:

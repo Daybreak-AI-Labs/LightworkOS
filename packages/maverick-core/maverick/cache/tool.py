@@ -217,7 +217,10 @@ def _warm_on_start() -> int:
 
 def cacheable(tool: Any) -> bool:
     """Only side-effect-free (``parallel_safe``) tools may be memoized."""
-    return getattr(tool, "parallel_safe", False) is True
+    # These tools default omitted dates to the current clock. Their verdicts
+    # can change while identical arguments remain in an unlimited-TTL cache.
+    temporal = {"consent_check", "retention_check", "breach_notification", "coordinated_disclosure"}
+    return getattr(tool, "parallel_safe", False) is True and getattr(tool, "name", "") not in temporal
 
 
 def _key(
@@ -271,9 +274,13 @@ def get_cached(
             hit, value = shared.get(name, args, scope=namespace) if shared else (False, None)
             with _lock:
                 if hit and isinstance(value, str):
-                    _store[k] = (value, time.monotonic(), time.time())
-                    while len(_store) > _maxsize():
-                        _store.popitem(last=False)
+                    # Redis's existing API returns no age/remaining TTL.
+                    # Keep expiring hits in that authoritative tier so warming
+                    # cannot restart their lifetime in this process.
+                    if not ttl:
+                        _store[k] = (value, time.monotonic(), time.time())
+                        while len(_store) > _maxsize():
+                            _store.popitem(last=False)
                     _hits += 1
                     return (True, value)
                 _misses += 1

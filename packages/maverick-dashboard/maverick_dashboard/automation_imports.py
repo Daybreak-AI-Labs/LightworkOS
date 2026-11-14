@@ -274,8 +274,9 @@ def _translated(request, choices, raws):
             title, body = automation.render(complete=True)
         except Exception as exc:
             if isinstance(exc, ValueError) and str(exc).startswith("n8n import needs repair:"):
-                name = " ".join(str(raw.get("name") or "An automation").split())[:80]
-                raise HTTPException(422, f"{name} was not imported: {exc}. Repair it in the other platform; "
+                from maverick.automation_import.base import display_line
+                name = display_line(raw.get("name") or "An automation", max_chars=80)
+                raise HTTPException(422, f"{name} was not imported: {display_line(exc)}. Repair it in the other platform; "
                                     "nothing was saved.") from exc
             raise HTTPException(422, "An automation in this export could not be translated completely. Nothing was skipped or saved; choose a supported separate export.") from exc
         if not body or len(body) > 16000:

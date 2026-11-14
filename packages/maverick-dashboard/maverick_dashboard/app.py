@@ -15634,7 +15634,15 @@ async def llm_gateway_otel(request: Request) -> JSONResponse:
                                "type": "invalid_request_error"}},
         )
     try:
-        result = await run_in_threadpool(llm_gateway.ingest_otel_spans, payload)
+        result = await run_in_threadpool(
+            llm_gateway.ingest_otel_spans, payload, caller_token=token,
+        )
+    except PermissionError:
+        return JSONResponse(
+            status_code=401,
+            content={"error": {"message": "The gateway bearer is missing or wrong.",
+                               "type": "invalid_request_error"}},
+        )
     except ValueError as exc:
         return JSONResponse(
             status_code=400,
