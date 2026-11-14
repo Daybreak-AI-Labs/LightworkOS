@@ -58,7 +58,7 @@ def test_azure_completion_override_uses_client_environment(monkeypatch):
     monkeypatch.setattr(openai, "AsyncAzureOpenAI", lambda **kwargs: SimpleNamespace())
     monkeypatch.setenv("AZURE_OPENAI_USE_MAX_COMPLETION", "0")
     env = {"AZURE_OPENAI_ENDPOINT": "https://azure.example", "AZURE_OPENAI_DEPLOYMENT": "deployment",
-           "AZURE_OPENAI_API_KEY": "synthetic", "AZURE_OPENAI_USE_MAX_COMPLETION": "1"}
+           "AZURE_OPENAI_API_KEY": "synthetic", "AZURE_OPENAI_USE_MAX_COMPLETION": "1"}  # pragma: allowlist secret -- synthetic client fixture
     client = AzureOpenAIClient(environment=env)
     assert client._wants_max_completion("deployment")
     env["AZURE_OPENAI_USE_MAX_COMPLETION"] = "0"
