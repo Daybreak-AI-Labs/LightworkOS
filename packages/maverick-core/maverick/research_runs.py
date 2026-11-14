@@ -181,6 +181,11 @@ def _decimal(value: object, label: str, *, non_negative: bool = True) -> str:
     if not number.is_finite() or (non_negative and number < 0):
         requirement = "finite and non-negative" if non_negative else "finite"
         raise ValueError(f"{label} must be {requirement}")
+    # Reject huge exponents before normalizing: normalize() raises
+    # decimal.Overflow (not ValueError) past the context's exponent limit, and
+    # no value this far from 1 fits the 64-character boundary below.
+    if number and abs(number.adjusted()) > 64:
+        raise ValueError(f"{label} exceeds its precision boundary")
     normalized = format(number.normalize(), "f")
     if normalized == "-0":
         normalized = "0"
