@@ -37,12 +37,37 @@ def test_dry_run_produces_row(harness, tmp_path, monkeypatch):
     )
 
     assert row["agent"] == "maverick"
-    # Provenance: auto-measured rows are tagged so they can't be confused
-    # with hand-added comparator rows.
-    assert row["source"] == "measured"
+    # Provenance: a dry run measured nothing, so it is never tagged as a
+    # measured row (nor confused with hand-added comparator rows).
+    assert row["source"] == "dry-run"
     assert row["outcome"] == "dry-run"
     assert row["wall_seconds"] >= 0
     assert row["cost_dollars"] == 0.0
+
+
+def test_failed_run_never_inherits_an_older_episode(harness, tmp_path, monkeypatch):
+    import subprocess
+
+    from maverick.world_model import WorldModel
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("MAVERICK_BENCH_DRY_RUN", raising=False)
+    db = tmp_path / "world.db"
+    wm = WorldModel(db)
+    episode = wm.start_episode(wm.create_goal("earlier run"))
+    wm.end_episode(episode, "done", "success", cost_dollars=1.5, input_tokens=10)
+    monkeypatch.setattr(
+        harness.subprocess, "run",
+        lambda *a, **k: subprocess.CompletedProcess(a[0], 2, "", "boom"),
+    )
+    bench = tmp_path / "fake.md"
+    bench.write_text("dummy benchmark spec")
+
+    row = harness.run_one(bench, 1.0, 10.0, "ci", db_path=db)
+
+    assert row["outcome"] == "exit-2"
+    assert row["cost_dollars"] == 0.0
+    assert row["input_tokens"] == 0
 
 
 def test_append_results_creates_table(harness, tmp_path):
