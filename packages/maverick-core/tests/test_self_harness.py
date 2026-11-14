@@ -308,6 +308,13 @@ def test_store_roundtrip_and_recall(monkeypatch, store):
     assert json.loads(store.read_text())["A"].count("Verify the window first.") == 1
 
 
+def test_apply_refuses_to_overwrite_an_unreadable_store(store):
+    store.write_text('{"A": "- keep me"', encoding="utf-8")  # truncated JSON
+    with pytest.raises(ValueError):
+        sh._apply_addendum(_sig_proposal(), path=store)
+    assert store.read_text(encoding="utf-8") == '{"A": "- keep me"'
+
+
 # ---------- GATE (full promote + refusal) ----------
 
 def _enable(monkeypatch, frozen=False):

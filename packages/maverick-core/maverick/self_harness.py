@@ -215,7 +215,7 @@ def _load_addenda_strict(path: Path) -> dict[str, str]:
     """
     if _world_routed(path):
         from . import learning_store
-        raw = learning_store.load_addenda_db()
+        raw = learning_store.load_addenda_db(strict=True)
     else:
         if path.is_symlink():
             raise ValueError("addenda store must not be a symbolic link")
@@ -2400,7 +2400,8 @@ def _apply_addendum(proposal: HarnessProposal, path: Path | None = None, *,
     p = path if path is not None else _store_path()
     from .file_lock import cross_process_lock
     with _lock, cross_process_lock(p), _store_rmw_lock(p):
-        before = load_addenda(p)
+        # Strict: a failed read must not be followed by a whole-map write.
+        before = _load_addenda_strict(p)
         _apply_addendum_locked(
             proposal, p, before, provenance=provenance)
 
