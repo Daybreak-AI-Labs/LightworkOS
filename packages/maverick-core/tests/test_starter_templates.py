@@ -72,6 +72,9 @@ def test_suggest_owner_scopes_history(tmp_path):
     bob = st.suggest(w, k=1, owner="user:bob", templates=tpls)
     assert amy[0]["name"] == "research-report"
     assert bob[0]["name"] == "trip-plan"
+    # An unscoped (admin) caller is ranked on all goals, not only unowned ones.
+    w.create_goal("plan another trip", "", owner="user:amy")
+    assert st.suggest(w, k=1, owner=None, templates=tpls)[0]["name"] == "trip-plan"
 
 
 def test_suggest_reads_local_template_catalog(tmp_path, monkeypatch):

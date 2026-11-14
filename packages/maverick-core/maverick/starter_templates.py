@@ -69,9 +69,10 @@ def suggest(world, k: int = 5, *, owner: str | None = None, templates: list | No
     ``templates=None`` reads the local template catalog (user-installed +
     bundled); pass parsed ``Template`` objects to rank another set. Each row is
     ``{name, title, params, score}``; ties (including the all-zero cold start)
-    break on name for a stable order.
+    break on name for a stable order. ``owner=None`` (an admin or unscoped
+    caller) ranks on every goal's history.
     """
-    profile = history_profile(world, owner=owner or "")
+    profile = history_profile(world, owner=owner)
     candidates = _local_templates(owner) if templates is None else templates
     rows = [
         {
