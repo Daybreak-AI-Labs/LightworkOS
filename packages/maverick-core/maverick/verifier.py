@@ -618,7 +618,9 @@ def _provider(model: str) -> str:
     m = model.lower()
     if m.startswith("claude"):
         return "anthropic"
-    if m.startswith("gpt") or m.startswith("o"):
+    # OpenAI reasoning models are "o" plus a digit (o1, o3, o4-mini); a bare
+    # "o" prefix also matched unrelated ids such as "ollama-..." or "olmo".
+    if m.startswith("gpt") or re.match(r"o\d", m):
         return "openai"
     if m.startswith("gemini"):
         return "gemini"

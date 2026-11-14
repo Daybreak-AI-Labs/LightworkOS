@@ -454,6 +454,8 @@ class TestCrossFamilyVerifier:
         assert _provider("openai:gpt-5.4") == "openai"
         assert _provider("gpt-5.4") == "openai"
         assert _provider("o3") == "openai"
+        assert _provider("o4-mini") == "openai"
+        assert _provider("olmo-2") != "openai"
         assert _provider("gemini-3-pro") == "gemini"
         assert _provider("deepseek-v4-pro") == "deepseek"
         assert _provider("grok-4.3") == "xai"
