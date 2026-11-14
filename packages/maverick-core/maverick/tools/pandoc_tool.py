@@ -51,6 +51,14 @@ def _need_pandoc() -> str | None:
     return "ERROR: pandoc not on PATH. Install pandoc."
 
 
+def _pandoc_error(code: int, stderr: str) -> str:
+    # Every run passes --sandbox (pandoc 2.15+). An older pandoc rejects the
+    # option; say what is needed rather than echoing its usage error.
+    if "--sandbox" in stderr and "nknown option" in stderr:
+        return "ERROR: pandoc 2.15 or newer is required (it must support --sandbox)"
+    return f"ERROR: pandoc ({code}): {stderr.strip()[-300:]}"
+
+
 def _safe_path(sandbox, user_path: str) -> str:
     if user_path.startswith("-"):
         raise ValueError("paths may not begin with '-'")
@@ -107,11 +115,13 @@ def _op_convert(args: dict, sandbox) -> str:
     cmd = ["pandoc", "--sandbox", src, "-o", dst, "-f", reader, "-t", writer, *extra]
     code, _out, stderr = sandbox_run(sandbox, cmd, timeout=120)
     if code != 0:
-        return f"ERROR: pandoc ({code}): {stderr.strip()[-300:]}"
+        return _pandoc_error(code, stderr)
     return f"wrote {dst}"
 
 
 def _is_workspace_image(target: str, bases: tuple[Path, ...], workdir: Path) -> bool:
+    if target.lower().startswith("data:"):
+        return True  # inline image: no file or network access
     normalized = target.replace("\\", "/")
     if ":" in normalized or normalized.startswith("/"):
         return False
@@ -153,30 +163,38 @@ def _convert_to_docx(sandbox, src: str, dst: str, reader: str, extra: list) -> s
     """
     import json
     import secrets
+    import shutil
 
     from . import sandbox_run
-    staging = str(Path(dst).with_name(f".{Path(dst).name}.{secrets.token_hex(16)}.pandoc.json"))
+    token = secrets.token_hex(16)
+    staging = str(Path(dst).with_name(f".{Path(dst).name}.{token}.pandoc.json"))
+    workdir = Path(sandbox.workdir).resolve()
+    # A docx source keeps its images inside the package; the JSON AST only
+    # names them. Extract them to a workspace directory (relative, so the
+    # targets stay relative workspace paths) for the second pass to embed.
+    media_dir = f".pandoc-media-{token}"
+    first = ["pandoc", "--sandbox", src, "-o", staging, "-f", reader, "-t", "json"]
+    if reader == "docx":
+        first.append(f"--extract-media={media_dir}")
     try:
-        code, _out, stderr = sandbox_run(
-            sandbox, ["pandoc", "--sandbox", src, "-o", staging, "-f", reader, "-t", "json"], timeout=120,
-        )
+        code, _out, stderr = sandbox_run(sandbox, first, timeout=120)
         if code != 0:
-            return f"ERROR: pandoc ({code}): {stderr.strip()[-300:]}"
+            return _pandoc_error(code, stderr)
         try:
             ast = json.loads(Path(staging).read_text(encoding="utf-8"))
         except (OSError, ValueError) as e:
             return f"ERROR: pandoc produced no readable document: {type(e).__name__}"
-        workdir = Path(sandbox.workdir).resolve()
         bad = _unsafe_image_target(ast, (workdir, Path(src).parent), workdir)
         if bad is not None:
             return f"ERROR: docx output only embeds images by relative workspace path; refused {bad[:200]!r}"
         cmd = ["pandoc", staging, "-o", dst, "-f", "json", "-t", "docx", *extra]
         code, _out, stderr = sandbox_run(sandbox, cmd, timeout=120)
         if code != 0:
-            return f"ERROR: pandoc ({code}): {stderr.strip()[-300:]}"
+            return _pandoc_error(code, stderr)
         return f"wrote {dst}"
     finally:
         Path(staging).unlink(missing_ok=True)
+        shutil.rmtree(workdir / media_dir, ignore_errors=True)
 
 
 def _op_formats(_args: dict, _sandbox) -> str:
@@ -200,7 +218,7 @@ def _string_convert(text: str, from_: str, to: str, sandbox) -> str:
         sandbox, ["pandoc", "--sandbox", "-f", from_, "-t", to], timeout=60, stdin=text,
     )
     if code != 0:
-        return f"ERROR: pandoc ({code}): {stderr.strip()[-300:]}"
+        return _pandoc_error(code, stderr)
     return out
 
 
