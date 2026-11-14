@@ -135,3 +135,33 @@ def test_main_writes_raw_transcripts_owner_only(tmp_path):
     os.chmod(out, 0o644)
     assert export_texts.main(["--in", str(outbox), "--out", str(out)]) == 0
     assert stat.S_IMODE(out.stat().st_mode) == 0o600
+
+
+def test_export_skips_a_donation_whose_events_fail(caplog):
+    good, bad = _record("good", 1, 1), _record("bad", 2, 2)
+
+    def fetch(rec):
+        if rec["goal_id"] == 2:
+            raise RuntimeError("goal_events failed")
+        return _events()
+
+    with caplog.at_level("WARNING"):
+        out = export_texts.export_texts([bad, good], fetch)
+    assert list(out) == [export_texts.record_trajectory_id(good)]
+    assert "skipped 1 donation" in caplog.text
+
+
+def test_main_writes_through_symlinked_dir_and_to_devices(tmp_path):
+    import os
+
+    import pytest
+    if os.name != "posix":
+        pytest.skip("POSIX symlinks and /dev/null")
+    outbox = tmp_path / "outbox"
+    outbox.mkdir()
+    real = tmp_path / "real"
+    real.mkdir()
+    (tmp_path / "link").symlink_to(real, target_is_directory=True)
+    assert export_texts.main(["--in", str(outbox), "--out", str(tmp_path / "link" / "o.jsonl")]) == 0
+    assert (real / "o.jsonl").exists()
+    assert export_texts.main(["--in", str(outbox), "--out", "/dev/null"]) == 0

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 from pathlib import Path
 
@@ -41,6 +42,8 @@ from .ingest import (
     load_donations,
     rejected_trajectory_id,
 )
+
+log = logging.getLogger(__name__)
 
 
 def events_to_text(events: list[dict]) -> str:
@@ -75,6 +78,7 @@ def export_texts(records, fetch_events) -> dict[str, str]:
     """
     out: dict[str, str] = {}
     seen: dict[str, str] = {}
+    skipped = 0
     for record in records:
         identity = record_trajectory_id(record)
         binding = json.dumps(record, sort_keys=True, separators=(",", ":"), allow_nan=False)
@@ -83,7 +87,16 @@ def export_texts(records, fetch_events) -> dict[str, str]:
                 raise ValueError("Conflicting donation records share a trajectory identity")
             continue
         seen[identity] = binding
-        text = events_to_text(fetch_events(record) or [])
+        try:
+            events = fetch_events(record) or []
+        except RuntimeError as e:
+            # A database error on one goal skips that donation (its partial
+            # transcript is never exported as complete), not the whole export.
+            skipped += 1
+            log.warning("export_texts: skipping donation for goal %s: %s",
+                        record.get("goal_id"), e)
+            continue
+        text = events_to_text(events)
         if text:
             out[record_trajectory_id(record)] = text
         for i, att in enumerate(record.get("rejected_attempts", []) or []):
@@ -97,7 +110,24 @@ def export_texts(records, fetch_events) -> dict[str, str]:
             cand_text = c.get("text") if isinstance(c, dict) else None
             if cand_text and str(cand_text).strip():
                 out[candidate_trajectory_id(record, i)] = str(cand_text)
+    if skipped:
+        log.warning("export_texts: skipped %d donation(s) whose goal events could not be read",
+                    skipped)
     return out
+
+
+def _write_output(path: Path, body: str) -> None:
+    """Write the raw, unscrubbed transcripts owner-only (0600) to a regular
+    file. The path is resolved first, so a symlinked parent directory (``/tmp``
+    on macOS) works; a non-regular target such as ``/dev/stdout`` is written
+    directly, as before."""
+    target = path.resolve() if path.exists() else path.parent.resolve() / path.name
+    if target.exists() and not target.is_file():
+        with target.open("w", encoding="utf-8") as out:
+            out.write(body)
+        return
+    from ..file_lock import atomic_write_text
+    atomic_write_text(target, body, mode=0o600)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -132,13 +162,9 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         if world is not None:
             close_world_if_owned(world)
-    # The transcripts are raw, unscrubbed goal text: write them owner-only
-    # (0600), not with the umask's usual world-readable 0644.
-    from ..file_lock import atomic_write_text
-    atomic_write_text(
+    _write_output(
         args.out_file,
         "".join(json.dumps({"id": tid, "text": text}) + "\n" for tid, text in texts.items()),
-        mode=0o600,
     )
     print(
         f"exported {len(texts)} proposer transcript(s) -> {args.out_file} "

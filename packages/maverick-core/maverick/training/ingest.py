@@ -248,16 +248,26 @@ def klear_rows(outbox: Path, world=None) -> Iterator[dict]:
     best-of-N candidates scored by objective tests (so a passing vs failing
     candidate pairs within the task_family). ``world`` (optional) supplies the
     goal_events; donations may have been pruned before ingestion."""
+    skipped = 0
     for record in load_donations(outbox, world=world):
-        events = (
-            fetch_steps_for_goal(world, record.get("goal_id", 0))
-            if world else []
-        )
+        try:
+            events = (
+                fetch_steps_for_goal(world, record.get("goal_id", 0))
+                if world else []
+            )
+        except RuntimeError as e:
+            # One goal's database error skips that donation only; its partial
+            # trajectory is never emitted as complete.
+            skipped += 1
+            log.warning("ingest: skipping donation for goal %s: %s", record.get("goal_id"), e)
+            continue
         yield to_klear_jsonl(build_trajectory(record, events))
         for rej in build_rejected_trajectories(record):
             yield to_klear_jsonl(rej)
         for cnd in build_candidate_trajectories(record):
             yield to_klear_jsonl(cnd)
+    if skipped:
+        log.warning("ingest: skipped %d donation(s) whose goal events could not be read", skipped)
 
 
 def main() -> int:
