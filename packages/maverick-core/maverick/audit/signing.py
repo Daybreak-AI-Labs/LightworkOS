@@ -798,6 +798,26 @@ def _validated_tail_hash(data: object, *, operation: str, path: Path) -> str:
     return row_hash
 
 
+_CHAIN_FIELDS = ("prev_hash", "key_id", "hash", "sig")
+
+
+def _chain_safe_payload(event: dict) -> dict:
+    """The row body exactly as a verifier will re-read it.
+
+    A JSON round trip first, so the hashed bytes match what ``verify_chain``
+    re-serialises (an integer dict key sorts differently from its string
+    form). Then a caller field that shares a chain field's name moves to
+    ``payload_<name>``: it would otherwise be overwritten (``key_id``,
+    ``prev_hash``) or hashed and then replaced, leaving a row that can never
+    verify (``hash``, ``sig``).
+    """
+    payload = json.loads(json.dumps(event, default=str))
+    for name in _CHAIN_FIELDS:
+        if name in payload:
+            payload[f"payload_{name}"] = payload.pop(name)
+    return payload
+
+
 class AuditSigner:
     """Sign + chain audit log lines.
 
@@ -927,17 +947,17 @@ class AuditSigner:
                         # append a cryptographically valid but structurally
                         # forked pair of rows.
                         actual_tail = self._locked_tail_hash(f)
+                        payload = _chain_safe_payload(event)
                         if (
                             idempotency_identity is not None
                             and _locked_event_identity_exists(
                                 f,
-                                event,
+                                payload,
                                 idempotency_identity,
                             )
                         ):
                             self._last_hash = actual_tail
                             return True
-                        payload = dict(event)
                         payload["prev_hash"] = actual_tail
                         payload["key_id"] = self._key_id
                         row_bytes = json.dumps(

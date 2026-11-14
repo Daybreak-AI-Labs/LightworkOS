@@ -222,3 +222,25 @@ class TestAuditKeyPerms:
 
         assert len(private) == 32
         assert priv_path.read_bytes() == private
+
+
+def test_signed_row_keeps_colliding_payload_fields_and_verifies(tmp_path, monkeypatch):
+    # A payload key_id (an API key's id) was overwritten by the signer's key
+    # id; a payload hash/sig or an integer dict key made the row unverifiable.
+    import json
+
+    if not _crypto_works():
+        pytest.skip("cryptography backend unavailable")
+    import maverick.audit.signing as signing
+    from maverick.audit import verify_chain
+
+    monkeypatch.setattr(signing, "KEY_DIR", tmp_path / "keys")
+    path = tmp_path / "2026-01-01.ndjson"
+    signer = signing.AuditSigner(path)
+    assert signer.write({"kind": "api_key", "key_id": "my-api-key-id-123",
+                         "hash": "x", "sig": "y", "m": {2: "a", 10: "b"}})
+    row = json.loads(path.read_text().splitlines()[0])
+    assert row["payload_key_id"] == "my-api-key-id-123"
+    assert row["payload_hash"] == "x" and row["payload_sig"] == "y"
+    assert row["key_id"] != "my-api-key-id-123"
+    assert verify_chain(path) == []
