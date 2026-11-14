@@ -163,8 +163,10 @@ this."), and the client raises `LightworkError` with that status. The client doe
 not check scopes itself. Every scope includes read access. The dashboard token is
 break-glass access and has no scopes.
 
-Responses are returned as the API sends them: plain dicts and lists. `Health`
-and `Decision` are small frozen dataclasses. `Decision` holds the
+Responses are returned as plain dicts and lists. A successful response with the
+wrong JSON container type raises `LightworkError`; goal lists must contain dicts.
+The client does not validate every response field. `Health` and `Decision` are
+small frozen dataclasses. `Decision` holds the
 `X-Lightwork-*` headers: `decision_id`, `audit` (`"delivered"` or `"pending"`)
 and `approval_state`. While `audit` is `"pending"`, the vote is recorded but not
 yet effective.

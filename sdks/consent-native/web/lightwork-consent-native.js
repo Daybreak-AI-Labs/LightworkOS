@@ -330,6 +330,9 @@ export class WebCryptoReceiptVerifier {
     // The detached signed bytes cover the result object itself. The digest is
     // validated as metadata but not re-serialized in JavaScript, avoiding
     // Python/ECMAScript float spelling differences in legitimate results.
+    if (!body.result || typeof body.result !== "object" || Array.isArray(body.result)) {
+      throw new TypeError("receipt result must be an object");
+    }
     requireDigest(body.result_sha256, "result digest");
     const exact = {
       application_ref: expected.authority.application_ref,
@@ -552,10 +555,14 @@ export class LightworkCTVConsentClient {
   async #materialize(requestId, operation, payload, downstreamIdempotencyKey, createdAt) {
     const counter = await this.outbox.reserveCounter(this.authority.device_id);
     if (!Number.isSafeInteger(counter) || counter < 1) throw new Error("durable monotonic counter is unavailable");
+    // Signing yields to authority rotation. Keep the bytes and queue metadata
+    // bound to one authority/key pair so drain can renew a stale envelope.
+    const authority = this.authority;
+    const privateKey = this.privateKey;
     const issuedAt = requireWireTimestamp(Math.floor(this.clock()), "issue time");
     const body = {
       schema: "lightwork.native-consent-envelope.v1",
-      ...this.authority,
+      ...authority,
       request_id: requireRef(requestId, "request id"),
       counter,
       issued_at: issuedAt,
@@ -565,7 +572,7 @@ export class LightworkCTVConsentClient {
     };
     const canonical = encoder.encode(canonicalize(body));
     if (canonical.byteLength < 1 || canonical.byteLength > MAX_PAYLOAD_BYTES) throw new RangeError("envelope is outside its bound");
-    const signature = new Uint8Array(await crypto.subtle.sign("Ed25519", this.privateKey, canonical));
+    const signature = new Uint8Array(await crypto.subtle.sign("Ed25519", privateKey, canonical));
     if (signature.byteLength !== 64) throw new Error("signer failed");
     const signedEnvelope = encoder.encode(canonicalize({ ...body, signature_hex: hex(signature) }));
     if (signedEnvelope.byteLength > MAX_PAYLOAD_BYTES) throw new RangeError("signed envelope is outside its bound");
@@ -575,9 +582,9 @@ export class LightworkCTVConsentClient {
       payload,
       downstreamIdempotencyKey,
       createdAt,
-      deviceId: this.authority.device_id,
-      deviceRevision: this.authority.device_revision,
-      applicationAuthoritySHA256: this.authority.application_authority_sha256,
+      deviceId: authority.device_id,
+      deviceRevision: authority.device_revision,
+      applicationAuthoritySHA256: authority.application_authority_sha256,
       expiresAt: body.expires_at,
       requestSHA256: await sha256Hex(canonical),
       signedEnvelope,
