@@ -160,25 +160,26 @@ def _execution_budget(
 ) -> tuple[float | None, float | None]:
     """Clamp a per-agent request to its registry budget ceilings.
 
-    Protobuf floats can carry NaN/Infinity.  Normalize those (and non-positive
-    sentinel values) to "unspecified" before clamping, otherwise NaN can survive
+    Protobuf floats can carry NaN/Infinity. Normalize those and negative dollar
+    values to "unspecified" before clamping; explicit zero dollars remains a cap.
+    Wall-time sentinels remain non-positive. Otherwise NaN can survive
     ``min`` and later be replaced by a larger generic Budget default.  The
     shared operator keeps its historical pass-through semantics.
     """
     if agent is None:
         return max_dollars, max_wall_seconds
 
-    def _finite_positive(value: float | None) -> float | None:
+    def _finite_positive(value: float | None, *, allow_zero: bool = False) -> float | None:
         if value is None:
             return None
         parsed = float(value)
-        return parsed if math.isfinite(parsed) and parsed > 0 else None
+        return parsed if math.isfinite(parsed) and (parsed > 0 or (allow_zero and parsed == 0)) else None
 
     from ..agent_trust import clamp_budget
 
     return clamp_budget(
         agent,
-        max_dollars=_finite_positive(max_dollars),
+        max_dollars=_finite_positive(max_dollars, allow_zero=True),
         max_wall_seconds=_finite_positive(max_wall_seconds),
     )
 
@@ -497,7 +498,8 @@ def _servicer(service, pb2, pb2_grpc, *, bearer_token: str | None = None):
             trust_cap = _trust_capability(context, agent)
             max_dollars, max_wall_seconds = _execution_budget(
                 agent,
-                max_dollars=request.max_dollars or None,
+                max_dollars=(request.max_dollars if getattr(request, "has_max_dollars", False)
+                             else request.max_dollars or None),
                 max_wall_seconds=request.max_wall_seconds or None,
             )
             channel, user_id = _execution_identity(
@@ -581,7 +583,8 @@ def _servicer(service, pb2, pb2_grpc, *, bearer_token: str | None = None):
             trust_cap = _trust_capability(context, agent)
             max_dollars, max_wall_seconds = _execution_budget(
                 agent,
-                max_dollars=request.max_dollars or None,
+                max_dollars=(request.max_dollars if getattr(request, "has_max_dollars", False)
+                             else request.max_dollars or None),
                 max_wall_seconds=request.max_wall_seconds or None,
             )
             channel, user_id = _execution_identity(

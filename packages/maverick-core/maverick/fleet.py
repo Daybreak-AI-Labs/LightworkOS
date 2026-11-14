@@ -243,7 +243,7 @@ def record_run(
     d = fleets_dir(tenant=tenant)
     ensure_private_directory(d)
     path = runs_path(name, tenant=tenant)
-    with _runs_lock, cross_process_lock(path):
+    with _runs_lock, cross_process_lock(d / f"{name}.json"), cross_process_lock(path):
         runs = load_runs(name, tenant=tenant)
         runs.append({"agent": agent, "goal_id": goal_id, "ts": time.time()})
         atomic_write_text(path, json.dumps(runs, indent=2))
