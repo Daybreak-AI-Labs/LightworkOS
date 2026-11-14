@@ -1,9 +1,7 @@
 """Saved security policy and source boundaries retain their configured scope."""
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -156,38 +154,3 @@ def test_airgap_audits_tenant_roles_mcp_and_federation(monkeypatch, tmp_path):
     for extra in ({"mcp_servers": {"remote": {"url": "https://public.example/mcp"}}},
                   {"federation": {"peers": [{"name": "remote", "target": "public.example:50051"}]}}):
         assert not air_gap.audit(config={**local, **extra})["clean"]
-
-
-@pytest.mark.parametrize("source", ["salesforce_records", "servicenow_tickets"])
-def test_connected_queries_are_date_bounded(monkeypatch, source):
-    from maverick import automation_connected_events as connected
-
-    selected = {"object": "Lead", "closed_only": False} if source == "salesforce_records" else {"table": "incident"}
-    monkeypatch.setattr(connected, "validate", lambda source, config: config)
-    paths = []
-
-    def collect(source, config, path, **kwargs):
-        paths.append(path)
-        return []
-
-    monkeypatch.setattr(connected, "collection", collect)
-    connected.read_items(source, {"selection": selected})
-    query = parse_qs(urlsplit(paths[0]).query)
-    if source == "salesforce_records":
-        assert "CreatedDate >= " in query["q"][0]
-        assert " LIMIT " in query["q"][0]
-    else:
-        assert "sys_created_on>=" in query["sysparm_query"][0]
-
-
-def test_connected_seen_window_retires_absent_identities(monkeypatch):
-    from maverick import automation_connected_events as connected
-    from maverick import automation_events as events
-
-    monkeypatch.setattr(connected, "read_items", lambda source, config: ([{"id": "new", "created": "2026-11-01"}], "id", "created"))
-    prior = [hashlib.sha256(str(i).encode()).hexdigest() for i in range(connected.MAX_SEEN)]
-    source = connected.ConnectedAppSource("sharepoint_files")
-    result = source.poll({"_lightwork_cursor_format": 1}, events._encode_cursor("connected_app", prior))
-    assert result.event_ids == ["new"]
-    assert len(events._decode_cursor(result.cursor, "connected_app", 1)) == 1
-    assert not source.poll({"_lightwork_cursor_format": 1}, result.cursor).event_ids

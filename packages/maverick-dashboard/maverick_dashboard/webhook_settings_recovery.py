@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 
 from maverick import config
 from maverick.crypto_at_rest import (
+    _BOUND_MAGIC,
     deployment_key_scope,
     seal_bound,
     seal_to_str,
@@ -62,18 +63,36 @@ def _save(row):
 
 
 def _load(identity):
+    # All native writers use this reentrant lock. Keep the historical read and
+    # rewrite together so migration cannot overwrite a newer recovery outcome.
+    with settings_store._locked(strict=True):
+        return _load_locked(identity)
+
+
+def _load_locked(identity):
     path = _path(identity)
     if not path.exists():
         raise native.WebhookSettingsConflict("This saved change is no longer available. Refresh the recent change history.")
     if path.is_symlink() or path.stat().st_size > _MAX_BYTES * 2:
         raise native.WebhookSettingsUnavailable("The saved change cannot be checked safely. Nothing was repeated.")
-    with tenant_scope(tenant=None), deployment_key_scope():
-        raw = unseal_bound(ensure_private_file(path).read_bytes(), _binding(identity))
+    blob = ensure_private_file(path).read_bytes()
+    legacy_tenant = blob.startswith(_BOUND_MAGIC + b"T")
+    if legacy_tenant:
+        # Older recovery writers ignored deployment_key_scope and used the
+        # request tenant's DEK and AAD. Authenticate in that original tenant
+        # before moving the journal to the deployment key; never relax the
+        # generic shared-scope refusal of tenant ciphertext.
+        raw = unseal_bound(blob, _binding(identity))
+    else:
+        with tenant_scope(tenant=None), deployment_key_scope():
+            raw = unseal_bound(blob, _binding(identity))
     row = json.loads(raw)
     if (not isinstance(row, dict) or row.get("id") != identity or row.get("purpose") != _PURPOSE
             or type(row.get("revision")) is not int or row["revision"] < 1
             or row.get("state") not in {"prepared", "reviewed", "completed"}):
         raise native.WebhookSettingsUnavailable("The saved change cannot be verified. Nothing was repeated.")
+    if legacy_tenant or blob.startswith(_BOUND_MAGIC + b"K"):
+        _save(row)
     return row
 
 

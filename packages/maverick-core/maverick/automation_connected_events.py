@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import hashlib
 import re
-from datetime import datetime, timedelta, timezone
 from urllib.parse import quote, urlencode, urlsplit
 
 from . import automation_events as events
@@ -20,7 +19,6 @@ TABLES = {"incident": "Incidents", "change_request": "Change requests", "sc_req_
 MAX_ITEMS = 5000
 MAX_PAGES = 32
 MAX_SEEN = 20000
-_WINDOW_DAYS = 7
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.!,:@-]{0,255}")
 
 
@@ -142,16 +140,11 @@ def read_items(source, config):
         fields = "Id,Name,CreatedDate" if obj != "Case" else "Id,CaseNumber,Subject,CreatedDate"
         if obj == "Opportunity":
             fields += ",IsClosed,StageName,LastModifiedDate"
-        date_field = "LastModifiedDate" if selected["closed_only"] else "CreatedDate"
-        since = (datetime.now(timezone.utc) - timedelta(days=_WINDOW_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        query = ("SELECT " + fields + " FROM " + obj + " WHERE " + date_field + " >= " + since
-                 + (" AND IsClosed = true" if selected["closed_only"] else "")
-                 + " ORDER BY " + date_field + " DESC,Id DESC LIMIT " + str(MAX_ITEMS + 1))
-        return collection(source, cfg, "/services/data/v61.0/query?" + urlencode({"q": query}), key="records"), "Id", date_field
+        query = "SELECT " + fields + " FROM " + obj + (" WHERE IsClosed = true" if selected["closed_only"] else "") + " ORDER BY CreatedDate DESC,Id DESC"
+        return collection(source, cfg, "/services/data/v61.0/query?" + urlencode({"q": query}), key="records"), "Id", "CreatedDate"
     rows = []
-    since = (datetime.now(timezone.utc) - timedelta(days=_WINDOW_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
     for offset in range(0, MAX_ITEMS + 1, 1000):
-        page = collection(source, cfg, "/api/now/table/" + selected["table"] + "?" + urlencode({"sysparm_query": "sys_created_on>=" + since + "^ORDERBYDESCsys_created_on^ORDERBYDESCsys_id", "sysparm_fields": "sys_id,number,short_description,sys_created_on,state", "sysparm_limit": 1000, "sysparm_offset": offset}), key="result", paginated=False)
+        page = collection(source, cfg, "/api/now/table/" + selected["table"] + "?" + urlencode({"sysparm_query": "ORDERBYDESCsys_created_on^ORDERBYDESCsys_id", "sysparm_fields": "sys_id,number,short_description,sys_created_on,state", "sysparm_limit": 1000, "sysparm_offset": offset}), key="result", paginated=False)
         rows.extend(page)
         if len(rows) > MAX_ITEMS:
             raise events.EventSourceError("This ticket source exceeds 5,000 items. No event position was advanced.")
@@ -179,9 +172,7 @@ class ConnectedAppSource:
         prior = events._decode_cursor(cursor, "connected_app", 1 if preview_baseline else config.get("_lightwork_cursor_format"))
         if not isinstance(prior, list) or len(prior) > MAX_SEEN or any(not isinstance(item, str) or not re.fullmatch(r"[0-9a-f]{64}", item) for item in prior):
             raise events.EventSourceError("The source position is unavailable. No events were repeated.")
-        # Only identities still in this complete query window can repeat on
-        # the next poll. Retire old ones without marking un-emitted backlog.
-        seen = set(prior) & hashed
+        seen = set(prior)
         fresh = [row for row in items if hashlib.sha256(str(row[id_field]).encode()).hexdigest() not in seen]
         fresh.sort(key=lambda row: (str(row.get(date_field) or ""), str(row[id_field])))
         fresh = fresh[:events._MAX_EVENTS]
