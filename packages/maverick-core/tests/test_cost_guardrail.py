@@ -45,3 +45,8 @@ def test_errors():
     assert t.fn({"op": "check", "projected_dollars": -1}).startswith("ERROR")
     assert t.fn({"op": "check", "projected_dollars": 1, "hard": "yes"}).startswith("ERROR")
     assert t.fn({"op": "nope", "projected_dollars": 1}).startswith("ERROR")
+
+
+def test_nan_is_not_under_budget():
+    assert _check(projected_dollars="nan").startswith("ERROR")
+    assert _check(projected_dollars=1e9, limit="nan").startswith("ERROR")

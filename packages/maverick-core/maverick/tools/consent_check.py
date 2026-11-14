@@ -2,8 +2,8 @@
 
 Evaluates a set of consent records and reports, per processing purpose, whether
 valid consent currently exists. A record is only VALID if it was granted, not
-withdrawn, and not expired as of ``now``; otherwise it is NOT_GRANTED, WITHDRAWN,
-or EXPIRED. When several records share a purpose the most recent (by
+withdrawn, not expired, and not granted after ``now``; otherwise it is
+NOT_GRANTED, NOT_YET_GRANTED, WITHDRAWN, or EXPIRED. When several records share a purpose the most recent (by
 ``granted_at``) governs, so a fresh re-grant supersedes an older withdrawal.
 Pure date logic — deterministic and offline. Distinct from the
 ``voice_cloning_consent`` single-purpose gate.
@@ -33,6 +33,10 @@ def _status(rec: dict, now: date) -> tuple[str, str]:
     """Return (state, detail) for one consent record."""
     if rec.get("granted") is not True:
         return "NOT_GRANTED", "consent was not granted"
+    if rec.get("granted_at"):
+        g = _parse(rec["granted_at"], "granted_at")
+        if g > now:
+            return "NOT_YET_GRANTED", f"granted_at {g.isoformat()} is after {now.isoformat()}"
     if rec.get("withdrawn_at"):
         w = _parse(rec["withdrawn_at"], "withdrawn_at")
         if w <= now:

@@ -32,6 +32,9 @@ _GROUPS["EEA"] = _GROUPS["EU"] | {"IS", "LI", "NO"}
 def _expand(entries: Any) -> list[str]:
     """Resolve codes/group-names into a flat, de-duplicated, sorted list."""
     out: set[str] = set()
+    if isinstance(entries, str):
+        # One code or group, not a sequence of characters ("EU" -> E, U).
+        entries = [entries]
     for e in entries or []:
         token = str(e).strip().upper()
         if not token:

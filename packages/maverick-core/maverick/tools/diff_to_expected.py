@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from . import Tool
+from . import Tool, as_bool
 
 
 def _to_number(value: Any) -> float | None:
@@ -64,7 +64,8 @@ def _deep_diff(actual: Any, expected: Any, path: str = "$") -> list[str]:
         for i in range(min(len(actual), len(expected))):
             diffs.extend(_deep_diff(actual[i], expected[i], f"{path}[{i}]"))
         return diffs
-    if actual != expected:
+    # True == 1 in Python, but JSON true and 1 are different values.
+    if actual != expected or isinstance(actual, bool) != isinstance(expected, bool):
         return [f"{path}: {actual!r} != expected {expected!r}"]
     return []
 
@@ -108,7 +109,7 @@ def _compare(args: dict[str, Any]) -> str:
         tol = _to_number(args.get("tol"))
         if tol is None:
             tol = 0.0
-        return _diff_numeric(actual, expected, abs(tol), bool(args.get("rel", False)))
+        return _diff_numeric(actual, expected, abs(tol), as_bool(args.get("rel")))
     return f"ERROR: unknown mode {mode!r}"
 
 

@@ -54,3 +54,8 @@ def test_errors_and_contract():
         {"op": "bad", "request": {"action": "a"}}).startswith("ERROR")
     t = consent_ergonomics()
     assert t.name == "consent_ergonomics" and t.parallel_safe is True
+
+
+def test_string_scopes_are_one_scope_not_characters():
+    out = _run({"action": "clean up", "scopes": "delete_all"})
+    assert not out.startswith("CONSENT [LOW]")

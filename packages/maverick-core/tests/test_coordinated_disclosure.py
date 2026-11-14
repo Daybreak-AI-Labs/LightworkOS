@@ -125,3 +125,10 @@ def test_cvd_validation():
     assert t.fn({"op": "status", "reported": "nope", "embargo_days": 30}).startswith("ERROR")
     assert t.fn({"op": "status", "reported": "2027-01-01", "embargo_days": -1}).startswith("ERROR")
     assert t.fn({"op": "advisory", "reported": "2027-01-01", "embargo_days": 1, "severity": "bogus", "id": "x", "summary": "y"}).startswith("ERROR")
+
+
+def test_records_form_agrees_with_single_form_and_ignores_severity_case():
+    rec = [{"id": "v", "reported": "2026-01-01"}]
+    assert "[OVERDUE] v" in _s(rec, today="2026-04-01", embargo_days=90)
+    rec = [{"id": "h", "reported": "2026-01-01", "severity": "High"}]
+    assert "[OVERDUE] h" in _s(rec, today="2026-01-09", policy={"high": 7})

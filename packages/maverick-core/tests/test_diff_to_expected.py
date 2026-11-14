@@ -62,3 +62,8 @@ def test_errors_and_factory_shape():
     assert t.fn({"op": "compare", "actual": 1, "expected": 1, "mode": "bogus"}).startswith("ERROR")
     assert t.name == "diff_to_expected"
     assert t.parallel_safe is True
+
+
+def test_json_bool_is_not_one_and_string_rel_is_false():
+    assert _cmp(mode="json", actual={"a": True}, expected={"a": 1}).startswith("DIFF")
+    assert _cmp(mode="numeric", actual=105, expected=100, tol=0.1, rel="false").startswith("DIFF")

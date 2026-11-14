@@ -423,6 +423,8 @@ def test_tools_render_refusals_and_never_the_token():
     assert set(merch) == {"catalog_read", "inventory_read", "pricing_read", "orders_read",
                           "analytics_read", "promotions_read", "merchant_stage_change"}
     assert _run(shop["cart_add"], product_id="sku-trail-01", quantity=999).startswith("REFUSED")
+    # quantity=0 must be refused, not turned into the default of 1.
+    assert _run(shop["cart_add"], product_id="sku-trail-01", quantity=0).startswith("REFUSED")
     assert _run(shop["checkout_handoff"]).startswith("REFUSED")
     assert "demo-store" in _run(shop["storefront_search"], query="trail")
     assert "129.0" in _run(shop["cart_add"], product_id="sku-trail-01", quantity=1)

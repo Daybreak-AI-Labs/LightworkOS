@@ -70,3 +70,8 @@ def test_registered():
 
     names = set(getattr(base_registry(world=_W(), sandbox=_S()), "_tools", {}).keys())
     assert "consent_check" in names
+
+
+def test_grant_dated_after_now_is_not_valid():
+    out = _c([{"purpose": "p", "granted": True, "granted_at": "2030-01-01"}], now="2026-01-01")
+    assert out.startswith("INVALID") and "NOT_YET_GRANTED" in out

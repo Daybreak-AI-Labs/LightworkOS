@@ -55,8 +55,15 @@ def _summarize(request: dict) -> str:
     action = str(request.get("action", "")).strip()
     if not action:
         return "ERROR: request.action is required"
-    scopes = [str(s).strip() for s in (request.get("scopes") or []) if str(s).strip()]
-    data = [str(d).strip() for d in (request.get("data") or []) if str(d).strip()]
+    raw_scopes, raw_data = request.get("scopes") or [], request.get("data") or []
+    # A bare string would be iterated character by character ("delete_all"
+    # became ten one-letter scopes and rated LOW).
+    if isinstance(raw_scopes, str):
+        raw_scopes = [raw_scopes]
+    if isinstance(raw_data, str):
+        raw_data = [raw_data]
+    scopes = [str(s).strip() for s in raw_scopes if str(s).strip()]
+    data = [str(d).strip() for d in raw_data if str(d).strip()]
     duration = str(request.get("duration", "")).strip()
 
     badge = _badge(scopes) if scopes else "low"
