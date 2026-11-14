@@ -322,6 +322,31 @@ def test_migrate_leaves_no_plaintext_residue_in_the_db_file(monkeypatch, tmp_pat
     assert marker.encode() not in _all_db_bytes(db)
 
 
+def test_migrate_leaves_no_plaintext_terms_in_a_pre_v49_message_index(monkeypatch, tmp_path):
+    from maverick.encryption_migrate import migrate_world_db
+    from maverick.world_model import SCHEMA, WorldModel
+
+    db = tmp_path / "world.db"
+    wm = WorldModel(db)
+    gid = wm.create_goal("g", "d")
+    wm.conn.close()
+    # A database not yet opened since v49 still carries the message index.
+    start = SCHEMA.index("CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts")
+    end = SCHEMA.index("END;", SCHEMA.index("messages_au")) + len("END;")
+    c = sqlite3.connect(str(db))
+    c.executescript(SCHEMA[start:end])
+    for n in range(6):
+        c.execute("INSERT INTO messages(goal_id, role, content, ts) VALUES(?, 'user', ?, 0)",
+                  (gid, f"zebraterm{n}quokka"))
+    c.commit()
+    c.close()
+    assert b"zebraterm3quokka" in _all_db_bytes(db)
+
+    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
+    assert migrate_world_db(db)["messages.content"] == 6
+    assert b"zebraterm" not in _all_db_bytes(db)
+
+
 @requires_crypto
 def test_migrate_rebinds_legacy_sealed_rows_and_marks_the_store(monkeypatch, tmp_path):
     from maverick.encryption_migrate import migrate_world_db

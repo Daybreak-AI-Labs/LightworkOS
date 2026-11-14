@@ -198,6 +198,7 @@ def migrate_world_db(
                 (resealed, rid, val),
             )
             report[f"{table}.{col}"] += changed.rowcount
+        _rebuild_message_index(conn)
         conn.commit()
         _shred_residue(conn, report)
         if not _unsealed_remaining(conn):
@@ -322,6 +323,20 @@ def migrate_postgres_world(world, *, dry_run: bool = False) -> dict[str, int]:
         from .world_model import _POSTGRES_STORE_POSTURES
         _POSTGRES_STORE_POSTURES[(world._posture_identity, tenant)] = True
     return report
+
+
+def _rebuild_message_index(conn: sqlite3.Connection) -> None:
+    """Rebuild the pre-v49 ``messages_fts`` index when it is still present.
+
+    Its update trigger deletes the old row and indexes the sealed token, but
+    FTS5 keeps the deleted plaintext terms in its segment pages until they are
+    merged. A rebuild discards the whole index, so the freed pages are zeroed
+    by ``secure_delete`` and dropped by the VACUUM that follows."""
+    try:
+        conn.execute("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')")
+    except sqlite3.OperationalError as exc:
+        if "no such table" not in str(exc):
+            raise
 
 
 def _shred_residue(conn: sqlite3.Connection, report: dict[str, int]) -> None:
