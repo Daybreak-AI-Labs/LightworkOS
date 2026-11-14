@@ -24,8 +24,14 @@ class MigrationRefused(RuntimeError):
 def _raw(path: Path, keep) -> dict:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, ValueError, OSError):
+    except FileNotFoundError:
         return {}
+    except (ValueError, OSError) as exc:
+        # A corrupt file would otherwise import as empty and then be renamed
+        # to *.migrated with its entries silently left behind.
+        raise MigrationRefused(
+            f"{path.name} is unreadable or malformed; fix or move it first "
+            "(nothing was imported)") from exc
     return {str(k): v for k, v in data.items() if keep(v)} if isinstance(data, dict) else {}
 
 
@@ -55,10 +61,15 @@ def require_world_store() -> None:
 def preview() -> dict[str, Any]:
     """What a move would import right now (read-only)."""
     from . import self_harness as sh
-    _src, addenda, meta, tried = _file_stores()
+    try:
+        _src, addenda, meta, tried = _file_stores()
+        problem = ""
+    except MigrationRefused as exc:
+        addenda, meta, tried, problem = {}, {}, {}, str(exc)
     return {"world_store": world_store_selected(), "addenda": len(addenda),
             "provenance": len(meta), "tried": len(tried),
-            "corpus_configured": bool(sh.settings().get("eval_corpus"))}
+            "corpus_configured": bool(sh.settings().get("eval_corpus")),
+            "unreadable": problem}
 
 
 def migrate_learning_files() -> dict[str, int] | None:
