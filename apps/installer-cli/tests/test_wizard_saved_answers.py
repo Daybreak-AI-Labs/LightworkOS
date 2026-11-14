@@ -208,3 +208,15 @@ def test_keyed_search_backend_without_its_key_is_not_forced(monkeypatch, tmp_pat
     config._load_env_file(wizard.ENV_FILE)
     assert "MAVERICK_SEARCH_BACKEND" not in os.environ
     assert config.load_config(wizard.CONFIG_FILE)["capabilities"]["web_search"] is True
+
+
+def test_blank_or_padded_secret_answers_keep_or_trim_the_value(monkeypatch):
+    import getpass
+
+    q_secret = wizard._q_secret
+    monkeypatch.setenv("WIZARD_TEST_SECRET", "existing-value")
+    monkeypatch.setattr(wizard, "_q_secret", lambda prompt: "   ")
+    assert wizard.collect_api_keys([], {"WIZARD_TEST_SECRET"}) == {"WIZARD_TEST_SECRET": "existing-value"}
+    monkeypatch.setattr(wizard, "questionary", None)
+    monkeypatch.setattr(getpass, "getpass", lambda prompt: "  pasted-value \t")
+    assert q_secret("Key") == "pasted-value"

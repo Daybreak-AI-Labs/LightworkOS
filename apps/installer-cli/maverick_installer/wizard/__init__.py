@@ -525,7 +525,7 @@ def _q_secret(message: str) -> str:
     if questionary is None:
         import getpass
 
-        return getpass.getpass(f"{message}: ")
+        return getpass.getpass(f"{message}: ").strip()
     # Route through _ask so Ctrl-C / Ctrl-D / non-TTY (questionary returns
     # None) raises KeyboardInterrupt and aborts the wizard, like every other
     # prompt. The old `.ask() or ""` swallowed the abort into "", which
@@ -3712,7 +3712,7 @@ def _ask_credential(env_name: str, label: str) -> str:
     """Ask for a credential without showing any of an existing value."""
     current = os.environ.get(env_name, "")
     status = "set" if current else "not set"
-    value = _q_secret(f"  {label} [current: {status}] (blank = keep current)") or current
+    value = _q_secret(f"  {label} [current: {status}] (blank = keep current)").strip() or current
     return _single_line_env_value(env_name, value).strip()
 
 
@@ -5583,7 +5583,7 @@ def _consumer_api_key() -> dict[str, str]:
     )
     val = _single_line_env_value(
         "ANTHROPIC_API_KEY", _q_secret("  Paste your Anthropic API key (leave blank to skip):"),
-    )
+    ).strip()
     if not val.strip():
         console.print(
             "[yellow]Skipped.[/yellow] You can add one later in Lightwork Settings."
