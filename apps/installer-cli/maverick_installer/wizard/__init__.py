@@ -1107,7 +1107,7 @@ _ALLOWLIST_HINT = {
     "sms": "phone numbers, e.g. +14155551234",
     "whatsapp": "senders as Twilio sends them, e.g. whatsapp:+14155551234",
     "whatsapp_cloud": "bare wa_id digits, e.g. 14155551234",
-    "threads": "Threads usernames of allowed authors",
+    "threads": "numeric Threads user ids of allowed authors (not usernames)",
     "rcs": "E.164 MSISDNs, e.g. +14155551234",
 }
 
