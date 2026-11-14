@@ -364,8 +364,13 @@ class TrustLedger:
             elif kind == "graduate":
                 s = TrustState(action, s.hits, s.misses, s.streak,
                                True, True, ts)
-            elif kind in ("demote", "revoke"):
+            elif kind == "demote":
                 s = TrustState(action, s.hits, s.misses, s.streak,
+                               False, s.ever_graduated, ts)
+            elif kind == "revoke":
+                # An operator revoke restarts the streak, so the next accurate
+                # prediction cannot re-graduate the action straight away.
+                s = TrustState(action, s.hits, s.misses, 0,
                                False, s.ever_graduated, ts)
             else:  # superseded: idempotency only, no evidence weight
                 s = TrustState(action, s.hits, s.misses, s.streak,

@@ -388,6 +388,10 @@ def test_operator_revoke(tmp_path):
     assert engine.revoke("wire_transfer", reason="quarter close") is True
     assert revokes == []
     assert engine.ledger.state("wire_transfer").graduated is False
+    # One more accurate prediction does not undo the operator's revoke.
+    _card(engine, episode_id=9)
+    assert engine.reconcile(resolve=lambda g, e: 1.0).graduated == ()
+    assert engine.ledger.state("wire_transfer").graduated is False
 
 
 # -- decide(): every uncertainty keeps the human ---------------------------
