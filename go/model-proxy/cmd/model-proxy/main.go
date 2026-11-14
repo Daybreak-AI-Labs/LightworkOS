@@ -46,7 +46,7 @@ func main() {
 	}
 	if *check {
 		fmt.Printf("OK: %s:%d -> %s (auth=%s)\n",
-			config.ListenHost, config.ListenPort, config.Upstream, config.AuthStyle)
+			config.ListenHost, config.ListenPort, config.UpstreamLogLabel(), config.AuthStyle)
 		return
 	}
 
@@ -62,6 +62,6 @@ func main() {
 		ReadHeaderTimeout: min(10*time.Second, timeout),
 		MaxHeaderBytes:    65536,
 	}
-	log.Printf("model proxy on %s -> %s (auth=%s)", addr, config.Upstream, config.AuthStyle)
+	log.Printf("model proxy on %s -> %s (auth=%s)", addr, config.UpstreamLogLabel(), config.AuthStyle)
 	log.Fatal(httpSrv.ListenAndServe())
 }
