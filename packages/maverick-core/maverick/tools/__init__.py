@@ -193,9 +193,9 @@ def sandbox_run(
     through ``sandbox.exec()`` instead.
 
     Through a sandbox, the argv is shell-quoted with ``shlex.join`` and handed
-    to ``exec()`` (which runs ``sh -c``); ``stdin`` is fed via a base64 pipe so
-    arbitrary text reaches the process without shell-quoting hazards. The
-    LocalBackend runs the argv directly with a bounded stdin pipe. When no
+    to ``exec()`` (which runs ``sh -c``); small ``stdin`` is fed via a base64
+    pipe without shell-quoting hazards. Large input requires an admitted stdin
+    channel: LocalBackend runs the argv directly with a bounded pipe. When no
     sandbox is wired in, falls back to a scrubbed-env ``subprocess.run`` of the
     raw argv list (no shell interpolation -- the chokepoint guard forbids that
     outside the sandbox backends), passing ``stdin`` directly.
@@ -217,7 +217,11 @@ def sandbox_run(
         cmd = shlex.join(argv)
         if stdin is not None:
             if len(stdin.encode("utf-8")) > 64 * 1024:
-                return _sandbox_run_large_input(sandbox, execute, cmd, stdin, timeout)
+                # The SDK has no stdin contract for these backends. Do not
+                # stage host-written input in an agent-writable workspace:
+                # directory swaps can redirect writes or replace cleanup
+                # targets. Refuse before execution until a channel is declared.
+                return 1, "", "this sandbox cannot safely accept stdin larger than 64 KiB"
             import base64
             b64 = base64.b64encode(stdin.encode("utf-8")).decode("ascii")
             cmd = f"printf %s {shlex.quote(b64)} | base64 -d | {cmd}"
@@ -233,27 +237,6 @@ def sandbox_run(
         return r.returncode, r.stdout, r.stderr
     except subprocess.TimeoutExpired:
         return 124, "", f"TIMEOUT after {timeout}s"
-
-
-def _sandbox_run_large_input(sandbox, execute, cmd, stdin, timeout):
-    """Keep large input out of shell arguments on workspace-sharing backends."""
-    import shlex
-    import tempfile
-    from pathlib import Path
-
-    from ..sandbox.sdk import workdir_is_local
-
-    if not workdir_is_local(sandbox):
-        return 1, "", "large stdin requires a backend stdin channel or a local workspace"
-    workdir = Path(sandbox.workdir).resolve()
-    with tempfile.TemporaryDirectory(prefix=".maverick-stdin-", dir=workdir) as directory:
-        path = Path(directory) / "input"
-        with path.open("x", encoding="utf-8", newline="") as stream:
-            os.chmod(path, 0o600)
-            stream.write(stdin)
-        relative = path.relative_to(workdir).as_posix()
-        result = execute(f"{cmd} < {shlex.quote(relative)}", timeout=timeout)
-        return result.exit_code, result.stdout, result.stderr
 
 
 def host_exec(

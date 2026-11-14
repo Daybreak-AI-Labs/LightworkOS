@@ -188,7 +188,7 @@ def _write_descriptor(workdir: Path, target: Path):
         parent = directories[-1]
         _verify_write_fd(workdir, parent)
         try:
-            fd = os.open(rel.name, flags | os.O_CREAT | os.O_EXCL, dir_fd=parent)
+            fd = os.open(rel.name, flags | os.O_CREAT | os.O_EXCL, 0o666, dir_fd=parent)
             created.append((parent, rel.name, os.fstat(fd)))
         except FileExistsError:
             fd = os.open(rel.name, flags, dir_fd=parent)

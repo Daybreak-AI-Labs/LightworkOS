@@ -37,24 +37,13 @@ def test_tenant_ip_policy_applies_to_equivalent_literals():
     assert not host_allowed("api.example.com", policy={"deny": ["*.example.com"]})
 
 
-@pytest.mark.parametrize("shared_workspace", [False, True])
-def test_large_stdin_reaches_backend_without_command_size_limit(tmp_path, shared_workspace):
+def test_large_local_stdin_reaches_backend_without_command_size_limit(tmp_path):
     from maverick.sandbox.local import LocalBackend
     from maverick.tools import sandbox_run
 
     payload = "a" * (256 * 1024)
     backend = LocalBackend(workdir=tmp_path)
-    if shared_workspace:
-        class SharedBackend:
-            workdir = tmp_path
-
-            def exec(self, cmd, *, timeout):
-                return backend.exec(cmd, timeout=timeout)
-
-        selected = SharedBackend()
-    else:
-        selected = backend
-    result = sandbox_run(selected, [sys.executable, "-c", "import sys; print(len(sys.stdin.read()))"], stdin=payload, timeout=5)
+    result = sandbox_run(backend, [sys.executable, "-c", "import sys; print(len(sys.stdin.read()))"], stdin=payload, timeout=5)
     assert result == (0, f"{len(payload)}\n", "")
     assert list(tmp_path.iterdir()) == []
 
@@ -140,3 +129,69 @@ def test_file_write_refuses_fifo_without_waiting(tmp_path):
     result = subprocess.run([sys.executable, "-c", script, str(tmp_path)], capture_output=True, text=True, timeout=3)
     assert result.returncode == 0, result.stderr
     assert result.stdout.startswith("ERROR")
+
+
+@pytest.mark.parametrize("attack", ["symlink", "replacement"])
+def test_large_stdin_does_not_stage_in_untrusted_workspace(tmp_path, monkeypatch, attack):
+    import tempfile
+
+    from maverick.sandbox.local import ExecResult
+    from maverick.tools import sandbox_run
+
+    workdir = tmp_path / "workspace"
+    workdir.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    valuable = workdir / "user-data"
+    valuable.mkdir()
+    (valuable / "valuable.txt").write_text("keep me")
+    temporary_directory = tempfile.TemporaryDirectory
+
+    class RacingDirectory(temporary_directory):
+        def __enter__(self):
+            from pathlib import Path
+
+            created = super().__enter__()
+            path = Path(created)
+            path.rename(workdir / "original-stage")
+            path.symlink_to(outside, target_is_directory=True)
+            return created
+
+    class Backend:
+        def __init__(self):
+            self.workdir = workdir
+
+        def exec(self, cmd, *, timeout):
+            stage = next(workdir.glob(".maverick-stdin-*"))
+            stage.rename(workdir / "saved-input")
+            valuable.rename(stage)
+            return ExecResult(stdout="completed", stderr="", exit_code=0)
+
+    if attack == "symlink":
+        monkeypatch.setattr(tempfile, "TemporaryDirectory", RacingDirectory)
+    try:
+        result = sandbox_run(Backend(), ["unused"], stdin="PRIVATE" * 10000)
+    except OSError:
+        result = None
+    assert list(outside.iterdir()) == []
+    assert (valuable / "valuable.txt").read_text() == "keep me"
+    assert sorted(path.name for path in workdir.iterdir()) == ["user-data"]
+    assert result[0] != 0
+    assert "stdin" in result[2]
+    assert "PRIVATE" not in result[2]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission modes")
+@pytest.mark.parametrize(("mask", "expected"), [(0o022, 0o644), (0o077, 0o600)])
+def test_new_text_file_mode_respects_umask_without_execute_bits(tmp_path, mask, expected):
+    import stat
+
+    from maverick.tools import fs
+
+    previous = os.umask(mask)
+    try:
+        result = fs.write_file(SimpleNamespace(workdir=tmp_path)).fn({"path": "plain.txt", "content": "data"})
+    finally:
+        os.umask(previous)
+    assert result.startswith("wrote")
+    assert stat.S_IMODE((tmp_path / "plain.txt").stat().st_mode) == expected
