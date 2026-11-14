@@ -487,8 +487,10 @@ def _preflight_fetch(url: str, parsed: Any) -> str | None:
         if not egress_allowed("http_fetch", parsed.hostname or ""):
             return (f"ERROR: egress policy blocks http_fetch from reaching "
                     f"{parsed.hostname!r} (see [egress] / [sandbox.tool.http_fetch]).")
-    except Exception:  # pragma: no cover -- policy never breaks a fetch
-        pass
+    except Exception as e:
+        # A policy that cannot be evaluated (malformed [sandbox] or [egress]
+        # config) must not turn an allowlist or deny-all posture into allow-all.
+        return f"ERROR: egress policy could not be evaluated ({type(e).__name__}); refusing to fetch."
 
     if not allow_private():
         if _is_private_ip(parsed.hostname or ""):

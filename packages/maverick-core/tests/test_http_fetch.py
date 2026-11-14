@@ -217,3 +217,19 @@ def test_guarded_urlopen_allows_redirect_to_public(monkeypatch):
         _Req(), None, 302, "Found", {}, "https://other.example.org/next",
     )
     assert out is not None
+
+
+def test_preflight_refuses_when_the_egress_policy_cannot_be_evaluated(monkeypatch):
+    """A malformed per-tool policy used to be swallowed, so an allowlist
+    posture became allow-all for http_fetch."""
+    from urllib.parse import urlparse
+
+    import maverick.tenant.egress as egress
+    from maverick.tools.http_fetch import _preflight_fetch
+
+    def _broken(*_a, **_k):
+        raise AttributeError("'str' object has no attribute 'get'")
+
+    monkeypatch.setattr(egress, "egress_allowed", _broken)
+    url = "https://example.com/"
+    assert (_preflight_fetch(url, urlparse(url)) or "").startswith("ERROR: egress policy could not be evaluated")
