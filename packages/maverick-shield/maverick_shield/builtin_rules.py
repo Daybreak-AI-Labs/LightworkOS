@@ -22,6 +22,7 @@ users via the "agent-shield not installed" warning.
 from __future__ import annotations
 
 import base64
+import html
 import os
 import re
 import unicodedata
@@ -79,7 +80,9 @@ def _compile(p: str) -> re.Pattern:
 # (`--recursive`); the rules below use it, bounded to a handful of
 # repetitions (never unbounded, so this can't blow up on adversarial input),
 # to detect the two flags regardless of how they're grouped or ordered.
-_FLAG_TOKEN = r"(?:-[a-zA-Z]+|--[a-zA-Z][a-zA-Z-]*)"
+# A bare ``--`` (end of options) is a token too: ``rm -rf -- /`` is the same
+# command.
+_FLAG_TOKEN = r"(?:-[a-zA-Z]+|--[a-zA-Z][a-zA-Z-]*|--)"
 
 
 def _has_flag(letter: str, long_name: str) -> str:
@@ -99,9 +102,12 @@ def _has_flag(letter: str, long_name: str) -> str:
 # "stops only a verbatim copy-paste" to "stops the common encodings too".
 
 # Zero-width spaces/joiners, bidi controls, BOM, and the Unicode tag block
-# (steganographic invisible chars).
+# (steganographic invisible chars), plus the soft hyphen, combining grapheme
+# joiner, Mongolian vowel separator, Hangul fillers and variation selectors,
+# which render as nothing inside a word ("ig\u00adnore").
 _INVISIBLE = re.compile(
-    r"[\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]|[\U000E0000-\U000E007F]"
+    r"[\u00ad\u034f\u115f\u1160\u180e\u200b-\u200f\u202a-\u202e\u2060-\u206f"
+    r"\u3164\ufe00-\ufe0f\uffa0\ufeff]|[\U000E0000-\U000E007F]|[\U000E0100-\U000E01EF]"
 )
 
 # Common confusable code points folded to their ASCII look-alike. Covers the
@@ -110,8 +116,30 @@ _HOMOGLYPHS = str.maketrans({
     "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "х": "x", "у": "y",
     "і": "i", "ѕ": "s", "ԁ": "d", "ո": "n", "ⅼ": "l", "ӏ": "l", "ʟ": "l",
     "α": "a", "ο": "o", "ρ": "p", "ν": "v", "ϲ": "c", "ѐ": "e", "ƽ": "s",
-    "ɡ": "g", "ⅰ": "i", "ｉ": "i",
+    "ɡ": "g", "ⅰ": "i", "ｉ": "i", "ι": "i",
 })
+
+# ``\\xHH`` escapes written inline ("\\x69\\x67nore all previous ...").
+_INLINE_HEX = re.compile(r"\\x([0-9a-fA-F]{2})")
+
+
+def _strip_combining(text: str) -> str:
+    """Drop combining marks ("ignóre" -> "ignore"); ASCII text is unchanged."""
+    if text.isascii():
+        return text
+    decomposed = unicodedata.normalize("NFD", text)
+    return unicodedata.normalize(
+        "NFC", "".join(c for c in decomposed if not unicodedata.combining(c)))
+
+
+def _unescape_inline(text: str) -> str:
+    """Decode HTML entities and inline ``\\xHH`` escapes in place, so a keyword
+    spelled ``ignore&#32;all`` or ``\x69gnore`` reads as the plain words."""
+    if "&" in text:
+        text = html.unescape(text)
+    if "\\x" in text:
+        text = _INLINE_HEX.sub(lambda m: chr(int(m.group(1), 16)), text)
+    return text
 
 # A base64-shaped run long enough to carry a payload (but not so short it
 # matches every hex id). Decoded and re-scanned.
@@ -214,10 +242,10 @@ def _candidates(text: str) -> list[str]:
     folded after a ``casefold()`` so an upper/mixed-case confusable (Cyrillic
     capital ``І`` -> ``і``) maps onto the lowercase confusable table;
     rules are IGNORECASE so the extra lowercasing is safe."""
-    norm0 = unicodedata.normalize("NFKC", text)
+    norm0 = unicodedata.normalize("NFKC", _unescape_inline(text))
     cands = {text}
     # strip vs space-substitute invisibles; original-case vs casefolded.
-    for base in (_strip_invisible(norm0), _INVISIBLE.sub(" ", norm0)):
+    for base in (_strip_combining(_strip_invisible(norm0)), _INVISIBLE.sub(" ", norm0)):
         for variant in (base, base.casefold()):
             folded = variant.translate(_HOMOGLYPHS)
             cands.add(folded)
@@ -356,7 +384,7 @@ RULES: list[Rule] = [
             r"\brm\s+"
             rf"(?=(?:{_FLAG_TOKEN}\s+){{0,5}}{_has_flag('r', 'recursive')})"
             rf"(?=(?:{_FLAG_TOKEN}\s+){{0,5}}{_has_flag('f', 'force')})"
-            rf"(?:{_FLAG_TOKEN}\s+){{1,5}}(\/|~|\$HOME)(\*|\/|[\s;&|]|$)"
+            rf"(?:{_FLAG_TOKEN}\s+){{1,5}}(\/|~|\$HOME|\$\{{HOME\}})(\*|\/|[\s;&|]|$)"
         ),
         "rm -rf/-fr (contiguous OR split across flags, e.g. `rm -r -f /`) "
         "against /, ~, or $HOME",
@@ -372,7 +400,7 @@ RULES: list[Rule] = [
         _compile(
             r"\bch(mod|own)\s+"
             rf"(?=(?:{_FLAG_TOKEN}\s+){{0,5}}{_has_flag('R', 'recursive')})"
-            r"(?:(?!\bch(?:mod|own)\s)[^\n])*\s(\/|~|\$HOME)(\s|;|&|\||$)"
+            r"(?:(?!\bch(?:mod|own)\s)[^\n])*\s(\/|~|\$HOME|\$\{HOME\})(\s|;|&|\||$)"
         ),
         "Recursive chmod/chown (contiguous OR split across flags, e.g. "
         "`chmod -c -R 777 /`) against /, ~, or $HOME",

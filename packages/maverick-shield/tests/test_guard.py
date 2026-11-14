@@ -31,6 +31,19 @@ def test_shield_scan_tool_call_blocks_destructive_rm(cmd):
     assert verdict.severity == "critical"
 
 
+@pytest.mark.parametrize("args", [
+    {"cmd": "rm -rf -- /"},
+    {"cmd": "rm -rf ${HOME}"},
+    {"cmd": "rm", "args": ["-rf", "/"]},
+])
+def test_shield_scan_tool_call_blocks_rm_variants(args):
+    # End-of-options "--", "${HOME}", and a command split across fields (the
+    # key name used to sit between "rm" and its flags) are the same command.
+    from maverick_shield.guard import Shield
+    sh = Shield(backend=Shield.BACKEND_BUILTIN)
+    assert not sh.scan_tool_call("shell", args).allowed
+
+
 def test_shield_scan_tool_call_allows_benign():
     from maverick_shield.guard import Shield
     sh = Shield(backend=Shield.BACKEND_BUILTIN)
