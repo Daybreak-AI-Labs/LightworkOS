@@ -55,7 +55,11 @@ def _check_provider_keys() -> list[str]:
             missing.append(name)
     out = [f"  ✓ providers with keys: {', '.join(found) or '(none)'}"]
     if not found:
-        out.append("    ! no provider keys set — agent cannot make LLM calls")
+        from ..config import any_provider_configured
+        if any_provider_configured():
+            out.append("    (another provider is configured by key, base URL or config)")
+        else:
+            out.append("    ! no provider keys set — agent cannot make LLM calls")
     return out
 
 

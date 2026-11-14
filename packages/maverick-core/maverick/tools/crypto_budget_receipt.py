@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import math
 from typing import Any
 
 from . import Tool
@@ -24,8 +25,8 @@ def _fmt_dollars(value: Any) -> tuple[str | None, str | None]:
         amount = float(value)
     except (TypeError, ValueError):
         return None, "dollars must be a number"
-    if amount < 0:
-        return None, "dollars must be non-negative"
+    if not math.isfinite(amount) or amount < 0:
+        return None, "dollars must be a finite, non-negative number"
     return f"{amount:.2f}", None
 
 

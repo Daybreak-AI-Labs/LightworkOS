@@ -4,7 +4,8 @@ Evaluates a set of consent records and reports, per processing purpose, whether
 valid consent currently exists. A record is only VALID if it was granted, not
 withdrawn, not expired, and not granted after ``now``; otherwise it is
 NOT_GRANTED, NOT_YET_GRANTED, WITHDRAWN, or EXPIRED. When several records share a purpose the most recent (by
-``granted_at``) governs, so a fresh re-grant supersedes an older withdrawal.
+``granted_at``) governs, so a fresh re-grant supersedes an older withdrawal;
+a withdrawal on any record dated on or after that grant still withdraws it.
 Pure date logic — deterministic and offline. Distinct from the
 ``voice_cloning_consent`` single-purpose gate.
 
@@ -48,17 +49,31 @@ def _status(rec: dict, now: date) -> tuple[str, str]:
     return "VALID", "granted, active"
 
 
+def _later_withdrawal(rec: dict, withdrawals: list[date]) -> date | None:
+    """A withdrawal on another record of the purpose, dated on or after the
+    governing grant (same day counts: the order within a day is unknown)."""
+    ga = rec.get("granted_at")
+    granted = _parse(ga, "granted_at") if ga else date.min
+    later = [w for w in withdrawals if w >= granted]
+    return max(later) if later else None
+
+
 def _check(consents: list, now: date, only: str | None) -> str:
     # Most recent grant at or before ``now`` per purpose governs. A record
     # dated after ``now`` cannot hide a current grant: it is considered only
     # when the purpose has no record at or before ``now`` (NOT_YET_GRANTED).
     latest: dict[str, tuple[tuple[int, int], dict]] = {}
+    withdrawals: dict[str, list[date]] = {}
     for i, rec in enumerate(consents):
         if not isinstance(rec, dict) or "purpose" not in rec:
             return f"ERROR: consent {i} needs a 'purpose'"
         purpose = str(rec["purpose"])
         if only is not None and purpose != only:
             continue
+        if rec.get("withdrawn_at"):
+            w = _parse(rec["withdrawn_at"], f"consent {i} withdrawn_at")
+            if w <= now:
+                withdrawals.setdefault(purpose, []).append(w)
         ga = rec.get("granted_at")
         when = _parse(ga, f"consent {i} granted_at").toordinal() if ga else -1
         key = (0 if when > now.toordinal() else 1, when)
@@ -73,7 +88,10 @@ def _check(consents: list, now: date, only: str | None) -> str:
 
     rows = []
     for purpose in sorted(latest):
-        state, detail = _status(latest[purpose][1], now)
+        rec = latest[purpose][1]
+        state, detail = _status(rec, now)
+        if state == "VALID" and (w := _later_withdrawal(rec, withdrawals.get(purpose, []))):
+            state, detail = "WITHDRAWN", f"withdrawn {w.isoformat()} (on a record for this purpose)"
         rows.append((purpose, state, detail))
 
     valid = sum(1 for _, s, _ in rows if s == "VALID")

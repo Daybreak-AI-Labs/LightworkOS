@@ -159,10 +159,10 @@ def _op_query(args: dict) -> str:
     vals = args.get("expression_values") if isinstance(
         args.get("expression_values"), dict) else {}
     limit = max(1, min(int(args.get("limit") or 25), 1000))
-    items = _paginate(_client().Table(table).query, {
-        "KeyConditionExpression": expr,
-        "ExpressionAttributeValues": vals,
-    }, limit)
+    kwargs: dict = {"KeyConditionExpression": expr}
+    if vals:  # DynamoDB rejects an empty ExpressionAttributeValues map
+        kwargs["ExpressionAttributeValues"] = vals
+    items = _paginate(_client().Table(table).query, kwargs, limit)
     if not items:
         return "no items"
     return f"count={len(items)}\n" + _dump(items)
@@ -179,7 +179,8 @@ def _op_scan(args: dict) -> str:
         kwargs["FilterExpression"] = f
         vals = args.get("expression_values") if isinstance(
             args.get("expression_values"), dict) else {}
-        kwargs["ExpressionAttributeValues"] = vals
+        if vals:  # DynamoDB rejects an empty ExpressionAttributeValues map
+            kwargs["ExpressionAttributeValues"] = vals
     items = _paginate(_client().Table(table).scan, kwargs, limit)
     if not items:
         return "no items"

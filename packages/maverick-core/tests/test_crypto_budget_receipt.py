@@ -45,3 +45,8 @@ def test_errors():
     assert t.fn({"op": "issue", "goal_id": "g", "dollars": -1, "key": "k"}).startswith("ERROR")
     assert t.fn({"op": "issue", "goal_id": "g", "dollars": 1}).startswith("ERROR")  # no key
     assert t.fn({"op": "nope", "key": "k"}).startswith("ERROR")
+
+
+def test_non_finite_amount_is_refused():
+    for bad in ("nan", "inf", "-inf"):
+        assert _run(op="issue", goal_id="g", dollars=bad, key="k").startswith("ERROR"), bad
