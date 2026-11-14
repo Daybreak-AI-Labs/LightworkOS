@@ -77,7 +77,7 @@ def _op_accounts(args: dict) -> str:
     if not rows:
         return "no accounts"
     return "\n".join(
-        f"  {(a.get('account_id') or '?')[:12]}  "
+        f"  {a.get('account_id') or '?'}  "
         f"{(a.get('display_name') or '?')[:30]:<30}  "
         f"{a.get('account_type', '?')}  {a.get('currency', '')}"
         for a in rows
