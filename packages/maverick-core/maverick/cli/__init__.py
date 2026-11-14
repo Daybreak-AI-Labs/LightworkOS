@@ -3106,7 +3106,14 @@ def _dashboard_public_url() -> str:
 
 
 def _require_unfinished_onboarding(tenant_id: str) -> None:
-    from maverick_dashboard import invites, rbac
+    try:
+        from maverick_dashboard import invites, rbac
+    except ImportError as exc:
+        raise ValueError(
+            f"tenant {tenant_id!r} already exists, and the dashboard package is "
+            f"unavailable so its setup cannot be checked or continued ({exc}). "
+            "Install maverick-dashboard, then re-run `maverick tenant onboard`."
+        ) from exc
 
     from ..tenant.registry import get_tenant
 
@@ -3114,6 +3121,18 @@ def _require_unfinished_onboarding(tenant_id: str) -> None:
     if (record is None or not record.active or rbac.list_tenant_roles(tenant_id)
             or any(inv.tenant == tenant_id for inv in invites.list_invites())):
         raise ValueError("tenant already exists with members or an invitation; use the dashboard to manage access")
+
+
+def _note_unapplied_onboard_options() -> None:
+    ctx = click.get_current_context()
+    given = [
+        flag for name, flag in (("plan", "--plan"), ("display_name", "--name"),
+                                ("max_daily_dollars", "--max-daily-dollars"))
+        if ctx.get_parameter_source(name) is not click.core.ParameterSource.DEFAULT
+    ]
+    if given:
+        click.echo(f"  NOTE: these options were not applied to the existing tenant: "
+                   f"{', '.join(given)}", err=True)
 
 
 @tenant.command("onboard")
@@ -3146,6 +3165,7 @@ def tenant_onboard(tenant_id: str, admin_email: str, plan: str, display_name: st
         if rec is not None:
             _require_unfinished_onboarding(rec.id)
             click.echo(f"continuing unfinished setup for tenant {rec.id!r}")
+            _note_unapplied_onboard_options()
         else:
             rec = create_tenant(tenant_id, plan=plan, display_name=display_name,
                                  max_daily_dollars=max_daily_dollars)

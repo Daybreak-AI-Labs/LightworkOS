@@ -378,6 +378,23 @@ def test_onboard_can_finish_after_a_rejected_first_invite():
     assert invoke("tenant", "onboard", "acme", "--admin-email", "other@example.test").exit_code == 2
 
 
+def test_onboard_rerun_reports_missing_dashboard_and_unapplied_options(monkeypatch):
+    import sys
+
+    from maverick.tenant.registry import create_tenant, get_tenant
+    create_tenant("acme")
+    retry = invoke("tenant", "onboard", "acme", "--admin-email", "admin@example.test",
+                   "--plan", "pro", "--name", "Acme", "--max-daily-dollars", "5")
+    assert retry.exit_code == 0, retry.output
+    assert "not applied to the existing tenant: --plan, --name, --max-daily-dollars" in retry.output
+    assert get_tenant("acme").plan == "free"
+    monkeypatch.setitem(sys.modules, "maverick_dashboard", None)
+    result = invoke("tenant", "onboard", "acme", "--admin-email", "admin@example.test")
+    assert result.exit_code == 2, result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert "dashboard package is unavailable" in result.output
+
+
 @pytest.mark.parametrize("spent,durable,expected_exit,remaining", [
     (0.75, False, 0, 0.25), (1.0, False, 2, None),
     (1.25, False, 2, None), (-1.0, False, 1, None), (0.75, True, 0, 1.0),
