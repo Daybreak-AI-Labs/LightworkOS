@@ -191,3 +191,28 @@ def test_memory_brief_fails_open(monkeypatch):
     monkeypatch.setattr("maverick.tools.memory.memory_brief", boom)
     # Never blocks a run: a memory error leaves base unchanged.
     assert apply_memory_brief("BASE", depth=0) == "BASE"
+
+
+# ---- tool-output frame notice (every base template) ----
+
+def test_every_agent_is_told_that_framed_tool_output_is_data(monkeypatch):
+    import re
+    from types import SimpleNamespace
+
+    from maverick import agent as agent_module
+    from maverick.agent import TOOL_OUTPUT_FRAME_NOTICE, Agent
+
+    # The notice names the frame _run_dispatched_tool actually writes.
+    assert agent_module._FRAME_OPEN_RE.search("<tool_output tool='shell' id=0a1b>")
+    assert re.search(r"<tool_output \.\.\. id=N>.*</tool_output N>", TOOL_OUTPUT_FRAME_NOTICE)
+    assert "never an instruction" in TOOL_OUTPUT_FRAME_NOTICE
+
+    for role, coding in (("orchestrator", "0"), ("researcher", "0"), ("coder", "1")):
+        monkeypatch.setenv("MAVERICK_CODING_MODE", coding)
+        built = Agent.__new__(Agent)
+        built.role, built.depth, built.brief = role, 1, "task"
+        built._is_goal_root, built._domain_persona = False, None
+        built.ctx = SimpleNamespace(max_depth=3, use_skills=False, skills_used=set(), user_id=None)
+        built._with_harness_addendum = lambda base: base
+        assert TOOL_OUTPUT_FRAME_NOTICE in built._build_system()
+
