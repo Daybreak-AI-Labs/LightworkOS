@@ -181,6 +181,18 @@ def test_server_timeout_is_an_error_not_a_hang(tmp_path, monkeypatch):
     assert out.startswith("ERROR:")
 
 
+def test_server_that_stops_reading_cannot_block_past_the_deadline(tmp_path, monkeypatch):
+    # The didOpen frame carries the whole file; a server that never reads its
+    # stdin used to block the write forever, whatever timeout_s said.
+    f = tmp_path / "big.py"
+    f.write_text("x = 1\n" * 150_000)
+    deaf = [sys.executable, "-c", "import time; time.sleep(60)"]
+    _use_fake_server(monkeypatch, tmp_path, argv=deaf)
+    out = _tool().fn({"op": "symbols", "file": str(f), "timeout_s": 1.5})
+    assert out.startswith("ERROR:")
+    assert _tool().fn({"op": "symbols", "file": str(f), "timeout_s": float("nan")}).startswith("ERROR:")
+
+
 def test_per_call_server_override_is_rejected(tmp_path, monkeypatch):
     _use_fake_server(monkeypatch, tmp_path)
     f = tmp_path / "w.py"
