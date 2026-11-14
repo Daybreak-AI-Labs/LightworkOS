@@ -3643,17 +3643,16 @@ class WorldModel:
         *,
         expected_owner: str | None = None,
     ) -> bool:
-        """Record an answer to a question. Returns False if no unanswered
-        question with that id exists, so callers can flag a typo'd id instead
-        of reporting a false success. An answer is recorded once: the agent
-        may already have acted on it, so it is never silently replaced.
+        """Record an answer to a question. Returns False if no question with
+        that id exists, so callers can flag a typo'd id instead of reporting
+        a false success.
 
         ``expected_owner`` binds the mutation to the parent goal's owner in
         the same SQL statement.  This is the object-level authorization seam
         used by network adapters; a missing, ownerless, or foreign question is
         deliberately the same zero-row result.
         """
-        sql = "UPDATE questions SET answer = ?, answered_at = ? WHERE id = ? AND answer IS NULL"
+        sql = "UPDATE questions SET answer = ?, answered_at = ? WHERE id = ?"
         params: tuple[Any, ...] = (
             _enc_field(answer, "questions.answer"),
             time.time(),
