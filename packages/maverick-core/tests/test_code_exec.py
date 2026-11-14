@@ -183,6 +183,29 @@ async def test_non_bmp_tool_output_survives_into_the_script(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_lone_surrogate_and_late_budget_stop_are_handled(monkeypatch):
+    from maverick.budget import BudgetExceeded
+    from maverick.tools.code_exec import _outputs_literal
+
+    literal = _outputs_literal({"v": "bad \ud800"})
+    assert "\\ud800" in literal  # escaped fallback: encodable and valid Python
+    literal.encode("utf-8")
+
+    agent = _FakeAgent()
+    calls = {"n": 0}
+
+    def record():
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise BudgetExceeded("out of money")
+
+    agent.ctx.budget.record_tool_call = record
+    out = await code_exec_tool(agent).fn(
+        {"code": "x", "tool_calls": [{"name": "a"}, {"name": "b"}]})
+    assert out.startswith("INDETERMINATE: budget exhausted before running 'b'")
+
+
+@pytest.mark.asyncio
 async def test_empty_stdout_gives_a_hint(monkeypatch):
     _patch_sandbox(monkeypatch, out="")
     out = await code_exec_tool(_FakeAgent()).fn({"code": "x = 1"})

@@ -102,8 +102,24 @@ def _admit_declared_call(agent, name, ran: int) -> str | None:
     try:
         agent.ctx.budget.record_tool_call()
     except BudgetExceeded as e:
-        return f"ERROR: budget exhausted before running {name!r}: {e}"
+        # After earlier declared calls ran, their effects may have happened.
+        return _stopped(f"budget exhausted before running {name!r}: {e}", ran)
     return None
+
+
+def _outputs_literal(tool_outputs: dict[str, str]) -> str:
+    """``tool_outputs`` as a Python literal that round-trips its values.
+
+    Unescaped JSON keeps non-BMP characters intact. A value holding a lone
+    surrogate cannot be encoded that way, so it falls back to the escaped
+    form, which still parses (as the same lone surrogate).
+    """
+    text = json.dumps(tool_outputs, ensure_ascii=False)
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return json.dumps(tool_outputs)
+    return text
 
 
 def _build_script(agent, code: str, declared: list, tool_outputs: dict[str, str]) -> str:
@@ -119,7 +135,7 @@ def _build_script(agent, code: str, declared: list, tool_outputs: dict[str, str]
     preamble = (
         "# Injected by code_exec: outputs of the tool_calls you declared,\n"
         "# keyed by your `as` (or '<name>_<index>'). Read them via tools[...].\n"
-        "tools = " + json.dumps(tool_outputs, ensure_ascii=False) + "\n\n"
+        "tools = " + _outputs_literal(tool_outputs) + "\n\n"
     )
     script = preamble + code
     try:
