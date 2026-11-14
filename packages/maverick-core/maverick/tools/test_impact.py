@@ -25,7 +25,8 @@ ops:
   - analyze_files(paths)        — explicit changed-file list
 
 Both ops accept an optional ``test_dirs`` arg (defaults to
-``["tests", "test"]`` searched from the configured workdir).
+``["tests", "test"]`` searched from the sandbox workdir when the tool is
+built with one, else from the process working directory).
 """
 from __future__ import annotations
 
@@ -190,11 +191,13 @@ def _analyze(changed: list[str], workdir: Path, test_dirs: list[str]) -> str:
     return "\n".join(lines)
 
 
-def _run(args: dict[str, Any]) -> str:
+def _run(args: dict[str, Any], sandbox: Any = None) -> str:
     op = args.get("op")
     if not op:
         return "ERROR: op is required"
-    workdir = Path.cwd().resolve()
+    # The goal workspace when a sandbox is wired in; the process working
+    # directory is only a fallback for standalone use.
+    workdir = Path(sandbox.workdir if sandbox is not None else Path.cwd()).resolve()
     test_dirs = args.get("test_dirs") or ["tests", "test"]
     try:
         if op == "analyze":
@@ -210,7 +213,7 @@ def _run(args: dict[str, Any]) -> str:
     return f"ERROR: unknown op {op!r}"
 
 
-def test_impact() -> Tool:
+def test_impact(sandbox: Any = None) -> Tool:
     return Tool(
         name="test_impact",
         description=(
@@ -221,5 +224,5 @@ def test_impact() -> Tool:
             "Optional test_dirs override."
         ),
         input_schema=_IMPACT_SCHEMA,
-        fn=_run,
+        fn=lambda args: _run(args, sandbox),
     )

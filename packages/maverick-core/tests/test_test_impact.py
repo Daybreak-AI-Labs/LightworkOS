@@ -75,3 +75,16 @@ def test_test_impact_no_test_dir(tmp_path, monkeypatch):
         "paths": ["src/x.py"],
     })
     assert "no test directories" in out
+
+
+def test_test_impact_scans_the_sandbox_workdir_not_cwd(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from maverick.tools.test_impact import test_impact
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    _seed_repo(ws)
+    monkeypatch.chdir(tmp_path)  # the server's cwd has no tests
+    out = test_impact(SimpleNamespace(workdir=ws)).fn(
+        {"op": "analyze_files", "paths": ["src/pkg/foo.py"]})
+    assert "test_foo.py" in out
