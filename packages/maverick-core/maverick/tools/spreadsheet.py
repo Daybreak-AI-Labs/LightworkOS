@@ -17,6 +17,7 @@ from __future__ import annotations
 import csv as _csv
 import io
 import os
+import re
 import stat
 import struct
 import tempfile
@@ -438,12 +439,27 @@ def _special_operation(path, op, sandbox):
     return None
 
 
+def _is_single_cell(cell: str) -> bool:
+    # A new workbook is edited in the host process, where openpyxl expands a
+    # range such as "A1:XFD1048576" into every cell before failing. Accept one
+    # coordinate inside the Excel limits (the isolated worker's own check).
+    match = re.fullmatch(r"\$?([A-Za-z]{1,3})\$?([1-9][0-9]{0,6})", cell)
+    if match is None:
+        return False
+    column = 0
+    for letter in match.group(1).upper():
+        column = column * 26 + ord(letter) - 64
+    return column <= 16384 and int(match.group(2)) <= 1048576
+
+
 def _set_cell_operation(path, args, sheet):
     if not _is_xlsx(path):
         return "ERROR: set_cell is xlsx-only; use write for csv"
     cell = str(args.get("cell") or "").strip()
     if not cell:
         return "ERROR: set_cell requires cell (e.g. 'B2')"
+    if not _is_single_cell(cell):
+        return f"ERROR: set_cell needs a single A1 cell such as 'B2', not {cell[:40]!r}"
     from ..file_lock import cross_process_lock
     with cross_process_lock(path, strict=True):
         if path.exists():
