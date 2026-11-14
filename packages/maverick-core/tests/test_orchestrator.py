@@ -491,3 +491,15 @@ def test_paid_enrichment_does_not_swallow_budget_or_accounting_stops():
                 raise stop
         with _enrich("recall"):  # unpaid enrichment stays fail-soft
             raise stop
+
+
+def test_best_of_n_ladder_and_per_attempt_allowance():
+    from maverick.orchestrator import _parse_bon_ladder, _remaining_allowance
+
+    ladder = _parse_bon_ladder("openai:gpt-5.5, ollama:qwen3:32b, anthropic:claude-x:0.7,")
+    assert [m for m, _ in ladder] == ["openai:gpt-5.5", "ollama:qwen3:32b", "anthropic:claude-x"]
+    assert ladder[2][1] == 0.7
+    # An attempt gets what is left of the parent's cap, not a fresh full cap.
+    assert _remaining_allowance(100, 70) == 30
+    assert _remaining_allowance(100, 120) == 0
+    assert _remaining_allowance(None, 5) is None

@@ -63,6 +63,30 @@ def _enrich(label: str, *, paid: bool = False):
             _safe_exception_text(e, fallback="enrichment unavailable"),
         )
 
+def _remaining_allowance(cap: int | None, used: int) -> int | None:
+    """What is left of an integer cap (``None`` = uncapped), never negative."""
+    return None if cap is None else max(0, cap - used)
+
+
+def _parse_bon_ladder(raw_ladder: str) -> list[tuple[str, float]]:
+    """``model[:temperature]`` entries, comma-separated. A suffix that is not a
+    temperature belongs to the model (``openai:gpt-5.5``, ``ollama:qwen3:32b``)."""
+    ladder: list[tuple[str, float]] = []
+    for entry in raw_ladder.split(","):
+        if not entry.strip():
+            continue
+        mdl, _, t = entry.rpartition(":")
+        try:
+            temperature = float(t) if mdl else None
+        except ValueError:
+            temperature = None
+        if temperature is not None and 0.0 <= temperature <= 2.0:
+            ladder.append((mdl.strip(), temperature))
+        else:
+            ladder.append((entry.strip(), 0.3 + 0.25 * len(ladder)))
+    return ladder
+
+
 def _skill_distillation_frozen(*, config: dict | None = None) -> bool:
     """Whether calibration has frozen learning (the verifier drifted and no
     longer discriminates correct from incorrect).
@@ -3373,16 +3397,7 @@ async def run_goal_best_of_n(
 
     raw_ladder = env_or_config("MAVERICK_BON_LADDER", "search", "ladder", default_ladder) \
         or default_ladder
-    ladder: list[tuple[str, float]] = []
-    for entry in raw_ladder.split(","):
-        if ":" in entry:
-            mdl, t = entry.rsplit(":", 1)
-            try:
-                ladder.append((mdl.strip(), float(t)))
-            except ValueError:
-                ladder.append((mdl.strip(), 0.3 + 0.25 * len(ladder)))
-        elif entry.strip():
-            ladder.append((entry.strip(), 0.3 + 0.25 * len(ladder)))
+    ladder = _parse_bon_ladder(raw_ladder)
     # Pad the ladder with temperature-only steps if N > len(ladder).
     while len(ladder) < n:
         ladder.append(("", round(0.2 + 0.25 * len(ladder), 2)))
@@ -3429,9 +3444,11 @@ async def run_goal_best_of_n(
         attempt_budget = _Budget(
             max_dollars=per_attempt_dollars,
             max_wall_seconds=per_attempt_wall,
-            max_input_tokens=budget.max_input_tokens,
-            max_output_tokens=budget.max_output_tokens,
-            max_tool_calls=budget.max_tool_calls,
+            # Attempts run one after another and the parent absorbs each one,
+            # so the remaining (not the full) allowance keeps the sum in the cap.
+            max_input_tokens=_remaining_allowance(budget.max_input_tokens, budget.input_tokens),
+            max_output_tokens=_remaining_allowance(budget.max_output_tokens, budget.output_tokens),
+            max_tool_calls=_remaining_allowance(budget.max_tool_calls, budget.tool_calls),
         )
         # Per-attempt sampling temperature via a ContextVar, NOT a process-
         # global env var: a concurrent goal on the same process must not inherit
