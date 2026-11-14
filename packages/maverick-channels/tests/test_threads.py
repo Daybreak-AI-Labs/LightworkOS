@@ -154,6 +154,17 @@ def test_unlisted_author_ignored(monkeypatch):
     assert not ch.send.await_count
 
 
+def test_username_allow_list_keeps_stable_sender_identity(monkeypatch):
+    ch = _channel(allowed_user_ids=[OWNER])
+    ch.send = AsyncMock()
+    _fake_wm(monkeypatch)
+    _install_httpx(monkeypatch, [], _responder_with([_reply()]))
+    asyncio.run(_cycle(ch))
+    ch.handler.assert_awaited_once()
+    assert ch.handler.await_args.args[0].sender_id == OWNER_ID
+    ch.send.assert_awaited_once()
+
+
 def test_self_authored_reply_skipped(monkeypatch):
     """The bot's own replies come back on the edge; answering them would
     loop. from.id == configured user_id is dropped before any claim."""

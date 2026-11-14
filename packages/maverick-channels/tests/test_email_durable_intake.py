@@ -166,6 +166,29 @@ def test_failed_intake_does_not_ack_seen(environment, monkeypatch):
     assert not runs
 
 
+def test_folded_subject_is_unfolded_before_saving_reply_route(environment, monkeypatch):
+    channel, _ = environment
+    _imap(monkeypatch, lambda: None,
+          lambda: _mail().replace(b"Subject: Review", b"Subject: Review\r\n\tthis quarter"))
+    row, = channel._fetch_unseen()
+    assert row["route"]["subject"] == "Re: Review this quarter"
+    message = email.message.EmailMessage()
+    message["Subject"] = row["route"]["subject"]
+    assert "Subject: Review this quarter" in row["message"]["text"]
+
+
+def test_invalid_intake_configuration_leaves_mail_unread(environment, monkeypatch):
+    from maverick import config
+
+    channel, _ = environment
+    seen = []
+    _imap(monkeypatch, lambda: seen.append(True))
+    monkeypatch.setattr(config, "load_config", lambda: {"channels": {"max_intake_records": 0}})
+    with pytest.raises(ValueError, match="intake capacity"):
+        channel._fetch_unseen()
+    assert seen == []
+
+
 @pytest.mark.parametrize("phase", ["connect", "accepted_then_disconnect", "explicit_rejection"])
 def test_smtp_failure_classification_retains_ambiguity(environment, monkeypatch, phase):
     channel, _ = environment
