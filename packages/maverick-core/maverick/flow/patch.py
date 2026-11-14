@@ -114,7 +114,15 @@ def _set_field(flow: Flow, p: dict) -> None:
     else:
         d[field] = value
     try:
-        flow.nodes[nid] = FlowNode.from_dict(d)
+        updated = FlowNode.from_dict(d)
+        # Rebuilding an unchanged child must not erase diagnostics from its
+        # original definition. Explicit child replacement can repair them.
+        if field != "body" and node.body is not None and updated.body is not None:
+            updated.body._retain_duplicate_ids_from(node.body)
+        if field != "branches":
+            for child, copied in zip(node.branches, updated.branches, strict=True):
+                copied._retain_duplicate_ids_from(child)
+        flow.nodes[nid] = updated
     except (TypeError, ValueError, KeyError) as e:
         raise PatchError(f"set_field: bad value for {field!r}: {e}") from e
 

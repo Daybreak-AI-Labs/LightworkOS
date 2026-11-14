@@ -98,6 +98,35 @@ def test_duplicate_node_ids_are_reported_even_after_authoring_copy(container):
     assert Flow.from_dict(flow.to_dict()).validate() == []
 
 
+@pytest.mark.parametrize("container", ["scope", "parallel"])
+@pytest.mark.parametrize("existing", [False, True])
+def test_node_field_edit_preserves_unchanged_nested_duplicate_diagnostics(container, existing):
+    child = {"id": "child", "name": "child", "start": "a", "nodes": [
+        {"id": "a", "kind": "agent", "brief": "first"},
+        {"id": "a", "kind": "agent", "brief": "second"},
+    ]}
+    field = "body" if container == "scope" else "branches"
+    nested = {"id": "nested", "kind": container, field: child if field == "body" else [child]}
+    flow = _flow(FlowNode(id="start", kind="agent", brief="start"))
+    prefix = [{"op": "add_node", "after": "start", "node": nested}]
+    if existing:
+        flow.nodes["start"].next = "nested"
+        flow.nodes["nested"] = FlowNode.from_dict(nested)
+        prefix = []
+    label = {"op": "set_field", "id": "nested", "field": "label", "value": "Edited label"}
+    with pytest.raises(PatchError, match="duplicate node id 'a'"):
+        apply_patches(flow, [*prefix, label])
+
+    # Explicit replacement or removal is still a valid repair in the same batch.
+    repaired_child = _flow(FlowNode(id="a", kind="agent", brief="replacement")).to_dict()
+    replacement = {"op": "set_field", "id": "nested", "field": field,
+                   "value": repaired_child if field == "body" else [repaired_child]}
+    repaired = apply_patches(flow, [*prefix, label, replacement])
+    assert repaired.validate() == [] and repaired.nodes["nested"].label == "Edited label"
+    removed = apply_patches(flow, [*prefix, label, {"op": "remove_node", "id": "nested"}])
+    assert removed.validate() == [] and "nested" not in removed.nodes
+
+
 def test_choice_approval_gets_a_binary_gate_before_high_risk_work():
     flow = _flow(
         FlowNode(id="choice", kind="approval", prompt="Choose", choices=["go", "hold"], next="pay"),
