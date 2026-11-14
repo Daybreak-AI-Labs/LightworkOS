@@ -1758,3 +1758,22 @@ def test_infinite_numbers_fall_back_instead_of_raising_or_lifting_caps(monkeypat
         "commerce": {"max_session_spend": inf}, "repl": {"max_seconds": inf}})
     assert config_module.get_commerce()["max_session_spend"] == 500.0
     assert config_module.get_repl()["max_seconds"] == 30.0
+
+
+def test_a_rotated_or_removed_wizard_env_value_reaches_the_running_process(tmp_path, monkeypatch):
+    import os
+
+    name = "MAVERICK_TEST_ENV_ROTATION"
+    monkeypatch.setenv(name, "seed")  # so monkeypatch removes what the load exports
+    monkeypatch.delenv(name)
+    env = tmp_path / ".env"
+    env.write_text(f"{name}=first\n", encoding="utf-8")
+    config_module.reset_config_cache()
+    config_module._load_env_file(env)
+    assert os.environ[name] == "first"
+    env.write_text(f"{name}=second-rotated\n", encoding="utf-8")
+    config_module._load_env_file(env)
+    assert os.environ[name] == "second-rotated"
+    env.write_text("\n", encoding="utf-8")
+    config_module._load_env_file(env)
+    assert name not in os.environ

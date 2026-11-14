@@ -226,8 +226,9 @@ def reset_config_cache() -> None:
 # injector at all, so ``${VAR}`` interpolated to "" and a freshly validated
 # key could never reach the runtime (`maverick start` exited 2 right after
 # `maverick init` said "Setup complete"). load_config() exports the file
-# itself -- ``setdefault`` only, so an explicitly exported variable always
-# wins -- memoized by mtime+size so a change is a re-read, not a re-load.
+# itself -- an explicitly exported variable always wins; a value the loader
+# set itself follows later edits and removals of the file -- memoized by
+# mtime+size so a change is a re-read, not a re-load.
 # The freshness re-check itself is throttled to once per second: load_config()
 # sits on per-row hot paths (e.g. _dec_field on every sealed column read), and
 # an unconditional config_path()+stat() per call measurably breached the
@@ -241,6 +242,9 @@ _WIZARD_FORBIDDEN_AUTHORITY_ENV = frozenset({
 })
 _ENV_RECHECK_SECONDS = 1.0
 _env_file_cache: dict[str, tuple[int, int, bytes | None]] = {}
+# Values this loader put into os.environ, so a later change to .env replaces
+# them while an explicitly exported variable still always wins.
+_env_file_exported: dict[str, str] = {}
 _env_last_check: float | None = None
 # Bound at import: tests that monkeypatch time.monotonic (a process-global
 # patch) to drive their OWN timeout logic must not have the values consumed
@@ -261,7 +265,7 @@ def _load_wizard_env() -> None:
 
 def _load_env_file(path: Path) -> None:
     """Export ``KEY=value`` lines from ``path`` into ``os.environ`` without
-    overriding variables that are already set."""
+    overriding variables that were set by anyone but this loader."""
     try:
         st = path.stat()
     except OSError:
@@ -275,6 +279,7 @@ def _load_env_file(path: Path) -> None:
     except (OSError, UnicodeDecodeError):
         return
     _env_file_cache[key] = (st.st_mtime_ns, st.st_size, digest)
+    seen: set[str] = set()
     for line in text.splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
@@ -289,7 +294,15 @@ def _load_env_file(path: Path) -> None:
         # Tolerate hand-edited quoting (systemd EnvironmentFile strips it too).
         if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
             value = value[1:-1]
-        os.environ.setdefault(name, value)
+        if name not in os.environ or os.environ[name] == _env_file_exported.get(name):
+            os.environ[name] = value  # first load, or a value this loader set: follow the file
+            _env_file_exported[name] = value
+        seen.add(name)
+    for name in [n for n in _env_file_exported if n not in seen]:
+        # A line removed from the file stops being exported, unless the value
+        # was replaced by someone else meanwhile.
+        if os.environ.get(name) == _env_file_exported.pop(name):
+            os.environ.pop(name, None)
 
 
 def _read_toml_raw(path: Path) -> dict:
