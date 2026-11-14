@@ -171,6 +171,18 @@ IMAP_CONFIG = {"host": "mail.invalid", "username": "synthetic",
                "allowed_senders": "synthetic@example.invalid"}  # pragma: allowlist secret - synthetic environment-variable name
 
 
+def test_imap_password_name_cannot_point_at_another_process_secret(mailbox, monkeypatch):
+    """A saved source must not send an unrelated process secret (a provider key)
+    to the mail host it names."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "synthetic-provider-key")  # pragma: allowlist secret
+    attempts = []
+    monkeypatch.setattr("imaplib.IMAP4_SSL", lambda *a, **k: attempts.append(a) or mailbox)
+    for name in ("ANTHROPIC_API_KEY", "EMAIL_APP_PASSWORD", "MAVERICK_DASHBOARD_TOKEN"):
+        with pytest.raises(ev.EventSourceError, match="IMAP"):
+            ev.ImapEmailSource().poll({**IMAP_CONFIG, "password_env": name}, "")
+    assert attempts == []
+
+
 def test_imap_requires_sender_verification_and_an_explicit_people_list(mailbox):
     source = ev.ImapEmailSource()
     with pytest.raises(ev.EventSourceError, match="server that checks"):

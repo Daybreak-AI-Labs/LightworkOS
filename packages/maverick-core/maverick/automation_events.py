@@ -725,6 +725,12 @@ def _fetch_imap(config: dict, since_uid: int | None,
     pw_env = str((config or {}).get("password_env") or "").strip()
     if not (host and user and pw_env):
         raise EventSourceError("imap_email source needs 'host', 'username', 'password_env'")
+    # The password goes to the host this source names, so the name may only
+    # point at a variable set aside for it, never a provider key or token.
+    if not re.fullmatch(r"[A-Z0-9_]{1,128}", pw_env) or "IMAP" not in pw_env.split("_"):
+        raise EventSourceError(
+            "The mail password name must be a variable set aside for this inbox, "
+            "with IMAP as one of its words (for example IMAP_PASSWORD)")
     trusted_server = str((config or {}).get("trusted_authserv_id") or "").strip()
     if not valid_trusted_mail_server(trusted_server):
         raise EventSourceError("Choose the server that checks incoming mail before this automation can start work")
