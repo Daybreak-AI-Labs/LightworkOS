@@ -15,12 +15,19 @@ Returns ``PASS <coerced-value>`` or ``FAIL: <reason>``. Deterministic; no LLM.
 """
 from __future__ import annotations
 
+import math
 import re
 from typing import Any
 
 from . import Tool
 
 _TRUE = {"true", "1", "yes", "on"}
+# The pattern and the value both come from the model, and ``re`` has no time
+# limit: bound the text and refuse the pattern shapes that backtrack
+# exponentially (a repeated group that itself contains a quantifier or an
+# alternation, such as ``(a+)+$`` or ``(a|a)*$``).
+_PATTERN_MAX_VALUE_LEN = 1000
+_REPEAT_RE = re.compile(r"[*+]|\{\d*,?\d*\}")
 _FALSE = {"false", "0", "no", "off"}
 
 
@@ -40,12 +47,78 @@ def _coerce(value: Any, typ: str) -> tuple[bool, Any, str]:
     if typ in ("integer", "number"):
         if isinstance(value, bool):
             return False, None, "boolean is not a number"
+        what = "an integer" if typ == "integer" else "a number"
         try:
-            num = int(value) if typ == "integer" else float(value)
+            num = float(value) if typ == "number" or isinstance(value, float) else int(value)
         except (TypeError, ValueError, OverflowError):
-            return False, None, f"{value!r} is not {'an integer' if typ == 'integer' else 'a number'}"
+            return False, None, f"{value!r} is not {what}"
+        if isinstance(num, float) and not math.isfinite(num):
+            return False, None, f"{value!r} is not {'an integer' if typ == 'integer' else 'a finite number'}"
+        if typ == "integer" and isinstance(num, float):
+            if not num.is_integer():
+                return False, None, f"{value!r} is not {what}"
+            num = int(num)
         return True, num, ""
     return False, None, f"unknown type {typ!r}"
+
+
+def _skip_class(pat: str, i: int) -> int:
+    """Index just past the character class that starts at ``pat[i] == '['``."""
+    i += 1
+    if i < len(pat) and pat[i] == "^":
+        i += 1
+    if i < len(pat) and pat[i] == "]":
+        i += 1
+    while i < len(pat) and pat[i] != "]":
+        i += 2 if pat[i] == "\\" else 1
+    return i + 1
+
+
+def _backtracks_exponentially(pat: str) -> bool:
+    """True if a repeated group contains a quantifier or an alternation."""
+    stack: list[list[bool]] = []  # per open group: [has_quantifier, has_alternation]
+    i = 0
+    while i < len(pat):
+        ch = pat[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if ch == "[":
+            i = _skip_class(pat, i)
+            continue
+        if ch == "(":
+            stack.append([False, False])
+        elif ch == "|" and stack:
+            stack[-1][1] = True
+        elif ch == ")" and stack:
+            has_q, has_alt = stack.pop()
+            repeated = _REPEAT_RE.match(pat, i + 1) is not None
+            if repeated and (has_q or has_alt):
+                return True
+            if stack and (has_q or repeated):
+                stack[-1][0] = True
+        elif stack and _REPEAT_RE.match(pat, i):
+            stack[-1][0] = True
+        i += 1
+    return False
+
+
+def _check_pattern(pat: Any, value: str) -> str | None:
+    if not isinstance(pat, str):
+        return "FAIL: pattern must be a string"
+    if len(value) > _PATTERN_MAX_VALUE_LEN:
+        return (f"FAIL: value longer than {_PATTERN_MAX_VALUE_LEN} characters "
+                "cannot be checked against a pattern")
+    if _backtracks_exponentially(pat):
+        return (f"FAIL: pattern {pat!r} repeats a group that contains a "
+                "quantifier or alternation; rewrite it without nesting")
+    try:
+        matched = re.search(pat, value)
+    except re.error as e:
+        return f"FAIL: invalid pattern {pat!r}: {e}"
+    if not matched:
+        return f"FAIL: {value!r} does not match pattern {pat!r}"
+    return None
 
 
 def _check(value: Any, schema: dict) -> str:
@@ -57,13 +130,17 @@ def _check(value: Any, schema: dict) -> str:
 
     if "enum" in schema:
         allowed = schema["enum"]
+        if not isinstance(allowed, list):
+            return "FAIL: enum must be a list"
         if value not in allowed:
             return f"FAIL: {value!r} not in enum {allowed}"
 
     if isinstance(value, str):
         pat = schema.get("pattern")
-        if pat and not re.search(pat, value):
-            return f"FAIL: {value!r} does not match pattern {pat!r}"
+        if pat:
+            failure = _check_pattern(pat, value)
+            if failure:
+                return failure
         if "min_length" in schema and len(value) < schema["min_length"]:
             return f"FAIL: length {len(value)} < min_length {schema['min_length']}"
         if "max_length" in schema and len(value) > schema["max_length"]:

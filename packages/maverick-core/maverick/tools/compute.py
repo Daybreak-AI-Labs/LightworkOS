@@ -90,10 +90,21 @@ def _reject_unsafe_pow(node: ast.AST) -> None:
             raise ValueError("nested exponentiation not allowed")
 
 
+_FALLBACK_NODES = (
+    ast.Expression, ast.BinOp, ast.UnaryOp, ast.Call, ast.Name, ast.Load,
+    ast.Constant, ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv,
+    ast.Mod, ast.Pow, ast.UAdd, ast.USub,
+)
+_FALLBACK_MAX_LEN = 1000
+
+
 def _evaluate_fallback(expr: str) -> str:
-    """Minimal evaluator using ast.literal_eval — only supports
-    arithmetic on numeric literals."""
-    import ast
+    """Minimal evaluator for arithmetic on numeric literals, the math
+    constants and the functions in ``safe_globals``.
+
+    Only numeric constants and arithmetic nodes are allowed: strings, lists,
+    f-strings and comprehensions would let a short expression allocate
+    gigabytes (``f'{1:>100000000}'``, ``'a'*10**10``)."""
     import math
     # Replace common math constants/funcs so simple expressions work.
     safe_globals = {
@@ -102,14 +113,23 @@ def _evaluate_fallback(expr: str) -> str:
         "sqrt": math.sqrt, "log": math.log, "exp": math.exp,
         "abs": abs, "min": min, "max": max,
     }
+    if len(expr) > _FALLBACK_MAX_LEN:
+        raise ValueError(f"expression longer than {_FALLBACK_MAX_LEN} characters")
     # Walk the AST to ensure only safe nodes.
     tree = ast.parse(expr, mode="eval")
     for node in ast.walk(tree):
-        if isinstance(node, (ast.Call,)):
-            if not isinstance(node.func, ast.Name) or node.func.id not in safe_globals:
-                raise ValueError(f"function not allowed: {ast.dump(node.func)}")
-        elif isinstance(node, (ast.Attribute, ast.Import, ast.ImportFrom)):
-            raise ValueError("attribute access / imports not allowed")
+        if not isinstance(node, _FALLBACK_NODES):
+            raise ValueError(f"not allowed in an expression: {type(node).__name__}")
+        if isinstance(node, ast.Constant) and (
+            isinstance(node.value, bool) or not isinstance(node.value, (int, float))
+        ):
+            raise ValueError("only numeric literals are allowed")
+        if isinstance(node, ast.Name) and node.id not in safe_globals:
+            raise ValueError(f"name not allowed: {node.id}")
+        if isinstance(node, ast.Call) and (
+            not isinstance(node.func, ast.Name) or node.keywords
+        ):
+            raise ValueError("only plain calls to the math functions are allowed")
         _reject_unsafe_pow(node)
     code = compile(tree, "<expr>", "eval")
     result = eval(code, {"__builtins__": {}}, safe_globals)

@@ -44,3 +44,22 @@ def test_constrained_length_and_errors():
     assert t.fn({"value": "ab", "schema": {"type": "string", "min_length": 3}}).startswith("FAIL")
     assert t.fn({"schema": {"type": "string"}}).startswith("ERROR")  # missing value
     assert t.fn({"value": "x", "schema": {}}).startswith("ERROR")    # empty schema
+
+
+def test_constrained_backtracking_pattern_refused_before_matching(monkeypatch):
+    import maverick.tools.constrained_output as co
+    t = constrained_output()
+    calls: list = []
+    monkeypatch.setattr(co.re, "search", lambda *a: calls.append(a))
+    # (a+)+$ on "a"*40 + "b" backtracks for about a day; it is refused unrun.
+    out = t.fn({"value": "a" * 40 + "b", "schema": {"pattern": "(a+)+$"}})
+    assert out.startswith("FAIL") and "rewrite" in out and calls == []
+    out = t.fn({"value": "a" * 5000, "schema": {"pattern": "^a+$"}})
+    assert out.startswith("FAIL") and calls == []
+
+
+def test_constrained_fail_open_values_now_fail():
+    t = constrained_output()
+    assert t.fn({"value": "nan", "schema": {"type": "number", "maximum": 10}}).startswith("FAIL")
+    assert t.fn({"value": 3.9, "schema": {"type": "integer", "maximum": 3}}).startswith("FAIL")
+    assert t.fn({"value": "ed,g", "schema": {"enum": "red,green"}}).startswith("FAIL")
