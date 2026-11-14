@@ -233,3 +233,21 @@ def test_mongodb_delete_dry_run(monkeypatch):
         "op": "delete", "collection": "u", "filter": {"id": 1},
     })
     assert "DRY RUN" in out
+
+
+def test_mongodb_hosts_are_checked_against_enterprise_egress(monkeypatch, tmp_path):
+    # pymongo uses raw sockets, outside the process egress guard; every seed
+    # host in the URI is checked before a client is built.
+    _install_fake_mongo(monkeypatch, [{"_id": 1, "name": "alice"}])
+    built = []
+    sys.modules["pymongo"].MongoClient = lambda *a, **k: built.append(a)
+    monkeypatch.setenv("MONGODB_URI", "mongodb://u:p@10.0.0.5:27017,db.example.com/x?tls=true")
+    monkeypatch.setenv("MAVERICK_CONFIG", str(tmp_path / "absent.toml"))
+    monkeypatch.setenv("MAVERICK_ENTERPRISE", "1")
+    from maverick import config
+    config.reset_config_cache()
+    from maverick.tools.mongodb_tool import mongodb_tool
+    out = mongodb_tool().fn({"op": "find", "collection": "orders"})
+    config.reset_config_cache()
+    assert out.startswith("ERROR") and "db.example.com" in out
+    assert built == []

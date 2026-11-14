@@ -46,11 +46,16 @@ _DDB_SCHEMA: dict[str, Any] = {
 
 def _client():
     import boto3
-    return boto3.resource(
+
+    from ._sdk_egress import require_sdk_egress
+    resource = boto3.resource(
         "dynamodb",
         endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or None,
         region_name=os.environ.get("AWS_REGION") or None,
     )
+    # botocore is outside the process egress guard; check the endpoint here.
+    require_sdk_egress("dynamodb", resource.meta.client.meta.endpoint_url)
+    return resource
 
 
 def _serialize(obj: Any, _depth: int = 0) -> Any:

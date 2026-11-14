@@ -17,6 +17,7 @@ def _install_fake_boto3(monkeypatch, *, buckets=None, list_objects=None,
             return self._data[:n]
 
     class _Client:
+        meta = types.SimpleNamespace(endpoint_url="https://s3.us-east-1.amazonaws.com")
         def list_buckets(self):
             return {"Buckets": buckets or []}
 
@@ -91,3 +92,18 @@ def test_s3_presign_returns_url(monkeypatch):
     from maverick.tools.s3_tool import s3_tool
     out = s3_tool().fn({"op": "presign", "bucket": "b", "key": "k"})
     assert "https://x.example/k?sig=abc" in out
+
+
+def test_s3_endpoint_is_checked_against_enterprise_egress(monkeypatch, tmp_path):
+    # botocore is outside the process egress guard, so the tool checks the
+    # client's endpoint itself: enterprise mode with no allowed host refuses.
+    _install_fake_boto3(monkeypatch, buckets=[{"Name": "b1"}])
+    monkeypatch.setenv("MAVERICK_CONFIG", str(tmp_path / "absent.toml"))
+    monkeypatch.setenv("MAVERICK_ENTERPRISE", "1")
+    from maverick import config
+    config.reset_config_cache()
+    from maverick.tools.s3_tool import s3_tool
+    out = s3_tool().fn({"op": "list_buckets"})
+    config.reset_config_cache()
+    assert out.startswith("ERROR") and "s3.us-east-1.amazonaws.com" in out
+    assert "b1" not in out

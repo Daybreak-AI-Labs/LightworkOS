@@ -36,11 +36,16 @@ _SES_SCHEMA: dict[str, Any] = {
 
 def _client():
     import boto3
-    return boto3.client(
+
+    from ._sdk_egress import require_sdk_egress
+    client = boto3.client(
         "ses",
         endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or None,
         region_name=os.environ.get("AWS_REGION") or None,
     )
+    # botocore is outside the process egress guard; check the endpoint here.
+    require_sdk_egress("ses", client.meta.endpoint_url)
+    return client
 
 
 def _op_send(args: dict) -> str:

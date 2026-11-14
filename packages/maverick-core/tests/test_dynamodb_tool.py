@@ -15,6 +15,7 @@ def _install_fake_boto3_ddb(monkeypatch, *, tables=None, item=None,
             self.client = c
 
     class _LL:
+        meta = types.SimpleNamespace(endpoint_url="https://dynamodb.us-east-1.amazonaws.com")
         def list_tables(self):
             return {"TableNames": tables or []}
 
@@ -109,6 +110,9 @@ def test_dynamodb_query_follows_last_evaluated_key(monkeypatch):
             return {"Items": [{"id": "2", "name": "bob"}], "ScannedCount": 1}
 
     class _Resource:
+        meta = types.SimpleNamespace(client=types.SimpleNamespace(meta=types.SimpleNamespace(
+            endpoint_url="https://dynamodb.us-east-1.amazonaws.com")))
+
         def Table(self, name):
             return _Table()
 
@@ -143,6 +147,9 @@ def test_dynamodb_scan_pagination_obeys_total_read_budget(monkeypatch):
             }
 
     class _Resource:
+        meta = types.SimpleNamespace(client=types.SimpleNamespace(meta=types.SimpleNamespace(
+            endpoint_url="https://dynamodb.us-east-1.amazonaws.com")))
+
         def Table(self, name):
             return _Table()
 
@@ -173,6 +180,9 @@ def test_dynamodb_scan_pagination_missing_scanned_count_fails_closed(monkeypatch
             return {"Items": [], "LastEvaluatedKey": {"id": str(len(calls["scan"]))}}
 
     class _Resource:
+        meta = types.SimpleNamespace(client=types.SimpleNamespace(meta=types.SimpleNamespace(
+            endpoint_url="https://dynamodb.us-east-1.amazonaws.com")))
+
         def Table(self, name):
             return _Table()
 

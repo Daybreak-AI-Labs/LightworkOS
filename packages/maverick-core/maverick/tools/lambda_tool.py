@@ -45,11 +45,16 @@ _LAMBDA_SCHEMA: dict[str, Any] = {
 
 def _client(service: str):
     import boto3
-    return boto3.client(
+
+    from ._sdk_egress import require_sdk_egress
+    client = boto3.client(
         service,
         endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or None,
         region_name=os.environ.get("AWS_REGION") or None,
     )
+    # botocore is outside the process egress guard; check the endpoint here.
+    require_sdk_egress("lambda", client.meta.endpoint_url)
+    return client
 
 
 def _op_list_functions(args: dict) -> str:

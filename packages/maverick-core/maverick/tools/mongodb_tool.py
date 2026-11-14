@@ -68,7 +68,19 @@ def _config() -> tuple[str, str]:
     db = os.environ.get("MONGODB_DB", "").strip()
     if not uri:
         raise RuntimeError("MongoDB requires MONGODB_URI.")
+    _check_egress(uri)
     return uri, db
+
+
+def _check_egress(uri: str) -> None:
+    """pymongo uses raw sockets, outside the process egress guard, so check
+    every seed host in the URI (or the SRV name) against the egress policy."""
+    from ._sdk_egress import require_sdk_egress
+
+    rest = uri.split("://", 1)[-1]
+    hosts = rest.split("/", 1)[0].split("?", 1)[0].rsplit("@", 1)[-1]
+    for host in hosts.split(","):
+        require_sdk_egress("mongodb", f"http://{host.strip()}/")
 
 
 # One MongoClient is built per _run() and closed in its finally (see below).

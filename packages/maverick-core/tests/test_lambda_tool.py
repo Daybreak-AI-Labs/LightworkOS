@@ -13,6 +13,7 @@ def _install_fake_boto3_lambda(monkeypatch, *, functions=None,
     boto3 = types.ModuleType("boto3")
 
     class _LambdaClient:
+        meta = types.SimpleNamespace(endpoint_url="https://lambda.us-east-1.amazonaws.com")
         def list_functions(self, **k):
             return {"Functions": functions or []}
 
@@ -26,6 +27,7 @@ def _install_fake_boto3_lambda(monkeypatch, *, functions=None,
                     {"FunctionName": k.get("FunctionName"), "Runtime": "python3.12"}}
 
     class _LogsClient:
+        meta = types.SimpleNamespace(endpoint_url="https://logs.us-east-1.amazonaws.com")
         def filter_log_events(self, **k):
             return {"events": log_events or []}
 
