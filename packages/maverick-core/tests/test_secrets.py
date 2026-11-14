@@ -140,9 +140,15 @@ def test_common_credential_shapes_are_redacted():
         "token github_pat_11ABCDEFG0123456789_abcdefghijklmnopqrstuv": "github_pat_11ABCDEFG",
         "Authorization: Basic dXNlcjpwYXNz": "dXNlcjpwYXNz",
         "password=hunter2": "hunter2",
-        "api_key: abc123def": "abc123def",
+        "api_key:abc123def": "abc123def",
         '{"api_key": "zzz-secret"}': "zzz-secret",
     }
     for text, secret in cases.items():
         assert secret not in scrub(text), text
     assert scrub("see http://host:8080/p") == "see http://host:8080/p"
+    # JSON stays valid, prose is not a key/value pair, and a host after the
+    # password stays readable.
+    assert scrub('{"api_key": "zzz"}') == '{"api_key": "[REDACTED:kv_secret]"}'
+    assert scrub("invalid password: user bob") == "invalid password: user bob"
+    assert scrub("redis://u:pw@cache:6379,user=a@b") == \
+        "redis://u:[REDACTED:url_credentials]@cache:6379,user=a@b"
