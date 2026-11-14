@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
+import inspect
 import json
 import logging
 import os
@@ -272,16 +273,26 @@ def _enterprise_mode() -> bool:
         return True
 
 
+class _ApproverPolicyUnavailable(RuntimeError):
+    """The configured standing approver could not be read."""
+
+
 def _approver() -> str:
-    """The standing approver of record for governed connector writes."""
+    """The standing approver of record for governed connector writes.
+
+    An unreadable config source may hide an ``approver`` pin, so this raises
+    instead of returning "no pin" (which would let any approver decide).
+    """
     a = os.environ.get("MAVERICK_GOVERNED_APPROVER", "").strip()
     if a:
         return a
-    try:
-        from .config import get_governed_connectors
-        return str(get_governed_connectors().get("approver", "")).strip()
-    except Exception:  # pragma: no cover -- config must never break tool assembly
-        return ""
+    from .config import config_source_errors, get_governed_connectors
+
+    if config_source_errors(include_tenant=True):
+        raise _ApproverPolicyUnavailable(
+            "governed connector approver policy is unreadable",
+        )
+    return str(get_governed_connectors().get("approver", "")).strip()
 
 
 def _is_governable_op_tool(tool: Tool) -> bool:
@@ -863,6 +874,40 @@ def _prepare_connector_args(tool: Tool, args: dict) -> tuple[dict, str | None]:
     return args, None
 
 
+def _await_effect(result, loop: asyncio.AbstractEventLoop | None):
+    """Run an async connector's effect to completion before it is receipted.
+
+    A coroutine that is never awaited performs no write; reporting it as a
+    COMMIT would record a write that did not happen.
+    """
+    if not inspect.isawaitable(result):
+        return result
+    if loop is None:
+        return asyncio.run(_as_coroutine(result))
+    return asyncio.run_coroutine_threadsafe(_as_coroutine(result), loop).result()
+
+
+async def _as_coroutine(awaitable):
+    return await awaitable
+
+
+def _async_governed(fn):
+    """Async front for a governed wrapper around an async connector.
+
+    An async connector (MCP, async plugins) must run on the caller's event
+    loop, where its client lives. The blocking approval and receipt steps run
+    on a worker thread; the effect is awaited on the loop before the COMMIT
+    receipt is written.
+    """
+    async def _afn(args: dict) -> str:
+        out = await asyncio.to_thread(fn, args, asyncio.get_running_loop())
+        return await out if inspect.isawaitable(out) else out
+
+    _afn.__module__ = fn.__module__
+    _afn.__qualname__ = "wrap_connector_tool.<locals>._afn"
+    return _afn
+
+
 def _connector_approval_denial(decision, decision_actor: str, expected_approver: str, path: str) -> str | None:
     if decision.source == "dashboard" and not decision_actor:
         return (
@@ -920,7 +965,7 @@ def _wrap_connector_executor(
             strict=strict_write,
         )
 
-    def _fn(args: dict) -> str:
+    def _fn(args: dict, loop: asyncio.AbstractEventLoop | None = None) -> str:
         args, error = _prepare_connector_args(tool, args)
         if error:
             return error
@@ -1059,7 +1104,7 @@ def _wrap_connector_executor(
                     (tool.name, request_digest) if no_revision else None
                 )
                 try:
-                    result = tool.fn(receipt_args)
+                    result = _await_effect(tool.fn(receipt_args), loop)
                 except (Exception, asyncio.CancelledError) as exc:
                     # Exception messages from HTTP/database libraries routinely
                     # embed credentialed URLs, headers, and DSNs. Receipts and the
@@ -1166,7 +1211,7 @@ def _wrap_connector_executor(
         name=tool.name,
         description=_governed_description(tool),
         input_schema=tool.input_schema,
-        fn=_fn,
+        fn=_async_governed(_fn) if inspect.iscoroutinefunction(tool.fn) else _fn,
         parallel_safe=False,
     )
 
