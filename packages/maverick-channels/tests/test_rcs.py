@@ -395,3 +395,46 @@ def test_missing_allowlist_raises(monkeypatch):
     monkeypatch.delenv("RCS_ALLOWED_USER_IDS", raising=False)
     with pytest.raises(ValueError, match="ALLOWED_USER_IDS"):
         _channel(allowed_user_ids=None)
+
+
+@pytest.mark.parametrize("status, delivered", [("ALREADY_EXISTS", True), ("ABORTED", False)])
+def test_409_counts_as_delivered_only_for_an_already_accepted_saved_chunk(monkeypatch, tmp_path, status, delivered):
+    from maverick import world_model
+    from maverick_channels.base import IncomingMessage, Reply
+    from maverick_channels.delivery import DeliveryJournal, DeliveryUnknown
+
+    monkeypatch.setattr(world_model, "DEFAULT_DB", tmp_path / "world.db")
+    _install_google_auth(monkeypatch, _FakeCreds())
+
+    class _Resp:
+        status_code, text = 409, ""
+
+        def json(self):
+            return {"error": {"code": 409, "status": status}}
+
+    class _Client:
+        def __init__(self, timeout=None):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, params=None, headers=None, json=None):
+            return _Resp()
+
+    monkeypatch.setitem(sys.modules, "httpx", types.SimpleNamespace(AsyncClient=_Client))
+    ch = _channel(handler=AsyncMock(return_value=Reply("pong")))
+    message = IncomingMessage(user_id=SENDER, text="ping", channel="rcs", message_id="rbm-409")
+
+    async def send(reply):
+        return await ch.send(SENDER, reply.text)
+
+    row = asyncio.run(ch.process_message(message, external_id="rbm-409", account="agent",
+                                         authorize=lambda: True, send=send, journal=DeliveryJournal()))
+    assert (row["delivery"] == "delivered") is delivered
+    # Outside a saved delivery the messageId is a one-off, so a 409 is never a duplicate.
+    with pytest.raises(DeliveryUnknown):
+        asyncio.run(ch.send(SENDER, "pong"))

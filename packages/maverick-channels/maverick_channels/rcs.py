@@ -81,6 +81,14 @@ TEXT_LIMIT = 2000  # RBM text content cap
 HANDSHAKE_BODY_LIMIT = 4096  # body-token registration payload cap
 
 
+def _already_exists(response) -> bool:
+    try:
+        error = (response.json() or {}).get("error") or {}
+        return isinstance(error, dict) and error.get("status") == "ALREADY_EXISTS"
+    except Exception:  # noqa: BLE001 -- an unreadable body proves nothing
+        return False
+
+
 class RcsChannel(Channel):
     name = "rcs"
 
@@ -321,9 +329,10 @@ class RcsChannel(Channel):
                     response = await client.post(url,
                         params={"agentId": self.agent_id, "messageId": chunk_idempotency_key(key)},
                         headers={"Authorization": f"Bearer {token}"}, json={"contentMessage": {"text": chunk}})
-                if response.status_code == 409:
-                    # ALREADY_EXISTS: this messageId (the chunk's stable
-                    # idempotency key) was accepted by an earlier attempt.
+                if response.status_code == 409 and delivery_active() and _already_exists(response):
+                    # ALREADY_EXISTS for this chunk's stable messageId: an
+                    # earlier attempt was accepted. Any other 409 (or one with
+                    # a one-off id outside a saved delivery) stays unknown.
                     return chunk_idempotency_key(key)
                 if 400 <= response.status_code < 500 and response.status_code not in {408, 409}:
                     raise DeliveryNotSent("Provider rejected the message")
