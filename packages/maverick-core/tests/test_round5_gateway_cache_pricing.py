@@ -104,8 +104,41 @@ def test_openrouter_missing_cost_prices_cache_conservatively(writes):
 
 
 @pytest.mark.parametrize("cost", [-1, float("nan"), True])
-def test_gateway_response_call_cost_never_raises(cost):
-    from maverick.llm import _response_call_cost
+def test_invalid_gateway_cost_is_unresolved_but_finally_spend_never_raises(cost):
+    from maverick.budget import Budget, UsageAccountingError
+    from maverick.llm import _call_spend, _response_call_cost
 
     response = SimpleNamespace(raw=_response(cost=cost))
-    assert _response_call_cost("openrouter:gpt-5.5", response) > 0
+    with pytest.raises(UsageAccountingError):
+        _response_call_cost("openrouter:gpt-5.5", response)
+    assert _call_spend("openrouter:gpt-5.5", response, Budget(), 0.0) > 0
+
+
+def _receipt(kind):
+    usage = SimpleNamespace(prompt_tokens=1000, completion_tokens=10, cost=None,
+                            prompt_tokens_details=SimpleNamespace(cached_tokens=50, cache_write_tokens=0))
+    if kind == "byok_without_upstream":
+        usage.cost, usage.is_byok, usage.cost_details = 0.0, True, {}
+    elif kind == "invalid_cost_with_writes":
+        usage.cost = -1
+        usage.prompt_tokens_details.cache_write_tokens = 200
+    return SimpleNamespace(raw=SimpleNamespace(usage=usage))
+
+
+@pytest.mark.parametrize("kind", ["byok_without_upstream", "invalid_cost_with_writes", "no_cost"])
+def test_provider_hold_settles_unknown_only_for_unresolvable_gateway_receipt(monkeypatch, kind):
+    from maverick import llm as llm_module
+    from maverick import provider_cost_cap
+    from maverick.budget import Budget, _lookup_price_quote
+
+    settled = []
+    monkeypatch.setattr(provider_cost_cap, "settle", lambda hold, actual, **kwargs: settled.append(actual))
+    response = _receipt(kind)
+    llm_module._finish_provider_call(object(), "openrouter", "openrouter:gpt-5.5", response, None, 0.0, 1.0)
+    if kind == "no_cost":
+        in_rate, out_rate = _lookup_price_quote("openrouter:gpt-5.5", estimate_only=True).rates
+        assert settled[0] == pytest.approx(((950 + 50 * 1.0) * in_rate + 10 * out_rate) / 1_000_000)
+    else:
+        assert settled[0] is None  # retained as an unknown receipt for reconciliation
+    # The finally-block spend recorder never raises for any receipt.
+    assert llm_module._call_spend("openrouter:gpt-5.5", response, Budget(), 0.0, 1.0) >= 0

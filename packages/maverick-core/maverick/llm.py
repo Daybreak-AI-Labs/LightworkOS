@@ -1888,7 +1888,7 @@ def _gateway_response_cost(model, usage, quote):
 
 
 def _response_call_cost(model_id, resp, cache_read_mult: float | None = None,
-                        *, quote: ModelPrice | None = None) -> float | None:
+                        *, quote: ModelPrice | None = None, tolerant_gateway: bool = False) -> float | None:
     """Per-call $ derived from THIS response's own token usage, or ``None`` when
     the response carries no usage to price from.
 
@@ -1931,12 +1931,13 @@ def _response_call_cost(model_id, resp, cache_read_mult: float | None = None,
         # Physical-attempt observers see the SDK response before the provider
         # adapter builds LLMResponse (for example prompt-cache prewarm).
         usage = getattr(resp, "usage", None)
+    # An incomplete or invalid gateway receipt raises so a provider hold is
+    # settled as unknown; ``_call_spend`` (run from ``finally``) tolerates it.
     try:
         gateway_cost = _gateway_response_cost(model_id, usage, quote)
     except Exception:
-        # Called from ``finally``: never raise. The provider's own strict
-        # record_tokens already refused malformed gateway usage; fall through
-        # to the tolerant token estimate below for the ledger.
+        if not tolerant_gateway:
+            raise
         logging.getLogger(__name__).debug("gateway response cost unavailable for %s", model_id, exc_info=True)
         gateway_cost = None
     if gateway_cost is not None:
@@ -2054,7 +2055,9 @@ def _call_spend(model_id, resp, budget, dollars_baseline, cache_read_mult=None, 
     """
     if not budget:
         return 0.0
-    call_cost = _response_call_cost(model_id, resp, cache_read_mult, quote=quote)
+    # Runs from ``complete()``'s ``finally``: an unresolvable gateway receipt
+    # falls back to the tolerant token estimate instead of raising.
+    call_cost = _response_call_cost(model_id, resp, cache_read_mult, quote=quote, tolerant_gateway=True)
     return call_cost if call_cost is not None else (budget.dollars - dollars_baseline)
 
 
