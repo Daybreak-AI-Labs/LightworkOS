@@ -35,3 +35,8 @@ def test_scan_trips_on_planted_token():
 
 def test_bad_kind_errors():
     assert _mint(kind="nonsense").startswith("ERROR")
+
+
+def test_scan_trips_on_lower_cased_token():
+    token = _mint(label="x").split()[-1]
+    assert _scan(f"leak {token.lower()}").startswith("TRIPPED")

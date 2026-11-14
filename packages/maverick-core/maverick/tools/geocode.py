@@ -1,8 +1,10 @@
 """Geocoding tool — places <-> coordinates.
 
-Uses OpenStreetMap's Nominatim service (no API key required). Respects
-the OSM usage policy: max 1 req/sec, identifying User-Agent, optional
-``NOMINATIM_URL`` env to point at a self-hosted instance.
+Uses OpenStreetMap's Nominatim service (no API key required). Sends an
+identifying User-Agent (override with ``NOMINATIM_USER_AGENT`` to add a real
+contact, as the OSM usage policy asks). This tool does not rate-limit: the
+public instance allows at most 1 request per second, so callers must pace
+calls or set ``NOMINATIM_URL`` to a self-hosted instance.
 
 ops:
   - forward(query, limit)              — text address -> lat/lon
@@ -131,7 +133,8 @@ def geocode() -> Tool:
             "Geocoding via OpenStreetMap Nominatim. ops: forward "
             "(address -> lat/lon), reverse (lat/lon -> address). "
             "No API key. NOMINATIM_URL to point at a self-hosted "
-            "instance. Respects OSM usage policy (UA + low rate)."
+            "instance. The public instance allows at most 1 request "
+            "per second and this tool does not enforce it: pace calls."
         ),
         input_schema=_GEO_SCHEMA,
         fn=_run,

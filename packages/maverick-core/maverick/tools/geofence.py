@@ -49,6 +49,9 @@ def _check(region: str, policy: dict) -> str:
     code = region.strip().upper()
     if not code:
         return "ERROR: region is required"
+    if code not in _GROUPS and not (len(code) == 2 and code.isalpha()):
+        # "Germany" would match no list entry and fall to an allow default.
+        return f"ERROR: region {region!r} is not an ISO 3166-1 alpha-2 code or a group"
     allow = _expand(policy.get("allow"))
     deny = _expand(policy.get("deny"))
     default = str(policy.get("default", "deny")).strip().lower()
@@ -60,10 +63,12 @@ def _check(region: str, policy: dict) -> str:
     # to itself (unchanged behaviour), while a group region matches a list entry
     # only when EVERY country it covers is on that list. Without this a group
     # region never matched the expanded lists, so a `deny: ["EU"]` was silently
-    # bypassed (fail-open) and an `allow: ["EU"]` wrongly denied.
+    # bypassed (fail-open) and an `allow: ["EU"]` wrongly denied. Deny wins:
+    # a group region is denied when ANY country it covers is on the deny-list
+    # (EU with deny DE must not come back ALLOW).
     region_codes = _expand([code])
 
-    if region_codes and region_codes <= deny:
+    if region_codes & deny:
         return f"DENY {code}: in deny-list"
     if allow:
         if region_codes and region_codes <= allow:
@@ -111,7 +116,9 @@ def geofence() -> Tool:
             "Decide if a region is permitted by an allow/deny geofence policy. "
             "op=check with 'region' (ISO 3166-1 alpha-2 code or a group: EU, "
             "EEA, FIVE_EYES) and 'policy' (allow/deny lists + default). Deny "
-            "wins over allow; an empty allow-list means 'any not denied'. "
+            "wins over allow (a group is denied if any member is denied). "
+            "Without an allow-list the 'default' decides, and it is deny "
+            "unless the policy sets default=allow. "
             "Returns ALLOW/DENY with the reason."
         ),
         input_schema=_SCHEMA,

@@ -93,7 +93,9 @@ def _explain(args: dict[str, Any]) -> str:
     # [governance] configuration, which would let ordinary tool callers probe
     # deployed deny/approval gates.  This explainer is safe for agent exposure
     # only when it evaluates an explicitly supplied policy snapshot (or the
-    # empty default policy when omitted).
+    # empty default policy when omitted). When ``risk`` is omitted,
+    # evaluate() still rates the action with tool_risk(), which applies the
+    # deployment's [security.tool_risk] overrides.
     policy = _policy_from_dict(args.get("policy"))
 
     verdict = evaluate(action, risk=str(risk) if risk else None, amount=amount,
@@ -130,7 +132,10 @@ _SCHEMA: dict[str, Any] = {
             "type": "object",
             "description": "governance Policy as config dict (deny_actions, "
                            "require_human_actions, *_min_risk, *_above); omit for "
-                           "an empty policy (never loads live config)",
+                           "an empty policy (never loads the live [governance] "
+                           "policy; when 'risk' is omitted the action's risk "
+                           "comes from tool_risk, which honours "
+                           "[security.tool_risk] overrides)",
         },
     },
     "required": ["action"],
