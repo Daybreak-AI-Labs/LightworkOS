@@ -104,6 +104,12 @@ class AgentTrustError(ValueError):
     """A registry entry or request the trust plane refuses to deal with."""
 
 
+class RevokedAgentRemovalRefused(AgentTrustError):
+    """Removing this managed entry would lift a revocation (see
+    :func:`remove_agent`). Callers report it as a conflict (HTTP 409) with
+    ``str(exc)``, not as a server error."""
+
+
 def valid_agent_id(agent_id: object) -> bool:
     return isinstance(agent_id, str) and bool(_ID_RE.fullmatch(agent_id))
 
@@ -704,12 +710,20 @@ def _entry_from_agent(agent: TrustedAgent) -> dict[str, Any]:
     for name in agent.__dataclass_fields__:
         value = getattr(agent, name)
         out[name] = sorted(value) if isinstance(value, frozenset) else value
-    # A config-file bearer may be plaintext; the overlay keeps only its hash.
-    for name in _TOKEN_ATTRS.values():
-        token = out.get(name)
+    return hash_overlay_tokens(out)
+
+
+def hash_overlay_tokens(entry: dict[str, Any]) -> dict[str, Any]:
+    """Replace plaintext config-file bearers in an overlay entry by their hash,
+    for every surface whose verifier (:func:`_token_matches`) accepts the hashed
+    form. ``mcp_token`` stays as it is: the MCP per-task capability refresh
+    compares the stored string with the raw bearer, so a hashed MCP token would
+    refuse every call."""
+    for name in _HASHABLE_TOKEN_ATTRS:
+        token = entry.get(name)
         if isinstance(token, str) and token and not token.startswith(_TOKEN_HASH_PREFIX):
-            out[name] = hash_token(token)
-    return out
+            entry[name] = hash_token(token)
+    return entry
 
 
 def attenuate_agent(
@@ -910,10 +924,11 @@ def remove_agent(agent_id: str) -> bool:
             return False
         if any(e.get("revoked") is True for e in entries
                if str(e.get("id") or "") == agent_id) and _config_defines(agent_id):
-            raise AgentTrustError(
-                f"agent {agent_id!r} is revoked and also defined in config.toml; "
-                "removing its revocation would re-enable it. Clear the "
-                "revocation through the revocation workflow first")
+            raise RevokedAgentRemovalRefused(
+                f"Agent {agent_id!r} is revoked and is also defined in the "
+                "server's config file, so removing its app-managed entry would "
+                "make it trusted again. Restore it through the revocation "
+                "workflow first, or remove it from the config file.")
         _save_managed(kept)
     return True
 
@@ -960,6 +975,7 @@ def lookup(agent_id: str, *, registry: dict[str, TrustedAgent] | None = None) ->
 
 _TOKEN_ATTRS = {"a2a": "a2a_token", "grpc": "grpc_token", "mcp": "mcp_token",
                 "rest": "rest_token"}
+_HASHABLE_TOKEN_ATTRS = ("a2a_token", "grpc_token", "rest_token")
 
 #: Tokens minted from the app are stored hashed; hand-edited config-file
 #: tokens stay plaintext-compatible. The prefix disambiguates the two forms.

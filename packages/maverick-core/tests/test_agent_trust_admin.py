@@ -58,7 +58,7 @@ def test_remove_refuses_to_drop_the_revocation_of_a_config_defined_agent(monkeyp
     monkeypatch.setattr(config, "load_config", lambda *a, **k: cfg)
     agent_trust.put_agent({"id": "vega", "max_risk": "low"})
     agent_trust.set_revoked("vega", True)
-    with pytest.raises(agent_trust.AgentTrustError, match="revoked"):
+    with pytest.raises(agent_trust.RevokedAgentRemovalRefused, match="revoked"):
         agent_trust.remove_agent("vega")
     assert agent_trust.load_registry(cfg)["vega"].is_active()[0] is False
 
@@ -74,10 +74,14 @@ def test_put_agent_refuses_an_entry_past_capacity(monkeypatch):
 
 def test_attenuating_a_config_agent_stores_only_its_token_hash(monkeypatch):
     from maverick import config
-    cfg = {"agent_trust": {"agents": [{"id": "vega", "a2a_token": "tok-plain-123"}]}}
+    cfg = {"agent_trust": {"agents": [{"id": "vega", "a2a_token": "tok-plain-123",
+                                       "mcp_token": "mcp-plain-456"}]}}
     monkeypatch.setattr(config, "load_config", lambda *a, **k: cfg)
     agent_trust.attenuate_agent("vega", max_risk="low")
-    assert "tok-plain-123" not in agent_trust.managed_path().read_text()
+    stored = agent_trust.managed_path().read_text()
+    assert "tok-plain-123" not in stored
+    # The MCP capability refresh compares the raw bearer, so it stays as is.
+    assert "mcp-plain-456" in stored
     assert agent_trust.agent_for_token("tok-plain-123", "a2a", registry=agent_trust.load_registry(cfg)) is not None
 
 
