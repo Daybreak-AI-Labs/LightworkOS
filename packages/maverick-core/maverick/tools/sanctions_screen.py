@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -27,8 +28,15 @@ _WS = re.compile(r"\s+")
 
 
 def normalize(name: str) -> str:
-    """Lowercase, strip punctuation, collapse whitespace for stable comparison."""
-    s = _PUNCT.sub(" ", (name or "").lower())
+    """Lowercase, fold accents, strip punctuation, collapse whitespace.
+
+    Accents are folded (``José`` -> ``jose``, ``Müller`` -> ``muller``) before
+    punctuation is stripped; otherwise each accented letter became a space and
+    an accented spelling never matched the plain one on the list.
+    """
+    folded = unicodedata.normalize("NFKD", (name or "").casefold())
+    folded = "".join(ch for ch in folded if not unicodedata.combining(ch))
+    s = _PUNCT.sub(" ", folded)
     return _WS.sub(" ", s).strip()
 
 
@@ -74,7 +82,11 @@ def screen(name: str, sdn_names, *, threshold: float = 0.85) -> dict:
 
 
 def load_list(path: str | Path) -> list[str]:
-    """Load names from a newline list or a JSON array / ``{"names": [...]}``."""
+    """Load names from a newline list or a JSON array / ``{"names": [...]}``.
+
+    Raises ``ValueError`` for JSON of any other shape: reading it as a newline
+    list would screen against one meaningless "name" and report CLEAR.
+    """
     p = Path(path)
     if not p.exists():
         return []
@@ -89,6 +101,8 @@ def load_list(path: str | Path) -> list[str]:
             return [str(x) for x in data]
         if isinstance(data, dict) and isinstance(data.get("names"), list):
             return [str(x) for x in data["names"]]
+        if data is not None:
+            raise ValueError('JSON sanctions list must be an array or {"names": [...]}')
     return [ln.strip() for ln in text.splitlines() if ln.strip()]
 
 
@@ -198,7 +212,10 @@ def _run(args: dict[str, Any]) -> str:
         return "\n".join(lines)
 
     path = _list_path()
-    sdn = load_list(path)
+    try:
+        sdn = load_list(path)
+    except ValueError as exc:
+        return f"ERROR: sanctions list at {path} is unusable: {exc}"
     if not sdn:
         return (f"ERROR: no sanctions list found at {path}. Set [screening] "
                 "sdn_path to an OFAC SDN export (newline or JSON name list).")
