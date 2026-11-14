@@ -392,15 +392,17 @@ def _plugin_signing_policy() -> tuple[str | None, bool, set[str]]:
     require = False
     revoked: set[str] = set()
     try:
-        from .config import load_config
+        from .config import config_source_errors, load_config
         cfg = (load_config() or {}).get("plugins") or {}
         root = str(cfg.get("ca_root_pubkey") or "").strip()
         require = bool(cfg.get("require_signing"))
         rev = cfg.get("ca_revoked") or []
         if isinstance(rev, (list, tuple)):
             revoked = {str(s) for s in rev}
-    except Exception:  # pragma: no cover -- config never blocks discovery
-        pass
+        # An unreadable config may have required signing: keep it required.
+        require = require or bool(config_source_errors(include_tenant=True))
+    except Exception:  # pragma: no cover -- unreadable policy keeps signing on
+        require = True
     try:
         from .enterprise import enterprise_enabled
         if enterprise_enabled():

@@ -123,6 +123,14 @@ def test_default_config_is_noop():
     assert require is False and root is None and revoked == set()
 
 
+def test_unreadable_config_keeps_signing_required(monkeypatch, tmp_path):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("[plugins]\nrequire_signing = true\nx = [\n", encoding="utf-8")
+    monkeypatch.setenv("MAVERICK_CONFIG", str(cfg))
+    _root, require, _revoked = plugins._plugin_signing_policy()
+    assert require is True
+
+
 # ---- non-.py files are inside the signature ----------------------------------
 #
 # A manifest that hashed only `.py` would leave a signed plugin's native
