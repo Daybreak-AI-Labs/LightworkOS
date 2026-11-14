@@ -70,7 +70,9 @@ def test_tags_branches_and_urls_are_not_pins():
     out = _run(deps=deps)
     assert out.startswith("VIOLATIONS: 3")
     assert _run(deps=[{"name": "a", "version": "==1.0", "hash": "h"},
-                      {"name": "b", "version": "v2.1.0", "hash": "h"}]).startswith("OK")
+                      {"name": "b", "version": "v2.1.0", "hash": "h"},
+                      {"name": "c", "version": "a" * 40, "hash": "h"},
+                      {"name": "d", "version": "sha256:" + "e" * 64, "hash": "h"}]).startswith("OK")
 
 
 def test_errors():
