@@ -433,8 +433,10 @@ def _crash_on_journal_done(monkeypatch):
     return real
 
 
+@pytest.mark.parametrize("with_operation", [False, True], ids=["plain", "attempt-index"])
 @pytest.mark.parametrize("indexed", [False, True], ids=["json", "sqlite"])
-def test_fold_crash_after_the_write_recovers_for_either_deployment_form(monkeypatch, tmp_path, indexed):
+def test_fold_crash_after_the_write_recovers_for_either_deployment_form(
+        monkeypatch, tmp_path, indexed, with_operation):
     """The journal's digests must describe what a reload of the saved ledger
     produces, or a stop after the write blocks capped calls for good."""
     import json
@@ -449,8 +451,12 @@ def test_fold_crash_after_the_write_recovers_for_either_deployment_form(monkeypa
     if indexed:
         provider_spend_sqlite.ensure(path, pcc)
     legacy = tmp_path / "home" / "tenants" / "acme" / "provider_spend.json"
+    operation = ({"operation_id": "op-1", "category": "other", "parent_category": "other",
+                  "attempt_no": 1} if with_operation else {})
     with tenant_scope(tenant="acme"):
-        pcc.reserve("openai", 2.0, request_id="ordinary-hold", path=legacy)   # no operation metadata
+        hold = pcc.reserve("openai", 2.0, request_id="ordinary-hold", path=legacy, **operation)
+        if with_operation:
+            pcc.settle(hold, None)                    # unknown cost: refuses admission
     real = _crash_on_journal_done(monkeypatch)
     pcc._FOLDED.clear()
     with pytest.raises(pcc.ProviderAccountingUnavailable):
@@ -461,9 +467,15 @@ def test_fold_crash_after_the_write_recovers_for_either_deployment_form(monkeypa
     assert (status.spent, status.reserved) == (1.0, 2.0)
     journal = path.with_name(path.name + pcc._TENANT_FOLD_SUFFIX)
     assert json.loads(journal.read_text())["state"] == "done"
+    if with_operation:
+        assert pcc._load(path)[pcc._ATTEMPT_INDEX]
+        assert (status.allowed, status.unresolved) == (False, True)
+        with tenant_scope(tenant="acme"), pytest.raises(pcc.ProviderAttemptAlreadyAdmitted):
+            pcc.reserve("openai", 2.0, request_id="second-dispatch", **operation)
 
 
-def test_fold_larger_than_the_json_form_is_published_indexed(monkeypatch, tmp_path):
+@pytest.mark.parametrize("with_operation", [False, True], ids=["plain", "attempt-index"])
+def test_fold_larger_than_the_json_form_is_published_indexed(monkeypatch, tmp_path, with_operation):
     """Two saveable earlier ledgers whose receipts together exceed the JSON
     ledger limit must fold into indexed storage, not fail on every retry."""
     from maverick import provider_spend_sqlite
@@ -476,7 +488,9 @@ def test_fold_larger_than_the_json_form_is_published_indexed(monkeypatch, tmp_pa
         legacy = tmp_path / "home" / "tenants" / tenant / "provider_spend.json"
         with tenant_scope(tenant=tenant):
             for n in range(20):
-                hold = pcc.reserve("openai", 1.0, request_id=f"{tenant}-call-{n}", path=legacy)
+                hold = pcc.reserve("openai", 1.0, request_id=f"{tenant}-call-{n}", path=legacy, **(
+                    {"operation_id": f"op-{tenant}-{n}", "category": "other", "parent_category": "other",
+                     "attempt_no": 1} if with_operation else {}))
                 pcc.settle(hold, 0.5)
         legacies.append(legacy)
     largest = max(legacy.stat().st_size for legacy in legacies)
@@ -492,3 +506,5 @@ def test_fold_larger_than_the_json_form_is_published_indexed(monkeypatch, tmp_pa
     assert provider_spend_sqlite.is_active(pcc._deployment_ledger_path())
     pcc._FOLDED.clear()
     assert pcc.check("openai") == status                          # no second fold
+    if with_operation:
+        assert len(pcc._load(pcc._deployment_ledger_path())[pcc._ATTEMPT_INDEX]) == 40
