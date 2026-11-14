@@ -68,6 +68,10 @@ def _op_invoke(args: dict) -> str:
     if not name:
         return "ERROR: invoke requires function_name"
     itype = (args.get("invocation_type") or "RequestResponse").strip()
+    if itype.lower() == "dryrun":
+        # Governance treats any casing of DryRun as read-only, so only the
+        # real DryRun type may be sent for it.
+        itype = "DryRun"
     payload = args.get("payload") if isinstance(args.get("payload"), dict) else {}
     if itype != "DryRun" and not as_bool(args.get("confirm")):
         return (
