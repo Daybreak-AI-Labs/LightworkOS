@@ -78,8 +78,16 @@ def git_env_without_user_config() -> dict[str, str]:
 # attributes file chosen from config. git accepts any run of blanks between a
 # section name and its quoted subsection (`[filter   "x"]`), so the section
 # names are matched as a pattern, not as the literal `[filter "`.
-_CONFIG_SECTION = re.compile(r"\[\s*(?:filter|include)")
-_CONFIG_NEEDLES = ("include.path", "includeif", "fsmonitor", "attributesfile")
+# A promisor remote makes a plain `git diff` fetch a missing object, and that
+# fetch runs the transport settings: `remote.<name>.uploadpack`/`receivepack`,
+# `core.sshCommand`, `core.gitProxy`, an askpass or credential helper, or a
+# protocol (such as `ext::`) the repository allows itself. Those are matched too.
+_CONFIG_SECTION = re.compile(r"\[\s*(?:filter|include|credential|protocol)")
+_CONFIG_NEEDLES = (
+    "include.path", "includeif", "fsmonitor", "attributesfile",
+    "uploadpack", "receivepack", "sshcommand", "gitproxy", "askpass",
+    "credential.", "protocol.",
+)
 
 
 def _text(path: Path) -> str:
@@ -157,20 +165,31 @@ def git_metadata_may_execute_filters(wd: Path) -> bool:
     pointer file or symlink moves the git directory (possibly inside the
     workspace), a linked worktree reads its main repository's, and
     `extensions.worktreeConfig` adds `config.worktree`. All of those are
-    scanned, and anything that cannot be followed or read counts as unsafe.
+    scanned, as are the git directories of repositories nested in ``wd``,
+    and anything that cannot be followed or read counts as unsafe.
     """
     try:
         wd = Path(wd)
-        directories = _git_directories(wd)
-        if directories is None:
-            return True
-        for directory in directories:
-            config_files = [directory / "config", directory / "config.worktree"]
-            config_files.extend(directory.glob("worktrees/*/config.worktree"))
-            if any(_config_may_run_commands(_text(path)) for path in config_files):
-                return True
-            if _attributes_name_a_filter(_text(directory / "info" / "attributes")):
+        # A nested repository (a gitlink or submodule checkout) counts too:
+        # git checks its dirtiness with a child `git status` that reads that
+        # repository's own config and info/attributes.
+        nested = [path.parent for path in wd.glob("**/.git") if path.parent != wd]
+        for repo in [wd, *nested]:
+            if _git_settings_may_run_commands(_git_directories(repo)):
                 return True
         return any(_attributes_name_a_filter(_text(path)) for path in wd.glob("**/.gitattributes"))
     except Exception:
         return True
+
+
+def _git_settings_may_run_commands(directories: list[Path] | None) -> bool:
+    if directories is None:
+        return True
+    for directory in directories:
+        config_files = [directory / "config", directory / "config.worktree"]
+        config_files.extend(directory.glob("worktrees/*/config.worktree"))
+        if any(_config_may_run_commands(_text(path)) for path in config_files):
+            return True
+        if _attributes_name_a_filter(_text(directory / "info" / "attributes")):
+            return True
+    return False

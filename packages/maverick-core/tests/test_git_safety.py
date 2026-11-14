@@ -253,6 +253,36 @@ class TestGitDirDiscovery:
             config.write_text(original + f"{header}\n\tpath = /x\n")
             assert git_metadata_may_execute_filters(repo) is True, header
 
+    def test_promisor_transport_and_nested_repository_settings_are_flagged(self, tmp_path):
+        """A promisor remote makes `git diff` lazily fetch a missing object,
+        which runs the transport the repository chose; and git checks a nested
+        repository's dirtiness with a child `git status` that applies that
+        repository's own config and attributes."""
+        from maverick.git_safety import git_metadata_may_execute_filters
+        repo = self._repo(tmp_path)
+        config = repo / ".git" / "config"
+        original = config.read_text()
+        for setting in (
+            '[remote "origin"]\n\turl = /x\n\tpromisor = true\n\tuploadpack = id; git-upload-pack\n',
+            "[core]\n\tsshCommand = id\n",
+            '[credential "https://x"]\n\thelper = !id\n',
+            '[protocol "ext"]\n\tallow = always\n',
+        ):
+            config.write_text(original + setting)
+            assert git_metadata_may_execute_filters(repo) is True, setting
+        config.write_text(original)
+        sub = repo / "sub"
+        sub.mkdir()
+        _make_git_repo(sub)
+        assert git_metadata_may_execute_filters(repo) is False
+        (sub / ".git" / "info").mkdir(exist_ok=True)
+        (sub / ".git" / "info" / "attributes").write_text("* filter=x\n")
+        assert git_metadata_may_execute_filters(repo) is True
+        (sub / ".git" / "info" / "attributes").write_text("")
+        sub_config = sub / ".git" / "config"
+        sub_config.write_text(sub_config.read_text() + f'[filter "x"]\n\tclean = {_FILTER_PWN}\n')
+        assert git_metadata_may_execute_filters(repo) is True
+
     def test_filter_attribute_such_as_git_lfs_is_refused(self, tmp_path):
         """A repository that really uses a filter (git-lfs) is refused too:
         the host cannot tell a legitimate clean/smudge command from a planted
