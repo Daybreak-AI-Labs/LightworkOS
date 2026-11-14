@@ -30,6 +30,7 @@ from typing import Any
 from .config import env_flag
 
 log = logging.getLogger(__name__)
+_MESSAGES_CONTEXT = "checkpoints.messages"
 
 _CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS checkpoints (
@@ -168,6 +169,10 @@ class Checkpointer:
             log.debug("checkpoint: payload not serializable, skipping: %s", e)
             return False
         try:
+            # The transcript holds prompts and tool output: seal it like the
+            # world model's other agent text (fails closed, never plaintext).
+            from .world_model import _enc_field
+            payload_messages = _enc_field(payload_messages, _MESSAGES_CONTEXT)
             with self._world._writing() as conn:
                 conn.execute(
                     "INSERT INTO checkpoints"
@@ -227,9 +232,11 @@ class Checkpointer:
         if row is None:
             return None
         try:
+            from .world_model import _dec_field
             saved = Checkpoint(
                 goal_id=row[0], episode_id=row[1], agent_id=row[2], step_seq=row[3],
-                messages=json.loads(row[4]), budget=json.loads(row[5]),
+                messages=json.loads(_dec_field(row[4], context=_MESSAGES_CONTEXT)),
+                budget=json.loads(row[5]),
                 meta=json.loads(row[6]),
             )
             if (not isinstance(saved.messages, list)
@@ -361,9 +368,11 @@ class Checkpointer:
         if row is None:
             return None
         try:
+            from .world_model import _dec_field
             return Checkpoint(
                 goal_id=row[0], episode_id=row[1], agent_id=row[2], step_seq=row[3],
-                messages=json.loads(row[4]), budget=json.loads(row[5]),
+                messages=json.loads(_dec_field(row[4], context=_MESSAGES_CONTEXT)),
+                budget=json.loads(row[5]),
                 meta=json.loads(row[6]),
             )
         except (TypeError, ValueError):  # pragma: no cover -- corrupt row
@@ -393,13 +402,15 @@ class Checkpointer:
         if dst_goal_id is None or not self._ensure():
             return False
         try:
+            from .world_model import _enc_field
+            messages = _enc_field(json.dumps(ckpt.messages, default=str), _MESSAGES_CONTEXT)
             with self._world._writing() as conn:
                 conn.execute(
                     "INSERT INTO checkpoints"
                     "(goal_id, episode_id, agent_id, step_seq, created_at, "
                     " messages, budget, meta) VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
                     (dst_goal_id, ckpt.episode_id, ckpt.agent_id, ckpt.step_seq,
-                     time.time(), json.dumps(ckpt.messages, default=str),
+                     time.time(), messages,
                      json.dumps(ckpt.budget), json.dumps(ckpt.meta, default=str)),
                 )
             return True

@@ -47,6 +47,23 @@ def test_checkpointer_save_and_latest(tmp_path: Path):
     assert abs(got.budget["dollars"] - 0.42) < 1e-9
 
 
+def test_checkpoint_transcript_is_sealed_at_rest(tmp_path: Path, monkeypatch):
+    import sqlite3
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
+    world = WorldModel(tmp_path / "w.db")
+    gid = world.create_goal("g", "")
+    cp = ckpt_mod.Checkpointer(world)
+    messages = [{"role": "user", "content": "private prompt text"}]
+    assert cp.save(goal_id=gid, agent_id="a", step_seq=1, messages=messages, budget=Budget())
+    with sqlite3.connect(tmp_path / "w.db") as conn:
+        raw = conn.execute("SELECT messages FROM checkpoints").fetchone()[0]
+    assert "private prompt text" not in raw
+    assert cp.latest(gid, "a").messages == messages
+    assert cp.at_or_before_step(gid, "a", 1).messages == messages
+
+
 def test_checkpointer_latest_returns_highest_step(tmp_path: Path):
     world = WorldModel(tmp_path / "w.db")
     gid = world.create_goal("g", "")
