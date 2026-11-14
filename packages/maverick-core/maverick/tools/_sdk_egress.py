@@ -83,8 +83,10 @@ def aws_client(tool: str, service: str, *, resource: bool = False, config=None):
     }
     if config is not None:
         kwargs["config"] = config
-    probe = boto3.client(service, aws_access_key_id="egress-probe",
-                         aws_secret_access_key="egress-probe", **kwargs)
+    probe = boto3.client(
+        service, aws_access_key_id="egress-probe",
+        aws_secret_access_key="egress-probe",  # pragma: allowlist secret
+        **kwargs)
     require_sdk_egress(tool, probe.meta.endpoint_url)
     if resource:
         return boto3.resource(service, **kwargs)
