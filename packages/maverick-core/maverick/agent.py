@@ -3824,6 +3824,21 @@ class Agent:
             + " Do not repeat the original action to recover omitted data.]"
         )
 
+    async def _post_tool_hooks(self, name: str, args, result) -> None:
+        """Fire POST_TOOL_USE for a completed call. Every completed call
+        reaches the hooks, but only with what the model may see: the redacted
+        output, or the notice that Shield withheld it."""
+        from .hooks import HookContext, HookEvent
+        from .hooks import dispatch as _dispatch_hooks
+        await _dispatch_hooks(HookContext(
+            event=HookEvent.POST_TOOL_USE,
+            tool_name=name,
+            tool_args=args,
+            tool_result=result,
+            goal_id=self.ctx.goal_id,
+            agent_role=self.role,
+        ))
+
     async def _run_dispatched_tool(
         self,
         name: str,
@@ -3838,8 +3853,6 @@ class Agent:
     ) -> str:
         """Run one already-authorized, already-audited dispatch to termination."""
         from .audit import TOOL_CALL_COMMITMENT_ALGORITHM
-        from .hooks import HookContext, HookEvent
-        from .hooks import dispatch as _dispatch_hooks
 
         terminal_attempted = False
 
@@ -3930,6 +3943,11 @@ class Agent:
                         "tool output-scan errored; content withheld "
                         f"({type(exc).__name__}); reconcile without replay",
                     )
+                    await self._post_tool_hooks(
+                        name, args,
+                        "INDETERMINATE: the tool executed but Shield output "
+                        f"screening failed ({type(exc).__name__}); output withheld"
+                    )
                     raise
                 else:
                     if not out_verdict.allowed:
@@ -3948,14 +3966,17 @@ class Agent:
                             disposition="execution_unknown" if execution_unknown else "output_withheld",
                             output_summary=_audit_summary(reason),
                         ):
-                            return (
+                            withheld = (
                                 "INDETERMINATE: the tool executed and its output "
                                 "was withheld, but terminal audit evidence could "
                                 "not be written; reconcile state and do not retry"
                             )
-                        return _blocked_tool_output_message(
-                            execution_unknown=execution_unknown, verdict=out_verdict, reason=reason,
-                        )
+                        else:
+                            withheld = _blocked_tool_output_message(
+                                execution_unknown=execution_unknown, verdict=out_verdict, reason=reason,
+                            )
+                        await self._post_tool_hooks(name, args, withheld)
+                        return withheld
             from .safety.secret_detector import redact as _redact_secrets
             from .tool_result_stream import needs_complete_output, result_bytes
 
@@ -3964,14 +3985,7 @@ class Agent:
             result_bytes(output)
             output, _redacted = _redact_secrets(output)
             result_bytes(output)
-            await _dispatch_hooks(HookContext(
-                event=HookEvent.POST_TOOL_USE,
-                tool_name=name,
-                tool_args=args,
-                tool_result=output,
-                goal_id=self.ctx.goal_id,
-                agent_role=self.role,
-            ))
+            await self._post_tool_hooks(name, args, output)
             safe_name, _ = _redact_secrets(str(name)[:128])
             complete_output = output
             if (tracker := getattr(self.ctx, "ifc", None)) is not None:
