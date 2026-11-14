@@ -26,6 +26,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import tempfile
 import time
 from collections.abc import Generator
@@ -255,14 +256,16 @@ class StreamingCompactor:
         """Native async entry; cancellation never falls back to sync I/O."""
         return await run_async(self._fold_steps(conversation_id, turns))
 
-    def _fold_steps(self, conversation_id: str, turns: list[dict]):
+    def _fold_steps(self, conversation_id: str, turns: list[dict], seed: str | None = None):
         """Fold the turns the cursor hasn't seen into the running summary.
 
         ``turns`` is the conversation prefix so far (oldest first); only
         ``turns[cursor:]`` are summarized. Returns the updated summary and
         persists ``(cursor=len(turns), summary)``. A ``turns`` list shorter
         than the cursor means the conversation was rewound: state resets and
-        everything is refolded.
+        everything is refolded. ``seed`` is the text of this strategy's own
+        earlier summary when ``turns[0]`` is that summary message; a reset then
+        continues from it instead of folding it as one clipped turn.
         """
         initial_state = self._load().get(conversation_id)
         cursor, summary, fingerprint = self._decode_state(initial_state)
@@ -272,6 +275,8 @@ class StreamingCompactor:
         )
         if cursor > len(turns) or not prefix_matches:
             cursor, summary = 0, ""
+        if seed is not None and cursor == 0:
+            cursor, summary = 1, seed
         new_turns = turns[cursor:]
         if new_turns:
             summary = yield from self._fold_once_steps(summary, new_turns)
@@ -332,6 +337,27 @@ class StreamingCompactor:
                 self._save(data)
 
 
+_SUMMARY_RE = re.compile(
+    r'<stream-summary turns="(\d+)">\n(.*)\n</stream-summary>', re.DOTALL)
+
+
+def _own_summary(msg: dict) -> tuple[int, str] | None:
+    """``(turns, summary)`` when ``msg`` is a summary this strategy produced.
+
+    Inside the agent loop the history is replaced by this strategy's output,
+    so the next call sees ``[brief, <stream-summary>, ...]``. Treating that
+    summary as one ordinary turn clipped it to 160 characters and lost every
+    earlier fact on each turn.
+    """
+    if not isinstance(msg, dict) or msg.get("role") != "user":
+        return None
+    content = msg.get("content")
+    if not isinstance(content, str):
+        return None
+    m = _SUMMARY_RE.fullmatch(content)
+    return (int(m.group(1)), m.group(2)) if m else None
+
+
 def _default_key(messages: list[dict]) -> str:
     """Stable conversation key: hash of the first message (preserved verbatim
     by every compaction pass, so it identifies the episode across calls)."""
@@ -383,11 +409,14 @@ def _compact_streaming_steps(
         return list(messages)
     key = conversation_id or _default_key(messages)
     compactor = StreamingCompactor(llm=llm, path=path, budget=budget)
-    summary = yield from compactor._fold_steps(key, messages[1:cutoff])
+    prior = _own_summary(messages[1])
+    seed = prior[1] if prior is not None else None
+    summary = yield from compactor._fold_steps(key, messages[1:cutoff], seed=seed)
+    turns = cutoff - 1 if prior is None else prior[0] + cutoff - 2
     summary_msg = {
         "role": "user",
         "content": (
-            f'<stream-summary turns="{cutoff - 1}">\n{summary}\n</stream-summary>'
+            f'<stream-summary turns="{turns}">\n{summary}\n</stream-summary>'
         ),
     }
     return [messages[0], summary_msg, *messages[cutoff:]]
