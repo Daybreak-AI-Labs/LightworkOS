@@ -63,7 +63,7 @@ def test_native_prepare_ticket_cannot_start_two_live_consents(monkeypatch):
     monkeypatch.setenv("MAVERICK_OAUTH_DESKTOP_RETURN", "1")
     monkeypatch.setenv("MAVERICK_DESKTOP_OAUTH_TICKET_KEY", "07" * 32)
     oauth.save_workspace_application(OWNER, provider="google", client_id="synthetic-client",
-        client_secret="synthetic-secret", expected_revision="", desktop_return=True)
+        client_secret="synthetic-secret", expected_revision="", desktop_return=True)  # pragma: allowlist secret -- synthetic consent fixture
     prepared = oauth.native_prepare_ticket(OWNER, profile="google-drive", name="evidence",
         context="fixture-context")
 
