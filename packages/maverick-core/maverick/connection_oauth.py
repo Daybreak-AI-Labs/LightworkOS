@@ -632,6 +632,9 @@ def begin(actor, *, profile, name, redirect_uri, context, expected_revision="", 
             key: value for key, value in store["consents"].items()
             if value["expires_at"] > now
         }
+        if prepared and any(value.get("native_prepare_jti") == prepared["jti"]
+                            for value in store["consents"].values()):
+            raise PermissionError("Desktop account-return ticket was already used. Start again.")
         pending = [value for value in store["consents"].values()
                    if value.get("retired") is not True]
         # The per-account cap stops one user from blocking everyone else's
@@ -694,6 +697,22 @@ def _tokens(response, scopes, *, provider="", prior_refresh="", prior_granted=No
         provider, response, scopes, prior=prior_granted,
     )
     return access, refresh, time.time() + seconds, granted_scopes, scope_status
+
+
+def _same_provider_account(previous, selected, identity, workspace):
+    """Sharing belongs to one verified provider subject and destination."""
+    if not previous:
+        return False
+    oauth = previous.get("oauth") or {}
+    try:
+        prior = _stored_identity(oauth.get("identity"), selected["provider"])
+    except ValueError:
+        return False
+    return (previous.get("connector") == selected["connector"]
+            and previous.get("base_url") == selected["origin"]
+            and prior["subject"] == identity["subject"]
+            and prior.get("tenant_id") == identity.get("tenant_id")
+            and (oauth.get("workspace") or {}).get("provider_id") == workspace.get("provider_id"))
 
 
 def finish(actor, *, state, code, context, redirect_uri, return_profile="browser"):
@@ -761,9 +780,11 @@ def finish(actor, *, state, code, context, redirect_uri, return_profile="browser
                 or (previous or {}).get("revision", "") != consent["expected_revision"]
                 or previous and previous.get("owner") != actor):
             raise connections.ConnectionVersionConflict("Connection or application changed during consent. Start again.")
-        records[consent["name"]] = {"name": consent["name"], "connector": selected["connector"], "base_url": selected["origin"], "token": access,
+        same_account = _same_provider_account(previous, selected, identity, workspace)
+        replacement = {"name": consent["name"], "connector": selected["connector"], "base_url": selected["origin"], "token": access,
             "created": (previous or {}).get("created", time.time()), "owner": actor,
-            "access": (previous or {}).get("access", "owner"), "allowed_principals": (previous or {}).get("allowed_principals", []),
+            "access": previous.get("access", "owner") if same_account else "owner",
+            "allowed_principals": list(previous.get("allowed_principals", [])) if same_account else [],
             "revision": uuid.uuid4().hex,
             "oauth": {"profile": consent["profile"], "self_connect": consent.get("self_connect", False), "application_key": consent.get("application_key", _app_key(actor, selected["provider"])),
                 "application_revision": application["revision"], "refresh_token": refresh,
@@ -771,6 +792,14 @@ def finish(actor, *, state, code, context, redirect_uri, return_profile="browser
                 "site_url": consent["site_url"], "identity": identity,
                 "workspace": workspace, "requested_scopes": list(selected["scopes"]),
                 "granted_scopes": granted_scopes, "scope_status": scope_status}}
+        # Retain evidence with its old revision, never as current readiness.
+        if previous:
+            if previous.get("last_test"):
+                replacement["last_test"] = dict(previous["last_test"])
+            for field in ("test_history", "capability_receipts"):
+                if previous.get(field):
+                    replacement[field] = list(previous[field])
+        records[consent["name"]] = replacement
         connections._save(records)
         return connections._public(records[consent["name"]])
 

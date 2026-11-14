@@ -397,6 +397,26 @@ def test_screen_parks_an_approval_at_the_floor():
         xa.approval_status("sf-quotebot", 999999)
 
 
+def test_screen_backlog_is_bounded_before_approval_and_notification(monkeypatch):
+    from maverick.world_model import WorldModel
+
+    _enroll(max_risk="high")
+    monkeypatch.setattr(xa, "_MAX_PENDING_EXECUTIONS", 2)
+    notifications = []
+    monkeypatch.setattr(xa, "_notify_approval", lambda *args: notifications.append(args))
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        verdicts = list(executor.map(lambda _: xa.screen("sf-quotebot", "send_contract", risk="high"), range(3)))
+    assert sum(row.get("requires_approval", False) for row in verdicts) == 2
+    assert [row["rule"] for row in verdicts].count("approval_backlog") == 1
+    assert len(notifications) == 2
+    with WorldModel() as world:
+        pending = world.pending_approvals()
+        assert len(pending) == 2
+        world.decide_approval(pending[0].id, "denied", decided_by="user:reviewer")
+    assert xa.screen("sf-quotebot", "send_contract", risk="high")["requires_approval"]
+    assert xa.screen("sf-quotebot", "research", risk="low")["allowed"]
+
+
 def test_screen_approval_poll_is_owner_scoped_and_rejects_stale_binding():
     _enroll(max_risk="high")
     xa.enroll(

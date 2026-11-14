@@ -35,6 +35,17 @@ def test_set_list_get_delete_roundtrip():
     assert connections.list_connections() == []
 
 
+def test_unpinned_resolution_matches_provider_and_prefers_owned_accounts():
+    connections.set_connection("salesforce", connector="jira", token="wrong-provider")
+    connections.set_connection("a-shared", connector="salesforce", token="shared", access="tenant")
+    connections.set_connection("z-owned", connector="salesforce", token="owned", owner="user:alice")
+    assert connections.resolve("salesforce", principal="user:alice") == ("", "owned")
+    assert connections.resolve("salesforce", principal="user:bob") == ("", "shared")
+    connections.set_connection("salesforce", connector="salesforce", token="named", access="tenant")
+    assert connections.resolve("salesforce", principal="user:alice") == ("", "owned")
+    assert connections.resolve("salesforce", principal="user:bob") == ("", "named")
+
+
 def test_reviewed_delete_does_not_remove_replacement_or_reveal_other_owner():
     old = connections.set_connection("reviewed", owner="user:owner", token="old-fixture")
     replacement = connections.set_connection("reviewed", owner="user:owner", token="replacement-fixture")

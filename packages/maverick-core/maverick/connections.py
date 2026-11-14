@@ -443,19 +443,22 @@ def resolve(connector: str, *, principal: str | None = None) -> tuple[str, str] 
         caller = None
     else:
         caller = _require_principal(principal)
-    # a connection named exactly after the connector wins; else the first one
-    # whose "connector" field points at it AND whose use grant admits the
-    # authenticated caller.  Sort the fallback so selection is deterministic.
+    # Explicit selection wins. Otherwise prefer the caller's own usable
+    # account, then the connector-named record, then a deterministic fallback.
     from .template_connections import selected
     pin = selected(slug, caller)
     data = _load()
     rec = data.get(pin["name"] if pin else slug)
-    if pin is not None and (not rec or rec.get("revision") != pin["revision"] or not _may_use(rec, caller)):
+    if pin is not None and (not rec or rec.get("connector") != slug
+                           or rec.get("revision") != pin["revision"] or not _may_use(rec, caller)):
         raise PermissionError("Selected account changed before credential resolution.")
-    if pin is None and (not isinstance(rec, dict) or not _may_use(rec, caller)):
-        rec = next((r for _, r in sorted(data.items())
-                    if isinstance(r, dict) and r.get("connector") == slug
-                    and _may_use(r, caller)), None)
+    if pin is None:
+        usable = [r for _, r in sorted(data.items())
+                  if isinstance(r, dict) and r.get("connector") == slug
+                  and r.get("token") and _may_use(r, caller)]
+        owned = [r for r in usable if caller and r.get("owner") == caller]
+        candidates = owned or usable
+        rec = next((r for r in candidates if r is rec), None) or next(iter(candidates), None)
     if not rec or not rec.get("token"):
         return None
     if rec.get("oauth"):

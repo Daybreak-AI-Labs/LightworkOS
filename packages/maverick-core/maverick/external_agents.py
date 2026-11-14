@@ -1316,13 +1316,29 @@ def screen(
         approval_card = decode_approval_detail(approval_detail)
         if approval_card is None:  # pragma: no cover - encoder contract
             raise ExternalAgentsError("screen approval binding was not encoded")
-        approval_id = open_world().create_approval(
-            action, risk=req_risk,
-            scope=meta.get("department") or None,
-            detail=approval_detail,
-            provenance="external_agents",
-            approvals_required=required_approvals(req_risk),
-            requested_by=f"agent:{agent_id}")
+        # The count and insert share the execution/enrollment lock across
+        # processes. Query the agent before LIMIT so another agent's queue
+        # cannot hide this backlog. Existing unattached execution approvals
+        # also consume capacity for new screening requests.
+        with _sidecar_locked():
+            try:
+                world = open_world()
+                pending = world.pending_unattached_approval_ids(
+                    f"agent:{agent_id}", limit=_MAX_PENDING_EXECUTIONS)
+            except Exception:
+                return _screen_verdict(agent_id, tool, False, "approval_unavailable",
+                    "Pending approvals could not be checked; this action remains blocked.")
+            if len(pending) >= _MAX_PENDING_EXECUTIONS:
+                return _screen_verdict(agent_id, tool, False, "approval_backlog",
+                    f"{_MAX_PENDING_EXECUTIONS} approvals already await decisions "
+                    "for this agent; wait for a human decision before trying again.")
+            approval_id = world.create_approval(
+                action, risk=req_risk,
+                scope=meta.get("department") or None,
+                detail=approval_detail,
+                provenance="external_agents",
+                approvals_required=required_approvals(req_risk),
+                requested_by=f"agent:{agent_id}")
         _notify_approval(approval_id, agent_id, tool, req_risk,
                          meta.get("department") or "")
         out = _screen_verdict(
