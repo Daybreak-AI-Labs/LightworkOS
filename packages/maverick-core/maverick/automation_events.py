@@ -707,29 +707,45 @@ def _email_body_text(msg) -> str:
     return ""
 
 
-_MAIL_WORDS = ("IMAP", "MAIL", "OUTLOOK", "INBOX", "SMTP")  # MAIL covers EMAIL, GMAIL, MAILBOX
-_SECRET_WORDS = ("PASSWORD", "PASS", "SECRET")
+_MAIL_WORDS = frozenset({
+    "IMAP", "MAIL", "EMAIL", "GMAIL", "OUTLOOK", "MAILBOX", "INBOX", "ICLOUD",
+    "YAHOO", "FASTMAIL", "PROTON", "ZOHO", "EXCHANGE", "O365", "OFFICE365"})
+_PASSWORD_WORDS = frozenset({"PASSWORD", "PASS", "PW", "PWD"})
+_CREDENTIAL_WORDS = frozenset({
+    "KEY", "TOKEN", "API", "CLIENT", "ACCESS", "SECRET", "DSN", "DATABASE",
+    "DB", "AWS", "OPENAI", "ANTHROPIC"})
+# Password variables the product reads for its own connections (mailer.py and
+# tools/email_tool.py send and read mail as EMAIL_USER / EMAIL_APP_PASSWORD;
+# the rest are channel, connector and store credentials).
+_PRODUCT_PASSWORD_NAMES = frozenset({
+    "EMAIL_APP_PASSWORD", "BITBUCKET_APP_PASSWORD", "BLUESKY_PASSWORD",
+    "CALDAV_PASSWORD", "ES_PASSWORD", "IRC_PASSWORD", "REDIS_PASSWORD",
+    "TEAMS_APP_PASSWORD"})
 
 
 def imap_password_name_problem(name: object) -> str | None:
     """Why ``name`` cannot be an IMAP source's ``password_env``, or None.
 
-    The value is sent to the host the source names, so the name must look
-    like a mail password (a mail word and a password word, upper-case
-    letters, digits and underscores) and must not be one of the product's
-    own credential variables. Checked when a source is saved and on every
-    poll."""
+    The value is sent to the host the source names, so the name, read as its
+    underscore-separated words, must say it is a mailbox password: a password
+    word and a mail word or mail provider, and no word of another kind of
+    credential. The product's own credential variables are refused. Checked
+    when a source is saved and on every poll."""
     text = str(name or "")
+    words = set(text.split("_"))
     if (not re.fullmatch(r"[A-Z0-9_]{1,128}", text)
-            or not any(word in text for word in _MAIL_WORDS)
-            or not any(word in text for word in _SECRET_WORDS)
-            or text.startswith("MAVERICK_")
-            or text.endswith(("_API_KEY", "_TOKEN", "_DSN"))):
-        return ("The mail password name must name the inbox's password variable: "
-                "upper-case letters, digits and underscores, with a mail word "
-                "(IMAP, MAIL, EMAIL, GMAIL, OUTLOOK, MAILBOX, INBOX or SMTP) and "
-                "PASSWORD, PASS or SECRET, for example IMAP_PASSWORD. Product "
-                "keys and tokens cannot be used.")
+            or not words & _PASSWORD_WORDS
+            or not words & _MAIL_WORDS
+            or words & _CREDENTIAL_WORDS
+            or text.startswith("MAVERICK")
+            or text in _PRODUCT_PASSWORD_NAMES):
+        return ("The mail password name must name this inbox's own password "
+                "variable: upper-case words joined by underscores, including a "
+                "password word (PASSWORD, PASS, PW or PWD) and a mail word or "
+                "provider (such as IMAP, MAIL, GMAIL, OUTLOOK or ICLOUD), for "
+                "example IMAP_PASSWORD. Keys, tokens, client secrets and the "
+                "product's own credentials, such as EMAIL_APP_PASSWORD, cannot "
+                "be used.")
     return None
 
 
