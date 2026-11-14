@@ -451,3 +451,14 @@ class TestEventParsing:
         text, tc = CodexCLIClient._extract_tool_call(
             'see:\n```json\n{"just": "data"}\n```')
         assert tc is None and "just" in text
+
+    def test_tool_call_scan_is_linear_on_unclosed_openers(self):
+        # Many ```json{ openers with no closing fence made the old
+        # ``\{.*?\}`` pattern rescan the rest of the reply per opener
+        # (128 KB took seconds; the reply cap is 4 MiB). The paired scan
+        # handles a full-size reply and still finds the real call before them.
+        call = '```json\n{"tool_call": {"name": "read_file", "input": {"path": "a"}}}\n```'
+        text, tc = CodexCLIClient._extract_tool_call(call + "\n" + "```json{" * 500_000)
+        assert tc is not None and tc.name == "read_file"
+        assert tc.input == {"path": "a"}
+        assert text.endswith("```json{")

@@ -44,6 +44,7 @@ Config knobs (``[providers.codex_cli]``): ``binary`` (default ``codex``),
 from __future__ import annotations
 
 import asyncio
+import bisect
 import json
 import math
 import os
@@ -95,11 +96,33 @@ _ENV_ALLOWLIST = (
 
 _SANDBOX_MODES = ("read-only", "workspace-write", "danger-full-access")
 
-# One fenced json block carrying the emulated tool call. Non-greedy body so
-# trailing prose after the block doesn't get swallowed into the JSON parse.
-_TOOL_CALL_BLOCK = re.compile(
-    r"```json\s*(\{.*?\})\s*```", re.DOTALL,
-)
+# One fenced json block carrying the emulated tool call: an opener
+# (```json, optional whitespace, "{") closed by the first later "}", optional
+# whitespace and ``` -- the shortest block, so trailing prose after it is not
+# swallowed into the JSON parse. Openers and closers are found by two linear
+# scans and paired with a binary search: a single ``\{.*?\}`` pattern rescans
+# the rest of the reply for every unclosed opener, which is quadratic on a
+# reply full of ```json{ openers.
+_TOOL_CALL_OPENER = re.compile(r"```json\s*\{")
+_TOOL_CALL_CLOSER = re.compile(r"\}\s*```")
+
+
+def _tool_call_blocks(text: str) -> list[tuple[int, int, str]]:
+    """Return ``(start, end, json_body)`` for each fenced tool-call block."""
+    closers = [(m.start(), m.end()) for m in _TOOL_CALL_CLOSER.finditer(text)]
+    closer_starts = [start for start, _ in closers]
+    blocks: list[tuple[int, int, str]] = []
+    pos = 0
+    for opener in _TOOL_CALL_OPENER.finditer(text):
+        if opener.start() < pos:
+            continue
+        brace = opener.end() - 1
+        i = bisect.bisect_right(closer_starts, brace)
+        if i == len(closers):
+            break  # no later closer, so none for any later opener either
+        close, pos = closers[i]
+        blocks.append((opener.start(), pos, text[brace:close + 1]))
+    return blocks
 
 _TOOL_PROTOCOL = """\
 
@@ -497,10 +520,9 @@ class CodexCLIClient:
     @staticmethod
     def _extract_tool_call(text: str) -> tuple[str, ToolCall | None]:
         """Split an emulated tool call out of the reply text, if present."""
-        matches = list(_TOOL_CALL_BLOCK.finditer(text or ""))
-        for m in reversed(matches):
+        for start, end, body in reversed(_tool_call_blocks(text or "")):
             try:
-                payload = json.loads(m.group(1))
+                payload = json.loads(body)
             except json.JSONDecodeError:
                 continue
             call = payload.get("tool_call") if isinstance(payload, dict) else None
@@ -509,7 +531,7 @@ class CodexCLIClient:
             args = call.get("input")
             if not isinstance(args, dict):
                 args = {}
-            remaining = (text[: m.start()] + text[m.end():]).strip()
+            remaining = (text[:start] + text[end:]).strip()
             return remaining, ToolCall(
                 id=f"codex_{uuid.uuid4().hex[:16]}",
                 name=call["name"],
