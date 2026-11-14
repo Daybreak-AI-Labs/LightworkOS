@@ -12,8 +12,10 @@ answers (someone replied under the bot's post); the alternative mentions
 edge needs an extra permission grant and misses replies that don't
 @-mention the account, and Threads has no DM API at all. Each reply carries
 ``username``/``from`` so the *author* — not the transport — is
-allowlist-checked (default-deny), and replies authored by the configured
-account itself are skipped so the bot can never loop on its own replies.
+allowlist-checked by its numeric ``from.id`` (default-deny; a username can be
+reassigned to another account, so it never authorizes), and replies
+authored by the configured account itself are skipped so the bot can never
+loop on its own replies.
 
 Polling persists bounded continuation only after durable inbox admission.
 Execution claims remain held after an unknown outcome; saved replies retry
@@ -31,7 +33,7 @@ Config::
     enabled = true
     access_token = "${THREADS_ACCESS_TOKEN}"
     user_id      = "17841400000000000"      # numeric Threads user id
-    allowed_user_ids = ["yourhandle"]       # Threads usernames, no '@'
+    allowed_user_ids = ["17841400000000001"]  # numeric Threads user ids
     poll_seconds = 30
 
 Requires::
@@ -82,14 +84,13 @@ class ThreadsChannel(Channel):
                 "([channels.threads] or THREADS_ACCESS_TOKEN / THREADS_USER_ID env)."
             )
         # The token only proves WE can read the account; gate on the reply
-        # AUTHOR (Threads username, no '@').
+        # AUTHOR (numeric Threads user id; usernames can be reassigned).
         self.allowed_user_ids = normalize_allowlist(allowed_user_ids, "THREADS_ALLOWED_USER_IDS")
         if not self.allowed_user_ids:
             raise ValueError(
                 "Set THREADS_ALLOWED_USER_IDS to restrict who can drive the agent"
             )
         self.poll_seconds = float(poll_seconds)
-        self._username_senders: dict[str, str] = {}
         self._running = False
         self._stop_event = asyncio.Event()
 
@@ -150,25 +151,11 @@ class ThreadsChannel(Channel):
         self.poll_status = (await asyncio.to_thread(checkpoint.store.get, checkpoint.record_id))["status"]
         return results
 
-    def _allowed_sender(self, sender_id):
-        return (is_allowed(sender_id, self.allowed_user_ids)
-                or any(name in self.allowed_user_ids and owner == sender_id
-                       for name, owner in self._username_senders.items()))
-
     def _input(self, reply):
         reply_id, text = str(reply.get("id") or ""), str(reply.get("text") or "")
         sender = reply.get("from") or {}
         sender_id = str(sender.get("id") or "")
-        if not text or not sender_id or sender_id == str(self.user_id):
-            return None
-        username = str(reply.get("username") or sender.get("username") or "")
-        # Bind configured names to provider IDs, keeping principals stable and
-        # at most one observed account per configured username.
-        self._username_senders = {name: owner for name, owner in self._username_senders.items()
-                                  if owner != sender_id or name == username}
-        if username and is_allowed(username, self.allowed_user_ids):
-            self._username_senders[username] = sender_id
-        if not self._allowed_sender(sender_id):
+        if not text or not sender_id or sender_id == str(self.user_id) or not is_allowed(sender_id, self.allowed_user_ids):
             return None
         if not reply_id:
             raise ValueError("Threads reply requires a stable provider identity")
@@ -181,7 +168,7 @@ class ThreadsChannel(Channel):
             return None
         account = self.user_id
         return await self.admit_message(incoming, external_id=incoming.message_id, account=account,
-            authorize=lambda: account == self.user_id and self._allowed_sender(incoming.sender_id))
+            authorize=lambda: account == self.user_id and is_allowed(incoming.sender_id, self.allowed_user_ids))
 
     async def _dispatch(self, reply: dict) -> None:
         receipt = await self._admit(reply)
@@ -192,7 +179,7 @@ class ThreadsChannel(Channel):
             if result.text:
                 return await self.send(incoming.user_id, result.text)
         return await self.process_message(incoming, external_id=incoming.message_id, account=account,
-            authorize=lambda: account == self.user_id and self._allowed_sender(incoming.sender_id),
+            authorize=lambda: account == self.user_id and is_allowed(incoming.sender_id, self.allowed_user_ids),
             receipt=receipt, send=send_saved)
 
     async def start(self) -> None:
@@ -219,7 +206,7 @@ class ThreadsChannel(Channel):
                         return await self.send(msg.user_id, reply.text)
                 try:
                     await self.recover_messages(account=account, send=send_saved,
-                        authorize=lambda msg, account=account: account == self.user_id and self._allowed_sender(msg.sender_id))
+                        authorize=lambda msg, account=account: account == self.user_id and is_allowed(msg.sender_id, self.allowed_user_ids))
                 except Exception:
                     log.warning("threads saved delivery recovery remains incomplete")
                 try:
