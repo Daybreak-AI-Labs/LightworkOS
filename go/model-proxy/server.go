@@ -25,6 +25,15 @@ func lastHeaderValue(values []string) string {
 	return values[len(values)-1]
 }
 
+// Connection is a list-valued routing control: all field values nominate
+// hop-by-hop headers. Other fields retain the existing last-value contract.
+func forwardedHeaderValue(name string, values []string) string {
+	if strings.EqualFold(name, "Connection") {
+		return strings.Join(values, ",")
+	}
+	return lastHeaderValue(values)
+}
+
 // HTTPUpstream owns a reusable transport and returns an unbuffered response.
 type HTTPUpstream struct{ Client *http.Client }
 
@@ -61,7 +70,7 @@ func (h *HTTPUpstream) Open(ctx context.Context, method, url string, headers map
 	}
 	responseHeaders := make(map[string]string, len(resp.Header))
 	for key, values := range resp.Header {
-		responseHeaders[key] = lastHeaderValue(values)
+		responseHeaders[key] = forwardedHeaderValue(key, values)
 	}
 	return &UpstreamResponse{resp.StatusCode, responseHeaders, resp.Body}, nil
 }
@@ -187,7 +196,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = controller.SetWriteDeadline(deadline)
 	headers := make(map[string]string, len(r.Header))
 	for key, values := range r.Header {
-		headers[key] = lastHeaderValue(values)
+		headers[key] = forwardedHeaderValue(key, values)
 	}
 	if !Authenticate(s.admitted, headers) {
 		proxyError(w, 401, "proxy authentication required")
