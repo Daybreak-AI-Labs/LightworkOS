@@ -174,7 +174,9 @@ def trust_add_cmd(agent_id, pubkey, direction, allow_tools, max_risk, max_dollar
         "allow_tools": _split(allow_tools), "max_risk": max_risk,
         "max_dollars": max_dollars, "data_scopes": _split(data_scopes),
         "a2a_token": _at_rest(a2a_token), "grpc_token": _at_rest(grpc_token),
-        "mcp_token": _at_rest(mcp_token),
+        # Stored as given until the MCP task authorizer accepts the hashed
+        # form: it compares the stored credential with the presented bearer.
+        "mcp_token": mcp_token,
     }
     try:
         a = agent_trust.put_agent(entry)
@@ -192,9 +194,17 @@ def trust_rm_cmd(agent_id: str) -> None:
 
     # Removing a contained agent's entry drops its revoked flag, so a later
     # `trust add` would re-admit it without the security release.
+    action_errors: list[Exception] = []
+
+    def _remove() -> bool:
+        try:
+            return agent_trust.remove_agent(agent_id)
+        except Exception as exc:  # reported below, not as a containment failure
+            action_errors.append(exc)
+            return False
+
     try:
-        removed = shared().run_if_unprotected(
-            f"agent:{agent_id}", lambda: agent_trust.remove_agent(agent_id))
+        removed = shared().run_if_unprotected(f"agent:{agent_id}", _remove)
     except ProtectedRevocationError as exc:
         raise click.ClickException(
             "agent is security-contained; use `maverick control-plane release`"
@@ -203,6 +213,9 @@ def trust_rm_cmd(agent_id: str) -> None:
         raise click.ClickException(
             "containment authority is unavailable; remove refused"
         ) from exc
+    if action_errors:
+        raise click.ClickException(
+            f"could not remove {agent_id!r}: {action_errors[0]}") from action_errors[0]
     if removed:
         click.echo(click.style(f"removed {agent_id!r}", fg="yellow"))
     else:
@@ -626,7 +639,10 @@ def security_release_cmd(subject: str) -> None:
         # entry and gateway containment would stay in force while it printed
         # success. The control plane releases all three together.
         raise click.ClickException(
-            "external agents are released with `maverick control-plane release`")
+            "an external agent's trust entry and gateway containment are lifted "
+            "together by the control plane: enable it ([control_plane] enable = "
+            "true or MAVERICK_CONTROL_PLANE=1), then run "
+            f"`maverick control-plane release {subject}`")
     result = release(subject)
     colour = "green" if result.contained else "red"
     click.echo(click.style(f"released={result.contained}", fg=colour))
