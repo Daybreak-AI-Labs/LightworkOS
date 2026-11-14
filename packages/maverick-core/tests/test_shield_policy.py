@@ -29,6 +29,26 @@ def test_required_via_enterprise(monkeypatch):
     assert shield_policy.shield_required() is True
 
 
+def test_env_override_cannot_turn_off_enterprise_requirement(monkeypatch):
+    monkeypatch.setenv("MAVERICK_ENTERPRISE", "1")
+    monkeypatch.setenv("MAVERICK_REQUIRE_SHIELD", "0")
+    assert shield_policy.shield_required() is True
+
+
+def test_text_scan_uses_the_operator_safety_configuration(monkeypatch):
+    """Federation, A2A and agent-bus text is screened under the operator's
+    ``[safety]`` profile and constitution, not a default-built shield."""
+    from maverick import config
+    pytest.importorskip("maverick_shield")
+    monkeypatch.setattr(config, "get_safety", lambda: {
+        "profile": "balanced",
+        "constitution": [{"name": "no-codeword", "pattern": "purple-elephant",
+                          "severity": "critical"}],
+    })
+    assert shield_policy.scan_block("hello purple-elephant") is not None
+    assert shield_policy.scan_block("hello there") is None
+
+
 def test_not_required_by_default(monkeypatch):
     monkeypatch.setattr(shield_policy, "shield_required", shield_policy.shield_required)
     assert shield_policy.shield_required() is False
@@ -57,6 +77,10 @@ def test_scan_error_blocks(monkeypatch):
     fake = types.ModuleType("maverick_shield")
 
     class _Shield:
+        @classmethod
+        def from_config(cls):
+            return cls()
+
         def scan_input(self, text):
             raise RuntimeError("boom")
 
@@ -74,6 +98,10 @@ def test_detector_fires_blocks(monkeypatch):
         reasons = ["injection"]
 
     class _Shield:
+        @classmethod
+        def from_config(cls):
+            return cls()
+
         def scan_input(self, text):
             return _V()
 

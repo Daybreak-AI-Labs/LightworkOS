@@ -12,7 +12,8 @@ inbound, A2A) screens consistently and **fails toward the gate** when the shield
 is required:
 
 * ``shield_required()`` — on via ``MAVERICK_REQUIRE_SHIELD``, ``[safety]
-  require_shield = true``, or enterprise mode.
+  require_shield = true``, ``profile = "strict"``, or enterprise mode (which
+  ``MAVERICK_REQUIRE_SHIELD=0`` cannot turn off).
 * ``scan_block(text)`` — returns a block reason or ``None`` (allow). A shield
   *scan error* always blocks (fail-toward-gate). A *missing* shield blocks only
   when required (so non-enterprise installs keep the fail-open default).
@@ -40,15 +41,17 @@ def shield_required() -> bool:
     # A separate presence flag cannot silently relax its required checks.
     if str(safety.get("profile", "")).strip().lower() == "strict":
         return True
-    env = os.environ.get("MAVERICK_REQUIRE_SHIELD")
-    if env is not None and env.strip() != "":
-        return is_truthy(env)
+    # Enterprise mode is a floor: the env override below can turn the
+    # requirement on, but it cannot turn it off for an enterprise deployment.
     try:
         from .enterprise import enterprise_enabled
         if enterprise_enabled():
             return True
     except Exception:  # pragma: no cover
         pass
+    env = os.environ.get("MAVERICK_REQUIRE_SHIELD")
+    if env is not None and env.strip() != "":
+        return is_truthy(env)
     return coerce_bool(safety.get("require_shield"))
 
 
@@ -67,6 +70,10 @@ def scan_block(text: str) -> str | None:
       preserving the fail-open default for personal installs);
     - shield installed but the scan errors: block (fail-toward-gate);
     - shield installed and a detector fires: block with its reasons.
+
+    The shield is built from the operator's ``[safety]`` configuration
+    (profile, threshold, constitution and signed shared rules), as the agent
+    path and :func:`scan_tool_call_block` build it.
     """
     text = (text or "").strip()
     if not text:
@@ -79,7 +86,7 @@ def scan_block(text: str) -> str | None:
                     "([safety] require_shield / enterprise mode)")
         return None
     try:
-        verdict = Shield().scan_input(text)
+        verdict = Shield.from_config().scan_input(text)
     except Exception as e:  # pragma: no cover - fail toward the gate
         log.warning("shield scan failed (blocking): %s", e)
         return "shield scan error"
