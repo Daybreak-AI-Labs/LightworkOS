@@ -94,8 +94,20 @@ class TestShellOpaqueGuard:
         for cmd in ("pip install -e .", "pip install requests", "npm install"):
             out = tool.fn({"cmd": cmd})
             assert "blocked" in out.lower(), f"expected {cmd!r} to be blocked; got {out[:200]}"
+        assert "editable" in tool.fn({"cmd": "pip install -e ."}).lower()
         monkeypatch.setenv("MAVERICK_BENCHMARK_OPAQUE", "0")
         assert "ran:" in tool.fn({"cmd": "pip install ."})
+
+    def test_blocklist_is_linear_on_repeated_subcommands(self):
+        """`"git log " * 474` took seconds before the consent prompt: each rule
+        retried from every `git` (and every `log`). Rules now commit to the
+        first `git` in a segment; the decisions themselves are unchanged."""
+        from maverick.tools.shell import _is_blocked_in_opaque
+        for many in ("git log " * 474, "cat " * 950, "curl " * 760):
+            assert _is_blocked_in_opaque(many) == (False, "")
+        assert _is_blocked_in_opaque("echo x; " + "git log " * 400 + "-p")[0]
+        assert _is_blocked_in_opaque("ls | git -c a=b show HEAD")[0]
+        assert _is_blocked_in_opaque("curl " * 300 + "https://github.com/x")[0]
 
 
 @pytest.fixture(autouse=True)
