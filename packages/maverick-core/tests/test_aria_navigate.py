@@ -113,7 +113,7 @@ def _route_clicks(monkeypatch, page):
     """Stand in for the browser tool's gated click path."""
     def gated(args):
         page.actions.append(("gated", args["selector"]))
-        return "clicked"
+        return f"clicked {args['selector']!r} on https://example.com/"
     monkeypatch.setattr(mod, "_gated_click", gated)
 
 
@@ -151,13 +151,15 @@ def test_activate_click_needs_browser_approval(monkeypatch):
     assert page.actions == []
 
 
-def test_activate_focus_action(monkeypatch):
+def test_activate_refuses_focus_and_reports_landed_page_denial(monkeypatch):
     page = FakePage()
     run = _use(monkeypatch, page)
     run({"op": "snapshot"})
     out = run({"op": "activate", "node_id": "n3", "action": "focus"})
-    assert out.startswith("focus: n3 [textbox]")
-    assert page.actions == ["focus"]
+    assert out.startswith("ERROR") and page.actions == []  # focus is never ungated
+    denial = "⚠ DENIED: navigation landed on a private/internal host '10.0.0.1'"
+    monkeypatch.setattr(mod, "_gated_click", lambda args: denial)
+    assert run({"op": "activate", "node_id": "n5"}) == denial
 
 
 def test_activate_without_prior_snapshot_resolves_itself(monkeypatch):

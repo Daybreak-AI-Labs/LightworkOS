@@ -7,7 +7,7 @@ instead of pixels or raw CSS selectors:
     role/name outline with stable node ids (``n1``, ``n2``, … assigned in
     depth-first order, so the same tree always yields the same ids);
   - ``find`` matches nodes by ARIA role and/or accessible-name substring;
-  - ``activate`` clicks (or focuses) a node by id, resolving it back to the
+  - ``activate`` clicks a node by id, resolving it back to the
     live page via Playwright's role+name locator (``page.get_by_role``) —
     the same query a screen reader makes. A click is sent through the
     ``browser`` tool's click path, so it needs the same exact human approval,
@@ -52,8 +52,8 @@ _SCHEMA: dict[str, Any] = {
         "node_id": {"type": "string", "description": "Node id from snapshot/find (activate)."},
         "action": {
             "type": "string",
-            "enum": ["click", "focus"],
-            "description": "What activate does (default click).",
+            "enum": ["click"],
+            "description": "What activate does: click (the only action; it needs approval).",
         },
     },
     "required": ["op"],
@@ -132,10 +132,10 @@ def _activate(page, args: dict[str, Any]) -> str:
             "the page changed — re-snapshot"
         )
     action = (args.get("action") or "click").strip().lower()
-    if action == "focus":
-        locator.first.focus()
-        suffix = f" (first of {count} matches)" if count > 1 else ""
-        return f"focus: {nid} [{role}] {name!r}{suffix}"
+    if action != "click":
+        # Focus fires page handlers too, and the browser approval gate has no
+        # focus action, so only an approved click is offered.
+        return f"ERROR: unsupported activate action {action!r}; use click"
     if count > 1:
         return (
             f"ERROR: {count} live elements match {nid} ([{role}] {name!r}); "
@@ -147,7 +147,9 @@ def _activate(page, args: dict[str, Any]) -> str:
     if "_capability_allow_hosts" in args:
         gated["_capability_allow_hosts"] = args["_capability_allow_hosts"]
     result = _gated_click(gated)
-    if result.startswith("ERROR"):
+    if not result.startswith("clicked "):
+        # An error, an unapproved action, or a landed-page denial that closed
+        # the session: the model must see it as the browser reported it.
         return result
     return f"click: {nid} [{role}] {name!r}"
 
@@ -224,7 +226,7 @@ def aria_navigate(*, managed: bool = False) -> Tool:
             "Drive the browser via the accessibility tree instead of pixels or "
             "CSS: snapshot for a compact role/name outline with node ids, find "
             "to match nodes by ARIA role + accessible name, activate to click "
-            "or focus a node by id. Robust to markup churn; use alongside the "
+            "a node by id (approval required). Robust to markup churn; use alongside the "
             "'browser' tool (same session)."
         ),
         input_schema=_SCHEMA,
