@@ -6,6 +6,10 @@ This remains separate from a run's Budget and a principal's quota. No configured
 cap leaves provider admission unchanged. No provider cap is enabled by
 default.
 
+Local provider spending is shared across the deployment rather than separated
+by tenant, and earlier per-tenant ledgers are folded in once; review configured
+caps against the deployment's combined spending after upgrading.
+
 Every physical synchronous, asynchronous, or hedged LLM dispatch reserves its
 projected cost under the accounting lock before calling a provider. Outstanding
 reservations are included in the numeric total. The call's own response usage
