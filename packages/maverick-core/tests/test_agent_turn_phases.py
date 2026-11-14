@@ -339,3 +339,18 @@ def test_the_turn_loop_delegates_each_phase_to_a_method_under_the_complexity_cap
         "_append_turn_trailers", "_answer_pending_tool_uses",
     ):
         assert "noqa: C901" not in inspect.getsource(getattr(Agent, phase)), phase
+
+
+@pytest.mark.asyncio
+async def test_a_failed_ask_user_or_a_non_object_input_goes_back_to_the_model(ctx, fake_llm):
+    fake_llm.scripted.extend([
+        LLMResponse(text="", thinking=None, stop_reason="tool_use",
+                    tool_calls=[ToolCall(id="q", name="ask_user", input={})]),  # no question
+        LLMResponse(text="", thinking=None, stop_reason="tool_use",
+                    tool_calls=[ToolCall(id="n", name="shell", input=None)]),
+        _final("done"),
+    ])
+    result = await Agent(ctx=ctx, role="coder", brief="b", depth=0, max_steps=5).run()
+
+    assert result.blocked_on_user is False and result.final == "done"
+    assert "tool input must be a JSON object" in ctx.blackboard.render(50)

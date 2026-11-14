@@ -5095,7 +5095,8 @@ class Agent:
                                stop_kind=_budget_stop_kind(e), stop_detail=str(e))
         if self._goal_cancelled():
             bb.post(self.name, "error", "cancelled via dashboard")
-            return AgentResult(error="cancelled via dashboard", role=self.role, name=self.name)
+            return AgentResult(error="cancelled via dashboard", role=self.role, name=self.name,
+                               stop_kind="cancelled", stop_detail="cancelled via dashboard")
 
         # Long-horizon review checkpoint (opt-in [safety] review_checkpoint): at
         # the root, a human-review heartbeat every N dollars / M tool calls /
@@ -5890,6 +5891,7 @@ class Agent:
             bb.post(self.name, "error", "cancelled via dashboard")
             return AgentResult(
                 error="cancelled via dashboard", role=self.role, name=self.name,
+                stop_kind="cancelled", stop_detail="cancelled via dashboard",
             )
 
         run_parallel = (
@@ -6035,6 +6037,7 @@ class Agent:
                 bb.post(self.name, "error", f"halted: {e}")
                 return AgentResult(
                     error=f"halted: {e}", role=self.role, name=self.name,
+                    stop_kind="killswitch", stop_detail=str(e),
                 ), blocked
             if self._goal_cancelled():
                 self._answer_pending_tool_uses(
@@ -6043,6 +6046,7 @@ class Agent:
                 bb.post(self.name, "error", "cancelled via dashboard")
                 return AgentResult(
                     error="cancelled via dashboard", role=self.role, name=self.name,
+                    stop_kind="cancelled", stop_detail="cancelled via dashboard",
                 ), blocked
             # record_tool_call() calls check() and can raise mid-turn.
             try:
@@ -6056,8 +6060,10 @@ class Agent:
             # shares this Budget) can trip BudgetExceeded -- or a halt can land
             # -- DURING execution.
             try:
-                output = await self._run_tool(tc.name, tc.input)
-            except (AuditRefused, BudgetExceeded, killswitch.Halted) as exc:
+                # Model-written arguments can decode to null, a list or a string.
+                output = (await self._run_tool(tc.name, tc.input) if isinstance(tc.input, dict)
+                          else _NotExecutedToolResult("ERROR: tool input must be a JSON object"))
+            except (AuditRefused, BudgetExceeded, UsageAccountingError, killswitch.Halted) as exc:
                 _stop_reason = "audit refused" if isinstance(exc, AuditRefused) else type(exc).__name__
                 self._answer_pending_tool_uses(
                     resp, messages, tool_results,
@@ -6065,7 +6071,8 @@ class Agent:
                     "reconcile state before retrying",
                 )
                 raise
-            if tc.name == "ask_user" and not isinstance(output, _NotExecutedToolResult):
+            if (tc.name == "ask_user" and not isinstance(output, _NotExecutedToolResult)
+                    and not _tool_call_failed(output)):  # only a filed question pauses the run
                 from .autonomy import assume_when_headless
                 if assume_when_headless():
                     # No human is available (headless / autonomous run, off by
