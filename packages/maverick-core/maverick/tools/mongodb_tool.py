@@ -189,6 +189,11 @@ def _op_find(args: dict[str, Any]) -> str:
     limit = max(1, min(int(args.get("limit") or 25), 1000))
     sort_pairs = args.get("sort") or []
     cursor = db[col].find(flt)
+    # PyMongo decodes a complete batch before yielding its first document.
+    # Fetch one at a time so early output truncation avoids unused documents.
+    batch_size = getattr(cursor, "batch_size", None)
+    if callable(batch_size):
+        cursor = batch_size(1)
     if sort_pairs:
         try:
             cursor = cursor.sort([(s[0], int(s[1])) for s in sort_pairs])

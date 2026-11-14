@@ -160,7 +160,8 @@ async def _op_find_api(agent: Agent, bb, self_learning, args: dict, need: str) -
     if not _spec_matches_requested_host(base_url, spec_url):
         return (
             f"Unverified OpenAPI candidate: {spec_url}\n"
-            "It was not saved or opened because its host was not the requested host. "
+            "It was fetched for validation but not saved or previewed because its host "
+            "was not the requested host. "
             "Ask the operator to verify the service and supply its base_url before retrying."
         )
     self_learning.record(need or base_url, "api", spec_url, source=spec_url)

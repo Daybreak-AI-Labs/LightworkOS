@@ -105,16 +105,25 @@ def test_mongodb_empty_write_filter_never_dispatches(monkeypatch, operation):
 def test_mongodb_find_stops_reading_at_output_limit(monkeypatch):
     from maverick.tools import mongodb_tool as mongo
 
-    pulled, closed = [], []
+    pulled, prefetched, closed = [], [], []
 
     class Cursor:
+        batch_count = 101
+
+        def batch_size(self, n):
+            self.batch_count = n
+            return self
+
         def limit(self, _n):
             return self
 
         def __iter__(self):
-            for i in range(1000):
-                pulled.append(i)
-                yield {"data": "x" * 2000}
+            for start in range(0, 1000, self.batch_count):
+                batch = range(start, min(start + self.batch_count, 1000))
+                prefetched.extend(batch)
+                for i in batch:
+                    pulled.append(i)
+                    yield {"data": "x" * 2000}
 
         def close(self):
             closed.append(True)
@@ -127,6 +136,7 @@ def test_mongodb_find_stops_reading_at_output_limit(monkeypatch):
     out = mongo._op_find({"collection": "records", "limit": 1000})
     assert "truncated" in out and len(out) < 3100
     assert len(pulled) == 2 and closed == [True]
+    assert prefetched == [0, 1]
 
 
 def test_serial_refuses_virtual_consoles():
