@@ -233,6 +233,11 @@ def test_content_hash_covers_metadata_native_and_unrecorded_files(tmp_path, monk
     native.write_bytes(b"native-v1")
     assert pl._dist_content_hash("acme-plugin") == original
 
+    # Another distribution installed beside it is not this plugin's content.
+    (site / "unrelated").mkdir()
+    (site / "unrelated" / "__init__.py").write_text("x = 1\n", encoding="utf-8")
+    assert pl._dist_content_hash("acme-plugin") == original
+
     (pkg / "generated.py").write_text("def factory(): return 'owned'\n", encoding="utf-8")
     assert pl._dist_content_hash("acme-plugin") != original
 
@@ -260,3 +265,18 @@ def test_enforce_refuses_when_content_hash_is_unavailable(tmp_path, monkeypatch)
     monkeypatch.setenv("MAVERICK_PLUGIN_LOCK_POLICY", "warn")
     pl.reset_warned()
     assert pl.dist_allowed_by_lock("acme-tools") is True
+
+
+def test_enforce_refuses_on_malformed_lock_or_misspelt_policy(tmp_path, monkeypatch):
+    """A truncated lockfile is not "no lock", and a misspelt policy is not "off"."""
+    _fake_eps(monkeypatch, [("t1", "acme-tools", "1.0.0")])
+    lock = tmp_path / "plugins.lock.json"
+    monkeypatch.setattr(pl, "lock_path", lambda: lock)
+    monkeypatch.setenv("MAVERICK_PLUGIN_LOCK_POLICY", "enforce")
+    pl.reset_warned()
+    assert pl.dist_allowed_by_lock("acme-tools") is True  # no lockfile: nothing to enforce
+    for body in ('{"pins": {"acme-tools": "1.0', '{"pins": ["acme-tools"]}'):
+        lock.write_text(body, encoding="utf-8")
+        assert pl.dist_allowed_by_lock("acme-tools") is False
+    monkeypatch.setenv("MAVERICK_PLUGIN_LOCK_POLICY", "enforced")
+    assert pl.lock_policy() == "enforce"
