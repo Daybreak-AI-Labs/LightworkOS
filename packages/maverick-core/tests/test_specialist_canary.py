@@ -69,6 +69,7 @@ def test_with_no_trial_nothing_is_recorded_and_the_current_version_runs(env):
     assert canary.version_for_goal(PACK, 1) == (canary.CURRENT, None)
     assert canary.live(PACK) is None
     assert canary.TRIAL_GOALS.get(canary._goal_record_id(PACK, 1)) is None
+    assert canary.TRIAL_GOALS.get(canary._goal_record_id(PACK, 3)) is None  # blocked
 
 
 def test_the_trial_share_is_chosen_from_the_goal_id_and_each_goal_keeps_its_version(env):
@@ -106,7 +107,7 @@ def test_a_full_trial_store_drops_finished_goals_of_ended_trials(env, monkeypatc
     first = _start(canary, percent=50)
     for goal_id in range(1, 5):
         canary.version_for_goal(PACK, goal_id)
-        world.status[goal_id] = "done"
+        world.status[goal_id] = "blocked" if goal_id == 3 else "done"
     world.status[4] = "running"  # still running: its recorded choice must stay
     canary.finish(PACK, candidate_id=first["candidate_id"], outcome=canary.ROLLED_BACK, actor="owner")
     second = _start(canary, percent=50)
@@ -116,6 +117,7 @@ def test_a_full_trial_store_drops_finished_goals_of_ended_trials(env, monkeypatc
     assert row is not None and row["candidate_id"] == second["candidate_id"]
     assert canary.TRIAL_GOALS.get(canary._goal_record_id(PACK, 4))["candidate_id"] == first["candidate_id"]
     assert canary.TRIAL_GOALS.get(canary._goal_record_id(PACK, 1)) is None
+    assert canary.TRIAL_GOALS.get(canary._goal_record_id(PACK, 3)) is None  # blocked
 
 
 def test_a_resumed_goal_with_no_recorded_choice_keeps_the_current_version(env):
@@ -213,7 +215,7 @@ def test_the_automatic_roll_back_is_off_by_default(env):
     for goal_id in _goals_on(canary, canary.CANDIDATE, 10):
         world.status[goal_id] = "failed"
     for goal_id in _goals_on(canary, canary.CURRENT, 10, first=1000):
-        world.status[goal_id] = "done"
+        world.status[goal_id] = "blocked" if goal_id == 3 else "done"
 
     canary.version_for_goal(PACK, 5000, world=world)
     assert canary.live(PACK) is not None

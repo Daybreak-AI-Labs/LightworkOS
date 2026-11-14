@@ -204,7 +204,11 @@ def version_for_goal(name: str, goal_id: int, *, world=None, resume: bool = Fals
     return CURRENT, None
 
 
-_FINISHED_GOAL_STATUSES = frozenset({"done", "completed", "failed", "cancelled", "error"})
+# Settled goal statuses (the world model's terminal set plus "stopped"). A
+# blocked goal may be resumed later, but a resumed goal with no record runs
+# the current version, so its ended-trial record can go.
+_FINISHED_GOAL_STATUSES = frozenset({"done", "completed", "failed", "cancelled", "blocked",
+                                     "error", "stopped"})
 _PRUNE_RETRY_AFTER = 0.0  # monotonic time before which a full store is not listed again
 
 
