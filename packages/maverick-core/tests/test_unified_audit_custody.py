@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from pathlib import Path
 
@@ -194,21 +195,40 @@ def test_authority_revision_rollback_and_same_revision_rewrite_are_refused() -> 
 
 def test_siem_cursor_resyncs_after_an_authorized_erasure_rewrite(tmp_path, monkeypatch):
     # An erasure removes rows and re-signs the day, so the saved cursor row no
-    # longer matches. With a signed erase marker the day is replayed (delivery
-    # is at-least-once); without one the mismatch still stops the export.
+    # longer matches. Only signed evidence that names the cursor's day and is
+    # newer than the cursor row allows replaying that day (delivery is
+    # at-least-once); anything else still stops the export.
     tenant = "c" * 64
     projection = {"kind": "unified_audit_projection", "tenant_sha256": tenant,
-                  "projection_event_id": "d" * 64, "hash": "e" * 64}
+                  "projection_event_id": "d" * 64, "hash": "e" * 64, "ts": 150.0}
     day, later = tmp_path / "2026-09-01.ndjson", tmp_path / "2026-09-02.ndjson"
-    rows = {day: [{"kind": "goal", "hash": "f" * 64}, projection], later: []}
+    rows = {day: [{"kind": "goal", "hash": "f" * 64, "ts": 120.0}, projection], later: []}
     monkeypatch.setattr(custody, "_rows", lambda path: rows[path])
-    cursor = {"day": "2026-09-01", "line": 2, "row_sha256": "a" * 64}
+    cursor = {"day": "2026-09-01", "line": 2, "row_sha256": "a" * 64, "ts": 140.0}
+
+    def batch():
+        return custody._siem_batch((day, later), cursor=cursor, tenant_sha256=tenant, limit=10)
 
     with pytest.raises(custody.UnifiedAuditCustodyError, match="no longer matches"):
-        custody._siem_batch((day, later), cursor=cursor, tenant_sha256=tenant, limit=10)
-
-    rows[later] = [{"kind": "erase", "hash": "b" * 64}]
-    lines, new_cursor = custody._siem_batch(
-        (day, later), cursor=cursor, tenant_sha256=tenant, limit=10)
+        batch()
+    rows[later] = [{"kind": "erase", "hash": "b" * 64, "ts": 200.0}]  # another day's file
+    with pytest.raises(custody.UnifiedAuditCustodyError, match="no longer matches"):
+        batch()
+    rows[day].append({"kind": "erase", "hash": "9" * 64, "ts": 130.0})  # older than the cursor
+    with pytest.raises(custody.UnifiedAuditCustodyError, match="no longer matches"):
+        batch()
+    rows[day][-1] = {"kind": "erase", "hash": "9" * 64, "ts": 160.0}
+    lines, new_cursor = batch()
     assert ['"projection_event_id":"' + "d" * 64 in line.replace(" ", "") for line in lines] == [True]
-    assert new_cursor == {"day": "2026-09-02", "line": 1, "row_sha256": "b" * 64}
+    assert new_cursor == {"day": "2026-09-02", "line": 1, "row_sha256": "b" * 64, "ts": 200.0}
+    with pytest.raises(custody.UnifiedAuditCustodyError, match="no longer matches"):
+        custody._siem_batch((day, later), cursor={k: v for k, v in cursor.items() if k != "ts"},
+                            tenant_sha256=tenant, limit=10)  # an undated cursor proves nothing
+    rows[day].pop()  # a completed day's erasure is recorded by a superseding re-anchor
+    ledger = tmp_path / "anchors.ndjson"
+    first = {"kind": "anchor", "day": "2026-09-01", "ts": "1970-01-01T00:03:00+00:00"}
+    ledger.write_text(json.dumps(first) + "\n")
+    with pytest.raises(custody.UnifiedAuditCustodyError, match="no longer matches"):
+        batch()  # the first anchor only seals the finished day
+    ledger.write_text(json.dumps(first) + "\n" + json.dumps({**first, "ts": "1970-01-01T00:04:00+00:00"}) + "\n")
+    assert batch()[0]

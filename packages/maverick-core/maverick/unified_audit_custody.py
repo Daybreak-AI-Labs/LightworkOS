@@ -421,24 +421,45 @@ def _rows(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def _erasure_rewrote(files: Sequence[Path], day: str) -> bool:
-    """Whether signed evidence shows an authorized erasure rewrote ``day``: a
-    superseding re-anchor of that day in the anchor ledger, or an ``erase``
-    marker on or after it. Chains and anchors were verified before this."""
-    if not files:
+def _epoch(value: object) -> float | None:
+    """A row timestamp as epoch seconds (audit rows use floats, the anchor
+    ledger ISO strings), or None when it is not a usable time."""
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
+        return float(value)
+    return None
+
+
+def _erasure_rewrote(files: Sequence[Path], day: str, after: object) -> bool:
+    """Whether signed evidence shows an authorized erasure rewrote ``day``
+    after the cursor row (time ``after``) was read: a superseding re-anchor of
+    that day, or an ``erase`` marker written into that day's own file, newer
+    than the cursor. A cursor without a time proves nothing. Chains and
+    anchors were verified before this."""
+    since = _epoch(after)
+    if since is None:
         return False
-    ledger = files[0].parent / signing.ANCHOR_FILENAME
-    if ledger.exists():
+    ledger = files[0].parent / signing.ANCHOR_FILENAME if files else None
+    if ledger is not None and ledger.exists():
         anchors = [
             row for row in signing._ledger_rows(ledger)
             if row.get("kind") == "anchor" and row.get("day") == day
         ]
-        if len(anchors) > 1:
+        # The first anchor seals the finished day; only a later one records
+        # a rewrite.
+        if any((_epoch(row.get("ts")) or 0.0) > since for row in anchors[1:]):
             return True
     return any(
-        row.get("kind") == "erase"
+        row.get("kind") == "erase" and (_epoch(row.get("ts")) or 0.0) > since
         for path in files
-        if path.stem >= day
+        if path.stem == day
         for row in _rows(path)
     )
 
@@ -453,12 +474,14 @@ def _siem_batch(
     start_day = None
     start_line = 0
     start_hash = ""
+    start_ts: object = None
     if cursor is not None:
         if not isinstance(cursor, Mapping):
             raise UnifiedAuditCustodyError("custody SIEM cursor is invalid")
         start_day = cursor.get("day")
         start_line = cursor.get("line")
         start_hash = cursor.get("row_sha256")
+        start_ts = cursor.get("ts")
         if (
             not isinstance(start_day, str)
             or not _DAY.fullmatch(start_day)
@@ -491,7 +514,7 @@ def _siem_batch(
         if path.stem == start_day:
             offset = start_line
             if start_line > len(rows) or rows[start_line - 1].get("hash") != start_hash:
-                if not _erasure_rewrote(files, start_day):
+                if not _erasure_rewrote(files, start_day, start_ts):
                     raise UnifiedAuditCustodyError("custody SIEM cursor no longer matches audit evidence")
                 # An authorized erasure re-signed the day: replay it from the
                 # start (delivery is at-least-once).
@@ -505,6 +528,8 @@ def _siem_batch(
                 "line": line_number,
                 "row_sha256": row_hash,
             }
+            if _epoch(row.get("ts")) is not None:
+                new_cursor["ts"] = row["ts"]  # lets a later erasure be dated against it
             if row.get("kind") != "unified_audit_projection":
                 continue
             if row.get("tenant_sha256") != tenant_sha256:
