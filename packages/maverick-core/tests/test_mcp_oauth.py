@@ -102,5 +102,21 @@ def test_request_headers_carry_the_current_oauth_token(monkeypatch):
     spec = MCPServerSpec(name="s", url="https://h/mcp",
                          oauth={"token_url": "https://i/t", "client_id": "c"})
     client = StreamableHttpMCPClient(spec)
+    import asyncio
+    asyncio.run(client._refresh_bearer())
     assert client._headers()["Authorization"] == "Bearer tok-1"
+    asyncio.run(client._refresh_bearer())  # expired: refreshed off the loop
     assert client._headers()["Authorization"] == "Bearer tok-2"
+
+
+def test_fresh_oauth_token_is_reused_without_a_fetch(monkeypatch):
+    calls = []
+    monkeypatch.setattr(mcp_oauth, "_default_fetch", lambda cfg: calls.append(1) or
+                        {"access_token": "tok", "expires_in": 3600})
+    spec = MCPServerSpec(name="s", url="https://h/mcp",
+                         oauth={"token_url": "https://i/t", "client_id": "c"})
+    client = StreamableHttpMCPClient(spec)
+    import asyncio
+    for _ in range(3):
+        asyncio.run(client._refresh_bearer())
+    assert calls == [1]

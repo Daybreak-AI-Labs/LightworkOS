@@ -1008,6 +1008,7 @@ class StreamableHttpMCPClient:
         self._session_id: str | None = None
         self._protocol_version = PROTOCOL_VERSION
         self._initialized = False
+        self._oauth_bearer: str | None = None
         self._req_id = 0
         self._oauth_provider: Any = None
         self.catalog = ToolCatalog(
@@ -1091,9 +1092,11 @@ class StreamableHttpMCPClient:
         headers = {"User-Agent": "maverick-mcp-client/0.1"}
         if self.spec.headers:
             headers.update(self.spec.headers)
-        bearer = self._bearer()
+        bearer = await asyncio.to_thread(self._bearer)
         if bearer:
             headers["Authorization"] = f"Bearer {bearer}"
+        if self.spec.oauth:
+            self._oauth_bearer = bearer
         extra = {"transport": self._transport} if self._transport is not None else {}
         self._client = httpx.AsyncClient(
             timeout=self.timeout, headers=headers, follow_redirects=False, **extra,
@@ -1122,14 +1125,22 @@ class StreamableHttpMCPClient:
             h["Mcp-Session-Id"] = self._session_id
         if self._initialized:
             h["MCP-Protocol-Version"] = self._protocol_version
-        if self.spec.oauth:
-            # Re-read per request: the provider caches the access token and
-            # refreshes it when it expires, so a long-lived client keeps a
-            # valid bearer instead of the one fetched at start().
-            bearer = self._bearer()
-            if bearer:
-                h["Authorization"] = f"Bearer {bearer}"
+        if self.spec.oauth and self._oauth_bearer:
+            # Kept current by _refresh_bearer before each request, so a
+            # long-lived client does not keep the token fetched at start().
+            h["Authorization"] = f"Bearer {self._oauth_bearer}"
         return h
+
+    async def _refresh_bearer(self) -> None:
+        """Use the cached OAuth token until shortly before it expires; the
+        refresh is a blocking HTTP call, so it runs off the event loop."""
+        if not self.spec.oauth:
+            return
+        provider = self._ensure_oauth_provider()
+        token = provider.cached_token() if hasattr(provider, "cached_token") else None
+        if token is None:
+            token = await asyncio.to_thread(provider.token)
+        self._oauth_bearer = token
 
     async def _post(self, payload: dict, req_id: int | None = None) -> Any:
         if self._client is None:
@@ -1138,6 +1149,7 @@ class StreamableHttpMCPClient:
         async def _send() -> _HTTPMCPResponse:
             if payload.get("method") == "tools/call":
                 check_call_guard()
+            await self._refresh_bearer()
             from .governed_http import admit_client_request
 
             admit_client_request(self._client, self.spec.url)
