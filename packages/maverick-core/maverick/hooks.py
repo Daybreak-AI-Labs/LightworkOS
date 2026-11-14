@@ -39,12 +39,14 @@ import asyncio
 import fnmatch
 import logging
 import os
+import re
 import shlex
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -71,6 +73,9 @@ class HookContext:
     agent_role: str = ""
     duration_ms: float = 0.0
     extra: dict[str, Any] = field(default_factory=dict)
+    # Set by dispatch when it refuses for a reason other than a hook's own
+    # verdict (an unreadable hooks configuration); callers may show it.
+    block_reason: str = ""
 
 
 @dataclass
@@ -121,35 +126,59 @@ def clear() -> None:
     """Drop all registered hooks. Used in tests + on session restart."""
     global _loaded
     _registry.clear()
+    _config_block.clear()
     _loaded = False
 
 
-def _config_unavailable(_ctx: HookContext) -> bool:
-    """Blocking stand-in for guard hooks that could not be read."""
-    return False
+# Raw-text evidence that an unreadable config file defines hooks: a [hooks]
+# or [[hooks]] table header, or a top-level hooks key. Bytes are searched,
+# never parsed (the file is unreadable as TOML by definition).
+_HOOKS_MENTION = re.compile(rb"^[ \t]*(?:\[\[?[ \t]*hooks\b|hooks[ \t]*=)", re.MULTILINE)
+# Global config files that are unreadable and appear to define hooks. While
+# non-empty, blocking events are refused; it is re-evaluated on each dispatch.
+_config_block: list[str] = []
+_reported_unreadable: set[str] = set()
 
 
-def load_from_config() -> None:
-    """Read [[hooks]] entries from ~/.maverick/config.toml and register
-    each one. Safe to call multiple times; clear() first if you don't
-    want duplicates.
+def _unreadable_hook_sources() -> list[str]:
+    """Unreadable GLOBAL config sources whose raw text mentions hooks.
 
-    An unreadable config source may hold guard hooks, so every blocking
-    event is refused (fail-closed) until the process is restarted with a
-    readable config. A malformed entry is skipped with a warning; the
-    remaining entries still load.
+    Tenant overlays are never consulted: one tenant's broken file must not
+    decide for every tenant sharing the process. A missing file is not an
+    error. An unreadable file with no hooks mention loads zero hooks from it
+    and is logged once.
     """
     from .config import config_source_errors, load_config
-    cfg = load_config()
-    if config_source_errors(include_tenant=True):
-        log.error(
-            "hooks: config source unreadable; blocking PreToolUse and "
-            "UserPromptSubmit until it is fixed and Lightwork restarts",
-        )
-        register(HookEvent.PRE_TOOL_USE, _config_unavailable)
-        register(HookEvent.USER_PROMPT_SUBMIT, _config_unavailable)
-        return
-    for entry in cfg.get("hooks", []) or []:
+    load_config()  # refresh the source-error seam before reading it
+    flagged: list[str] = []
+    for path in config_source_errors(include_tenant=False):
+        try:
+            raw = Path(path).read_bytes()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            raw = b""
+        if _HOOKS_MENTION.search(raw):
+            flagged.append(path)
+        elif path not in _reported_unreadable:
+            _reported_unreadable.add(path)
+            log.error("hooks: %s could not be read and does not mention hooks; "
+                      "no hooks were loaded from it", path)
+    return flagged
+
+
+def config_block_reason() -> str:
+    """Why blocking events are refused, or "" when the hooks config is readable."""
+    if not _config_block:
+        return ""
+    return ("the hooks configuration could not be read ("
+            + ", ".join(_config_block)
+            + "); fix the file to resume")
+
+
+def _register_config_entries() -> None:
+    from .config import load_config
+    for entry in load_config().get("hooks", []) or []:
         try:
             event = HookEvent(entry["event"])
             cmd = entry.get("command")
@@ -162,6 +191,46 @@ def load_from_config() -> None:
             log.warning("hook missing command: %s", entry)
             continue
         register(event, cmd, matcher=matcher, timeout_ms=timeout_ms)
+
+
+def load_from_config() -> None:
+    """Read [[hooks]] entries from ~/.maverick/config.toml and register
+    each one. Safe to call multiple times; clear() first if you don't
+    want duplicates.
+
+    When a global config file is unreadable and its raw text mentions hooks,
+    no entries are registered and blocking events (PreToolUse,
+    UserPromptSubmit) are refused; :func:`dispatch` re-checks on every call
+    and loads the hooks as soon as the file is readable again. A malformed
+    entry is skipped with a warning; the remaining entries still load.
+    """
+    flagged = _unreadable_hook_sources()
+    if flagged:
+        _config_block[:] = flagged
+        log.error("hooks: %s", config_block_reason())
+        return
+    _config_block.clear()
+    _register_config_entries()
+
+
+def _lift_config_block() -> bool:
+    """Re-check a config block; load the hooks once it lifts."""
+    with _load_lock:
+        if not _config_block:
+            return True
+        try:
+            flagged = _unreadable_hook_sources()
+            if not flagged:
+                _register_config_entries()
+        except Exception:
+            log.exception("hooks: configuration still cannot be loaded")
+            return False
+        if flagged:
+            _config_block[:] = flagged
+            return False
+        _config_block.clear()
+        log.warning("hooks: configuration readable again; hooks loaded")
+        return True
 
 
 _loaded = False
@@ -192,9 +261,9 @@ async def ensure_loaded() -> None:
         try:
             load_from_config()
         except Exception:
-            log.exception("hooks: load_from_config failed; blocking guarded events")
-            register(HookEvent.PRE_TOOL_USE, _config_unavailable)
-            register(HookEvent.USER_PROMPT_SUBMIT, _config_unavailable)
+            log.exception("hooks: load_from_config failed; blocking guarded "
+                          "events until it loads")
+            _config_block[:] = ["config.toml (load failed)"]
         try:
             load_from_entry_points()
         except Exception:  # pragma: no cover
@@ -229,6 +298,11 @@ async def dispatch(ctx: HookContext) -> bool:
     Pre* hook explicitly blocked the action (exit code != 0 for shell;
     falsy return for callable). Always returns True for Post* events."""
     is_blocking = ctx.event in (HookEvent.PRE_TOOL_USE, HookEvent.USER_PROMPT_SUBMIT)
+    if _config_block and not _lift_config_block() and is_blocking:
+        ctx.block_reason = config_block_reason()
+        log.warning("hooks: %s BLOCKED: %s",
+                    ctx.tool_name or ctx.event.value, ctx.block_reason)
+        return False
     allowed = True
     for spec in list(_registry):
         if not spec.matches(ctx):

@@ -118,16 +118,40 @@ async def test_hook_env_omits_secrets(tmp_path, monkeypatch):
     assert "MAVERICK_HOOK_EVENT=PostToolUse" in dumped
 
 
-@pytest.mark.asyncio
-async def test_unreadable_config_blocks_guarded_events(monkeypatch):
-    import maverick.config as cfg
+def _config_file(tmp_path, monkeypatch, text):
+    from maverick import config
+    path = tmp_path / "config.toml"
+    path.write_text(text, encoding="utf-8")
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    monkeypatch.setenv("MAVERICK_CONFIG", str(path))
+    config.reset_config_cache()
+    return path
 
-    monkeypatch.setattr(cfg, "load_config", dict)
-    monkeypatch.setattr(cfg, "config_source_errors",
-                        lambda **_k: {"config.toml": "parse error"})
+
+@pytest.mark.asyncio
+async def test_unreadable_config_without_hooks_allows(tmp_path, monkeypatch):
+    _config_file(tmp_path, monkeypatch, "[budget\nmax_dollars = 1\n")
     hooks.load_from_config()
-    assert await _dispatch(HookEvent.PRE_TOOL_USE, tool_name="shell") is False
+    assert await _dispatch(HookEvent.PRE_TOOL_USE, tool_name="shell") is True
+
+
+@pytest.mark.asyncio
+async def test_unreadable_hooks_config_blocks_until_fixed(tmp_path, monkeypatch):
+    path = _config_file(tmp_path, monkeypatch, (
+        "[[hooks]]\nevent = \"PreToolUse\"\nmatcher = \"shell\"\n"
+        "command = \"/bin/false\"\n[broken\n"))
+    hooks.load_from_config()
+    ctx = HookContext(event=HookEvent.PRE_TOOL_USE, tool_name="read_file")
+    assert await hooks.dispatch(ctx) is False
+    assert "hooks configuration could not be read" in ctx.block_reason
+    assert str(path) in ctx.block_reason
     assert await _dispatch(HookEvent.POST_TOOL_USE, tool_name="shell") is True
+
+    # Fixed on disk: the block lifts without a restart and the hooks load.
+    path.write_text("[[hooks]]\nevent = \"PreToolUse\"\nmatcher = \"shell\"\n"
+                    "command = \"/bin/false\"\n", encoding="utf-8")
+    assert await _dispatch(HookEvent.PRE_TOOL_USE, tool_name="read_file") is True
+    assert await _dispatch(HookEvent.PRE_TOOL_USE, tool_name="shell") is False
 
 
 @pytest.mark.asyncio
