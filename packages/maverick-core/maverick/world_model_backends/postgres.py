@@ -1519,12 +1519,21 @@ class PostgresWorldModel:
         if _rls_explicitly_set():
             return
         from . import pg_rls
+        # A table whose policy is already installed and forced was gated on an
+        # earlier boot; counting it again proves nothing (FORCE RLS with no
+        # tenant shows zero rows) and only adds full scans that a statement
+        # timeout can turn into a refusal to start.
+        pending = tuple(
+            t for t in pg_rls._PREFLIGHT_TABLES if not self._rls_policy_is_active(t)
+        )
+        if not pending:
+            return
         try:
             if self._pool is not None:
                 with self._pool.connection() as conn:
-                    report = pg_rls.preflight(conn)
+                    report = pg_rls.preflight(conn, only=pending)
             else:
-                report = pg_rls.preflight(self.conn)
+                report = pg_rls.preflight(self.conn, only=pending)
         except Exception as e:
             # An explicit opt-in returned above, so this is the auto-on path the
             # gate protects: forcing the policy without knowing whether legacy

@@ -95,21 +95,22 @@ def connect(dsn: str, *, autocommit: bool = False):
     return psycopg.connect(dsn, autocommit=autocommit)
 
 
-def preflight(conn) -> dict[str, Any]:
+def preflight(conn, *, only: tuple[str, ...] | None = None) -> dict[str, Any]:
     """Read-only readiness report for enabling RLS.
 
     For each tenant-scoped table: its owner, whether the *current* role owns it
     (only the owner can ALTER / CREATE POLICY), and the count of legacy
     NULL-tenant rows and empty-tenant event rows that RLS would hide. ``ready``
     is True only when every table exists, is owned by the current role, and has
-    no unscoped rows.
+    no unscoped rows. ``only`` limits the report to a subset of
+    :data:`_PREFLIGHT_TABLES` (the boot gate skips tables already protected).
     """
     cur = conn.cursor()
     cur.execute("SELECT current_user")
     role = cur.fetchone()[0]
     tables: dict[str, dict[str, Any]] = {}
     ready = True
-    for t in _PREFLIGHT_TABLES:
+    for t in _PREFLIGHT_TABLES if only is None else only:
         # to_regclass returns NULL (no error) for a table that isn't there yet,
         # so a pre-migration DB reports cleanly instead of raising.
         cur.execute("SELECT to_regclass(%s)", (t,))
