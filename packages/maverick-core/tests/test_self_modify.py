@@ -30,6 +30,15 @@ PROTECTED = [
     "/etc/passwd",                                   # absolute -> forbidden
     "../../etc/passwd",                              # traversal -> forbidden
     "packages/maverick-core/maverick/audit/../self_improvement.py",  # traversal
+    # Build and test-support files outside the package can change how the
+    # candidate is built or how its tests behave.
+    "test_support/provider_env.py",
+    "Makefile",
+    "build/maverick.spec",
+    "vendor/x.py",
+    ".gitattributes",
+    "release-cohort.toml",
+    "sitecustomize.py",
 ]
 
 NOT_PROTECTED = [
@@ -206,6 +215,20 @@ class TestReviewPatch:
             patch, sm.EditableSurface(editable_globs=("**",)))
         assert result.ok is False
         assert "git apply -p1" in result.reason
+
+    @pytest.mark.parametrize("sep", ["\u2028", "\x85", "\x1c", "\x0c"])
+    def test_header_is_split_on_newline_only_like_git(self, sep):
+        # git keeps these characters inside the header line, so the reviewed
+        # path must be the whole name git would create, not the prefix before
+        # the separator.
+        p = "packages/maverick-core/maverick/domains/a.toml"
+        patch = (f"--- /dev/null\n+++ b/{p}{sep}x.py\n"
+                 "@@ -0,0 +1 @@\n+x\n")
+        surface = sm.EditableSurface(
+            editable_globs=("packages/maverick-core/maverick/domains/*.toml",))
+        result = sm.review_patch(patch, surface)
+        assert result.ok is False
+        assert p not in result.touched
 
     def test_custom_surface_authority_is_refused_even_if_it_says_editable(self):
         class FakeSurface:

@@ -116,6 +116,7 @@ _PROTECTED_FILE_PREFIXES_CF = (
 _PROTECTED_REPO_PREFIXES_CF = (
     ".devcontainer/",
     "apps/",
+    "build/",
     "deploy/",
     "extensions/",
     "go/",
@@ -128,6 +129,8 @@ _PROTECTED_REPO_PREFIXES_CF = (
     "rust/",
     "scripts/",
     "sdks/",
+    "test_support/",
+    "vendor/",
     "web/",
 )
 # Candidate-controlled tests/proofs can launder a score without improving the
@@ -137,9 +140,10 @@ _PROTECTED_PATH_COMPONENTS_CF = frozenset({
     ".codex", ".git", ".github", "benchmarks", "proof", "test", "tests",
 })
 _PROTECTED_BASENAMES_CF = frozenset({
-    ".coveragerc", ".pre-commit-config.yaml", ".secrets.baseline",
-    "agents.md", "conftest.py", "pyproject.toml", "pytest.ini", "ruff.toml",
-    "tox.ini",
+    ".coveragerc", ".gitattributes", ".pre-commit-config.yaml",
+    ".secrets.baseline", "agents.md", "conftest.py", "makefile",
+    "pyproject.toml", "pytest.ini", "release-cohort.toml", "ruff.toml",
+    "sitecustomize.py", "tox.ini", "usercustomize.py",
 })
 _WINDOWS_RESERVED_STEMS_CF = frozenset({
     "aux", "clock$", "con", "conin$", "conout$", "nul", "prn",
@@ -373,7 +377,7 @@ def _diff_paths(patch: str) -> list[str]:
             seen.add(p)
             paths.append(p)
 
-    for line in patch.splitlines():
+    for line in _patch_lines(patch):
         if line.startswith("diff --git "):
             # diff --git a/X b/Y
             bits = line.split()
@@ -385,6 +389,17 @@ def _diff_paths(patch: str) -> list[str]:
                               "copy from ", "copy to ")):
             _add(line.split(" ", 2)[2])
     return paths
+
+
+def _patch_lines(patch: str) -> list[str]:
+    """Split a patch into lines exactly as ``git apply`` does: on ``\n`` only.
+
+    ``str.splitlines`` also breaks on U+2028, U+0085, ``\x0b``, ``\x0c`` and
+    ``\x1c``-``\x1e``; git keeps those inside the line. Splitting differently
+    from git would let a header such as ``+++ b/x.toml<U+2028>y.py`` be
+    reviewed as ``x.toml`` while git writes the longer name.
+    """
+    return patch.split("\n")
 
 
 def _split_diff_git_paths(line: str) -> tuple[str, str] | None:
@@ -441,7 +456,7 @@ def _unsafe_apply_prefix(patch: str) -> str | None:
     exact same repository-relative target.  Rename/copy metadata is already
     repository-relative and is classified separately by :func:`_diff_paths`.
     """
-    for line in (patch or "").splitlines():
+    for line in _patch_lines(patch or ""):
         if line.startswith("diff --git "):
             pair = _split_diff_git_paths(line)
             if pair is None:
@@ -473,7 +488,7 @@ def _unsafe_diff_artifact(patch: str) -> str | None:
     allowlisted path resolve or execute outside the reviewed source artifact.
     """
     regular_modes = {"100644", "100755"}
-    for raw in (patch or "").splitlines():
+    for raw in _patch_lines(patch or ""):
         line = raw.strip()
         # A text patch may edit an existing regular executable, but it may not
         # create one or change mode bits.  Executability is a capability change
