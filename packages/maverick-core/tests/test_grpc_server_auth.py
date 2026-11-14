@@ -519,3 +519,37 @@ def test_run_goal_rejects_malformed_capability_json(monkeypatch):
 
     assert context.aborted[0] == _Codes.INVALID_ARGUMENT
     assert svc.calls == []
+
+
+@pytest.mark.parametrize("stale,disabled,imported,regenerated", [
+    (True, False, False, True),
+    (False, False, False, False),
+    (True, True, False, False),
+    (True, False, True, False),
+])
+def test_stubs_older_than_the_proto_are_regenerated_before_import(
+    monkeypatch, tmp_path, stale, disabled, imported, regenerated,
+):
+    import os
+    import sys
+    import types
+
+    proto = tmp_path / "maverick.proto"
+    proto.write_text('syntax = "proto3";\n', encoding="utf-8")
+    for name in ("maverick_pb2.py", "maverick_pb2_grpc.py"):
+        (tmp_path / name).write_text("", encoding="utf-8")
+    if stale:  # generated before the proto gained fields
+        os.utime(tmp_path / "maverick_pb2.py", (1, 1))
+    monkeypatch.setattr(grpc_server, "_PROTO", proto)
+    if disabled:
+        monkeypatch.setenv("MAVERICK_NO_RUNTIME_PROTOC", "1")
+    else:
+        monkeypatch.delenv("MAVERICK_NO_RUNTIME_PROTOC", raising=False)
+    if imported:  # protobuf cannot replace a registered descriptor in-process
+        monkeypatch.setitem(sys.modules, "maverick.grpc_api.maverick_pb2", types.ModuleType("maverick_pb2"))
+    else:
+        monkeypatch.delitem(sys.modules, "maverick.grpc_api.maverick_pb2", raising=False)
+    generated = []
+    monkeypatch.setattr(grpc_server, "_generate_stubs", lambda: generated.append(1))
+    grpc_server._refresh_stale_stubs()
+    assert generated == ([1] if regenerated else [])

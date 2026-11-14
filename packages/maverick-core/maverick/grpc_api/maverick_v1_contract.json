@@ -91,6 +91,11 @@
         "number": 1,
         "type": "int64"
       },
+      "has_max_dollars": {
+        "label": "",
+        "number": 8,
+        "type": "bool"
+      },
       "max_depth": {
         "label": "",
         "number": 6,
@@ -122,6 +127,11 @@
         "label": "",
         "number": 2,
         "type": "string"
+      },
+      "has_max_dollars": {
+        "label": "",
+        "number": 7,
+        "type": "bool"
       },
       "max_dollars": {
         "label": "",
