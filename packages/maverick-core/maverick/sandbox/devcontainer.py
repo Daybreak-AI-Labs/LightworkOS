@@ -148,12 +148,19 @@ def _parse_devcontainer(path: Path) -> DevcontainerSpec:
     repo_name = path.parent.name
     if path.parent.name == ".devcontainer":
         repo_name = path.parent.parent.name
+    workspace_folder = str(data.get("workspaceFolder") or f"/workspaces/{repo_name}")
+    # It becomes `-v project:<folder>` and `-w <folder>`: a `:` or `,` would
+    # add mount options (`/w:Z` relabels the host project under SELinux).
+    if (not workspace_folder.startswith("/") or any(c in workspace_folder for c in ":,\0\n")
+            or ".." in workspace_folder.split("/")):
+        raise RuntimeError(
+            f"{path}: refusing `workspaceFolder` value {workspace_folder!r} "
+            "(must be an absolute path without ':', ',' or '..')"
+        )
     return DevcontainerSpec(
         image=image,
         remote_user=str(data.get("remoteUser") or "root"),
-        workspace_folder=str(
-            data.get("workspaceFolder") or f"/workspaces/{repo_name}",
-        ),
+        workspace_folder=workspace_folder,
         container_env={
             str(k): str(v) for k, v in (data.get("containerEnv") or {}).items()
         },

@@ -46,6 +46,14 @@ def test_parse_rejects_other_flag_shapes(tmp_path, bad):
         _parse_devcontainer(p)
 
 
+@pytest.mark.parametrize("folder", ["/w:Z", "relative", "/w/../etc", "/a,b"])
+def test_parse_rejects_mount_option_workspace_folder(tmp_path, folder):
+    p = tmp_path / "devcontainer.json"
+    p.write_text(json.dumps({"image": "alpine", "workspaceFolder": folder}), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="workspaceFolder"):
+        _parse_devcontainer(p)
+
+
 @pytest.mark.parametrize(
     "good",
     [

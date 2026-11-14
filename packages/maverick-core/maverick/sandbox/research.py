@@ -398,7 +398,7 @@ class ResearchContainerRunner:
                 and host["Memory"] == self.limits.memory_bytes
                 and host["MemorySwap"] == self.limits.memory_bytes
                 and host["PidsLimit"] == self.limits.pids
-                and host["NanoCpus"] == int(self.limits.cpus * 1_000_000_000)
+                and host["NanoCpus"] == round(self.limits.cpus * 1_000_000_000)
                 and valid_mount and valid_source and valid_scratch
                 and config["Entrypoint"] == ["/usr/bin/env"]
                 and config["Cmd"] == ["-i", *_ENV, "/usr/local/bin/python3", "-I", "-B", f"/candidate/{entrypoint}"]
