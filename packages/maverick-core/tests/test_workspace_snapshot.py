@@ -245,3 +245,56 @@ def test_tool_restore_rejects_dest_escape(tmp_path):
     out = workspace_snapshot(_SB(work)).fn(
         {"op": "restore", "id": "snap-0001", "dest": "/tmp/evil-restore"})
     assert out.startswith("ERROR") and "escape" in out.lower()
+
+
+def test_store_dir_is_resolved_per_tenant(tmp_path, monkeypatch):
+    """Regression: the store was fixed at import time and shared by every
+    tenant, so one tenant could list and restore another tenant's archives."""
+    from maverick.paths import tenant_scope
+    from maverick.workspace_snapshot import store_dir
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "home"))
+    with tenant_scope(tenant="acme"):
+        acme = store_dir()
+    with tenant_scope(tenant="globex"):
+        globex = store_dir()
+    assert acme != globex
+    assert "tenants" in acme.parts and "tenants" in globex.parts
+
+
+def test_restore_into_other_directory_never_deletes(tmp_path):
+    """Regression: restoring a snapshot of ``ws/sub`` into ``ws`` deleted every
+    file in ``ws`` the archive did not contain."""
+    ws = tmp_path / "ws"
+    (ws / "sub").mkdir(parents=True)
+    (ws / "sub" / "s.txt").write_text("s", encoding="utf-8")
+    (ws / "important.txt").write_text("keep", encoding="utf-8")
+    store = tmp_path / "snaps"
+    man = create_snapshot(ws / "sub", store)
+
+    res = restore_snapshot(store, man["id"], ws)
+
+    assert (ws / "important.txt").read_text(encoding="utf-8") == "keep"
+    assert (ws / "sub" / "s.txt").exists()
+    assert res["removed"] == 0 and res["reconciled"] is False
+
+
+def test_ids_past_9999_stay_unique_and_store_is_capped(tmp_path, monkeypatch):
+    """Regression: ids overflowed into a repeated ``snap-10000`` that was
+    silently overwritten and never listed; and nothing capped the store."""
+    import maverick.workspace_snapshot as mod
+
+    src = _src(tmp_path)
+    store = tmp_path / "snaps"
+    store.mkdir()
+    (store / "snap-9999.tar.gz").write_bytes(b"")
+    first = create_snapshot(src, store)
+    second = create_snapshot(src, store)
+    assert (first["id"], second["id"]) == ("snap-10000", "snap-10001")
+    assert [s["id"] for s in list_snapshots(store)] == [
+        "snap-10001", "snap-10000", "snap-9999"]
+    assert restore_snapshot(store, "snap-10000", tmp_path / "r")["id"] == "snap-10000"
+
+    monkeypatch.setattr(mod, "_MAX_SNAPSHOTS", 3)
+    with pytest.raises(ValueError, match="limit"):
+        create_snapshot(src, store)

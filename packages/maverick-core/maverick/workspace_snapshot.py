@@ -1,8 +1,9 @@
 """Workspace snapshot / restore: point-in-time tar.gz of a directory.
 
 A cheap, dependency-free checkpoint of a working directory so a long run can roll
-back a bad edit or compare states. Snapshots are gzip tarballs under
-``~/.maverick/snapshots/`` (or ``[workspace] snapshot_dir``). Extraction is
+back a bad edit or compare states. Snapshots are gzip tarballs in the
+active tenant's ``snapshots/`` data directory (or under ``[workspace]
+snapshot_dir``, namespaced per tenant). Extraction is
 path-traversal-safe — no archive member may escape the destination directory
 (the classic "tarbomb"/``../`` write). The ``_*`` helpers take explicit paths so
 they're unit-testable against a tmpdir.
@@ -16,25 +17,40 @@ import tarfile
 import time
 from pathlib import Path
 
-from .paths import data_dir
+from .paths import current_tenant, data_dir
 
 log = logging.getLogger(__name__)
 
-_DEFAULT_STORE = data_dir("snapshots")
-_ID_RE = re.compile(r"^snap-(\d{4})(?:-.*)?$")
+_ID_RE = re.compile(r"^snap-(\d{4,})(?:-.*)?$")
 # Per-snapshot ceiling so a runaway workspace can't fill the disk silently.
 _MAX_FILES = 20_000
 _MAX_BYTES = 512 * 1024 * 1024  # 512 MiB uncompressed
+# Store-wide ceiling: there is no delete op, so an agent loop of ``snapshot``
+# calls must not be able to fill the disk.
+_MAX_SNAPSHOTS = 200
+# Global pax header naming the directory a snapshot was taken from. Restore
+# deletes files the archive lacks only when ``dest`` is that directory.
+_SOURCE_HEADER = "maverick.snapshot_source"
 
 
 def store_dir() -> Path:
+    """The snapshot store for the ACTIVE tenant, resolved at call time.
+
+    A ``[workspace] snapshot_dir`` override is namespaced per tenant the same
+    way :func:`paths.data_dir` is, so one tenant can never list or restore
+    another tenant's archives.
+    """
     from .config import load_config
     try:
         cfg = (load_config() or {}).get("workspace") or {}
         sd = str(cfg.get("snapshot_dir") or "").strip()
     except Exception:  # pragma: no cover -- config never blocks snapshots
         sd = ""
-    return Path(sd).expanduser() if sd else _DEFAULT_STORE
+    if not sd:
+        return data_dir("snapshots")
+    tenant = current_tenant()
+    base = Path(sd).expanduser()
+    return base / "tenants" / tenant if tenant else base
 
 
 def _slug(label: str) -> str:
@@ -42,14 +58,23 @@ def _slug(label: str) -> str:
     return s[:40].lower()
 
 
-def _next_id(store: Path) -> str:
-    n = 0
+def _snapshot_ids(store: Path) -> list[int]:
+    ids: list[int] = []
     if store.exists():
         for p in store.glob("snap-*.tar.gz"):
             m = _ID_RE.match(p.name[: -len(".tar.gz")])
             if m:
-                n = max(n, int(m.group(1)))
-    return f"{n + 1:04d}"
+                ids.append(int(m.group(1)))
+    return ids
+
+
+def _next_id(store: Path) -> str:
+    ids = _snapshot_ids(store)
+    if len(ids) >= _MAX_SNAPSHOTS:
+        raise ValueError(
+            f"snapshot store holds {len(ids)} snapshots (limit "
+            f"{_MAX_SNAPSHOTS}); remove old archives from {store} first")
+    return f"{max(ids, default=0) + 1:04d}"
 
 
 def create_snapshot(src: Path, store: Path, label: str = "") -> dict:
@@ -94,7 +119,9 @@ def create_snapshot(src: Path, store: Path, label: str = "") -> dict:
     # with no half-written snapshot.
     tmp = target.with_name(target.name + ".tmp")
     try:
-        with tarfile.open(tmp, "w:gz") as tar:
+        with tarfile.open(
+                tmp, "w:gz", format=tarfile.PAX_FORMAT,
+                pax_headers={_SOURCE_HEADER: str(src.resolve())}) as tar:
             tar.add(src, arcname=".", recursive=True)
         os.replace(tmp, target)
     except BaseException:
@@ -136,17 +163,20 @@ def list_snapshots(store: Path) -> list[dict]:
             "size_bytes": st.st_size,
             "mtime": int(st.st_mtime),
         })
-    out.sort(key=lambda r: r["id"], reverse=True)
+    out.sort(key=lambda r: int(r["id"][len("snap-"):]), reverse=True)
     return out
 
 
 def _resolve_archive(store: Path, snap_id: str) -> Path:
     snap_id = (snap_id or "").strip()
-    m = re.match(r"^(?:snap-)?(\d{4})$", snap_id)
+    m = re.match(r"^(?:snap-)?(\d{4,})$", snap_id)
     if not m:
         raise ValueError(f"invalid snapshot id {snap_id!r} (expected e.g. snap-0001)")
     num = m.group(1)
-    matches = sorted(store.glob(f"snap-{num}*.tar.gz"))
+    # ``snap-1000*`` also globs ``snap-10000``; keep only exact id matches.
+    matches = sorted(
+        p for p in store.glob(f"snap-{num}*.tar.gz")
+        if (im := _ID_RE.match(p.name[: -len(".tar.gz")])) and im.group(1) == num)
     if not matches:
         raise ValueError(f"no such snapshot {snap_id!r}")
     return matches[0]
@@ -173,7 +203,12 @@ def _resolved_within(base: Path, target: Path) -> bool:
 
 
 def restore_snapshot(store: Path, snap_id: str, dest: Path) -> dict:
-    """Extract a snapshot into ``dest`` with path-traversal protection."""
+    """Extract a snapshot into ``dest`` with path-traversal protection.
+
+    Files in ``dest`` that the snapshot lacks are deleted only when ``dest``
+    is the directory the snapshot was taken from (an in-place rollback).
+    Restoring into any other directory only creates and overwrites members.
+    """
     archive = _resolve_archive(store, snap_id)
     dest = Path(dest)
     dest.mkdir(parents=True, exist_ok=True)
@@ -181,6 +216,7 @@ def restore_snapshot(store: Path, snap_id: str, dest: Path) -> dict:
     skipped_links = 0
     members_seen: set[str] = set()
     with tarfile.open(archive, "r:gz") as tar:
+        source = tar.pax_headers.get(_SOURCE_HEADER)
         for member in tar.getmembers():
             # Record EVERY member's normalised path (files, dirs, even skipped
             # links) so the reconciliation pass below only deletes destination
@@ -224,6 +260,15 @@ def restore_snapshot(store: Path, snap_id: str, dest: Path) -> dict:
         log.warning(
             "restore_snapshot: skipped %d link member(s) not recreated in %s",
             skipped_links, dest)
+    in_place = bool(source) and Path(source) == dest.resolve()
+    removed = _reconcile(dest, members_seen) if in_place else 0
+    m = _ID_RE.match(archive.name[: -len(".tar.gz")])
+    return {"id": f"snap-{m.group(1)}" if m else archive.name,
+            "restored": restored, "skipped_links": skipped_links,
+            "removed": removed, "reconciled": in_place, "dest": str(dest)}
+
+
+def _reconcile(dest: Path, members_seen: set[str]) -> int:
     # Reconcile the destination against the snapshot: delete files (and
     # now-empty dirs) present in dest but ABSENT from the archive. Extraction
     # alone only overwrites/creates members, so reverting an ADDITIVE change (a
@@ -261,8 +306,7 @@ def restore_snapshot(store: Path, snap_id: str, dest: Path) -> dict:
                 removed += 1
             except OSError:
                 pass  # still holds a kept file -- leave it in place
-    return {"id": f"snap-{archive.name[5:9]}", "restored": restored,
-            "skipped_links": skipped_links, "removed": removed, "dest": str(dest)}
+    return removed
 
 
 # --- tool surface ----------------------------------------------------------
@@ -306,7 +350,9 @@ def _run(args: dict, sandbox=None) -> str:
                 return "ERROR: restore requires dest"
             res = restore_snapshot(store, args.get("id") or "",
                                    Path(_safe_path(sandbox, dest)))
-            return f"restored {res['restored']} files from {res['id']} -> {res['dest']}"
+            return (f"restored {res['restored']} files from {res['id']} -> "
+                    f"{res['dest']} (removed {res['removed']} entries absent "
+                    f"from the snapshot)")
     except (ValueError, OSError, tarfile.TarError) as e:
         return f"ERROR: {e}"
     return f"ERROR: unknown op {op!r}"
@@ -319,8 +365,10 @@ def workspace_snapshot(sandbox=None):
         description=(
             "Snapshot / restore a working directory as a gzip tarball. ops: "
             "snapshot (path, label), list, restore (id, dest). Snapshots live "
-            "under ~/.maverick/snapshots; the source/destination are confined "
-            "to the workspace and restore is path-traversal-safe."
+            "in the tenant's snapshot store; the source/destination are "
+            "confined to the workspace and restore is path-traversal-safe. "
+            "Restoring into the snapshot's own source directory also deletes "
+            "files the snapshot does not contain."
         ),
         input_schema=_SCHEMA,
         fn=lambda args: _run(args, sandbox),
