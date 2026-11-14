@@ -799,6 +799,29 @@ def test_explicit_opt_out_is_a_noop(monkeypatch):
     assert not v.ok and "disabled" in v.blocking_reason
 
 
+def test_shared_controller_follows_config_changes(monkeypatch):
+    """Tightening the margin or ceiling reaches the process-wide controller
+    without a restart, and unreadable configuration freezes it."""
+    from maverick import config, self_improvement
+
+    reset_shared()
+    policy = {"min_improvement": 0.0, "max_auto_rung": "evaluator"}
+    errors: dict = {}
+    monkeypatch.setattr(config, "get_self_improvement", lambda: dict(policy))
+    monkeypatch.setattr(config, "config_source_errors",
+                        lambda include_tenant=True: dict(errors))
+    first = self_improvement.shared()
+    assert (first.min_improvement, first.max_auto_rung) == (0.0, "evaluator")
+    policy.update(min_improvement=0.5, max_auto_rung="config")
+    again = self_improvement.shared()
+    assert again is first
+    assert (again.min_improvement, again.max_auto_rung) == (0.5, "config")
+    errors["config.toml"] = "unreadable"
+    assert self_improvement.shared().min_improvement == -1.0
+    assert self_improvement.enabled() is False
+    reset_shared()
+
+
 def test_consider_promotes_when_enabled(tmp_path, monkeypatch):
     monkeypatch.setenv("MAVERICK_SELF_IMPROVEMENT", "1")
     ledger = PromotionLedger(path=tmp_path / "si.json")

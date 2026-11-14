@@ -104,7 +104,14 @@ _RUNG_POLICY: dict[str, dict[str, Any]] = {
 def enabled() -> bool:
     """Whether governed prompt/policy learning may promote. ON by default."""
     try:
-        from .config import get_self_improvement, governed_learning_env_flag
+        from .config import (
+            config_source_errors,
+            get_self_improvement,
+            governed_learning_env_flag,
+        )
+        if config_source_errors(include_tenant=True):
+            # Unreadable configuration may hide ``enable = false``.
+            return False
         override = governed_learning_env_flag("MAVERICK_SELF_IMPROVEMENT")
         base = (override if override is not None
                 else bool(get_self_improvement().get("enable", True)))
@@ -113,15 +120,22 @@ def enabled() -> bool:
     return base
 
 
+_FROZEN_CONFIG = {"enable": False, "min_improvement": -1.0, "max_auto_rung": "policy"}
+
+
 def _config() -> dict:
     try:
-        from .config import get_self_improvement
+        from .config import config_source_errors, get_self_improvement
+        if config_source_errors(include_tenant=True):
+            # ``load_config`` returns defaults for an unreadable file; the
+            # operator's margin and ceiling may be lost, so freeze instead.
+            return dict(_FROZEN_CONFIG)
         return get_self_improvement()
     except Exception:  # pragma: no cover
         # Invalid margin freezes the controller if a direct caller constructs it
         # despite the disabled master switch. Never turn config loss into the
         # permissive zero-margin policy.
-        return {"enable": False, "min_improvement": -1.0, "max_auto_rung": "policy"}
+        return dict(_FROZEN_CONFIG)
 
 
 @dataclass
@@ -2705,16 +2719,17 @@ def shared() -> SelfImprovementController:
     from .paths import data_dir
 
     path = data_dir("self_improvement.json")
+    cfg = _config()
     with _shared_lock:
         ctrl = _shared.get(path)
         if ctrl is None:
-            cfg = _config()
-            ctrl = SelfImprovementController(
-                min_improvement=float(cfg.get("min_improvement", 0.0)),
-                max_auto_rung=str(cfg.get("max_auto_rung", "policy")),
-                ledger=PromotionLedger(path=path),
-            )
+            ctrl = SelfImprovementController(ledger=PromotionLedger(path=path))
             _shared[path] = ctrl
+        # Re-read the margin and ceiling on every call: the controller is
+        # process-wide, and an operator who tightens either one must not have
+        # to restart long-running processes for it to apply.
+        ctrl.min_improvement = float(cfg.get("min_improvement", 0.0))
+        ctrl.max_auto_rung = str(cfg.get("max_auto_rung", "policy"))
         return ctrl
 
 
