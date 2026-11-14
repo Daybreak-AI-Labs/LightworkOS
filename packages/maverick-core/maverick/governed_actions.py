@@ -307,19 +307,21 @@ def _lineage_dir(store_dir: str | Path | None = None) -> Path:
     return data_dir("lineage")
 
 
-def _lineage_file_for_read(goal_id: int, store_dir: str | Path | None) -> Path:
-    """The ledger file to READ for ``goal_id``. Before lineage honoured
-    ``MAVERICK_HOME`` it was written under ``~/.maverick/lineage`` when no
-    tenant was active; a goal whose file is only there is still read from
-    there. Nothing is ever written to that location."""
-    path = _lineage_dir(store_dir) / f"{int(goal_id)}.ndjson"
-    if store_dir is None and not path.exists():
-        from .paths import current_tenant
-        if not current_tenant():
-            legacy = Path("~/.maverick/lineage").expanduser() / path.name
-            if legacy.exists():
-                return legacy
-    return path
+def _legacy_lineage_note(goal_id: int, store_dir: str | Path | None) -> str:
+    """Before lineage honoured ``MAVERICK_HOME`` it was written under
+    ``~/.maverick/lineage`` (shared by every home) when no tenant was active.
+    A file there for the same goal id cannot be tied to this store, so it is
+    never read as this goal's lineage; a MISSING verdict only mentions it."""
+    if store_dir is not None:
+        return ""
+    legacy = Path("~/.maverick/lineage").expanduser() / f"{int(goal_id)}.ndjson"
+    try:
+        if legacy.exists() and legacy.parent.resolve() != _lineage_dir().resolve():
+            return (f"; an older ledger for goal id {int(goal_id)} exists at {legacy}, "
+                    "but it cannot be tied to this workspace and was not checked")
+    except Exception:  # noqa: BLE001 -- a hint never changes the verdict
+        pass
+    return ""
 
 
 def record_tool_lineage(goal_id: int | None, action: str, params: object, *,
@@ -396,7 +398,7 @@ def record_tool_lineage(goal_id: int | None, action: str, params: object, *,
 def load_lineage(goal_id: int, store_dir: str | Path | None = None) -> list[dict]:
     """Best-effort display adapter; use verification for evidence decisions."""
     try:
-        f = _lineage_file_for_read(goal_id, store_dir)
+        f = _lineage_dir(store_dir) / f"{int(goal_id)}.ndjson"
         if not f.exists():
             return []
         links = [json.loads(ln) for ln in f.read_text(encoding="utf-8").splitlines() if ln.strip()]
@@ -425,10 +427,10 @@ def verify_lineage_file(goal_id: int, store_dir: str | Path | None = None) -> st
     chain to verify; read/parse failures must never become an empty chain.
     """
     try:
-        path = _lineage_file_for_read(goal_id, store_dir)
+        path = _lineage_dir(store_dir) / f"{int(goal_id)}.ndjson"
         body = path.read_text(encoding="utf-8")
     except FileNotFoundError:
-        return "MISSING: no persisted lineage file"
+        return "MISSING: no persisted lineage file" + _legacy_lineage_note(goal_id, store_dir)
     except UnicodeError:
         return "BROKEN: lineage is not UTF-8 text"
     except (OSError, ValueError, TypeError, RuntimeError):
