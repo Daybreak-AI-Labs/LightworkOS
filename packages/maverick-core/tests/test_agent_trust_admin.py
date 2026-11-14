@@ -80,8 +80,7 @@ def test_attenuating_a_config_agent_stores_only_its_token_hash(monkeypatch):
     agent_trust.attenuate_agent("vega", max_risk="low")
     stored = agent_trust.managed_path().read_text()
     assert "tok-plain-123" not in stored
-    # The MCP capability refresh compares the raw bearer, so it stays as is.
-    assert "mcp-plain-456" in stored
+    assert "mcp-plain-456" not in stored
     assert agent_trust.agent_for_token("tok-plain-123", "a2a", registry=agent_trust.load_registry(cfg)) is not None
 
 

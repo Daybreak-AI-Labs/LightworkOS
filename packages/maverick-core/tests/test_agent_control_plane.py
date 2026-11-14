@@ -336,6 +336,23 @@ def test_a_config_only_trust_entry_gets_a_managed_overlay(monkeypatch, tmp_path)
     assert "plain-rest-bearer" not in managed_path().read_text()
 
 
+def test_a_config_only_overlay_stores_the_mcp_token_hashed(monkeypatch, tmp_path):
+    from maverick import config
+    from maverick.agent_trust import agent_for_token, hash_token, load_registry, managed_path
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('[control_plane]\nenable = true\n[agent_trust]\nagents = [\n'
+                   '  { id = "toml-only", direction = "both",'
+                   ' mcp_token = "plain-mcp-bearer" },\n]\n')
+    monkeypatch.setenv("MAVERICK_CONFIG", str(cfg))
+    config.reset_config_cache()
+    assert acp.suspend("agent:toml-only", reason="x").ok
+    assert acp.resume("agent:toml-only").ok
+    assert "plain-mcp-bearer" not in managed_path().read_text()
+    assert load_registry()["toml-only"].mcp_token == hash_token("plain-mcp-bearer")
+    agent = agent_for_token("plain-mcp-bearer", "mcp")
+    assert agent is not None and agent.id == "toml-only"
+
+
 def test_a_revocation_that_does_not_persist_is_reported_as_failure(monkeypatch):
     import maverick.revocation as rev
 
