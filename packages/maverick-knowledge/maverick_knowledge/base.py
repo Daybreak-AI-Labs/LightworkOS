@@ -44,15 +44,22 @@ MAX_DOCUMENT_CHUNKS = 2048
 # The phrases need an attack cue, not just the vocabulary: "you are now ready
 # to log in", "the new rule takes effect", "show the password you typed" and
 # "print your access token expiry" each used to drop a whole benign document.
+# The cues kept: "you are now" + an assistant/AI/model word, "your/the new
+# instructions", and print/show + "your"/"the user's" right before the secret.
 _INJECTION_RE = re.compile(
     r"\b(?:ignore|disregard|forget)\b.{0,30}\b(?:previous|prior|above|earlier|all)\b"
     r".{0,30}\b(?:instruction|message|context|prompt|rule)"
     r"|\byou\s+are\s+now\s+(?:an?\s+|in\s+)?(?:unrestricted|uncensored|unfiltered|"
     r"jailbroken|amoral|evil|rogue|dan\b|developer\s+mode|free\s+from|no\s+longer\s+bound)"
+    r"|\byou\s+are\s+now\s+(?:an?\s+|the\s+|my\s+)?(?:[\w-]+\s+){0,3}"
+    r"(?:assistant|ai|model|bot|chatbot|agent|llm)\b"
+    r"|\b(?:your|the)\s+new\s+instructions?\b"
     r"|\bnew\s+system\s+(?:instruction|prompt|directive|rule)"
     r"|\bnew\s+(?:instruction|prompt|directive|rule)s?\s*:"
     r"|</?\s*(?:system|assistant|developer)\s*>"
     r"|\b(?:reveal|print|show|leak|exfiltrate)\b.{0,40}\b(?:system\s+prompt|your\s+instruction)"
+    r"|\b(?:print|show)\b.{0,30}\b(?:your|the\s+user'?s?)\s+"
+    r"(?:secret|api[\s_-]?key|password|token|credential)"
     r"|\b(?:reveal|leak|exfiltrate)\b.{0,40}"
     r"\b(?:secret|api[\s_-]?key|password|token|credential)"
     r"|\boverride\b.{0,20}\b(?:safety|guard|shield|policy|governance)\b",
