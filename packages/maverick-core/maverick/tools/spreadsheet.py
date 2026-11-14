@@ -464,17 +464,21 @@ def _set_cell_operation(path, args, sheet):
     return f"set {cell} in {path}"
 
 
-def _workspace_gate(sandbox, raw_path: str, path: Path, op) -> str | None:
-    """Apply the file tools' `.git` write refusal and opaque-mode read gate."""
+def _workspace_gate(sandbox, raw_path: str, path: Path, op) -> None:
+    """Apply the file tools' `.git` write refusal and opaque-mode read gate.
+
+    Raises ``ValueError`` when the operation is refused; no-op without a sandbox.
+    """
+    if sandbox is None:
+        return
     from .fs import _is_opaque_blocked_resolved
     if op in ("info", "read"):
         if _is_opaque_blocked_resolved(sandbox, raw_path):
-            return "ERROR: spreadsheet read blocked in benchmark opaque mode (.git/tests)"
-        return None
+            raise ValueError("spreadsheet read blocked in benchmark opaque mode (.git/tests)")
+        return
     rel = path.relative_to(Path(sandbox.workdir).resolve())
     if any(part.rstrip(" .").casefold() == ".git" for part in rel.parts):
-        return f"ERROR: refusing to write under .git/: {rel}"
-    return None
+        raise ValueError(f"refusing to write under .git/: {rel}")
 
 
 def _run(args: dict[str, Any], sandbox=None) -> str:
@@ -486,12 +490,9 @@ def _run(args: dict[str, Any], sandbox=None) -> str:
         return "ERROR: path is required"
     try:
         path = _safe_path(sandbox, raw_path)
+        _workspace_gate(sandbox, raw_path, path, op)
     except ValueError as e:
         return f"ERROR: {e}"
-    if sandbox is not None:
-        refusal = _workspace_gate(sandbox, raw_path, path, op)
-        if refusal:
-            return refusal
     limit = args.get("limit", 50)
     if type(limit) is not int or not 1 <= limit <= 10000:
         return "ERROR: limit must be an integer between 1 and 10000"

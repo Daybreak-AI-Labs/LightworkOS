@@ -23,7 +23,6 @@ Measurements: ``[{"t", "value"}]`` (most recent last).
 from __future__ import annotations
 
 import math
-
 from typing import Any
 
 from . import Tool
