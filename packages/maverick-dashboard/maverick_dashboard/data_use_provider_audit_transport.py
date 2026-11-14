@@ -665,54 +665,9 @@ class NativeProviderAuditTransport:
                 return parsed
         return min(0.25 * 2 ** (index - 1), 2.0)
 
-    def _execute_statement(  # noqa: C901 - bounded provider response state machine
-        self,
-        *,
-        request: ProviderAuditReadRequest,
-        binding: Mapping[str, Any],
-        credential: ProviderAuditCredentialLease,
-        limits: ProviderLimits,
-        statement: str,
-        phase: str,
-        expected_columns: int | None = None,
-        read_deadline: float | None = None,
-    ) -> tuple[list[list[Any]], list[dict[str, Any]]]:
-        if not isinstance(statement, str) or not 1 <= len(statement.encode()) <= _MAX_SQL_BYTES:
-            raise DataUseProviderAuditPermanent("provider_audit_contract_invalid")
-        seed = hashlib.sha256(f"{request.request_sha256}:{phase}".encode()).hexdigest()
-        request_uuid = str(uuid.UUID(seed[:32]))
-        if request.provider_id == "snowflake":
-            path = "/api/v2/statements?requestId=" + quote(request_uuid, safe="")
-            body = {
-                "statement": statement,
-                "timeout": max(1, math.ceil(limits.timeout_seconds)),
-                "database": binding["catalog"],
-                "schema": binding["schema_name"],
-                "warehouse": binding["compute_id"],
-            }
-        else:
-            if expected_columns not in {1, 4}:
-                raise DataUseProviderAuditPermanent("provider_audit_contract_invalid")
-            path = "/api/2.0/sql/statements"
-            body = {
-                "statement": statement,
-                "warehouse_id": binding["compute_id"],
-                "wait_timeout": "0s",
-                "on_wait_timeout": "CONTINUE",
-                "format": "JSON_ARRAY",
-                "disposition": "INLINE",
-            }
-        response, receipts = self._http_request(
-            request=request,
-            binding=binding,
-            credential=credential,
-            limits=limits,
-            method="POST",
-            path=path,
-            body=body,
-            request_id_sha256=seed,
-            read_deadline=read_deadline,
-        )
+    def _poll_statement_result(
+        self, request, binding, credential, limits, seed, read_deadline, response, receipts,
+    ):
         handle: str | None = None
         payload: dict[str, Any]
         for poll_index in range(limits.max_polls + 1):
@@ -773,6 +728,211 @@ class NativeProviderAuditTransport:
             receipts.extend(polled)
         else:  # pragma: no cover - bounded loop exits above
             raise DataUseProviderAuditRetryable("provider_audit_poll_incomplete")
+        return handle, payload, data
+
+
+    def _collect_snowflake_statement_rows(
+        self, request, binding, credential, limits, seed, read_deadline, payload, handle, rows,
+        receipts,
+    ):
+        metadata = payload.get("resultSetMetaData")
+        if not isinstance(metadata, Mapping):
+            raise DataUseProviderAuditPermanent("provider_partition_invalid")
+        row_type = metadata.get("rowType")
+        partition_info = metadata.get("partitionInfo")
+        if (
+            metadata.get("format") != "jsonv2"
+            or not isinstance(row_type, list)
+            or len(row_type) != 5
+            or not all(isinstance(column, Mapping) for column in row_type)
+            or not isinstance(partition_info, list)
+            or not 1 <= len(partition_info) <= self._limits.max_pages_per_read
+        ):
+            raise DataUseProviderAuditPermanent("provider_partition_invalid")
+        num_rows = _provider_count(
+            metadata.get("numRows"),
+            maximum=request.event_limit + 1,
+        )
+        partition_counts: list[int] = []
+        for info in partition_info:
+            if not isinstance(info, Mapping):
+                raise DataUseProviderAuditPermanent("provider_partition_invalid")
+            partition_counts.append(
+                _provider_count(
+                    info.get("rowCount"),
+                    maximum=request.event_limit + 1,
+                )
+            )
+        if sum(partition_counts) != num_rows or len(rows) != partition_counts[0]:
+            raise DataUseProviderAuditPermanent("provider_partition_invalid")
+        for partition in range(1, len(partition_info)):
+            page_response, page_receipts = self._http_request(
+                request=request,
+                binding=binding,
+                credential=credential,
+                limits=limits,
+                method="GET",
+                path=(
+                    "/api/v2/statements/" + quote(handle, safe="") + f"?partition={partition}"
+                ),
+                body=None,
+                request_id_sha256=_text_sha256(f"{seed}:partition:{partition}"),
+                read_deadline=read_deadline,
+            )
+            receipts.extend(page_receipts)
+            page = self._response_json(page_response, limits.max_response_bytes)
+            page_handle = page.get("statementHandle")
+            if page_handle is not None and _token(page_handle) != handle:
+                raise DataUseProviderAuditPermanent("provider_statement_identity_changed")
+            if "data" not in page:
+                raise DataUseProviderAuditPermanent("provider_partition_invalid")
+            page_rows = self._rows(page["data"])
+            if len(page_rows) != partition_counts[partition]:
+                raise DataUseProviderAuditPermanent("provider_partition_invalid")
+            rows.extend(page_rows)
+        if len(rows) != num_rows:
+            raise DataUseProviderAuditPermanent("provider_partition_invalid")
+
+
+    def _collect_databricks_statement_rows(
+        self, request, binding, credential, limits, seed, read_deadline, payload, handle, rows,
+        receipts, expected_columns,
+    ):
+        result = payload.get("result")
+        manifest = payload.get("manifest")
+        if not isinstance(result, Mapping) or not isinstance(manifest, Mapping):
+            raise DataUseProviderAuditPermanent("provider_manifest_invalid")
+        schema = manifest.get("schema")
+        columns = schema.get("columns") if isinstance(schema, Mapping) else None
+        column_count = schema.get("column_count") if isinstance(schema, Mapping) else None
+        total_rows = manifest.get("total_row_count")
+        total_chunks = manifest.get("total_chunk_count")
+        if (
+            manifest.get("format") != "JSON_ARRAY"
+            or manifest.get("truncated") is not False
+            or isinstance(column_count, bool)
+            or column_count != expected_columns
+            or not isinstance(columns, list)
+            or len(columns) != expected_columns
+            or not all(isinstance(column, Mapping) for column in columns)
+            or isinstance(total_rows, bool)
+            or not isinstance(total_rows, int)
+            or not 0 <= total_rows <= _MAX_ROWS
+            or isinstance(total_chunks, bool)
+            or not isinstance(total_chunks, int)
+            or not 0 <= total_chunks <= self._limits.max_pages_per_read
+        ):
+            raise DataUseProviderAuditPermanent("provider_manifest_invalid")
+        if total_rows == 0:
+            if (
+                total_chunks != 0
+                or rows
+                or set(result) - {"data_array"}
+                or result.get("data_array", []) != []
+            ):
+                raise DataUseProviderAuditPermanent("provider_manifest_invalid")
+            next_chunk = None
+            fetched_chunks = 0
+        else:
+            if (
+                total_chunks < 1
+                or "data_array" not in result
+                or result.get("chunk_index") != 0
+                or result.get("row_offset") != 0
+                or result.get("row_count") != len(rows)
+            ):
+                raise DataUseProviderAuditPermanent("provider_manifest_invalid")
+            next_chunk = result.get("next_chunk_index")
+            fetched_chunks = 1
+        while fetched_chunks < total_chunks:
+            if next_chunk != fetched_chunks:
+                raise DataUseProviderAuditPermanent("provider_chunk_invalid")
+            page_response, page_receipts = self._http_request(
+                request=request,
+                binding=binding,
+                credential=credential,
+                limits=limits,
+                method="GET",
+                path=(
+                    "/api/2.0/sql/statements/"
+                    + quote(handle, safe="")
+                    + "/result/chunks/"
+                    + str(next_chunk)
+                ),
+                body=None,
+                request_id_sha256=_text_sha256(f"{seed}:chunk:{next_chunk}"),
+                read_deadline=read_deadline,
+            )
+            receipts.extend(page_receipts)
+            page = self._response_json(page_response, limits.max_response_bytes)
+            if "external_links" in page or "data_array" not in page:
+                raise DataUseProviderAuditPermanent("provider_chunk_invalid")
+            page_rows = self._rows(page["data_array"])
+            if (
+                page.get("chunk_index") != fetched_chunks
+                or page.get("row_offset") != len(rows)
+                or page.get("row_count") != len(page_rows)
+                or len(rows) + len(page_rows) > total_rows
+            ):
+                raise DataUseProviderAuditPermanent("provider_chunk_invalid")
+            rows.extend(page_rows)
+            next_chunk = page.get("next_chunk_index")
+            fetched_chunks += 1
+        if next_chunk is not None or fetched_chunks != total_chunks or len(rows) != total_rows:
+            raise DataUseProviderAuditPermanent("provider_manifest_invalid")
+
+
+    def _execute_statement(
+        self,
+        *,
+        request: ProviderAuditReadRequest,
+        binding: Mapping[str, Any],
+        credential: ProviderAuditCredentialLease,
+        limits: ProviderLimits,
+        statement: str,
+        phase: str,
+        expected_columns: int | None = None,
+        read_deadline: float | None = None,
+    ) -> tuple[list[list[Any]], list[dict[str, Any]]]:
+        if not isinstance(statement, str) or not 1 <= len(statement.encode()) <= _MAX_SQL_BYTES:
+            raise DataUseProviderAuditPermanent("provider_audit_contract_invalid")
+        seed = hashlib.sha256(f"{request.request_sha256}:{phase}".encode()).hexdigest()
+        request_uuid = str(uuid.UUID(seed[:32]))
+        if request.provider_id == "snowflake":
+            path = "/api/v2/statements?requestId=" + quote(request_uuid, safe="")
+            body = {
+                "statement": statement,
+                "timeout": max(1, math.ceil(limits.timeout_seconds)),
+                "database": binding["catalog"],
+                "schema": binding["schema_name"],
+                "warehouse": binding["compute_id"],
+            }
+        else:
+            if expected_columns not in {1, 4}:
+                raise DataUseProviderAuditPermanent("provider_audit_contract_invalid")
+            path = "/api/2.0/sql/statements"
+            body = {
+                "statement": statement,
+                "warehouse_id": binding["compute_id"],
+                "wait_timeout": "0s",
+                "on_wait_timeout": "CONTINUE",
+                "format": "JSON_ARRAY",
+                "disposition": "INLINE",
+            }
+        response, receipts = self._http_request(
+            request=request,
+            binding=binding,
+            credential=credential,
+            limits=limits,
+            method="POST",
+            path=path,
+            body=body,
+            request_id_sha256=seed,
+            read_deadline=read_deadline,
+        )
+        (handle, payload, data) = self._poll_statement_result(
+            request, binding, credential, limits, seed, read_deadline, response, receipts,
+        )
         if handle is None:
             raise DataUseProviderAuditPermanent("provider_statement_identity_missing")
         statement_sha = _text_sha256(handle)
@@ -782,146 +942,15 @@ class NativeProviderAuditTransport:
                 break
         rows = self._rows(data)
         if request.provider_id == "snowflake":
-            metadata = payload.get("resultSetMetaData")
-            if not isinstance(metadata, Mapping):
-                raise DataUseProviderAuditPermanent("provider_partition_invalid")
-            row_type = metadata.get("rowType")
-            partition_info = metadata.get("partitionInfo")
-            if (
-                metadata.get("format") != "jsonv2"
-                or not isinstance(row_type, list)
-                or len(row_type) != 5
-                or not all(isinstance(column, Mapping) for column in row_type)
-                or not isinstance(partition_info, list)
-                or not 1 <= len(partition_info) <= self._limits.max_pages_per_read
-            ):
-                raise DataUseProviderAuditPermanent("provider_partition_invalid")
-            num_rows = _provider_count(
-                metadata.get("numRows"),
-                maximum=request.event_limit + 1,
+            self._collect_snowflake_statement_rows(
+                request, binding, credential, limits, seed, read_deadline, payload, handle, rows,
+                receipts,
             )
-            partition_counts: list[int] = []
-            for info in partition_info:
-                if not isinstance(info, Mapping):
-                    raise DataUseProviderAuditPermanent("provider_partition_invalid")
-                partition_counts.append(
-                    _provider_count(
-                        info.get("rowCount"),
-                        maximum=request.event_limit + 1,
-                    )
-                )
-            if sum(partition_counts) != num_rows or len(rows) != partition_counts[0]:
-                raise DataUseProviderAuditPermanent("provider_partition_invalid")
-            for partition in range(1, len(partition_info)):
-                page_response, page_receipts = self._http_request(
-                    request=request,
-                    binding=binding,
-                    credential=credential,
-                    limits=limits,
-                    method="GET",
-                    path=(
-                        "/api/v2/statements/" + quote(handle, safe="") + f"?partition={partition}"
-                    ),
-                    body=None,
-                    request_id_sha256=_text_sha256(f"{seed}:partition:{partition}"),
-                    read_deadline=read_deadline,
-                )
-                receipts.extend(page_receipts)
-                page = self._response_json(page_response, limits.max_response_bytes)
-                page_handle = page.get("statementHandle")
-                if page_handle is not None and _token(page_handle) != handle:
-                    raise DataUseProviderAuditPermanent("provider_statement_identity_changed")
-                if "data" not in page:
-                    raise DataUseProviderAuditPermanent("provider_partition_invalid")
-                page_rows = self._rows(page["data"])
-                if len(page_rows) != partition_counts[partition]:
-                    raise DataUseProviderAuditPermanent("provider_partition_invalid")
-                rows.extend(page_rows)
-            if len(rows) != num_rows:
-                raise DataUseProviderAuditPermanent("provider_partition_invalid")
         else:
-            result = payload.get("result")
-            manifest = payload.get("manifest")
-            if not isinstance(result, Mapping) or not isinstance(manifest, Mapping):
-                raise DataUseProviderAuditPermanent("provider_manifest_invalid")
-            schema = manifest.get("schema")
-            columns = schema.get("columns") if isinstance(schema, Mapping) else None
-            column_count = schema.get("column_count") if isinstance(schema, Mapping) else None
-            total_rows = manifest.get("total_row_count")
-            total_chunks = manifest.get("total_chunk_count")
-            if (
-                manifest.get("format") != "JSON_ARRAY"
-                or manifest.get("truncated") is not False
-                or isinstance(column_count, bool)
-                or column_count != expected_columns
-                or not isinstance(columns, list)
-                or len(columns) != expected_columns
-                or not all(isinstance(column, Mapping) for column in columns)
-                or isinstance(total_rows, bool)
-                or not isinstance(total_rows, int)
-                or not 0 <= total_rows <= _MAX_ROWS
-                or isinstance(total_chunks, bool)
-                or not isinstance(total_chunks, int)
-                or not 0 <= total_chunks <= self._limits.max_pages_per_read
-            ):
-                raise DataUseProviderAuditPermanent("provider_manifest_invalid")
-            if total_rows == 0:
-                if (
-                    total_chunks != 0
-                    or rows
-                    or set(result) - {"data_array"}
-                    or result.get("data_array", []) != []
-                ):
-                    raise DataUseProviderAuditPermanent("provider_manifest_invalid")
-                next_chunk = None
-                fetched_chunks = 0
-            else:
-                if (
-                    total_chunks < 1
-                    or "data_array" not in result
-                    or result.get("chunk_index") != 0
-                    or result.get("row_offset") != 0
-                    or result.get("row_count") != len(rows)
-                ):
-                    raise DataUseProviderAuditPermanent("provider_manifest_invalid")
-                next_chunk = result.get("next_chunk_index")
-                fetched_chunks = 1
-            while fetched_chunks < total_chunks:
-                if next_chunk != fetched_chunks:
-                    raise DataUseProviderAuditPermanent("provider_chunk_invalid")
-                page_response, page_receipts = self._http_request(
-                    request=request,
-                    binding=binding,
-                    credential=credential,
-                    limits=limits,
-                    method="GET",
-                    path=(
-                        "/api/2.0/sql/statements/"
-                        + quote(handle, safe="")
-                        + "/result/chunks/"
-                        + str(next_chunk)
-                    ),
-                    body=None,
-                    request_id_sha256=_text_sha256(f"{seed}:chunk:{next_chunk}"),
-                    read_deadline=read_deadline,
-                )
-                receipts.extend(page_receipts)
-                page = self._response_json(page_response, limits.max_response_bytes)
-                if "external_links" in page or "data_array" not in page:
-                    raise DataUseProviderAuditPermanent("provider_chunk_invalid")
-                page_rows = self._rows(page["data_array"])
-                if (
-                    page.get("chunk_index") != fetched_chunks
-                    or page.get("row_offset") != len(rows)
-                    or page.get("row_count") != len(page_rows)
-                    or len(rows) + len(page_rows) > total_rows
-                ):
-                    raise DataUseProviderAuditPermanent("provider_chunk_invalid")
-                rows.extend(page_rows)
-                next_chunk = page.get("next_chunk_index")
-                fetched_chunks += 1
-            if next_chunk is not None or fetched_chunks != total_chunks or len(rows) != total_rows:
-                raise DataUseProviderAuditPermanent("provider_manifest_invalid")
+            self._collect_databricks_statement_rows(
+                request, binding, credential, limits, seed, read_deadline, payload, handle, rows,
+                receipts, expected_columns,
+            )
         if len(rows) > _MAX_ROWS:
             raise DataUseProviderAuditPermanent("provider_row_bound_exceeded")
         return rows, receipts
