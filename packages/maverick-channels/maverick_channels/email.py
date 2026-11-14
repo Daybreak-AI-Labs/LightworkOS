@@ -158,10 +158,10 @@ def _smtp_refusal(replies, message):
 
     Enhanced status 5.1.x (bad destination address) or 5.3.4 (message too
     big) is positive evidence. Sending quotas and policy throttles also use
-    5xx (5.4.5, 5.2.0, 5.7.x), so they, a reply without an enhanced status,
-    and any 4xx leave the message retryable.
+    5xx (5.4.5, 5.2.0, 5.7.x), so any other 5xx refusal backs off without
+    being abandoned, and a 4xx stays plainly retryable.
     """
-    from .delivery import DeliveryNotSent, DeliveryRejected
+    from .delivery import DeliveryNotSent, DeliveryRefusedUnclear, DeliveryRejected
 
     def definitive(reply):
         if not isinstance(reply, tuple) or len(reply) < 2 or not isinstance(reply[0], int):
@@ -170,7 +170,11 @@ def _smtp_refusal(replies, message):
         return 500 <= reply[0] < 600 and re.match(r"\s*5\.(1\.\d{1,3}|3\.4)\b", text) is not None
 
     replies = list(replies)
-    return (DeliveryRejected if replies and all(map(definitive, replies)) else DeliveryNotSent)(message)
+    if replies and all(map(definitive, replies)):
+        return DeliveryRejected(message)
+    permanent = [reply for reply in replies
+                 if isinstance(reply, tuple) and reply and isinstance(reply[0], int) and 500 <= reply[0] < 600]
+    return (DeliveryRefusedUnclear if permanent else DeliveryNotSent)(message)
 
 
 class EmailChannel(Channel):

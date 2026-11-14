@@ -66,6 +66,12 @@ class DeliveryRejected(DeliveryNotSent):
     throttling, disconnection and outages stay plain DeliveryNotSent."""
 
 
+class DeliveryRefusedUnclear(DeliveryNotSent):
+    """The provider refused this request for a cause it did not make clear
+    (a bare 400/403, an unclassified SMTP 5xx). Retried with the persisted,
+    growing backoff of a rejection, but never counted toward the limit."""
+
+
 # Abandoning a deliverable reply is worse than retrying an undeliverable one,
 # so a rejection needs positive evidence. These statuses speak about the
 # message or its recipient. Providers also answer throttling, quotas and
@@ -73,6 +79,7 @@ class DeliveryRejected(DeliveryNotSent):
 # a message-level refusal from the body; 401, 408, 409, 429 and the rest stay
 # retryable.
 _REJECTED_STATUSES = frozenset({404, 410, 413, 422})
+_UNCLEAR_STATUSES = frozenset({400, 403})
 
 
 def provider_refusal(status, message, *, refused=False):
@@ -81,8 +88,9 @@ def provider_refusal(status, message, *, refused=False):
     ``refused`` is the adapter's positive evidence, from the response body,
     that a 400/403 refused this message or recipient.
     """
-    definitive = status in _REJECTED_STATUSES or (refused and status in {400, 403})
-    return (DeliveryRejected if definitive else DeliveryNotSent)(message)
+    if status in _REJECTED_STATUSES or (refused and status in _UNCLEAR_STATUSES):
+        return DeliveryRejected(message)
+    return (DeliveryRefusedUnclear if status in _UNCLEAR_STATUSES else DeliveryNotSent)(message)
 
 
 class _DeliveryNotAuthorized(DeliveryNotSent):
@@ -1132,7 +1140,7 @@ class _DeliveryAttempt:
             raise DeliveryRejected("Channel reply exceeds chunk bound")
         attempt_id = uuid.uuid4().hex
         chunks[key] = {"state": "sending", "payload_sha256": digest, "attempt_id": attempt_id,
-                       "attempts": (old or {}).get("attempts", 0),
+                       "attempts": (old or {}).get("attempts", 0), "refusals": (old or {}).get("refusals", 0),
                        "idempotency_key": str(uuid.uuid5(uuid.NAMESPACE_URL, self.record_id + ":" + key))}
         try:
             updates = {"chunks": chunks}
@@ -1160,7 +1168,8 @@ class _DeliveryAttempt:
         except DeliveryNotSent as exc:
             withheld = isinstance(exc, DeliveryWithheld)
             await self._finish(key, attempt_id, "retryable", withheld=withheld,
-                               rejected=isinstance(exc, DeliveryRejected))
+                               rejected=isinstance(exc, DeliveryRejected),
+                               unclear=isinstance(exc, DeliveryRefusedUnclear))
             raise
         except BaseException:
             await self._finish(key, attempt_id, "delivery_unknown")
@@ -1168,7 +1177,8 @@ class _DeliveryAttempt:
         await self._finish(key, attempt_id, "delivered", str(result or "")[:512])
         return result
 
-    async def _finish(self, key, attempt_id, state, provider_id="", *, withheld=False, rejected=False):
+    async def _finish(self, key, attempt_id, state, provider_id="", *, withheld=False, rejected=False,
+                      unclear=False):
         row = await asyncio.to_thread(self.journal.get, self.record_id)
         chunks = dict(row["chunks"])
         if chunks[key]["attempt_id"] != attempt_id:
@@ -1180,6 +1190,12 @@ class _DeliveryAttempt:
                 state = "delivery_failed"
             else:
                 chunks[key]["retry_at"] = time.time() + self.retry_seconds * 2 ** (attempts - 1)
+        elif unclear:
+            # Same backoff, capped at the rejection maximum; never abandoned.
+            refusals = chunks[key].get("refusals", 0) + 1
+            chunks[key]["refusals"] = refusals
+            exponent = min(refusals, MAX_PROVIDER_ATTEMPTS - 1) - 1
+            chunks[key]["retry_at"] = time.time() + self.retry_seconds * 2 ** exponent
         chunks[key] = {**chunks[key], "state": state, "provider_id": provider_id}
         if withheld:
             chunks[key]["withheld"] = True

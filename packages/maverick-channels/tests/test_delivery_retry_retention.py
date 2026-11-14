@@ -250,7 +250,7 @@ def test_temporary_not_sent_is_retried_past_the_rejection_allowance(journal):
     """Throttled, disconnected or unavailable sends were never refused: no limit applies."""
     assert type(delivery.provider_refusal(429, "throttled")) is delivery.DeliveryNotSent
     assert type(delivery.provider_refusal(401, "session expired")) is delivery.DeliveryNotSent
-    assert type(delivery.provider_refusal(400, "bad request")) is delivery.DeliveryNotSent
+    assert type(delivery.provider_refusal(400, "bad request")) is delivery.DeliveryRefusedUnclear
     assert type(delivery.provider_refusal(404, "no such recipient")) is delivery.DeliveryRejected
     calls = []
 
@@ -289,7 +289,7 @@ class _Response:
 
 
 @pytest.mark.parametrize(("status", "refused", "expected"), [
-    (400, False, delivery.DeliveryNotSent), (403, False, delivery.DeliveryNotSent),
+    (400, False, delivery.DeliveryRefusedUnclear), (403, False, delivery.DeliveryRefusedUnclear),
     (401, True, delivery.DeliveryNotSent), (429, True, delivery.DeliveryNotSent),
     (409, True, delivery.DeliveryNotSent), (400, True, delivery.DeliveryRejected),
     (403, True, delivery.DeliveryRejected), (404, False, delivery.DeliveryRejected),
@@ -302,13 +302,14 @@ def test_bare_400_or_403_is_not_evidence_of_a_refused_message(status, refused, e
 
 
 @pytest.mark.parametrize(("status", "body", "expected"), [
-    (400, {"error": {"code": 4, "message": "Application request limit reached"}}, delivery.DeliveryNotSent),
-    (400, {"error": {"code": 190, "message": "Session has expired"}}, delivery.DeliveryNotSent),
-    (400, {"error": {"code": 130429, "message": "Rate limit hit"}}, delivery.DeliveryNotSent),
-    (403, {"error": {"code": 131056}}, delivery.DeliveryNotSent),
-    (400, {"error": {"code": 100, "is_transient": True}}, delivery.DeliveryNotSent),
-    (400, ValueError("not json"), delivery.DeliveryNotSent),
-    (400, {"unexpected": "shape"}, delivery.DeliveryNotSent),
+    (400, {"error": {"code": 4, "message": "Application request limit reached"}}, delivery.DeliveryRefusedUnclear),
+    (400, {"error": {"code": 190, "message": "Session has expired"}}, delivery.DeliveryRefusedUnclear),
+    (400, {"error": {"code": 130429, "message": "Rate limit hit"}}, delivery.DeliveryRefusedUnclear),
+    (403, {"error": {"code": 131056}}, delivery.DeliveryRefusedUnclear),
+    (400, {"error": {"code": 100, "is_transient": True}}, delivery.DeliveryRefusedUnclear),
+    (400, ValueError("not json"), delivery.DeliveryRefusedUnclear),
+    (400, {"unexpected": "shape"}, delivery.DeliveryRefusedUnclear),
+    (429, {"error": {"code": 4}}, delivery.DeliveryNotSent),
     (400, {"error": {"code": 100, "message": "Invalid parameter"}}, delivery.DeliveryRejected),
     (400, {"error": {"code": 131026, "message": "Message undeliverable"}}, delivery.DeliveryRejected),
 ])
@@ -327,7 +328,7 @@ def test_graph_refusal_needs_a_message_level_error_code(status, body, expected):
     ({"error": "ExpiredToken", "message": "Token has expired"}, delivery.DeliveryNotSent),
     ({"error": "InvalidToken"}, delivery.DeliveryNotSent),
     ({"error": "InvalidRequest", "message": "Record/text must not be longer than 300 graphemes"},
-     delivery.DeliveryNotSent),
+     delivery.DeliveryRefusedUnclear),
 ])
 def test_bluesky_expired_token_is_temporary(body, expected):
     from maverick_channels import bluesky
@@ -340,12 +341,12 @@ def test_bluesky_expired_token_is_temporary(body, expected):
     ([(550, b"5.1.1 The email account that you tried to reach does not exist")], delivery.DeliveryRejected),
     ([(553, b"5.1.3 Invalid recipient address syntax")], delivery.DeliveryRejected),
     ([(552, b"5.3.4 Message size exceeds fixed maximum message size")], delivery.DeliveryRejected),
-    ([(550, b"5.4.5 Daily user sending quota exceeded")], delivery.DeliveryNotSent),
-    ([(554, b"5.2.0 STOREDRV.Submission.Exception:SubmissionQuotaExceededException")], delivery.DeliveryNotSent),
-    ([(550, b"5.7.1 Message rejected by policy")], delivery.DeliveryNotSent),
-    ([(550, b"no such user")], delivery.DeliveryNotSent),
+    ([(550, b"5.4.5 Daily user sending quota exceeded")], delivery.DeliveryRefusedUnclear),
+    ([(554, b"5.2.0 STOREDRV.Submission.Exception:SubmissionQuotaExceededException")], delivery.DeliveryRefusedUnclear),
+    ([(550, b"5.7.1 Message rejected by policy")], delivery.DeliveryRefusedUnclear),
+    ([(550, b"no such user")], delivery.DeliveryRefusedUnclear),
     ([(450, b"4.1.1 Mailbox temporarily unavailable")], delivery.DeliveryNotSent),
-    ([(550, b"5.1.1 unknown user"), (450, b"4.2.1 try later")], delivery.DeliveryNotSent),
+    ([(550, b"5.1.1 unknown user"), (450, b"4.2.1 try later")], delivery.DeliveryRefusedUnclear),
     ([], delivery.DeliveryNotSent),
 ])
 def test_smtp_quota_and_policy_refusals_stay_retryable(replies, expected):
@@ -432,4 +433,56 @@ def test_only_a_caller_that_asks_waits_for_a_busy_activity_stripe(journal, monke
                     authorize=lambda: True, send=send, receipt=row, journal=journal, wait_for_activity=True)
             await eraser
         assert handled == []
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(("refusal", "persisted", "limited"), [
+    (lambda: delivery.provider_refusal(403, "forbidden, cause unknown"), True, False),
+    (lambda: delivery.provider_refusal(404, "no such recipient"), True, True),
+    (lambda: delivery.provider_refusal(429, "throttled"), False, False),
+])
+def test_unclear_refusal_backs_off_but_is_never_abandoned(journal, monkeypatch, refusal, persisted, limited):
+    now = [delivery.time.time()]
+    monkeypatch.setattr(delivery, "time", SimpleNamespace(time=lambda: now[0]))
+    calls = []
+
+    async def handler(inbound):
+        return "answer"
+
+    async def send(reply):
+        calls.append(reply.text)
+        raise refusal()
+
+    async def send_saved(inbound, reply, route):
+        return await send(reply)
+
+    async def run():
+        channel = Adapter(handler)
+        row = await channel.process_message(message("unclear"), external_id="unclear", account="acct",
+                    authorize=lambda: True, send=send, journal=journal)
+        kwargs = dict(account="acct", authorize=lambda _: True, send=send_saved, journal=journal,
+                      respect_retry_at=True)
+        delays = []
+        for _ in range(delivery.MAX_PROVIDER_ATTEMPTS + 3):
+            delay = delivery.retry_delay(row)
+            if not persisted:
+                assert delay == 0 and row["delivery"] == "retryable"
+            elif limited and row["delivery"] == "delivery_failed":
+                break
+            else:
+                assert delay > 0 and row["delivery"] == "retryable"
+                delays.append(delay)
+                before = len(calls)
+                assert await delivery.recover_messages(channel, **kwargs) == []  # Not yet due.
+                assert len(calls) == before
+                now[0] += delay + 1
+            await delivery.recover_messages(channel, **kwargs)
+            row = journal.get(row["id"])
+        if limited:
+            assert row["delivery"] == "delivery_failed" and len(calls) == delivery.MAX_PROVIDER_ATTEMPTS
+        else:
+            assert row["delivery"] == "retryable"
+            assert len(calls) == delivery.MAX_PROVIDER_ATTEMPTS + 4
+        if persisted and not limited:
+            assert delays[1] > delays[0] and delays[-1] <= 30 * 2 ** (delivery.MAX_PROVIDER_ATTEMPTS - 2)
     asyncio.run(run())

@@ -27,7 +27,7 @@ from .base import (
     is_allowed,
     normalize_allowlist,
 )
-from .delivery import DeliveryUnknown, provider_refusal, send_chunk
+from .delivery import DeliveryNotSent, DeliveryUnknown, provider_refusal, send_chunk
 from .polling import PollCheckpoint, PollPage
 from .polling import parse_timestamp as _parse_indexed_at
 from .polling import utc_timestamp as _now_iso_z
@@ -44,8 +44,16 @@ _MAX_SEEN_URIS = 1000
 
 def _reply_refusal(response):
     """A PDS answers an expired or invalid token with 400 (see
-    ``_drop_expired_session``), so only statuses about the record itself
-    reject a reply; a bare 400/403 stays retryable."""
+    ``_drop_expired_session``): the next call signs in again, so that is
+    temporary. Only statuses about the record itself reject a reply; another
+    bare 400/403 backs off without being abandoned."""
+    if response.status_code == 400:
+        try:
+            error = (response.json() or {}).get("error")
+        except Exception:  # noqa: BLE001 -- an unreadable body leaves the status to decide
+            error = None
+        if error in {"ExpiredToken", "InvalidToken"}:
+            return DeliveryNotSent("Bluesky session expired; the reply was not sent")
     return provider_refusal(response.status_code, "Bluesky rejected the reply")
 
 
