@@ -128,7 +128,9 @@ def test_a2a_deny_tools_union_environment_and_config(monkeypatch):
         assert capability.deny_tools == frozenset({"shell", *denied})
 
 
-def test_consent_ledger_keys_are_excluded_at_root_and_tenant_scopes():
+def test_consent_ledger_keys_are_excluded_at_root_and_tenant_scopes(tmp_path):
+    import hashlib
+
     from maverick import backup
 
     for name in ("consent.ledger.key", "tenants/acme/consent.ledger.key"):
@@ -137,6 +139,30 @@ def test_consent_ledger_keys_are_excluded_at_root_and_tenant_scopes():
         assert not backup._keys_included(path, False)
         assert backup._keys_included(path, True)
     assert not backup._is_key_material(Path("consent.ledger.jsonl"))
+
+    # A restore's selected key scopes must not make a different class of live
+    # signing/decryption keys eligible for replacement or deletion.
+    contents = b"test key"
+    receipt = (hashlib.sha256(contents).hexdigest(), len(contents))
+    for prefix in ("", "tenants/acme/"):
+        consent = f"{prefix}consent.ledger.key"
+        general = (f"{prefix}keys/at_rest.key", f"{prefix}audit/keys/signing.key")
+        for name in (consent, *general):
+            live = tmp_path / name
+            live.parent.mkdir(parents=True, exist_ok=True)
+            live.write_bytes(contents)
+
+        consent_archive = {consent: receipt}
+        consent_scopes = backup._archive_includes_keys(consent_archive)
+        assert backup._keys_included(Path(consent), consent_scopes)
+        assert all(not backup._keys_included(Path(name), consent_scopes) for name in general)
+        assert backup._replacement_targets(tmp_path, consent_archive) == {consent}
+
+        general_archive = dict.fromkeys(general, receipt)
+        general_scopes = backup._archive_includes_keys(general_archive)
+        assert all(backup._keys_included(Path(name), general_scopes) for name in general)
+        assert not backup._keys_included(Path(consent), general_scopes)
+        assert backup._replacement_targets(tmp_path, general_archive) == set(general)
 
 
 def test_airgap_audits_tenant_roles_mcp_and_federation(monkeypatch, tmp_path):
