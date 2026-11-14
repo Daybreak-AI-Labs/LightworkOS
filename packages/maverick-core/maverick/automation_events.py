@@ -707,6 +707,32 @@ def _email_body_text(msg) -> str:
     return ""
 
 
+_MAIL_WORDS = ("IMAP", "MAIL", "OUTLOOK", "INBOX", "SMTP")  # MAIL covers EMAIL, GMAIL, MAILBOX
+_SECRET_WORDS = ("PASSWORD", "PASS", "SECRET")
+
+
+def imap_password_name_problem(name: object) -> str | None:
+    """Why ``name`` cannot be an IMAP source's ``password_env``, or None.
+
+    The value is sent to the host the source names, so the name must look
+    like a mail password (a mail word and a password word, upper-case
+    letters, digits and underscores) and must not be one of the product's
+    own credential variables. Checked when a source is saved and on every
+    poll."""
+    text = str(name or "")
+    if (not re.fullmatch(r"[A-Z0-9_]{1,128}", text)
+            or not any(word in text for word in _MAIL_WORDS)
+            or not any(word in text for word in _SECRET_WORDS)
+            or text.startswith("MAVERICK_")
+            or text.endswith(("_API_KEY", "_TOKEN", "_DSN"))):
+        return ("The mail password name must name the inbox's password variable: "
+                "upper-case letters, digits and underscores, with a mail word "
+                "(IMAP, MAIL, EMAIL, GMAIL, OUTLOOK, MAILBOX, INBOX or SMTP) and "
+                "PASSWORD, PASS or SECRET, for example IMAP_PASSWORD. Product "
+                "keys and tokens cannot be used.")
+    return None
+
+
 def _fetch_imap(config: dict, since_uid: int | None,
                 uidvalidity: str | None = None) -> tuple[list[dict], int, str]:
     """Fetch messages with UID > ``since_uid`` from an IMAP mailbox. Returns
@@ -725,12 +751,9 @@ def _fetch_imap(config: dict, since_uid: int | None,
     pw_env = str((config or {}).get("password_env") or "").strip()
     if not (host and user and pw_env):
         raise EventSourceError("imap_email source needs 'host', 'username', 'password_env'")
-    # The password goes to the host this source names, so the name may only
-    # point at a variable set aside for it, never a provider key or token.
-    if not re.fullmatch(r"[A-Z0-9_]{1,128}", pw_env) or "IMAP" not in pw_env.split("_"):
-        raise EventSourceError(
-            "The mail password name must be a variable set aside for this inbox, "
-            "with IMAP as one of its words (for example IMAP_PASSWORD)")
+    problem = imap_password_name_problem(pw_env)
+    if problem:
+        raise EventSourceError(problem)
     trusted_server = str((config or {}).get("trusted_authserv_id") or "").strip()
     if not valid_trusted_mail_server(trusted_server):
         raise EventSourceError("Choose the server that checks incoming mail before this automation can start work")

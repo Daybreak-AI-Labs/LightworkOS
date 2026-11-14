@@ -177,10 +177,18 @@ def test_imap_password_name_cannot_point_at_another_process_secret(mailbox, monk
     monkeypatch.setenv("ANTHROPIC_API_KEY", "synthetic-provider-key")  # pragma: allowlist secret
     attempts = []
     monkeypatch.setattr("imaplib.IMAP4_SSL", lambda *a, **k: attempts.append(a) or mailbox)
-    for name in ("ANTHROPIC_API_KEY", "EMAIL_APP_PASSWORD", "MAVERICK_DASHBOARD_TOKEN"):
-        with pytest.raises(ev.EventSourceError, match="IMAP"):
+    for name in ("ANTHROPIC_API_KEY", "MAVERICK_DASHBOARD_TOKEN", "DATABASE_PASSWORD",
+                 "MAVERICK_EMAIL_PASSWORD", "MAIL_TOKEN", "mail_password"):
+        assert ev.imap_password_name_problem(name), name
+        with pytest.raises(ev.EventSourceError, match="mail password name"):
             ev.ImapEmailSource().poll({**IMAP_CONFIG, "password_env": name}, "")
     assert attempts == []
+    # Working mail setups keep their existing variable names.
+    for name in ("MAIL_PASSWORD", "GMAIL_APP_PASSWORD", "OUTLOOK_SECRET", "SYNTHETIC_IMAP_PASSWORD"):
+        assert ev.imap_password_name_problem(name) is None, name
+    monkeypatch.setenv("GMAIL_APP_PASSWORD", "synthetic-offline")  # pragma: allowlist secret
+    ev.ImapEmailSource().poll({**IMAP_CONFIG, "password_env": "GMAIL_APP_PASSWORD"}, "")
+    assert len(attempts) == 1
 
 
 def test_imap_requires_sender_verification_and_an_explicit_people_list(mailbox):

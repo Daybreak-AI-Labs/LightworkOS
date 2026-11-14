@@ -9258,6 +9258,13 @@ def _govern_event_source_config(request: Request, source: str, config: dict, *, 
         require_global_permission(request, "admin")
     elif authority == "tenant_admin":
         require_permission(request, "admin")
+    if source == "imap_email" and isinstance(config, dict):
+        # Refuse a password name that could send another secret to the mail
+        # host now, rather than at the source's next poll.
+        from maverick.automation_events import imap_password_name_problem
+        problem = imap_password_name_problem(str(config.get("password_env") or "").strip())
+        if problem:
+            raise HTTPException(status_code=400, detail=problem)
 
     try:
         return event_poll.admit_event_source_config(source, config)
