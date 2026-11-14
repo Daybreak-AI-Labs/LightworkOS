@@ -33,6 +33,18 @@ def _write_tenant_kms(tid: str, body: str) -> None:
 
 # ---- regression: review findings -----------------------------------------
 
+def test_unreadable_byok_overlay_does_not_mint_a_local_dek():
+    # A broken overlay loads as defaults ([kms] lost); minting a DEK under the
+    # local fallback KEK would silently and permanently downgrade BYOK.
+    from maverick.crypto_at_rest import EncryptionUnavailable
+    from maverick.tenant.kms import _wrapped_dek_path
+
+    _write_tenant_kms("acme", '[kms]\nprovider = "aws"\nkey_id = "cmk"\nnot toml\n')
+    with pytest.raises(EncryptionUnavailable, match="unreadable"):
+        K.tenant_dek("acme")
+    assert not _wrapped_dek_path("acme").exists()
+
+
 def test_concurrent_first_use_loser_adopts_winner_dek(monkeypatch):
     # Two processes first-use the same tenant: the O_EXCL loser must adopt the
     # winner's persisted DEK, not crash on FileExistsError or seal under a DEK

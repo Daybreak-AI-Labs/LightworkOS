@@ -40,13 +40,7 @@ def _local_kms(raw_kek: str) -> _kms.LocalKMS:
     return _kms.LocalKMS(key)
 
 
-def _tenants_with_dek() -> list[str]:
-    from .registry import list_tenants
-    return [rec.id for rec in list_tenants()
-            if _kms._wrapped_dek_path(rec.id).exists()]
-
-
-def _would_do(tenant_id: str, old_kms, new_kms) -> str:
+def _would_do(tenant_id: str | None, old_kms, new_kms) -> str:
     """Dry-run probe: what rotate_kek_idempotent WOULD return for this tenant,
     without writing. ``rotated`` | ``skipped`` | ``error: ...``."""
     path = _kms._wrapped_dek_path(tenant_id)
@@ -71,14 +65,20 @@ def rotate_local_fleet(old_kek: str, new_kek: str, *, dry_run: bool = False) -> 
 
     Returns ``{"total", "rotated":[ids], "skipped":[ids], "failed":{id: reason},
     "dry_run": bool}``. ``rotated``/``skipped`` are *projections* under dry-run.
+    Every wrapped DEK on disk is covered, including removed (restorable)
+    tenants, tenants used without a roster and the un-namespaced DEK (reported
+    as ``kms.SHARED_DEK_LABEL``); a tenant directory whose DEK cannot be
+    attributed is reported as failed so the old KEK is not retired early.
     """
     old_kms = _local_kms(old_kek)
     new_kms = _local_kms(new_kek)
     rotated: list[str] = []
     skipped: list[str] = []
-    failed: dict[str, str] = {}
+    owners, unrecognised = _kms.wrapped_dek_holders()
+    failed: dict[str, str] = dict(unrecognised)
 
-    for tid in _tenants_with_dek():
+    for tid in owners:
+        label = _kms.SHARED_DEK_LABEL if tid is None else tid
         try:
             if dry_run:
                 outcome = _would_do(tid, old_kms, new_kms)
@@ -88,11 +88,11 @@ def rotate_local_fleet(old_kek: str, new_kek: str, *, dry_run: bool = False) -> 
         except Exception as e:  # pragma: no cover -- defensive; per-tenant isolate
             outcome = f"error: {e}"
         if outcome == "rotated":
-            rotated.append(tid)
+            rotated.append(label)
         elif outcome == "skipped":
-            skipped.append(tid)
+            skipped.append(label)
         else:
-            failed[tid] = outcome.removeprefix("error: ")
+            failed[label] = outcome.removeprefix("error: ")
 
     return {
         "total": len(rotated) + len(skipped) + len(failed),

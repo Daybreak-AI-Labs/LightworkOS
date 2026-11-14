@@ -295,6 +295,7 @@ def tenant_dek(tenant_id: str | None, *, kms: KMS | None = None) -> bytes:
                 return dek
             _dek_cache.pop(cache_key, None)  # lapsed -> re-unwrap below
         # Per-tenant BYOK: resolve THIS tenant's KMS unless one was injected.
+        resolved = kms is None
         kms = kms or get_kms(tenant_id)
         path = _wrapped_dek_path(tenant_id)
         ensure_private_directory(path.parent)
@@ -305,9 +306,26 @@ def tenant_dek(tenant_id: str | None, *, kms: KMS | None = None) -> bytes:
             if len(dek) != _DEK_BYTES:
                 raise EncryptionUnavailable("unwrapped DEK is malformed")
         else:
+            if resolved and _kms_config_unreadable(tenant_id):
+                # The [kms] section that chose the provider may have been lost;
+                # a new DEK wrapped by the fallback local KEK would silently
+                # downgrade a BYOK tenant for good.
+                raise EncryptionUnavailable(
+                    "cannot create a data key: KMS configuration is unreadable")
             dek = _generate_and_persist_dek(path, context, kms)
         _dek_cache[cache_key] = (dek, _now())
         return dek
+
+
+def _kms_config_unreadable(tenant_id: str | None) -> bool:
+    """Whether a configuration source that may hold ``tenant_id``'s ``[kms]``
+    could not be read (``load_config`` then returns defaults)."""
+    from ..config import _source_errors, config_source_errors
+    if tenant_id is None:
+        return bool(config_source_errors(include_tenant=True))
+    from ..paths import _tenant_segment, maverick_home
+    overlay = _io_path(maverick_home() / "tenants" / _tenant_segment(tenant_id) / "config.toml")
+    return bool(config_source_errors(include_tenant=False) or _source_errors([overlay]))
 
 
 def _generate_and_persist_dek(path, context: bytes, kms: KMS) -> bytes:
@@ -404,6 +422,47 @@ def rotate_kek_idempotent(tenant_id: str | None, *, old_kms: KMS, new_kms: KMS) 
     return "rotated"
 
 
+#: Report key for the un-namespaced (no tenant) DEK in fleet rotation reports.
+#: Tenant ids are never empty, so it cannot collide with a named tenant.
+SHARED_DEK_LABEL = ""
+
+
+def wrapped_dek_holders() -> tuple[list[str | None], dict[str, str]]:
+    """Every wrapped DEK on disk, by owner, for fleet rotation.
+
+    The roster alone is not enough: it drops removed (restorable) tenants and
+    knows nothing about the un-namespaced DEK or tenants used without a roster,
+    and a rotation that skips a DEK leaves it wrapped under the old KEK.
+    Returns ``(owners, unrecognised)``: ``None`` in ``owners`` is the
+    un-namespaced DEK; ``unrecognised`` maps a tenant directory holding a DEK
+    whose name does not decode to a tenant id, to the reason.
+    """
+    from urllib.parse import unquote_to_bytes
+
+    from ..paths import _tenant_segment, maverick_home
+
+    home = maverick_home()
+    owners: list[str | None] = []
+    unrecognised: dict[str, str] = {}
+    if _io_path(home / "keys" / "dek.wrapped").exists():
+        owners.append(None)
+    root = home / "tenants"
+    entries = sorted(root.iterdir()) if root.is_dir() else []
+    for entry in entries:
+        if not _io_path(entry / "keys" / "dek.wrapped").exists():
+            continue
+        try:
+            tid = unquote_to_bytes(entry.name).decode("utf-8")
+            ok = bool(tid) and _tenant_segment(tid) == entry.name
+        except (UnicodeDecodeError, ValueError):
+            ok = False
+        if ok:
+            owners.append(tid)
+        else:
+            unrecognised[entry.name] = "tenant directory name does not decode to a tenant id"
+    return owners, unrecognised
+
+
 def rotate_kek_fleet(*, old_kms_for, new_kms_for) -> dict[str, str]:
     """Rotate every provisioned tenant's wrapped DEK from its old KEK to its new
     KEK (fleet-wide key rotation). ``old_kms_for`` / ``new_kms_for`` are callables
@@ -421,18 +480,19 @@ def rotate_kek_fleet(*, old_kms_for, new_kms_for) -> dict[str, str]:
     the rest. **Check the report before retiring the old KEK** -- any
     ``"error: ..."`` entry means that tenant is still wrapped under the old KEK
     and would become unreadable if it is decommissioned. Returns ``{tenant_id:
-    "rotated" | "error: <reason>"}``. Re-wrap only -- no data is re-encrypted."""
-    from .registry import list_tenants
-    report: dict[str, str] = {}
-    for rec in list_tenants():
-        tid = rec.id
-        if not _wrapped_dek_path(tid).exists():
-            continue  # tenant never sealed anything yet -> no DEK to rotate
+    "rotated" | "error: <reason>"}``; the un-namespaced DEK is reported under
+    :data:`SHARED_DEK_LABEL` and the resolvers receive ``None`` for it. Every
+    wrapped DEK on disk is covered (:func:`wrapped_dek_holders`), not only the
+    roster. Re-wrap only -- no data is re-encrypted."""
+    owners, unrecognised = wrapped_dek_holders()
+    report: dict[str, str] = {name: f"error: {why}" for name, why in unrecognised.items()}
+    for tid in owners:
+        label = SHARED_DEK_LABEL if tid is None else tid
         try:
             rotate_kek(tid, old_kms=old_kms_for(tid), new_kms=new_kms_for(tid))
-            report[tid] = "rotated"
+            report[label] = "rotated"
         except Exception as e:
-            report[tid] = f"error: {e}"
+            report[label] = f"error: {e}"
     return report
 
 
