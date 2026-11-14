@@ -2,8 +2,8 @@
 
 Tier 1 (SRE reviewer): a single 429 / 503 / connection-reset used to
 fail the entire goal. Provider calls now retry with exponential backoff
-(1s, 2s, 4s, 8s, max 5 attempts), honoring ``Retry-After`` when the
-provider returns one.
+(1s, 2s, ..., capped at 30 s; 3 attempts by default, set by ``[latency]
+retry_attempts``), honoring ``Retry-After`` when the provider returns one.
 
 Errors we retry:
   - anthropic.RateLimitError, anthropic.APIConnectionError,
