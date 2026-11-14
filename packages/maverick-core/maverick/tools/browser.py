@@ -1083,6 +1083,11 @@ def _browser_extract_text(page, args) -> str:
         # Whole-page text fallback.
         body = page.query_selector("body")
         text = (body.inner_text() or "").strip()[:50_000] if body else ""
+    return _scanned_page_text(text)
+
+
+def _scanned_page_text(text: str) -> str:
+    """Page-derived text, annotated by the injection scan, then redacted."""
     cleaned, warning = _scan_fetched(text)
     return _redact_browser_text(warning + cleaned)
 
@@ -1091,8 +1096,8 @@ def _browser_extract_html(page, args) -> str:
     selector = args.get("selector")
     if selector:
         el = page.query_selector(selector)
-        return _redact_browser_text((el.inner_html() if el else "")[:100_000])
-    return _redact_browser_text(page.content()[:100_000])
+        return _scanned_page_text((el.inner_html() if el else "")[:100_000])
+    return _scanned_page_text(page.content()[:100_000])
 
 
 def _browser_find_text(page, args) -> str:
@@ -1136,7 +1141,7 @@ def _browser_list_links(page) -> str:
         text = (a.inner_text() or "").strip()[:80]
         links.append(f"{text!r} -> {href}")
     return (
-        _redact_browser_text("\n".join(links))
+        _scanned_page_text("\n".join(links))
         if links
         else "no links on page"
     )
@@ -1245,7 +1250,7 @@ def _browser_observe(page) -> str:
         "accessibility_tree": ax_json,
         "accessibility_truncated": ax_truncated,
     }
-    return _redact_browser_text(json.dumps(snapshot, ensure_ascii=False, default=str))
+    return _scanned_page_text(json.dumps(snapshot, ensure_ascii=False, default=str))
 
 
 def _browser_save_session(session) -> str:
