@@ -77,3 +77,30 @@ def test_answer_path_write_failure_reasks_only_the_workspace(monkeypatch, tmp_pa
     assert saved["sandbox"] == {"backend": "docker", "workdir": str(tmp_path / "good-work")}
     assert "Workspace directory" in prompts.getvalue()
     assert not Path(saved["sandbox"]["workdir"]).exists()
+
+
+@pytest.mark.parametrize("failed_name", ["", "config.toml.lock", ".config.toml-publication.tmp"])
+def test_config_publication_failure_preserves_a_containing_workspace(monkeypatch, tmp_path, prompts, failed_name):
+    work = tmp_path / "work"
+    config_dir = work / ".maverick"
+    config_dir.mkdir(parents=True)
+    partial = config_dir / "wizard-partial.json"
+    state = {"providers": ["anthropic"], "sandbox": {"backend": "docker", "workdir": str(work)}}
+    partial.write_text(json.dumps(state))
+    monkeypatch.setattr(wizard, "CONFIG_DIR", config_dir)
+    monkeypatch.setattr(wizard, "CONFIG_FILE", config_dir / "config.toml")
+    monkeypatch.setattr(wizard, "ENV_FILE", config_dir / ".env")
+    monkeypatch.setattr(wizard, "PARTIAL_STATE_PATH", partial)
+    asked = []
+    monkeypatch.setattr(wizard, "_q_text", lambda *a, **kw: asked.append(a[0]) or str(tmp_path / "other"))
+    assert wizard._advanced_write_failed(PermissionError(13, "denied", str(config_dir / failed_name))) == 1
+    assert asked == []
+    assert json.loads(partial.read_text()) == state
+
+    # A dedicated work folder inside the configuration directory is still an
+    # answer-owned path, rather than a configuration publication location.
+    state["sandbox"]["workdir"] = str(config_dir / "work")
+    partial.write_text(json.dumps(state))
+    assert wizard._advanced_write_failed(PermissionError(13, "denied", str(config_dir / "work" / "probe"))) == 1
+    assert asked == ["Workspace directory"]
+    assert json.loads(partial.read_text())["sandbox"]["workdir"] == str(tmp_path / "other")

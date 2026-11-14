@@ -6198,6 +6198,12 @@ def _reask_failed_workspace(exc: OSError) -> None:
         workdir = Path(sandbox["workdir"]).expanduser().resolve()
         if failed in {CONFIG_FILE.resolve(), ENV_FILE.resolve(), PARTIAL_STATE_PATH.resolve()}:
             return
+        config_dir = CONFIG_DIR.resolve()
+        # The more specific configuration location owns its directory, locks
+        # and publication temps. A work folder nested inside it still owns
+        # its own preparation failures.
+        if (failed == config_dir or config_dir in failed.parents) and config_dir not in workdir.parents:
+            return
         if failed != workdir and workdir not in failed.parents:
             return
     except (OSError, ValueError, TypeError):

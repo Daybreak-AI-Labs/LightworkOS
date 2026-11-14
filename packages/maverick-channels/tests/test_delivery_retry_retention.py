@@ -206,3 +206,41 @@ def test_automatic_recovery_waits_but_explicit_recovery_remains_immediate(journa
         assert result[0]["delivery"] == "delivered"
         assert calls == ["answer", "answer"] and handled == ["recover"]
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("phase", ["execution", "staging"])
+def test_live_legacy_owner_without_scope_is_never_declared_abandoned(journal, monkeypatch, phase):
+    incoming = message("legacy")
+    incoming.attachments = [{"filename": "note.txt", "mime": "text/plain", "data": b"live legacy input"}]
+    row = journal.admit(incoming, external_id="legacy", account="acct")
+    row = journal.claim_execution(row) if phase == "execution" else journal.change(row, execution="staging")
+    # An earlier build persisted this protocol without the new ownership field
+    # or activity locks. Its still-running handler/publisher owns this revision.
+    row = journal.store.update(row["id"], lambda record: record.pop("activity_scope"),
+                               expected_revision=row["revision"], action="legacy_fixture", actor="test")
+    blob = delivery._blob_path(row["id"], row["message"]["attachments"][0]["sha256"])
+    later = row["updated_at"] + delivery.STALE_CLAIM_SECONDS + 1
+    monkeypatch.setattr(delivery, "time", SimpleNamespace(time=lambda: later))
+
+    async def run():
+        ready, finish = asyncio.Event(), asyncio.Event()
+
+        async def legacy_owner():
+            ready.set()
+            await finish.wait()
+            return journal.change(row, execution="completed" if phase == "execution" else "received")
+
+        owner = asyncio.create_task(legacy_owner())
+        await ready.wait()
+        try:
+            if phase == "execution":
+                journal._surface_stale_claim(row)
+            else:
+                journal._compact_receipt(row, later)
+            assert not owner.done()
+            assert journal.get(row["id"]) == row
+            assert blob.exists()
+        finally:
+            finish.set()
+            await owner
+    asyncio.run(run())

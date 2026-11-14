@@ -413,8 +413,8 @@ class DeliveryJournal:
 
         # A different-home replica's local lock says nothing about its owner.
         try:
-            if row.get("activity_scope") not in (None, _activity_scope()):
-                log.warning("Channel execution belongs to another replica; its receipt remains unresolved")
+            if row.get("activity_scope") != _activity_scope():
+                log.warning("Channel execution has no matching workspace owner; its receipt remains unresolved")
                 return row
             with _receipt_activity(row["id"]) as idle:
                 current = self.get(row["id"])
@@ -470,8 +470,8 @@ class DeliveryJournal:
         fingerprint = _digest([payload, route])
         row = self.get(record_id)
         if row and row.get("staging_retired") and not row.get("restore_hold"):
-            if row.get("activity_scope") not in (None, _activity_scope()):
-                raise IntakeMessageRejected("Another replica's unfinished message cleanup needs review")
+            if row.get("activity_scope") != _activity_scope():
+                raise IntakeMessageRejected("Unfinished message cleanup has no matching workspace owner; review its saved receipt")
             self._retire_staging(row)
             row = self.get(record_id)
         if row is None:
@@ -624,8 +624,8 @@ class DeliveryJournal:
                 or not row.get("staging_retired") and row["updated_at"] > now - STALE_CLAIM_SECONDS):
             return False
         try:
-            if row.get("activity_scope") not in (None, _activity_scope()):
-                log.warning("Unfinished channel intake belongs to another replica; its receipt remains saved")
+            if row.get("activity_scope") != _activity_scope():
+                log.warning("Unfinished channel intake has no matching workspace owner; its receipt remains saved")
                 return False
             with _receipt_activity(row["id"], purpose="intake") as idle:
                 current = self.get(row["id"])
