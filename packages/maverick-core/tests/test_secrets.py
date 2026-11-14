@@ -152,7 +152,7 @@ def test_common_credential_shapes_are_redacted():
         # httpx logs request URLs at INFO: Wolfram's appid, Trello's key and a
         # Telegram bot token in the URL path.
         "GET https://api.wolframalpha.com/v2/query?input=pi&appid=WXYZ12-ABCDEF1234": "ABCDEF1234",  # pragma: allowlist secret
-        "GET https://api.trello.com/1/boards?key=0123abcdkey&token=tok": "0123abcdkey",  # pragma: allowlist secret
+        "GET https://api.trello.com/1/boards?key=0123456789abcdef0123456789abcdef&token=tok": "0123456789abcdef0123456789abcdef",  # pragma: allowlist secret
         "POST https://api.telegram.org/bot123456:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw/getUpdates": "AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw",  # pragma: allowlist secret
         "https://api.telegram.org/file/bot42:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw/doc.pdf": "AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw",  # pragma: allowlist secret
     }
@@ -177,6 +177,11 @@ def test_common_credential_shapes_are_redacted():
         "secret = sha256(data)",
         "if flags&key==mask: return",
         "def bot(self, key=None):",
+        "?key=value",
+        "?sort=name&key=id",
+        "redis.io/?name=GET&key=mykey",
+        'f"https://api.wolframalpha.com/v2/query?appid={appid}&input="',
+        "see [demo](https://x.org/p?appid=demo).",
     ):
         assert scrub(code) == code, code
     with_query = scrub("https://u:pw@host?next=a@b.com")  # pragma: allowlist secret

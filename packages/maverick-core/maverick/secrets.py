@@ -129,10 +129,14 @@ _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # Query parameters that are a credential only for particular services:
     # Wolfram Alpha's ``appid`` (its sole credential) and Trello's ``key``.
     # httpx logs every request URL at INFO. Kept apart from url_secret so the
-    # names there match exactly as before; ``(?!=)`` leaves an ``&key==`` (a
-    # comparison in source code) alone.
+    # names there match exactly as before. ``key=``/``appid=`` are also common
+    # ordinary parameters (``?key=id``, ``?appid=demo``, a ``{appid}``
+    # template), so only a credential-shaped value is redacted: 16-256 letters,
+    # digits, ``-`` or ``_`` making up the whole value (a 32-hex Trello key, a
+    # Wolfram app id). The value never takes in ``)``, quotes, braces or
+    # whitespace, and the bounded run keeps the match linear.
     ("url_key_param", re.compile(
-        r"(?i)([?&](?:appid|key)=)(?!=)([^&#\s\"']+)",
+        r"(?i)([?&](?:appid|key)=)([A-Za-z0-9_-]{16,256})(?=$|[&#\s\"'(){}\[\]<>])",
     )),
     # Telegram bot token in a Bot API URL path (``/bot<id>:<token>/method``,
     # also ``/file/bot<id>:<token>/...``). httpx logs the URL at INFO. The bot
