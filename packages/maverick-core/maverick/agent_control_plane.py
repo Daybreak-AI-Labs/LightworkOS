@@ -702,12 +702,14 @@ def _managed_entry(agent_id: str) -> dict | None:
 
 def _overlay_from(agent) -> dict:
     """A managed-registry entry equivalent to a parsed ``TrustedAgent`` (used
-    when the entry lives only in TOML: the overlay overrides it by id)."""
+    when the entry lives only in TOML: the overlay overrides it by id).
+    Plaintext config-file bearers are hashed so the overlay never stores them."""
+    from .agent_trust import hash_overlay_tokens
     entry: dict[str, Any] = {}
     for f in dataclasses.fields(agent):
         value = getattr(agent, f.name)
         entry[f.name] = sorted(value) if isinstance(value, frozenset) else value
-    return entry
+    return hash_overlay_tokens(entry)
 
 
 def _set_trust_revoked(agent_id: str, revoked: bool, notes: list[str]) -> bool:
