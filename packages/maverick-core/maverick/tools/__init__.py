@@ -976,6 +976,26 @@ def _registry_principal(user_id: str | None) -> str:
     return str(current_principal() or "").strip()
 
 
+def _workspace_cache_scope(sandbox: Any) -> str | None:
+    """Tool-output cache scope for ``sandbox``'s workspace.
+
+    A local workdir path names one directory on this machine. A remote one
+    (SSH, microVM, Modal) only means something on its host, so the host is
+    part of the scope when the backend names one; otherwise the backend
+    instance itself is, so two remote sandboxes never share entries.
+    """
+    from ..sandbox.sdk import workdir_is_local
+
+    workdir = getattr(sandbox, "workdir", None)
+    if not workdir:
+        return None
+    scope = f"{type(sandbox).__name__}:{workdir}"
+    if workdir_is_local(sandbox):
+        return scope
+    host = getattr(sandbox, "host", None)
+    return f"{scope}@{host}" if host else f"{scope}@instance-{id(sandbox)}"
+
+
 def base_registry(
     world,
     sandbox,
@@ -1028,12 +1048,11 @@ def base_registry(
     from .str_edit import str_replace_editor
 
     principal = _registry_principal(user_id)
-    workdir = getattr(sandbox, "workdir", None)
-    reg = ToolRegistry(
-        principal=principal or None,
-        workspace=f"{type(sandbox).__name__}:{workdir}" if workdir else None,
-    )
     from ..sandbox.sdk import workdir_is_local
+
+    reg = ToolRegistry(
+        principal=principal or None, workspace=_workspace_cache_scope(sandbox),
+    )
 
     # These tools use local pathlib operations rather than sandbox.exec().
     # A remote workspace path would refer to an unrelated host directory.

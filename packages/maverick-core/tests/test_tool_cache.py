@@ -354,3 +354,16 @@ def test_workspaces_never_share_cached_output(monkeypatch, tmp_path):
     _run(reg_a, "read_file", {"path": "notes.txt"})
     _run(reg_b, "read_file", {"path": "notes.txt"})
     assert calls_a["n"] == 1 and calls_b["n"] == 1  # same args, two workspaces
+
+
+def test_remote_workspaces_on_different_hosts_have_distinct_cache_scopes():
+    from maverick.tools import _workspace_cache_scope
+
+    class Remote:
+        workdir_is_local = False
+        workdir = "~/maverick-workspace"
+
+        def __init__(self, host):
+            self.host = host
+
+    assert _workspace_cache_scope(Remote("a.example")) != _workspace_cache_scope(Remote("b.example"))
