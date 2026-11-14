@@ -51,6 +51,7 @@ except ModuleNotFoundError:  # pragma: no cover -- Py 3.11 CI matrix
     import tomli as tomllib  # type: ignore[no-redef]
 
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 
 try:
@@ -513,7 +514,7 @@ def _q_secret(message: str) -> str:
     if questionary is None:
         import getpass
 
-        return getpass.getpass(f"{message}: ").strip()
+        return getpass.getpass(f"{message}: ")
     # Route through _ask so Ctrl-C / Ctrl-D / non-TTY (questionary returns
     # None) raises KeyboardInterrupt and aborts the wizard, like every other
     # prompt. The old `.ask() or ""` swallowed the abort into "", which
@@ -2354,6 +2355,20 @@ def pick_intent_value() -> dict[str, Any]:
             "completion_confirmation": False}
 
 
+def _prompt_finance_dollars(question: str, *, default: str) -> float:
+    while True:
+        raw = _q_text(question, default=default).strip()
+        if raw.startswith(("$", "£", "€")):
+            raw = raw[1:].strip()
+        try:
+            value = float(raw.replace(",", ""))
+        except ValueError:
+            value = float("nan")
+        if math.isfinite(value) and value >= 0:
+            return value
+        console.print("[yellow]Enter zero or a positive amount (for example, $50,000).[/yellow]")
+
+
 def pick_finance() -> dict[str, Any]:
     """Opt-in to the finance suite governance (finance-agent-suite §5/§8).
 
@@ -2391,13 +2406,11 @@ def pick_finance() -> dict[str, Any]:
         ],
         default=["sox", "gaap"],
     )
-    require_human_above = _safe_float(
-        _q_text("  Pause money movement above $ (DoA threshold; 0 = pause all)", default="5000"),
-        default=5000.0,
+    require_human_above = _prompt_finance_dollars(
+        "  Pause money movement above $ (DoA threshold; 0 = pause all)", default="5000",
     )
-    deny_above = _safe_float(
-        _q_text("  Hard-deny money movement above $ (0 = no hard ceiling)", default="0"),
-        default=0.0,
+    deny_above = _prompt_finance_dollars(
+        "  Hard-deny money movement above $ (0 = no hard ceiling)", default="0",
     )
     require_fresh = _q_confirm(
         "  Require a FRESH human approval each time a paused action runs "
@@ -3607,14 +3620,11 @@ def pick_connectors() -> dict[str, str]:
         for env_name, is_secret in entry["env"]:
             current = os.environ.get(env_name, "")
             if is_secret:
-                masked = (current[:4] + "...") if current else "(none)"
-                val = _q_secret(f"    {env_name} [current: {masked}] (blank = keep current)")
-                if not val and current:
-                    val = current
+                val = _ask_credential(env_name, env_name)
             else:
                 val = _q_text(f"    {env_name}", default=current)
             if val:
-                keys[env_name] = val
+                keys[env_name] = _single_line_env_value(env_name, val)
     return keys
 
 
@@ -3679,12 +3689,20 @@ def _web_address_problem(value: str, schemes: tuple[str, ...]) -> str | None:
             + " and has no user name or password in it.")
 
 
+def _single_line_env_value(env_name: str, value: str) -> str:
+    """Never let one saved value introduce another environment variable."""
+    while "\r" in value or "\n" in value:
+        console.print(f"[yellow]{env_name} must be on one line. Re-enter it without line breaks.[/yellow]")
+        value = _q_secret(f"  {env_name} (one line; blank = omit)")
+    return value
+
+
 def _ask_credential(env_name: str, label: str) -> str:
-    """A credential for ~/.maverick/.env, asked the way the connector prompts ask: blank
-    keeps the value the environment already holds."""
+    """Ask for a credential without showing any of an existing value."""
     current = os.environ.get(env_name, "")
-    masked = (current[:4] + "...") if current else "(none)"
-    return _q_secret(f"  {label} [current: {masked}] (blank = keep current)").strip() or current
+    status = "set" if current else "not set"
+    value = _q_secret(f"  {label} [current: {status}] (blank = keep current)") or current
+    return _single_line_env_value(env_name, value).strip()
 
 
 def _ask_azure_id(env_name: str, label: str) -> str:
@@ -3989,11 +4007,11 @@ def collect_api_keys(providers: list[str], channel_envs: set[str]) -> dict[str, 
     console.print("[bold]API keys / tokens[/bold] (stored in ~/.maverick/.env, chmod 600)")
     for env_name in dict.fromkeys(needed):  # dedupe preserving order
         current = os.environ.get(env_name, "")
-        masked = (current[:7] + "...") if current else "(none)"
-        val = _q_secret(f"  {env_name} [current: {masked}] (leave blank to keep current)")
+        val = _ask_credential(env_name, env_name)
         if not val:
-            if current:
-                keys[env_name] = current
+            continue
+        if val == current:
+            keys[env_name] = val
             continue
 
         # Validate when we know how, with a 7-day cache so re-runs of
@@ -4478,10 +4496,17 @@ def _cfg_knowledge_sources(knowledge_sources: dict[str, Any] | None) -> list[str
     # them at each refresh and refuses any value outside its range.
     lines = ["", "[knowledge_sources]"]
     for key, _label, _default, low, high in _KNOWLEDGE_SOURCE_LIMITS:
-        value = knowledge_sources.get(key)
+        if key not in knowledge_sources:
+            continue
+        value = knowledge_sources[key]
         if type(value) is not int or not low <= value <= high:
             raise ValueError(f"knowledge_sources.{key} must be a whole number from {low} to {high}")
         lines.append(f"{key} = {value}")
+    if "permission_filter" in knowledge_sources:
+        mode = knowledge_sources["permission_filter"]
+        if mode not in ("off", "by_email"):
+            raise ValueError('knowledge_sources.permission_filter must be "off" or "by_email"')
+        _emit_kv(lines, "permission_filter", mode)
     return lines
 
 
@@ -4555,8 +4580,8 @@ def _cfg_finance(finance: dict[str, Any] | None) -> list[str]:
     # sanctions. _cfg_governance owns the parent table and its scalar keys;
     # this helper emits only the finance-owned child and peer tables.
     lines: list[str] = []
-    rha = finance.get("require_human_above") or 0
-    if rha and rha > 0:
+    rha = finance.get("require_human_above")
+    if rha is not None and rha >= 0:
         lines.append("")
         lines.append("[governance.require_human_above]")
         lines.append(f'"*" = {rha}')
@@ -4732,7 +4757,8 @@ def _cfg_plugins(
     if plugin_enforce:
         _emit_kv(lines, "enforce_permissions", plugin_enforce)
     if ts_plugins:
-        _emit_kv(lines, "ts", ts_plugins)
+        commands = ["[" + ", ".join(_toml_str(arg) for arg in command) + "]" for command in ts_plugins]
+        lines.append("ts = [" + ", ".join(commands) + "]")
     return lines
 
 
@@ -5028,6 +5054,7 @@ def write_config(
 
     # Preserve private backups of hand-edited files. Compose both new files
     # before replacing either active file, and publish through private temps.
+    keys = {name: _single_line_env_value(name, value) for name, value in keys.items()}
     env_body = "\n".join(f"{k}={v}" for k, v in keys.items()) + "\n" if keys else None
 
     # [flows] can be requested by two independent wizard steps: the dedicated
@@ -5256,6 +5283,22 @@ def smoke_test() -> bool:
 PARTIAL_STATE_PATH = CONFIG_DIR / "wizard-partial.json"
 
 
+def _public_partial_state(state: dict[str, Any]) -> dict[str, Any]:
+    saved = dict(state)
+    advanced = saved.get("advanced")
+    oidc = advanced.get("oidc") if isinstance(advanced, dict) else None
+    if isinstance(oidc, dict) and any(oidc.get(key) for key in ("client_secret", "session_secret")):
+        saved.pop("advanced", None)
+    knowledge = saved.get("knowledge")
+    if isinstance(knowledge, dict) and knowledge.get("dsn"):
+        saved.pop("knowledge", None)
+    notifications = saved.get("_notifications_pair")
+    if (isinstance(notifications, (list, tuple)) and notifications
+            and isinstance(notifications[0], dict) and notifications[0].get("ntfy_topic")):
+        saved.pop("_notifications_pair", None)
+    return saved
+
+
 def _save_partial(state: dict[str, Any]) -> None:
     """Persist wizard progress so --resume can pick up later."""
     try:
@@ -5263,13 +5306,8 @@ def _save_partial(state: dict[str, Any]) -> None:
 
         from maverick.file_lock import atomic_write_text
 
-        saved = dict(state)
-        advanced = saved.get("advanced")
-        oidc = advanced.get("oidc") if isinstance(advanced, dict) else None
-        if isinstance(oidc, dict) and any(oidc.get(key) for key in ("client_secret", "session_secret")):
-            # Resume must ask for this step again; omitting just the secrets
-            # would silently write an incomplete browser SSO configuration.
-            saved.pop("advanced", None)
+        # Re-ask whole secret-bearing steps on resume, preserving current-run answers.
+        saved = _public_partial_state(state)
         atomic_write_text(PARTIAL_STATE_PATH, _json.dumps(saved, default=str), mode=0o600)
     except OSError:
         pass
@@ -5285,19 +5323,17 @@ def _load_partial() -> dict[str, Any] | None:
         state = _json.loads(PARTIAL_STATE_PATH.read_text())
         if not isinstance(state, dict):
             return None
-        advanced = state.get("advanced")
-        oidc = advanced.get("oidc") if isinstance(advanced, dict) else None
-        if isinstance(oidc, dict) and any(oidc.get(key) for key in ("client_secret", "session_secret")):
-            # Older versions wrote these secrets to the resume file. Remove
-            # them immediately and require the operator to re-enter the step.
+        saved = _public_partial_state(state)
+        if saved != state:
+            # Scrub older resume files before returning any saved answers.
             from maverick.file_lock import atomic_write_text
 
-            state.pop("advanced", None)
+            state = saved
             try:
                 atomic_write_text(PARTIAL_STATE_PATH, _json.dumps(state, default=str), mode=0o600)
             except OSError as exc:
                 raise RuntimeError(
-                    "Cannot securely remove old OIDC secrets from the wizard resume file. "
+                    "Cannot securely remove old OIDC secrets or connection credentials from the wizard resume file. "
                     f"Secure or remove {PARTIAL_STATE_PATH} before resuming."
                 ) from exc
         return state
@@ -5318,7 +5354,7 @@ def run_fast() -> int:
 
     Skips every prompt. Writes a minimal config that runs on Anthropic
     Claude (BYOK via ANTHROPIC_API_KEY env), the Docker sandbox when its
-    daemon is up (else local), balanced safety, $5/run cap. Users can
+    daemon is up (else local), balanced safety, $2 and 30-minute task caps. Users can
     use Lightwork Settings after installation to change supported options.
     """
     guard = _first_setup_guard()
@@ -5329,7 +5365,7 @@ def run_fast() -> int:
         console.print("[red]Preflight failed.[/red] Fix the issues above and re-run.")
         return 1
     console.print(
-        "[bold]Fast setup:[/bold] using safe defaults. "
+        "[bold]Fast setup:[/bold] using safe defaults, with $2 and 30 minutes per task. "
         "Open Lightwork Settings after setup to make changes.\n"
         f"Setup will be saved at {CONFIG_FILE}.\n"
     )
@@ -5344,7 +5380,7 @@ def run_fast() -> int:
         "scan_output": True,
         "compartments": False,
     }
-    budget = {"strict_pricing": True}
+    budget = {"max_dollars": 2.0, "max_wall_seconds": 1800.0, "strict_pricing": True}
     # Prefer the isolated Docker sandbox, but fall back to local when the
     # daemon isn't up -- otherwise fast-setup writes a docker config that the
     # very next `maverick start` can't run (the user never chose docker, yet
@@ -5534,7 +5570,9 @@ def _consumer_api_key() -> dict[str, str]:
         "Get a key at: [cyan]https://console.anthropic.com/settings/keys[/cyan]\n"
         "[dim]It looks like 'sk-ant-...' and is about 100 characters long.[/dim]",
     )
-    val = _q_secret("  Paste your Anthropic API key (leave blank to skip):")
+    val = _single_line_env_value(
+        "ANTHROPIC_API_KEY", _q_secret("  Paste your Anthropic API key (leave blank to skip):"),
+    )
     if not val.strip():
         console.print(
             "[yellow]Skipped.[/yellow] You can add one later in Lightwork Settings."
@@ -5717,9 +5755,9 @@ def run_consumer() -> int:
     if keys:
         console.print(
             Panel.fit(
-                (f"[bold yellow]Setup saved, {user_name}. File work is off.[/bold yellow]\n\n"
+                (f"[bold yellow]Setup saved, {escape(user_name)}. File work is off.[/bold yellow]\n\n"
                  if backend == "local" else
-                 f"[bold green]Setup complete, {user_name}.[/bold green]\n\n")
+                 f"[bold green]Setup complete, {escape(user_name)}.[/bold green]\n\n")
                 + f"Your first task ({outcome.label}, on sample data, waits in {outcome.lands_in}):\n"
                 + f"  [bold]{cli_command(department)}[/bold]\n\n"
                 + (_FILE_WORK_RECOVERY + "\n\n" if backend == "local" else "")
@@ -5732,7 +5770,7 @@ def run_consumer() -> int:
     else:
         console.print(
             Panel.fit(
-                f"[bold yellow]Setup saved without an API key, {user_name}.[/bold yellow]\n\n"
+                f"[bold yellow]Setup saved without an API key, {escape(user_name)}.[/bold yellow]\n\n"
                 "Open Lightwork Settings to add a provider key when ready.",
                 border_style="yellow",
             )
@@ -6051,9 +6089,9 @@ def run_express() -> int:
     if keys:
         console.print(
             Panel.fit(
-                (f"[bold yellow]Setup saved, {user_name}. File work is off.[/bold yellow]\n\n"
+                (f"[bold yellow]Setup saved, {escape(user_name)}. File work is off.[/bold yellow]\n\n"
                  if backend == "local" else
-                 f"[bold green]Setup saved, {user_name}.[/bold green]\n\n")
+                 f"[bold green]Setup saved, {escape(user_name)}.[/bold green]\n\n")
                 + "Open the dashboard:\n"
                 + "  [bold]maverick dashboard[/bold]   web UI at http://127.0.0.1:8765\n\n"
                 + (_FILE_WORK_RECOVERY + "\n\n" if backend == "local" else "")
@@ -6064,7 +6102,7 @@ def run_express() -> int:
     else:
         console.print(
             Panel.fit(
-                f"[bold yellow]Setup saved without an API key, {user_name}.[/bold yellow]\n\n"
+                f"[bold yellow]Setup saved without an API key, {escape(user_name)}.[/bold yellow]\n\n"
                 "Open Lightwork Settings to add a provider key.",
                 border_style="yellow",
             )
@@ -6412,6 +6450,20 @@ def _run_plugin_picks(state: dict[str, Any], _announce, channels: dict[str, Any]
     }
 
 
+def _web_search_step(state: dict[str, Any]) -> tuple[bool, list[str], dict[str, str]]:
+    """Keep the chosen backend alongside its credential requirements for resume."""
+    web_search_pair = state.get("_web_search_pair")
+    if web_search_pair is None or (web_search_pair[0] and not state.get("_web_search_backend")):
+        web_search_pair = pick_web_search()
+        state["_web_search_backend"] = os.environ.get("MAVERICK_SEARCH_BACKEND") if web_search_pair[0] else None
+    web_search_enabled, web_search_envs = web_search_pair
+    state["_web_search_pair"] = [web_search_enabled, web_search_envs]
+    _save_partial(state)
+    backend = state.get("_web_search_backend")
+    keys = {"MAVERICK_SEARCH_BACKEND": backend} if web_search_enabled and backend else {}
+    return web_search_enabled, web_search_envs, keys
+
+
 def _run_short_setup_mode(resume: bool) -> int | None:
     # A saved partial state belongs to the advanced flow, not the mode picker.
     if resume:
@@ -6558,9 +6610,7 @@ def run(fast: bool = False, resume: bool = False) -> int:
     advanced = _simple["advanced"]
 
     _announce()
-    web_search_enabled, web_search_envs = state.get("_web_search_pair") or pick_web_search()
-    state["_web_search_pair"] = [web_search_enabled, web_search_envs]
-    _save_partial(state)
+    web_search_enabled, web_search_envs, web_search_keys = _web_search_step(state)
 
     _plugins_block = _run_plugin_picks(state, _announce, channels)
     mcp_servers = _plugins_block["mcp_servers"]
@@ -6637,6 +6687,7 @@ def run(fast: bool = False, resume: bool = False) -> int:
     # to partial state). Editable later in the .env file.
     keys.update(pick_connectors())
     keys.update(monitoring_keys)
+    keys.update(web_search_keys)
 
     suites = pick_suites()
 
@@ -6649,79 +6700,84 @@ def run(fast: bool = False, resume: bool = False) -> int:
         )
         return 0
 
-    write_config(
-        providers,
-        role_models,
-        channels,
-        safety,
-        budget,
-        sandbox,
-        keys,
-        capabilities,
-        research_execution=research_execution,
-        candidate_promotion=candidate_promotion,
-        knowledge_access=knowledge_access,
-        advanced=advanced,
-        provider_options=provider_options,
-        mcp_servers=mcp_servers,
-        plugins=plugins,
-        plugin_grant=plugin_grant,
-        ts_plugins=ts_plugins,
-        plugin_enforce=plugin_enforce,
-        tool_acl=tool_acl,
-        rate_limits=rate_limits,
-        retention=retention,
-        analytics=analytics,
-        persona=persona,
-        notifications=notifications,
-        deadline_alerts=deadline_alerts,
-        webhooks=webhooks,
-        deliverables=deliverables,
-        contact_centre=contact_centre,
-        personas=personas,
-        a2a=a2a_cfg,
-        my_work=my_work_cfg,
-        notifications_email=notifications_email,
-        support=support_cfg,
-        collaboration=collaboration_cfg,
-        web_search_enabled=web_search_enabled,
-        skills=signed_skills
-        if (
-            signed_skills.get("trusted_pubkeys")
-            or signed_skills.get("require_signed")
-            or signed_skills.get("require_signed_catalog")
+    try:
+        write_config(
+            providers,
+            role_models,
+            channels,
+            safety,
+            budget,
+            sandbox,
+            keys,
+            capabilities,
+            research_execution=research_execution,
+            candidate_promotion=candidate_promotion,
+            knowledge_access=knowledge_access,
+            advanced=advanced,
+            provider_options=provider_options,
+            mcp_servers=mcp_servers,
+            plugins=plugins,
+            plugin_grant=plugin_grant,
+            ts_plugins=ts_plugins,
+            plugin_enforce=plugin_enforce,
+            tool_acl=tool_acl,
+            rate_limits=rate_limits,
+            retention=retention,
+            analytics=analytics,
+            persona=persona,
+            notifications=notifications,
+            deadline_alerts=deadline_alerts,
+            webhooks=webhooks,
+            deliverables=deliverables,
+            contact_centre=contact_centre,
+            personas=personas,
+            a2a=a2a_cfg,
+            my_work=my_work_cfg,
+            notifications_email=notifications_email,
+            support=support_cfg,
+            collaboration=collaboration_cfg,
+            web_search_enabled=web_search_enabled,
+            skills=signed_skills
+            if (
+                signed_skills.get("trusted_pubkeys")
+                or signed_skills.get("require_signed")
+                or signed_skills.get("require_signed_catalog")
+            )
+            else None,
+            self_learning=self_learning,
+            # Persist the explicit default-off decision. Unlike default-on governed
+            # learning, Ekko never inherits authority from another feature.
+            ekko=ekko,
+            automation_import=automation_import if automation_import.get("enable") else None,
+            event_triggers=event_triggers if event_triggers.get("enable") else None,
+            flows=flows if flows.get("enable") else None,
+            knowledge=knowledge if knowledge.get("enable") else None,
+            knowledge_sources=knowledge_sources if knowledge.get("enable") else None,
+            oauth=oauth if oauth.get("vault") else None,
+            governed_connectors=governed_connectors if governed_connectors.get("enable") else None,
+            durable=durable if durable.get("enabled") else None,
+            workspace=workspace if workspace.get("journal") else None,
+            finance=finance if finance.get("enable") else None,
+            value=value or None,
+            intent_value=intent_value,
+            assessments=assessments or None,
+            security_suite=security_suite,
+            monitoring=monitoring,
+            approval=approval,
+            suites=suites,
+            # The advanced flow applies no preset -- the operator hand-picked
+            # every knob -- so record "custom" rather than omitting the label
+            # (dashboards keyed on [governance].profile would otherwise read
+            # advanced-configured tenants, the most governance-sensitive ones,
+            # as tier-less) or borrowing a level name the knobs may not match.
+            governance_profile="custom",
+            per_tenant_keys=per_tenant_keys,
+            protect_existing=True,
         )
-        else None,
-        self_learning=self_learning if self_learning.get("enable") else None,
-        # Persist the explicit default-off decision. Unlike default-on governed
-        # learning, Ekko never inherits authority from another feature.
-        ekko=ekko,
-        automation_import=automation_import if automation_import.get("enable") else None,
-        event_triggers=event_triggers if event_triggers.get("enable") else None,
-        flows=flows if flows.get("enable") else None,
-        knowledge=knowledge if knowledge.get("enable") else None,
-        knowledge_sources=knowledge_sources if knowledge.get("enable") else None,
-        oauth=oauth if oauth.get("vault") else None,
-        governed_connectors=governed_connectors if governed_connectors.get("enable") else None,
-        durable=durable if durable.get("enabled") else None,
-        workspace=workspace if workspace.get("journal") else None,
-        finance=finance if finance.get("enable") else None,
-        value=value or None,
-        intent_value=intent_value,
-        assessments=assessments or None,
-        security_suite=security_suite,
-        monitoring=monitoring,
-        approval=approval,
-        suites=suites,
-        # The advanced flow applies no preset -- the operator hand-picked
-        # every knob -- so record "custom" rather than omitting the label
-        # (dashboards keyed on [governance].profile would otherwise read
-        # advanced-configured tenants, the most governance-sensitive ones,
-        # as tier-less) or borrowing a level name the knobs may not match.
-        governance_profile="custom",
-        per_tenant_keys=per_tenant_keys,
-        protect_existing=True,
-    )
+    except Exception as exc:
+        _clear_partial()
+        show_install_failure(exc)
+        return 1
     _clear_partial()
     ok = smoke_test()
     if ok:
