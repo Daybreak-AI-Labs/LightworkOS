@@ -6,10 +6,10 @@ configuration with provider IDs before upgrading; usernames may be reassigned.
 The dashboard accepts a Mattermost allow-list entry only when it is a
 26-character user ID.
 
-Mastodon and Mattermost replies insert an invisible separator after a
-model-written `@`, including inside code, so replies cannot notify another
-person through a model-written mention; check copied commands before running
-them.
+Mastodon and Mattermost replies insert an invisible separator after the `@`
+of a model-written `@name` mention, including inside code, so replies cannot
+notify another person through a model-written mention. E-mail addresses and
+URLs are left alone. Check copied commands before running them.
 
 Mastodon, Bluesky and Threads persist each authorized input in the channel
 inbox before advancing a page checkpoint. A process restart or rate limit

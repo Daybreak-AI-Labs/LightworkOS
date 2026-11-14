@@ -12,8 +12,16 @@ distribution name, entry-point name, module path, and file paths with SHA-256
 digests. The file set comes from the installed distribution's `RECORD` through
 `importlib.metadata`: every listed file under the entry point's top-level
 package, the entry-point module itself, and listed top-level `.pth` files.
-This includes native extensions and data files, not just Python source.
-The signature bundle itself is excluded because it contains the manifest.
+This includes native extensions and data files, not just Python source, and
+it includes any `__pycache__/*.pyc` files that the installer recorded in
+`RECORD` (a default `pip install` compiles and records them). The signature
+bundle itself is excluded because it contains the manifest.
+
+Because of those recorded `.pyc` files, the manifest must be produced from the
+distribution as it is installed. A manifest computed from the wheel before
+installation will not match an installation that compiled bytecode. Lightwork
+does not ship a command that produces the manifest; the loader's own
+computation is `_expected_plugin_signature_manifest` in `plugins.py`.
 
 At load time, Lightwork recomputes this manifest. Adding, removing, or changing
 a covered file after signing makes verification fail; editing `RECORD` does
@@ -35,9 +43,12 @@ package directory, has no additional package tree to scan.
 
 The extra-file scan skips `__pycache__`, non-files, and files with other
 suffixes, such as unlisted `.csv` data. It does **not** ignore all non-Python
-files: native libraries and `.pth` hooks are checked. These scan exclusions
-do not remove a `RECORD`-listed file from the signed manifest or its digest
-verification. Failure to inspect the required files refuses the plugin.
+files: native libraries and `.pth` hooks inside the plugin's own directories
+are checked. A `.pth` file at the top level of `site-packages` is covered only
+when `RECORD` lists it; the scan does not look for unlisted ones there. These
+scan exclusions do not remove a `RECORD`-listed file from the signed manifest
+or its digest verification. Failure to inspect the required files refuses the
+plugin.
 
 ## Recognizing and fixing a refusal
 

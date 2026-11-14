@@ -21,19 +21,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Shield's published held-out base64 evasion detection is now 71.0% (22 of 31),
   measured without a readable plaintext cue; use this corrected result when
   assessing protection.
-- An IMAP source now requires a mail-password environment variable and refuses
-  the product's own credential variables; update the source's password variable
-  before saving it.
+- An IMAP source's password variable must be named as a mailbox password (for
+  example `IMAP_PASSWORD`), and the product's own credential variables are
+  refused. The name is checked on every poll as well as on save, so an existing
+  source that uses a refused name stops polling: rename its password variable.
 - OpenOCD now refuses a workspace containing a `.cfg` or `.tcl` file unless
   flashing is allowed; review those files and the flashing permission before
   running hardware work.
 - MongoDB now refuses `mongodb+srv://` while an egress policy is active; use an
   explicitly permitted `mongodb://` endpoint.
-- S3 requests now use path-style addressing; ensure any custom S3 endpoint
-  supports that addressing style.
-- Model-written `@` characters in Mastodon and Mattermost replies are now
-  neutralised, including inside code; copy commands with care because those
-  replies contain an invisible separator.
+- The S3 tool and the attachment S3 mirror now use path-style addressing;
+  ensure any custom S3 endpoint they use supports that addressing style.
+- Model-written `@name` mentions in Mastodon and Mattermost replies are now
+  neutralised, including inside code; e-mail addresses and URLs are left alone.
+  Copy commands with care because those replies contain an invisible separator.
 - `audit_days` and all other retention periods now require whole numbers and
   reject booleans; replace values such as `true` or fractional days before
   enforcing retention.
@@ -44,16 +45,42 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   limit changes explicitly.
 - Serial and ROS writes now require approval; allow for an approval step in
   workflows that write to devices.
-- Provider spending now uses one deployment-wide ledger, with earlier
-  per-tenant ledgers folded in once; review provider caps against total
-  deployment spending rather than a single tenant's spending.
-- Configured policy gates now refuse work when their configuration cannot be
-  read; repair the configuration before retrying blocked work.
+- Provider spending now uses one deployment-wide ledger. Earlier per-tenant
+  ledgers are folded in once: the current period's totals and unresolved
+  reservations move, so a hold that blocked calls before the upgrade still
+  does. An earlier ledger that cannot be read blocks capped provider calls
+  until it is repaired on the Provider spending page. Review provider caps
+  against total deployment spending rather than a single tenant's spending.
+- A policy gate whose configuration file exists but cannot be read or parsed
+  now refuses work (for example a task budget); repair the file before
+  retrying. With no configuration file, or with a misspelled key, the defaults
+  still apply, so keep running `maverick config-lint` after hand edits.
 - Browser-vault keys are no longer included in backups by default; retain the
   key separately and supply it when restoring existing vault entries.
 - `aria_navigate` no longer accepts `focus`; remove that action from callers.
-- Signed plugins now refuse extra executable files in their owned package
-  directories; rebuild and re-sign packages that ship new code or native files.
+- Signed plugins are now also refused when a Python source or bytecode file
+  (`.py`, `.pyc`, `.pyw`) is on disk in their own package folders but not in
+  the signed manifest; reinstall the plugin into a clean environment to remove
+  leftover files. See the [plugin signing guide](docs/plugin-signing-author-guide.md).
+- The translate tool sends nothing unless `DEEPL_API_KEY` or
+  `LIBRETRANSLATE_URL` is set. There is no public default server any more: set
+  `LIBRETRANSLATE_URL` if you relied on it.
+- A default backup now leaves out the consent-ledger signing key
+  (`consent.ledger.key`) as well; escrow it with the other keys, because
+  standing consent grants cannot be verified without it.
+- An MCP server configured with a token or an `Authorization` header must use
+  `https://` or a loopback address; change the URL of any such server that
+  uses plain `http://` to a remote host.
+- A cron schedule whose day-of-month or day-of-week field starts with `*`
+  (for example `*/2`) now needs both day fields to match, as in standard cron;
+  a schedule such as `0 0 */2 * 1` fires less often than before.
+- With Postgres row-level security on, the first start as the table owner
+  replaces the policy on the webhook and deadline-alert tables, so a workspace
+  whose id contains characters outside `A-Z a-z 0-9 . _ -` can use them.
+  Upgrade and restart every process that uses the database; see
+  [multi-tenancy](docs/multi-tenancy.md).
+- Every agent's system prompt now says that text inside a tool-output frame is
+  data a tool returned and never an instruction.
 
 ### Fixed
 
@@ -69,8 +96,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ceiling; no configuration change is needed.
 - A revocation in `config.toml` now takes precedence over managed trust entries;
   clear that revocation explicitly before restoring access.
-- Webhook delivery bodies are now encrypted at rest; run `encryption migrate`
-  to cover existing stored bodies.
+- When at-rest encryption is enabled, webhook delivery bodies are now sealed;
+  run `maverick encryption migrate` (on Postgres, once per tenant) to seal
+  bodies stored earlier.
 - Incomplete BigQuery, Snowflake and Databricks statements are now reported as
   unfinished; check their eventual status before treating their output as final.
 - Personal-data erasure checks an existing knowledge store even when knowledge

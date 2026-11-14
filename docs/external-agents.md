@@ -96,8 +96,12 @@ is the `[agent_trust] agents` list in `~/.maverick/config.toml`; an agent
 enrolled from the dashboard lives in the managed overlay
 (`agent_trust.json` under the data dir), which overrides a TOML entry with
 the same id. Credential mints, revokes, restores and re-enrollment preserve
-existing identity fields; re-enrollment also keeps tool, risk, spending,
-wall-time and data-scope limits that are not supplied in the update.
+the identity fields of an agent that is already in the managed overlay;
+re-enrollment also keeps its tool, risk, spending, wall-time and data-scope
+limits that are not supplied in the update. **Re-enrolling an agent that
+exists only in `config.toml` creates a managed entry that replaces the TOML
+one**, so its TOML public key, tokens and JWT fields no longer apply: re-apply
+identity fields after that first re-enroll.
 
 ```toml
 [[agent_trust.agents]]
