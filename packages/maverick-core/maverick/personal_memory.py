@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import time
 
 from . import personal_identity
@@ -15,6 +16,8 @@ from .authority_effects import authority_effect_fence
 from .crypto_at_rest import seal, unseal
 from .file_lock import atomic_write_bytes, cross_process_lock, ensure_private_directory
 from .paths import current_tenant_id_strict, data_dir
+
+log = logging.getLogger(__name__)
 
 
 def scope_key(channel: str, user_id: str) -> str:
@@ -105,10 +108,20 @@ def records(channel, user_id, *, path=None):
     rows = []
     try:
         with open(path or default_path(), encoding="utf-8") as stream:
+            skipped = 0
             for line in stream:
-                row = json.loads(line)
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    row = None
+                if not isinstance(row, dict):
+                    # One damaged line must not break recall for every person.
+                    skipped += 1
+                    continue
                 if row.get("channel") == channel and row.get("user_id") == user_id:
                     rows.append(row)
+            if skipped:
+                log.warning("skipped %d unreadable user-note line(s)", skipped)
     except FileNotFoundError:
         pass
     record = controls(channel, user_id)
@@ -208,5 +221,14 @@ def recall(channel, user_id, *, path=None, k=8, execution_identity=False):
     rows.sort(key=lambda row: not row.get("manual"))
     # Inspection still shows retained source records, but prompt enrichment
     # immediately stops using a source excluded after it was consolidated.
-    return [row["note"] for row in rows
-            if not row.get("source_goal_id") or not excluded(int(row["source_goal_id"]))][:max(1, k)]
+    return [row["note"] for row in rows if not _source_excluded(row, excluded)][:max(1, k)]
+
+
+def _source_excluded(row, excluded) -> bool:
+    source = row.get("source_goal_id")
+    if not source:
+        return False
+    try:
+        return excluded(int(source))
+    except (TypeError, ValueError):
+        return True  # exclusion cannot be checked: do not recall the note

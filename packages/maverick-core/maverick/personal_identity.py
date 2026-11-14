@@ -118,7 +118,9 @@ def begin(principal: str, channel: str) -> dict:
 def prove_channel_command(text: str, *, channel: str, user_id: str, sender_id: str | None = None,
                           account_sha256: str | None = None, private_destination: dict | None = None) -> str | None:
     """Called after adapter authentication/tenant admission, before LLM history."""
-    if not text.startswith("LIGHTWORK LINK"):
+    # Intercept leading-whitespace variants too, so a link token never reaches
+    # LLM history; the strict match below still decides validity.
+    if not text.lstrip().startswith("LIGHTWORK LINK"):
         return None
     match = re.fullmatch(r"LIGHTWORK LINK ([A-Za-z0-9_-]{43})", text.strip())
     if not match or channel not in CHANNELS or not user_id or len(user_id) > 256:

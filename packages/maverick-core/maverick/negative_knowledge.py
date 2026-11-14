@@ -122,9 +122,13 @@ class GuardrailRegistry:
         try:
             path = ensure_private_file(Path(self.path))
             raw = json.loads(atomic_read_text(path))
-        except (OSError, ValueError):
+        except (OSError, ValueError) as exc:
+            log.warning("learned guardrails at %s are unreadable (%s); none apply until "
+                        "the file is repaired", self.path, type(exc).__name__)
             return
         if not isinstance(raw, list):
+            log.warning("learned guardrails at %s are not a list; none apply until the "
+                        "file is repaired", self.path)
             return
         for d in (raw or []):
             try:
