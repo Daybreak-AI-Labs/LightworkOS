@@ -194,27 +194,33 @@ def test_wav_decode_uses_compact_numeric_samples(monkeypatch):
     np.testing.assert_array_equal(samples, np.full(10000, 0.25, dtype=np.float32))
 
 
-def test_sensor_import_does_not_mutate_other_threads_search_path(tmp_path, monkeypatch):
-    import builtins
-
+def test_sensor_import_excludes_workspace_dependency_code(tmp_path, monkeypatch):
     from maverick.tools import hardware_sensors as module
+
     workspace, site = tmp_path / "work", tmp_path / "site"
     workspace.mkdir()
     site.mkdir()
-    (site / "psutil.py").write_text("import builtins, sys\nbuiltins.sensor_import_paths.append(sys.path)\n")
+    marker = workspace / "dependency_executed"
+    dependency = "_sensor_dependency_probe"
+    (site / "psutil.py").write_text(f"import {dependency}\nvalue = {dependency}.value\n")
+    (site / f"{dependency}.py").write_text("value = 42\n")
+    (workspace / f"{dependency}.py").write_text(
+        "from pathlib import Path\n"
+        f"Path({str(marker)!r}).write_text('executed')\n"
+        "raise ImportError('untrusted workspace dependency')\n"
+    )
     monkeypatch.chdir(workspace)
     monkeypatch.syspath_prepend(str(site))
     monkeypatch.syspath_prepend(str(workspace))
     monkeypatch.delitem(sys.modules, "psutil", raising=False)
-    observed = []
-    monkeypatch.setattr(builtins, "sensor_import_paths", observed, raising=False)
-    original = sys.path
+    monkeypatch.delitem(sys.modules, dependency, raising=False)
     try:
-        assert module._psutil() is not None
-        assert observed == [original]
-        assert observed[0] is original and sys.path is original
+        result = module._psutil()
+        assert not marker.exists()
+        assert result is not None and result.value == 42
     finally:
         sys.modules.pop("psutil", None)
+        sys.modules.pop(dependency, None)
 
 
 def test_x11_focus_changes_computer_approval_digest(monkeypatch):
