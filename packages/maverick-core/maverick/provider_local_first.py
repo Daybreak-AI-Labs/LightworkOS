@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import socket
+from urllib.parse import urlsplit
 
 from .providers import _canonical
 
@@ -81,14 +82,34 @@ def local_model_for_role(role: str) -> str | None:
 
 
 def probe(provider: str, *, timeout: float = 0.3) -> bool:
-    """Best-effort TCP probe of a local provider's default port."""
-    port = _LOCAL_PORTS.get(_canonical(provider))
-    if not port:
+    """Probe the effective configured endpoint, using defaults only when absent."""
+    name = _canonical(provider)
+    if name not in _LOCAL_PORTS:
         return False
     try:
-        with socket.create_connection(("127.0.0.1", port), timeout=timeout):
+        from .config import load_config, provider_configuration_state
+
+        providers = load_config().get("providers", {})
+        if not isinstance(providers, dict):
+            return False
+        table = providers.get(name, {})
+        if not isinstance(table, dict) or ("base_url" in table and not isinstance(table["base_url"], str)):
+            return False
+        state = provider_configuration_state(name)
+        if state.get("source_errors"):
+            return False
+        endpoint = state.get("base_url") or f"http://127.0.0.1:{_LOCAL_PORTS[name]}"
+        parsed = urlsplit(endpoint)
+        if (parsed.scheme not in {"http", "https"} or not parsed.hostname
+                or parsed.username is not None or parsed.password is not None
+                or any(char.isspace() for char in endpoint)):
+            return False
+        port = parsed.port if parsed.port is not None else (443 if parsed.scheme == "https" else 80)
+        if not 1 <= port <= 65535:
+            return False
+        with socket.create_connection((parsed.hostname, port), timeout=timeout):
             return True
-    except OSError:
+    except (OSError, TypeError, ValueError, AttributeError):
         return False
 
 

@@ -109,9 +109,10 @@ def min_recall_trust() -> int:
 # role tags, "ignore previous instructions", instruction-override, secret
 # exfiltration, and destructive-shell snippets. This is a deliberately small,
 # high-signal list -- a heuristic that flags low-trust writes for quarantine,
-# NOT a complete classifier. (label, pattern); matched case-insensitively.
+# NOT a complete classifier. (label, pattern); matched case-insensitively
+# across line breaks so splitting an instruction does not evade the tripwire.
 _INJECTION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    (label, re.compile(rx, re.IGNORECASE))
+    (label, re.compile(rx, re.IGNORECASE | re.DOTALL))
     for label, rx in [
         ("ignore-previous",
          r"\b(ignore|disregard|forget)\b.{0,30}\b(previous|prior|above|earlier|"

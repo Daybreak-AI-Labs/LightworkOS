@@ -36,7 +36,10 @@ wins -- dollars vanish from a *spend-cap* ledger and the deployment overspends
 past the configured ceiling). Reservations and settlement receipts share that
 transaction. The numeric counter includes confirmed costs and outstanding
 reservations, so old numeric readers remain conservative. Configured admission
-refuses unreadable accounting and unknown final charges; failures never recreate
+refuses unreadable accounting and unknown final charges in the current UTC
+period (including zero-dollar holds). An unresolved receipt from an older
+retained period does not block admission after rollover; it remains recorded
+for reconciliation in that original period. Failures never recreate
 a damaged ledger as zero. A required marker distinguishes lost established
 accounting from fresh setup. Shared PostgreSQL uses its transactional authority
 and never substitutes a local file. Crashed reservations do not expire.
@@ -1356,8 +1359,10 @@ def _reserve_provider(
 ) -> Reservation | None:
     """Durably encumber capacity before each physical call, including hedges.
 
-    Holds never expire automatically. A crashed caller cannot reopen capacity;
-    uncertain completion retains the hold until an exact actual-cost receipt.
+    Holds never expire automatically within their original UTC period. A
+    crashed caller cannot reopen that period's capacity; uncertain completion
+    retains the hold until an exact actual-cost receipt. A later period has
+    its own ceiling and does not inherit the unresolved-receipt admission block.
     The legacy numeric total includes holds, so older readers stay conservative.
     """
     name = _canon(provider)

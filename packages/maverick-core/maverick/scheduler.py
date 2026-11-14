@@ -141,7 +141,8 @@ def next_run(expr: str, *, after: float | None = None, tz: str = "") -> float:
     **UTC** — so ``0 9 * * *`` with ``tz='America/New_York'`` fires at 09:00 New
     York wall-clock (adjusting across DST), not 09:00 UTC. The returned value is
     always a UTC epoch. Day-of-month and day-of-week follow Vixie cron semantics:
-    if BOTH are restricted (not ``*``), a match on EITHER fires. (Across a DST
+    if BOTH raw fields are restricted (do not start with ``*``), a match on
+    EITHER fires; otherwise both expanded constraints must match. (Across a DST
     transition a local schedule at the skipped/doubled hour may fire irregularly
     that day -- the standard local-cron caveat.)
     """
@@ -159,8 +160,9 @@ def next_run(expr: str, *, after: float | None = None, tz: str = "") -> float:
     # Round up to the next whole minute.
     t = base.replace(second=0, microsecond=0) + _dt.timedelta(minutes=1)
 
-    dom_restricted = dom != set(range(1, 32))
-    dow_restricted = dow != set(range(7))
+    fields = expr.split()
+    dom_restricted = not fields[2].startswith("*")
+    dow_restricted = not fields[4].startswith("*")
 
     def _day_matches(d: _dt.datetime) -> bool:
         if d.month not in mon:
@@ -171,11 +173,7 @@ def next_run(expr: str, *, after: float | None = None, tz: str = "") -> float:
         dow_ok = py_dow in dow
         if dom_restricted and dow_restricted:
             return dom_ok or dow_ok
-        if dom_restricted:
-            return dom_ok
-        if dow_restricted:
-            return dow_ok
-        return True
+        return dom_ok and dow_ok
 
     # Bound the search. Skip whole non-matching days in one jump instead of
     # walking 1440 dead minutes each — so an impossible schedule

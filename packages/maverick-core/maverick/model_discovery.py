@@ -333,6 +333,7 @@ def _entry(
     fetched_at: float | None,
     free_models: list[str] | None = None,
     capabilities: dict | None = None,
+    truncated: bool = False,
 ) -> dict[str, Any]:
     return {
         "provider": provider,
@@ -342,6 +343,7 @@ def _entry(
         # budget prices those at zero instead of refusing them as unpriced.
         "free_models": list(free_models or []),
         "capabilities": capabilities or {},
+        "truncated": truncated,
         "detail": detail[:MAX_DETAIL_CHARS],
         "fetched_at": fetched_at,
     }
@@ -352,6 +354,21 @@ def _official_openrouter_listing(url: str) -> bool:
     return (parsed.scheme == "https" and parsed.hostname == "openrouter.ai"
             and parsed.port in (None, 443) and parsed.path == "/api/v1/models"
             and not parsed.query and not parsed.fragment and parsed.username is None)
+
+
+def _page_capabilities(style: str, payload: dict) -> dict:
+    from .model_guidance import parse_capabilities
+
+    key = "models" if style in {"gemini", "ollama"} else "data"
+    rows = payload.get(key)
+    if not isinstance(rows, list):
+        return {}
+    capabilities = {}
+    # The shared parser accepts at most 500 rows. Parse the already byte-bounded
+    # response in batches before choosing which model ids retain evidence.
+    for offset in range(0, len(rows), 500):
+        capabilities.update(parse_capabilities(style, {key: rows[offset:offset + 500]}))
+    return capabilities
 
 
 def discover(provider: str, *, fetch: Fetch | None = None, material: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -389,8 +406,7 @@ def discover(provider: str, *, fetch: Fetch | None = None, material: dict[str, A
                 return _entry(name, "unavailable", [], f"provider returned HTTP {int(status)} for the model list", now)
             payload = json.loads(body.decode("utf-8"), parse_float=Decimal)
             ids, token = parse_models(style, payload)
-            from .model_guidance import parse_capabilities
-            capabilities.update(parse_capabilities(style, payload))
+            capabilities.update(_page_capabilities(style, payload))
             if name == "openrouter" and _official_openrouter_listing(url):
                 free.extend(parse_free_models(style, payload))
             if name == "gemini":
@@ -409,16 +425,30 @@ def discover(provider: str, *, fetch: Fetch | None = None, material: dict[str, A
         return _entry(name, "unavailable", [], "provider returned an unreadable model list", now)
     except Exception as exc:
         return _entry(name, "unavailable", [], f"model list request failed ({type(exc).__name__})", now)
-    models = sorted(models)[:MAX_MODELS_PER_PROVIDER]
+    total_models = len(models)
+    truncated = total_models > MAX_MODELS_PER_PROVIDER
+    if truncated:
+        from .llm import MODEL_CATALOG, MODEL_PRICES
+        catalog = set(MODEL_CATALOG.get(name, ()))
+        free_ids = set(free)
+        priced_ids = {model for model in models
+                      if spec_for(name, model) in MODEL_PRICES
+                      or (model in catalog and model in MODEL_PRICES)}
+        # This is picker retention only; it grants no pricing authority.
+        # Billing still requires its normal verified evidence checks.
+        models.sort(key=lambda model: (0 if model in free_ids else 1 if model in priced_ids else 2, model))
+    models = sorted(models[:MAX_MODELS_PER_PROVIDER])
     kept = set(models)
     return _entry(
         name,
         "live",
         models,
-        f"{len(models)} models reachable with the configured key",
+        (f"{len(models)} of {total_models} reachable models shown; list truncated"
+         if truncated else f"{len(models)} models reachable with the configured key"),
         now,
         free_models=[m for m in _ids(free) if m in kept],
         capabilities={m: capabilities[m] for m in kept if m in capabilities},
+        truncated=truncated,
     )
 
 
@@ -464,7 +494,8 @@ def _load_cache(path: Path | None = None) -> dict[str, dict[str, Any]]:
         raw_caps = row.get("capabilities")
         capabilities = {m: clean_capabilities(raw_caps.get(m)) for m in _ids(models)} if isinstance(raw_caps, dict) else {}
         out[name] = _entry(name, status, _ids(models), detail, fetched,
-                           free_models=[m for m in _ids(free) if m in _ids(models)], capabilities=capabilities)
+                           free_models=[m for m in _ids(free) if m in _ids(models)], capabilities=capabilities,
+                           truncated=row.get("truncated") is True)
         out[name]["material_binding"] = binding
         out[name]["refresh_token"] = row.get("refresh_token") if isinstance(row.get("refresh_token"), str) and re.fullmatch(r"[a-f0-9]{32}", row["refresh_token"]) else ""
         attempted = row.get("last_attempt_at")

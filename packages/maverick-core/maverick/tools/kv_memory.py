@@ -53,7 +53,25 @@ def _unscope(scoped_key: str) -> str:
     return scoped_key
 
 
-def _run_factory(world, goal_id: int | None):
+def _screen_write(value, provenance, shield):
+    from .. import memory_guard
+
+    if shield is None and memory_guard.enabled():
+        try:
+            from maverick_shield import Shield
+        except ImportError:
+            log.warning("Memory Guard: optional safety shield is unavailable; using the injection tripwire")
+        else:
+            try:
+                from ..shield_policy import _configured_shield
+                shield = _configured_shield(Shield, external_text=False)
+            except Exception:
+                return memory_guard.WriteDecision(
+                    False, "safety shield configuration is unavailable; review safety settings", ["shield"])
+    return memory_guard.screen_write(value, provenance, shield=shield)
+
+
+def _run_factory(world, goal_id: int | None, *, shield=None):
     observed: dict[str, int] = {}
     def _run(args: dict[str, Any]) -> str:
         if world is None or goal_id is None:
@@ -86,7 +104,7 @@ def _run_factory(world, goal_id: int | None):
             # (not stored) and audited. All a no-op when the guard is off.
             from .. import memory_guard as _mg
             _prov = _mg.agent_fact_provenance()
-            _decision = _mg.screen_write(value, _prov)
+            _decision = _screen_write(value, _prov, shield)
             _mg.audit_write(scoped, _prov, _decision, goal_id=goal_id)
             if not _decision.allowed:
                 return (
@@ -159,8 +177,8 @@ def _search(world, prefix, args, cap):
     return "\n".join(f"{_unscope(key)}: {(value or '')[:200]}" for key, value in rows)
 
 
-def kv_memory(world, goal_id: int | None) -> Tool:
-    """Factory: builds the kv_memory tool bound to (world, goal_id)."""
+def kv_memory(world, goal_id: int | None, *, shield=None) -> Tool:
+    """Bind goal memory to an available caller or configured optional shield."""
     return Tool(
         name="kv_memory",
         description=(
@@ -171,5 +189,5 @@ def kv_memory(world, goal_id: int | None) -> Tool:
             "for cross-goal context."
         ),
         input_schema=_KV_SCHEMA,
-        fn=_run_factory(world, goal_id),
+        fn=_run_factory(world, goal_id, shield=shield),
     )
