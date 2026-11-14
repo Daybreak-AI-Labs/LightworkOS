@@ -3259,11 +3259,16 @@ def tenant_kms_rotate(old_kek_file: str | None, new_kek_file: str | None,
                       dry_run: bool, yes: bool) -> None:
     """Rotate every tenant's wrapped DEK between LocalKMS KEKs.
 
-    Use when rolling the at-rest master key / MAVERICK_KMS_KEK. Re-wrap only --
-    no tenant data is re-encrypted. Idempotent and resumable: a tenant already
-    on the new KEK is skipped, so a re-run finishes an interrupted rotation. Set
-    the new KEK live only AFTER this reports 0 failed. Supply KEKs via protected
-    files or the hidden prompts; raw KEKs are never accepted in command argv.
+    Supply the actual 32-byte LocalKMS KEKs as hex or base64. When configured,
+    use the MAVERICK_KMS_KEK override. Otherwise each KEK is SHA-256 of the
+    ASCII bytes 'maverick-kms-kek/v1', one NUL byte, then the corresponding
+    at-rest master-key bytes. Supply that derived KEK, not the master key.
+
+    Re-wrap only -- no tenant data is re-encrypted. Idempotent and resumable:
+    a tenant already on the new KEK is skipped, so a re-run finishes an
+    interrupted rotation. Set the new KEK live only AFTER this reports 0 failed.
+    Supply KEKs via protected files or the hidden prompts; raw KEKs are never
+    accepted in command argv.
     """
     from ..tenant.kms_fleet import rotate_local_fleet
 
