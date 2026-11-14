@@ -171,8 +171,8 @@ CREATE TABLE IF NOT EXISTS signoffs (
 
 -- v18 artifacts: versioned, kind-tagged deliverable artifacts a goal produces
 -- (markdown / code / table / text), distinct from the single goal.result blob.
--- Re-emitting the same (goal_id, title) appends a new version; content is
--- encrypted at rest like other agent output (the title is stored in plaintext). The render kind drives how the
+-- Re-emitting the same (goal_id, title) appends a new version; title + content
+-- are encrypted at rest like other agent output. The render kind drives how the
 -- dashboard presents it.
 CREATE TABLE IF NOT EXISTS artifacts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
