@@ -57,7 +57,7 @@ def _save(row):
         raise native.WebhookSettingsUnavailable("This change is too large to retain safely. No new setting was saved.")
     ensure_private_directory(_directory())
     with tenant_scope(tenant=None), deployment_key_scope():
-        blob = seal_bound(raw, _binding(row["id"]))
+        blob = seal_bound(raw, _binding(row["id"]), bind_tenant=False)
     atomic_write_bytes(_path(row["id"]), blob)
 
 

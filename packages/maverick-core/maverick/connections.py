@@ -72,7 +72,7 @@ def _path():
 
 def _load() -> dict[str, dict]:
     from .file_lock import atomic_read_bytes, cross_process_lock, ensure_private_file
-    from .paths import current_tenant_id
+    from .paths import current_tenant_id_strict
 
     path = _path()
     try:
@@ -82,7 +82,7 @@ def _load() -> dict[str, dict]:
         # for callers already inside the credential mutation transaction.
         with cross_process_lock(path, strict=True):
             ensure_private_file(path)
-            raw = unseal_text_for_tenant(current_tenant_id(), atomic_read_bytes(path))
+            raw = unseal_text_for_tenant(current_tenant_id_strict(), atomic_read_bytes(path))
         data = json.loads(raw)
         if (
             not isinstance(data, dict)
@@ -106,10 +106,10 @@ def _load() -> dict[str, dict]:
 
 def _save(data: dict[str, dict]) -> None:
     from .file_lock import atomic_write_bytes, ensure_private_directory
-    from .paths import current_tenant_id
+    from .paths import current_tenant_id_strict
 
     path = _path()
-    blob = seal_text_for_tenant(current_tenant_id(), json.dumps(data, sort_keys=True))
+    blob = seal_text_for_tenant(current_tenant_id_strict(), json.dumps(data, sort_keys=True))
     ensure_private_directory(path.parent)
     atomic_write_bytes(path, blob, mode=0o600)
 
