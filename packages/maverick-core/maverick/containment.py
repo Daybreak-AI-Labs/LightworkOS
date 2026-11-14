@@ -79,13 +79,11 @@ DEFAULT_DENY_TOOLS = frozenset({
     "http_fetch", "web_search", "browser", "websocket", "webrtc",
     "email", "gmail", "ses", "sns", "twilio",
     "slack_bot", "discord_bot", "teams", "notify",
-    "dns_lookup", "web_archive", "web_recorder", "openapi_runner",
-    "s3_attachments", "slack_workflow", "discord_slash",
+    "dns_lookup", "web_archive", "openapi_runner",
     "github_issues", "github_search", "github_actions", "github_repo_search",
     "gitlab", "gitlab_issues", "jira", "linear", "notion", "stripe",
     "wikipedia", "arxiv", "semantic_scholar", "hackernews", "huggingface",
-    "youtube", "geocode", "translate", "currency", "saas_trigger",
-    "generic_oauth", "oauth_helper", "oidc",
+    "youtube", "geocode", "translate", "currency",
 })
 
 _DEFAULT_MAX_WALL_SECONDS = 1800.0
@@ -124,12 +122,53 @@ def _containment_cfg() -> dict:
         return {}
 
 
-def _config_unreadable() -> bool:
+def _unreadable_containment_sources() -> list[str]:
+    """Unreadable configuration sources whose raw text mentions containment.
+
+    The fail-soft loader replaced such a file with defaults, so a
+    ``[containment]`` table it held may have been lost. Only those files are
+    evidence that containment was configured: the bytes are searched, never
+    parsed. A source whose bytes cannot be read gives no evidence.
+    """
     try:
         from .config import config_source_errors
-        return bool(config_source_errors(include_tenant=True))
+        errors = config_source_errors(include_tenant=True)
     except Exception:
-        return True
+        return []
+    found = []
+    for source in errors:
+        try:
+            raw = Path(source).read_bytes()
+        except OSError:
+            continue
+        if b"containment" in raw.lower():
+            found.append(str(source))
+    return found
+
+
+def status() -> dict:
+    """Whether containment is on and why, for status surfaces.
+
+    ``reason`` is ``"environment"``, ``"configuration"``,
+    ``"unreadable_configuration"`` (on because a source that mentions
+    containment could not be read; ``sources`` names it) or ``"off"``.
+    ``message`` is a plain sentence for people, empty when it is off.
+    """
+    env = os.environ.get("MAVERICK_CONTAINMENT", "").strip()
+    if env:
+        on = coerce_bool(env, default=True)
+        return {"enabled": on, "reason": "environment" if on else "off", "sources": [],
+                "message": "Locked-down mode is on (MAVERICK_CONTAINMENT)." if on else ""}
+    cfg = _containment_cfg()  # loads first: the loader records unreadable sources
+    sources = _unreadable_containment_sources()
+    if sources:
+        return {"enabled": True, "reason": "unreadable_configuration", "sources": sources,
+                "message": (f"Locked-down mode is on because {', '.join(sources)} could not "
+                            "be read; fix that file to restore your setting.")}
+    value = cfg.get("enabled")
+    on = False if value is None else coerce_bool(value, default=True)
+    return {"enabled": on, "reason": "configuration" if on else "off", "sources": [],
+            "message": "Locked-down mode is on ([containment] enabled)." if on else ""}
 
 
 def enabled() -> bool:
@@ -137,19 +176,14 @@ def enabled() -> bool:
     ``[containment] enabled = true``.
 
     Fails closed: an env value that is neither a recognised true nor false
-    token, a non-boolean config value, and an unreadable configuration
-    source (whose ``[containment]`` table may have been lost) all turn
-    containment on.
+    token, a non-boolean config value, and an unreadable configuration source
+    whose text mentions containment (its table may have been lost) all turn
+    containment on. Another unreadable source leaves the readable result.
     """
-    env = os.environ.get("MAVERICK_CONTAINMENT", "").strip()
-    if env:
-        return coerce_bool(env, default=True)
-    cfg = _containment_cfg()  # loads first: the loader records unreadable sources
-    if _config_unreadable():
-        log.warning("configuration is unreadable; containment stays on")
-        return True
-    value = cfg.get("enabled")
-    return False if value is None else coerce_bool(value, default=True)
+    current = status()
+    if current["reason"] == "unreadable_configuration":
+        log.warning("%s", current["message"])
+    return bool(current["enabled"])
 
 
 def profile_from_config() -> ContainmentProfile:
@@ -221,6 +255,11 @@ def apply(profile: ContainmentProfile, *, registry, sandbox_env: dict) -> Contai
       :func:`make_ephemeral_workdir`; the report records that obligation.
     """
     preserved = frozenset(getattr(registry, "_acl_denied", set()) or set())
+    # Why the tools are denied, for the registry's denial message; set only
+    # when containment is on because configuration could not be read.
+    current = status()
+    registry.acl_denial_note = (current["message"]
+                                if current["reason"] == "unreadable_configuration" else "")
     connectors = frozenset(getattr(registry, "deferrable_names", set()) or set())
     denied = frozenset(profile.deny_tools) | connectors
     if denied:
@@ -300,6 +339,7 @@ __all__ = [
     "active_profile",
     "enabled",
     "profile_from_config",
+    "status",
     "apply",
     "assert_no_network_env",
     "make_ephemeral_workdir",

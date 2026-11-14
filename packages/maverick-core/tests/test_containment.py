@@ -54,6 +54,18 @@ def test_enabled_fails_closed_on_unclear_settings(monkeypatch, tmp_path):
     monkeypatch.delenv("MAVERICK_CONTAINMENT")
     _config(monkeypatch, tmp_path, "[containment]\nenabled = true\nbroken = [\n")
     assert containment.enabled() is True
+    current = containment.status()
+    assert current["reason"] == "unreadable_configuration"
+    assert "could not be read" in current["message"]
+    reg = ToolRegistry()
+    containment.apply(containment.active_profile(), registry=reg, sandbox_env={})
+    assert "could not be read" in reg.acl_denial_note
+
+
+def test_unreadable_config_without_containment_keeps_it_off(monkeypatch, tmp_path):
+    _config(monkeypatch, tmp_path, "[models]\nbroken = [\n")
+    assert containment.enabled() is False
+    assert containment.status()["reason"] == "off"
 
 
 def test_enabled_from_config(monkeypatch, tmp_path):
@@ -121,6 +133,7 @@ def test_apply_denies_deferrable_connectors():
                                sandbox_env={})
     assert reg._acl_allows("sendgrid") is False
     assert reg._acl_allows("dns_lookup") is False
+    assert reg._acl_allows("web_recorder") is True  # generates a script; no network
     assert "sendgrid" in report.denied_tools
 
 
