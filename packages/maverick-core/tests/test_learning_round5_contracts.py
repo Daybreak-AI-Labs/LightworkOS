@@ -219,3 +219,33 @@ with dreaming.learning_mutation_scope(keep_last=1) as snap:
         if process.poll() is None:
             process.kill()
         process.communicate(timeout=5)
+
+
+def test_signed_evidence_head_survives_rollover_without_reanchoring_damage(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from maverick.audit import signing, writer
+
+    ledger = earned_autonomy.TrustLedger(path=tmp_path / "rollover.ndjson")
+    assert ledger.record_event("hit", "deploy", card_id="first")
+    directory = ledger._log._anchor_location()[1]
+    original_day = signing.day_files(directory)[-1]
+    tomorrow = datetime.now(timezone.utc) + timedelta(days=1)
+
+    class NextDay(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return tomorrow if tz is not None else tomorrow.replace(tzinfo=None)
+
+    monkeypatch.setattr(signing, "_today_utc", lambda: tomorrow.strftime("%Y-%m-%d"))
+    monkeypatch.setattr(writer, "datetime", NextDay)
+    assert ledger.verify().startswith("VALID")
+    assert ledger.record_event("miss", "deploy", card_id="second")
+    assert ledger.verify().startswith("VALID")
+    assert len(signing.day_files(directory)) == 2
+    # Completed-day corruption must never be repaired by the next append.
+    original_day.write_text("")
+    before = (directory / signing.ANCHOR_FILENAME).read_bytes()
+    assert ledger.verify().startswith("BROKEN")
+    assert not ledger.record_event("hit", "deploy", card_id="third")
+    assert (directory / signing.ANCHOR_FILENAME).read_bytes() == before

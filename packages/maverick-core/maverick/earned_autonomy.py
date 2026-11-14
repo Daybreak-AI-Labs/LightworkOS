@@ -171,19 +171,38 @@ class _ChainedLog:
 
     def _record_anchor(self, head: str, count: int) -> bool:
         from .audit import AuditEvent, AuditLog, EventKind
+        from .audit.signing import _append_anchor, _segment_text, verify_chain
+        from .file_lock import cross_process_lock
 
         identity, directory = self._anchor_location()
         # This evidence always requires signing, including legacy deployments
         # whose general-purpose audit sink permits unsigned events. The native
         # strict writer still enforces custody policy and key authority.
         sink = AuditLog(audit_dir=directory, sign=True)
-        return sink.record_strict_signed(AuditEvent(
+        if not sink.record_strict_signed(AuditEvent(
             ts=time.time(), kind=EventKind.AUTONOMY_GRADUATION,
             agent="earned_autonomy", payload={
                 "decision": "chain_head", "store_id": identity,
                 "head": head, "row_count": count,
             },
-        ))
+        )):
+            return False
+        path = sink._current_path
+        if path is None:
+            return False
+        # Seal the current signed tip immediately, including the first day.
+        # Otherwise the first verification after midnight requires a day-ledger
+        # that AuditLog only creates on its next write, which verification then
+        # prevents. Verify exact bytes before extending the signed anchor; never
+        # manufacture a baseline during a read or repair an unverified history.
+        with cross_process_lock(path, strict=True):
+            segment = _segment_text(path)
+            if verify_chain(path, segment=segment):
+                return False
+            rows = [json.loads(line) for line in segment.splitlines() if line.strip()]
+            if not rows or rows[-1].get("head") != head or rows[-1].get("row_count") != count:
+                return False
+            return _append_anchor(directory, path.stem, rows[-1]["hash"], len(rows))
 
     def _append_unlocked(self, fields: dict, *, force: bool) -> bool:
         if self.path is not None and not self.verify().startswith("VALID:"):
