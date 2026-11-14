@@ -303,9 +303,17 @@ def xa_remove_cmd(agent_id: str, yes: bool) -> None:
 
     # Removing a contained agent would let a fresh enroll come back live
     # without the security release, so removal waits for that release.
+    action_errors: list[Exception] = []
+
+    def _unenroll() -> bool:
+        try:
+            return xa.unenroll(agent_id)
+        except Exception as exc:  # reported below, not as a containment failure
+            action_errors.append(exc)
+            return False
+
     try:
-        removed = shared().run_if_unprotected(
-            f"agent:{agent_id}", lambda: xa.unenroll(agent_id))
+        removed = shared().run_if_unprotected(f"agent:{agent_id}", _unenroll)
     except ProtectedRevocationError as exc:
         raise click.ClickException(
             "agent is security-contained; use `maverick control-plane release`"
@@ -314,6 +322,9 @@ def xa_remove_cmd(agent_id: str, yes: bool) -> None:
         raise click.ClickException(
             "containment authority is unavailable; remove refused"
         ) from exc
+    if action_errors:
+        raise click.ClickException(
+            f"could not remove {agent_id!r}: {action_errors[0]}") from action_errors[0]
     if removed:
         click.echo(click.style(f"removed {agent_id!r}", fg="yellow"))
     else:

@@ -229,7 +229,8 @@ def test_ordinary_restore_and_gateway_release_refuse_security_containment():
     # `security release` would lift only the revocation row and print success.
     released = _run("security", "release", "agent:sf-quotebot")
     assert released.exit_code == 1
-    assert "control-plane release" in released.output
+    assert "control-plane release agent:sf-quotebot" in released.output
+    assert "[control_plane] enable" in released.output
 
     assert shared().revoked()["agent:sf-quotebot"] == contained
     assert agent_trust.load_registry()["sf-quotebot"].revoked is True
@@ -301,3 +302,16 @@ def test_trust_add_stores_bearer_tokens_hashed_not_raw(tmp_path):
     agent = agent_for_token("RAW-BEARER-abc123", "a2a")
     assert agent is not None and agent.id == "peer1"
     assert agent_trust.lookup("peer1") is not None
+
+
+def test_remove_reports_its_own_failure_not_a_containment_outage(monkeypatch):
+    assert _enroll_cli().exit_code == 0
+
+    def _broken(_agent_id):
+        raise OSError("registry write denied")
+
+    monkeypatch.setattr(xa, "unenroll", _broken)
+    removed = _run("external-agents", "remove", "sf-quotebot", "--yes")
+    assert removed.exit_code == 1
+    assert "registry write denied" in removed.output
+    assert "containment authority" not in removed.output
