@@ -3,16 +3,16 @@
 Wraps two backends:
 
   - DeepL (preferred for accuracy; auth via ``DEEPL_API_KEY``)
-  - LibreTranslate (open, free-tier; configurable endpoint via
-    ``LIBRETRANSLATE_URL``, default ``https://libretranslate.com``;
-    optional ``LIBRETRANSLATE_API_KEY``)
+  - LibreTranslate (open; the server named by ``LIBRETRANSLATE_URL``,
+    optional ``LIBRETRANSLATE_API_KEY``). There is no default server: text
+    is never sent to a public service the operator did not choose.
 
 ops:
   - translate(text, target, source)    — translate to target lang code
   - detect(text)                       — detect source lang code
 
 Choose backend per call via ``backend`` (default: deepl when key
-present, else libretranslate).
+present, else libretranslate when ``LIBRETRANSLATE_URL`` is set).
 """
 from __future__ import annotations
 
@@ -54,6 +54,19 @@ def _pick_backend(explicit: str) -> str:
     return "libretranslate"
 
 
+_BACKENDS = ("deepl", "libretranslate")
+_NOT_CONFIGURED = (
+    "ERROR: no translation service is configured, so nothing was sent. "
+    "Set DEEPL_API_KEY, or set LIBRETRANSLATE_URL to the LibreTranslate "
+    "server you want to use."
+)
+
+
+def _libre_base() -> str:
+    """The operator's LibreTranslate server, or ``""``. There is no default."""
+    return os.environ.get("LIBRETRANSLATE_URL", "").strip().rstrip("/")
+
+
 def _translate_deepl(text: str, target: str, source: str) -> str:
     import httpx
     key = os.environ.get("DEEPL_API_KEY", "").strip()
@@ -79,7 +92,7 @@ def _translate_deepl(text: str, target: str, source: str) -> str:
 
 def _translate_libre(text: str, target: str, source: str) -> str:
     import httpx
-    base = os.environ.get("LIBRETRANSLATE_URL", "https://libretranslate.com").rstrip("/")
+    base = _libre_base()
     payload = {"q": text, "target": target.lower(), "source": source.lower() or "auto",
                "format": "text"}
     key = os.environ.get("LIBRETRANSLATE_API_KEY", "").strip()
@@ -99,7 +112,7 @@ def _detect_deepl(text: str) -> str:
 
 def _detect_libre(text: str) -> str:
     import httpx
-    base = os.environ.get("LIBRETRANSLATE_URL", "https://libretranslate.com").rstrip("/")
+    base = _libre_base()
     payload = {"q": text}
     key = os.environ.get("LIBRETRANSLATE_API_KEY", "").strip()
     if key:
@@ -126,6 +139,10 @@ def _run(args: dict[str, Any]) -> str:
     except ImportError:
         return "ERROR: httpx not installed. Run: python -m pip install -e './packages/maverick-core[issue-trackers]'"
     backend = _pick_backend((args.get("backend") or "").strip())
+    if backend not in _BACKENDS:
+        return f"ERROR: unknown backend {backend!r}; use 'deepl' or 'libretranslate'."
+    if backend == "libretranslate" and not _libre_base():
+        return _NOT_CONFIGURED
     target = (args.get("target") or "en").strip()
     source = (args.get("source") or "").strip()
     try:
@@ -150,7 +167,8 @@ def translate() -> Tool:
             "LibreTranslate (LIBRETRANSLATE_URL). ops: translate "
             "(text + target + optional source), detect (lang only). "
             "backend chooses 'deepl' or 'libretranslate' (default: "
-            "deepl when key present, else libretranslate)."
+            "deepl when key present, else libretranslate). With neither "
+            "configured the tool returns an error and sends nothing."
         ),
         input_schema=_TRANS_SCHEMA,
         fn=_run,
