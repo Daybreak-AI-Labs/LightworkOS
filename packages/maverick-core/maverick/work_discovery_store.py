@@ -2172,15 +2172,19 @@ class WorkDiscoveryStore:
         since_value = _timestamp(since) if since is not None else None
         # Read one bounded page, then filter the authenticated timestamp after
         # decryption. Occurrence time is deliberately not a plaintext index.
+        # The page holds the NEWEST events (the device quota exceeds the page
+        # cap), returned oldest first.
         params.append(limit)
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT event_id,session_id,sequence,payload,event_digest,"
                 "ingested_at,expires_at "
                 "FROM ekko_events WHERE " + " AND ".join(where)
-                + " ORDER BY ingested_at,session_id,sequence LIMIT ?",
+                + " ORDER BY ingested_at DESC,session_id DESC,sequence DESC"
+                " LIMIT ?",
                 params,
             ).fetchall()
+            rows.reverse()
             session_rows = {
                 str(row["session_id"]): row
                 for row in conn.execute(
