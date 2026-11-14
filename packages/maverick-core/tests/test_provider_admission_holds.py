@@ -61,3 +61,21 @@ def test_a_call_is_settled_under_the_tenant_that_admitted_it():
         provider.settle(hold, 1)
     states = [c["state"] for c in organization._load("acme")["calls"].values()]
     assert states == ["settled"]
+
+
+def test_an_earlier_day_hold_leaves_the_hot_store_but_stays_settleable(monkeypatch):
+    # A run that died before acknowledgement kept its calls in the hot file
+    # forever; past its day the hold counts for nothing, so it is archived
+    # with its state instead of growing the file toward its size limit.
+    budget = budget_from_config()
+    _QuotaUsageSettlement(principal="user:a", budget=budget, domain=None)
+    stale = provider.reserve("openai", 6, organization_budget=budget)
+    _next_day(monkeypatch)
+    b2 = budget_from_config()
+    _QuotaUsageSettlement(principal="user:b", budget=b2, domain=None)
+    provider.reserve("anthropic", 1, organization_budget=b2)
+    hot = organization._load("acme")["calls"]
+    assert [call["provider"] for call in hot.values()] == ["anthropic"]
+    key = organization._key(stale.provider, stale.request_id)
+    archived = organization._load("acme", key=key)["calls"]
+    assert {call["state"] for call in archived.values() if call["provider"] == "openai"} == {"held"}

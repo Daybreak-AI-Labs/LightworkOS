@@ -1,4 +1,6 @@
-"""Indexed history for released organization receipts; no unresolved holds.
+"""Indexed history for released organization receipts, and for holds from an
+earlier UTC day (they no longer count against any cap; see
+``provider_admission._held``), kept with their held or unknown state.
 
 The caller holds provider_admission's strict store lock. SQLite commits history
 before the hot JSON removes it; duplicates after a crash prefer the hot record.
@@ -87,9 +89,17 @@ def include(tenant, data, *, run_ids=(), key=None, scopes=()):
 
 
 def compact(tenant, data):
-    """Move fully acknowledged scopes out of the bounded pending-hold store."""
+    """Move scopes with nothing pending today out of the bounded hot store.
+
+    A run that died before acknowledgement leaves unreleased calls behind;
+    once their day has passed they count for nothing, so keeping them hot only
+    grows the file until every provider call for the tenant is refused. A call
+    without a day is treated as today's (conservative)."""
+    from ..quotas import _today
+
+    today = _today()
     pending = {data['runs'][call['run_id']]['scope'] for call in data['calls'].values()
-               if not call['released']}
+               if not call['released'] and call.get('day', today) == today}
     scopes = {run['scope'] for run in data['runs'].values()} - pending
     identities = {identity for identity, run in data['runs'].items() if run['scope'] in scopes}
     if not identities:
