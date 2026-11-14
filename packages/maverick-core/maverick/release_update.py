@@ -386,7 +386,9 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover -- CLI shell
         from .workspace_snapshot import restore_snapshot
 
         def _rollback(bundle_dir, manifest, snap_id) -> None:
-            restore_snapshot(Path(args.store), snap_id, Path(args.dest))
+            # A rollback restores in place: an archive made before snapshots
+            # recorded their source must still remove files added since.
+            restore_snapshot(Path(args.store), snap_id, Path(args.dest), legacy_in_place=True)
 
         res = rollback_bundle(args.dir, args.snapshot, rollback=_rollback,
                               trusted_pubkeys=trust)
