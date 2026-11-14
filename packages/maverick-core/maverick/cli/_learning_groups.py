@@ -5,11 +5,12 @@ of the package __init__ so the @main.command decorators fire on package import.
 """
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import click
 
-from . import main
+from . import _write_private_export, main
 
 
 @main.command("hindsight")
@@ -80,6 +81,7 @@ def hindsight(ctx, before: str, limit: int, all_goals: bool, ledger: bool,
                    "run with learning FROZEN (control) vs LIVE (treatment), e.g. "
                    "via MAVERICK_LEARNING_FROZEN=1 then =0.")
 @click.option("--confidence", default=0.95, show_default=True,
+              type=click.FloatRange(min=0, max=1, min_open=True, max_open=True),
               help="Confidence level for the bootstrap CI.")
 @click.option("--seed", default=1234, show_default=True,
               help="Bootstrap seed -- the reported lift is reproducible per seed.")
@@ -102,6 +104,8 @@ def prove_learning(scores_path: str, confidence: float, seed: int,
     from dataclasses import asdict
 
     from ..learning_proof import paired_lift
+    if not math.isfinite(confidence):
+        raise click.BadParameter("must be finite and strictly between 0 and 1", param_hint="--confidence")
     try:
         data = _json.loads(Path(scores_path).read_text(encoding="utf-8"))
         baseline = [float(x) for x in data["baseline"]]
@@ -210,32 +214,36 @@ def domains_audit(json_out: str | None, suite: str | None) -> None:
         if not audits:
             raise click.ClickException(f"no packs in suite {suite!r}")
     s = summarize(audits)
+    streamed = False
+    if json_out:
+        import json as _json
+        try:
+            streamed = _write_private_export(json_out, _json.dumps(to_json(audits), indent=2))
+        except OSError as exc:
+            raise click.ClickException(f"could not write {json_out}: {exc}") from exc
     click.echo(f"{s['packs']} pack(s) across {s['suites']} suite(s); "
-               f"{s['builders']} builder(s)")
+               f"{s['builders']} builder(s)", err=streamed)
     click.echo(f"  drafting agents that can reach a state-mutator: "
-               f"{s['drafting_agents_reaching_a_mutator']}  (must be 0)")
-    click.echo(f"  with enforced persisted sign-off: {s['packs_with_human_gate']}")
+               f"{s['drafting_agents_reaching_a_mutator']}  (must be 0)", err=streamed)
+    click.echo(f"  with enforced persisted sign-off: {s['packs_with_human_gate']}", err=streamed)
     click.echo(
         "  with prompt-only unenforced gate:  "
-        f"{s['packs_with_unenforced_prompt_gate']}"
+        f"{s['packs_with_unenforced_prompt_gate']}", err=streamed
     )
-    click.echo(f"  with suite/pack refusals:     {s['packs_with_refusals_beyond_universal']}")
-    click.echo(f"  with a declared deliverable:  {s['packs_with_deliverable']}")
-    click.echo(f"  with a reasoning-effort tier: {s['packs_with_effort_tier']}")
+    click.echo(f"  with suite/pack refusals:     {s['packs_with_refusals_beyond_universal']}", err=streamed)
+    click.echo(f"  with a declared deliverable:  {s['packs_with_deliverable']}", err=streamed)
+    click.echo(f"  with a reasoning-effort tier: {s['packs_with_effort_tier']}", err=streamed)
     _ap = s.get("autonomy_posture", {})
     click.echo(
         "  autonomy posture (baseline rung): "
         f"observe={_ap.get('observe', 0)} suggest={_ap.get('suggest', 0)} "
         f"request={_ap.get('request', 0)} auto={_ap.get('auto', 0)}; "
-        f"onboarding={s.get('packs_onboarding', 0)}")
+        f"onboarding={s.get('packs_onboarding', 0)}", err=streamed)
     flagged = [a for a in audits if a.reachable_dangerous and not a.is_builder]
     for a in flagged:
         click.echo(f"  FLAG {a.name}: reaches {', '.join(a.reachable_dangerous)}", err=True)
     if json_out:
-        import json as _json
-        Path(json_out).write_text(_json.dumps(to_json(audits), indent=2),
-                                  encoding="utf-8")
-        click.echo(f"Wrote audit document -> {json_out}")
+        click.echo(f"Wrote audit document -> {json_out}", err=streamed)
     if flagged:
         raise click.ClickException(
             f"{len(flagged)} drafting pack(s) can reach a state-mutator")

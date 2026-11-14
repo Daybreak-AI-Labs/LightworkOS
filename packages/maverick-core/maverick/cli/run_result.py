@@ -11,7 +11,12 @@ from dataclasses import asdict
 from pathlib import Path
 
 from ..authority_effects import authority_effect_fence
-from ..file_lock import atomic_create_text, open_private_read
+from ..file_lock import (
+    _validate_open_lock_file,
+    _windows_open_private_file_is_restricted,
+    atomic_create_text,
+    require_private_directory,
+)
 
 SCHEMA = "lightwork.cli-run-result.v1"
 STATUSES = {"pending", "draft", "active", "running", "blocked", "done", "failed", "cancelled", "paused", "waiting"}
@@ -33,10 +38,39 @@ def prepare_result_target(value, *, repeat, dry_cost, key_file=None):
 
 
 def read_result_key(path):
+    """Verify a caller-owned key without claiming its file or directory."""
     if path is None:
         return None
-    with os.fdopen(open_private_read(path), "rb") as stream:
-        key = stream.read(33)
+    path = Path(path)
+    parent = require_private_directory(path.parent).stat()
+    if os.name != "nt" and parent.st_uid != os.getuid():
+        raise PermissionError("The result key directory must belong to the current user.")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    flags |= getattr(os, "O_NONBLOCK", 0)
+    fd = os.open(path, flags)
+    try:
+        def inspect_key():
+            info = _validate_open_lock_file(path, fd)
+            if os.name == "nt":
+                mode = 0o600 if info.st_mode & stat.S_IWRITE else 0o400
+                private = _windows_open_private_file_is_restricted(path, info, mode)
+            else:
+                private = (info.st_uid == os.getuid() and not info.st_mode & 0o077
+                           and bool(info.st_mode & stat.S_IRUSR))
+            if not private:
+                raise PermissionError("The result key must already be private.")
+            return (info.st_dev, info.st_ino, info.st_mode, info.st_nlink,
+                    info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+        before = inspect_key()
+        key = os.read(fd, 33)
+        if inspect_key() != before:
+            raise PermissionError("The result key changed while being read.")
+        current_parent = require_private_directory(path.parent).stat()
+        if (parent.st_dev, parent.st_ino) != (current_parent.st_dev, current_parent.st_ino):
+            raise PermissionError("The result key directory changed while being read.")
+    finally:
+        os.close(fd)
     if len(key) != 32:
         raise ValueError("The private result key is unavailable or invalid.")
     return key

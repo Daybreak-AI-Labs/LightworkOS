@@ -504,16 +504,20 @@ def attest_export_verifier_cmd(out: str) -> None:
     import pathlib
 
     from ..attestation import verifier_source
+    from . import _write_private_export
     text, digest = verifier_source()
     path = pathlib.Path(out)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-    click.echo(f"verifier -> {path}")
-    click.echo(f"sha256:     {digest}")
-    click.echo("")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        streamed = _write_private_export(path, text)
+    except OSError as exc:
+        raise click.ClickException(f"could not write {path}: {exc}") from exc
+    click.echo(f"verifier -> {path}", err=streamed)
+    click.echo(f"sha256:     {digest}", err=streamed)
+    click.echo("", err=streamed)
     click.echo(f"  python {path.name} <bundle.json> --key <pubkey-hex> "
-               "[--evidence <audit-dir>]")
-    click.echo("Needs only Python and 'cryptography'.")
+               "[--evidence <audit-dir>]", err=streamed)
+    click.echo("Needs only Python and 'cryptography'.", err=streamed)
 
 
 @main.group("security")
