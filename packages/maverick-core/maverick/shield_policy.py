@@ -99,7 +99,7 @@ def _configured_shield(shield_cls, *, external_text: bool):
             return cached
     try:
         shield = shield_cls.from_config()
-        if external_text and getattr(shield, "_scan_input_enabled", True) is False:
+        if external_text and not getattr(shield, "_scan_input_enabled", True):
             shield._scan_input_enabled = True
     except Exception as e:
         if not external_text:
