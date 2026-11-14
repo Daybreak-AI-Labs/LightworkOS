@@ -52,3 +52,11 @@ def test_factory_identity():
     t = polyglot_injection()
     assert t.name == "polyglot_injection"
     assert t.parallel_safe is True
+
+
+def test_unclosed_template_markers_scan_in_linear_time():
+    """``\\{\\{.*?\\}\\}`` rescanned the rest of the text for every unclosed
+    ``{{``; 40 KB took seconds and 400 KB would take minutes."""
+    assert _run("{{" * 200_000).startswith("CLEAN")
+    assert _run("on" * 200_000).startswith("CLEAN")
+    assert "template" in _run("{{ x }} && rm -rf /")

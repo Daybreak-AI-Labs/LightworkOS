@@ -157,9 +157,11 @@ def _load_parquet_capped(path: Path, cap: int, pd):
 def _apply_where(df, where: str):
     """Parse a single 'col op value' clause. Safer than df.query()."""
     import re
-    m = re.match(
-        r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(==|!=|<=|>=|<|>)\s*(.+?)\s*$",
-        where,
+    # Strip first: a lazy ``(.+?)\s*$`` retries the trailing-space match at
+    # every position of a long whitespace run, which is quadratic.
+    m = re.fullmatch(
+        r"([A-Za-z_][A-Za-z0-9_]*)\s*(==|!=|<=|>=|<|>)\s*(.+)",
+        where.strip(),
     )
     if not m:
         raise ValueError(
