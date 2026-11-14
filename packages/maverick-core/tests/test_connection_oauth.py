@@ -216,6 +216,48 @@ def test_lost_rotating_refresh_reply_is_not_replayed(monkeypatch):
     assert connections.get_connection("evidence")["oauth"]["refresh_state"] == "pending"
 
 
+def test_refresh_that_never_reached_the_provider_can_be_retried(monkeypatch):
+    import httpx
+
+    app()
+    exchange(start(), monkeypatch)
+    expire()
+    calls = []
+    def unreachable(*args):
+        calls.append(args)
+        raise httpx.ConnectError("synthetic connection refused")
+    monkeypatch.setattr(oauth, "_post_token", unreachable)
+    for _ in range(2):
+        with pytest.raises(PermissionError):
+            oauth.renew(connections.get_connection("evidence"), actor=OWNER)
+    assert len(calls) == 2
+    assert connections.get_connection("evidence")["oauth"]["refresh_state"] == "ready"
+
+
+def test_test_receipts_do_not_change_the_refresh_binding(monkeypatch):
+    app()
+    saved = exchange(start(), monkeypatch)
+    before = oauth._refresh_binding(connections.get_connection("evidence"))
+    for _ in range(2):
+        connections.record_test_result("evidence", reachable=True, authenticated=True, status=200,
+                                       expected_revision=saved["revision"])
+    assert oauth._refresh_binding(connections.get_connection("evidence")) == before
+
+
+def test_pending_consent_cap_is_per_account(monkeypatch):
+    app()
+    monkeypatch.setattr(oauth, "_PENDING_CONSENT_LIMIT", 1)
+    start()
+    with pytest.raises(ValueError, match="Too many"):
+        start()
+    with oauth.connections._mutation_lock():
+        store = oauth._load()
+        for value in store["consents"].values():
+            value["owner"] = "user:someone-else"
+        oauth._save(store)
+    start()
+
+
 def test_refresh_cannot_replace_the_connected_provider_account(monkeypatch):
     app()
     saved = exchange(start(), monkeypatch)

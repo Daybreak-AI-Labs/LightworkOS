@@ -64,6 +64,7 @@ _NATIVE_TICKET_ENV = "MAVERICK_DESKTOP_OAUTH_TICKET_KEY"
 _NATIVE_TICKET_SCHEMA = "lightwork.native-oauth-ticket.v1"
 _NATIVE_TICKET_MAX = 8192
 _PENDING_CONSENT_LIMIT = 32
+_PENDING_CONSENT_ACCOUNTS = 32
 _RETIRED_CONSENT_LIMIT = 64
 _RETIRED_CONSENT_TTL = 24 * 60 * 60
 _GOOGLE_SCOPE_ALIASES = {
@@ -631,11 +632,12 @@ def begin(actor, *, profile, name, redirect_uri, context, expected_revision="", 
             key: value for key, value in store["consents"].items()
             if value["expires_at"] > now
         }
-        pending_count = sum(
-            value.get("retired") is not True
-            for value in store["consents"].values()
-        )
-        if pending_count >= _PENDING_CONSENT_LIMIT:
+        pending = [value for value in store["consents"].values()
+                   if value.get("retired") is not True]
+        # The per-account cap stops one user from blocking everyone else's
+        # authorizations; the workspace cap still bounds the store.
+        if (sum(value.get("owner") == actor for value in pending) >= _PENDING_CONSENT_LIMIT
+                or len(pending) >= _PENDING_CONSENT_LIMIT * _PENDING_CONSENT_ACCOUNTS):
             raise ValueError("Too many account authorizations are pending. Wait ten minutes.")
         store["consents"][key] = {"owner": actor, "profile": profile, "name": name, "context": context, "self_connect": self_connect,
             "application_key": application_key, "application_revision": application["revision"], "expected_revision": expected_revision,
@@ -721,34 +723,44 @@ def finish(actor, *, state, code, context, redirect_uri, return_profile="browser
             raise connections.ConnectionVersionConflict("Connection or application changed during consent. Start again.")
         del store["consents"][key]
         _save(store)
-        token_response = _post_token(selected["provider"], {"grant_type": "authorization_code", "client_id": application["client_id"], "client_secret": application["client_secret"], "code": code, "redirect_uri": redirect_uri, "code_verifier": consent["verifier"],
-            **({"scope": " ".join(selected["scopes"])} if selected["provider"] == "microsoft" else {})})
-        access, refresh, expires, granted_scopes, scope_status = _tokens(
-            token_response, selected["scopes"], provider=selected["provider"],
-        )
-        identity = _provider_identity(selected["provider"], access, response=token_response,
-            client_id=application["client_id"], nonce=consent.get("nonce", ""))
-        prefix = ""
-        workspace = {}
-        if consent["profile"] == "jira-cloud":
-            sites = _jira_sites(access)
-            if not isinstance(sites, list):
-                raise ValueError("Authorized Jira sites were unavailable.")
-            matches = [row for row in sites if isinstance(row, dict) and str(row.get("url", "")).rstrip("/") == consent["site_url"]]
-            if len(matches) != 1 or not re.fullmatch(r"[0-9a-fA-F-]{36}", str(matches[0].get("id", ""))):
-                raise ValueError("Consent did not authorize the selected Jira site. No connection was saved.")
-            resource_scopes = matches[0].get("scopes")
-            if (not isinstance(resource_scopes, list) or any(not isinstance(value, str) for value in resource_scopes)
-                    or not (set(selected["scopes"]) - {"offline_access", "read:me"}) <= set(resource_scopes)):
-                raise ValueError("The selected Jira site did not grant the required read and write access.")
-            cloud_id = str(uuid.UUID(matches[0]["id"]))
-            prefix = "/ex/jira/" + cloud_id
-            workspace = {"provider_id": cloud_id,
-                         "name": _identity_text(matches[0].get("name"), maximum=512),
-                         "url": consent["site_url"]}
+    # Provider I/O runs outside the shared credential-store lock (every
+    # resolve and listing takes it); the record is re-checked before saving.
+    token_response = _post_token(selected["provider"], {"grant_type": "authorization_code", "client_id": application["client_id"], "client_secret": application["client_secret"], "code": code, "redirect_uri": redirect_uri, "code_verifier": consent["verifier"],
+        **({"scope": " ".join(selected["scopes"])} if selected["provider"] == "microsoft" else {})})
+    access, refresh, expires, granted_scopes, scope_status = _tokens(
+        token_response, selected["scopes"], provider=selected["provider"],
+    )
+    identity = _provider_identity(selected["provider"], access, response=token_response,
+        client_id=application["client_id"], nonce=consent.get("nonce", ""))
+    prefix = ""
+    workspace = {}
+    if consent["profile"] == "jira-cloud":
+        sites = _jira_sites(access)
+        if not isinstance(sites, list):
+            raise ValueError("Authorized Jira sites were unavailable.")
+        matches = [row for row in sites if isinstance(row, dict) and str(row.get("url", "")).rstrip("/") == consent["site_url"]]
+        if len(matches) != 1 or not re.fullmatch(r"[0-9a-fA-F-]{36}", str(matches[0].get("id", ""))):
+            raise ValueError("Consent did not authorize the selected Jira site. No connection was saved.")
+        resource_scopes = matches[0].get("scopes")
+        if (not isinstance(resource_scopes, list) or any(not isinstance(value, str) for value in resource_scopes)
+                or not (set(selected["scopes"]) - {"offline_access", "read:me"}) <= set(resource_scopes)):
+            raise ValueError("The selected Jira site did not grant the required read and write access.")
+        cloud_id = str(uuid.UUID(matches[0]["id"]))
+        prefix = "/ex/jira/" + cloud_id
+        workspace = {"provider_id": cloud_id,
+                     "name": _identity_text(matches[0].get("name"), maximum=512),
+                     "url": consent["site_url"]}
+    with connections._mutation_lock():
         _authority(actor)
         if consent.get("self_connect"):
             _self_connect_allowed(consent["profile"])
+        records = connections._load()
+        previous = records.get(consent["name"])
+        current_app = _bound_application(_load(), actor, selected["provider"], consent)
+        if (not current_app or current_app["revision"] != consent["application_revision"]
+                or (previous or {}).get("revision", "") != consent["expected_revision"]
+                or previous and previous.get("owner") != actor):
+            raise connections.ConnectionVersionConflict("Connection or application changed during consent. Start again.")
         records[consent["name"]] = {"name": consent["name"], "connector": selected["connector"], "base_url": selected["origin"], "token": access,
             "created": (previous or {}).get("created", time.time()), "owner": actor,
             "access": (previous or {}).get("access", "owner"), "allowed_principals": (previous or {}).get("allowed_principals", []),
@@ -814,11 +826,35 @@ def renew(record, *, actor):
 
 
 def _refresh_binding(record):
-    """Freeze credentials and authority, allowing only a concurrent test receipt."""
+    """Freeze credentials and authority, allowing only a concurrent test receipt
+    (which writes ``last_test`` and appends the previous one to ``test_history``)."""
     return hashlib.sha256(json.dumps(
-        {key: value for key, value in record.items() if key != "last_test"},
+        {key: value for key, value in record.items() if key not in {"last_test", "test_history"}},
         sort_keys=True, separators=(",", ":"),
     ).encode()).hexdigest()
+
+
+def _refresh_not_consumed(exc) -> bool:
+    """Whether a failed refresh request certainly left the refresh token unused:
+    no connection was made (nothing was sent), or the token endpoint refused
+    it with a throttling or unavailable status before issuing anything."""
+    import httpx
+
+    if isinstance(exc, httpx.ConnectError):
+        return True
+    return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in {429, 503}
+
+
+def _release_refresh(name, frozen):
+    """Return an untouched pending refresh to ``ready`` so a later use retries."""
+    with connections._mutation_lock():
+        records = connections._load()
+        latest = records.get(name)
+        if not latest or _refresh_binding(latest) != frozen:
+            return
+        latest["oauth"]["refresh_state"] = "ready"
+        latest["oauth"].pop("refresh_lease", None)
+        connections._save(records)
 
 
 def _renew_owned(record, *, actor):
@@ -860,8 +896,13 @@ def _renew_owned(record, *, actor):
         app_binding = _refresh_binding(application)
         connections._save(records)
     try:
-        result = _post_token(selected["provider"], {"grant_type": "refresh_token", "client_id": application["client_id"], "client_secret": application["client_secret"], "refresh_token": oauth["refresh_token"],
-            **({"scope": " ".join(selected["scopes"])} if selected["provider"] == "microsoft" else {})})
+        try:
+            result = _post_token(selected["provider"], {"grant_type": "refresh_token", "client_id": application["client_id"], "client_secret": application["client_secret"], "refresh_token": oauth["refresh_token"],
+                **({"scope": " ".join(selected["scopes"])} if selected["provider"] == "microsoft" else {})})
+        except Exception as exc:
+            if _refresh_not_consumed(exc):
+                _release_refresh(record["name"], frozen)
+            raise
         access, refresh, expires, granted_scopes, scope_status = _tokens(
             result, selected["scopes"], provider=selected["provider"],
             prior_refresh=oauth["refresh_token"], prior_granted=prior_granted,
