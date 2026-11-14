@@ -3666,6 +3666,19 @@ class PostgresWorldModel:
         now = time.time()
         tenant = _active_tenant()
         with self._tx() as cur:
+            self._lock_fact_subject(cur, key, shared=True)
+            if episode_id is not None:
+                # These legacy provenance columns have no foreign key. Hold
+                # their parent explicitly so erasure cannot delete the episode
+                # and then accept a late fact carrying its private output.
+                scope, scoped = _mutation_tenant_scope("g.tenant_id")
+                cur.execute(
+                    "SELECT e.id FROM episodes e JOIN goals g ON g.id=e.goal_id "
+                    "WHERE e.id=%s AND " + scope + " FOR SHARE OF e",
+                    (episode_id, *scoped),
+                )
+                if cur.fetchone() is None:
+                    raise ValueError("The fact's source episode is unavailable in this workspace.")
             self._check_fact_revision(cur, key, expected_revision)
             if _temporal_memory_enabled():
                 # Serialize concurrent writers for THIS key across replicas: the
@@ -4115,9 +4128,11 @@ class PostgresWorldModel:
 
     def ask(self, question: str, goal_id: int | None = None) -> int:
         # When attached to a goal, gate on that goal being in the active tenant
-        # (matches `answer`, which scopes by the parent goal). A goal-less
-        # question has no parent to inherit from, so it inserts directly.
+        # (matches `answer`, which scopes by the parent goal). A scoped
+        # question needs that parent so it can later be listed and answered.
         frag, fparams = _mutation_tenant_scope()
+        if _active_tenant() is not None and goal_id is None:
+            raise ValueError("A question in a tenant workspace must be attached to a goal.")
         with self._tx() as cur:
             if frag and goal_id is not None:
                 cur.execute(
@@ -5495,6 +5510,50 @@ class PostgresWorldModel:
             for store in RECEIPT_STORES
         }
 
+    @staticmethod
+    def _lock_fact_subject(cur, key: str, *, shared: bool) -> None:
+        # User-scoped facts can have no episode, and a new key has no row to
+        # lock. Only these writers need a scoped advisory fence in addition to
+        # the parent-row locks used by every foreign-key-backed child table.
+        parts = key.split(":", 3)
+        if len(parts) != 4 or parts[0] != "user":
+            return
+        identity = json.dumps(["fact-erasure", _active_tenant(), *parts[:3]])
+        function = "pg_advisory_xact_lock_shared" if shared else "pg_advisory_xact_lock"
+        cur.execute(f"SELECT {function}(hashtextextended(%s, 0))", (identity,))
+
+    def _locked_conversation_erasure_plan_cursor(self, cur, requested: list[int]) -> dict:
+        from ..erasure_receipts import ErasurePlanChanged
+
+        scope, scoped = _erasure_tenant_scope()
+        cur.execute(
+            "SELECT id, channel, user_id FROM conversations WHERE id=ANY(%s) "
+            "AND " + scope + " ORDER BY id FOR UPDATE", (requested, *scoped),
+        )
+        conversations = cur.fetchall()
+        # Match the writer's lock order: subject, then episode, then fact. The
+        # stable ordering also permits overlapping erasures to serialize.
+        subjects = sorted({f"user:{quote(str(channel), safe='')}:{quote(str(user), safe='')}:"
+                           for _, channel, user in conversations})
+        for subject in subjects:
+            self._lock_fact_subject(cur, subject, shared=False)
+        plan = self._conversation_erasure_plan_cursor(cur, requested)
+        for _ in range(8):
+            cur.execute("SELECT id FROM goals WHERE id=ANY(%s) ORDER BY id FOR UPDATE",
+                        (plan["goal_ids"],))
+            cur.fetchall()
+            cur.execute("SELECT id FROM episodes WHERE goal_id=ANY(%s) ORDER BY id FOR UPDATE",
+                        (plan["goal_ids"],))
+            cur.fetchall()
+            current = self._conversation_erasure_plan_cursor(cur, requested)
+            if (current["goal_ids"] == plan["goal_ids"]
+                    and current["episode_ids"] == plan["episode_ids"]):
+                return current
+            # A child may commit between the first read and its parent's lock.
+            # Lock that newly observed closure, then reread before any delete.
+            plan = current
+        raise ErasurePlanChanged("The conversation's task tree kept changing while erasure was being prepared. Retry the review.")
+
     def erase_conversations(
         self,
         conversation_ids: list[int],
@@ -5533,17 +5592,7 @@ class PostgresWorldModel:
         from ..erasure_receipts import ErasurePlanChanged
 
         with self._tx() as cur:
-            # Erasure is rare and correctness-sensitive. Block concurrent
-            # inserts into every participating table while the durable plan is
-            # re-read, compared, and deleted; otherwise a child could appear
-            # after receipt issuance but before its table's DELETE.
-            cur.execute(
-                "LOCK TABLE conversations, turns, goals, episodes, artifacts, "
-                "attachments, goal_events, goal_origins, goal_mutation_receipts, messages, "
-                "processed_messages, questions, share_links, signoffs, "
-                "fact_history, facts IN SHARE ROW EXCLUSIVE MODE"
-            )
-            plan = self._conversation_erasure_plan_cursor(cur, requested)
+            plan = self._locked_conversation_erasure_plan_cursor(cur, requested)
             if (
                 expected_conversations is not None
                 and plan["conversation_ids"] != expected_conversations
@@ -5980,26 +6029,53 @@ class PostgresWorldModel:
             # backfill commit together, so no partial state is observable here.
             return
         cur.execute(
-            "INSERT INTO provider_operation_attempts("
+            "WITH entries AS MATERIALIZED ("
+            "SELECT p.provider, p.period_key, j.request_id, j.receipt, "
+            "j.receipt->'operation' AS operation "
+            "FROM provider_cap_receipts AS p "
+            "CROSS JOIN LATERAL jsonb_each(CASE "
+            "WHEN jsonb_typeof(p.receipts_json::jsonb) = 'object' "
+            "THEN p.receipts_json::jsonb ELSE '{}'::jsonb END) AS j(request_id, receipt) "
+            "WHERE j.receipt->'operation' IS NOT NULL), "
+            "parsed AS MATERIALIZED (SELECT *, CASE "
+            "WHEN jsonb_typeof(operation->'attempt_no') = 'number' "
+            "AND operation->>'attempt_no' ~ '^[1-9][0-9]{0,18}$' "
+            "AND (length(operation->>'attempt_no') < 19 "
+            "OR operation->>'attempt_no' <= '9223372036854775807') "
+            "THEN (operation->>'attempt_no')::BIGINT ELSE NULL END AS attempt_no, "
+            "COALESCE(jsonb_typeof(operation) = 'object' "
+            "AND jsonb_typeof(operation->'operation_id') = 'string' "
+            "AND length(operation->>'operation_id') > 0 "
+            "AND jsonb_typeof(operation->'category') = 'string' "
+            "AND jsonb_typeof(operation->'parent_category') = 'string' "
+            "AND (operation->'service' IS NULL "
+            "OR jsonb_typeof(operation->'service') IN ('string', 'null')), FALSE) AS valid "
+            "FROM entries), inserted AS (INSERT INTO provider_operation_attempts("
             "scope_sha256, operation_id, attempt_no, category, parent_category, "
             "service, provider, period_key, request_id) "
-            "SELECT COALESCE(j.receipt->>'operation_scope_sha256', "
-            "j.receipt->>'work_item_sha256', "
+            "SELECT COALESCE(receipt->>'operation_scope_sha256', "
+            "receipt->>'work_item_sha256', "
             "'c544f4564db872e0ffb51fa1bb81b3d7089460a7a9a79ad21cd3952e77f0efec'), "  # pragma: allowlist secret
-            "j.receipt->'operation'->>'operation_id', "
-            "(j.receipt->'operation'->>'attempt_no')::BIGINT, "
-            "j.receipt->'operation'->>'category', "
-            "j.receipt->'operation'->>'parent_category', "
-            "j.receipt->'operation'->>'service', "
-            "p.provider, p.period_key, j.request_id "
-            "FROM provider_cap_receipts AS p "
-            "CROSS JOIN LATERAL jsonb_each(p.receipts_json::jsonb) "
-            "AS j(request_id, receipt) "
-            "WHERE jsonb_typeof(j.receipt->'operation') = 'object' "
+            "operation->>'operation_id', attempt_no, operation->>'category', "
+            "operation->>'parent_category', operation->>'service', "
+            "provider, period_key, request_id FROM parsed "
+            "WHERE valid AND attempt_no IS NOT NULL "
             "AND NOT EXISTS (SELECT 1 FROM provider_operation_attempts AS a "
-            "WHERE a.provider = p.provider AND a.period_key = p.period_key "
-            "AND a.request_id = j.request_id)"
+            "WHERE a.provider = parsed.provider AND a.period_key = parsed.period_key "
+            "AND a.request_id = parsed.request_id) RETURNING request_id) "
+            "SELECT provider, period_key, request_id FROM parsed "
+            "WHERE NOT valid OR attempt_no IS NULL"
         )
+        skipped = 0
+        while rows := cur.fetchmany(100):
+            for row in rows:
+                # A digest identifies the retained row without writing any
+                # potentially sensitive legacy identifier into application logs.
+                reference = hashlib.sha256(json.dumps(list(row)).encode()).hexdigest()
+                log.warning("Malformed legacy provider operation receipt retained; row_sha256=%s", reference)
+            skipped += len(rows)
+        if skipped:
+            log.warning("Skipped %d malformed legacy provider operation receipt(s); original spend receipts were retained", skipped)
 
     def reserve_current_provider_cap(
         self,

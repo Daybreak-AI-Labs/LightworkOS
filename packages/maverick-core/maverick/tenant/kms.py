@@ -21,6 +21,7 @@ Opt-in and offline-testable. Requires the ``cryptography`` extra (AES-GCM).
 from __future__ import annotations
 
 import hashlib
+import math
 import os
 import secrets
 import threading
@@ -280,7 +281,7 @@ _dek_lock = threading.Lock()
 _dek_tenant_locks: dict[str, threading.Lock] = {}
 
 
-def _dek_cache_ttl() -> float:
+def _dek_cache_ttl(tenant_id: str | None) -> float:
     """Seconds a tenant DEK stays cached before it must be re-unwrapped by the
     KMS. ``0`` (default) = cache for the process lifetime, unchanged behavior. A
     positive TTL bounds how long a *revoked* cloud-KMS key keeps opening data:
@@ -289,14 +290,18 @@ def _dek_cache_ttl() -> float:
     raw = os.environ.get("MAVERICK_KMS_DEK_CACHE_TTL")
     if raw is None or raw.strip() == "":
         try:
-            from ..config import load_config
-            raw = (load_config() or {}).get("kms", {}).get("dek_cache_ttl")
-        except Exception:  # pragma: no cover -- config never blocks key setup
-            raw = None
+            raw = _kms_config_for(tenant_id).get("dek_cache_ttl")
+        except Exception as exc:
+            raise EncryptionUnavailable("cannot read the tenant data-key cache policy") from exc
+        if _kms_config_unreadable(tenant_id):
+            raise EncryptionUnavailable("cannot read the tenant data-key cache policy")
     try:
-        return max(0.0, float(raw)) if raw is not None else 0.0
-    except (TypeError, ValueError):
-        return 0.0
+        ttl = float(raw) if raw is not None else 0.0
+    except (TypeError, ValueError) as exc:
+        raise EncryptionUnavailable("tenant data-key cache lifetime must be a nonnegative number") from exc
+    if not math.isfinite(ttl) or ttl < 0:
+        raise EncryptionUnavailable("tenant data-key cache lifetime must be a finite nonnegative number")
+    return ttl
 
 
 def tenant_dek(tenant_id: str | None, *, kms: KMS | None = None) -> bytes:
@@ -304,13 +309,13 @@ def tenant_dek(tenant_id: str | None, *, kms: KMS | None = None) -> bytes:
     generates + wraps + persists one on first use. Cached per tenant id (bounded
     by ``[kms] dek_cache_ttl`` so a revoked KMS key takes effect)."""
     cache_key = tenant_id or "__default__"
-    dek = _cached_dek(cache_key)
+    dek = _cached_dek(cache_key, tenant_id)
     if dek is not None:
         return dek
     with _dek_lock:
         tenant_lock = _dek_tenant_locks.setdefault(cache_key, threading.Lock())
     with tenant_lock:
-        dek = _cached_dek(cache_key)  # another thread may have just loaded it
+        dek = _cached_dek(cache_key, tenant_id)  # another thread may have just loaded it
         if dek is not None:
             return dek
         # Per-tenant BYOK: resolve THIS tenant's KMS unless one was injected.
@@ -337,7 +342,7 @@ def tenant_dek(tenant_id: str | None, *, kms: KMS | None = None) -> bytes:
         return dek
 
 
-def _cached_dek(cache_key: str) -> bytes | None:
+def _cached_dek(cache_key: str, tenant_id: str | None) -> bytes | None:
     """The cached DEK, or None when absent or lapsed (a lapsed entry is dropped)."""
     # TTL is evaluated against the CURRENT setting on every read, not frozen at
     # write -- so raising the TTL (or revoking a cloud KEK) bounds even a
@@ -347,7 +352,7 @@ def _cached_dek(cache_key: str) -> bytes | None:
     if cached is None:
         return None
     dek, cached_at = cached
-    ttl = _dek_cache_ttl()  # reads config: outside the lock
+    ttl = _dek_cache_ttl(tenant_id)  # reads config: outside the lock
     if ttl <= 0 or cached_at + ttl > _now():
         return dek
     with _dek_lock:

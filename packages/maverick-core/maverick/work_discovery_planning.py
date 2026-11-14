@@ -12,7 +12,7 @@ import statistics
 from dataclasses import asdict, dataclass
 
 from .work_discovery import DraftReview
-from .work_discovery_store import WorkDiscoveryStoreError
+from .work_discovery_store import EnrollmentRequired, WorkDiscoveryStoreError
 
 MAX_PLANS = 100
 MAX_PILOT_RUNS = 30
@@ -168,7 +168,10 @@ class OpportunityPlans:
     def record_run(self, opportunity_id, *, sample, expected_revision):
         sample = validate_sample(sample)
         self.store._purge_expired_events()
-        with self.store._transaction() as conn:
+        with self.store._deployment_control_barrier(), self.store._consent_barrier(), self.store._transaction() as conn:
+            enrollment = self.store.get_enrollment()
+            if enrollment is None or not enrollment.active:
+                raise EnrollmentRequired("Recording a pilot run requires current enrollment for this owner and device.")
             value = self._find(conn, opportunity_id)
             if value is None:
                 raise PlanConflict("This plan expired or was removed. Refresh your saved opportunities.")
@@ -190,7 +193,7 @@ class OpportunityPlans:
             raise ValueError("Choose a saved opportunity.")
         if not self.store.path.exists():
             return False
-        with self.store._transaction() as conn:
+        with self.store._deployment_control_barrier(), self.store._consent_barrier(), self.store._transaction() as conn:
             value = self._find(conn, opportunity_id)
             if value is None:
                 return False
