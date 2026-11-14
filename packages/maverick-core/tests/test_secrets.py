@@ -129,3 +129,20 @@ class TestSecretScrubbing:
         out = scrub(text)
         # env_secret pattern catches this first since GITHUB_TOKEN matches.
         assert "ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789" not in out
+
+
+def test_common_credential_shapes_are_redacted():
+    # Formerly left in clear: an empty URL user, a password containing "@",
+    # fine-grained GitHub PATs, Basic auth, and lowercase or JSON key/values.
+    cases = {
+        "redis://:s3cr3tpass@cache:6379/0": "s3cr3tpass",
+        "postgres://u:p@ssw0rd@h/db": "ssw0rd",
+        "token github_pat_11ABCDEFG0123456789_abcdefghijklmnopqrstuv": "github_pat_11ABCDEFG",
+        "Authorization: Basic dXNlcjpwYXNz": "dXNlcjpwYXNz",
+        "password=hunter2": "hunter2",
+        "api_key: abc123def": "abc123def",
+        '{"api_key": "zzz-secret"}': "zzz-secret",
+    }
+    for text, secret in cases.items():
+        assert secret not in scrub(text), text
+    assert scrub("see http://host:8080/p") == "see http://host:8080/p"

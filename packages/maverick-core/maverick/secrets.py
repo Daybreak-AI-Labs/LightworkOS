@@ -40,7 +40,9 @@ _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     )),
     # Credentials embedded in a URL / connection string
     # (scheme://user:password@host -- postgres://, redis://, mongodb://, ...).
-    # Redacts only the password segment, keeping the rest readable.
+    # Redacts only the password segment, keeping the rest readable. The user
+    # may be empty (redis://:password@host), and the password runs to the last
+    # "@" before the host, so a password containing "@" is redacted whole.
     # The scheme run is bounded ({0,31}) instead of an open `*`: an
     # unbounded greedy class followed by the required `://` backtracks
     # quadratically on a long run of scheme-class chars that has no `://`
@@ -48,7 +50,7 @@ _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # crafted long string could hang the agent). No real URL scheme is
     # anywhere near 32 chars, so the bound changes no legitimate match.
     ("url_credentials", re.compile(
-        r"([a-zA-Z][a-zA-Z0-9+.\-]{0,31}://[^\s:/@]+:)([^\s/@]+)(@)",
+        r"([a-zA-Z][a-zA-Z0-9+.\-]{0,31}://[^\s:/@]*:)([^\s/]+)(@)",
     )),
     # Anthropic API key (sk-ant-...)
     ("anthropic_key", re.compile(r"\bsk-ant-[A-Za-z0-9_-]{20,}\b")),
@@ -71,16 +73,18 @@ _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("aws_secret_key", re.compile(
         r"(?i)(aws_secret_access_key\s*[:=]\s*['\"]?)([A-Za-z0-9/+]{40})",
     )),
-    # GitHub PAT (ghp_/gho_/ghu_/ghr_/ghs_ prefix)
-    ("github_token", re.compile(r"\bgh[ps]_[A-Za-z0-9_]{30,}\b|\bghu_[A-Za-z0-9_]{30,}\b|\bgho_[A-Za-z0-9_]{30,}\b|\bghr_[A-Za-z0-9_]{30,}\b")),
+    # GitHub PAT (ghp_/gho_/ghu_/ghr_/ghs_ prefix, and fine-grained github_pat_)
+    ("github_token", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{22,}\b|\bgh[ps]_[A-Za-z0-9_]{30,}\b|\bghu_[A-Za-z0-9_]{30,}\b|\bgho_[A-Za-z0-9_]{30,}\b|\bghr_[A-Za-z0-9_]{30,}\b")),
     # Lightwork personal / service-account API key (lwk_...; see
     # maverick_dashboard.api_keys). Only the configured default prefix is
     # recognised here; a custom prefix must be added to this list too.
     ("lightwork_api_key", re.compile(r"\blwk_[A-Za-z0-9_-]{20,}\b")),
     # Slack tokens (xoxb-, xoxp-, xapp-)
     ("slack_token", re.compile(r"\bxox[bpaors]-[A-Za-z0-9-]{10,}\b")),
-    # Generic bearer header (Authorization: Bearer ...)
-    ("bearer", re.compile(r"(?i)\b(authorization\s*:\s*bearer\s+)([A-Za-z0-9._\-+/=]{16,})")),
+    # Authorization header (Bearer ... or Basic <base64 user:password>)
+    ("bearer", re.compile(
+        r"(?i)\b(authorization\s*:\s*(?:bearer\s+(?=[A-Za-z0-9._\-+/=]{16})|basic\s+))"
+        r"([A-Za-z0-9._\-+/=]+)")),
     # .env-style KEY=value lines (only the value part; only redact when key
     # contains TOKEN / KEY / SECRET / PASSWORD / PASS / CREDENTIAL). Tolerates
     # a leading `export ` so shell-style `export FOO_TOKEN=...` is covered too.
@@ -121,6 +125,14 @@ _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         r"(?i)([?&](?:access_token|api_key|apikey|auth_token|token|secret|"
         r"password|passwd|sig|signature|client_secret)=)([^&#\s\"']+)",
     )),
+    # Lowercase or quoted key/value pairs (password=..., api_key: ...,
+    # {"api_key": "..."}) that the uppercase env_secret pattern misses. A value
+    # an earlier pattern already redacted is left alone.
+    ("kv_secret", re.compile(
+        r"(?i)(\b(?:password|passwd|api[_-]?key|access[_-]?token|auth[_-]?token|"
+        r"client[_-]?secret|secret[_-]?key)[\"']?[^\S\n]*[:=][^\S\n]*)"
+        r"(?![\"']?\[REDACTED)(\"[^\"\n]*\"|'[^'\n]*'|[^\s,;&\"'}]+)",
+    )),
 ]
 
 
@@ -135,7 +147,7 @@ def scrub(text: str) -> str:
         return text
     out = text
     for kind, pat in _PATTERNS:
-        if kind in ("bearer", "env_secret", "url_secret", "aws_secret_key", "jwt"):
+        if kind in ("bearer", "env_secret", "url_secret", "aws_secret_key", "jwt", "kv_secret"):
             # Keep the prefix (header name / KEY= / ?param= / text before a
             # token), redact the value.
             out = pat.sub(lambda m, k=kind: m.group(1) + f"[REDACTED:{k}]", out)
