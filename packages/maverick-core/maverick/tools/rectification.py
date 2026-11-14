@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from . import Tool
+from . import Tool, as_bool
 
 
 def _apply(record: dict, changes: dict, immutable: set, allow_new: bool) -> str:
@@ -73,7 +73,7 @@ def _run(args: dict[str, Any]) -> str:
     immutable = args.get("immutable", [])
     if not isinstance(immutable, list):
         return "ERROR: immutable must be an array of field names"
-    allow_new = bool(args.get("allow_new", False))
+    allow_new = as_bool(args.get("allow_new", False))
     return _apply(record, changes, {str(f) for f in immutable}, allow_new)
 
 

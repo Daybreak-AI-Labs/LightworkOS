@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import Tool
+from . import Tool, as_bool
 
 _DEFAULT_THRESHOLD_PCT = 10.0
 
@@ -35,7 +35,7 @@ def _parse_plan(plan: Any, label: str) -> tuple[dict[str, Any] | None, str]:
         return None, f"ERROR: {label} needs numeric rows_scanned and cost"
     if rows < 0 or cost < 0:
         return None, f"ERROR: {label} rows_scanned and cost must be >= 0"
-    used_index = bool(plan.get("used_index", False))
+    used_index = as_bool(plan.get("used_index", False))
     return {"rows_scanned": rows, "cost": cost, "used_index": used_index}, ""
 
 

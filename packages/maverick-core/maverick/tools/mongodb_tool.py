@@ -212,7 +212,7 @@ def _op_update(args: dict[str, Any]) -> str:
     if not col or flt is None or set_ is None:
         return "ERROR: update requires collection, filter, set_"
     result = db[col].update_many(flt, {"$set": set_},
-                                  upsert=bool(args.get("upsert")))
+                                  upsert=as_bool(args.get("upsert")))
     return (
         f"matched={result.matched_count} modified={result.modified_count} "
         f"upserted_id={result.upserted_id}"

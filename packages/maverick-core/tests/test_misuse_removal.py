@@ -51,3 +51,8 @@ def test_errors_and_contract():
     assert misuse_removal().fn({"op": "bad", "entries": []}).startswith("ERROR")
     t = misuse_removal()
     assert t.name == "misuse_removal" and t.parallel_safe is True
+
+
+def test_string_false_flag_does_not_remove_the_entry():
+    out = _run([{"id": "a", "score": 1, "flagged": "false"}])
+    assert out.startswith("CLEANED: removed 0, kept 1")

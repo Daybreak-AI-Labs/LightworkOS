@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import Tool
+from . import Tool, as_bool
 
 
 def _parse_region(r: Any, idx: int) -> tuple[dict[str, Any] | None, str]:
@@ -35,7 +35,7 @@ def _parse_region(r: Any, idx: int) -> tuple[dict[str, Any] | None, str]:
         return None, f"ERROR: region {name!r} rtt_ms must be >= 0"
     return {
         "name": name,
-        "healthy": bool(r.get("healthy", False)),
+        "healthy": as_bool(r.get("healthy", False)),
         "rtt_ms": rtt,
         "capacity_left": capacity,
     }, ""

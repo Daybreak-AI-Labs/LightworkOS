@@ -71,3 +71,11 @@ def test_non_finite_rows_scanned_does_not_crash():
     out = t.fn({"baseline": {"rows_scanned": float("inf"), "cost": 1},
                 "candidate": {"rows_scanned": 1, "cost": 1}})
     assert out.startswith("ERROR")
+
+
+def test_string_false_used_index_is_not_read_as_true():
+    out = _compare(
+        {"rows_scanned": 100, "cost": 10.0, "used_index": True},
+        {"rows_scanned": 100, "cost": 10.0, "used_index": "false"},
+    )
+    assert out.startswith("REGRESSION") and "index dropped" in out
