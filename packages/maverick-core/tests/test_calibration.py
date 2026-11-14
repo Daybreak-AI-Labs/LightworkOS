@@ -69,6 +69,13 @@ class TestLedgerAndVerdict:
         assert loaded[0].evaluator_id == "judge:v2"
         assert loaded[1].evaluator_id == ""
 
+    def test_non_finite_confidence_is_never_the_most_confident(self, tmp_path):
+        p = tmp_path / "cal.ndjson"
+        assert calibration.record_sample(float("nan"), True, path=p) is True
+        with open(p, "a", encoding="utf-8") as f:
+            f.write('{"confidence": NaN, "correct": true}\n')
+        assert [s.confidence for s in calibration.load_samples(path=p)] == [0.0]
+
     def test_run_assessment_persists_verdict(self, tmp_path):
         sp = tmp_path / "cal.ndjson"
         vp = tmp_path / "verdict.json"

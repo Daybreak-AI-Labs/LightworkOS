@@ -279,10 +279,13 @@ def assess(
 
 
 def _clamp01(v: float) -> float:
+    """Clamp to [0, 1]; a non-number or non-finite value (NaN would clamp to
+    1.0, the most confident) is treated as 0."""
     try:
-        return max(0.0, min(1.0, float(v)))
+        value = float(v)
     except (TypeError, ValueError):
         return 0.0
+    return max(0.0, min(1.0, value)) if math.isfinite(value) else 0.0
 
 
 def record_sample(
@@ -397,8 +400,11 @@ def load_samples(path: Path | None = None, *, strict: bool = False) -> list[Cali
                     d = json.loads(raw)
                     if not isinstance(d, dict):
                         continue
+                    confidence = float(d.get("confidence", 0.0))
+                    if not math.isfinite(confidence):
+                        continue
                     out.append(CalibrationSample(
-                        confidence=float(d.get("confidence", 0.0)),
+                        confidence=confidence,
                         correct=bool(d.get("correct", False)),
                         ts=float(d.get("ts", 0.0) or 0.0),
                         source=str(d.get("source", "")),
