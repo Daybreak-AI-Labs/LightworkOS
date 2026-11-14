@@ -116,3 +116,15 @@ def test_registered():
 
     names = set(getattr(base_registry(world=_W(), sandbox=_S()), "_tools", {}).keys())
     assert "jwt_inspect" in names
+
+
+def test_lenient_inputs_are_not_reported_valid():
+    # A string exp was skipped (time: valid) and junk characters inserted into
+    # the signature were dropped by the decoder, so the token still verified.
+    tok = _make({"alg": "HS256"}, {"sub": "u", "exp": "1"}, secret="topsecret")
+    out = _i(tok, now=1000, secret="topsecret")
+    assert out.startswith("INVALID") and "exp is not a numeric date" in out
+    good = _make({"alg": "HS256"}, {"sub": "u"}, secret="topsecret")
+    h, p, sig = good.split(".")
+    assert _i(f"{h}.{p}.{sig[:4]}!!{sig[4:]}", now=1000, secret="topsecret").startswith("INVALID")
+    assert "unrecognised alg hs256" in _i(_make({"alg": "hs256"}, {"sub": "u"}), now=1000, secret="s")

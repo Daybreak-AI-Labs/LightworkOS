@@ -19,6 +19,7 @@ import binascii
 import hashlib
 import hmac
 import json
+import math
 import time
 from typing import Any
 
@@ -27,9 +28,24 @@ from . import Tool
 _HMAC_ALGS = {"HS256": hashlib.sha256, "HS384": hashlib.sha384, "HS512": hashlib.sha512}
 
 
+_B64URL_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
+_ASYMMETRIC_ALGS = frozenset({"RS256", "RS384", "RS512", "PS256", "PS384", "PS512",
+                              "ES256", "ES384", "ES512", "ES256K", "EdDSA"})
+
+
 def _b64url_decode(seg: str) -> bytes:
+    # urlsafe_b64decode silently drops characters outside the alphabet, so a
+    # tampered segment would still decode (and a signature still verify).
+    if not set(seg) <= _B64URL_CHARS:
+        raise binascii.Error("non-base64url character")
     pad = "=" * (-len(seg) % 4)
     return base64.urlsafe_b64decode(seg + pad)
+
+
+def _numeric_date(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if math.isfinite(value) else None
 
 
 def _inspect(token: str, now: float, secret: str | None, leeway: float) -> str:
@@ -48,11 +64,14 @@ def _inspect(token: str, now: float, secret: str | None, leeway: float) -> str:
 
     # --- time validity ---
     time_issues = []
-    exp = claims.get("exp")
-    nbf = claims.get("nbf")
-    if isinstance(exp, (int, float)) and now > exp + leeway:
+    exp = _numeric_date(claims.get("exp"))
+    nbf = _numeric_date(claims.get("nbf"))
+    for name in ("exp", "nbf"):
+        if name in claims and _numeric_date(claims[name]) is None:
+            time_issues.append(f"{name} is not a numeric date")
+    if exp is not None and now > exp + leeway:
         time_issues.append(f"EXPIRED {int(now - exp)}s ago")
-    if isinstance(nbf, (int, float)) and now < nbf - leeway:
+    if nbf is not None and now < nbf - leeway:
         time_issues.append(f"NOT_YET_VALID in {int(nbf - now)}s")
     time_ok = not time_issues
 
@@ -70,8 +89,10 @@ def _inspect(token: str, now: float, secret: str | None, leeway: float) -> str:
             got = b""
         sig_ok = hmac.compare_digest(expected, got)
         sig_state = "VALID" if sig_ok else "INVALID"
-    else:
+    elif alg in _ASYMMETRIC_ALGS:
         sig_state, sig_ok = f"unverifiable here (asymmetric alg {alg})", None
+    else:
+        sig_state, sig_ok = f"unverifiable here (unrecognised alg {alg})", None
 
     # --- verdict ---
     if sig_ok is False or not time_ok:
