@@ -3025,7 +3025,11 @@ Built-in tool modules. Highlights by group (all under `tools/`):
   two-link chain offline (artifact sig → publisher key; publisher cert → root)
   **fail-closed**: tampered artifact/cert, wrong root, expired or revoked cert,
   or a missing piece all refuse; an unverifiable CRL never silently
-  un-revokes.
+  un-revokes. At load, a signed plugin is also refused when a Python,
+  bytecode, native or `.pth` file sits on disk in a directory it owns (one
+  holding a file its RECORD lists, and every directory below it) without
+  being in the signed manifest. Files another distribution installs into a
+  shared namespace package, outside those directories, are not checked.
   **Plugin compatibility matrix** (`plugin_matrix.py`, `python -m
   maverick.plugin_matrix [--ci]`, wired as a CI lint step): one table per
   installed entry point — dist, declared API major, loadable/deprecated/
