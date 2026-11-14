@@ -7,6 +7,8 @@ these directly.
 """
 from __future__ import annotations
 
+import json
+import re
 from typing import Any
 
 
@@ -38,15 +40,26 @@ def _toml_str(v: Any) -> str:
     Windows paths (e.g. a sandbox workdir ``C:\\Users\\x\\ws``) contain
     backslashes; emitted raw into a ``"..."`` basic string, ``\\U`` is parsed
     as a unicode escape and the config.toml the wizard just wrote can't be read
-    back (``TOMLDecodeError: Invalid hex value``). Escape backslashes and
-    double-quotes so the round-trip holds on every platform.
+    back (``TOMLDecodeError: Invalid hex value``). Escape backslashes, quotes
+    and control characters so the round-trip holds on every platform.
     """
-    s = str(v).replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{s}"'
+    return json.dumps(str(v), ensure_ascii=False).replace("\x7f", "\\u007f")
+
+
+def _toml_key(value: Any) -> str:
+    """Keep static bare keys readable and quote each dynamic key segment."""
+    key = str(value)
+    return key if re.fullmatch(r"[A-Za-z0-9_-]+", key) else _toml_str(key)
+
+
+def _valid_config_name(value: str) -> bool:
+    """Bounded names used by publication bindings and enrichment adapters."""
+    return re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", value) is not None
 
 
 def _emit_kv(lines: list[str], k: str, v: Any) -> None:
     """Append one TOML key=value line, type-dispatched."""
+    k = _toml_key(k)
     if isinstance(v, bool):
         lines.append(f"{k} = {str(v).lower()}")
     elif isinstance(v, (int, float)):
@@ -73,6 +86,6 @@ def _append_nested_product_config(
                 _emit_kv(lines, key, value)
         for subsystem, nested in table.items():
             if isinstance(nested, dict):
-                append_table(f"{path}.{subsystem}", nested)
+                append_table(f"{path}.{_toml_key(subsystem)}", nested)
 
     append_table(section, values)

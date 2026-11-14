@@ -5,12 +5,18 @@ See :mod:`._seams` for how the prompt primitives stay patchable through the
 """
 from __future__ import annotations
 
+import math
 import os
 import re
 from pathlib import Path
 from typing import Any
 
-from ._common import _append_nested_product_config, _safe_float, _toml_str
+from ._common import (
+    _append_nested_product_config,
+    _toml_key,
+    _toml_str,
+    _valid_config_name,
+)
 from ._seams import _q_checkbox, _q_confirm, _q_text, console
 
 
@@ -179,6 +185,30 @@ def _vendor_setup_guidance(enabled: bool) -> None:
             "uploads. Enabling this workflow does not assign ownership or verify "
             "provider access.[/dim]"
         )
+
+
+def _pick_enrichment_sources() -> list[str]:
+    while True:
+        enrichment_sources = [
+            value.strip().lower()
+            for value in _q_text(
+                "Allowlisted enrichment adapter names (comma-separated; optional)", default=""
+            ).split(",") if value.strip()
+        ]
+        if all(_valid_config_name(name) for name in enrichment_sources):
+            return enrichment_sources
+        console.print("[yellow]Use bounded adapter names: letters/digits/._:-, without spaces.[/yellow]")
+
+
+def _pick_hunter_poll_seconds() -> int:
+    while True:
+        try:
+            poll_value = float(_q_text("Hunter poll interval (seconds)", default="300"))
+            if not math.isfinite(poll_value):
+                raise ValueError
+            return max(30, min(3600, int(poll_value)))
+        except ValueError:
+            console.print("[yellow]Enter a finite numeric poll interval in seconds.[/yellow]")
 
 
 def pick_security_suite() -> dict[str, Any]:
@@ -779,26 +809,9 @@ def pick_security_suite() -> dict[str, Any]:
             }
             for label, name in connector_labels.items()
         }
-        enrichment_sources = [
-            value.strip().lower()
-            for value in _q_text(
-                "Allowlisted enrichment adapter names (comma-separated; optional)",
-                default="",
-            ).split(",")
-            if value.strip()
-        ]
-        poll_seconds = max(
-            30,
-            min(
-                3600,
-                int(
-                    _safe_float(
-                        _q_text("Hunter poll interval (seconds)", default="300"),
-                        default=300.0,
-                    )
-                ),
-            ),
-        )
+        enrichment_sources = _pick_enrichment_sources()
+        poll_seconds = _pick_hunter_poll_seconds()
+
     # Keep these additive administration prompts at the end of the established
     # security-suite questionnaire so scripted/resumed answers for existing
     # controls retain their historical ordering.
@@ -1511,7 +1524,7 @@ def _cfg_security_suite(
     for name in enrichment_sources:
         lines += [
             "",
-            f"[env_hunt.enrichment_sources.{name}]",
+            f"[env_hunt.enrichment_sources.{_toml_key(name)}]",
             "enable = true",
         ]
     try:

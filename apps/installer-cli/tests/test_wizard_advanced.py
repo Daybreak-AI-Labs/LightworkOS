@@ -725,13 +725,13 @@ def test_oidc_browser_login_writes_and_enables(tmp_path, monkeypatch):
         "client_id": "dash-client",
         "client_secret": "shhh",  # pragma: allowlist secret
         "redirect_uri": "https://dash.example.com/auth/callback",
-        "session_secret": "a-long-random-session-secret",  # pragma: allowlist secret
+        "session_secret": "a-long-random-session-secret-32-chars",  # pragma: allowlist secret
     }})
     assert cfg.count("[auth.oidc]") == 1
     parsed = tomllib.loads(cfg)["auth"]["oidc"]
     assert parsed["client_id"] == "dash-client"
     assert parsed["redirect_uri"] == "https://dash.example.com/auth/callback"
-    assert parsed["session_secret"] == "a-long-random-session-secret"  # pragma: allowlist secret
+    assert parsed["session_secret"] == "a-long-random-session-secret-32-chars"  # pragma: allowlist secret
 
     from maverick.oidc import login_enabled
     assert login_enabled() is True

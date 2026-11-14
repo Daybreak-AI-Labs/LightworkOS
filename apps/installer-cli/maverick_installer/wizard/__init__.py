@@ -69,7 +69,9 @@ from ._common import _csv_list as _csv_list
 from ._common import _emit_kv as _emit_kv
 from ._common import _safe_float as _safe_float
 from ._common import _safe_int as _safe_int
+from ._common import _toml_key as _toml_key
 from ._common import _toml_str as _toml_str
+from ._common import _valid_config_name as _valid_config_name
 from .advanced import _FEATURE_LOCKS as _FEATURE_LOCKS
 from .advanced import _LOCAL_FIRST_PROVIDERS as _LOCAL_FIRST_PROVIDERS
 from .advanced import _ask_chat_and_resource_followups as _ask_chat_and_resource_followups
@@ -120,8 +122,10 @@ from .advanced import (
 )
 from .advanced import _employee_activation_job_choices as _employee_activation_job_choices
 from .advanced import _local_first_model as _local_first_model
+from .advanced import _monthly_limit as _monthly_limit
 from .advanced import _pick_action_recipe_lineage as _pick_action_recipe_lineage
 from .advanced import _pick_agent_budget_reporting as _pick_agent_budget_reporting
+from .advanced import _pick_client_id as _pick_client_id
 from .advanced import _pick_codebase as _pick_codebase
 from .advanced import _pick_data_protection_toggles as _pick_data_protection_toggles
 from .advanced import _pick_device_pairing as _pick_device_pairing
@@ -133,12 +137,17 @@ from .advanced import _pick_image_edit_models as _pick_image_edit_models
 from .advanced import _pick_learning_lifecycle_toggles as _pick_learning_lifecycle_toggles
 from .advanced import _pick_learning_toggles as _pick_learning_toggles
 from .advanced import _pick_memory_and_product_toggles as _pick_memory_and_product_toggles
+from .advanced import _pick_monthly_limit as _pick_monthly_limit
+from .advanced import _pick_oidc_secret as _pick_oidc_secret
+from .advanced import _pick_oidc_value as _pick_oidc_value
 from .advanced import _pick_runtime_toggles as _pick_runtime_toggles
 from .advanced import _pick_swarm_scale as _pick_swarm_scale
 from .advanced import _pick_workflow_and_extension_toggles as _pick_workflow_and_extension_toggles
 from .advanced import _pick_working_toggles as _pick_working_toggles
 from .advanced import _prior_consent_salt as _prior_consent_salt
 from .advanced import _regulatory_profile_choices as _regulatory_profile_choices
+from .advanced import _require_secure_url as _require_secure_url
+from .advanced import _secure_or_loopback_url as _secure_or_loopback_url
 from .advanced import _spending_alert_at as _spending_alert_at
 from .advanced import _split_csv as _split_csv
 from .advanced import _typical_cost_min_runs as _typical_cost_min_runs
@@ -163,7 +172,9 @@ from .assessments import (
 from .assessments import pick_assessments as pick_assessments
 from .security_suite import _cfg_governed_records as _cfg_governed_records
 from .security_suite import _cfg_security_suite as _cfg_security_suite
+from .security_suite import _pick_enrichment_sources as _pick_enrichment_sources
 from .security_suite import _pick_evidence_local_parsers as _pick_evidence_local_parsers
+from .security_suite import _pick_hunter_poll_seconds as _pick_hunter_poll_seconds
 from .security_suite import _vendor_setup_guidance as _vendor_setup_guidance
 from .security_suite import pick_security_suite as pick_security_suite
 

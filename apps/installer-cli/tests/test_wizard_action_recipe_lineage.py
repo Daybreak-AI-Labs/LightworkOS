@@ -54,17 +54,17 @@ def test_lineage_wizard_preserves_separate_enable_policy_issuer_and_key_revocati
 @pytest.mark.parametrize("issuer", ["https://issuer.example", "space here", "x" * 129, "bad\nissuer", "é"])
 def test_lineage_wizard_rejects_invalid_issuer(monkeypatch, issuer):
     monkeypatch.setattr(wizard, "_q_confirm", lambda *a, **kw: True)
-    monkeypatch.setattr(wizard, "_q_text", lambda *a, **kw: issuer)
-    with pytest.raises(ValueError, match="issuer"):
-        wizard._pick_action_recipe_lineage()
+    answers = iter([issuer, "valid-issuer", ""])
+    monkeypatch.setattr(wizard, "_q_text", lambda *a, **kw: next(answers))
+    assert wizard._pick_action_recipe_lineage()["action_evidence_issuer"] == "valid-issuer"
 
 
 @pytest.mark.parametrize("revoked", ["short", "0123456789ABCDEF", "0123456789abcdef,", "0123456789abcdef,0123456789abcdef"])
 def test_lineage_wizard_rejects_malformed_revocation_ids(monkeypatch, revoked):
     monkeypatch.setattr(wizard, "_q_confirm", lambda *a, **kw: True)
-    monkeypatch.setattr(wizard, "_q_text", lambda prompt, **kw: "issuer" if "issuer ID" in prompt else revoked)
-    with pytest.raises(ValueError, match="revoked"):
-        wizard._pick_action_recipe_lineage()
+    answers = iter([revoked, "0123456789abcdef"])
+    monkeypatch.setattr(wizard, "_q_text", lambda prompt, **kw: "issuer" if "issuer ID" in prompt else next(answers))
+    assert wizard._pick_action_recipe_lineage()["action_evidence_revoked_keys"] == ["0123456789abcdef"]
 
 
 def test_blank_issuer_does_not_invent_a_signer_identity(monkeypatch):
