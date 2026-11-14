@@ -360,6 +360,8 @@ def _run_search(args: dict[str, Any]) -> str:
 
     forced = (env_or_config("MAVERICK_SEARCH_BACKEND", "tools", "search_backend")
               or "").strip().lower()
+    if forced == "auto":  # the documented default: try backends in order
+        forced = ""
     if forced and forced not in _BACKENDS:
         return (f"ERROR: search backend {forced!r} is not supported "
                 f"(choose one of: {', '.join(sorted(_BACKENDS))})")

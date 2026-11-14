@@ -92,6 +92,8 @@ def test_web_search_unknown_forced_backend_is_refused(monkeypatch):
         AssertionError("fell through to DuckDuckGo")))
     out = ws.web_search().fn({"query": "test"})
     assert out.startswith("ERROR") and "tavilly" in out
+    monkeypatch.setenv("MAVERICK_SEARCH_BACKEND", "auto")  # documented default
+    assert "not supported" not in ws.web_search().fn({"query": "test"})
 
 
 def test_web_search_site_filter(monkeypatch):
