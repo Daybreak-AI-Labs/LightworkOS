@@ -747,7 +747,7 @@ jobs:
           python -m pip install --upgrade \
             'pip==26.3' 'setuptools==84.2.1' 'wheel==0.48.0' 'packaging==26.3'
           python -m pip install \
-            arq azure-identity azure-keyvault-keys boto3 chromadb duckdb fastembed \
+            arq azure-identity azure-keyvault-keys boto3 duckdb fastembed \
             grpcio grpcio-tools langchain-core langsmith latex2mathml matrix-nio \
             opentelemetry-sdk opentelemetry-exporter-otlp-proto-http \
             pandas pyarrow playwright prometheus-client pysaml2 pyXMLSecurity python-docx \
@@ -809,7 +809,7 @@ jobs:
           python -m pip install --upgrade \
             'pip==26.3' 'setuptools==84.2.1' 'wheel==0.48.0' 'packaging==26.3'
           python -m pip install \
-            arq azure-identity azure-keyvault-keys boto3 chromadb duckdb fastembed \
+            arq azure-identity azure-keyvault-keys boto3 duckdb fastembed \
             grpcio grpcio-tools langchain-core langsmith latex2mathml matrix-nio \
             opentelemetry-sdk opentelemetry-exporter-otlp-proto-http \
             pandas pyarrow playwright prometheus-client pysaml2 pyXMLSecurity python-docx \
@@ -981,7 +981,7 @@ jobs:
           python -m pip install --upgrade \
             'pip==26.3' 'setuptools==84.2.1' 'wheel==0.48.0' 'packaging==26.3'
           python -m pip install \
-            arq azure-identity azure-keyvault-keys boto3 chromadb duckdb fastembed \
+            arq azure-identity azure-keyvault-keys boto3 duckdb fastembed \
             grpcio grpcio-tools langchain-core langsmith latex2mathml matrix-nio \
             opentelemetry-sdk opentelemetry-exporter-otlp-proto-http \
             pandas pyarrow playwright prometheus-client pysaml2 pyXMLSecurity python-docx \
