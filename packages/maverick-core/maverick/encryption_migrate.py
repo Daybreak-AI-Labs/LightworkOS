@@ -178,10 +178,7 @@ def migrate_world_db(
                     # A store sealed before the index rebuild existed can still
                     # hold plaintext terms there; clear them on any re-run.
                     _clear_leftover_index(conn)
-                # Same re-check as the reseal path: plaintext written after the
-                # scan must not be covered by the strict-read marker.
-                if not _unsealed_remaining(conn):
-                    _mark_migrated(db_path)
+                _mark_if_sealed(conn, db_path)
             return report
         # Phase 2 -- optionally back up the plaintext, then reseal in place.
         if backup:
@@ -209,12 +206,18 @@ def migrate_world_db(
         _rebuild_message_index(conn)
         conn.commit()
         _shred_residue(conn, report)
-        if not _unsealed_remaining(conn):
-            _mark_migrated(db_path)
+        _mark_if_sealed(conn, db_path)
     finally:
         conn.close()
     log.info("encryption migrate (dry_run=%s): %s", dry_run, report)
     return report
+
+
+def _mark_if_sealed(conn: sqlite3.Connection, db_path: Path) -> None:
+    """Write the migrated marker only if no plaintext remains now: a write
+    that landed after the scan must not be covered by the strict-read marker."""
+    if not _unsealed_remaining(conn):
+        _mark_migrated(db_path)
 
 
 def _unsealed_remaining(conn: sqlite3.Connection) -> bool:
