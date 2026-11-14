@@ -55,13 +55,28 @@ a historical `.pub` plus `.injected` marker without a private key is ignored.
   depend on any key file sitting next to the log. (Mirrors Python's
   `verify_chain(pubkey_hex=...)`.) Invalid hex or key length is a file-level
   `no_pubkey` error, including for an empty log.
-- `--all` — list every break, not just the first.
+- `--all` — list every retained break, up to 1,000, not just the first.
 
 > Without `--pubkey`, the binary prints a warning that it is trusting local key
 > files — the same caveat the Python CLI prints.
 
 ## Scope notes
 
+- **Resource bounds.** A day-file must be a regular file no larger than 64 MiB;
+  larger files are refused as `unreadable_segment`. Reads remain bounded if the
+  file grows. Local key files are bounded to their 32-byte format. Verification
+  stops after 1,000 reported failures and remains unsuccessful; reaching that
+  limit never certifies the remaining rows. The success count comes from the
+  same bytes that were verified. These are fixed internal bounds.
+- **JSON compatibility.** The verifier accepts strict JSON and preserves number
+  spellings when recomputing hashes. Python's writer can emit non-standard
+  `NaN`/`Infinity` values or escaped lone surrogates; these are refused here as
+  malformed, even when Python verifies their signatures. Reformatting numeric
+  literals can also change this verifier's hash result. The verifier does not
+  relax parsing or signature checks to accept these cases.
+  Objects with the reserved `$serde_json::private::Number` key are refused,
+  including escaped keys and nested objects, so the JSON parser cannot reinterpret
+  a changed object as the original signed number.
 - **Key sources.** The binary supports local disk keypairs or one explicit
   `--pubkey`. It does not load Python's configured operator pins, injected
   private keys, or KMS keys, nor apply Python's filesystem custody checks.
