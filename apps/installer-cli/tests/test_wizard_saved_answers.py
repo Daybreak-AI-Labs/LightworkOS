@@ -180,7 +180,7 @@ def test_completion_names_are_literal_markup(monkeypatch, tmp_path, mode, key):
 
 def test_partial_state_excludes_connection_secrets_and_scrubs_legacy_files(monkeypatch, tmp_path):
     _paths(monkeypatch, tmp_path)
-    state = {"deployment": "desktop", "knowledge": {"enable": True, "store": "pgvector", "dsn": "postgres://user:private@db/name"},
+    state = {"deployment": "desktop", "knowledge": {"enable": True, "store": "pgvector", "dsn": "postgres://user:private@db/name"},  # pragma: allowlist secret
              "_notifications_pair": [{"backend": "ntfy", "ntfy_topic": "private-topic"}, []]}  # pragma: allowlist secret
     wizard._save_partial(state)
     assert json.loads(wizard.PARTIAL_STATE_PATH.read_text()) == {"deployment": "desktop"}
