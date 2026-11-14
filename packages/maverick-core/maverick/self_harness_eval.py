@@ -1160,9 +1160,12 @@ def _load_raw(path: str | Path, *, strict: bool = False) -> dict:
             raise ValueError(f"corpus file {path} does not hold a JSON object")
     except FileNotFoundError:
         pass
-    except (ValueError, OSError):
+    except ValueError:
         if strict:
             raise
+    except OSError as exc:
+        if strict:  # callers handle ValueError; an I/O failure is the same refusal
+            raise ValueError(f"corpus file {path} cannot be read: {exc}") from exc
     return {}
 
 
@@ -1903,34 +1906,51 @@ def preview_corpus_import(corpus_path: str | Path, data: dict, *,
     return result
 
 
+def _migration_file_raw(p: Path) -> dict:
+    """A corpus-family file for migration: ``{}`` when absent; an unreadable
+    or non-object file raises ``MigrationRefused`` (the error the migration
+    callers report)."""
+    from .learning_store_migration import MigrationRefused
+    try:
+        raw = p.read_bytes()
+    except FileNotFoundError:
+        return {}
+    except OSError as exc:
+        raise MigrationRefused(f"corpus file {p} cannot be read; nothing was migrated: {exc}") from exc
+    try:
+        from .crypto_at_rest import unseal
+        data = json.loads(unseal(raw).decode("utf-8"))
+    except Exception as exc:
+        raise MigrationRefused(f"corpus file {p} cannot be read; nothing was migrated: {exc}") from exc
+    if not isinstance(data, dict):
+        raise MigrationRefused(f"corpus file {p} does not hold a JSON object; nothing was migrated")
+    return data
+
+
+def check_corpus_files_migratable(corpus_path: str | Path) -> None:
+    """Raise ``MigrationRefused`` if a corpus-family file exists but cannot be
+    read. Call before moving anything, so a refusal leaves nothing half-done."""
+    if _world_corpus_kind(corpus_path) != "live":
+        return
+    for p in (Path(corpus_path), pending_corpus_path(corpus_path),
+              rejected_corpus_path(corpus_path)):
+        _migration_file_raw(p)
+
+
 def migrate_corpus_files(corpus_path: str | Path) -> dict | None:
     """One-way import of the FILE corpus family into the world store (used by
     ``self-harness migrate-store``): merge-by-goal for live/pending, union
     for the reject memory; the files are renamed to ``*.migrated`` backups
     afterwards. ``None`` when the corpus isn't world-routed; a counts dict
     otherwise. Idempotent -- a second run finds no files. A file that exists
-    but cannot be read or opened raises ``ValueError`` before anything is
-    imported or renamed, so a failed read is never reported as migrated."""
+    but cannot be read or opened raises ``MigrationRefused`` before anything
+    is imported or renamed, so a failed read is never reported as migrated."""
     if _world_corpus_kind(corpus_path) != "live":
         return None
-
-    def _file_raw(p: Path) -> dict:
-        try:
-            raw = p.read_bytes()
-        except FileNotFoundError:
-            return {}
-        try:
-            from .crypto_at_rest import unseal
-            data = json.loads(unseal(raw).decode("utf-8"))
-        except Exception as exc:
-            raise ValueError(f"corpus file {p} cannot be read; nothing was migrated: {exc}") from exc
-        if not isinstance(data, dict):
-            raise ValueError(f"corpus file {p} does not hold a JSON object; nothing was migrated")
-        return data
-
     lp = Path(corpus_path)
     pp, rp = pending_corpus_path(corpus_path), rejected_corpus_path(corpus_path)
-    live_f, pend_f, rej_f = _file_raw(lp), _file_raw(pp), _file_raw(rp)
+    live_f, pend_f, rej_f = (_migration_file_raw(lp), _migration_file_raw(pp),
+                             _migration_file_raw(rp))
     counts = {"live": 0, "pending": 0, "rejected": 0}
     if live_f or pend_f or rej_f:
         with _corpus_lock, _corpus_rmw_lock(corpus_path):
@@ -1964,4 +1984,5 @@ __all__ = [
     "load_rejected", "rejected_corpus_path",
     "corpus_quality", "retire_corpus_cases",
     "import_corpus", "preview_corpus_import", "migrate_corpus_files",
+    "check_corpus_files_migratable",
 ]

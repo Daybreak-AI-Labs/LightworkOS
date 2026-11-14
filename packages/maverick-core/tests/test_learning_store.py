@@ -351,3 +351,10 @@ def test_migrate_store_refuses_an_unreadable_corpus_file(world_corpus):
     assert r.exit_code != 0
     assert cpath.read_text() == '{"M": [,]}'
     assert not cpath.with_name(cpath.name + ".migrated").exists()
+    # The callers report MigrationRefused, and can check before moving anything.
+    from maverick import self_harness_eval as ev
+    from maverick.learning_store_migration import MigrationRefused
+    with pytest.raises(MigrationRefused):
+        ev.check_corpus_files_migratable(cpath)
+    with pytest.raises(MigrationRefused):
+        ev.migrate_corpus_files(cpath)
