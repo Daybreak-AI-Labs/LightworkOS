@@ -176,10 +176,7 @@ def migrate_world_db(
                 if _has_message_index(conn):
                     # A store sealed before the index rebuild existed can still
                     # hold plaintext terms there; clear them on any re-run.
-                    conn.execute("PRAGMA secure_delete=ON")
-                    _rebuild_message_index(conn)
-                    conn.commit()
-                    _shred_residue(conn, {"messages_fts": 1})
+                    _clear_leftover_index(conn)
                 _mark_migrated(db_path)
             return report
         # Phase 2 -- optionally back up the plaintext, then reseal in place.
@@ -336,6 +333,30 @@ def _has_message_index(conn: sqlite3.Connection) -> bool:
     return conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'messages_fts'"
     ).fetchone() is not None
+
+
+def _clear_leftover_index(conn: sqlite3.Connection) -> None:
+    """Rebuild the leftover ``messages_fts`` index and shred what it freed.
+
+    Raises :class:`EncryptionUnavailable` with a plain instruction when the
+    database is in use, so the caller stops before writing the migrated
+    marker: that marker must not claim no plaintext remains while the
+    leftover index may still hold it."""
+    try:
+        conn.execute("PRAGMA secure_delete=ON")
+        _rebuild_message_index(conn)
+        conn.commit()
+    except sqlite3.OperationalError as exc:
+        if "locked" not in str(exc) and "busy" not in str(exc):
+            raise
+        conn.rollback()
+        raise EncryptionUnavailable(
+            "the message search index left by an earlier version may still hold "
+            "text written before encryption, and it can only be rebuilt while "
+            "the database is not in use; stop the application and run the "
+            "migration again"
+        ) from exc
+    _shred_residue(conn, {"messages_fts": 1})
 
 
 def _rebuild_message_index(conn: sqlite3.Connection) -> None:

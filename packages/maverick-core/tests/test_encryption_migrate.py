@@ -370,7 +370,23 @@ def test_rerun_clears_a_message_index_left_by_an_earlier_migration(monkeypatch, 
         assert encryption_migrate.migrate_world_db(db)["messages.content"] == 1
     assert b"zebratermquokka" in _all_db_bytes(db)
 
+    # While the application holds the database the rebuild cannot run: the
+    # re-run stops with an instruction and does not claim the store is clean.
+    from maverick.crypto_at_rest import EncryptionUnavailable
+    from maverick.world_model import migrated_marker_path
+    marker = migrated_marker_path(db)
+    marker.unlink(missing_ok=True)
+
+    def locked(conn):
+        raise sqlite3.OperationalError("database is locked")
+    with monkeypatch.context() as busy:
+        busy.setattr(encryption_migrate, "_rebuild_message_index", locked)
+        with pytest.raises(EncryptionUnavailable, match="stop the application"):
+            encryption_migrate.migrate_world_db(db)
+    assert not marker.exists()
+
     assert not any(encryption_migrate.migrate_world_db(db).values())
+    assert marker.exists()
     assert b"zebratermquokka" not in _all_db_bytes(db)
     assert not any(encryption_migrate.migrate_world_db(db).values())  # idempotent
 
