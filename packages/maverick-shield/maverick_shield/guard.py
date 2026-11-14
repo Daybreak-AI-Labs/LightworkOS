@@ -413,13 +413,19 @@ class Shield:
         # with newlines preserves each value's real boundaries.
         leaves = _collect_arg_strings(args)
         payload = "\n".join([f"tool={tool_name}", *leaves])
-        # Keys sit between the values above, so a command split across fields
-        # ({"cmd": "rm", "args": ["-rf", "/"]}) never read as one command.
-        # Append the values alone, in order, so it does.
-        values = _collect_arg_strings(args, keys=False)
-        if values != leaves:
-            payload += "\n" + "\n".join(values)
         verdict = self._scan_via_backend(payload)
+        # Keys sit between the values above, so a command split across fields
+        # ({"cmd": "rm", "args": ["-rf", "/"]}) never read as one command. Scan
+        # the values alone, in order, as a SECOND scan: appending them to the
+        # payload doubled its length and pushed large benign calls over the
+        # scan cap (blocked as input_too_large). This text is never longer
+        # than the payload above, so it cannot trip the cap on its own.
+        values = _collect_arg_strings(args, keys=False)
+        if verdict.allowed and values != leaves:
+            joined = self._scan_via_backend("\n".join(values))
+            if not joined.allowed:
+                joined.scan_error = joined.scan_error or verdict.scan_error
+                verdict = joined
         # Compose operator-defined constitutional rules onto the tool-call
         # surface too -- the most dangerous sink. scan_input/scan_output do
         # this; omitting it here left the constitution unenforced exactly where
