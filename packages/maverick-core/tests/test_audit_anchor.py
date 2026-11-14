@@ -124,3 +124,40 @@ def test_ensure_anchors_does_not_rebuild_deleted_anchor_ledger(tmp_path, monkeyp
     assert not (tmp_path / signing.ANCHOR_FILENAME).exists()
     breaks = verify_anchors(tmp_path)
     assert any(b.reason == "anchor_ledger_missing" for b in breaks)
+
+
+def test_ledger_truncated_with_day_files_is_detected(tmp_path, monkeypatch):
+    # Cutting anchors.ndjson back together with the newest day-file leaves a
+    # self-consistent shorter ledger; the signed high-water record shows it.
+    _isolate_keys(monkeypatch, tmp_path)
+    older, newer = _past_day(2), _past_day(1)
+    _write_signed_day(tmp_path, older, 2)
+    ensure_anchors(tmp_path)
+    ledger = tmp_path / signing.ANCHOR_FILENAME
+    ledger_after_older = ledger.read_bytes()
+    _write_signed_day(tmp_path, newer, 2)
+    assert ensure_anchors(tmp_path) == 1
+    assert verify_anchors(tmp_path) == []
+
+    (tmp_path / f"{newer}.ndjson").unlink()
+    ledger.write_bytes(ledger_after_older)
+    assert {b.reason for b in verify_anchors(tmp_path)} == {"anchor_ledger_truncated"}
+    ledger.write_bytes(b"")
+    assert {b.reason for b in verify_anchors(tmp_path)} == {"anchor_ledger_truncated"}
+
+    # A later honest anchor does not launder the cut, and removing the record
+    # is itself reported.
+    _write_signed_day(tmp_path, newer, 1)
+    ensure_anchors(tmp_path)
+    assert "anchor_ledger_truncated" in {b.reason for b in verify_anchors(tmp_path)}
+    (tmp_path / signing.ANCHOR_HIGHWATER_FILENAME).unlink()
+    assert "anchor_highwater_missing" in {b.reason for b in verify_anchors(tmp_path)}
+
+    # An installation that predates the record still verifies until it is written.
+    legacy = tmp_path / "legacy"
+    legacy.mkdir()
+    _write_signed_day(legacy, older, 2)
+    ensure_anchors(legacy)
+    (legacy / signing.ANCHOR_HIGHWATER_FILENAME).unlink()
+    (legacy / signing.ANCHOR_MARKER_FILENAME).write_text("anchors.ndjson is required\n")
+    assert verify_anchors(legacy) == []
