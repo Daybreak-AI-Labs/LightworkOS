@@ -62,9 +62,10 @@ a historical `.pub` plus `.injected` marker without a private key is ignored.
 
 ## Scope notes
 
-- **Resource bounds.** A day-file must be a regular file no larger than 64 MiB;
-  larger files are refused as `unreadable_segment`. Reads remain bounded if the
-  file grows. Local key files are bounded to their 32-byte format. Verification
+- **Resource bounds.** A day-file must be a regular file no larger than 512 MiB
+  (the Python checkpoint reader's segment bound; the writer rotates by day,
+  not by size); larger files are refused as `unreadable_segment`. Reads remain
+  bounded if the file grows. Local key files are bounded to their 32-byte format. Verification
   stops after 1,000 reported failures and remains unsuccessful; reaching that
   limit never certifies the remaining rows. The success count comes from the
   same bytes that were verified. These are fixed internal bounds.

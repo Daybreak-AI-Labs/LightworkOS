@@ -7,12 +7,21 @@ fn oversized_segments_are_refused_before_verification() {
     let path = directory.path().join("oversized.ndjson");
     File::create(&path)
         .unwrap()
-        .set_len(64 * 1024 * 1024 + 1)
+        .set_len(512 * 1024 * 1024 + 1)
         .unwrap();
     let breaks = verify_file(&path, &KeySource::Pinned("02".repeat(32)));
     assert_eq!(breaks.len(), 1);
     assert_eq!(breaks[0].reason, "unreadable_segment");
     assert!(breaks[0].detail.contains("size limit"));
+}
+
+#[test]
+fn segments_over_the_old_64_mib_limit_are_read() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("busy-day.ndjson");
+    std::fs::write(&path, "\n".repeat(64 * 1024 * 1024 + 1)).unwrap();
+    let breaks = verify_file(&path, &KeySource::Pinned("02".repeat(32)));
+    assert!(breaks.is_empty(), "{breaks:?}");
 }
 
 #[test]

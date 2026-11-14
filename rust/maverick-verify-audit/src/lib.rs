@@ -29,7 +29,10 @@ use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-const MAX_SEGMENT_BYTES: u64 = 64 * 1024 * 1024;
+// Matches the Python checkpoint reader's whole-segment bound
+// (`checkpoints._MAX_AUDIT_BYTES`); the writer rotates by day only, so a busy
+// day-file can exceed a smaller limit and still verify in Python.
+const MAX_SEGMENT_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_BREAKS: usize = 1000;
 
 /// One detected break in the chain. `line_no` is 1-indexed (0 for file/setup
