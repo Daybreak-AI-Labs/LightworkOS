@@ -52,10 +52,25 @@ def test_constrained_backtracking_pattern_refused_before_matching(monkeypatch):
     calls: list = []
     monkeypatch.setattr(co.re, "search", lambda *a: calls.append(a))
     # (a+)+$ on "a"*40 + "b" backtracks for about a day; it is refused unrun.
-    out = t.fn({"value": "a" * 40 + "b", "schema": {"pattern": "(a+)+$"}})
-    assert out.startswith("FAIL") and "rewrite" in out and calls == []
+    # The refusal is about the schema, not the value. (a?){25}a{25} counts the
+    # optional inside a large bounded repeat.
+    for pat in ("(a+)+$", "(a|a)*$", "^(a?){25}a{25}$"):
+        out = t.fn({"value": "a" * 40 + "b", "schema": {"pattern": pat}})
+        assert out.startswith("ERROR: schema pattern") and "refused" in out, pat
     out = t.fn({"value": "a" * 5000, "schema": {"pattern": "^a+$"}})
     assert out.startswith("FAIL") and calls == []
+
+
+def test_constrained_linear_patterns_are_evaluated():
+    t = constrained_output()
+    for pat, good, bad in (
+        (r"^(\d+\.){2}\d+$", "1.2.3", "1.2"),
+        (r"^(\d{1,3}\.){3}\d{1,3}$", "10.0.0.1", "10.0.0"),
+        (r"^[\w.+-]+@([\w-]+\.)+\w{2,}$", "a.b+c@mail.example.org", "a@b"),
+        (r"^(foo|bar)+$", "foobarfoo", "foobaz"),
+    ):
+        assert t.fn({"value": good, "schema": {"pattern": pat}}).startswith("PASS"), pat
+        assert t.fn({"value": bad, "schema": {"pattern": pat}}).startswith("FAIL"), pat
 
 
 def test_constrained_fail_open_values_now_fail():
