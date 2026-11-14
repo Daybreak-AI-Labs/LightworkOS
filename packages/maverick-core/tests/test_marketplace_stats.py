@@ -81,3 +81,11 @@ def test_rate_is_concurrency_safe(tmp_path):
     all_skills = RatingsLedger(p).all_ratings("skills")
     assert len(all_skills) == n
     assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_rate_keeps_an_unparseable_ledger_but_not_an_empty_one(tmp_path):
+    (tmp_path / "ok.json").write_text("{}")
+    (tmp_path / "bad.json").write_text("{broken")
+    RatingsLedger(tmp_path / "ok.json").rate("skills", "a", 4)
+    RatingsLedger(tmp_path / "bad.json").rate("skills", "a", 4)
+    assert [p.name.split("-")[0] for p in tmp_path.glob("*.corrupt-*")] == ["bad.json.corrupt"]
