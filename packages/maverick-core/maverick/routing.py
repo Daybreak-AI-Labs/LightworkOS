@@ -22,6 +22,7 @@ wins) or ``[models] cascade_escalate_below`` /
 from __future__ import annotations
 
 import logging
+import math
 import os
 from dataclasses import dataclass
 
@@ -42,8 +43,17 @@ class RouteSignal:
 
 # Cascade thresholds (env-tunable). Import-time values kept for callers that
 # read them; the live checks use escalate_below() / escalate_tool_depth().
-ESCALATE_VERIFIER_BELOW = float(os.environ.get("MAVERICK_ESCALATE_BELOW", "0.6"))
-ESCALATE_TOOL_DEPTH = int(os.environ.get("MAVERICK_ESCALATE_TOOL_DEPTH", "3"))
+# A malformed value falls back to the default instead of making the import
+# raise (the agent then silently ran without the cascade).
+def _import_time(name: str, cast, default):
+    try:
+        return cast(os.environ.get(name, default))
+    except ValueError:
+        return cast(default)
+
+
+ESCALATE_VERIFIER_BELOW = _import_time("MAVERICK_ESCALATE_BELOW", float, "0.6")
+ESCALATE_TOOL_DEPTH = _import_time("MAVERICK_ESCALATE_TOOL_DEPTH", int, "3")
 
 # Roles that anchor the swarm stay on their own model (pick() gives them Opus).
 _ANCHOR_ROLES = frozenset({"orchestrator", "revisor"})
@@ -56,6 +66,8 @@ def escalate_below() -> float:
 
     value = env_or_config_float("MAVERICK_ESCALATE_BELOW", "models",
                                 "cascade_escalate_below", 0.6)
+    if not math.isfinite(value):  # NaN would never escalate
+        value = 0.6
     return min(max(value, 0.0), 1.0)
 
 
