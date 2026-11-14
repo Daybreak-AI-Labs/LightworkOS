@@ -82,6 +82,16 @@ def test_apply_to_registry_wraps_named_tool():
     assert reg.get("untouched").fn({"x": "y"}) == "ok:y"
 
 
+def test_apply_to_registry_keeps_strict_and_parallel_flags():
+    reg = ToolRegistry()
+    tool = _echo_tool("echo")
+    tool.strict = True
+    tool.parallel_safe = True
+    reg.register(tool)
+    apply_to_registry(reg, limits={"echo": (2, 60.0)})
+    assert reg.get("echo").strict is True and reg.get("echo").parallel_safe is True
+
+
 def test_apply_to_registry_glob_match():
     reg = ToolRegistry()
     reg.register(_echo_tool("mcp_a__x"))
