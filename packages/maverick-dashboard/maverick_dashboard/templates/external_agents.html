@@ -134,7 +134,8 @@
         <input class="input" name="max_dollars" type="number" min="0" step="0.01" placeholder="50.00">
       </label>
       <label>Spending limit applies
-        <select class="select" name="budget_period">
+        <select class="select" name="budget_period" id="xa-budget-period">
+          <option value="" hidden>Keep the current setting</option>
           <option value="monthly" selected>Per month (starts again each month)</option>
           <option value="total">In total</option>
         </select>
@@ -174,7 +175,21 @@
     return String(text || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 64);
   }
   var nameIn = document.getElementById("xa-name"), idIn = document.getElementById("xa-id");
-  if (nameIn) nameIn.addEventListener("input", function () { idIn.value = slug(nameIn.value); });
+  // Re-adding an agent that already exists keeps its spending period unless
+  // the person picks one; a new agent starts per month.
+  var periodIn = document.getElementById("xa-budget-period"), periodPicked = false;
+  if (periodIn) periodIn.addEventListener("change", function () { periodPicked = true; });
+  function existingAgent(id) {
+    return Array.prototype.some.call(document.querySelectorAll("[data-xa-reset-budget]"),
+      function (el) { return el.getAttribute("data-xa-reset-budget") === id; });
+  }
+  if (nameIn) nameIn.addEventListener("input", function () {
+    idIn.value = slug(nameIn.value);
+    if (!periodIn || periodPicked) return;
+    var keep = existingAgent(idIn.value);
+    periodIn.options[0].hidden = !keep;
+    periodIn.value = keep ? "" : "monthly";
+  });
   // People and departments for the pickers.
   fetch("/api/v1/people/assignable").then(function (r) { return r.ok ? r.json() : { items: [] }; })
     .then(function (j) {
@@ -250,7 +265,7 @@
       data_scopes: f.getAll("data_scopes").map(String),
       max_dollars: num("max_dollars"),
       expires_days: num("expires_days"),
-      budget_period: String(f.get("budget_period") || "monthly"),
+      budget_period: String(f.get("budget_period") || "") || null,
     };
   }
   var form = document.getElementById("xa-add");

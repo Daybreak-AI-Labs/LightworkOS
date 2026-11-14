@@ -448,9 +448,11 @@ def _require_period_change_allowed(prior: dict | None, budget_period: str | None
         return
     if prior.get("period", "total") == "total" and budget_period == "monthly":
         raise ExternalAgentsError(
-            "This agent's spending limit applies in total. Re-enrolling cannot "
-            "change it to a monthly limit; use the agent's budget reset action, "
-            "which is recorded, and then set the monthly limit.")
+            "This agent's spending limit applies in total, and "
+            "re-enrolling cannot change the period. To switch it to a monthly "
+            "limit, reset its budget (`maverick external-agents reset-budget "
+            "<id>`, or Reset spending on the External agents page): that action "
+            "is recorded and moves the agent to a monthly limit from now on.")
 
 
 def unenroll(agent_id: str) -> bool:
