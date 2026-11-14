@@ -360,9 +360,12 @@ def compact(
 
     dropped = [m for i, m in enumerate(head) if i not in kept_by_idx]
     if not dropped:
+        # Nothing in the head could go, but the tail may still have been
+        # trimmed to fit; return that rather than the over-budget original.
+        kept = list(head) + fitted_tail
         return CompactResult(
-            messages=list(messages), dropped=[],
-            tokens_before=before, tokens_after=before, kept_marker=None,
+            messages=kept, dropped=[],
+            tokens_before=before, tokens_after=estimate_tokens(kept), kept_marker=None,
         )
 
     kept_head = [kept_by_idx[i] for i in sorted(kept_by_idx)]
