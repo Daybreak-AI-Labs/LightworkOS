@@ -1887,7 +1887,11 @@ def _handle_flow_sweep(_job=None) -> None:
         from maverick.flow.payloads import FlowPayloadError
 
         now = time.time()
-        action_episode_review.expire_retained(now=now)
+        try:
+            action_episode_review.expire_retained(now=now)
+        except Exception:
+            # A retention-store outage must not stop delayed flows or expiries.
+            log.exception("action evidence retention clean-up failed")
         if not resume_flows:
             return
         for run in store.iter_run_metadata(

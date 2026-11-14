@@ -242,3 +242,26 @@ def test_missing_draft_can_be_revoked_without_bypassing_pointer_cas(operation):
     assert operation(flow.id, expected_version=flow.version, expected_revision=flow.revision,
                      expected_release_id=release["release_id"])
     assert store.load_published_bundle(flow.id) is None
+
+
+def test_retention_store_outage_does_not_stop_due_delay_resumes(monkeypatch, caplog):
+    from types import SimpleNamespace
+
+    from maverick.flow import action_episode_review as review
+    from maverick.flow import runner
+    from maverick_dashboard import automation_queue as aq
+
+    def _down(**_kwargs):
+        raise OSError("governed records backend unavailable")
+
+    due = SimpleNamespace(status=runner.STATUS_PAUSED_DELAY, flow_id="f", run_id="r", owner="")
+    resumed = []
+    monkeypatch.setenv("MAVERICK_FLOWS", "1")
+    monkeypatch.setattr(review, "expire_retained", _down)
+    monkeypatch.setattr(store, "iter_run_metadata", lambda **_kwargs: iter([due]))
+    monkeypatch.setattr(aq, "enqueue_flow_resume", lambda *args, **kwargs: resumed.append(args))
+    monkeypatch.setattr(aq, "_reconcile_flow_crons", lambda: None)
+    monkeypatch.setattr(aq, "_run_for_active_tenants", lambda _label, fn: fn() or True)
+    aq._handle_flow_sweep()
+    assert resumed == [("f", "r")]
+    assert "retention" in caplog.text.lower()
