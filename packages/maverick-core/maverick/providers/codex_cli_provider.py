@@ -34,8 +34,10 @@ Differences from API-key providers, by design:
     block (``{"tool_call": {"name": ..., "input": {...}}}``), which is parsed
     back into a ``ToolCall``. Fine for benchmarks and general agent loops;
     weaker guarantees than a native tools API.
-  - The subprocess runs with ``--sandbox read-only`` by default: Lightwork
-    owns tool execution, Codex is used purely as the model backend.
+  - The subprocess runs with ``--sandbox read-only`` by default and with
+    Codex's own shell and exec tools turned off (``features.shell_tool`` and
+    ``features.unified_exec``): Lightwork owns tool execution, Codex is used
+    purely as the model backend.
 
 Config knobs (``[providers.codex_cli]``): ``binary`` (default ``codex``),
 ``sandbox_mode`` (default ``read-only``), ``timeout_seconds`` (default 600),
@@ -552,6 +554,12 @@ class CodexCLIClient:
                 "exec",
                 "--json",
                 "--skip-git-repo-check",
+                # Codex is only the model here; Lightwork runs the tools. Its
+                # read-only sandbox still lets its own shell READ host files
+                # (config, credentials), which an injected tool result could
+                # ask it to echo back, so its shell and exec tools are off.
+                "-c", "features.shell_tool=false",
+                "-c", "features.unified_exec=false",
                 "--sandbox", self.sandbox_mode,
                 "--output-last-message", str(last_msg),
                 "--model", model,

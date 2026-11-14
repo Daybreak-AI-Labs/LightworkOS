@@ -299,6 +299,9 @@ class TestExec:
         assert cmd[0].endswith("codex") and cmd[1] == "exec"
         assert "--json" in cmd and "--skip-git-repo-check" in cmd
         assert cmd[cmd.index("--sandbox") + 1] == "read-only"
+        # read-only still lets Codex's own shell read host secrets: it is off.
+        assert "features.shell_tool=false" in cmd and "features.unified_exec=false" in cmd
+        assert cmd[cmd.index("features.shell_tool=false") - 1] == "-c"
         assert cmd[cmd.index("--model") + 1] == client.DEFAULT_MODEL
         assert cmd[-1] == "-"                      # prompt via STDIN
         assert "You are terse." in call["input"]   # system reached the prompt
