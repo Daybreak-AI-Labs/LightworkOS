@@ -197,9 +197,29 @@ def test_serial_bounds_both_read_and_write_timeouts(monkeypatch, operation):
     out = getattr(serial, f"_op_{operation}")({"port": "/dev/ttyUSB0", "data": "x", "timeout": 10**9})
     assert "ERROR" not in out and seen
     assert all(0 < read <= 5 and read == write for read, write in seen)
-    for invalid in (0, -1, float("inf"), float("nan")):
+    for invalid in (-1, float("inf"), float("nan")):
         with pytest.raises(ValueError):
             serial._timeout({"timeout": invalid})
+
+
+def test_serial_admits_onboard_uarts_and_keeps_zero_timeout_default(tmp_path, monkeypatch):
+    from maverick.tools import serial_tool as serial
+
+    for port in ("/dev/ttyAMA0", "/dev/ttyTHS1", "/dev/ttymxc0", "/dev/ttyO1", "/dev/ttyGS0",
+                 "/dev/ttyS0", "/dev/serial0", "/dev/serial1"):
+        assert serial._valid_port(port), port
+    regular = tmp_path / "ttyS0"
+    regular.write_text("not a device")
+    for port in ("/dev/null", "/dev/tty1", "/dev/ttyAMA", "/dev/serial/../sda", "/dev/serial0/x",
+                 str(regular), "/dev/../etc/passwd"):
+        assert not serial._valid_port(port), port
+    # A device-named path that resolves out of /dev (or to a regular file) is refused.
+    monkeypatch.setattr(serial.os.path, "lexists", lambda path: True)
+    monkeypatch.setattr(serial.os.path, "realpath", lambda path: str(regular))
+    assert not serial._valid_port("/dev/serial0")
+    assert not serial._valid_port("/dev/serial/by-id/usb-foo")
+    monkeypatch.undo()
+    assert serial._timeout({"timeout": 0}) == 1.0
 
 
 @pytest.mark.parametrize("parent_case", ["success", "absent", "ambiguous", "malformed"])

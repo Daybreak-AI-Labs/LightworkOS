@@ -6,7 +6,8 @@ Linux board over a serial/USB-serial line (``/dev/ttyUSB0``, ``COM3``, …) via
 embedded-device access; JTAG/I2C are bus-specific and out of scope here.
 
 Safety: the port is validated to be a real serial device path (``/dev/ttyS*``,
-``/dev/ttyUSB*``, ``/dev/ttyACM*`` /
+``/dev/ttyUSB*``, ``/dev/ttyACM*``, onboard UARTs such as ``/dev/ttyAMA*`` and
+``/dev/serial<n>`` /
 ``/dev/cu.*`` / ``COM<n>`` / ``/dev/serial/by-id/*``), so this tool can't be
 turned into an arbitrary-file opener. It commands hardware, so it is not a
 low-risk tool.
@@ -20,7 +21,9 @@ ops:
 from __future__ import annotations
 
 import math
+import os
 import re
+import stat
 from typing import Any
 
 from . import Tool
@@ -46,6 +49,13 @@ _SERIAL_SCHEMA: dict[str, Any] = {
 # opens the caller-controlled path.
 _PORT_RE = re.compile(r"^(/dev/tty\w+|/dev/cu\.[\w.\-]+|COM\d+)$")
 _SERIAL_BY_ID_RE = re.compile(r"^/dev/serial/by-id/[\w.\-]+$")
+# Serial device names: PC UARTs, USB adapters, and the onboard UARTs of the
+# boards this tool targets (Raspberry Pi ttyAMA/serialN, Jetson ttyTHS/ttyHS,
+# i.MX ttymxc/ttyLP, BeagleBone ttyO, USB gadget ttyGS, Samsung ttySAC,
+# Qualcomm ttyMSM, Zynq ttyPS, Amlogic ttyAML), which have no by-id alias.
+_DEVICE_RE = re.compile(
+    r"/dev/(?:tty(?:S|USB|ACM|AMA|THS|HS|mxc|LP|O|GS|SAC|MSM|PS|AML)[0-9]+|serial[0-9]+)"
+)
 
 
 def _need_serial():
@@ -59,14 +69,24 @@ def _need_serial():
 
 def _valid_port(port: str) -> bool:
     port = port or ""
-    if port.startswith("/dev/tty") and not re.fullmatch(r"/dev/tty(?:S|USB|ACM)[0-9]+", port):
+    if _DEVICE_RE.fullmatch(port) or (
+        _SERIAL_BY_ID_RE.fullmatch(port) and port.rsplit("/", 1)[-1] not in {".", ".."}
+    ):
+        return _is_device_node(port)
+    if port.startswith(("/dev/tty", "/dev/serial")):
         return False
-    if _PORT_RE.fullmatch(port or ""):
-        return True
-    if not _SERIAL_BY_ID_RE.fullmatch(port or ""):
+    return bool(_PORT_RE.fullmatch(port))
+
+
+def _is_device_node(port: str) -> bool:
+    """An existing port must resolve to a character device inside /dev."""
+    if not os.path.lexists(port):
+        return True  # Opening it fails; there is nothing to misuse.
+    real = os.path.realpath(port)
+    try:
+        return real.startswith("/dev/") and stat.S_ISCHR(os.stat(real).st_mode)
+    except OSError:
         return False
-    name = port.rsplit("/", 1)[-1]
-    return name not in {".", ".."}
 
 
 def _baud(args: dict) -> int:
@@ -78,7 +98,7 @@ def _baud(args: dict) -> int:
 
 def _timeout(args: dict) -> float:
     # inf would block a read forever; refuse non-finite and non-positive values.
-    timeout = float(args.get("timeout") if args.get("timeout") is not None else 1.0)
+    timeout = float(args.get("timeout") or 1.0)
     if not math.isfinite(timeout) or timeout <= 0:
         raise ValueError("timeout must be a positive, finite number of seconds")
     return min(timeout, 5.0)
