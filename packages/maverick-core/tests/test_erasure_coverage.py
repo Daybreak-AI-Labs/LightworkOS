@@ -129,3 +129,26 @@ def test_human_edit_receipts_are_counted_then_removed_with_exact_goal(tmp_path):
         assert world.count_erasure_receipt_store("goal_mutation_receipts", [], [other]) == 1
     finally:
         world.close()
+
+
+def test_approvals_parked_by_an_erased_goal_lose_their_content(tmp_path):
+    from maverick.world_model import WorldModel
+    world = WorldModel(tmp_path / "approval-erasure.db")
+    try:
+        conversation = world.get_or_create_conversation("dashboard", "alice")
+        goal = world.create_goal("private", owner="user:alice")
+        world.append_turn(conversation.id, "user", "private", goal_id=goal)
+        mine = world.create_approval("email alice@example.com", scope="12 Elm St",
+                                     detail="Alice Smith, 12 Elm St")
+        other = world.create_approval("unrelated", detail="keep")
+        with world._writing() as con:
+            con.execute("UPDATE approvals SET goal_id = ? WHERE id = ?", (goal, mine))
+            con.execute("INSERT INTO approval_signoffs VALUES (?, 'u:bob', 'approved', 1, 'for Alice')", (mine,))
+        world.erase_conversations([conversation.id])
+        erased = world.get_approval(mine)
+        assert (erased.action, erased.scope, erased.detail) == ("[erased]", None, None)
+        with world._writing() as con:
+            assert con.execute("SELECT note FROM approval_signoffs").fetchone()[0] is None
+        assert world.get_approval(other).detail == "keep"
+    finally:
+        world.close()

@@ -1011,6 +1011,20 @@ def _dec_field(text: str | None, *, at_rest: bool | None = None,
     return text
 
 
+_ERASED_APPROVAL_ACTION = "[erased]"
+
+
+def _dec_field_or_withheld(text: str | None) -> str | None:
+    from .crypto_at_rest import EncryptionUnavailable
+
+    try:
+        return _dec_field(text)
+    except EncryptionUnavailable as exc:
+        log.error("at-rest: withholding a value in a result set that cannot be "
+                  "opened (%s)", exc)
+        return _UNSEALED_WITHHELD
+
+
 def _dec_fields(texts: list[str | None],
                 contexts: str | list[str | None] | None = None) -> list[str | None]:
     """Decrypt a result set with one policy and key lookup per query.
@@ -1038,8 +1052,10 @@ def _dec_fields(texts: list[str | None],
     try:
         decoded_present = unseal_many_from_str(present)
     except EncryptionUnavailable:
-        # One bad token must not hide the page: fall back to per-value reads.
-        decoded_present = [_dec_field(text) for text in present]
+        # One bad token must not hide the page: fall back to per-value reads,
+        # withholding a value that cannot be opened (an unbound legacy token
+        # makes _dec_field raise, which would fail the whole list read).
+        decoded_present = [_dec_field_or_withheld(text) for text in present]
     strict = (
         _strict_reads()
         if any(not is_sealed_str(text) for text in present)
@@ -1550,7 +1566,9 @@ class WorldModel:
                 if is_outermost:
                     self.conn.commit()
                     self._wake_changed_goals()
-            except Exception:
+            except BaseException:
+                # Ctrl-C or SystemExit too: an open half-applied transaction
+                # would otherwise be committed by this object's next write.
                 if is_outermost:
                     self.conn.rollback()
                     self.__dict__.pop("_changed_goals", None)
@@ -3625,16 +3643,17 @@ class WorldModel:
         *,
         expected_owner: str | None = None,
     ) -> bool:
-        """Record an answer to a question. Returns False if no question with
-        that id exists, so callers can flag a typo'd id instead of reporting
-        a false success.
+        """Record an answer to a question. Returns False if no unanswered
+        question with that id exists, so callers can flag a typo'd id instead
+        of reporting a false success. An answer is recorded once: the agent
+        may already have acted on it, so it is never silently replaced.
 
         ``expected_owner`` binds the mutation to the parent goal's owner in
         the same SQL statement.  This is the object-level authorization seam
         used by network adapters; a missing, ownerless, or foreign question is
         deliberately the same zero-row result.
         """
-        sql = "UPDATE questions SET answer = ?, answered_at = ? WHERE id = ?"
+        sql = "UPDATE questions SET answer = ?, answered_at = ? WHERE id = ? AND answer IS NULL"
         params: tuple[Any, ...] = (
             _enc_field(answer, "questions.answer"),
             time.time(),
@@ -3875,6 +3894,10 @@ class WorldModel:
         identity round so the next decision is a new signed audit event.
         """
         with self._writing() as conn:
+            # Take the cross-process write reservation before the read, as
+            # decide_approval_audited does, so a settle committed by another
+            # process cannot land between this read and the UPDATE below.
+            conn.execute("UPDATE approvals SET status = status WHERE id = ?", (int(approval_id),))
             row = conn.execute(
                 "SELECT status, decided_at, decided_by, undo_hold, action FROM approvals WHERE id = ?",
                 (int(approval_id),),
@@ -3889,11 +3912,13 @@ class WorldModel:
             decided_at = row["decided_at"]
             if decided_at is None or time.time() - float(decided_at) >= float(within_seconds):
                 return "too_late"
-            conn.execute(
+            reopened = conn.execute(
                 "UPDATE approvals SET status = 'pending', decided_at = NULL, "
                 "decided_by = NULL WHERE id = ? AND status = ? AND undo_hold = ?",
                 (int(approval_id), row["status"], APPROVAL_UNDO_OPEN),
-            )
+            ).rowcount
+            if reopened != 1:
+                return "too_late"  # the waiting task settled it first
             conn.execute(
                 "DELETE FROM approval_signoffs WHERE approval_id = ?",
                 (int(approval_id),),
@@ -4920,6 +4945,14 @@ class WorldModel:
                             f"WHERE goal_id IN ({goal_placeholders})",
                             chunk,
                         )
+                    # Approvals keep their identities and decisions (the audit
+                    # outbox refers to them), but the subject's content -- the
+                    # sealed action, scope and detail, and sign-off notes -- goes.
+                    conn.execute(
+                        "UPDATE approval_signoffs SET note = NULL WHERE approval_id IN ("
+                        f"SELECT id FROM approvals WHERE goal_id IN ({goal_placeholders}))",
+                        chunk,
+                    )
                     episode_query = (
                         "SELECT id FROM episodes "
                         f"WHERE goal_id IN ({goal_placeholders})"
@@ -4940,6 +4973,13 @@ class WorldModel:
                         "DELETE FROM episodes "
                         f"WHERE goal_id IN ({goal_placeholders})",
                         chunk,
+                    )
+                erased_action = _enc_field(_ERASED_APPROVAL_ACTION, "approvals.action")
+                for chunk in self._chunks(goal_ids, 499):  # one parameter is the action
+                    conn.execute(
+                        "UPDATE approvals SET action = ?, scope = NULL, detail = NULL "
+                        f"WHERE goal_id IN ({','.join('?' * len(chunk))})",
+                        (erased_action, *chunk),
                     )
                 # With deferred self-referential FKs, goals can be removed in
                 # bounded chunks and checked as one transaction at commit.

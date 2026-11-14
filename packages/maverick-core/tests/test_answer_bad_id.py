@@ -37,6 +37,7 @@ def test_world_answer_returns_match_flag(tmp_path: Path):
     qid = w.ask("Q?", goal_id=gid)
     assert w.answer(qid, "a") is True
     assert w.answer(999999, "a") is False
+    assert w.answer(qid, "replaced") is False  # answered once, never replaced
 
 
 def test_world_answer_owner_scope_is_atomic(tmp_path: Path):

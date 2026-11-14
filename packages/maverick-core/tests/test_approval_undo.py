@@ -55,6 +55,25 @@ def test_undo_outcomes_and_round_bumped_vote_identity(wm):
     assert wm.get_approval_audit_event(first.event_id).final_status is None
 
 
+def test_an_undo_that_loses_the_race_to_settle_reports_too_late(wm, monkeypatch):
+    """The settle lands after the undo read its row (another process in
+    production): the undo must not report success or clear the sign-offs."""
+    import maverick.world_model as world_model
+
+    aid = wm.create_approval("wire-funds", risk="high", undoable=True)
+    _decide(wm, aid, "approved")
+    real = world_model.approval_undo_refusal
+
+    def settle_first(*args):
+        wm.settle_approval_decision(aid, decided_before=time.time() + 60)
+        return real(*args)
+
+    monkeypatch.setattr(world_model, "approval_undo_refusal", settle_first)
+    assert wm.undo_approval_decision(aid, undone_by="u:bob", within_seconds=30) == "too_late"
+    assert wm.get_approval(aid).status == "approved"
+    assert wm.approval_state(aid)["approved_count"] == 1
+
+
 def test_the_window_is_open_only_before_its_end_even_on_an_equal_clock_reading(wm, monkeypatch):
     # Windows' wall clock (time.time() there reads GetSystemTimeAsFileTime
     # before Python 3.13) can give the decision and the undo the same value.
