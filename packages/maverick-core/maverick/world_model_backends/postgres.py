@@ -1618,6 +1618,21 @@ class PostgresWorldModel:
                         table, e,
                     )
                     continue
+                if table in _RLS_TENANT_COLUMN and self._rls_policy_is_active(
+                    table, setting="maverick.tenant",
+                ):
+                    # The policy an earlier version installed is still forced,
+                    # so isolation holds; refusing to start would take a
+                    # working deployment down over a role it cannot change.
+                    log.warning(
+                        "RLS on %s still uses the policy an earlier version installed, and "
+                        "this database role cannot replace it (%s). Tenant isolation stays "
+                        "enforced, but a workspace whose id contains characters outside "
+                        "A-Z a-z 0-9 . _ - cannot use its webhooks and deadline alerts "
+                        "until Lightwork is started once as the table owner.",
+                        table, e,
+                    )
+                    continue
                 raise RuntimeError(
                     f"MAVERICK_PG_RLS is enabled but fail-closed RLS could not "
                     f"be installed or verified on {table}: {e}"
@@ -1641,11 +1656,13 @@ class PostgresWorldModel:
             ")"
         )
 
-    def _rls_policy_is_active(self, table: str, *, cursor=None) -> bool:
+    def _rls_policy_is_active(self, table: str, *, cursor=None, setting: str | None = None) -> bool:
         """Verify FORCE and the complete stock policy before skipping DDL.
 
         Extra restrictive policies can narrow access. Another permissive policy
         can OR around isolation, so it is never evidence of a safe fast path.
+        ``setting`` checks for the policy keyed on that session setting instead
+        of the table's current one (the earlier workspace-table policy).
         """
         sql = (
             "SELECT c.relrowsecurity,c.relforcerowsecurity,p.polname,p.polcmd,"
@@ -1656,16 +1673,16 @@ class PostgresWorldModel:
         try:
             if cursor is not None:
                 cursor.execute(sql, (table,))
-                return self._rls_policy_rows_are_active(table, cursor.fetchall())
+                return self._rls_policy_rows_are_active(table, cursor.fetchall(), setting=setting)
             with self._tx() as cur:
                 cur.execute(sql, (table,))
                 rows = cur.fetchall()
         except Exception:
             return False
-        return self._rls_policy_rows_are_active(table, rows)
+        return self._rls_policy_rows_are_active(table, rows, setting=setting)
 
     @staticmethod
-    def _rls_policy_rows_are_active(table, rows) -> bool:
+    def _rls_policy_rows_are_active(table, rows, *, setting: str | None = None) -> bool:
         if not rows or not all(row[0] and row[1] for row in rows):
             return False
         policies = [row for row in rows if row[2] == "mvk_tenant_isolation"]
@@ -1675,7 +1692,7 @@ class PostgresWorldModel:
         if policy[3] != "*" or policy[4] is not True or list(policy[5] or ()) != [0]:
             return False
         column = _RLS_TENANT_COLUMN.get(table, "tenant_id")
-        setting = PostgresWorldModel._rls_setting(table)
+        setting = setting or PostgresWorldModel._rls_setting(table)
         expected = f"({column}=nullif(current_setting('{setting}'::text,true),''::text))"
         return all("".join(str(expr).lower().split()) == expected for expr in policy[6:8])
 

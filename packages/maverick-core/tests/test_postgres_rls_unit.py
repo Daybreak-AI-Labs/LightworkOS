@@ -580,6 +580,10 @@ def test_rls_policy_verification_reads_the_table_specific_column(monkeypatch):
     # The policy an earlier version installed compares the raw id with the
     # encoded segment; it is not current, so startup replaces it.
     assert verify([policy(earlier)]) is False
+    # ...but it can be recognised when a role that cannot replace it starts.
+    world_check = PostgresWorldModel._rls_policy_rows_are_active
+    assert world_check("webhook_deliveries", [policy(earlier)], setting="maverick.tenant") is True
+    assert world_check("webhook_deliveries", [policy(workspace)], setting="maverick.tenant") is False
     # The generic tenant_id column is not this table's isolation column.
     assert verify([policy(tenant_id)]) is False
     # Another permissive policy could OR around isolation.

@@ -171,4 +171,7 @@ a character outside `A-Z a-z 0-9 . _ -` could not read or add its own webhooks
 and deadline alerts. The first start of this version as the table owner replaces
 the policy on those three tables; no data changes. Upgrade and restart every
 process that uses the database: a process still on the earlier version sees no
-rows in those tables until it is upgraded.
+rows in those tables until it is upgraded. If the application's database role
+does not own those tables, it cannot replace the policy: it still starts, logs
+a warning, and keeps the earlier behaviour until Lightwork is started once as
+the table owner.

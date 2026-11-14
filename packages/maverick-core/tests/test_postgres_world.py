@@ -1396,6 +1396,23 @@ def test_rls_lets_a_tenant_with_an_encoded_id_use_its_workspace_rows(monkeypatch
             cur.execute(f"DROP POLICY IF EXISTS mvk_tenant_isolation ON {table}")
             cur.execute(f"CREATE POLICY mvk_tenant_isolation ON {table} "
                         f"USING ({earlier}) WITH CHECK ({earlier})")
+    app_dsn = make_conninfo(_DSN, user="mvk_rls_ws", password="rlspw")  # pragma: allowlist secret
+    # A role that cannot replace the earlier policy still starts: the policy is
+    # forced, so isolation holds, and a plainly named tenant works as before.
+    earlier_world = PostgresWorldModel(dsn=app_dsn)
+    try:
+        tok = set_tenant("rls_plain")
+        try:
+            hooks._write(
+                earlier_world,
+                "INSERT INTO webhook_subscriptions(id, workspace, url, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                ("wh-before", hooks.workspace_id(), "https://hooks.example.invalid/in", 1.0, 1.0),
+            )
+        finally:
+            reset_tenant(tok)
+    finally:
+        earlier_world.close()
     # The owner's next start replaces it with the current policy.
     PostgresWorldModel(dsn=_DSN).close()
     with psycopg.connect(_DSN, autocommit=True) as c, c.cursor() as cur:
@@ -1403,7 +1420,6 @@ def test_rls_lets_a_tenant_with_an_encoded_id_use_its_workspace_rows(monkeypatch
                     "WHERE polrelid = 'webhook_subscriptions'::regclass")
         assert "maverick.workspace" in cur.fetchone()[0]
 
-    app_dsn = make_conninfo(_DSN, user="mvk_rls_ws", password="rlspw")  # pragma: allowlist secret
     w = PostgresWorldModel(dsn=app_dsn)
 
     def add(tenant, ident):
@@ -1433,7 +1449,7 @@ def test_rls_lets_a_tenant_with_an_encoded_id_use_its_workspace_rows(monkeypatch
         # Its raw id is the first tenant's encoded segment.
         add("slack%3AU1", "wh-lookalike")
         assert visible("slack:U1") == ["wh-encoded"]
-        assert visible("rls_plain") == ["wh-plain"]
+        assert visible("rls_plain") == ["wh-before", "wh-plain"]
         assert visible("slack%3AU1") == ["wh-lookalike"]
         assert visible(None) == []
     finally:
