@@ -196,7 +196,9 @@ def _find_slot(args: dict[str, Any]) -> str:
     # strictly below it. Doing earliest first let latest become 24 when
     # earliest=23 (max(24, ...)) → a later cursor.replace(hour=24) crash.
     latest = max(1, min(int(args.get("latest_hour") or 18), 23))
-    earliest = max(0, min(int(args.get("earliest_hour") or 9), latest - 1))
+    raw_earliest = args.get("earliest_hour")
+    # An explicit 0 (midnight) is a valid hour, not "unset".
+    earliest = max(0, min(int(9 if raw_earliest is None else raw_earliest), latest - 1))
     now = datetime.now(tz=timezone.utc).replace(second=0, microsecond=0)
     window_end = now + timedelta(days=search_days)
     try:

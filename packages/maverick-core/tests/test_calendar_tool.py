@@ -89,6 +89,23 @@ def test_find_slot_always_discloses_unparseable_busy_events(monkeypatch, busy_ho
     assert "1 event(s) could not be parsed" in result
 
 
+def test_find_slot_honours_earliest_hour_zero(monkeypatch):
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    from maverick.tools import calendar_tool as module
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 7, 1, 1, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(module, "datetime", Clock)
+    monkeypatch.setattr(module, "_get_caldav_calendar", lambda: SimpleNamespace(search=lambda **kw: []))
+    result = module._find_slot({"search_days": 1, "earliest_hour": 0})
+    assert "01:00" in result and "09:00" not in result
+
+
 # ---------- calendar find_slot: latest_hour=23 must not crash ----------
 
 def test_calendar_find_slot_latest_hour_23(monkeypatch):

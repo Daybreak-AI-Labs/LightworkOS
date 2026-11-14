@@ -62,11 +62,13 @@ def _status(discovered: datetime, now: datetime, notified: datetime | None,
                      "without undue delay (GDPR Art. 34).")
         return head
 
-    remaining = _hours((deadline - now).total_seconds())
-    if remaining < 0:
-        head = f"OVERDUE: authority notification was due {dstr} ({deadline_hours}h after discovery), overdue {-remaining}h"
+    # Decide on the exact remaining time; round only for display, or a deadline
+    # missed by a few minutes would read "DUE ... (in -0.0h)".
+    remaining_s = (deadline - now).total_seconds()
+    if remaining_s < 0:
+        head = f"OVERDUE: authority notification was due {dstr} ({deadline_hours}h after discovery), overdue {_hours(-remaining_s)}h"
     else:
-        head = f"DUE: notify the supervisory authority by {dstr} (in {remaining}h)"
+        head = f"DUE: notify the supervisory authority by {dstr} (in {_hours(remaining_s)}h)"
 
     if high_risk:
         head += "\nHIGH RISK: affected individuals must also be notified without undue delay (Art. 34)"

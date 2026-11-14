@@ -212,3 +212,14 @@ def test_unmodelled_calendars_fall_back_to_weekends_only():
         __import__("datetime").datetime(
             2026, 12, 25, 12, 0,
             tzinfo=__import__("datetime").timezone.utc).timestamp(), "BR") is False
+
+
+def test_tool_reports_overdue_minutes_after_the_deadline():
+    # Rounded to 0.1 h, a deadline missed by 2 minutes used to read "DUE (in -0.0h)".
+    from maverick.tools.breach_notification import breach_notification
+
+    out = breach_notification().fn({
+        "op": "status", "discovered": "2026-01-01T00:00:00+00:00",
+        "now": "2026-01-04T00:02:00+00:00",
+    })
+    assert out.startswith("OVERDUE")
