@@ -16,11 +16,13 @@ Use:
 
     wf = Workflow(steps=[
         Step("fetch", "http_fetch", {"url": "https://news.ycombinator.com"}),
-        Step("snap",  "ocr",        {"op": "extract_url", "url": "${fetch.url}"}),
-        Step("note",  "notify",     {"title": "OCR done",
-                                       "body": "${snap.out}"}),
+        Step("note",  "notify",     {"title": "Fetched",
+                                       "body": "${fetch.out}"}),
     ])
     result = wf.run(registry)
+
+``${step.out}`` is the only placeholder form. With ``stop_on_error=False``
+a step whose dependency failed is recorded as failed and not run.
 
 Cycles are rejected at construction. Output of each step is whatever
 the underlying tool returned (string).
@@ -161,7 +163,18 @@ class Workflow:
         from .tool_authz import non_agent_capability_required
         result = WorkflowResult()
         outputs: dict[str, str] = {}
+        names = {s.name for s in self.steps}
+        not_ok: set[str] = set()
         for step in self._topo_order:
+            blocked = [d for d in self._all_deps(step, names) if d in not_ok]
+            if blocked:
+                # A dependency failed (or was itself skipped): never run the
+                # dependent on an unresolved ``${step.out}`` placeholder.
+                not_ok.add(step.name)
+                result.steps.append(StepResult(
+                    name=step.name, tool=step.tool, ok=False, output="",
+                    error=f"skipped: dependency {', '.join(blocked)} did not succeed"))
+                continue
             if non_agent_capability_required():
                 raise RuntimeError(
                     "workflow tool dispatch is unavailable while capability enforcement or an inherited grant is active"
@@ -197,12 +210,12 @@ class Workflow:
             result.steps.append(sr)
             if not ok:
                 result.failed = True
+                not_ok.add(step.name)
                 log.warning("workflow step %s failed: %s", step.name, err)
                 if stop_on_error:
                     break
-                # Don't expose a failed step's (empty) output to a downstream
-                # ${step.out} placeholder -- the dependent would silently run on
-                # a blanked argument instead of being skipped.
+                # Don't expose a failed step's (empty) output: its dependents
+                # are skipped above rather than run on the raw placeholder.
                 continue
             outputs[step.name] = sr.output
         return result

@@ -136,3 +136,28 @@ def test_workflow_resolves_string_placeholders():
     wf.run(_Reg())
     assert seen[1]["prefix"] == "got: first-output!"
     assert seen[1]["n"] == 1
+
+
+def test_workflow_skips_dependents_of_failed_step_when_continuing():
+    """Regression: with stop_on_error=False a dependent of a failed step ran
+    with the literal ``${b.out}`` placeholder as its argument."""
+    from maverick.workflow import Step, Workflow
+
+    ran: list[tuple[str, dict]] = []
+
+    class _Reg:
+        async def run(self, name, args):
+            ran.append((name, args))
+            return "ERROR: nope" if name == "boom" else "ok"
+
+    wf = Workflow(steps=[
+        Step("a", "ok-tool"),
+        Step("b", "boom"),
+        Step("c", "ok-tool", {"x": "${b.out}"}),
+        Step("d", "ok-tool", depends_on=["c"]),
+    ])
+    res = wf.run(_Reg(), stop_on_error=False)
+    assert [name for name, _ in ran] == ["ok-tool", "boom"]
+    by = res.by_name()
+    assert not by["c"].ok and "skipped" in by["c"].error
+    assert not by["d"].ok
