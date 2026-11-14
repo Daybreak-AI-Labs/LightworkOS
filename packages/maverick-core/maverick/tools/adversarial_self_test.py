@@ -35,9 +35,11 @@ _SUFFIXES = [
 # so a model-supplied pattern such as ``(a+)+$`` would freeze the whole
 # process. Patterns are limited to the flow engine's safe subset (at most one
 # quantifier, no nesting, alternation or counted repetition), and the output and
-# pattern count are capped so the remaining worst case stays bounded.
-_MAX_OUTPUT_CHARS = 8192
-_MAX_PATTERNS = 32
+# pattern count are capped so the remaining worst case stays bounded: one
+# quantifier can still be quadratic (``a*b`` on "aaa..."), so the total work is
+# at most _MAX_PATTERNS * _MAX_OUTPUT_CHARS**2 steps (tens of milliseconds).
+_MAX_OUTPUT_CHARS = 1024
+_MAX_PATTERNS = 8
 
 
 def _probe(output: str, patterns: list[Any]) -> str:
@@ -129,7 +131,8 @@ def adversarial_self_test() -> Tool:
             "Adversarial self-test (red-team yourself), offline. op=probe with "
             "'output' and 'patterns' (regex strings the output must NOT emit) "
             "returns CLEAN or FAIL with the matched patterns (simple patterns "
-            "only: one quantifier, no alternation; output up to 8192 chars). op=mutate with "
+            "only: one quantifier, no alternation; output up to 1024 chars, at most 8 "
+            "patterns). op=mutate with "
             "'seed' returns deterministic injection-style mutations (base64 "
             "wrap, leetspeak, reversed, suffix injection) to probe defenses. "
             "Pure stdlib re + base64."
