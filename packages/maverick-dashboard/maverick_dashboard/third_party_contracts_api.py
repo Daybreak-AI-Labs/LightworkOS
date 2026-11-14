@@ -276,15 +276,8 @@ def _jsonable(value: object) -> object:
     return value
 
 
-def create_third_party_contracts_router(  # noqa: C901, PLR0915
-    dependencies: ThirdPartyContractDependencies | None = None,
-) -> APIRouter:
-    deps = dependencies or ThirdPartyContractDependencies()
-    router = APIRouter(
-        prefix="/third-party/contracts",
-        tags=["third-party-contracts"],
-    )
-
+def _third_party_contracts_probes_routes(deps):
+    """Bind probes and related router operations."""
     def probes(request: Request, tenant: str) -> tuple[bool, bool, bool]:
         ops = _ops()
         enabled_probe = _dependency(
@@ -382,7 +375,11 @@ def create_third_party_contracts_router(  # noqa: C901, PLR0915
                 detail="Contract lifecycle store is unavailable",
             )
         return ops, tenant, store
+    return composition, probes
 
+
+def _third_party_contracts_call_routes(composition, deps, probes, router):
+    """Bind call and related router operations."""
     async def call(ops, function, *args, **kwargs):
         try:
             return await run_in_threadpool(function, *args, **kwargs)
@@ -597,7 +594,11 @@ def create_third_party_contracts_router(  # noqa: C901, PLR0915
         record = await call(ops, store.get_record, tenant, record_id)
         _secure(response)
         return projection(ops, record, sensitive=sensitive)
+    return call, include_sensitive, projection
 
+
+def _third_party_contracts_update_routes(call, composition, include_sensitive, projection, router):
+    """Bind update and related router operations."""
     async def update(
         request: Request,
         response: Response,
@@ -729,6 +730,22 @@ def create_third_party_contracts_router(  # noqa: C901, PLR0915
         result = await call(ops, store.get_tombstone, tenant, record_id)
         _secure(response)
         return _jsonable(result)  # type: ignore[return-value]
+
+
+def create_third_party_contracts_router(
+    dependencies: ThirdPartyContractDependencies | None = None,
+) -> APIRouter:
+    deps = dependencies or ThirdPartyContractDependencies()
+    router = APIRouter(
+        prefix="/third-party/contracts",
+        tags=["third-party-contracts"],
+    )
+
+    composition, probes = _third_party_contracts_probes_routes(deps)
+    (call, include_sensitive, projection) = _third_party_contracts_call_routes(
+        composition, deps, probes, router,
+    )
+    _third_party_contracts_update_routes(call, composition, include_sensitive, projection, router)
 
     return router
 

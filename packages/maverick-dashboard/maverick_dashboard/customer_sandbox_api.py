@@ -77,12 +77,8 @@ class CustomerSandboxDependencies:
         self.capability_probe = capability_probe
 
 
-def create_customer_sandbox_router(  # noqa: C901 - explicit route-local authority gates
-    dependencies: CustomerSandboxDependencies | None = None,
-) -> APIRouter:
-    deps = dependencies or CustomerSandboxDependencies()
-    router = APIRouter(prefix="/customer-sandboxes", tags=["customer-sandboxes"])
-
+def _customer_sandbox_capability_routes(deps):
+    """Bind capability and related router operations."""
     def capability(request: Request):
         require_global_permission(request, "admin")
         from maverick import customer_sandbox_lifecycle as lifecycle
@@ -128,7 +124,11 @@ def create_customer_sandbox_router(  # noqa: C901 - explicit route-local authori
         if type(store) is not lifecycle.CustomerSandboxLifecycleStore:
             raise HTTPException(status_code=503, detail="customer sandbox authority is unavailable")
         return lifecycle, store
+    return authority, capability
 
+
+def _customer_sandbox_call_routes(authority, capability, router):
+    """Bind call and related router operations."""
     async def call(lifecycle, function, *args, **kwargs):
         try:
             return _jsonable(await run_in_threadpool(function, *args, **kwargs))
@@ -211,7 +211,11 @@ def create_customer_sandbox_router(  # noqa: C901 - explicit route-local authori
     async def expire(request: Request, sandbox_id: ObjectId, body: RevisionIn):
         lifecycle, store = authority(request, admission_required=False)
         return await call(lifecycle, store.expire_sandbox, sandbox_id, **body.model_dump())
+    return call
 
+
+def _customer_sandbox_request_resync_routes(authority, call, router):
+    """Bind request resync and related router operations."""
     @router.post("/{sandbox_id}/resync/request")
     async def request_resync(request: Request, sandbox_id: ObjectId, body: ResyncIn):
         lifecycle, store = authority(request)
@@ -276,6 +280,17 @@ def create_customer_sandbox_router(  # noqa: C901 - explicit route-local authori
     async def integrity(request: Request):
         lifecycle, store = authority(request, admission_required=False)
         return await call(lifecycle, store.verify_integrity)
+
+
+def create_customer_sandbox_router(
+    dependencies: CustomerSandboxDependencies | None = None,
+) -> APIRouter:
+    deps = dependencies or CustomerSandboxDependencies()
+    router = APIRouter(prefix="/customer-sandboxes", tags=["customer-sandboxes"])
+
+    authority, capability = _customer_sandbox_capability_routes(deps)
+    call = _customer_sandbox_call_routes(authority, capability, router)
+    _customer_sandbox_request_resync_routes(authority, call, router)
 
     return router
 
