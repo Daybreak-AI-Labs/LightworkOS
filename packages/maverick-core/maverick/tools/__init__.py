@@ -1670,7 +1670,7 @@ def base_registry(
     from ..cost.curve_fitter import cost_curve_tool
     from .capability_query import capability_query
     from .oidc_tool import oidc_tool
-    reg.register(capability_query(user_id=user_id))
+    reg.register(capability_query(user_id=user_id, channel=channel))
     reg.register(oidc_tool())
     reg.register(cost_curve_tool(world))
 
