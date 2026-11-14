@@ -30,6 +30,26 @@ def world():
         w.close()
 
 
+def test_signoff_for_is_scoped_to_the_active_tenant(world):
+    from maverick.paths import tenant_scope
+
+    tenant = "signoff-" + uuid.uuid4().hex
+    other = tenant + "-other"
+    try:
+        with tenant_scope(tenant=tenant):
+            gid = world.create_goal("reviewed goal")
+            world.set_goal_status(gid, "done", result="ok")
+            assert world.record_signoff(gid, "approved", decided_by="rev")
+            assert world.signoff_for(gid)["decision"] == "approved"
+        with tenant_scope(tenant=other):
+            assert world.signoff_for(gid) is None
+    finally:
+        with world._tx() as cursor:
+            cursor.execute("DELETE FROM signoffs WHERE goal_id IN "
+                           "(SELECT id FROM goals WHERE tenant_id=%s)", (tenant,))
+            cursor.execute("DELETE FROM goals WHERE tenant_id=%s", (tenant,))
+
+
 @pytest.mark.parametrize("encrypted", [False, True])
 def test_goal_search_enforces_owner_and_preserves_project_metadata(world, monkeypatch, encrypted):
     from maverick.paths import tenant_scope

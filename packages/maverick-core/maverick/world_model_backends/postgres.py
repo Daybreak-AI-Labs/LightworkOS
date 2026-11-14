@@ -1526,9 +1526,16 @@ class PostgresWorldModel:
                     report = pg_rls.preflight(conn)
             else:
                 report = pg_rls.preflight(self.conn)
-        except Exception as e:  # pragma: no cover -- preflight never blocks an explicit opt-in
-            log.warning("RLS preflight could not run (%s); proceeding to _apply_rls", e)
-            return
+        except Exception as e:
+            # An explicit opt-in returned above, so this is the auto-on path the
+            # gate protects: forcing the policy without knowing whether legacy
+            # rows exist risks hiding and freezing them. Refuse to boot.
+            raise RuntimeError(
+                "Enterprise mode auto-enabled Postgres RLS, but the legacy-row "
+                f"preflight could not run ({e}). Retry, or check with "
+                "`maverick tenant rls-preflight`; to opt into RLS knowingly, set "
+                "MAVERICK_PG_RLS=1 explicitly."
+            ) from e
         offenders = {
             t: info.get("null_tenant_rows", 0) + info.get("empty_tenant_rows", 0)
             for t, info in report.get("tables", {}).items()
@@ -2711,12 +2718,17 @@ class PostgresWorldModel:
             return True
 
     def signoff_for(self, goal_id: int) -> dict | None:
-        """The current sign-off on a goal's deliverable, or None if unreviewed."""
+        """The current sign-off on a goal's deliverable, or None if unreviewed.
+
+        Scoped through the parent goal like the other child reads: ``signoffs``
+        has no tenant column or RLS policy of its own."""
+        frag, fparams = _tenant_scope()
         with self._tx() as cur:
             cur.execute(
                 "SELECT goal_id, decision, decided_by, note, created_at "
-                "FROM signoffs WHERE goal_id=%s",
-                (int(goal_id),),
+                "FROM signoffs WHERE goal_id=%s "
+                "AND goal_id IN (SELECT id FROM goals WHERE " + frag + ")",
+                (int(goal_id), *fparams),
             )
             r = cur.fetchone()
         if not r:
@@ -5259,8 +5271,18 @@ class PostgresWorldModel:
 
     @staticmethod
     def _receipt_tenant(tenant_id: str) -> str:
+        # Callers pass the raw tenant id (or "shared"); the active tenant here
+        # is the path-encoded segment, so compare like with like.
+        from ..paths import InvalidTenantError, _tenant_segment, canonical_tenant_id
+
         active = _active_tenant() or "shared"
-        if tenant_id != active:
+        claimed = tenant_id
+        if tenant_id != "shared":
+            try:
+                claimed = _tenant_segment(canonical_tenant_id(tenant_id))
+            except InvalidTenantError:
+                claimed = None
+        if claimed != active:
             raise ValueError("erasure receipt belongs to another tenant")
         return active
 

@@ -736,6 +736,22 @@ def test_preflight_refuses_boot_on_empty_tenant_event_batches(monkeypatch):
         world._preflight_rls_or_die()
 
 
+def test_preflight_failure_refuses_boot_when_auto_on(monkeypatch):
+    # The auto-on gate exists to stop RLS hiding legacy rows; a preflight that
+    # could not count them must not let the policy be forced anyway.
+    monkeypatch.setattr(postgres, "_rls_explicitly_set", lambda: False)
+
+    def _fails(conn):
+        raise TimeoutError("statement timeout")
+
+    monkeypatch.setattr("maverick.world_model_backends.pg_rls.preflight", _fails)
+    world = PostgresWorldModel.__new__(PostgresWorldModel)
+    world._pool = None
+    world.conn = object()
+    with pytest.raises(RuntimeError, match="preflight could not run"):
+        world._preflight_rls_or_die()
+
+
 def test_preflight_skipped_when_explicitly_opted_in(monkeypatch):
     # Explicit MAVERICK_PG_RLS=1 keeps the old fail-closed path: no boot refusal
     # even with NULL rows present (operator knowingly opted in).
@@ -1143,3 +1159,19 @@ def test_a_delivered_final_vote_is_announced_only_after_the_guard_and_the_commit
     world, told = _approval_world(monkeypatch, _ScriptedCursor(_delivery_answers()))
     assert world.mark_approval_audit_delivered("evt") is True
     assert told == [("approval.decided", 7, {"status": "approved", "decided_by": "user:dana"}, False)]
+
+
+def test_receipt_tenant_accepts_the_raw_id_of_an_encoded_tenant(tmp_path, monkeypatch):
+    # The manifest carries the raw tenant id; the backend's active tenant is
+    # the path-encoded segment. A tenant like "acme:eu" must still store its
+    # own receipts, and another tenant's id must still be refused.
+    from maverick.paths import tenant_scope
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
+    with tenant_scope(tenant="acme:eu"):
+        assert PostgresWorldModel._receipt_tenant("acme:eu") == "acme%3Aeu"
+        with pytest.raises(ValueError, match="another tenant"):
+            PostgresWorldModel._receipt_tenant("acme")
+        with pytest.raises(ValueError, match="another tenant"):
+            PostgresWorldModel._receipt_tenant("shared")
