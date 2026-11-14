@@ -123,13 +123,12 @@ _repo_cache: OrderedDict[str, tuple[str, str]] = OrderedDict()
 _repo_lock = threading.RLock()
 
 
-# Directories we never descend into for the repo-map signature: VCS,
-# vendored deps, caches, virtualenvs, build output. Walking them is slow and
-# they aren't part of the repo map anyway.
+# Directories omitted by the repo map that we never descend into for its
+# signature. Hidden directories shown by the map, including .hg, .svn,
+# .gradle and .ruff_cache, must remain visible to cache invalidation.
 _SIG_SKIP_DIRS = frozenset({
-    ".git", ".hg", ".svn", "node_modules", "__pycache__", ".venv", "venv",
-    ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox", "dist", "build",
-    ".idea", ".gradle", "target",
+    ".git", "node_modules", "__pycache__", ".venv", "venv", ".mypy_cache",
+    ".pytest_cache", ".tox", "dist", "build", ".idea", "target",
 })
 
 

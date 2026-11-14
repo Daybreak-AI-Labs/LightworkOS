@@ -142,6 +142,7 @@ def test_notebook_runs_once_when_only_python3_exists(monkeypatch, tmp_path):
 
 def test_repo_map_signature_tracks_hidden_entries(tmp_path):
     from maverick.cache.file import _workdir_signature
+    from maverick.tools.repo_map import repo_map
 
     before = _workdir_signature(tmp_path)
     (tmp_path / ".env").write_text("visible name")
@@ -152,6 +153,22 @@ def test_repo_map_signature_tracks_hidden_entries(tmp_path):
     before = _workdir_signature(tmp_path)
     (hidden / "config").write_text("changed length")
     assert _workdir_signature(tmp_path) != before
+
+    tool = repo_map(SimpleNamespace(workdir=tmp_path))
+    for name in (".gradle", ".ruff_cache", ".hg", ".svn"):
+        assert name + "/" not in tool.fn({})
+        before = _workdir_signature(tmp_path)
+        visible = tmp_path / name
+        visible.mkdir()
+        child = visible / "metadata"
+        child.write_text("shown child")
+        assert _workdir_signature(tmp_path) != before
+        assert name + "/    metadata" in tool.fn({})
+        child.rename(visible / "updated")
+        assert name + "/    updated" in tool.fn({})
+        (visible / "updated").unlink()
+        visible.rmdir()
+        assert name + "/" not in tool.fn({})
 
 
 def test_quorum_assigns_only_first_role_per_person():
