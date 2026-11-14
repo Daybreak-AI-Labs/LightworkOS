@@ -51,6 +51,7 @@ log = logging.getLogger(__name__)
 SAMPLES_PATH = data_dir("calibration.ndjson")
 VERDICT_PATH = data_dir("calibration_verdict.json")
 RISK_VERDICT_PATH = data_dir("self_harness_calibration_receipt.json")
+CHECKER_VERDICT_PATH = data_dir("calibration_checker_receipt.json")
 
 
 def _samples_path() -> Path:
@@ -82,6 +83,19 @@ def _risk_verdict_path() -> Path:
         return data_dir("self_harness_calibration_receipt.json")
     except Exception:  # pragma: no cover -- path resolution cannot block a run
         return RISK_VERDICT_PATH
+
+def _checker_verdict_path() -> Path:
+    """Tenant-scoped receipt of the latest narrowed (one checker, chosen
+    sources) assessment, such as the dashboard's checker calibration.
+
+    Separate from both the general learning-freeze verdict and the per-cycle
+    Self-Harness receipt, which each cycle rewrites from its own (often still
+    too few) samples. Self-Harness's initial admission for a checker reads it.
+    """
+    try:
+        return data_dir("calibration_checker_receipt.json")
+    except Exception:  # pragma: no cover -- path resolution cannot block a run
+        return CHECKER_VERDICT_PATH
 
 # Last-resort defaults; live values come from ``[calibration]`` (config.get_calibration).
 _DEFAULTS = {
@@ -434,16 +448,16 @@ def run_assessment(
     both omitted, historical all-sample calibration behavior is unchanged.
 
     A narrowed assessment (any of ``evaluator_id``, ``since``, ``sources`` or a
-    custom floor) writes the evaluator-bound receipt by default, never the
-    general verdict that :func:`learning_frozen` reads: one source's result
-    must not freeze or unfreeze tenant-wide learning.
+    custom floor) writes the checker receipt (:func:`_checker_verdict_path`)
+    by default, never the general verdict that :func:`learning_frozen` reads:
+    one source's result must not freeze or unfreeze tenant-wide learning.
     """
     if samples_path is None:
         samples_path = _samples_path()
     if verdict_path is None:
         narrowed = any(value is not None for value in (
             evaluator_id, since, sources, min_samples, min_discrimination))
-        verdict_path = _risk_verdict_path() if narrowed else _verdict_path()
+        verdict_path = _checker_verdict_path() if narrowed else _verdict_path()
     if before_effect is not None:
         before_effect()
     samples = load_samples(samples_path, strict=True) if strict else load_samples(samples_path)

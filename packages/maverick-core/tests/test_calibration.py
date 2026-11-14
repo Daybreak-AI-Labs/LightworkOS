@@ -93,7 +93,7 @@ class TestLedgerAndVerdict:
         tenant-wide learning by overwriting the general verdict."""
         general, receipt = tmp_path / "verdict.json", tmp_path / "receipt.json"
         monkeypatch.setattr(calibration, "_verdict_path", lambda: general)
-        monkeypatch.setattr(calibration, "_risk_verdict_path", lambda: receipt)
+        monkeypatch.setattr(calibration, "_checker_verdict_path", lambda: receipt)
         sp = tmp_path / "cal.ndjson"
         for _ in range(15):
             calibration.record_sample(0.9, True, source="s", evaluator_id="judge:A", path=sp)

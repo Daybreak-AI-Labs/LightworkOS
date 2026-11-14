@@ -102,9 +102,9 @@ def catalog(request):
     context = authority(request)
     model, draws, checker = _checker()
     retained = [sample for sample in _read_samples() if sample.evaluator_id == checker]
-    # The checker assessment below writes the evaluator-bound receipt, not the
-    # general learning-freeze verdict (calibration.run_assessment).
-    receipt = calibration._risk_verdict_path()
+    # The checker assessment below writes the checker receipt, not the general
+    # learning-freeze verdict (calibration.run_assessment).
+    receipt = calibration._checker_verdict_path()
     verdict = calibration._load_verdict(receipt)
     if receipt.exists() and verdict is None:
         raise HTTPException(503, "The current checker assessment cannot be verified. Refresh after its saved record is available; no check was started.")
