@@ -234,15 +234,25 @@ class GovernedActions:
                 "approver": link.approver, "hash": link.hash[:12]}
 
 
+class ImpactResult(list):
+    """The impact hits (a plain list of dicts) plus ``skipped_ledgers``: the
+    names of lineage ledgers that could not be read or failed verification.
+    A non-empty ``skipped_ledgers`` means the answer may be incomplete."""
+
+    def __init__(self, *args) -> None:
+        super().__init__(*args)
+        self.skipped_ledgers: list[str] = []
+
+
 def impact_of(identifier: str, *, kind: str = "any",
-              store_dir: str | Path | None = None) -> list[dict]:
+              store_dir: str | Path | None = None) -> ImpactResult:
     """Impact analysis: every recorded consequential action that depended on a
     given skill or source. Use when a skill/source is revoked or found bad --
     "what did it touch?" -- the inverse of lineage. Scans all per-goal ledgers;
     ``kind`` is ``skill`` | ``source`` | ``any``. Read-only, fail-open: a
-    ledger that is unreadable or fails verification is skipped with a warning,
-    and the scan continues with the remaining ledgers."""
-    out: list[dict] = []
+    ledger that is unreadable or fails verification is skipped with a warning
+    and named in ``skipped_ledgers``, and the scan continues with the rest."""
+    out = ImpactResult()
     try:
         d = _lineage_dir(store_dir)
         if not d.exists():
@@ -252,14 +262,20 @@ def impact_of(identifier: str, *, kind: str = "any",
         return out
     for f in files:
         try:
-            out.extend(_ledger_impact(f, identifier, kind))
+            hits = _ledger_impact(f, identifier, kind)
         except Exception as exc:
             log.warning("impact analysis skipped unreadable lineage ledger %s: %s",
-                         f.name, type(exc).__name__)
+                        f.name, type(exc).__name__)
+            hits = None
+        if hits is None:
+            out.skipped_ledgers.append(f.name)
+        else:
+            out.extend(hits)
     return out
 
 
-def _ledger_impact(f: Path, identifier: str, kind: str) -> list[dict]:
+def _ledger_impact(f: Path, identifier: str, kind: str) -> list[dict] | None:
+    """One ledger's hits, or None when it fails verification."""
     try:
         goal_id: object = int(f.stem)
     except ValueError:
@@ -268,8 +284,8 @@ def _ledger_impact(f: Path, identifier: str, kind: str) -> list[dict]:
              if line.strip()]
     if _verify_links(links).startswith("BROKEN"):
         log.warning("impact analysis skipped lineage ledger %s: it fails verification",
-                     f.name)
-        return []
+                    f.name)
+        return None
     want_skill = kind in ("skill", "any")
     want_source = kind in ("source", "any")
     out: list[dict] = []
@@ -287,6 +303,7 @@ def _ledger_impact(f: Path, identifier: str, kind: str) -> list[dict]:
 
 
 __all__ = ["ActionSpec", "Preview", "LineageLink", "GovernedActions", "ActionError",
+           "ImpactResult",
            "enabled", "record_tool_lineage", "load_lineage", "verify_lineage_file",
            "impact_of"]
 

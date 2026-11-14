@@ -155,6 +155,7 @@ def test_impact_of_keeps_scanning_past_an_unparseable_ledger(tmp_path):
         fh.write("not json\n")
     hits = ga_mod.impact_of("bad-skill", kind="skill", store_dir=tmp_path)
     assert sorted(h["goal_id"] for h in hits) == [2, 3]
+    assert hits.skipped_ledgers == ["1.ndjson"]  # the gap is reported, not silent
 
 
 def test_lineage_is_tenant_scoped(monkeypatch, tmp_path):
