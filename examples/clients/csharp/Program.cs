@@ -17,7 +17,16 @@ using ModelContextProtocol.Protocol;
 
 try
 {
-    return await RunAsync();
+    int result = await RunAsync();
+    if (result == 0)
+    {
+        // Disposal also checks the stderr reader and child exit. A late
+        // transport refusal must arrive before any success is reported.
+        Console.WriteLine("maverick_facts_get round-trip OK");
+        Console.WriteLine("maverick_facts_get structuredContent OK");
+        Console.WriteLine("OK: C# client drove Lightwork over MCP end-to-end");
+    }
+    return result;
 }
 catch (Exception failure)
 {
@@ -58,7 +67,6 @@ static async Task<int> RunAsync()
         Console.Error.WriteLine("maverick_facts_get returned no content");
         return 1;
     }
-    Console.WriteLine("maverick_facts_get round-trip OK");
 
     if (res.StructuredContent is not { } structured ||
         structured.ValueKind != JsonValueKind.Object ||
@@ -69,9 +77,6 @@ static async Task<int> RunAsync()
             "maverick_facts_get returned no structuredContent with a 'facts' object");
         return 1;
     }
-    Console.WriteLine("maverick_facts_get structuredContent OK");
-
-    Console.WriteLine("OK: C# client drove Lightwork over MCP end-to-end");
     return 0;
 }
 
