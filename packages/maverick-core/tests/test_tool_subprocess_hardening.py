@@ -323,6 +323,28 @@ def test_pandoc_converts_simple_markdown_to_html_and_docx(tmp_path):
         assert b"A plain document." in archive.read("word/document.xml")
 
 
+def test_pandoc_document_cannot_include_files_outside_the_workspace(tmp_path):
+    import shutil
+
+    from maverick.sandbox import LocalBackend
+    from maverick.tools.pandoc_tool import pandoc_tool
+
+    if shutil.which("pandoc") is None:
+        pytest.skip("pandoc is unavailable")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("OUTSIDE-SECRET\n", encoding="utf-8")
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "a.rst").write_text(f"Title\n=====\n\n.. include:: {outside}\n", encoding="utf-8")
+    (work / "b.md").write_text(f"![x]({outside})\n", encoding="utf-8")
+    tool = pandoc_tool(LocalBackend(workdir=work))
+    tool.fn({"op": "convert", "input_path": "a.rst", "output_path": "a.html"})
+    written = work / "a.html"
+    assert not written.exists() or "OUTSIDE-SECRET" not in written.read_text(encoding="utf-8")
+    assert tool.fn({"op": "convert", "input_path": "b.md", "output_path": "b.docx"}).startswith("ERROR:")
+    assert sorted(p.name for p in work.iterdir()) == ["a.html", "a.rst", "b.md"]
+
+
 @pytest.mark.parametrize("options", [
     ["-write", "/tmp/out"], ["text:/etc/passwd"], ["-script", "@bad"],
     ["-format", "info:"], ["-resize", "@secret"], ["-quality", "101"],
