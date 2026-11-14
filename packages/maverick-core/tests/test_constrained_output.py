@@ -46,26 +46,51 @@ def test_constrained_length_and_errors():
     assert t.fn({"value": "x", "schema": {}}).startswith("ERROR")    # empty schema
 
 
-def test_constrained_backtracking_pattern_refused_before_matching(monkeypatch):
+# Patterns that backtrack for seconds or longer on the paired value. Shape
+# checks missed every one of these; the time limit catches them all.
+_HANGING = [
+    ("^(a|a){30}$", "a" * 30 + "b"),
+    ("^(a|a){1,30}$", "a" * 30 + "b"),
+    ("^((a?){10}){10}a{100}$", "a" * 100),
+    ("^([!-~]+,)+$", "," * 40 + "a "),
+    (r"^([\x2c-\x2e]+,)+$", "," * 40 + "a "),
+    ("^" + "a?" * 30 + "a" * 30 + "$", "a" * 30),
+    ("^(.*a){10}!$", "a" * 40),
+    ("^.*a.*a.*a.*a.*!$", "a" * 1000),
+]
+
+
+def test_constrained_slow_patterns_are_a_schema_error(monkeypatch):
     import maverick.tools.constrained_output as co
+    monkeypatch.setattr(co, "_PATTERN_TIMEOUT_S", 0.3)
     t = constrained_output()
-    calls: list = []
-    monkeypatch.setattr(co.re, "search", lambda *a: calls.append(a))
-    # (a+)+$ on "a"*40 + "b" backtracks for about a day; it is refused unrun.
-    # The refusal is about the schema, not the value. (a?){25}a{25} counts the
-    # optional inside a large bounded repeat.
-    for pat in ("(a+)+$", "(a|a)*$", "^(a?){25}a{25}$"):
-        out = t.fn({"value": "a" * 40 + "b", "schema": {"pattern": pat}})
-        assert out.startswith("ERROR: schema pattern") and "refused" in out, pat
+    for pat, value in _HANGING:
+        out = t.fn({"value": value, "schema": {"pattern": pat}})
+        assert out.startswith("ERROR: schema pattern") and "too long to evaluate" in out, pat
+    out = t.fn({"value": "x", "schema": {"pattern": "[unterminated"}})
+    assert out.startswith("ERROR: schema pattern") and "invalid" in out
     out = t.fn({"value": "a" * 5000, "schema": {"pattern": "^a+$"}})
-    assert out.startswith("FAIL") and calls == []
+    assert out.startswith("FAIL")
 
 
-def test_constrained_linear_patterns_are_evaluated():
+_SEMVER = (r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+           r"(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)"
+           r"(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?"
+           r"(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$")
+
+
+def test_constrained_ordinary_patterns_are_evaluated():
     t = constrained_output()
     for pat, good, bad in (
+        (r"^[a-z]+(-[a-z]+)*$", "kebab-case-name", "Kebab--x"),
+        (_SEMVER, "1.2.3-rc.1+build.5", "01.2.3"),
+        (r"^[A-Z][a-z]+( [A-Z][a-z]+)*$", "New York City", "new York"),
+        (r"^(\w+\s)*\w+$", "three plain words", "trailing space "),
         (r"^(\d+\.){2}\d+$", "1.2.3", "1.2"),
         (r"^(\d{1,3}\.){3}\d{1,3}$", "10.0.0.1", "10.0.0"),
+        (r"^\d{4}-\d{2}-\d{2}$", "2026-11-14", "2026-11-1"),
+        (r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+         "123e4567-e89b-12d3-a456-426614174000", "123e4567-e89b-12d3-a456"),
         (r"^[\w.+-]+@([\w-]+\.)+\w{2,}$", "a.b+c@mail.example.org", "a@b"),
         (r"^(foo|bar)+$", "foobarfoo", "foobaz"),
     ):
