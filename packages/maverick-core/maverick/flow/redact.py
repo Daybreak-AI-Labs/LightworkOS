@@ -22,9 +22,9 @@ _SECRET_KEY = re.compile(
     r"bearer|credential|private[_-]?key|client[_-]?secret|access[_-]?key)", re.IGNORECASE)
 _ORDINARY_KEY_PART = re.compile(
     r"author(?!i[sz])|secretar(?:y|ies)"
-    r"|(?:max|min|input|output|prompt|completion|total|num|reasoning|cached)[_-]?tokens?"
-    r"(?![_-]?(?:secret|value|key))"
-    r"|tokens?[_-]?(?:counts?|limits?|usage|used|budget|estimate)",
+    r"|(?:max|min|input|output|prompt|completion|total|num|reasoning|cached)[_-]?tokens"
+    r"(?![a-z0-9])"
+    r"|tokens?[_-]?(?:counts?|limits?|usage|used|budget|estimate)(?![a-z0-9])",
     re.IGNORECASE)
 
 

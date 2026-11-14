@@ -30,7 +30,8 @@ class TestRedact:
             "securitytoken", "api_keys", "apikeys", "tokens", "token_value", "auth_header",
             "authHeader", "api_key", "x-api-key", "access_token", "X-Auth-Token",
             "Authorization", "AWS_SECRET_ACCESS_KEY", "credentials", "oauth_scopes",
-            "is_authenticated", "author_token", "max_tokens_secret",
+            "is_authenticated", "author_token", "max_tokens_secret", "max_tokensecret",
+            "cached_token", "cachedToken", "input_token", "output_token", "prompt_token",
         ]
         for key in credentials + sorted(ordinary):
             assert previous.search(key)
