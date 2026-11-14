@@ -10,7 +10,7 @@ Set up:
         enabled = true
         url = "https://chat.example.com"
         bot_token = "..."              # MATTERMOST_BOT_TOKEN wins when set
-        allowed_user_ids = ["alice"]    # Mattermost usernames or user ids
+        allowed_user_ids = ["..."]      # Mattermost user ids (not usernames)
 
 Uses the Mattermost REST API (v4) over HTTPS with the bot token as a bearer
 credential: it polls the channels the bot belongs to for new posts, answers
@@ -129,8 +129,7 @@ class MattermostChannel(Channel):
 
     # ------------------------------------------------------------ intake
     def _allowed(self, user_id: str, username: str) -> bool:
-        return (is_allowed(user_id, self.allowed_user_ids)
-                or bool(username) and is_allowed(username, self.allowed_user_ids))
+        return is_allowed(user_id, self.allowed_user_ids)
 
     def _text_for(self, post: dict, channel_type: str) -> str | None:
         """The request text, or None when the post is not addressed to the bot."""
