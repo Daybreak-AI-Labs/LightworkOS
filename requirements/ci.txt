@@ -255,5 +255,5 @@ websockets==17.4
 xxhash==4.1.0
 zstandard==0.25.0
 # Linux CI installs the CPU-only wheel from https://download.pytorch.org/whl/cpu.
+# The optional training dependency is not installed by non-Linux release jobs.
 torch==2.15.0+cpu; sys_platform == "linux"
-torch==2.15.0; sys_platform != "linux"
