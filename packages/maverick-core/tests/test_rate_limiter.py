@@ -82,6 +82,23 @@ def test_apply_to_registry_wraps_named_tool():
     assert reg.get("untouched").fn({"x": "y"}) == "ok:y"
 
 
+def test_apply_to_registry_wraps_lazy_tools_and_the_tools_after_them():
+    # Every default enterprise connector is a LazyTool. Rebuilding it with
+    # dataclasses.replace() raised, which left it and every later tool unlimited.
+    from maverick.tools._lazy import LazyTool, ToolDescriptor
+
+    descriptor = ToolDescriptor(
+        name="lazy", description="echo", input_schema={"type": "object"},
+        factory_module="unused", factory_name="unused", factory_kwargs={})
+    reg = ToolRegistry()
+    reg.register(LazyTool(descriptor, factory=lambda: _echo_tool("lazy")))
+    reg.register(_echo_tool("plain"))
+    assert apply_to_registry(reg, limits={"*": (1, 60.0)}) == 2
+    for name in ("lazy", "plain"):
+        assert reg.get(name).fn({"x": "1"}) == "ok:1"
+        assert reg.get(name).fn({"x": "2"}).startswith("ERROR: rate limit exceeded")
+
+
 def test_apply_to_registry_keeps_strict_and_parallel_flags():
     reg = ToolRegistry()
     tool = _echo_tool("echo")

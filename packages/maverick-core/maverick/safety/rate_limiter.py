@@ -27,7 +27,6 @@ import threading
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable
-from dataclasses import replace
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -134,6 +133,8 @@ def apply_to_registry(reg, limits: dict[str, tuple[int, float]] | None = None) -
     re-wrapping a tool resets its limiter (acceptable for kernel boot;
     not intended for hot reconfiguration).
     """
+    from ..tools import Tool
+
     limits = _load_limits() if limits is None else limits
     if not limits:
         return 0
@@ -145,8 +146,16 @@ def apply_to_registry(reg, limits: dict[str, tuple[int, float]] | None = None) -
             continue
         max_calls, window_s = lim
         limiter = _Limiter(max_calls, window_s)
-        # replace() keeps every other field (strict, parallel_safe, ...).
-        reg._tools[name] = replace(tool, fn=_wrap_fn(name, limiter, tool.fn))
+        # An explicit Tool, not dataclasses.replace(): a LazyTool has its own
+        # __init__ and replace() cannot rebuild it.
+        reg._tools[name] = Tool(
+            name=tool.name,
+            description=tool.description,
+            input_schema=tool.input_schema,
+            fn=_wrap_fn(name, limiter, tool.fn),
+            parallel_safe=tool.parallel_safe,
+            strict=tool.strict,
+        )
         wrapped += 1
     if wrapped:
         log.info("rate_limiter: wrapped %d tool(s)", wrapped)
