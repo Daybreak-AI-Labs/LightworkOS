@@ -263,6 +263,19 @@ def test_people_list_export_and_erase_are_workspace_scoped(monkeypatch):
     assert again["erased"] is False and "Nothing was found" in again["message"]
 
 
+def test_erase_without_a_conversation_still_scrubs_what_is_kept_about_the_person():
+    world = app_mod._world()
+    world.upsert_fact("user:slack:U123:timezone", "Europe/Paris")
+    body = client.post("/api/v1/compliance/people/erase",
+                       json={"channel": "slack", "user": "U123"}).json()
+    assert body["erased"] is True and body["conversations"] == 0
+    assert body["clean"] is True and "1 other stored item(s)" in body["message"]
+    assert world.get_fact("user:slack:U123:timezone") is None
+    again = client.post("/api/v1/compliance/people/erase",
+                        json={"channel": "slack", "user": "U123"}).json()
+    assert again["erased"] is False and "Nothing was found" in again["message"]
+
+
 def test_erase_does_not_claim_everything_when_a_clean_up_step_failed(monkeypatch):
     _seed_person()
     import maverick.audit as audit

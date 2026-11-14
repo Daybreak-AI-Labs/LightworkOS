@@ -5831,6 +5831,13 @@ def _erase_subject_residue(ctx, world, channel: str, user: str, yes: bool) -> No
     audit_scrubbed = _scrub_subject_audit(channel, user, failures)
     knowledge_removed = _erase_subject_knowledge_strict(channel, user, failures)
     knowledge_chunks = sum(knowledge_removed.values())
+    if isinstance(ctx.obj, dict):  # for in-process callers (the dashboard)
+        # The same list object: failures found below are reported too.
+        ctx.obj["erase_residue"] = {
+            "removed": (audit_scrubbed + len(scrubbed_fact_keys) + removed_notes
+                        + knowledge_chunks),
+            "failures": failures,
+        }
     # The same record-of-processing marker as a conversation erase, without
     # any identifier derived from the subject.
     try:
