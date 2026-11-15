@@ -155,6 +155,15 @@ def decide_held(hold_id: str, decision: str, *, actor: str,
         raise ValueError("choose include or keep_out")
     if not isinstance(actor, str) or not actor.strip():
         raise PermissionError("a named administrator is required")
+    from .file_lock import cross_process_lock
+    # One decision at a time per workspace, across threads and processes: the
+    # state check, the chunk store or removal and the recorded decision run as
+    # one step, so a losing decision sees "already decided" and changes nothing.
+    with cross_process_lock(held_documents_path(tenant), strict=True):
+        return _decide_held_locked(hold_id, decision, actor=actor, tenant=tenant)
+
+
+def _decide_held_locked(hold_id: str, decision: str, *, actor: str, tenant: str | None) -> dict:
     from .audit import AuditRefused, audit_event
     from .audit.events import EventKind
     kb = _held_base(decision, tenant)

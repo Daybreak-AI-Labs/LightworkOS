@@ -350,3 +350,60 @@ def test_a_refused_include_of_a_source_revision_keeps_the_earlier_version(tmp_pa
     monkeypatch.setattr(audit, "record", lambda kind, **payload: True)
     knowledge_admin.decide_held(hold, "include", actor="user:admin")
     assert "14 days" in texts() and "30 days" not in texts()
+
+
+def test_concurrent_include_and_keep_out_never_lose_the_document(tmp_path, monkeypatch):
+    # A keep-out that saw the document held must not remove chunks an include
+    # stored and recorded in the meantime. One decision wins; the other
+    # changes nothing and is told the document was already decided.
+    import threading
+
+    from maverick_knowledge.base import KnowledgeBase
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        "[knowledge]\nenable = true\nembedder = \"deterministic\"\nstore = \"sqlite\"\n"
+        f'path = {json.dumps(str(tmp_path / "knowledge.db"))}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MAVERICK_CONFIG", str(cfg))
+    import maverick.audit as audit
+    monkeypatch.setattr(audit, "record", lambda kind, **payload: True)
+    kb = knowledge_admin.open_knowledge_base()
+    assert kb.ingest_text("it", "Welcome. You are now ready to log in.") == 0
+    hold = kb.last_hold["id"]
+    kb.close()
+    keep_out_checked, include_done = threading.Event(), threading.Event()
+    real_unstore = KnowledgeBase.unstore_held
+
+    def paused_unstore(self, hold_id):
+        if threading.current_thread().name == "keep-out":
+            keep_out_checked.set()
+            include_done.wait(3)  # the include completes here when nothing serializes
+        return real_unstore(self, hold_id)
+
+    monkeypatch.setattr(KnowledgeBase, "unstore_held", paused_unstore)
+    outcomes = {}
+
+    def decide(name, decision):
+        try:
+            outcomes[name] = knowledge_admin.decide_held(hold, decision, actor="user:" + name)["state"]
+        except ValueError:
+            outcomes[name] = "already decided"
+        finally:
+            if name == "include":
+                include_done.set()
+
+    keeper = threading.Thread(target=decide, args=("keep-out", "keep_out"), name="keep-out")
+    keeper.start()
+    assert keep_out_checked.wait(5)
+    includer = threading.Thread(target=decide, args=("include", "include"), name="include")
+    includer.start()
+    keeper.join(10)
+    includer.join(10)
+    assert sorted(outcomes.values()) == ["already decided", "kept_out"] or \
+        sorted(outcomes.values()) == ["already decided", "included"]
+    kb = knowledge_admin.open_knowledge_base()
+    state = kb.held.get(hold)["state"]
+    stored = kb.store.count("it")
+    kb.close()
+    assert stored == (1 if state == "included" else 0)
