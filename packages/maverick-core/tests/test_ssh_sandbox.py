@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 from maverick.sandbox import build_sandbox
-from maverick.sandbox.ssh import SSHBackend
+from maverick.sandbox.ssh import SSHBackend, _marking_255
 
 _LOCAL_WORKSPACE_TOOLS = {
     "read_file", "write_file", "list_dir", "repo_map", "str_replace_editor",
@@ -75,6 +75,7 @@ def test_verify_ssh_failed_probe_raises(monkeypatch):
     (0, b"", None),
     (255, b"Connection reset by peer", "could not check GNU timeout: the ssh connection failed: Connection reset by peer"),
     (127, b"sh: timeout: not found", "does not accept --signal=KILL: sh: timeout: not found"),
+    (255, b"odd timeout\nlightwork-ssh-remote-exit-255\n", r"does not accept --signal=KILL: odd timeout\. Install"),
 ])
 def test_timeout_probe_runs_the_form_exec_uses_and_reports_why(monkeypatch, code, stderr, expected):
     """The probe is what exec runs (``timeout --signal=KILL <n>s``), so a remote
@@ -87,7 +88,7 @@ def test_timeout_probe_runs_the_form_exec_uses_and_reports_why(monkeypatch, code
         calls.append(args[-1])
         if args[-1] == "true":
             return subprocess.CompletedProcess(args, 0, stdout=b"", stderr=b"")
-        if args[-1] == "timeout --signal=KILL 1.000000s true":
+        if args[-1] == _marking_255("timeout --signal=KILL 1.000000s true"):
             return subprocess.CompletedProcess(args, code, stdout=b"", stderr=stderr)
         return subprocess.CompletedProcess(args, 125, stdout=b"", stderr=b"unrecognized option")
 
@@ -97,7 +98,7 @@ def test_timeout_probe_runs_the_form_exec_uses_and_reports_why(monkeypatch, code
     else:
         with pytest.raises(RuntimeError, match=expected):
             SSHBackend(host="me@example.com")
-    assert calls == ["true", "timeout --signal=KILL 1.000000s true"]
+    assert calls == ["true", _marking_255("timeout --signal=KILL 1.000000s true")]
 
 
 def test_exec_builds_mkdir_cd_and_quotes_command(monkeypatch):
@@ -127,7 +128,7 @@ def test_exec_builds_mkdir_cd_and_quotes_command(monkeypatch):
     # cmd runs as a single quoted arg inside sh -c so it can't escape the cd.
     inner = shlex.quote("echo $HOME")
     command = f"mkdir -p {quoted} && cd {quoted} && sh -c {inner}"
-    assert remote == f"timeout --signal=KILL 60.000000s sh -c {shlex.quote(command)}"
+    assert remote == _marking_255(f"timeout --signal=KILL 60.000000s sh -c {shlex.quote(command)}")
     assert kwargs["capture_output"] is True
     assert kwargs["text"] is True
     assert result.stdout == "hi"
@@ -157,7 +158,7 @@ def test_exec_cmd_injection_stays_single_arg(monkeypatch):
     # The whole evil string is one quoted arg to `sh -c` -- it never appears
     # as a bare `; rm -rf /` spliced after the cd.
     command = f"mkdir -p {quoted} && cd {quoted} && sh -c {shlex.quote(evil)}"
-    assert remote == f"timeout --signal=KILL 60.000000s sh -c {shlex.quote(command)}"
+    assert remote == _marking_255(f"timeout --signal=KILL 60.000000s sh -c {shlex.quote(command)}")
 
 
 def test_exec_uses_default_timeout_then_override(monkeypatch):
@@ -277,3 +278,20 @@ def test_invalid_workspace_declaration_does_not_enable_local_access(invalid):
     from maverick.sandbox.sdk import workdir_is_local
 
     assert not workdir_is_local(SimpleNamespace(workdir_is_local=invalid))
+
+
+@pytest.mark.parametrize("stderr,expected", [
+    ("ssh: connect to host h port 22: Connection refused\n",
+     "The ssh connection failed (exit 255): ssh: connect to host h port 22: Connection refused"),
+    ("oops\nlightwork-ssh-remote-exit-255\n", "oops\n"),
+])
+def test_exec_tells_a_failed_connection_from_a_remote_exit_255(monkeypatch, stderr, expected):
+    """ssh exits 255 for its own failures and passes a remote 255 through; the
+    remote wrapper marks the latter, so only an unmarked 255 is reported as a
+    connection failure."""
+    _patch_ssh_ok(monkeypatch)
+    backend = SSHBackend(host="me@example.com")
+    monkeypatch.setattr(subprocess, "run", lambda args, **kw: subprocess.CompletedProcess(
+        args, 255, stdout="", stderr=stderr))
+    result = backend.exec("exit 255")
+    assert (result.exit_code, result.stderr) == (255, expected)
