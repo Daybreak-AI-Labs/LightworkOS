@@ -5568,36 +5568,69 @@ def _record_world_backend(backend: str) -> None:
         log.warning("could not record the world database in use at %s", marker, exc_info=True)
 
 
+_WORLD_BACKENDS = ("sqlite", "postgres")
+_LOCAL_ON_PURPOSE = (
+    'To use the local database on purpose, set [world_model] backend = "sqlite" '
+    "in the settings file, or set MAVERICK_WORLD_BACKEND=sqlite."
+)
+
+
+def _last_world_backend() -> str:
+    marker = _world_backend_marker()
+    try:
+        return marker.read_text(encoding="utf-8").strip() if marker.is_file() else ""
+    except OSError:
+        return ""
+
+
 def _refuse_silent_local_fallback() -> None:
     """Refuse the local database when Postgres may have been lost.
 
-    The backend comes from configuration. With a readable configuration that
-    selects the local database, record it. With an unreadable one, refuse only
-    if Postgres was the last database used: a machine that has only ever used
-    the local database keeps working. ``MAVERICK_WORLD_BACKEND`` is an explicit
-    choice and is always honoured.
+    The backend comes from ``MAVERICK_WORLD_BACKEND`` or ``[world_model]
+    backend``; only ``sqlite`` and ``postgres`` are understood and anything
+    else is an error, never a fallback. Once Postgres was used, opening the
+    local database needs an explicit ``sqlite`` choice: settings that cannot
+    be read, or that do not name a backend, are refused. A machine that has
+    only ever used the local database keeps working.
     """
-    if os.environ.get("MAVERICK_WORLD_BACKEND", "").strip():
-        return
-    from .config import config_source_errors
+    env = os.environ.get("MAVERICK_WORLD_BACKEND", "").strip().lower()
+    if env and env not in _WORLD_BACKENDS:
+        raise WorldBackendUnreadable(
+            f"MAVERICK_WORLD_BACKEND is {env!r}, which Lightwork does not understand. "
+            'Use "sqlite" for the local database or "postgres" for the shared one.'
+        )
+    if env:
+        return  # an explicit choice (postgres was handled by the caller)
+    from .config import config_path, config_source_errors, load_config
 
     errors = config_source_errors(include_tenant=True)
-    if not errors:
+    last = _last_world_backend()
+    if errors:
+        if last != "postgres":
+            return
+        problems = "; ".join(f"{path}: {message}" for path, message in sorted(errors.items()))
+        raise WorldBackendUnreadable(
+            "Lightwork last used its Postgres database, but its settings cannot be "
+            f"read: {problems}. Fix that file and start again; Lightwork will not "
+            f"switch to a local database on its own. {_LOCAL_ON_PURPOSE}"
+        )
+    section = load_config().get("world_model") or {}
+    raw = section.get("backend") if isinstance(section, dict) else None
+    choice = raw.strip().lower() if isinstance(raw, str) else raw
+    if choice not in (None, "", *_WORLD_BACKENDS):
+        raise WorldBackendUnreadable(
+            f"[world_model] backend is {raw!r} in {config_path()} (or a settings "
+            "overlay), which Lightwork does not understand. Use "
+            '"sqlite" for the local database or "postgres" for the shared one.'
+        )
+    if choice == "sqlite" or last != "postgres":
         _record_world_backend("sqlite")
         return
-    marker = _world_backend_marker()
-    try:
-        last = marker.read_text(encoding="utf-8").strip() if marker.is_file() else ""
-    except OSError:
-        last = ""
-    if last != "postgres":
-        return
-    problems = "; ".join(f"{path}: {message}" for path, message in sorted(errors.items()))
     raise WorldBackendUnreadable(
-        "Lightwork last used its Postgres database, but its settings cannot be "
-        f"read: {problems}. Fix that file and start again; Lightwork will not "
-        "switch to a local database on its own. To use the local database on "
-        "purpose, set MAVERICK_WORLD_BACKEND=sqlite."
+        "Lightwork last used its Postgres database, but its settings no longer "
+        "choose a database, so it will not switch to a local database on its "
+        'own. To keep using Postgres, set [world_model] backend = "postgres". '
+        f"{_LOCAL_ON_PURPOSE}"
     )
 
 

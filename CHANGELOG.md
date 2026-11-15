@@ -240,6 +240,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   it refuses to start and names the file and line instead of opening a local
   database. Fix the file, or set `MAVERICK_WORLD_BACKEND=sqlite` to use the
   local database on purpose.
+- Only `sqlite` and `postgres` are accepted for `MAVERICK_WORLD_BACKEND` and
+  `[world_model] backend`; any other value now stops start-up with a plain
+  message. Once Postgres was used, settings that no longer name a database
+  are refused too. Set `backend = "sqlite"` (or the environment variable) to
+  move to the local database on purpose.
 - When the independence-levels setting cannot be read (an unreadable
   settings file, or `[workforce] levels` or `MAVERICK_WORKFORCE_LEVELS` that
   is not true or false), every agent can only watch: consequential actions

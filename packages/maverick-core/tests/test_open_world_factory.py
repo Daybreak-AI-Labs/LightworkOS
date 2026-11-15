@@ -181,9 +181,34 @@ def test_unreadable_config_after_postgres_refuses_local_fallback(tmp_path, monke
         open_world()
     assert str(config) in str(refused.value) and "line 3" in str(refused.value)
 
-    # A deliberate choice still works: the environment names the backend.
+    # Settings that are readable but silent about the backend do not switch
+    # to the local database either, and the marker stays Postgres.
+    config.write_text('[budget]\nmax_dollars = 1\n', encoding="utf-8")
+    with pytest.raises(WorldBackendUnreadable) as silent:
+        open_world()
+    assert 'backend = "sqlite"' in str(silent.value) and "MAVERICK_WORLD_BACKEND=sqlite" in str(silent.value)
+    with pytest.raises(WorldBackendUnreadable):
+        open_world()
+
+    # Unknown spellings are errors, never a fallback.
+    config.write_text('[world_model]\nbackend = "postgresql"\n', encoding="utf-8")
+    with pytest.raises(WorldBackendUnreadable) as unknown:
+        open_world()
+    assert "postgresql" in str(unknown.value) and str(config) in str(unknown.value)
+    monkeypatch.setenv("MAVERICK_WORLD_BACKEND", "postgresql")
+    with pytest.raises(WorldBackendUnreadable) as typo:
+        open_world()
+    assert "MAVERICK_WORLD_BACKEND" in str(typo.value) and '"sqlite"' in str(typo.value)
+
+    # A deliberate choice still works: the environment names the backend...
     monkeypatch.setenv("MAVERICK_WORLD_BACKEND", "sqlite")
     assert isinstance(open_world(), WorldModel)
+    # ...or readable settings choose the local database.
+    monkeypatch.delenv("MAVERICK_WORLD_BACKEND")
+    config.write_text('[world_model]\nbackend = "sqlite"\n', encoding="utf-8")
+    assert isinstance(open_world(), WorldModel)
+    config.write_text('[budget]\nmax_dollars = 1\n', encoding="utf-8")
+    assert isinstance(open_world(), WorldModel)  # the deliberate switch was recorded
     client.reset_client_cache()
     for world in wm._tenant_worlds.values():
         world.close()
