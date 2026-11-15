@@ -29,6 +29,8 @@ from .file_lock import ensure_private_directory
 EXPORT_SCHEMA = "lightwork.ediscovery-matter-export.v1"
 MAX_EXPORT_BYTES = 256 * 1024 * 1024
 _CANONICAL = "Lightwork sorted compact JSON v1 (UTF-8, sorted keys)"
+_MANIFEST_KEYS = frozenset({"schema", "generated_at", "exported_by", "matter", "canonicalization",
+                            "digest_algorithm", "files", "record_total", "not_included"})
 _NOT_INCLUDED = (
     "Attachment file bytes are not included; each attachment row carries its SHA-256 and size.",
     "Audit evidence, knowledge copies, model memory and copies held by outside providers are not part of this export.",
@@ -194,7 +196,12 @@ def verify_export(path: str | Path, *, trusted_keys: Mapping[str, str] | None = 
             if archive.testzip() is not None:
                 problems.append("archive")
             manifest = json.loads(archive.read("manifest.json"))
+            if not isinstance(manifest, dict):
+                raise ValueError("manifest is not an object")
             signature = manifest.pop("signature", None)
+            # The audit key also signs other documents; only a manifest is one.
+            if manifest.get("schema") != EXPORT_SCHEMA or set(manifest) != _MANIFEST_KEYS:
+                problems.append("manifest")
             digest = _digest(_canonical(manifest))
             keys = dict(trusted_keys) if trusted_keys is not None else trusted_audit_public_keys()
             if (not isinstance(signature, dict) or signature.get("digest") != digest

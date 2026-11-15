@@ -163,16 +163,25 @@ def seal(dossier: dict, *, sealed_by: str | None = None) -> dict:
     if sealed_by:
         body["sealed_by"] = sealed_by
     digest = hashlib.sha256(_ledger.canonical(body)).hexdigest()
-    return {"dossier": body, "signature": sign_detached_digest(digest)}
+    # The dossier is caller-chosen, so the signature names its purpose and
+    # cannot stand in for any other signed document (an export manifest).
+    return {"dossier": body, "signature": sign_detached_digest(digest, purpose=SCHEMA)}
 
 
 def verify(sealed: dict, pubkey_hex: str, reveals: dict[str, tuple[str, str]] | None = None) -> bool:
     """Offline check of the seal, plus any ``commitment -> (salt, content)``
     openings the holder chooses to reveal."""
-    from ..audit.signing import verify_detached_digest
+    from ..audit.signing import DETACHED_DIGEST_PURPOSE_MESSAGE_VERSION, verify_detached_digest
+    if sealed["dossier"].get("schema") != SCHEMA:
+        return False
     digest = hashlib.sha256(_ledger.canonical(sealed["dossier"])).hexdigest()
     sig = sealed["signature"]
-    if sig["digest"] != digest or not verify_detached_digest(pubkey_hex, digest, sig["signature"]):
+    # Seals from releases before the purpose existed carry the v1 form; the
+    # title schema check above keeps any other v1 document out.
+    purpose = SCHEMA if sig.get("message_version") == DETACHED_DIGEST_PURPOSE_MESSAGE_VERSION else None
+    if purpose is not None and sig.get("purpose") != purpose:
+        return False
+    if sig["digest"] != digest or not verify_detached_digest(pubkey_hex, digest, sig["signature"], purpose=purpose):
         return False
     known = {p["commitment"] for p in sealed["dossier"].get("priority", [])}
     return all(c in known and opens(c, salt, text) for c, (salt, text) in (reveals or {}).items())

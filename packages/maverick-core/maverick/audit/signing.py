@@ -336,13 +336,22 @@ def verify_ed25519(pubkey_hex: str, sig_hex: str, message: bytes) -> bool:
 # the exported digest. Prefixing makes the signed bytes structurally
 # unable to collide with a bare 32-byte row hash or envelope digest.
 DETACHED_DIGEST_MESSAGE_VERSION = "maverick-detached-digest/v1"
+# A signer whose content someone else chooses (a sealed discovery title) names
+# a purpose, so its signatures never verify as another document type.
+DETACHED_DIGEST_PURPOSE_MESSAGE_VERSION = "maverick-detached-digest/v2"
+_PURPOSE_RE = re.compile(r"[a-z0-9][a-z0-9.-]{0,63}")
 
 
-def _detached_digest_message(digest_hex: str) -> bytes:
-    return DETACHED_DIGEST_MESSAGE_VERSION.encode("utf-8") + b"\x00" + bytes.fromhex(digest_hex)
+def _detached_digest_message(digest_hex: str, purpose: str | None = None) -> bytes:
+    if purpose is None:
+        return DETACHED_DIGEST_MESSAGE_VERSION.encode("utf-8") + b"\x00" + bytes.fromhex(digest_hex)
+    if not _PURPOSE_RE.fullmatch(purpose):
+        raise ValueError("detached digest purpose must be a short lowercase name")
+    return (DETACHED_DIGEST_PURPOSE_MESSAGE_VERSION.encode("utf-8") + b"\x00"
+            + purpose.encode("ascii") + b"\x00" + bytes.fromhex(digest_hex))
 
 
-def sign_detached_digest(digest_hex: str) -> dict[str, str]:
+def sign_detached_digest(digest_hex: str, *, purpose: str | None = None) -> dict[str, str]:
     """Sign one SHA-256 digest with the active audit identity.
 
     Evidence exports use this detached form so the exported bytes are bound to
@@ -352,10 +361,12 @@ def sign_detached_digest(digest_hex: str) -> dict[str, str]:
 
     The signed message is domain-separated (:data:`DETACHED_DIGEST_MESSAGE_VERSION`
     prefix + a NUL separator + the raw digest bytes), not the bare digest --
-    see :func:`verify_detached_digest`.
+    see :func:`verify_detached_digest`. With ``purpose`` the message is the
+    v2 prefix, the purpose and the digest, and the result names both.
     """
     if not isinstance(digest_hex, str) or not re.fullmatch(r"[0-9a-f]{64}", digest_hex):
         raise ValueError("detached audit digest must be lowercase SHA-256 hex")
+    message = _detached_digest_message(digest_hex, purpose)
     if not _have_crypto():
         raise RuntimeError("cryptography is required for detached audit signing")
     from cryptography.hazmat.primitives import serialization
@@ -369,16 +380,20 @@ def sign_detached_digest(digest_hex: str) -> dict[str, str]:
     )
     if derived != public_raw or hashlib.sha256(derived).hexdigest()[:16] != key_id:
         raise ValueError("audit signing identity is inconsistent")
-    return {
+    signed = {
         "algorithm": "Ed25519-SHA256",
         "digest": digest_hex,
         "key_id": key_id,
         "message_version": DETACHED_DIGEST_MESSAGE_VERSION,
-        "signature": signer.sign(_detached_digest_message(digest_hex)).hex(),
+        "signature": signer.sign(message).hex(),
     }
+    if purpose is not None:
+        signed.update(message_version=DETACHED_DIGEST_PURPOSE_MESSAGE_VERSION, purpose=purpose)
+    return signed
 
 
-def verify_detached_digest(pubkey_hex: str, digest_hex: str, sig_hex: str) -> bool:
+def verify_detached_digest(pubkey_hex: str, digest_hex: str, sig_hex: str, *,
+                           purpose: str | None = None) -> bool:
     """Verify a signature produced by :func:`sign_detached_digest`.
 
     Recomputes the same domain-separated message. A signature over the bare
@@ -386,13 +401,16 @@ def verify_detached_digest(pubkey_hex: str, digest_hex: str, sig_hex: str) -> bo
     federation-envelope signature over the same digest) never verifies here,
     and a valid detached-digest signature never verifies as a plain
     ``verify_ed25519(pubkey, sig, bytes.fromhex(digest))`` call either -- that
-    cross-protocol reuse is exactly what the prefix rules out.
+    cross-protocol reuse is exactly what the prefix rules out. A signature
+    made with a ``purpose`` verifies only with that same purpose.
     """
     if not isinstance(digest_hex, str) or not re.fullmatch(r"[0-9a-f]{64}", digest_hex):
         return False
     if not _have_crypto():
         return False
-    return verify_ed25519(pubkey_hex, sig_hex, _detached_digest_message(digest_hex))
+    if purpose is not None and not (isinstance(purpose, str) and _PURPOSE_RE.fullmatch(purpose)):
+        return False
+    return verify_ed25519(pubkey_hex, sig_hex, _detached_digest_message(digest_hex, purpose))
 
 
 def _generate_keypair() -> tuple[bytes, bytes, str]:

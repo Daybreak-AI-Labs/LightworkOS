@@ -70,3 +70,29 @@ def test_seal_verifies_offline_and_detects_tampering():
     forged = copy.deepcopy(sealed)
     forged["dossier"]["gates"][2]["decision"] = "conceived"
     assert not t.verify(forged, pub)
+
+
+def test_seal_signature_is_bound_to_titles_and_older_seals_still_verify():
+    # A seal signs content an admin chooses, so it must not verify as any
+    # other detached-digest document (for example a signed export manifest).
+    import hashlib
+
+    from maverick.audit.signing import (
+        sign_detached_digest,
+        trusted_audit_public_keys,
+        verify_detached_digest,
+    )
+    from maverick.immune import _ledger as ledger
+    d, _ = _dossier()
+    sealed = t.seal(d)
+    sig = sealed["signature"]
+    pub = trusted_audit_public_keys()[sig["key_id"]]
+    assert t.verify(sealed, pub)
+    assert not verify_detached_digest(pub, sig["digest"], sig["signature"])
+    # A seal made by the previous release (unscoped signature) still verifies.
+    legacy = {"dossier": sealed["dossier"], "signature": sign_detached_digest(sig["digest"])}
+    assert t.verify(legacy, pub)
+    # An unscoped signature over a body that is not a title does not.
+    other = {k: v for k, v in sealed["dossier"].items() if k != "schema"}
+    digest = hashlib.sha256(ledger.canonical(other)).hexdigest()
+    assert not t.verify({"dossier": other, "signature": sign_detached_digest(digest)}, pub)
