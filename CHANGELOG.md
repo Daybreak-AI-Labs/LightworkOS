@@ -223,6 +223,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the refusal names the storage boundary.
 - An automation opportunity is not proposed while any completed run has no
   recorded cost, and the reason shown says so.
+- Turning off "Share anonymous work patterns" deletes the records still
+  waiting in the outbox and says how many. Training ingest and export also
+  re-check the setting and export nothing from this installation's outbox
+  while it is off or the configuration cannot be read.
 
 ### Fixed
 

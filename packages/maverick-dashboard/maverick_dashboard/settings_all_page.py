@@ -1778,7 +1778,24 @@ def _catalog_update_locked(request: Request, body: CatalogUpdate, full: bool=Fal
 
         refresh_runtime(request)
     state = _saved_state(before, asked)
-    return JSONResponse({'changed': [c['setting'].id for c in changes], 'restart': any(c['setting'].restart for c in changes), **state}, headers={'Cache-Control': 'no-store'})
+    return JSONResponse({'changed': [c['setting'].id for c in changes], 'restart': any(c['setting'].restart for c in changes), **_donation_opt_out(writes), **state}, headers={'Cache-Control': 'no-store'})
+
+
+def _donation_opt_out(writes: dict) -> dict[str, str]:
+    """Turning work-pattern sharing off deletes what was still waiting to be shared.
+
+    People who opt out expect nothing more to leave, so the save says how many
+    waiting items it deleted.
+    """
+    path = ("telemetry", "donate_trajectories")
+    if path not in writes or writes[path]:
+        return {}
+    from maverick.donation import _donations_enabled, purge_after_opt_out
+
+    if _donations_enabled():  # another configuration layer still turns it on
+        return {}
+    count = purge_after_opt_out()
+    return {'notice': f"{count} queued item{'' if count == 1 else 's'} deleted."}
 
 # ---------------------------------------------------------------- checks
 class SettingCheck(BaseModel):

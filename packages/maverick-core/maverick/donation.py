@@ -358,3 +358,42 @@ def clear_outbox(outbox: Path | None = None) -> int:
         except OSError:
             pass
     return n
+
+
+def purge_after_opt_out(outbox: Path | None = None) -> int:
+    """Delete the queued records once donation is turned off.
+
+    People who opt out expect nothing more to leave, so records queued
+    before the opt-out are deleted, not kept. An unreadable configuration
+    deletes nothing (the choice cannot be read); export stays refused by
+    :func:`withheld_at_export`. Returns the number of records deleted.
+    """
+    try:
+        from .config import config_source_errors
+        if config_source_errors(include_tenant=True) or _donations_enabled():
+            return 0
+    except Exception:
+        return 0
+    return clear_outbox(outbox)
+
+
+def withheld_at_export(outbox: Path) -> bool:
+    """Re-check consent before records leave this installation's outbox.
+
+    ``True`` when ``outbox`` is the active outbox and donation is off or its
+    configuration is unreadable; the queue is then deleted when the opt-out
+    is readable. Another directory (a fleet drop) carries its donors'
+    consent and is not this installation's to withhold.
+    """
+    try:
+        if Path(outbox).resolve() != _default_outbox().resolve():
+            return False
+        from .config import config_source_errors
+        if not config_source_errors(include_tenant=True) and _donations_enabled():
+            return False
+    except Exception:
+        return True
+    deleted = purge_after_opt_out(outbox)
+    log.warning("trajectory donation is off; nothing was exported from the outbox "
+                "(%d queued record(s) deleted)", deleted)
+    return True

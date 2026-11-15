@@ -436,3 +436,30 @@ class TestDefaultOutboxTenantScoping:
             assert list_pending() == [path]
         finally:
             reset_tenant(tok)
+
+
+def test_opt_out_withholds_and_deletes_the_queued_outbox_at_export(tmp_path, monkeypatch):
+    """Records queued before an opt-out never leave: export re-checks consent
+    and deletes the queue; an unreadable configuration exports nothing and
+    deletes nothing; a fleet drop directory is not this installation's."""
+    import maverick.config as cfg
+    from maverick.training.ingest import load_donations
+
+    monkeypatch.setattr(donation, "_donations_enabled", lambda: False)
+    monkeypatch.setattr(cfg, "config_source_errors", lambda **_: {})
+    record = {"source_ownership": "unowned", "goal_id": None}
+    outbox = donation._default_outbox()
+    outbox.mkdir(parents=True)
+    fleet = tmp_path / "fleet"
+    fleet.mkdir()
+    for d in (outbox, fleet):
+        (d / "r.json").write_text(json.dumps(record), encoding="utf-8")
+
+    monkeypatch.setattr(cfg, "config_source_errors", lambda **_: {"config": "unreadable"})
+    assert list(load_donations(outbox)) == []
+    assert len(list_pending(outbox)) == 1
+
+    monkeypatch.setattr(cfg, "config_source_errors", lambda **_: {})
+    assert list(load_donations(outbox)) == []
+    assert list_pending(outbox) == []
+    assert list(load_donations(fleet)) == [record]

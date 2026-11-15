@@ -464,8 +464,9 @@
       var done = (result.data.changed || []).length;
       var text = done ? 'Saved.' : 'Nothing changed.';
       if (result.data.restart) text += ' Check configuration status below for the services that need a restart.';
-      busyRows.forEach(function (row) { say(row, text); });
-      announce(done ? (done === 1 ? '1 setting saved.' : done + ' settings saved.') + (result.data.restart ? ' Check configuration status below for the services that need a restart.' : '') : '');
+      var notice = typeof result.data.notice === 'string' ? ' ' + result.data.notice : '';
+      busyRows.forEach(function (row) { say(row, text + notice); });
+      announce(done ? (done === 1 ? '1 setting saved.' : done + ' settings saved.') + (result.data.restart ? ' Check configuration status below for the services that need a restart.' : '') + notice : '');
       updateFilter();
     } catch (failure) {
       // A refused review (a lock-out, say) carries the server's own sentence,
