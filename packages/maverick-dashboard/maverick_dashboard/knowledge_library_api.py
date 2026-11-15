@@ -7,9 +7,9 @@ content and rebuilding the search index need administrator access.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Path, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 
@@ -187,6 +187,55 @@ def reindex_action(request: Request, job_id: str, action: str, body: JobActionIn
         raise HTTPException(409, "This rebuild has stopped. Review the collection before starting a new rebuild.")
     background_tasks.add_task(_run_reindex, request, body.context, job_id)
     return {"context": body.context, "job": job}
+
+
+class HeldDecisionIn(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    context: str = Field(pattern=r"^[a-f0-9]{64}$")
+    decision: Literal["include", "keep_out"]
+    confirmed: bool
+
+
+def held_documents(request):
+    """Documents the ingest screen held back, for an administrator."""
+    from maverick.knowledge_admin import list_held
+    context = _reindex_authority(request)
+    try:
+        documents = list_held()
+    except Exception as exc:  # noqa: BLE001 - never disclose store internals
+        raise HTTPException(503, "Held documents could not be read. Try again.") from exc
+    return {"context": context, "documents": documents}
+
+
+def decide_held_document(request, hold_id: str, body: HeldDecisionIn):
+    """Include a held document or keep it out (administrator, audited)."""
+    from maverick.knowledge_admin import KnowledgeUnavailable, decide_held
+
+    from .auth import caller_principal
+    _reindex_authority(request, body.context)
+    if not body.confirmed:
+        raise HTTPException(400, "Review the document and its reason before you decide.")
+    actor = caller_principal(request) or "dashboard-administrator"
+    try:
+        document = decide_held(hold_id, body.decision, actor=actor)
+    except LookupError as exc:
+        raise HTTPException(404, "This held document is no longer here. Refresh the list.") from exc
+    except KnowledgeUnavailable as exc:
+        raise HTTPException(409, "Document search is turned off or unavailable. Turn it on in Knowledge settings first.") from exc
+    except ValueError as exc:
+        raise HTTPException(409, "Someone already decided about this document. Refresh the list.") from exc
+    return {"context": body.context, "document": document}
+
+
+@router.get("/held")
+def held(request: Request, response: Response):
+    response.headers["Cache-Control"] = "private, no-store"
+    return held_documents(request)
+
+
+@router.post("/held/{hold_id}")
+def decide_held_route(request: Request, body: HeldDecisionIn, hold_id: str = Path(pattern=r"^[a-f0-9]{32}$")):
+    return decide_held_document(request, hold_id, body)
 
 
 __all__ = ["router"]

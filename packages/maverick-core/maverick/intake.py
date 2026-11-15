@@ -555,7 +555,9 @@ def onboarding_knowledge_base():
             shield = Shield.from_config(warn_if_missing=False)
         except Exception:
             pass
-        kb = KnowledgeBase(store=build_store(kcfg), embedder=build_embedder(kcfg), shield=shield)
+        from .knowledge_admin import held_store
+        kb = KnowledgeBase(store=build_store(kcfg), embedder=build_embedder(kcfg), shield=shield,
+                           held=held_store())
         try:  # OCR uploaded diagrams/images when the vision extra is installed
             from maverick_knowledge.image import build_ocr_describer
             kb.image_describer = build_ocr_describer()

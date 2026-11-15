@@ -423,10 +423,14 @@ def deposit(
         provenance = _provenance(caller.principal, source)
         try:
             chunks = kb.ingest_text(collection, text, source=provenance)
+            hold = getattr(kb, "last_hold", None)
         finally:
             close = getattr(kb, "close", None)
             if callable(close):
                 close()
+        if not chunks and isinstance(hold, dict):
+            return _done(False, "held for an administrator to review in the Knowledge library",
+                         collection=collection, chunks=0, source=provenance)
         return _done(True, "ingested", collection=collection, chunks=int(chunks or 0),
                      source=provenance)
     if kind == "fleet":

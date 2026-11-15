@@ -61,12 +61,100 @@ def open_knowledge_base(
                 raise KnowledgeUnavailable("configured knowledge store is missing or unavailable")
         from maverick_knowledge import KnowledgeBase, build_embedder, build_store
         embedder = build_embedder(kcfg)
-        return KnowledgeBase(store=build_store(kcfg), embedder=embedder)
+        return KnowledgeBase(store=build_store(kcfg), embedder=embedder, held=held_store(tenant))
     except KnowledgeUnavailable:
         raise
     except Exception as e:
         log.warning("knowledge admin: configured base unavailable: %s", type(e).__name__)
         raise KnowledgeUnavailable("configured knowledge store is unavailable") from e
+
+
+def held_documents_path(tenant: str | None = None) -> Path:
+    """Where the workspace keeps documents the ingest screen held back."""
+    from .workspace import Workspace
+    workspace = Workspace(tenant) if tenant is not None else Workspace.current()
+    return workspace.root / "knowledge_held.db"
+
+
+def held_store(tenant: str | None = None) -> Any:
+    """The workspace's held-document store (a separate file, so a knowledge
+    store from before holds existed opens unchanged)."""
+    from maverick_knowledge.held import HeldDocuments
+    return HeldDocuments(held_documents_path(tenant))
+
+
+# Plain-language reasons for each screen rule (labels from maverick_knowledge).
+HOLD_REASONS = {
+    "ignore-previous": "It asks the reader to ignore earlier instructions.",
+    "role-reassign": "It contains the words \"you are now\", which can give an assistant a new role.",
+    "new-instructions": "It mentions new instructions or rules for an assistant.",
+    "fake-role-tag": "It contains a tag that looks like a system or assistant message.",
+    "reveal-secrets": "It asks to show a password, key or other secret.",
+    "override-safety": "It asks to override a safety setting.",
+    "safety-scanner": "The safety scanner flagged it.",
+}
+_HOLD_DECISIONS = {"include", "keep_out"}
+
+
+def _public_hold(record: dict) -> dict:
+    from .secrets import scrub
+    rule = str(record.get("rule") or "")
+    return {
+        "id": record["id"], "collection": record["collection"],
+        "source": " ".join(str(record.get("source") or "").split())[:300] or "Unnamed document",
+        "rule": rule,
+        "reason": HOLD_REASONS.get(rule, "It looks like instructions for an assistant."),
+        "excerpt": scrub(str(record.get("excerpt") or ""))[:300],
+        "state": record["state"], "held_at": record["held_at"],
+        "decided_by": record.get("decided_by") or "", "decided_at": record.get("decided_at"),
+    }
+
+
+def list_held(*, tenant: str | None = None, limit: int = 200) -> list[dict]:
+    """Documents waiting for an administrator, newest first (no full text)."""
+    path = held_documents_path(tenant)
+    if not path.is_file():
+        return []
+    store = held_store(tenant)
+    try:
+        return [_public_hold(row) for row in store.list(limit=limit)]
+    finally:
+        store.close()
+
+
+def decide_held(hold_id: str, decision: str, *, actor: str,
+                tenant: str | None = None) -> dict:
+    """Include a held document in Knowledge or keep it out, and audit it.
+
+    Raises ``LookupError`` for an unknown document, ``ValueError`` for one
+    already decided, and :class:`KnowledgeUnavailable` when including needs a
+    knowledge base that is turned off or cannot open. The caller checks that
+    ``actor`` is an administrator."""
+    if decision not in _HOLD_DECISIONS:
+        raise ValueError("choose include or keep_out")
+    if not isinstance(actor, str) or not actor.strip():
+        raise PermissionError("a named administrator is required")
+    if decision == "include":
+        kb = open_knowledge_base(tenant=tenant)
+        if kb is None:
+            raise KnowledgeUnavailable("knowledge is turned off")
+        try:
+            record = kb.include_held(hold_id, decided_by=actor)
+        finally:
+            _close(kb)
+    else:
+        store = held_store(tenant)
+        try:
+            record = store.decide(hold_id, "kept_out", decided_by=actor)
+        finally:
+            store.close()
+    from .audit import audit_event
+    from .audit.events import EventKind
+    audit_event(EventKind.KNOWLEDGE_HOLD_DECISION, agent="knowledge", action=decision,
+                hold_id=record["id"], collection=record["collection"],
+                source=str(record.get("source") or ""), rule=str(record.get("rule") or ""),
+                decided_by=actor, chunks=int(record.get("chunks") or 0))
+    return {**_public_hold(record), "chunks": int(record.get("chunks") or 0)}
 
 
 def _store_config(kcfg: dict, tenant: str | None, *, confine: bool = True) -> tuple[dict, Path]:
@@ -106,7 +194,7 @@ def _open_for_subject_admin(tenant: str | None) -> Any | None:
                 return None
             _store_config(raw, tenant)  # an existing store must be this tenant's
             from maverick_knowledge import KnowledgeBase, build_store
-            return KnowledgeBase(store=build_store(kcfg))
+            return KnowledgeBase(store=build_store(kcfg), held=held_store(tenant))
         if store == "pgvector":
             return _open_disabled_pgvector(raw, kcfg, tenant)
         return None
@@ -139,7 +227,7 @@ def _open_disabled_pgvector(raw: dict, kcfg: dict, tenant: str | None) -> Any | 
     except KnowledgeUnavailable:
         pg.close()
         raise
-    return KnowledgeBase(store=pg)
+    return KnowledgeBase(store=pg, held=held_store(tenant))
 
 
 def erase_subject(channel: str, user_id: str, *,

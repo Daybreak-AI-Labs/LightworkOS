@@ -146,7 +146,51 @@
       starters.appendChild(li);
     });
   }
-  document.getElementById("ka-library-refresh").addEventListener("click", function(){ load(); refreshJobs().catch(function(error){ statusEl.textContent=error.message; }); });
+  var heldStatus = document.getElementById("ka-held-status");
+  var heldBody = document.getElementById("ka-held-documents");
+  async function decideHeld(item, decision, context) {
+    var include = decision === "include";
+    var ok = await confirmed(include
+      ? "Include “" + item.source + "” in " + human(item.collection) + "? Assistants will read it only as quoted material, never as instructions."
+      : "Keep “" + item.source + "” out of Knowledge? The held copy of its text is deleted. You can upload it again later.",
+      include ? "Include" : "Keep out");
+    if (!ok) return;
+    await call("POST", "/held/" + encodeURIComponent(item.id), { context: context, decision: decision, confirmed: true },
+      include ? "include the document" : "keep the document out");
+    heldStatus.textContent = include ? "Included “" + item.source + "”." : "Kept “" + item.source + "” out.";
+    await loadHeld(true);
+    if (include) await load();
+  }
+  async function loadHeld(keepStatus) {
+    if (!canAdmin || !heldBody) return;
+    var body;
+    try {
+      body = await call("GET", "/held", undefined, "load the held documents");
+    } catch (error) {
+      heldStatus.textContent = error.message;
+      return;
+    }
+    heldBody.textContent = "";
+    var documents = Array.isArray(body.documents) ? body.documents : [];
+    if (!keepStatus) heldStatus.textContent = documents.length ? "" : "No documents are held right now.";
+    documents.forEach(function (item) {
+      var tr = el("tr");
+      var th = el("th", null, item.source); th.scope = "row"; tr.appendChild(th);
+      tr.appendChild(el("td", null, human(item.collection)));
+      tr.appendChild(el("td", null, item.reason));
+      var quote = el("td"); quote.appendChild(el("q", null, item.excerpt)); tr.appendChild(quote);
+      var actions = el("td");
+      var include = button("Include", function () { return decideHeld(item, "include", body.context); }, "btn");
+      include.setAttribute("aria-label", "Include " + item.source);
+      var keep = button("Keep out", function () { return decideHeld(item, "keep_out", body.context); }, "btn btn--ghost");
+      keep.setAttribute("aria-label", "Keep " + item.source + " out");
+      actions.append(include, keep);
+      tr.appendChild(actions);
+      heldBody.appendChild(tr);
+    });
+  }
+  document.getElementById("ka-library-refresh").addEventListener("click", function(){ load(); loadHeld(); refreshJobs().catch(function(error){ statusEl.textContent=error.message; }); });
   refreshJobs().catch(function(error){statusEl.textContent=error.message;});
   load();
+  loadHeld();
 })();

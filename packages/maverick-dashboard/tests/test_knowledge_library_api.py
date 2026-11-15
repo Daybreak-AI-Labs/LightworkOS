@@ -72,3 +72,36 @@ def test_seed_refuses_unknown_starter_content_and_reports_when_off(client) -> No
     assert test_client.post("/api/v1/knowledge/library/seed", json={}).status_code == 503
     assert test_client.get("/api/v1/knowledge/library").json()["enabled"] is False
     assert "admin" in state["permissions"]
+
+
+def test_held_documents_are_listed_and_decided_by_an_administrator(client, monkeypatch) -> None:
+    test_client, state = client
+    import maverick.knowledge_admin as admin
+    from maverick_dashboard import draft_api
+    monkeypatch.setattr(draft_api, "context_for", lambda request: "a" * 64)
+    held = {"id": "d" * 32, "collection": "it", "source": "welcome.txt", "rule": "role-reassign",
+            "reason": "It contains the words \"you are now\".", "excerpt": "you are now ready to log in",
+            "state": "held", "held_at": 1.0, "decided_by": "", "decided_at": None}
+    decisions = []
+    monkeypatch.setattr(admin, "list_held", lambda: [held])
+
+    def decide(hold_id, decision, *, actor):
+        if hold_id != held["id"]:
+            raise LookupError(hold_id)
+        decisions.append((hold_id, decision, actor))
+        return {**held, "state": "included", "chunks": 1}
+
+    monkeypatch.setattr(admin, "decide_held", decide)
+    body = test_client.get("/api/v1/knowledge/library/held").json()
+    assert body == {"context": "a" * 64, "documents": [held]}
+    url = "/api/v1/knowledge/library/held/" + "d" * 32
+    unconfirmed = {"context": "a" * 64, "decision": "include", "confirmed": False}
+    assert test_client.post(url, json=unconfirmed).status_code == 400 and decisions == []
+    stale = {"context": "b" * 64, "decision": "include", "confirmed": True}
+    assert test_client.post(url, json=stale).status_code == 409 and decisions == []
+    result = test_client.post(url, json={**stale, "context": "a" * 64}).json()
+    assert result["document"]["state"] == "included"
+    assert decisions == [("d" * 32, "include", "dashboard-administrator")]
+    missing = test_client.post("/api/v1/knowledge/library/held/" + "e" * 32, json={**stale, "context": "a" * 64})
+    assert missing.status_code == 404
+    assert set(state["permissions"]) == {"admin"}

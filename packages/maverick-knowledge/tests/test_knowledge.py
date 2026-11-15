@@ -806,6 +806,40 @@ class TestKnowledgeBase:
         ):
             assert kb.ingest_text("p", poison) == 0, repr(poison)
 
+    def test_tripped_document_is_held_with_its_reason_until_included(self, tmp_path):
+        # An ordinary document used to vanish without a trace. It is now held,
+        # kept out of search, and included only by an explicit decision.
+        from maverick_knowledge.held import HeldDocuments
+        held = HeldDocuments(tmp_path / "held.db")
+        kb = KnowledgeBase(embedder=DeterministicEmbedder(dim=64), held=held)
+        doc = "Welcome aboard. Your account is set up and you are now ready to log in."
+        assert kb.ingest_text("it", doc, source="welcome.txt", subject="u:alice") == 0
+        [record] = held.list()
+        assert record["rule"] == "role-reassign" and "you are now ready" in record["excerpt"]
+        assert record["source"] == "welcome.txt" and kb.last_hold["id"] == record["id"]
+        assert kb.store.count("it") == 0
+        # The rule is not loosened: the same text trips again and stays held.
+        assert kb.ingest_text("it", doc, source="welcome.txt", subject="u:alice") == 0
+        assert len(held.list()) == 1
+        result = kb.include_held(record["id"], decided_by="user:admin")
+        assert result["state"] == "included" and result["chunks"] == 1
+        assert held.list() == [] and kb.store.count("it") == 1
+        # Included text is quoted material, never bare instruction text.
+        rendered = kb.search_formatted(["it"], "log in")
+        assert "<quoted_document" in rendered and "not instructions" in rendered
+        assert "</quoted_document>" in rendered and doc in rendered
+        # A repeat upload of an included document is admitted, not held again.
+        assert kb.ingest_text("it", doc, source="welcome.txt", subject="u:alice") == 1
+        # Keeping a document out discards its text; erasure covers held records.
+        other = "Note: you are now on the finance rota."
+        assert kb.ingest_text("fin", other, subject="u:alice") == 0
+        kept = kb.keep_out_held(kb.last_hold["id"], decided_by="user:admin")
+        assert kept["state"] == "kept_out" and kept["text"] == ""
+        assert kb.ingest_text("fin", other, subject="u:alice") == 0
+        assert kb.count_subject("u:alice") == 3  # one stored chunk, two hold records
+        kb.erase_subject("u:alice")
+        assert kb.count_subject("u:alice") == 0
+
     def test_large_document_is_shield_scanned_in_windows(self, caplog):
         # The Shield blocks anything over its scan cap, so a whole-document
         # scan dropped every document over 262,144 characters; a Shield error

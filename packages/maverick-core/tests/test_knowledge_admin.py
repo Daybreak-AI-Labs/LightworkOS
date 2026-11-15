@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from maverick import knowledge_admin
 from maverick.knowledge_seed import available_corpora, seed_corpora
 
@@ -219,3 +220,42 @@ def test_erase_verify_includes_knowledge_residual(tmp_path, monkeypatch):
     assert not report2["clean"]
     assert report2["indeterminate"]
     assert "erasure_receipt" in report2["errors"]
+
+
+def test_held_document_is_listed_with_its_reason_and_included_by_an_audited_decision(tmp_path, monkeypatch):
+    # An ingest-screen hit used to drop the document silently. It is now held in
+    # the workspace, listed with a plain reason, and stored only after an
+    # administrator's decision, which is audited.
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        "[knowledge]\nenable = true\nembedder = \"deterministic\"\nstore = \"sqlite\"\n"
+        f'path = {json.dumps(str(tmp_path / "knowledge.db"))}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MAVERICK_CONFIG", str(cfg))
+    # A knowledge store written before holds existed opens unchanged.
+    from maverick_knowledge import SqliteVectorStore
+    SqliteVectorStore(tmp_path / "knowledge.db").close()
+    assert knowledge_admin.list_held() == []
+    events = []
+    import maverick.audit as audit
+    monkeypatch.setattr(audit, "record", lambda kind, **payload: events.append((kind, payload)) or True)
+    kb = knowledge_admin.open_knowledge_base()
+    doc = "Setup is finished and you are now ready to log in. Token sk-live-ABCDEFGHIJKLMNOPQRSTUVWX"
+    assert kb.ingest_text("it", doc, source="welcome.txt") == 0
+    kb.close()
+    [held] = knowledge_admin.list_held()
+    assert held["source"] == "welcome.txt" and held["rule"] == "role-reassign"
+    assert held["reason"].startswith("It contains the words") and "text" not in held
+    assert "ABCDEFGHIJKLMNOPQRSTUVWX" not in held["excerpt"]
+    result = knowledge_admin.decide_held(held["id"], "include", actor="user:admin")
+    assert result["state"] == "included" and result["chunks"] == 1
+    assert knowledge_admin.list_held() == []
+    kb = knowledge_admin.open_knowledge_base()
+    assert kb.store.count("it") == 1
+    kb.close()
+    [(kind, payload)] = events
+    assert kind == "knowledge_hold_decision"
+    assert payload["action"] == "include" and payload["decided_by"] == "user:admin"
+    with pytest.raises(ValueError):
+        knowledge_admin.decide_held(held["id"], "keep_out", actor="user:admin")
