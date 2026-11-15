@@ -1823,7 +1823,7 @@ def test_a_tenant_overlay_can_only_tighten_organisation_policy(tmp_path, monkeyp
     policy = Policy.from_config()
     assert policy.deny_actions == {"shell", "browser"} and policy.require_human_min_risk == "medium"
     assert config.tenant_ignored_settings() == {
-        "governance.deny_actions", "governance.require_human_min_risk", "capabilities.browser"}
+        "governance.require_human_min_risk", "capabilities.browser"}
     monkeypatch.delenv("MAVERICK_TENANT")
     assert config.tenant_policy_loosenings() == {"acme": [
-        "governance.deny_actions", "governance.require_human_min_risk", "capabilities.browser"]}
+        "governance.require_human_min_risk", "capabilities.browser"]}

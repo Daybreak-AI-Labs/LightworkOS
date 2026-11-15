@@ -19,22 +19,22 @@ place that decides it:
   every key) may only go down; ``None``, zero or a negative number is no limit.
 * ``minimum`` -- a numeric floor (or per-key table, with a ``default`` key)
   may only go up.
-* ``memory`` -- a memory size such as ``"4g"`` may only go down.
-* ``rate`` -- an ``"N/seconds"`` rate may only go down; off is no limit.
 * ``approval`` -- an approval requirement may only be added: a list grows and
   a switch may only go to on.
 * ``rank`` -- an ordered choice, ``order`` listed from strictest to loosest;
   an entry may be a tuple of equally strict spellings.
 
-Numbers may be written as TOML numbers or as the strings the Settings page
-sends. An organisation value that cannot be compared (an unranked choice such
-as a plugin sandbox backend) keeps the organisation's value; that key is
-reported as set by the organisation rather than as a looser choice.
+Keys whose consumer has its own parser (governance thresholds, approval
+counts, tool risk ratings, sandbox limits, ...) are compared by what that
+consumer does with each value (:mod:`maverick._tighten_consumers`), and a
+tenant value the consumer cannot read is ignored. An organisation value that
+cannot be compared (an unranked choice such as a plugin sandbox backend)
+keeps the organisation's value; that key is reported as set by the
+organisation rather than as a looser choice.
 """
 from __future__ import annotations
 
 import math
-import re
 from collections.abc import Sequence
 from typing import Any
 
@@ -111,39 +111,6 @@ def _minimum(upper: object, lower: object) -> tuple[Any, bool]:
     return _per_key(upper, lower, _floor, lambda amount, bound: amount is None or amount < bound)
 
 
-_MEMORY = re.compile(r"(\d+(?:\.\d+)?)\s*([kmgt]?)(?:i?b)?")
-_MEMORY_UNITS = {"": 1, "k": 1024, "m": 1024 ** 2, "g": 1024 ** 3, "t": 1024 ** 4}
-
-
-def _memory(value: object) -> float | None:
-    """Bytes for a Docker-style size (``512m``, ``4g``, ``4gb``) or a byte count."""
-    if value is None or (isinstance(value, str) and not value.strip()):
-        return None
-    if isinstance(value, str):
-        match = _MEMORY.fullmatch(value.strip().lower())
-        if not match:
-            raise ValueError("not a memory size")
-        return _ceiling(float(match.group(1)) * _MEMORY_UNITS[match.group(2)])
-    return _ceiling(value)
-
-
-def _rate(value: object) -> float | None:
-    """Calls per second for an ``"N/seconds"`` rate; ``None`` when off."""
-    if value is None or (isinstance(value, str) and value.strip().lower() in
-                         {"", "0", "off", "false", "no", "none", "disabled"}):
-        return None
-    from .safety.shield_rate_limit import parse_rate
-    calls, seconds = parse_rate(str(value).strip())
-    return calls / seconds
-
-
-def _scalar(upper: object, lower: object, read) -> tuple[Any, bool]:
-    up, low = read(upper), read(lower)
-    if up is None:
-        return lower, False
-    return (upper, True) if low is None or low > up else (lower, False)
-
-
 def _list(value: object) -> list:
     if not isinstance(value, list):
         raise ValueError("expected a list")
@@ -173,11 +140,7 @@ def _ranked(upper: object, lower: object, order: Sequence[object], unknown: obje
     return (upper, True) if low_rank > up_rank else (lower, False)
 
 
-_KINDS = {
-    "limit": _limit, "minimum": _minimum,
-    "memory": lambda upper, lower: _scalar(upper, lower, _memory),
-    "rate": lambda upper, lower: _scalar(upper, lower, _rate),
-}
+_KINDS = {"limit": _limit, "minimum": _minimum}
 
 
 def tighten(kind: str, upper: object, lower: object, *,
@@ -191,7 +154,7 @@ def tighten(kind: str, upper: object, lower: object, *,
     as; :class:`Incomparable` means the upper value has no such meaning.
     """
     if kind == "approval":
-        kind = "protection" if isinstance(lower, bool) else "deny_list"
+        kind = "deny_list" if isinstance(lower, list) else "protection"
     if kind in _KINDS:
         return _KINDS[kind](upper, lower)
     if kind == "rank":
@@ -241,17 +204,16 @@ def _block_default(section: dict) -> str:
     return {"strict": "medium", "permissive": "critical"}.get(profile, "high")
 
 
-def _protected_default(_section: dict) -> list[str]:
-    from .quorum import DEFAULT_PROTECTED_KEYS
-    return sorted(DEFAULT_PROTECTED_KEYS)
+def _consumer(key: str, default: object = None) -> tuple:
+    """A rule whose comparison mirrors the key's consumer (:mod:`._tighten_consumers`)."""
+    from ._tighten_consumers import MERGES
+    return ("consumer", default, MERGES[key], None)
 
 
 _BACKENDS = (("firecracker",), ("gvisor",), ("kubernetes", "docker", "podman", "devcontainer"), ("local",))
 _NETWORK = (("deny-all", "deny_all", "deny", "blocked", "none-allowed"),
             ("allowlist", "allow-list", "allow_list"), ("", "open", "allow", "allow-all", "allow_all"))
-_CONSENT = (("auto-deny",), ("ask",), ("dashboard",), ("",), ("auto-approve",))
 _ACL_RISK = ("low", "medium", "high", (None, ""))
-_TOOL_RISK = ("high", "medium", "low")
 
 # section -> key -> (kind, default, order, unknown). The default is what the
 # key's consumer uses when it is unset (a callable gets the organisation's
@@ -260,12 +222,12 @@ _TOOL_RISK = ("high", "medium", "low")
 # a place the owner chooses to run work) and merges as an ordinary setting.
 TENANT_RULES: dict[str, dict[str, tuple]] = {
     "governance": {
-        "deny_actions": ("deny_list", [], (), None),
-        "require_human_actions": ("approval", [], (), None),
+        "deny_actions": _consumer("governance.deny_actions"),
+        "require_human_actions": _consumer("governance.require_human_actions"),
         "deny_min_risk": ("risk", None, _RISK_ORDER, None),
         "require_human_min_risk": ("risk", None, _RISK_ORDER, None),
-        "deny_above": ("limit", None, (), None),
-        "require_human_above": ("limit", None, (), None),
+        "deny_above": _consumer("governance.deny_above"),
+        "require_human_above": _consumer("governance.require_human_above"),
         "require_fresh_human_approval": ("approval", False, (), None),
         "profile": ("rank", "", (("regulated",), ("standard",), ("essentials", "")), ""),
     },
@@ -275,20 +237,20 @@ TENANT_RULES: dict[str, dict[str, tuple]] = {
         "scan_input": ("protection", True, (), None),
         "scan_tool_calls": ("protection", True, (), None),
         "scan_output": ("protection", True, (), None),
-        "constitution": ("deny_list", [], (), None),
+        "constitution": _consumer("safety.constitution"),
         "compartments": ("protection", False, (), None),
         "compartment_unseal": ("rank", "human", ("human", "orchestrator", "both"), None),
         "require_shield": ("protection", False, (), None),
-        "consent_mode": ("rank", "", _CONSENT, "ask"),
-        "review_checkpoint": ("limit", None, (), None),
-        "max_scan_chars": ("limit", 262_144, (), None),
+        "consent_mode": _consumer("safety.consent_mode"),
+        "review_checkpoint": _consumer("safety.review_checkpoint"),
+        "max_scan_chars": _consumer("safety.max_scan_chars", 262_144),
         "supply_chain_pinning": ("protection", False, (), None),
         "cascade": ("protection", False, (), None),
         "decode_hidden": ("protection", True, (), None),
-        "shield_rate_limit": ("rate", None, (), None),
-        "quorum_required": ("minimum", 1, (), None),
-        "quorum_protected_keys": ("deny_list", _protected_default, (), None),
-        "quorum_ttl_days": ("limit", 7, (), None),
+        "shield_rate_limit": _consumer("safety.shield_rate_limit"),
+        "quorum_required": _consumer("safety.quorum_required"),
+        "quorum_protected_keys": _consumer("safety.quorum_protected_keys"),
+        "quorum_ttl_days": _consumer("safety.quorum_ttl_days", 7),
         "goal_risk_floor": ("rank", "low", ("high", "medium", "low"), "low"),
         "goal_risk_require_human": ("rank", "never", ("medium", "high", ("never", "")), "high"),
     },
@@ -297,7 +259,7 @@ TENANT_RULES: dict[str, dict[str, tuple]] = {
                         ("permission", False, (), None)),
         "enforce": ("protection", False, (), None),
         "per_call_tokens": ("protection", False, (), None),
-        "per_call_token_ttl": ("limit", 30, (), None),
+        "per_call_token_ttl": _consumer("capabilities.per_call_token_ttl", 30),
     },
     "sandbox": {
         "backend": ("rank", "local", _BACKENDS, None),
@@ -310,23 +272,23 @@ TENANT_RULES: dict[str, dict[str, tuple]] = {
         "allow_root": ("permission", False, (), None),
         "reuse_container": ("permission", False, (), None),
         "cross_run_pool": ("permission", False, (), None),
-        "pids_limit": ("limit", 512, (), None),
-        "memory": ("memory", "4g", (), None),
-        "memory_mb": ("limit", None, (), None),
-        "cpus": ("limit", None, (), None),
-        "long_command_timeout": ("limit", 600, (), None),
-        "timeout": ("limit", 60, (), None),
+        "pids_limit": _consumer("sandbox.pids_limit", 512),
+        "memory": _consumer("sandbox.memory", "4g"),
+        "memory_mb": _consumer("sandbox.memory_mb"),
+        "cpus": _consumer("sandbox.cpus"),
+        "long_command_timeout": _consumer("sandbox.long_command_timeout", 600),
+        "timeout": _consumer("sandbox.timeout", 60),
     },
     "security": {
-        "allowed_tools": ("allow_list", [], (), None),
-        "denied_tools": ("deny_list", [], (), None),
+        "allowed_tools": _consumer("security.allowed_tools"),
+        "denied_tools": _consumer("security.denied_tools"),
         "max_risk": ("rank", None, _ACL_RISK, "low"),
         "channels": ("acl", {}, (), None),
         "users": ("acl", {}, (), None),
         "network_policy": ("rank", "open", _NETWORK, "deny-all"),
-        "approvals_required": ("minimum", 1, (), None),
-        "approvals_required_by_risk": ("minimum", None, (), None),
-        "tool_risk": ("tool_risk", {}, (), None),
+        "approvals_required": _consumer("security.approvals_required"),
+        "approvals_required_by_risk": _consumer("security.approvals_required_by_risk"),
+        "tool_risk": _consumer("security.tool_risk"),
         "auto_fix": ("permission", False, (), None),
         "isolate_parsers": ("protection", False, (), None),
         "secure_defaults": ("protection", True, (), None),
@@ -351,25 +313,6 @@ def _acl(upper: object, lower: object) -> tuple[Any, bool]:
     return merged, loosened
 
 
-def _tool_risk(upper: object, lower: object) -> tuple[Any, bool]:
-    """A tool's risk rating may only go up from the organisation's, or from
-    the built-in rating when the organisation set none."""
-    from .safety.tool_risk import tool_risk
-    if not isinstance(upper, dict) or not isinstance(lower, dict):
-        raise ValueError("expected a table")
-    merged, loosened = dict(upper), False
-    for name, level in lower.items():
-        current = upper.get(name, tool_risk(str(name), overrides={}))
-        try:
-            value, looser = _ranked(current, level, _TOOL_RISK, None)
-        except ValueError:
-            value, looser = current, True
-        loosened = loosened or looser
-        if not looser:
-            merged[name] = value
-    return merged, loosened
-
-
 def _merge_key(rule: tuple | None, section: dict, key: str, value: object,
                deep_merge=None) -> tuple[bool, Any, str | None]:
     """``(changed, value, status)`` for one lower-layer key of a tight section;
@@ -383,12 +326,14 @@ def _merge_key(rule: tuple | None, section: dict, key: str, value: object,
     upper = section[key] if present else (default(section) if callable(default) else default)
     try:
         if kind == "risk":
+            if not isinstance(value, str):  # the governance parser refuses it
+                raise ValueError("expected a risk level")
             _, loosened = tighten("rank", _risk(upper), _risk(value), order=order)
             effective = upper if loosened else value
+        elif kind == "consumer":
+            effective, loosened = order(upper, value)
         elif kind == "acl":
             effective, loosened = _acl(upper, value)
-        elif kind == "tool_risk":
-            effective, loosened = _tool_risk(upper, value)
         else:
             effective, loosened = tighten(kind, upper, value, order=order, unknown=unknown)
     except Incomparable:
