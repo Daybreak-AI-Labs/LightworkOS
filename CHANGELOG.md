@@ -216,6 +216,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `llamacpp-<port>.promptcache`; replica 0 keeps `llamacpp.promptcache`.
 - On Postgres, malformed or duplicate legacy provider spend receipts no
   longer stop the one-time operation-record backfill; they are logged.
+- A training receipt is not issued once the receipt store holds 100,000
+  receipts or would grow past 64 MiB, the limits its reader already applied;
+  the refusal names the storage boundary.
+- An automation opportunity is not proposed while any completed run has no
+  recorded cost, and the reason shown says so.
 
 ### Fixed
 
