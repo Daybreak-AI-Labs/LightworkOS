@@ -258,6 +258,7 @@ def restore_snapshot(store: Path, snap_id: str, dest: Path, *,
     members_seen: set[str] = set()
     with tarfile.open(archive, "r:gz") as tar:
         source = tar.pax_headers.get(_SOURCE_HEADER)
+        members = []
         for member in tar.getmembers():
             # Record EVERY member's normalised path (files, dirs, even skipped
             # links) so the reconciliation pass below only deletes destination
@@ -287,6 +288,13 @@ def restore_snapshot(store: Path, snap_id: str, dest: Path, *,
                 raise ValueError(
                     f"unsafe archive member parent escapes destination: "
                     f"{member.name!r}")
+            # Complete every member check before overwriting any destination
+            # file. The extraction filter can also reject a member, so apply
+            # it during this validation pass on supported Python versions.
+            if hasattr(tarfile, "data_filter"):
+                tarfile.data_filter(member, str(dest))
+            members.append(member)
+        for member in members:
             # ``filter="data"`` is the safe extraction policy (rejects absolute
             # paths / traversal / device files) and the future default; the
             # kwarg only exists on 3.12+.  On 3.10/3.11 the resolved checks

@@ -11,6 +11,7 @@ import importlib.metadata
 import importlib.util
 import io
 import json
+import math
 import os
 import re
 import secrets
@@ -578,7 +579,53 @@ def export_comparison(identifier: str, report_id: str, *, actor: str) -> bytes:
         return (json.dumps(report, ensure_ascii=False, allow_nan=False, indent=2) + "\n").encode("utf-8")
 
 
+def _remove_snapshot_files(identifier: str) -> None:
+    for suffix in (".json", ".comparison.json", ".drill.json", ".custody-test.json"):
+        (_store() / (identifier + suffix)).unlink(missing_ok=True)
+    _archive(identifier).unlink(missing_ok=True)
+
+
+def _retire_unused_review(*, replacing: bool = False, preserve: str | None = None) -> None:
+    """Caller holds the recovery lock; only signed, unused safety copies expire."""
+    path = _store() / "review.json"
+    if not path.exists():
+        return
+    with backup.recovery_scope(_root(), current_tenant_id_strict(), _key(), max_expanded_bytes=MAX_EXPANDED_BYTES):
+        review = json.loads(file_lock.atomic_read_text(path))
+        backup._verify_authentication(review, allow_unsigned=False, label="recovery review")
+        if review.get("target") != target():
+            raise RecoveryError("The recovery review belongs to another workspace; its safety snapshot was retained.")
+        expires = review.get("expires_at")
+        if (type(expires) not in (int, float) or not math.isfinite(expires)
+                or expires <= 0):
+            raise RecoveryError("The recovery review expiry could not be verified; its safety snapshot was retained.")
+        if not replacing and expires >= time.time():
+            return
+        identifier = review.get("safety_snapshot")
+        retained = {preserve, review.get("snapshot")}
+        for retained_path in (_store() / "last-restore.json", _bootstrap_path()):
+            if retained_path.exists():
+                record = json.loads(file_lock.atomic_read_text(retained_path))
+                backup._verify_authentication(record, allow_unsigned=False, label="recovery retention record")
+                retained.update((record.get("snapshot"), record.get("safety_snapshot")))
+        if identifier is not None and (not isinstance(identifier, str) or not _ID.fullmatch(identifier)):
+            raise RecoveryError("The recovery review has an invalid safety snapshot; it was retained.")
+        if identifier is not None and identifier not in retained:
+            archive = _store() / (identifier + ".tgz")
+            if archive.exists():
+                manifest = backup.verify_backup(archive)
+                context = manifest.get("recovery", {})
+                if (context.get("kind") != "before-restore"
+                        or context.get("tenant_id") != current_tenant_id_strict()):
+                    raise RecoveryError("The unused safety snapshot could not be verified; it was retained.")
+                _remove_snapshot_files(identifier)
+        # Keep the review until its archive cleanup succeeds, so a failed
+        # unlink can be retried without losing the authenticated reference.
+        path.unlink()
+
+
 def _create(kind: str) -> dict:
+    _retire_unused_review()
     if len(list(_store().glob("*.tgz"))) >= MAX_SNAPSHOTS:
         raise RecoveryError("The local snapshot limit is reached. Export and retire snapshots under your retention policy first.")
     identifier = secrets.token_hex(16)
@@ -644,6 +691,7 @@ def retire(identifier: str, expected_sha256: str) -> dict:
 
 def import_archive(staged: Path) -> dict:
     with _locked():
+        _retire_unused_review()
         if len(list(_store().glob("*.tgz"))) >= MAX_SNAPSHOTS:
             raise RecoveryError("The local snapshot limit is reached.")
         if staged.stat().st_size > MAX_UPLOAD_BYTES:
@@ -3731,6 +3779,7 @@ def prepare_restore(identifier: str, *, isolated: bool, actor: str) -> dict:
             )
         # A virgin target has no payload from which to build an archive. Its
         # signed, exact empty-state bootstrap marker is the rollback point.
+        _retire_unused_review(replacing=True, preserve=identifier)
         safety = None if bootstrap is not None else _create("before-restore")
         review = {"review": secrets.token_hex(16), "target": target(), "snapshot": identifier,
                   "actor": actor,
@@ -3742,7 +3791,12 @@ def prepare_restore(identifier: str, *, isolated: bool, actor: str) -> dict:
         if bootstrap is not None:
             review["bootstrap_id"] = bootstrap["bootstrap_id"]
             review["empty_state_sha256"] = bootstrap["empty_state_sha256"]
-        file_lock.atomic_write_text(_store() / "review.json", json.dumps(backup._authenticate_for_write(review, _key())))
+        try:
+            file_lock.atomic_write_text(_store() / "review.json", json.dumps(backup._authenticate_for_write(review, _key())))
+        except BaseException:
+            if safety is not None:
+                _remove_snapshot_files(safety["id"])
+            raise
         return {**review, "file_count": selected["file_count"],
                 "tenant": current_tenant_id_strict(),
                 "protected_changes": comparison["protected_changes"]}
