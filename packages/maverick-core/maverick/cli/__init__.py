@@ -6018,8 +6018,8 @@ def _refuse_unerasable_audit(ctx, channel: str, user: str) -> None:
     )
     click.echo(
         "error: erasure refused; nothing was deleted. These audit days hold this "
-        "subject and cannot be erased: " + "; ".join(blockers)
-        + ". Repair them (`maverick audit verify` shows the breaks) and run erase again.",
+        "subject and cannot be erased yet: " + "; ".join(blockers)
+        + ". Then run erase again.",
         err=True,
     )
     ctx.exit(1)

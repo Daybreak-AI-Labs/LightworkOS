@@ -182,26 +182,50 @@ def test_erase_without_a_signer_leaves_the_day_untouched(_isolate_keys, tmp_path
     assert verify_chain(path) == []
 
 
-def test_erase_of_a_day_with_an_unsigned_start_keeps_it_verifiable(_isolate_keys, tmp_path):
-    """A day that began unsigned and continued signed can be erased: the subject
-    goes from both parts and the day verifies exactly as before."""
+def test_erase_of_a_day_with_unsigned_rows_keeps_it_verifiable(_isolate_keys, tmp_path):
+    """A day that began unsigned, was signed, then had signing switched off
+    again can be erased: the subject goes from every part, unsigned rows stay
+    out of the chain, and the day verifies exactly as before."""
     from maverick.audit.erase import scrub_user
     from maverick.audit.events import AuditEvent, EventKind
     from maverick.audit.signing import verify_chain
     from maverick.audit.writer import AuditLog
 
     ad = tmp_path / "audit"
-    for sign, users in ((False, ("alice", "bob")), (True, ("alice", "bob"))):
+    for sign in (False, True, False):
         log = AuditLog(audit_dir=ad, sign=sign)
-        for uid in users:
+        for uid in ("alice", "bob"):
             assert log.record(AuditEvent(ts=1000.0, kind=EventKind.GOAL_START,
                                          payload={"channel": "telegram", "user_id": uid,
                                                   "title": f"{uid} goal"}))
     path = sorted(ad.glob("*.ndjson"))[0]
     before = [(b.line_no, b.reason) for b in verify_chain(path)]
-    assert before == [(1, "unsigned"), (2, "unsigned")]
+    assert before == [(1, "unsigned"), (2, "unsigned"), (5, "unsigned"), (6, "unsigned")]
+
+    matched, _ = scrub_user("telegram", "alice", audit_dir=ad, strict=True)
+    assert matched == 3
+    assert "alice" not in path.read_text(encoding="utf-8")
+    assert [(b.line_no, b.reason) for b in verify_chain(path)] == before
+
+
+def test_erase_never_signs_a_row_that_arrived_unsigned(_isolate_keys, tmp_path):
+    """A forged unsigned row placed after the first signed row (with a line of
+    carriage returns to skew line counting) stays unverifiable after an erase
+    of another subject; it is never re-signed into the chain."""
+    import json
+
+    from maverick.audit.erase import scrub_user
+    from maverick.audit.signing import verify_chain
+
+    _log, ad, path = _signed_log(tmp_path)
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    forged = json.dumps({"v": 1, "ts": 1.0, "kind": "approval", "agent": "admin",
+                         "payload": {"approved": "wire $1M"}}) + "\n"
+    path.write_text("\r" * 20 + "\n" + lines[0] + forged + "".join(lines[1:]), encoding="utf-8")
+    before = [(b.line_no, b.reason) for b in verify_chain(path)]
+    assert before == [(3, "unsigned")]
 
     matched, _ = scrub_user("telegram", "alice", audit_dir=ad, strict=True)
     assert matched == 2
-    assert "alice" not in path.read_text(encoding="utf-8")
     assert [(b.line_no, b.reason) for b in verify_chain(path)] == before
+    assert '"sig"' not in path.read_text(encoding="utf-8").splitlines()[2]

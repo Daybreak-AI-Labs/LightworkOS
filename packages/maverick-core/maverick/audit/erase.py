@@ -30,6 +30,7 @@ only safe rule.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import logging
 from pathlib import Path
@@ -96,7 +97,10 @@ def _scan_rows(
     rows: list[tuple[str, dict | None]] = []
     matched = 0
     any_signed = False
-    for raw in original.splitlines(keepends=True):
+    # Split exactly as ``verify_chain`` does (on "\n" only), so a row here is
+    # the same row the verifier sees: ``splitlines`` would also split on "\r",
+    # "\x85" or "\u2028" and disagree with it.
+    for raw in io.StringIO(original):
         try:
             event = json.loads(raw)
         except json.JSONDecodeError:
@@ -107,7 +111,7 @@ def _scan_rows(
             # verbatim like any other unparseable row.
             rows.append((raw, None))
             continue
-        if event.get("sig") and event.get("hash") and event.get("key_id"):
+        if _arrived_signed(event):
             any_signed = True
         if _event_matches(event, channel, user_id):
             matched += 1
@@ -115,20 +119,18 @@ def _scan_rows(
     return rows, matched, any_signed
 
 
-def _first_signed(rows: list[tuple[str, dict | None]]) -> int:
-    """Index of the first signed row; rows before it are an unsigned start."""
-    for index, (_raw, event) in enumerate(rows):
-        if event is not None and event.get("sig") and event.get("hash") and event.get("key_id"):
-            return index
-    return len(rows)
+def _arrived_signed(event: dict | None) -> bool:
+    """Whether a row carries its own signature fields; only these are re-signed."""
+    return bool(event and event.get("sig") and event.get("hash") and event.get("key_id"))
 
 
-def _verify_signed_chain(path: Path, first_signed: int) -> bool:
+def _verify_signed_chain(path: Path) -> bool:
     """Validate a signed chain before the authorized erase. False = abort.
 
-    A day that began unsigned (signing switched on mid-day) is accepted when
-    its only breaks are those unsigned rows before the first signed row: they
-    were never in the chain, and the erase keeps them out of it.
+    Rows written with signing off (``unsigned``: no hash, sig or key_id) are
+    accepted wherever they are: they were never in the chain and the erase
+    keeps them out of it, verbatim apart from the erased subject. Any other
+    break refuses: erase re-signs only rows that verified, never repairs.
     """
     try:
         from .signing import verify_chain
@@ -138,7 +140,7 @@ def _verify_signed_chain(path: Path, first_signed: int) -> bool:
     except Exception as e:  # pragma: no cover - defensive/crypto missing
         log.warning("audit erase: could not verify %s before rewrite: %s", path, e)
         return False
-    breaks = [b for b in breaks if not (b.reason == "unsigned" and b.line_no <= first_signed)]
+    breaks = [b for b in breaks if b.reason != "unsigned"]
     if breaks:
         log.warning(
             "audit erase: refusing to rewrite %s; signed chain is not clean (%s)",
@@ -181,24 +183,23 @@ def _chain_entries(
     user_id: str,
     *,
     delete: bool,
-    first_signed: int,
 ) -> list[tuple[str, object]]:
     """The erased day as :func:`signing.resign_rows` input.
 
-    Rows from the first signed row on are re-signed; an unsigned start and
-    unparseable lines are kept verbatim and out of the chain.
+    Only rows that arrived with their own signature fields (and verified,
+    checked before this) are re-signed. A row that arrived unsigned stays
+    out of the chain wherever it is, tombstoned if it is the subject's.
     """
     entries: list[tuple[str, object]] = []
-    for index, (raw, event) in enumerate(rows):
-        if not raw.strip():
-            continue
-        line = raw.splitlines()[0]
+    for raw, event in rows:
+        line = raw.rstrip("\n")  # blank and whitespace lines stay where they were
+        signed = _arrived_signed(event)
         if event is not None and _event_matches(event, channel, user_id):
             if delete:
                 continue
             event = _tombstone(event, channel, user_id)
             line = json.dumps(event, default=str)
-        if event is None or index < first_signed:
+        if not signed:
             entries.append(("raw", line))
         else:
             entries.append(("json", event))
@@ -273,8 +274,7 @@ def _process_file_locked(
     # If this is a signed audit file, validate it before making the authorized
     # erase mutation. Re-signing may only bless changes we just made to a
     # previously clean chain, never unrelated old tampering.
-    first_signed = _first_signed(rows)
-    if any_signed and not _verify_signed_chain(path, first_signed):
+    if any_signed and not _verify_signed_chain(path):
         if strict:
             raise RuntimeError(
                 "signed audit chain failed pre-erasure integrity verification"
@@ -299,7 +299,7 @@ def _process_file_locked(
                 raise
             return 0, len(rows)
         text, _signed = resign_rows(
-            _chain_entries(rows, channel, user_id, delete=delete, first_signed=first_signed),
+            _chain_entries(rows, channel, user_id, delete=delete),
             keypair,
         )
 
@@ -386,19 +386,24 @@ def _day_blocker(path: Path, channel: str, user_id: str) -> str | None:
         original = segment_text(path, fail_soft=False)
     # failure-policy: fail_closed
     except Exception:
-        return f"{path.name} (cannot be read)"
+        return (f"{path.name} cannot be read: restore the at-rest encryption key, or restore "
+                "the file from a backup (`maverick backup restore`)")
     rows, matched, any_signed = _scan_rows(original, channel, user_id)
     if not matched or not any_signed:
         return None
-    if not _verify_signed_chain(path, _first_signed(rows)):
-        return f"{path.name} (its signed chain does not verify)"
+    if not _verify_signed_chain(path):
+        return (f"{path.name} has signed rows that do not verify (see `maverick audit verify`); "
+                "erase will not re-sign them. Restore the day from a backup "
+                "(`maverick backup restore`)")
     try:
         from .signing import _load_or_create_keypair
 
         _load_or_create_keypair()
     # failure-policy: fail_closed
     except Exception:
-        return f"{path.name} (the audit signing key is not available here)"
+        return (f"{path.name} needs the audit signing key, which this process cannot load: "
+                "run erase where MAVERICK_AUDIT_SIGNING_KEY or "
+                "MAVERICK_AUDIT_SIGNING_KEY_WRAPPED is set")
     return None
 
 

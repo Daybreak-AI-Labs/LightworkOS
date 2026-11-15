@@ -235,8 +235,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `maverick erase` exits 1 with "erasure incomplete" and what remains when
   data is left or the erasure cannot be certified; it used to exit 0.
 - An audit erase re-signs the day in memory and writes it once, so a missing
-  signing key leaves the day unchanged instead of broken. A day that began
-  unsigned and continued signed can now be erased.
+  signing key leaves the day unchanged instead of broken. A day with rows
+  written while signing was off can be erased; erase never signs those rows
+  or any row that did not verify, so the day verifies exactly as before.
 - Erasing a person also deletes the durable-execution checkpoints of their
   goals, which kept failed or stopped goals' transcripts.
 
