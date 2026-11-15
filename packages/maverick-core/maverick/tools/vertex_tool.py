@@ -14,9 +14,11 @@ ops:
   - predict(endpoint_id, instances)    — custom deployed endpoint
 
 ``generate`` names no model of its own (users own model choice) and refuses a
-model outside ``[access] allowed_models``. Every request is metered through
-``provider_cost_cap`` as provider ``vertex``, so ``[budget.provider_caps]``
-applies.
+model outside ``[access] allowed_models``. Every request leaves a provider
+spend receipt for ``vertex`` with an unknown cost: no Vertex model has a
+verified price, so a call is not charged to the run's dollar budget and
+cannot be held to a ``[budget.provider_caps] vertex`` cap. With that cap set,
+the tool refuses instead of sending.
 """
 from __future__ import annotations
 
@@ -71,7 +73,12 @@ def _base() -> str:
 
 
 def _post(url: str, body: dict, category: str):
-    """One paid Vertex request, metered against the ``vertex`` provider cap."""
+    """One paid Vertex request, with an unknown-cost provider receipt."""
+    from ..provider_cost_cap import caps_from_config
+    if "vertex" in caps_from_config():
+        raise RuntimeError(
+            "a spending cap is set for vertex ([budget.provider_caps]), but Vertex "
+            "calls have no known price, so they cannot be held to it; nothing was sent")
     import httpx
     return metered_provider_call(
         "vertex",
@@ -176,7 +183,9 @@ def vertex_tool() -> Tool:
             "Google Cloud Vertex AI over REST. ops: generate (Gemini "
             "generateContent), predict (custom deployed endpoint). Auth: "
             "VERTEX_ACCESS_TOKEN + VERTEX_PROJECT (+ VERTEX_LOCATION, "
-            "default us-central1)."
+            "default us-central1). Calls have no known price: they are not "
+            "charged to the run budget, and are refused under a vertex "
+            "spending cap."
         ),
         input_schema=_SCHEMA,
         fn=_run,

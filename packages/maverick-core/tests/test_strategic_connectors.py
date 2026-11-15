@@ -290,6 +290,22 @@ def test_vertex_calls_are_metered_against_provider_spend(monkeypatch):
     assert post.call_count == 2
 
 
+def test_vertex_refuses_plainly_under_a_vertex_spending_cap(monkeypatch):
+    # No Vertex model has a verified price, so a call cannot be held to a
+    # [budget.provider_caps] vertex cap: say so instead of an accounting error.
+    monkeypatch.setenv("VERTEX_ACCESS_TOKEN", "t")
+    monkeypatch.setenv("VERTEX_PROJECT", "proj")
+    monkeypatch.setattr("maverick.provider_cost_cap.caps_from_config", lambda: {"vertex": 5.0})
+    post = MagicMock(return_value=_resp(200, {"predictions": [1]}))
+    _fake_httpx(monkeypatch, post=post)
+    from maverick.tools.vertex_tool import vertex_tool
+    for args in ({"op": "generate", "model": "m", "prompt": "hi"},
+                 {"op": "predict", "endpoint_id": "7", "instances": [1]}):
+        out = vertex_tool().fn(args)
+        assert out.startswith("ERROR") and "spending cap" in out and "price" in out
+    assert post.call_count == 0
+
+
 def test_vertex_ids_cannot_leave_their_path_segment(monkeypatch):
     monkeypatch.setenv("VERTEX_ACCESS_TOKEN", "t")
     monkeypatch.setenv("VERTEX_PROJECT", "proj")
