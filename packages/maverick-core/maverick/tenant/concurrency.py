@@ -1,31 +1,37 @@
-"""Per-tenant concurrency ceiling -- noisy-neighbor protection.
+"""Per-tenant "tasks at once" plan limit, shared by every process.
 
 The global runner semaphore (:data:`maverick.runner.MAX_CONCURRENT_GOALS`)
-bounds *total* in-flight goals, but it is tenant-blind: one tenant can fill
-every slot and starve all the others for the duration of their runs. This
-module adds a per-tenant ceiling derived from the tenant's provisioned plan
-(:func:`maverick.billing.entitlements_for` ``.max_concurrent_goals``), so a
-single noisy tenant cannot monopolise a shared instance.
+bounds *total* in-flight goals in one process, but it is tenant-blind. This
+module bounds how many goals one tenant runs at once, from the tenant's plan
+(:func:`maverick.billing.entitlements_for` ``.max_concurrent_goals``).
+
+A plan of N tasks at once is N numbered slots. A run holds one slot from
+admission (:func:`maverick.runner.run_goal_in_thread`) until it finishes. A
+slot is the same lease the task execution guard uses: an operating-system
+file lock on a SQLite install, a PostgreSQL session advisory lock on a shared
+database. So every process on the host, or every replica on the database,
+counts against the same slots, and a process that dies gives its slot back
+without anyone doing anything.
 
 Fail-open (kernel rule 1): with no active tenant, or a plan whose
 ``max_concurrent_goals`` is 0 (unlimited), nothing is enforced. A tenant with
 no roster entry, or an unknown plan name, resolves to the ``free`` plan, whose
-default ceiling applies.
-Any error resolving the limit leaves the slot granted -- this gate can only
-refuse a *tenant already at its own ceiling*, never become a new way to down
-the channel server.
+default ceiling applies. An error resolving the limit admits the run; a slot
+store that cannot be reached refuses it, so the limit is never skipped.
 """
 from __future__ import annotations
 
-import threading
+import hashlib
+from contextlib import ExitStack, contextmanager
+from types import SimpleNamespace
 
-_lock = threading.Lock()
-# tenant id -> number of goals currently in flight for that tenant.
-_inflight: dict[str, int] = {}
-# tenant id -> slots granted without counting (unlimited plan or lookup error
-# at acquire time). Their release must not decrement ``_inflight``, or a plan
-# change mid-run would free a counted slot early and admit one goal too many.
-_uncounted: dict[str, int] = {}
+# A world without a shared database counts slots with host file locks.
+_LOCAL = SimpleNamespace(path="local")
+_BUSY = "This workspace is at its limit of tasks at once."
+
+
+class TenantAtCapacity(Exception):
+    """Every one of the tenant's plan slots is held by a running task."""
 
 
 def _limit_for(tenant: str) -> int:
@@ -41,50 +47,41 @@ def _limit_for(tenant: str) -> int:
         return 0
 
 
-def acquire(tenant: str | None) -> bool:
-    """Atomically reserve a concurrency slot for ``tenant``.
+def _identity(tenant: str, index: int) -> bytes:
+    return hashlib.sha256(f"tenant-slot\0{tenant}\0{index}".encode()).digest()
 
-    Returns True when the slot is granted (always so for ``tenant is None`` or
-    an unlimited plan) and False when the tenant is already at its ceiling. On
-    a grant the caller MUST pair this with :func:`release` in a ``finally``.
+
+@contextmanager
+def slot(tenant: str | None, world=None):
+    """Hold one of ``tenant``'s plan slots for the duration of the block.
+
+    Raises :class:`TenantAtCapacity` when every slot is taken. ``world`` picks
+    the slot store: a PostgreSQL world shares slots across replicas.
     """
-    if tenant is None:
-        return True
-    limit = _limit_for(tenant)
+    limit = _limit_for(tenant) if tenant is not None else 0
     if limit <= 0:
-        with _lock:
-            _uncounted[tenant] = _uncounted.get(tenant, 0) + 1
-        return True
-    with _lock:
-        current = _inflight.get(tenant, 0)
-        if current >= limit:
-            return False
-        _inflight[tenant] = current + 1
-    return True
-
-
-def release(tenant: str | None) -> None:
-    """Release a slot previously granted by :func:`acquire`. Idempotent-safe."""
-    if tenant is None:
+        yield
         return
-    with _lock:
-        # Release uncounted grants first: keeping a counted slot occupied a
-        # little longer can only refuse, never over-admit.
-        uncounted = _uncounted.get(tenant, 0)
-        if uncounted > 0:
-            if uncounted == 1:
-                _uncounted.pop(tenant, None)
-            else:
-                _uncounted[tenant] = uncounted - 1
-            return
-        current = _inflight.get(tenant, 0) - 1
-        if current <= 0:
-            _inflight.pop(tenant, None)
+    from ..task_execution_guard import TaskBusy, held
+
+    store = world if getattr(world, "_dsn", None) else _LOCAL
+    with ExitStack() as stack:
+        for index in range(limit):
+            try:
+                stack.enter_context(held(store, _identity(tenant, index), "tenant-slot-", _BUSY, _BUSY))
+                break
+            except TaskBusy:
+                continue
         else:
-            _inflight[tenant] = current
+            raise TenantAtCapacity(_BUSY)
+        yield
 
 
-def in_flight(tenant: str) -> int:
-    """Goals currently in flight for ``tenant`` (for tests/observability)."""
-    with _lock:
-        return _inflight.get(tenant, 0)
+def has_room(tenant: str | None, world=None) -> bool:
+    """Whether a run for ``tenant`` would be admitted now. Advisory only: the
+    runner takes the slot itself, so a race here can only change the reply."""
+    try:
+        with slot(tenant, world):
+            return True
+    except TenantAtCapacity:
+        return False

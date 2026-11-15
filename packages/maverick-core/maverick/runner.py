@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import contextlib
 import contextvars
 import functools
 import logging
@@ -532,6 +533,34 @@ def _run_world(db_path: Path | None):
     return open_world(db_path)
 
 
+def _admission_result(admission, detailed_outcome: bool):
+    """An admission refusal as this caller's contract spells it."""
+    if isinstance(admission, GoalRunUnavailable):
+        return _unavailable_goal_run(admission.reason, detailed_outcome=detailed_outcome)
+    return admission
+
+
+def _hold_tenant_slot(stack: contextlib.ExitStack, world, goal_id: int) -> GoalRunUnavailable | None:
+    """Take one of the active tenant's "tasks at once" plan slots for this run.
+
+    The slots are shared by every process (:mod:`maverick.tenant.concurrency`)
+    and come back when a process dies. ``None`` admits the run; a full plan
+    returns the same refusal as a busy runner, which the job queue retries."""
+    from .paths import scoped_tenant_id
+    from .tenant.concurrency import TenantAtCapacity, slot
+
+    # The workspace this request or queued job runs in, as the channel door,
+    # the dashboard and the worker pin it.
+    tenant = scoped_tenant_id()
+    try:
+        stack.enter_context(slot(tenant, world))
+    except TenantAtCapacity:
+        log.warning("run_goal_in_thread: tenant %s is at its tasks-at-once limit "
+                    "(goal_id=%s); refusing run", tenant, goal_id)
+        return GoalRunUnavailable("concurrency_slot")
+    return None
+
+
 def run_goal_in_thread(
     goal_id: int,
     max_dollars: float | None = None,
@@ -606,6 +635,7 @@ def run_goal_in_thread(
     world = None
     sandbox = None
     budget = None
+    tenant_slot = contextlib.ExitStack()
     try:
         from .budget import budget_from_config
         from .llm import LLM
@@ -667,9 +697,10 @@ def run_goal_in_thread(
             max_dollars=max_dollars,
             max_wall_seconds=max_wall_seconds,
         )
-        admission = _allowance_admission(world, goal_id, budget)
+        admission = (_allowance_admission(world, goal_id, budget)
+                     or _hold_tenant_slot(tenant_slot, world, goal_id))
         if admission is not None:
-            return admission
+            return _admission_result(admission, detailed_outcome)
         from .task_model_selection import run_scope as task_model_scope
         # Validate retained choices before provider/sandbox construction. The
         # same scope is reinstated below for every normal team role on resume.
@@ -719,6 +750,7 @@ def run_goal_in_thread(
                 close_world_if_owned(world)
             except Exception:  # pragma: no cover
                 log.debug("run_goal_in_thread: world close failed", exc_info=True)
+        tenant_slot.close()
         # The run is no longer doing work once cleanup completes. Publish that
         # truth before returning the permit so a newly-admitted run cannot
         # briefly double-count with this finished one.

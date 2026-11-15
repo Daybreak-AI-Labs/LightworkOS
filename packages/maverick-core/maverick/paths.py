@@ -301,6 +301,12 @@ def explicit_tenant_id() -> str | None:
     return os.environ.get("MAVERICK_TENANT", "").strip() or None
 
 
+def scoped_tenant_id() -> str | None:
+    """Tenant pinned for this request or run by :func:`set_tenant`, ignoring
+    the process-wide ``MAVERICK_TENANT`` binding and the client binding."""
+    return _TENANT.get() or None
+
+
 def implicit_tenant_id() -> str | None:
     """The deployment's own default tenant: the ``MAVERICK_TENANT`` process
     binding or the ``[client] id`` floor, ignoring any per-request scope.

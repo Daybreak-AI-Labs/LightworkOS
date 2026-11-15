@@ -68,7 +68,9 @@ bots and IdP are all per-tenant in the one-instance-per-tenant model.
 A tenant's plan (`free` / `pro` / `enterprise`, or operator-defined under
 `[billing.plans]`) gates real behaviour, not just labels:
 
-- **concurrency** — `max_concurrent_goals` caps a tenant's in-flight goals;
+- **concurrency** — `max_concurrent_goals` caps a tenant's in-flight goals
+  where each run is admitted, counted across every process and replica; a
+  slot held by a process that stops comes back by itself;
 - **channels** — a plan without the `channels` feature is refused at the
   channel door;
 - **audit_export** — `maverick audit export --tenant <id>` requires the

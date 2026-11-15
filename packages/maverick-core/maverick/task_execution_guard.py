@@ -30,15 +30,25 @@ def _identity(world, goal_id):
 
 @contextmanager
 def lease(world, goal_id):
-    identity = _identity(world, goal_id)
+    with held(world, _identity(world, goal_id), "execution-",
+              "This task is still running or finishing. Wait for its safe boundary and review again.",
+              "This task is still running or finishing. Review again after it stops."):
+        yield
+
+
+@contextmanager
+def held(world, identity: bytes, prefix: str, local_busy: str, shared_busy: str):
+    """Hold the lease named by ``identity`` until the block exits, or raise
+    :class:`TaskBusy`. A process that dies releases it: the operating system
+    drops its file lock and PostgreSQL ends its session."""
     if getattr(world, "path", None) is not None:
         with ExitStack() as stack:
             # Only a conflict taking the lease means busy; one raised by the
             # body keeps its own meaning.
             try:
-                stack.enter_context(_lease("execution-" + identity.hex()))
+                stack.enter_context(_lease(prefix + identity.hex()))
             except RecoveryConflict as exc:
-                raise TaskBusy("This task is still running or finishing. Wait for its safe boundary and review again.") from exc
+                raise TaskBusy(local_busy) from exc
             yield
         return
     from .postgres_io import BoundedConnection, postgres_io_timeout_seconds
@@ -53,7 +63,7 @@ def lease(world, goal_id):
         with connection.cursor() as cursor:
             cursor.execute("SELECT pg_try_advisory_lock(%s)", (key,))
             if not cursor.fetchone()[0]:
-                raise TaskBusy("This task is still running or finishing. Review again after it stops.")
+                raise TaskBusy(shared_busy)
         try:
             yield
         finally:

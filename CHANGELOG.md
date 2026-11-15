@@ -232,6 +232,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   value is ignored, logged, listed by `maverick doctor` and shown in Settings
   as "Set by your organisation"; the file still loads. Remove the looser
   values from the file to clear the warning.
+- A workspace's "tasks at once" plan limit now applies wherever a run starts
+  (dashboard, channels and the queue worker) and is shared by every process
+  and replica. A queued run waits for a free slot; a slot held by a process
+  that stopped is freed automatically.
 
 ### Fixed
 
