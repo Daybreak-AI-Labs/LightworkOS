@@ -379,6 +379,42 @@ def test_postgres_legacy_null_tenant_row_opens_with_its_own_unbound_binding(monk
 
 
 @requires_crypto
+def test_postgres_legacy_value_that_cannot_open_degrades_like_before(monkeypatch, tmp_path):
+    """An older-format token no key opens makes ``_dec_field`` raise. On a
+    page it is withheld, as ``_dec_fields`` always did, so one bad row cannot
+    fail a list; and an exception on the empty binding still lets the
+    reader's own binding try."""
+    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
+    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
+    from maverick import crypto_at_rest, paths
+    from maverick import world_model as wm
+    from maverick.world_model_backends import postgres
+
+    monkeypatch.setattr(car, "_KEY_PATH", tmp_path / "old" / "at_rest.key")
+    unopenable = car.seal_to_str("sealed under a key that is gone")
+    monkeypatch.setattr(car, "_KEY_PATH", tmp_path / "keys" / "at_rest.key")
+    good = postgres._seal("legacy title", "goals.title")
+    token = paths._TENANT.set("reader")
+    try:
+        assert postgres._unseal_page([unopenable, good], ["goals.title"] * 2, [True, True]) == [
+            wm._UNSEALED_WITHHELD, "legacy title"]
+
+        real = wm._dec_field
+
+        def empty_binding_raises(text, **kw):
+            if crypto_at_rest._OPEN_UNBOUND_ROW.get():
+                raise crypto_at_rest.EncryptionUnavailable("not this binding")
+            return real(text, **kw)
+
+        monkeypatch.setattr(wm, "_dec_field", empty_binding_raises)
+        own = postgres._seal("reader's own note", "goals.title")
+        assert postgres._unseal(own, "goals.title", legacy_row=True) == "reader's own note"
+        assert postgres._unseal_page([own], ["goals.title"], [True]) == ["reader's own note"]
+    finally:
+        paths._TENANT.reset(token)
+
+
+@requires_crypto
 def test_migrated_store_withholds_an_unbound_sealed_value_pasted_into_a_column(
     monkeypatch, tmp_path
 ):

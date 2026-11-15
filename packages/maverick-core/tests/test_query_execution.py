@@ -396,12 +396,27 @@ def test_native_postgres_statement_deadline_and_fresh_next_query(request, monkey
     warm = json.loads(database_tool().fn({"op": "query", "sql": "SELECT 1 AS value",
                                          "response_format": "json"}))
     assert warm["rows"] == [[1]] and warm["complete"]
+    import sqlalchemy
+
     monkeypatch.setattr(query_execution, "query_timeout_seconds", lambda: 0.15)
     executions = capture_execution(monkeypatch, database_module)
+    statements = []
+
+    def capture_statement(_connection, _cursor, statement, _parameters, _context, _many):
+        statements.append(statement)
+
+    sqlalchemy.event.listen(sqlalchemy.engine.Engine, "before_cursor_execute", capture_statement)
     began = time.monotonic()
-    result = database_tool().fn({"op": "query", "sql": _SLOW_PG_READ})
+    try:
+        result = database_tool().fn({"op": "query", "sql": _SLOW_PG_READ})
+    finally:
+        sqlalchemy.event.remove(sqlalchemy.engine.Engine, "before_cursor_execute", capture_statement)
     assert time.monotonic() - began < 2.5
-    assert result.startswith("ERROR:") and executions[0].finished
+    # The statement was sent and then stopped by the deadline, not refused or
+    # timed out before it reached the server.
+    assert _SLOW_PG_READ in statements
+    assert result.startswith("ERROR: database query failed (QueryDeadlineExceeded)")
+    assert "transaction_status=not_started" not in result and executions[0].finished
     assert executions[0].cancellation_support == "postgres_statement_timeout_and_cancel_safe"
     monkeypatch.setattr(query_execution, "query_timeout_seconds", lambda: 3)
     subsequent = json.loads(database_tool().fn({"op": "query", "sql": "SELECT 7 AS value", "response_format": "json"}))

@@ -1187,24 +1187,43 @@ def _unseal(text, context=None, *, legacy_row=False):
     binding. A token bound to any other tenant fails both. Visibility stays
     with the caller's tenant scope, and write paths keep exact-tenant scope,
     so they never see a legacy row under a tenant."""
-    from ..world_model import _UNSEALED_WITHHELD, _dec_field
-    if legacy_row and _active_tenant() is not None:
-        from ..crypto_at_rest import unbound_row_scope
-        with unbound_row_scope():
-            value = _dec_field(text, context=context)
-        if value != _UNSEALED_WITHHELD:
+    from ..world_model import _dec_field
+    if legacy_row:
+        value = _open_unbound(text, context)
+        if value is not None:
             return value
     return _dec_field(text, context=context)
 
 
+def _open_unbound(text, context):
+    """A legacy value opened with the empty tenant binding, or None when that
+    binding does not open it (withheld or raised) or there is no tenant to
+    differ from: the caller then reads it the ordinary way."""
+    from ..crypto_at_rest import EncryptionUnavailable, unbound_row_scope
+    from ..world_model import _UNSEALED_WITHHELD, _dec_field
+    if _active_tenant() is None:
+        return None
+    try:
+        with unbound_row_scope():
+            value = _dec_field(text, context=context)
+    except EncryptionUnavailable:
+        return None
+    return None if value == _UNSEALED_WITHHELD else value
+
+
 def _unseal_page(values, contexts, legacy) -> list:
-    """Batch :func:`_unseal` for a result page: one key lookup for ordinary
-    rows, per-value opening for legacy ones."""
+    """Batch :func:`_unseal` for a result page. Legacy values first try the
+    empty binding; everything else goes through ``_dec_fields``, which opens
+    with the reader's binding and withholds a value it cannot open, so one
+    bad row never fails the page."""
     from ..world_model import _dec_fields
-    plain = iter(_dec_fields([v for v, old in zip(values, legacy, strict=True) if not old],
-                             [c for c, old in zip(contexts, legacy, strict=True) if not old]))
-    return [_unseal(v, c, legacy_row=True) if old else next(plain)
-            for v, c, old in zip(values, contexts, legacy, strict=True)]
+    opened = [_open_unbound(v, c) if old else None
+              for v, c, old in zip(values, contexts, legacy, strict=True)]
+    rest = [i for i, value in enumerate(opened) if value is None]
+    decoded = _dec_fields([values[i] for i in rest], [contexts[i] for i in rest])
+    for i, value in zip(rest, decoded, strict=True):
+        opened[i] = value
+    return opened
 
 
 def _dec_goal_row(row) -> PGGoal:
