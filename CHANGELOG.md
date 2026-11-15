@@ -234,6 +234,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The database query timeout now also applies on MySQL Connector/Python and
   MariaDB Connector/Python: the server stops the statement at the deadline
   and a timed-out query is cancelled. Before, only PyMySQL was bounded.
+- Image OCR runs Tesseract with one OpenMP thread unless OMP_THREAD_LIMIT is
+  set, so a busy host no longer pushes small images past the OCR timeout.
 
 ### Fixed
 

@@ -168,3 +168,27 @@ def test_ocr_calls_run_concurrently_outside_the_pixel_cap_lock(tmp_path, monkeyp
     assert all(result.endswith("text") for result in results)
     assert caps_during_ocr == [90, 90]
     assert image_module.MAX_IMAGE_PIXELS == 90
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the stand-in tesseract is a shell script")
+def test_ocr_runs_tesseract_with_one_openmp_thread(tmp_path, monkeypatch):
+    """Unbounded OpenMP threads made a tiny image run past the OCR timeout on
+    a busy host; tesseract now gets OMP_THREAD_LIMIT=1 (this process does not)."""
+    import os
+
+    pytesseract = pytest.importorskip("pytesseract")
+    Image = pytest.importorskip("PIL.Image")
+    from maverick_knowledge.image import build_ocr_describer
+
+    monkeypatch.delenv("OMP_THREAD_LIMIT", raising=False)
+    stand_in = tmp_path / "tesseract"  # writes its OpenMP limit as the OCR text
+    stand_in.write_text('#!/bin/sh\nprintf "omp=%s" "$OMP_THREAD_LIMIT" > "$2.txt"\n',
+                        encoding="utf-8")
+    stand_in.chmod(0o755)
+    monkeypatch.setattr(pytesseract.pytesseract, "tesseract_cmd", str(stand_in))
+    monkeypatch.setattr(pytesseract.pytesseract, "environ", os.environ)
+    image = tmp_path / "diagram.png"
+    Image.new("RGB", (8, 8), "white").save(image)
+
+    assert build_ocr_describer()(str(image)).endswith("\nomp=1")
+    assert "OMP_THREAD_LIMIT" not in os.environ

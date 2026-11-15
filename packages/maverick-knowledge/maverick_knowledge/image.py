@@ -9,7 +9,9 @@ callable, so the model/dependency choice stays with the operator.
 """
 from __future__ import annotations
 
+import os
 import warnings
+from collections.abc import Mapping
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from threading import RLock
@@ -22,6 +24,37 @@ DEFAULT_OCR_TIMEOUT_SECONDS = 15
 # handed to Ghostscript. Only these plugins may identify the file.
 OCR_IMAGE_FORMATS = ("PNG", "JPEG", "GIF", "WEBP", "BMP", "TIFF")
 _PIXEL_CAP_LOCK = RLock()
+
+
+class _OneOpenMPThread(Mapping):
+    """``os.environ``, read live, with ``OMP_THREAD_LIMIT=1`` unless set.
+
+    Tesseract's OpenMP otherwise starts a thread per core; on a busy host they
+    contend so badly that a tiny image ran 115 s instead of 0.4 s, far past
+    the OCR timeout. Only the tesseract child sees this, not this process."""
+
+    _KEY = "OMP_THREAD_LIMIT"
+
+    def __getitem__(self, key):
+        if key == self._KEY and key not in os.environ:
+            return "1"
+        return os.environ[key]
+
+    def __iter__(self):
+        yield from os.environ
+        if self._KEY not in os.environ:
+            yield self._KEY
+
+    def __len__(self):
+        return len(os.environ) + (self._KEY not in os.environ)
+
+
+def _limit_tesseract_threads(pytesseract) -> None:
+    # pytesseract has no env argument: it starts tesseract with its module's
+    # ``environ`` (``os.environ``). Swap in the view above, once.
+    module = getattr(pytesseract, "pytesseract", None)
+    if module is not None and getattr(module, "environ", None) is os.environ:
+        module.environ = _OneOpenMPThread()
 
 
 def _open_allowed(Image, path):
@@ -107,6 +140,7 @@ def build_ocr_describer(
         raise ValueError("max_image_bytes must be positive")
     if ocr_timeout_seconds <= 0:
         raise ValueError("ocr_timeout_seconds must be positive")
+    _limit_tesseract_threads(pytesseract)
 
     def describe(path: str) -> str:
         _validate_image(path, Image, max_image_pixels, max_image_bytes)
