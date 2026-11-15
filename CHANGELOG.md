@@ -223,6 +223,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the refusal names the storage boundary.
 - An automation opportunity is not proposed while any completed run has no
   recorded cost, and the reason shown says so.
+- `dns_lookup` now obeys the network policy and egress lists: a name the
+  policy blocks is not looked up. Add the host to the allow list if needed.
+- `embedded_device` refuses `i2c_write` until `[embedded] allow_flash = true`,
+  the same opt-in as flash and reset. Turn it on to keep writing registers.
+- Hosted `image_edit` edits and every `huggingface` call need a human
+  approval when governed connectors are on, like `replicate run`.
+- `str_replace_editor` and `spreadsheet` writes count against
+  `[limits] file_write_quota_mb`, as `write_file` writes already did.
+- The `s3`, `ses` and `sns` tools appear only with
+  `[tools] credential_connectors` on (`MAVERICK_ENABLE_CRED_TOOLS`), like
+  `lambda` and `dynamodb`. Turn it on to keep using them.
+- `vertex generate` has no built-in model: name one, and it must be on
+  `[access] allowed_models` when that list is set. Each Vertex call counts
+  against `[budget.provider_caps] vertex`.
+- `oracle` asks for `confirm` when a read hides a second statement in
+  Oracle `q'...'` quoting, after a `show`/`desc` line or after a `/` line.
+- `notebook_exec` keeps `%` and `!` lines that sit inside a string, a bracket
+  or a continued line; only lines that start a statement are dropped.
+- Every built-in tool now has an explicit risk rating. Discovery and
+  read-only tools such as `find_tools` are low, so a low or medium
+  `max_risk` keeps them. Unrated plugin and MCP tools still count as high.
 
 ### Fixed
 
