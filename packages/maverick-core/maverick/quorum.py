@@ -249,7 +249,17 @@ class ProposalStore:
             error: Exception = ValueError("not a JSON object")
         except FileNotFoundError:
             return {}
-        except (OSError, ValueError) as e:
+        except OSError as e:
+            log.warning("quorum: cannot read proposal store %s: %s", self.path, e)
+            if keep_unreadable:
+                # Only content that was read and cannot be parsed is moved
+                # aside; a read error may be transient, so the file stays.
+                raise QuorumError(
+                    f"the approval ledger {self.path} could not be read ({e}); "
+                    "nothing was changed. Check the file's permissions, then try again"
+                ) from e
+            return {}
+        except ValueError as e:
             error = e
         if not keep_unreadable:
             log.warning("quorum: cannot read proposal store %s: %s", self.path, error)

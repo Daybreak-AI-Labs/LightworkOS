@@ -232,6 +232,20 @@ def test_corrupt_store_fails_soft(tmp_path, clock):
     assert len(kept) == 1 and kept[0].read_text(encoding="utf-8") == "{ not json"
 
 
+def test_a_read_error_refuses_the_write_and_leaves_the_ledger(store, monkeypatch, tmp_path):
+    _propose(store)
+    before = store.path.read_bytes()
+
+    def unreadable(*_a, **_k):
+        raise PermissionError("permission denied")
+
+    monkeypatch.setattr(quorum, "atomic_read_text", unreadable)
+    with pytest.raises(quorum.QuorumError, match="could not be read"):
+        _propose(store, change_id="chg-2")
+    assert store.path.read_bytes() == before
+    assert not list(tmp_path.glob("proposals.json.corrupt-*"))
+
+
 def _process_approve(path, approver, barrier, output):
     """Child process: approve after a barrier, with a slow save so an
     unserialized read-modify-write would lose the other process's approval."""
