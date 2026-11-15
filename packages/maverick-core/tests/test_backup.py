@@ -1409,6 +1409,12 @@ def test_cli_refuses_to_start_on_unrecoverable_restore_with_the_message(monkeypa
     for args in (["--help"], ["backup", "--help"], ["backup", "restore", "--help"], ["version"]):
         shown = CliRunner().invoke(main, args)
         assert shown.exit_code == 0, (args, shown.output)
+    # "--help" as data (after "--", or as an option's value) is not a help
+    # request: the gate still runs before any write.
+    for args in (["fact", "note", "--", "--help"],
+                 ["schedule", "goal", "0 9 * * *", "text", "--title", "--help"]):
+        gated = CliRunner().invoke(main, args)
+        assert gated.exit_code == 1 and "stopped part-way" in gated.output, (args, gated.output)
 
 
 def test_next_restore_recovers_retained_applying_journal(monkeypatch):

@@ -459,12 +459,34 @@ def _configure_cli_text_streams() -> None:
             continue
 
 
+def _asks_for_help(parent: click.Context | None, command: click.Command,
+                   name: str, args: list[str]) -> bool:
+    """Whether Click itself would read ``args`` as a help request.
+
+    Uses each command's own option parser, without running any callback, so
+    ``--help`` after ``--`` or as an option's value is data, not a request.
+    """
+    ctx = click.Context(command, parent=parent, info_name=name, resilient_parsing=True)
+    try:
+        opts, rest, _order = command.make_parser(ctx).parse_args(list(args))
+    except click.UsageError:
+        return False  # the real parse reports it, after the gate
+    help_option = command.get_help_option(ctx)
+    if help_option is not None and opts.get(help_option.name):
+        return True
+    if isinstance(command, click.Group) and rest:
+        child = command.get_command(ctx, rest[0])
+        if child is not None:
+            return _asks_for_help(ctx, child, rest[0], rest[1:])
+    return False
+
+
 class _MainGroup(click.Group):
     """Notes whether a command only asks for its help text, so the start-up
     gate (see ``main``) can let help through while normal work is refused."""
 
     def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
-        ctx.meta["maverick.help_only"] = "--help" in args
+        ctx.meta["maverick.help_only"] = _asks_for_help(None, self, ctx.info_name or "", args)
         return super().parse_args(ctx, args)
 
 
