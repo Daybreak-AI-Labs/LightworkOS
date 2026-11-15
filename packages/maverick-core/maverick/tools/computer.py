@@ -31,6 +31,7 @@ from __future__ import annotations
 import base64
 import copy
 import importlib
+import importlib.util
 import io
 import logging
 import os
@@ -100,24 +101,39 @@ _COMPUTER_USE_INPUT_SCHEMA: dict[str, Any] = {
 
 
 def _ensure_pyautogui():
-    """Import pyautogui excluding the workspace: input actions check it before consent."""
+    try:
+        import pyautogui  # noqa
+    except ImportError as e:
+        raise ImportError(
+            "pyautogui not installed. Run: python -m pip install -e './packages/maverick-core[computer-use]'"
+        ) from e
+    return __import__("pyautogui")
+
+
+def _driver_before_consent():
+    """The input driver, loaded without running workspace code before consent."""
     from .hardware_sensors import _path_in_cwd, _safe_import_path
 
-    if sys.modules.get("pyautogui") is None:
-        original_path = list(sys.path)
-        try:
-            sys.path = [entry for entry in original_path if _safe_import_path(entry)]
-            importlib.import_module("pyautogui")
-        except ImportError as e:
-            raise ImportError(
-                "pyautogui not installed. Run: python -m pip install -e './packages/maverick-core[computer-use]'"
-            ) from e
-        finally:
-            sys.path = original_path
-    module = sys.modules["pyautogui"]
-    if _path_in_cwd(getattr(module, "__file__", None)):
-        raise ImportError("pyautogui resolves inside the workspace")
-    return module
+    if sys.modules.get("pyautogui") is not None:
+        origin = getattr(sys.modules["pyautogui"], "__file__", None)
+    else:
+        spec = importlib.util.find_spec("pyautogui")
+        origin = spec.origin if spec is not None else None
+    if _path_in_cwd(origin):
+        raise _WorkspaceDriver(
+            "ERROR: the input driver (pyautogui) is installed inside the working folder, "
+            "so Lightwork does not load it before approval. No input was sent."
+        )
+    original_path = list(sys.path)
+    try:
+        sys.path = [entry for entry in original_path if _safe_import_path(entry)]
+        return _ensure_pyautogui()
+    finally:
+        sys.path = original_path
+
+
+class _WorkspaceDriver(Exception):
+    """The driver resolves inside the workspace; the message says so."""
 
 
 _INPUT_NOT_SUPPORTED = (
@@ -137,7 +153,9 @@ def _input_driver_error(action: str, args: dict[str, Any]) -> str | None:
     if computer_action_risk(action, args) is None:
         return None
     try:
-        driver = _ensure_pyautogui()
+        driver = _driver_before_consent()
+    except _WorkspaceDriver as e:
+        return str(e)
     except ImportError as e:
         return f"ERROR: {e}"
     except Exception as e:
