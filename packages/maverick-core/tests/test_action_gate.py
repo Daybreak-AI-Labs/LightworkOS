@@ -792,6 +792,11 @@ def test_computer_dispatch_does_not_click_after_post_gate_window_swap(monkeypatc
             del x, y
             self.clicks += 1
 
+        def dispatch_bound(self, action, coord, args):
+            del action, args
+            self.click(*coord)
+            return f"clicked at {coord}"
+
     driver = _PyAutoGui()
     monkeypatch.setattr(computer, "_ensure_pyautogui", lambda: driver)
 
@@ -834,10 +839,10 @@ def test_browser_raw_selector_driver_is_refused_after_final_observation(monkeypa
     assert session.page.clicks == 0
 
 
-def test_computer_raw_global_driver_is_refused_after_final_observation(monkeypatch):
+def test_computer_raw_global_driver_is_refused_before_approval(monkeypatch):
     from maverick.tools import computer
 
-    _capture(monkeypatch)
+    calls = _capture(monkeypatch)
     monkeypatch.setattr(computer, "_host_safety_error", lambda: None)
     monkeypatch.setattr(
         computer,
@@ -867,8 +872,10 @@ def test_computer_raw_global_driver_is_refused_after_final_observation(monkeypat
         {"action": "left_click", "coordinate": [10, 20]},
     )
 
-    assert "cannot be bound atomically" in result
-    assert driver.clicks == 0
+    # Without a driver that can send input there is nothing to approve.
+    assert result.startswith("ERROR:") and "not supported yet" in result
+    assert "No input was sent" in result
+    assert calls == [] and driver.clicks == 0
 
 
 def test_browser_dispatch_uses_the_exact_frozen_reviewed_parameters(monkeypatch):
@@ -1053,6 +1060,11 @@ def test_concurrent_credential_mutation_before_computer_fence_blocks_click(
         def click(self, x=None, y=None):
             del x, y
             self.clicks += 1
+
+        def dispatch_bound(self, action, coord, args):
+            del action, args
+            self.click(*coord)
+            return f"clicked at {coord}"
 
     driver = _PyAutoGui()
     monkeypatch.setattr(computer, "_ensure_pyautogui", lambda: driver)

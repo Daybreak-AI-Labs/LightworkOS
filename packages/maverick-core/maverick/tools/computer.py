@@ -100,13 +100,51 @@ _COMPUTER_USE_INPUT_SCHEMA: dict[str, Any] = {
 
 
 def _ensure_pyautogui():
+    """Import pyautogui excluding the workspace: input actions check it before consent."""
+    from .hardware_sensors import _path_in_cwd, _safe_import_path
+
+    if sys.modules.get("pyautogui") is None:
+        original_path = list(sys.path)
+        try:
+            sys.path = [entry for entry in original_path if _safe_import_path(entry)]
+            importlib.import_module("pyautogui")
+        except ImportError as e:
+            raise ImportError(
+                "pyautogui not installed. Run: python -m pip install -e './packages/maverick-core[computer-use]'"
+            ) from e
+        finally:
+            sys.path = original_path
+    module = sys.modules["pyautogui"]
+    if _path_in_cwd(getattr(module, "__file__", None)):
+        raise ImportError("pyautogui resolves inside the workspace")
+    return module
+
+
+_INPUT_NOT_SUPPORTED = (
+    "ERROR: Sending mouse or keyboard input is not supported yet, so Lightwork "
+    "did not ask for approval. No input was sent. Screenshots still work; do "
+    "this step yourself."
+)
+
+
+def _input_driver_error(action: str, args: dict[str, Any]) -> str | None:
+    """Refuse an input action before approval when nothing could perform it.
+
+    Approved input is sent only through a driver that binds the exact target
+    (``dispatch_bound``). Asking a person to approve input that can never be
+    sent would teach them that approvals do nothing.
+    """
+    if computer_action_risk(action, args) is None:
+        return None
     try:
-        import pyautogui  # noqa
+        driver = _ensure_pyautogui()
     except ImportError as e:
-        raise ImportError(
-            "pyautogui not installed. Run: python -m pip install -e './packages/maverick-core[computer-use]'"
-        ) from e
-    return __import__("pyautogui")
+        return f"ERROR: {e}"
+    except Exception as e:
+        return f"ERROR: the desktop input driver could not start ({type(e).__name__}); no input was sent"
+    if not callable(getattr(driver, "dispatch_bound", None)):
+        return _INPUT_NOT_SUPPORTED
+    return None
 
 
 def _screenshot_png_b64() -> str:
@@ -691,6 +729,11 @@ def _run_computer_action(args: dict[str, Any]) -> str:
     host_error = _host_safety_error()
     if host_error is not None:
         return host_error
+
+    # Before the paid target lookup and the approval request.
+    driver_error = _input_driver_error(action, args)
+    if driver_error is not None:
+        return driver_error
 
     # A described target is turned into a coordinate before the approval gate,
     # so the approval shows (and binds) the exact point that will be clicked.

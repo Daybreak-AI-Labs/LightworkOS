@@ -235,6 +235,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Retrying a workflow whose approved high-risk step failed now asks for a
   new approval at that step's gate, then continues the saved work. Before,
   the retry was refused. Approve or reject the new request as usual.
+- The `computer` tool no longer asks to approve mouse or keyboard input it
+  cannot send. It says input is not supported yet; screenshots still work.
 
 ### Fixed
 
