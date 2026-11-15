@@ -76,6 +76,7 @@ from .advanced import _FEATURE_LOCKS as _FEATURE_LOCKS
 from .advanced import _LOCAL_FIRST_PROVIDERS as _LOCAL_FIRST_PROVIDERS
 from .advanced import _ask_chat_and_resource_followups as _ask_chat_and_resource_followups
 from .advanced import _ask_dashboard_followups as _ask_dashboard_followups
+from .advanced import _ask_ed25519_keys as _ask_ed25519_keys
 from .advanced import _ask_external_agent_followups as _ask_external_agent_followups
 from .advanced import _ask_flow_followups as _ask_flow_followups
 from .advanced import _ask_governed_execution_followups as _ask_governed_execution_followups
