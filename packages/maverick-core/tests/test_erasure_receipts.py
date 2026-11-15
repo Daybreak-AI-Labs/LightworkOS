@@ -1040,3 +1040,46 @@ def test_postgres_delete_contract_covers_descendants_and_every_child(
     assert "DELETE FROM episodes" in statements
     assert "DELETE FROM goals" in statements
     assert "DELETE FROM conversations" in statements
+
+
+def test_a_rerun_finishes_or_again_names_what_remains(monkeypatch):
+    """A rerun after a partly failed erase finds no conversation, yet it still
+    clears the AI reply cache and the attachment files the first run left."""
+    from maverick.cache import llm as llm_cache
+
+    world = _cli_world()
+    attachment = Path.home() / "private.txt"
+    _seed_complete_graph(world, attachment)
+    world.close()
+    cache_path = llm_cache.default_db_path()
+    from maverick.file_lock import ensure_private_directory
+
+    ensure_private_directory(cache_path.parent)
+    cache_path.write_bytes(b"")
+    purged: list[bool] = []
+    real_unlink = Path.unlink
+
+    def broken_unlink(self, *args, **kwargs):
+        if self == attachment:
+            raise OSError(5, "busy")
+        return real_unlink(self, *args, **kwargs)
+
+    def broken_purge(self, **_kwargs):
+        raise OSError(5, "disk busy")
+
+    monkeypatch.setattr(Path, "unlink", broken_unlink)
+    monkeypatch.setattr(llm_cache.LLMCache, "purge_all_authorities_for_erasure", broken_purge)
+    erase = ["erase", "--channel", "telegram", "--user", "alice", "--yes"]
+    for _run in range(2):
+        result = CliRunner().invoke(main, erase)
+        assert result.exit_code == 1, result.output
+        assert "llm_cache: OSError (errno 5)" in result.output
+        assert "could not remove an attachment file (OSError (errno 5))" in result.output
+    assert "no conversation found" in result.output and attachment.exists()
+
+    monkeypatch.setattr(Path, "unlink", real_unlink)
+    monkeypatch.setattr(llm_cache.LLMCache, "purge_all_authorities_for_erasure",
+                        lambda self, **_kwargs: purged.append(True))
+    result = CliRunner().invoke(main, erase)
+    assert result.exit_code == 0, result.output
+    assert purged and not attachment.exists()
