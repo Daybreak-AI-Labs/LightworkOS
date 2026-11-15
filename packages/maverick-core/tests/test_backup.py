@@ -1381,6 +1381,13 @@ def test_backup_leaves_out_an_unportable_name_in_sandbox_recovery_copies(caplog)
     assert any(name.endswith("sandbox-recovery/k8s-1/input/ok.txt") for name in names)
     assert not any("what?" in name for name in names)
     assert "what?.txt" in caplog.text
+    # A whole-home backup (installation recovery) sees the copies one level
+    # down, under tenants/<name>/sandbox-recovery.
+    from maverick.paths import maverick_home
+
+    with backup.recovery_scope(maverick_home(), "acme", bytes(range(32)), whole_home=True):
+        with tarfile.open(backup.create_backup()) as archive:
+            assert not any("what?" in name for name in archive.getnames())
     (root / "other?.txt").write_text("z")  # elsewhere the backup still refuses
     with pytest.raises(backup.BackupError, match="unsafe"):
         backup.create_backup()

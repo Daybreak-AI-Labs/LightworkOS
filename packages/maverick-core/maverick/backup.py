@@ -985,7 +985,10 @@ def _stage(root: Path, stage: Path, *, include_keys: bool | frozenset,
         try:
             rel = _safe_relative_path(relative.as_posix(), label="backup source path").as_posix()
         except BackupError:
-            if relative.parts[0] != "sandbox-recovery":
+            # The workspace's own folder, or a tenant's in a whole-home backup.
+            parts = relative.parts
+            if not (parts[0] == "sandbox-recovery"
+                    or (parts[0] == "tenants" and parts[2:3] == ("sandbox-recovery",))):
                 raise
             # Review copies kept from a failed workspace transfer, made before
             # transfers refused such names. Leave the one file out, not the backup.
