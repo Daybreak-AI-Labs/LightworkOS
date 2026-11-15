@@ -539,6 +539,82 @@ RULES: list[Rule] = [
 SEVERITY_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 
 
+# The three URL rules keep their original patterns, which backtrack on hostile
+# text. They run only on bounded windows that start at a URL-like fragment: a
+# match no longer than the window is found exactly as before, and a URL longer
+# than the window is a finding of its own (``overlong_url``).
+_URL_WINDOW_CHARS = 2048
+_URL_RULES = ("markdown_image_exfil", "base64_url_exfil", "credential_in_url")
+_URL_START = re.compile(r"https?://", re.IGNORECASE)
+_MD_START = re.compile(r"!\[")
+_MD_TARGET = re.compile(r"\]\(https?://", re.IGNORECASE)
+_SPACE = re.compile(r"\s")
+
+
+def _url_runs(text: str):
+    """(start, end) of each whitespace-free run, from its first URL scheme.
+
+    A match of the base64 or credential rule from a later scheme in the same
+    run is also a match from the first one, so only the first is tried."""
+    end = 0
+    for found in _URL_START.finditer(text):
+        start = found.start()
+        if start < end:
+            continue
+        space = _SPACE.search(text, start)
+        end = space.start() if space else len(text)
+        yield start, end
+
+
+def _markdown_targets(text: str):
+    """(start, target_end, too_long) for each markdown image that links to a
+    URL, skipping images whose match would be a match of an earlier one."""
+    pos = 0
+    while (found := _MD_START.search(text, pos)) is not None:
+        start = found.start()
+        close = text.find("]", start + 2)  # the alt text cannot contain "]"
+        if close < 0:
+            return
+        if not _MD_TARGET.match(text, close):
+            pos = close + 1
+            continue
+        paren = text.find(")", close + 2)  # the target cannot contain ")"
+        target_end = paren if paren >= 0 else len(text)
+        yield start, target_end, target_end - close > _URL_WINDOW_CHARS
+        # An image that starts inside this target and closes its alt text
+        # before target_end matches only if this one does.
+        last = text.rfind("]", close + 1, target_end)
+        pos = (last if last >= 0 else close) + 1
+
+
+def _url_findings(text: str, patterns: dict) -> set[str]:
+    """Names of the URL rules that match ``text``, plus ``overlong_url``."""
+    found: set[str] = set()
+    window = _URL_WINDOW_CHARS
+    for start, target_end, too_long in _markdown_targets(text):
+        if too_long:
+            found.add("overlong_url")
+        elif "markdown_image_exfil" not in found and patterns["markdown_image_exfil"].match(
+                text, start, target_end):
+            found.add("markdown_image_exfil")
+    for start, end in _url_runs(text):
+        if end - start > window:
+            found.add("overlong_url")
+            continue
+        if "base64_url_exfil" not in found and patterns["base64_url_exfil"].match(
+                text, start, min(len(text), end + window)):
+            found.add("base64_url_exfil")
+        if "credential_in_url" not in found and patterns["credential_in_url"].match(
+                text, start, end):
+            found.add("credential_in_url")
+    return found
+
+
+# Not in RULES: it is reported by _url_findings, not by its pattern.
+_OVERLONG_URL = Rule("overlong_url", "high", re.compile(r"(?!)"),
+                     f"URL longer than {_URL_WINDOW_CHARS} characters (too long to check)")
+
+
 def _threshold_to_min_severity(threshold: str) -> int:
     # Normalize: block_threshold comes from user-typed TOML. A non-lowercase or
     # padded spelling ("Medium", " high ") missed the lookup and silently fell
@@ -568,11 +644,15 @@ def scan(
     # Scan the original text AND its de-obfuscated / base64-decoded variants,
     # so an encoded or quoted payload still trips the rule it was hiding from.
     candidates = _candidates(text)
+    url_patterns = {r.name: r.pattern for r in RULES if r.name in _URL_RULES}
+    url_found = set().union(*(_url_findings(c, url_patterns) for c in candidates))
     matched: list[str] = []
     max_idx = -1
     max_sev = "none"
-    for r in RULES:
-        if any(r.pattern.search(c) for c in candidates):
+    for r in [*RULES, _OVERLONG_URL]:
+        hit = (r.name in url_found if r.name in (*_URL_RULES, _OVERLONG_URL.name)
+               else any(r.pattern.search(c) for c in candidates))
+        if hit:
             matched.append(r.name)
             idx = SEVERITY_ORDER[r.severity]
             if idx > max_idx:

