@@ -903,6 +903,7 @@ def core_tool_names(role: str, *, extra=()) -> frozenset[str]:
 # (see test_no_collision_with_opt_in_ambient_cred_tools).
 AMBIENT_CRED_TOOL_NAMES = frozenset({
     "airtable", "asana", "clickup", "lambda", "dynamodb", "vercel", "gdrive",
+    "s3", "ses", "sns",
 })
 
 # Hand-written connectors that still read operator-global environment
@@ -1609,7 +1610,6 @@ def base_registry(
         ToolDescriptor("datadog", datadog_tool, True),
         ToolDescriptor("hubspot", hubspot_tool, True),
         ToolDescriptor("twilio", twilio_tool, True),
-        ToolDescriptor("s3", s3_tool, True),
     ))
     reg.register(serial_tool())
     register_descriptors(reg, (ToolDescriptor("elasticsearch", elasticsearch_tool, True),))
@@ -1667,6 +1667,13 @@ def base_registry(
         reg.register(dynamodb_tool())
         reg.register(vercel_tool())
         reg.register(gdrive_tool())
+        # boto3's default chain finds instance roles and ~/.aws, as lambda
+        # and dynamodb do.
+        register_descriptors(reg, (
+            ToolDescriptor("s3", s3_tool, True),
+            ToolDescriptor("ses", ses_tool, True),
+            ToolDescriptor("sns", sns_tool, True),
+        ))
     register_descriptors(reg, (
         ToolDescriptor("trello", trello_tool, True),
         ToolDescriptor("confluence", confluence_tool, True),
@@ -1684,8 +1691,6 @@ def base_registry(
         ToolDescriptor("home_assistant", home_assistant_tool, True),
         ToolDescriptor("reddit", reddit_tool, True),
         ToolDescriptor("bitbucket", bitbucket_tool, True),
-        ToolDescriptor("ses", ses_tool, True),
-        ToolDescriptor("sns", sns_tool, True),
     ))
     _register_local_workspace_tool(reg, sandbox, ffmpeg_tool, has_local_workdir)
     _register_local_workspace_tool(reg, sandbox, pandoc_tool, has_local_workdir)
