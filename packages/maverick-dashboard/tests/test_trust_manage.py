@@ -278,12 +278,20 @@ def test_partner_request_limit_is_shown_and_raised_by_an_administrator(tmp_path,
 
     page = client.get("/trust").text
     assert "Partner request limits" in page and "Limit reached" in page
-    assert "data-tr-limit" in page
+    assert "data-tr-limit" in page and "Kept requests: 1 of 250,000" in page
 
-    assert client.post("/api/v1/trust/federation/nobody/limit", json={"reset": True}).status_code == 404
+    monkeypatch.setattr(federation, "_CORRELATION_CACHE_MAX", 1)
+    full = client.get("/trust").text
+    assert "Storage for partner requests is full" in full and "Turned away: storage full" in full
+    r = client.post("/api/v1/trust/federation/limits/storage", json={"limit": 300_000})
+    assert r.status_code == 200 and r.json() == {"storage_limit": 300_000}
+    assert "Kept requests: 1 of 300,000" in client.get("/trust").text
+
+    nobody = client.post("/api/v1/trust/federation/nobody/limit", json={"reset": True})
+    assert nobody.status_code == 404, nobody.text
     r = client.post("/api/v1/trust/federation/edge/limit", json={"limit": 5})
     assert r.status_code == 200 and r.json()["limit"] == 5 and r.json()["reached"] is False
-    assert [kw["new_limit"] for kind, kw in rows if kind == "federation_admission_limit_changed"] == [5]
+    assert [kw["new_limit"] for kind, kw in rows if kind == "federation_admission_limit_changed"] == [300_000, 5]
 
     def deny(request, permission):
         raise HTTPException(status_code=403, detail="forbidden")
@@ -304,4 +312,5 @@ def test_partner_request_limit_is_shown_and_raised_by_an_administrator(tmp_path,
     monkeypatch.setattr(trust_page_api, "require_global_permission", deny)
     assert client.post("/api/v1/trust/federation/edge/limit", json={"reset": True}).status_code == 403
     assert client.post("/api/v1/trust/federation/limits/start-over", json={}).status_code == 403
+    assert client.post("/api/v1/trust/federation/limits/storage", json={"limit": 5}).status_code == 403
     config.reset_config_cache()

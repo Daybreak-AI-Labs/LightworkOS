@@ -302,4 +302,10 @@ def test_cli_admission_limit_shows_raises_and_resets(monkeypatch, tmp_path):
     r = _run("trust", "admission-limit", "--start-over")
     assert r.exit_code == 0 and "unusable-" in r.output
     assert "0 of 50,000" in _run("trust", "admission-limit", "edge").output
+    from maverick import federation
+    monkeypatch.setattr(federation, "_CORRELATION_CACHE_MAX", 0)
+    r = _run("trust", "admission-limit", "edge")
+    assert "full: every partner's new requests are refused" in r.output
+    r = _run("trust", "admission-limit", "edge", "--storage", "300000")
+    assert r.exit_code == 0 and "0 of 300,000 partner requests kept" in r.output
     config.reset_config_cache()

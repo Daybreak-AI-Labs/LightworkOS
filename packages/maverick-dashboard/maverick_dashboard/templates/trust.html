@@ -153,6 +153,13 @@
   {% if can_admin_federation %}<p>Starting over keeps the unreadable copy and puts every partner back on the standard limit. <button type="button" class="btn" id="tr-limits-start-over">Start over</button></p>
   {% else %}<p>Ask an administrator to start over.</p>{% endif %}
   {% else %}
+  {% set store = federation_limits.peers[0] %}
+  <p>Kept requests: {{ "{:,}".format(store.storage_used) }} of {{ "{:,}".format(store.storage_limit) }}.
+    {% if store.storage_full %}<span class="badge failure">Storage full</span>{% endif %}</p>
+  {% if store.storage_full %}
+  <p role="alert">Storage for partner requests is full, so every partner is turned away. Raising one partner's limit won't help.</p>
+  {% endif %}
+  {% if can_admin_federation %}<p class="muted">Keeping more requests uses more disk space and makes each check a little slower. <button type="button" class="btn btn--ghost" id="tr-storage-raise" data-limit="{{ store.storage_limit }}">Raise storage limit</button></p>{% endif %}
   <div style="overflow-x:auto">
   <table>
     <thead><tr><th scope="col">Partner</th><th scope="col">Requests used</th><th scope="col">Status</th>{% if can_admin_federation %}<th scope="col">Actions</th>{% endif %}</tr></thead>
@@ -163,7 +170,8 @@
         <td><strong>{{ label }}</strong></td>
         <td>{{ "{:,}".format(p.used) }} of {{ "{:,}".format(p.limit) }}</td>
         <td>
-          {% if p.reached %}<span class="badge failure">Limit reached</span>
+          {% if p.storage_full %}<span class="badge failure">Turned away: storage full</span>
+          {% elif p.reached %}<span class="badge failure">Limit reached</span>
           <div class="muted" style="font-size:var(--text-xs)">New requests from this partner are turned away. Raise the limit or start the count again to let it continue.</div>
           {% else %}<span class="badge active">Within limit</span>{% endif %}
         </td>
@@ -369,6 +377,17 @@
 
   var limitsRetry = document.getElementById("tr-limits-retry");
   if (limitsRetry) limitsRetry.addEventListener("click", function () { window.location.reload(); });
+  var storageRaise = document.getElementById("tr-storage-raise");
+  if (storageRaise) storageRaise.addEventListener("click", async function () {
+    var current = Number(storageRaise.getAttribute("data-limit"));
+    var answer = await window.mvForm("Raise the storage limit", [
+      { key: "limit", label: "Partner requests to keep", type: "number", default: String(current * 2) }
+    ], { okText: "Raise storage limit" });
+    if (!answer) return;
+    var limit = Math.floor(Number(answer.limit));
+    if (!(limit > current) || limit > 2000000) { window.mvToast("Choose a number above " + current.toLocaleString() + " and no more than 2,000,000.", { error: true }); return; }
+    send("/api/v1/trust/federation/limits/storage", { method: "POST", body: JSON.stringify({ limit: limit }) }, "Storage limit raised.", "raise the storage limit");
+  });
   var limitsStartOver = document.getElementById("tr-limits-start-over");
   if (limitsStartOver) limitsStartOver.addEventListener("click", async function () {
     if (!(await window.mvConfirm("Start over with the standard limit for every partner? The unreadable copy is kept.", { okText: "Start over" }))) return;
@@ -382,7 +401,7 @@
       ], { okText: "Raise limit" });
       if (!answer) return;
       var limit = Math.floor(Number(answer.limit));
-      if (!(limit > current) || limit > 250000) { window.mvToast("Choose a number above " + current.toLocaleString() + " and no more than 250,000.", { error: true }); return; }
+      if (!(limit > current) || limit > 2000000) { window.mvToast("Choose a number above " + current.toLocaleString() + " and no more than 2,000,000.", { error: true }); return; }
       send("/api/v1/trust/federation/" + encodeURIComponent(b.getAttribute("data-tr-limit")) + "/limit", { method: "POST", body: JSON.stringify({ limit: limit }) }, "Limit raised.", "raise this limit");
     });
   });

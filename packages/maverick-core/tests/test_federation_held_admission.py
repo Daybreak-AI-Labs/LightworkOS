@@ -207,8 +207,10 @@ def test_operator_can_raise_or_reset_a_full_peer_admission_limit(tmp_path, monke
         with pytest.raises(admission.FederationAdmissionRejected, match="ledger capacity"):
             reserve(world, "b")
         assert "maverick trust admission-limit sender" in caplog.text
-        assert admission.admission_usage(world, "sender") == {
+        usage = admission.admission_usage(world, "sender")
+        assert {k: usage[k] for k in ("peer", "used", "limit", "reached", "counted_from")} == {
             "peer": "sender", "used": 1, "limit": 1, "reached": True, "counted_from": None}
+        assert usage["storage_full"] is False
 
         admission.set_admission_limit("sender", limit=2, actor="ops@corp.test")
         assert reserve(world, "b").goal_id != first.goal_id
@@ -289,3 +291,24 @@ def test_hand_edited_limits_that_are_not_usable_count_as_unreadable(tmp_path, mo
     with WorldModel(tmp_path / "world.db") as world:
         with pytest.raises(admission.FederationAdmissionRejected, match="limits could not be read"):
             reserve(world, "a")
+
+
+def test_full_workspace_storage_is_reported_and_an_administrator_can_raise_it(tmp_path, monkeypatch):
+    from maverick import federation
+
+    admission, reserve, events = _limits_harness(tmp_path, monkeypatch)
+    monkeypatch.setattr(federation, "_CORRELATION_CACHE_MAX", 2)
+    with WorldModel(tmp_path / "world.db") as world:
+        reserve(world, "a")
+        reserve(world, "b", peer="other")
+        usage = admission.admission_usage(world, "sender")
+        assert usage["storage_full"] is True and usage["storage_used"] == 2
+        assert usage["storage_limit"] == 2
+        with pytest.raises(admission.FederationAdmissionRejected, match="capacity is full$"):
+            reserve(world, "c")
+        admission.set_storage_limit(3, actor="ops")
+        assert reserve(world, "c").goal_id
+        assert admission.admission_usage(world, "sender")["storage_full"] is True
+    assert events[-1][1]["peer"] == "*" and events[-1][1]["new_limit"] == 3
+    with pytest.raises(ValueError):
+        admission.set_admission_limit("*", limit=5, actor="ops")

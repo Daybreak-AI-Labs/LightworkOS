@@ -292,8 +292,10 @@ def trust_verify_cmd(agent_id, tools, risk, direction) -> None:
               help="Start counting this peer's requests again from now.")
 @click.option("--start-over", is_flag=True,
               help="Set an unreadable limits file aside and use the default limits.")
+@click.option("--storage", type=click.IntRange(min=1), default=None,
+              help="How many partner requests this workspace keeps before refusing all.")
 def trust_admission_limit_cmd(peer: str | None, limit: int | None, reset: bool,
-                              start_over: bool) -> None:
+                              start_over: bool, storage: int | None) -> None:
     """Show, raise or reset how many requests federation PEER may send.
 
     Earlier requests are always kept, so a repeated request is still
@@ -312,6 +314,17 @@ def trust_admission_limit_cmd(peer: str | None, limit: int | None, reset: bool,
             raise click.ClickException(str(exc)) from exc
         click.echo(f"Set the unreadable limits aside as {aside}; default limits apply."
                    if aside else "The saved limits are readable; nothing was changed.")
+        if peer is None and storage is None:
+            return
+    if storage is not None:
+        try:
+            admission.set_storage_limit(storage, actor=_actor())
+        except admission.LimitsUnreadable as exc:
+            raise click.ClickException(unreadable) from exc
+        except (ValueError, RuntimeError) as exc:
+            raise click.ClickException(str(exc)) from exc
+        click.echo(f"This workspace now keeps up to {storage:,} partner requests. "
+                   "More kept requests use more disk space and slow each check a little.")
         if peer is None:
             return
     if peer is None:
@@ -331,6 +344,10 @@ def trust_admission_limit_cmd(peer: str | None, limit: int | None, reset: bool,
         raise click.ClickException(str(exc)) from exc
     note = "  (limit reached: new requests are refused)" if usage["reached"] else ""
     click.echo(f"{peer}: {usage['used']:,} of {usage['limit']:,} requests used{note}")
+    click.echo(f"Workspace storage: {usage['storage_used']:,} of {usage['storage_limit']:,} "
+               "partner requests kept"
+               + ("  (full: every partner's new requests are refused; raise it with "
+                  "--storage N)" if usage["storage_full"] else ""))
 
 
 @main.group("client")

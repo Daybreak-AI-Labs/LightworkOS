@@ -224,10 +224,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - An automation opportunity is not proposed while any completed run has no
   recorded cost, and the reason shown says so.
 - An outside agent that screens an action without a risk level now gets
-  Lightwork's own rating of that tool. If nothing rates the tool, the action
-  waits for a person's approval instead of being allowed. It is not refused
-  and does not count toward containment. To avoid the wait, rate the tool at
-  enrollment or have the agent send a risk level.
+  Lightwork's own rating of that tool. A tool nothing rates is still refused,
+  as before, for an agent whose highest allowed risk is low or medium. For an
+  agent allowed high risk, it now waits for a person's approval instead of
+  running. Rate the tool at enrollment to avoid either.
 - Two outside-agent run reports with the same idempotency key now record one
   task, even when they arrive together. The world database moves to schema
   53 on first open.
@@ -239,9 +239,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the count again from Agent trust > Partner request limits, or with
   `maverick trust admission-limit PEER --limit N` or `--reset`. Earlier
   requests stay on record, and each change is audited. A reset does not free
-  the workspace's 250,000-request storage limit. If the saved limits can't be
-  read, new partner requests are refused until an installation administrator
-  starts over (`--start-over`); the unreadable file is kept.
+  the workspace's 250,000-request storage limit; once that is full every
+  partner is refused, and an installation administrator can raise it there
+  or with `--storage N` (more disk space, slightly slower checks). If the
+  saved limits can't be read, new partner requests are refused until an
+  installation administrator starts over (`--start-over`); the unreadable
+  file is kept.
 - Only the task that linked an outcome key, a later turn of the same chat
   or task by the same person, or an administrator can link that key to
   different work. Other runs get an error and the link stays. Links saved

@@ -245,6 +245,7 @@ class EventKind:
     # count. payload: peer:str, actor:str, old_limit:int, new_limit:int,
     # reset:bool. Starting over after an unreadable limits file records
     # peer:"*", actor, start_over:true, set_aside:str (the kept file's name).
+    # A storage-limit change records peer:"*" and storage:true.
     # Retained admissions are never deleted by any of these changes.
     FEDERATION_ADMISSION_LIMIT_CHANGED = "federation_admission_limit_changed"
     # A bounded learned pure operator selected a value or the original agent.

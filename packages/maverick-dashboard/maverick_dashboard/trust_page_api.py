@@ -14,6 +14,8 @@
   peer's request limit or start its count again, installation administrators
   only, in the installation's own tenant where the federation server admits
   requests (``maverick trust admission-limit``).
+* ``POST /api/v1/trust/federation/limits/storage`` -- raise how many partner
+  requests the workspace keeps before refusing every peer (``--storage``).
 * ``POST /api/v1/trust/federation/limits/start-over`` -- set an unreadable
   limits file aside so the default limits apply (``--start-over``).
 
@@ -65,8 +67,13 @@ class AgentLimitsIn(BaseModel):
 
 class PeerLimitIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    limit: int | None = Field(default=None, ge=1, le=250_000)
+    limit: int | None = Field(default=None, ge=1, le=2_000_000)
     reset: bool = False
+
+
+class StorageLimitIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    limit: int = Field(ge=1, le=2_000_000)
 
 
 _REASONS = {
@@ -274,6 +281,23 @@ async def start_over_peer_limits(request: Request) -> dict:
     return {"started_over": aside is not None}
 
 
+@router.post("/federation/limits/storage")
+async def set_storage_limit(request: Request, body: StorageLimitIn) -> dict:
+    require_global_permission(request, "admin")
+    from maverick import federation_admission as admission
+    from maverick.audit import AuditRefused
+
+    actor = str(caller_principal(request) or "authorized-local-operator")
+    try:
+        limit = await run_in_threadpool(
+            lambda: _in_federation_scope(lambda: admission.set_storage_limit(body.limit, actor=actor)))
+    except admission.LimitsUnreadable as exc:
+        raise HTTPException(status_code=409, detail="The saved limits could not be read, so nothing was changed. Start over to use the default limits.") from exc
+    except (AuditRefused, RuntimeError) as exc:
+        raise HTTPException(status_code=503, detail="The change could not be recorded, so it was not made.") from exc
+    return {"storage_limit": limit}
+
+
 @router.post("/federation/{peer}/limit")
 async def set_peer_limit(request: Request, peer: str, body: PeerLimitIn) -> dict:
     require_global_permission(request, "admin")
@@ -298,6 +322,6 @@ async def set_peer_limit(request: Request, peer: str, body: PeerLimitIn) -> dict
     except admission.LimitsUnreadable as exc:
         raise HTTPException(status_code=409, detail="The saved limits could not be read, so nothing was changed. Start over to use the default limits.") from exc
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail="That limit is not allowed. Choose a whole number from 1 to 250,000.") from exc
+        raise HTTPException(status_code=422, detail="That limit is not allowed. Choose a whole number from 1 to 2,000,000.") from exc
     except (AuditRefused, RuntimeError) as exc:
         raise HTTPException(status_code=503, detail="The change could not be recorded, so it was not made.") from exc

@@ -14,7 +14,10 @@ can raise one peer's limit or start its count again (``set_admission_limit``,
 ``maverick trust admission-limit`` and the dashboard Agent trust page). A reset
 only moves where counting starts: every retained row still answers a repeated
 correlation, so no reset or raise reopens a replay. The workspace storage
-bound always counts every retained row; no peer change frees it. An
+bound always counts every retained row; no peer change frees it. Rows are
+never pruned: an unsigned peer's request carries no enforced maximum age,
+so any old row may still be needed to recognise a repeat. An installation
+administrator can raise the storage bound instead (``set_storage_limit``). An
 unreadable limits file refuses new requests until an administrator starts
 over (``start_over_limits``).
 """
@@ -40,6 +43,10 @@ RUNNING = "federation_running"
 RETIRED = "federation_retired"
 _permit = contextvars.ContextVar("federation_execution_permit", default=None)
 _LIMITS_FILE = "federation_admission_limits.json"
+#: Key of the workspace storage entry in the limits file (never a peer name).
+STORAGE = "*"
+#: Highest storage limit an administrator may set: 8x the default.
+STORAGE_LIMIT_MAX = 2_000_000
 log = logging.getLogger(__name__)
 
 
@@ -123,7 +130,6 @@ def reserve(world, *, peer: str, correlation: str, digest: str, title: str,
                     contract["peer"] != peer or contract["correlation"] != correlation):
                 raise FederationAdmissionRequired("federation receipt identity mismatch")
             return Reservation(key, int(row[0]), str(row[1]), contract)
-        from .federation import _CORRELATION_CACHE_MAX
         peer_key = _peer_key(peer)
         try:
             limits = _read_limits()
@@ -137,13 +143,15 @@ def reserve(world, *, peer: str, correlation: str, digest: str, title: str,
                 "partner request limits could not be read; the receiving operator must "
                 "repair them before new requests are accepted") from exc
         total, per_peer = _counts(db, mark, scope[0] if postgres else None, peer, limits)
-        if total >= _CORRELATION_CACHE_MAX:
+        if total >= _storage_limit(limits):
             log.warning(
                 "federation: this workspace holds %d accepted partner requests, its storage "
                 "limit, so new requests from every peer are refused. Raising or resetting a "
                 "peer's limit does not free this space. Earlier requests are kept so repeats "
-                "are recognised; deleting them would let an old request run again.",
-                _CORRELATION_CACHE_MAX)
+                "are recognised; deleting them would let an old request run again. An "
+                "installation administrator can raise the storage limit: `maverick trust "
+                "admission-limit --storage N` or Agent trust > Partner request limits.",
+                _storage_limit(limits))
             raise FederationAdmissionRejected("correlation replay ledger capacity is full")
         if per_peer >= _peer_limit(peer, limits):
             log.warning(
@@ -232,11 +240,18 @@ def _usable_entry(entry) -> bool:
                              and math.isfinite(since) and since >= 0)
 
 
+def _storage_limit(limits: dict) -> int:
+    """How many admissions the workspace keeps before refusing every peer."""
+    from .federation import _CORRELATION_CACHE_MAX
+    raw = (limits.get(STORAGE) or {}).get("limit")
+    return raw if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0 else _CORRELATION_CACHE_MAX
+
+
 def _peer_limit(peer: str, limits: dict) -> int:
-    from .federation import _CORRELATION_CACHE_MAX, _CORRELATION_PER_PEER_MAX
+    from .federation import _CORRELATION_PER_PEER_MAX
     raw = (limits.get(peer) or {}).get("limit")
     chosen = raw if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0 else _CORRELATION_PER_PEER_MAX
-    return min(_CORRELATION_CACHE_MAX, chosen)
+    return min(_storage_limit(limits), chosen)
 
 
 def _counted_from(entry: dict | None) -> float | None:
@@ -269,10 +284,11 @@ def admission_usage(world, peer: str) -> dict:
     """How many requests ``peer`` has used of its limit in this workspace."""
     limits = _read_limits()
     with _transaction(world, "federation-capacity") as (db, mark, _, scope, postgres):
-        _, used = _counts(db, mark, scope[0] if postgres else None, peer, limits)
-    limit = _peer_limit(peer, limits)
+        stored, used = _counts(db, mark, scope[0] if postgres else None, peer, limits)
+    limit, storage = _peer_limit(peer, limits), _storage_limit(limits)
     return {"peer": peer, "used": used, "limit": limit, "reached": used >= limit,
-            "counted_from": _counted_from(limits.get(peer))}
+            "counted_from": _counted_from(limits.get(peer)),
+            "storage_used": stored, "storage_limit": storage, "storage_full": stored >= storage}
 
 
 def set_admission_limit(peer: str, *, limit: int | None = None, reset: bool = False,
@@ -282,13 +298,14 @@ def set_admission_limit(peer: str, *, limit: int | None = None, reset: bool = Fa
     Operator-only: callers check authority. The audit row is written before
     the change is saved; a refused or failed audit write changes nothing."""
     from .audit import EventKind, audit_event
-    from .federation import _CORRELATION_CACHE_MAX
     from .file_lock import atomic_write_text, cross_process_lock
+    if peer == STORAGE:
+        raise ValueError("that name is reserved for the workspace storage limit")
     if limit is None and not reset:
         raise ValueError("choose a new limit, a reset, or both")
     if limit is not None and (isinstance(limit, bool) or not isinstance(limit, int)
-                              or not 1 <= limit <= _CORRELATION_CACHE_MAX):
-        raise ValueError(f"the limit must be a whole number from 1 to {_CORRELATION_CACHE_MAX:,}")
+                              or not 1 <= limit <= STORAGE_LIMIT_MAX):
+        raise ValueError(f"the limit must be a whole number from 1 to {STORAGE_LIMIT_MAX:,}")
     path = _limits_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     with cross_process_lock(path):
@@ -299,7 +316,7 @@ def set_admission_limit(peer: str, *, limit: int | None = None, reset: bool = Fa
             entry["limit"] = limit
         if reset:
             entry["counted_from"] = time.time()
-        new_limit = _peer_limit(peer, {peer: entry})
+        new_limit = _peer_limit(peer, {**limits, peer: entry})
         if not audit_event(EventKind.FEDERATION_ADMISSION_LIMIT_CHANGED, agent="federation",
                            peer=peer, actor=actor, old_limit=old_limit, new_limit=new_limit,
                            reset=bool(reset)):
@@ -307,6 +324,29 @@ def set_admission_limit(peer: str, *, limit: int | None = None, reset: bool = Fa
         limits[peer] = entry
         atomic_write_text(path, json.dumps(limits, sort_keys=True))
     return {"peer": peer, "limit": new_limit, "counted_from": _counted_from(entry)}
+
+
+def set_storage_limit(limit: int, *, actor: str) -> int:
+    """Set how many admissions this workspace keeps before refusing every
+    peer. Rows are never pruned: no age bound applies to unsigned peers, so
+    an old row may still be needed to recognise a repeated request. Raising
+    the limit costs disk space and makes each admission count slower.
+    Installation-administrator only (callers check). Audit row first."""
+    from .audit import EventKind, audit_event
+    from .file_lock import atomic_write_text, cross_process_lock
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= STORAGE_LIMIT_MAX:
+        raise ValueError(f"the storage limit must be a whole number from 1 to {STORAGE_LIMIT_MAX:,}")
+    path = _limits_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with cross_process_lock(path):
+        limits = _read_limits()
+        if not audit_event(EventKind.FEDERATION_ADMISSION_LIMIT_CHANGED, agent="federation",
+                           peer=STORAGE, actor=actor, old_limit=_storage_limit(limits),
+                           new_limit=limit, reset=False, storage=True):
+            raise RuntimeError("the change could not be recorded in the audit log, so it was not made")
+        limits[STORAGE] = {"limit": limit}
+        atomic_write_text(path, json.dumps(limits, sort_keys=True))
+    return limit
 
 
 def start_over_limits(*, actor: str) -> str | None:
