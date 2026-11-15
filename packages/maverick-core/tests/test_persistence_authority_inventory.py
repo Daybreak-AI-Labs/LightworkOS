@@ -139,3 +139,14 @@ def test_reconciliation_and_provider_receipt_owners_have_explicit_path_dispositi
             path = authority["sample_path"]
             assert authority_policy(path, is_sqlite=path.endswith(".sqlite3")) == authority["recovery_policy"]
             assert authority["disposition"]
+
+
+def test_partner_request_limits_restore_as_ordinary_configuration():
+    # Operator-set partner limits restore with the workspace backup, alongside
+    # the world.db admission rows they count; they never block a restore.
+    entry = {e["path"]: e for e in _inventory()["entries"]}[
+        "packages/maverick-core/maverick/federation_admission.py"]
+    assert entry["contract"] == "configuration"
+    assert "federation_admission_limits.json" in entry["literal_path_hints"]
+    for path in ("federation_admission_limits.json", "tenants/t1/federation_admission_limits.json"):
+        assert authority_policy(path, is_sqlite=False) is None

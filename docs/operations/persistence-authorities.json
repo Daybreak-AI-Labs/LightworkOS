@@ -181,7 +181,7 @@
     "preferences": 7,
     "learning": 61,
     "sqlite_domain": 81,
-    "configuration": 69,
+    "configuration": 70,
     "read_projection": 25,
     "audit": 24,
     "transient": 26,
@@ -30203,6 +30203,62 @@
           "function": "migrate_learning_files",
           "kind": "cross_process_lock",
           "expression": "cross_process_lock(src)"
+        }
+      ]
+    },
+    {
+      "path": "packages/maverick-core/maverick/federation_admission.py",
+      "contract": "configuration",
+      "owner": "packages/maverick-core/maverick/federation_admission.py",
+      "purpose": "Held federation admissions in the existing world-model delivery ledger, plus the operator-set partner request limits file.",
+      "referenced_store_owners": [
+        "packages/maverick-core/maverick/world_model.py"
+      ],
+      "review": "limits file read and every writer reviewed: operator-set per-peer limits, count restarts and the workspace storage limit, written under a cross-process lock after the audit row; an unreadable file refuses new admissions until an administrator sets it aside (never deleted). Tenant-scoped under data_dir; restored with the workspace backup as ordinary configuration (authority_policy returns None), consistent with the world.db admission rows it counts; removed with the tenant's data directory. Admission rows themselves stay world.db authority.",
+      "governed_namespaces": [],
+      "literal_path_hints": [
+        "federation_admission_limits.json"
+      ],
+      "observed_mechanism_markers": {
+        "cross_process_lock": 3,
+        "atomic_replace": 3
+      },
+      "source_sites": [
+        {
+          "line": 209,
+          "function": "_limits_path",
+          "kind": "data_dir",
+          "expression": "data_dir(_LIMITS_FILE)"
+        },
+        {
+          "line": 311,
+          "function": "set_admission_limit",
+          "kind": "cross_process_lock",
+          "expression": "cross_process_lock(path)"
+        },
+        {
+          "line": 325,
+          "function": "set_admission_limit",
+          "kind": "atomic_write_text",
+          "expression": "atomic_write_text(path, json.dumps(limits, sort_keys=True))"
+        },
+        {
+          "line": 341,
+          "function": "set_storage_limit",
+          "kind": "cross_process_lock",
+          "expression": "cross_process_lock(path)"
+        },
+        {
+          "line": 348,
+          "function": "set_storage_limit",
+          "kind": "atomic_write_text",
+          "expression": "atomic_write_text(path, json.dumps(limits, sort_keys=True))"
+        },
+        {
+          "line": 361,
+          "function": "start_over_limits",
+          "kind": "cross_process_lock",
+          "expression": "cross_process_lock(path)"
         }
       ]
     }
