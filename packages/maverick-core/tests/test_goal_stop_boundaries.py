@@ -198,13 +198,12 @@ async def test_goal_cancellation_retains_unknown_effect_in_durable_status(
     task = asyncio.create_task(run_goal(fake_llm, world, Budget(), gid,
                                         sandbox=LocalBackend(workdir=tmp_path)))
     try:
-        # Generous bounds: a fresh worker imports the run's start and settle
-        # paths (embeddings, tools, webhooks) for the first time here, which
-        # took over 5 s on a loaded machine. The test is about the durable
-        # status, not speed; a hang still fails at the bound.
+        # Start-up may import embeddings and tools for the first time in a
+        # fresh worker (over 5 s on a loaded machine); the cancel must still
+        # take effect quickly once the work is running.
         await asyncio.wait_for(started.wait(), 60)
         world.set_goal_status(gid, "cancelled")
-        result = await asyncio.wait_for(task, 60)
+        result = await asyncio.wait_for(task, 2)
         goal = world.get_goal(gid)
         assert goal.status == "cancelled"
         assert "may have committed" in result and "may have committed" in goal.result
