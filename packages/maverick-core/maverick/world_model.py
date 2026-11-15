@@ -72,7 +72,7 @@ log = logging.getLogger(__name__)
 # intentional override from the untouched compatibility constant.
 _INITIAL_DEFAULT_DB = data_dir("world.db")
 DEFAULT_DB = _INITIAL_DEFAULT_DB
-SCHEMA_VERSION = 52
+SCHEMA_VERSION = 53
 DEFAULT_BUSY_TIMEOUT_MS = 5000
 WAL_SWITCH_BUSY_TIMEOUT_MS = 50
 WAL_SWITCH_RETRY_SECONDS = 5.0
@@ -461,6 +461,10 @@ def _bootstrap_schema(conn: sqlite3.Connection) -> str:
 
 
 MIGRATIONS: dict[int, list[str]] = {
+    # v53: an external agent's run report key binds one goal. The unique
+    # index makes a concurrent retry with the same key reuse that goal.
+    53: ["CREATE UNIQUE INDEX IF NOT EXISTS idx_goal_origins_external_run "
+         "ON goal_origins(ref) WHERE kind = 'external_run'"],
     # v52: Postgres stores per-tenant rebinding completion in the database.
     # SQLite retains its adjacent marker; the table keeps schema heads aligned.
     52: ["CREATE TABLE IF NOT EXISTS encryption_migrations ("

@@ -1249,6 +1249,25 @@ class FederationService:
     def _authenticate(self, payload: dict[str, Any]) -> Peer | None:
         return _match_token(self._peers, str(payload.get("auth_token") or ""))
 
+    def _trusted_peer(self, payload: dict[str, Any], method: str) -> Peer:
+        """Authenticate, then apply the Agent Trust Plane as ``DelegateGoal``
+        does: an engaged plane refuses a peer that is absent, revoked, expired
+        or not permitted inbound, whatever its shared token. A no-op ALLOW
+        while the plane is disengaged."""
+        peer = self._authenticate(payload)
+        if peer is None:
+            raise FederationAuthError("federation: missing or invalid token")
+        from . import agent_trust
+        enforced, registry = agent_trust.load_trust_state()
+        decision = agent_trust.decide_inbound(
+            peer.name, registry=registry, enforced=enforced)
+        if decision.denied:
+            agent_trust.record_denied(
+                peer.name, decision, direction="inbound", correlation_id=method)
+            raise FederationAuthError(
+                f"federation: peer refused by the trust registry: {decision.reason}")
+        return peer
+
     def _verify_signed(
         self, peer: Peer, agent: Any, payload: dict[str, Any],
         registry: dict[str, Any], enforced: bool,
@@ -1342,8 +1361,7 @@ class FederationService:
         raise FederationError(f"unknown federation method: {method!r}")
 
     def hello(self, payload: dict[str, Any]) -> dict[str, Any]:
-        if self._authenticate(payload) is None:
-            raise FederationAuthError("federation: missing or invalid token")
+        self._trusted_peer(payload, "hello")
         return {
             "node": self.node,
             "protocol": PROTOCOL,
@@ -1515,9 +1533,7 @@ class FederationService:
                     "reason": "delegation admission unavailable; retry the same correlation_id"}
 
     def goal_status(self, payload: dict[str, Any]) -> dict[str, Any]:
-        peer = self._authenticate(payload)
-        if peer is None:
-            raise FederationAuthError("federation: missing or invalid token")
+        peer = self._trusted_peer(payload, "goal_status")
         st = self._goals().status(_to_int(payload.get("goal_id")))
         if st is None:
             return {"status": "unknown", "result": ""}

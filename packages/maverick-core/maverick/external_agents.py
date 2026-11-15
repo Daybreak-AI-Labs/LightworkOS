@@ -932,10 +932,13 @@ def record_run(agent_id: str, run: dict, *, shield: Any | None = None) -> dict:
     principal = f"agent:{agent_id}"
     from .world_model import open_world
     w = open_world()
-    gid = w.create_goal(
-        title, description=summary or "",
-        owner=principal,
+    gid, duplicate = _create_run_goal(
+        w, agent_id, idem, title, summary or "", owner=principal,
         domain=str(run.get("department") or meta.get("department") or ""))
+    if duplicate:
+        return {"goal_id": gid, "over_budget":
+                bool(_load_sidecar().get(agent_id, {}).get("over_budget")),
+                "duplicate": True}
     for step in steps:
         w.append_event(gid, principal, "status", step)
     eid = w.start_episode(gid)
@@ -966,6 +969,50 @@ def record_run(agent_id: str, run: dict, *, shield: Any | None = None) -> dict:
                 over_wall=over_wall)
     return {"goal_id": gid, "over_budget": over_budget,
             "over_wall": over_wall}
+
+
+_RUN_ORIGIN = "external_run"
+
+
+def _create_run_goal(w: Any, agent_id: str, idem: str, title: str,
+                     summary: str, *, owner: str, domain: str) -> tuple[int, bool]:
+    """Create a reported run's goal, binding its idempotency key in the same
+    transaction. A unique index on the key makes a concurrent report with the
+    same key reuse the first goal. Returns ``(goal_id, duplicate)``."""
+    if not idem:
+        return w.create_goal(title, description=summary, owner=owner,
+                             domain=domain), False
+    import hashlib
+
+    from .event_admission import _transaction
+    from .paths import current_tenant_id_strict
+    ref = hashlib.sha256(json.dumps(
+        ["external-run/1", current_tenant_id_strict(), agent_id, idem],
+        ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+    with _transaction(w, f"{_RUN_ORIGIN}:{ref}") as (db, mark, _, _, postgres):
+        found = db.execute(
+            f"SELECT goal_id FROM goal_origins WHERE kind={mark} AND ref={mark}",
+            (_RUN_ORIGIN, ref))
+        row = (db if postgres else found).fetchone()
+        if row is not None:
+            return int(row[0]), True
+        now = time.time()
+        if postgres:
+            from .world_model_backends.postgres import _active_tenant, _seal
+            db.execute(
+                "INSERT INTO goals(title,description,status,created_at,updated_at,"
+                "owner,domain,tenant_id) VALUES(%s,%s,'pending',%s,%s,%s,%s,%s) "
+                "RETURNING id",
+                (_seal(title, "goals.title"), _seal(summary, "goals.description"),
+                 now, now, owner, domain, _active_tenant()))
+            gid = int(db.fetchone()[0])
+        else:
+            gid = w.create_goal(title, description=summary, owner=owner,
+                                domain=domain)
+        db.execute(
+            f"INSERT INTO goal_origins(goal_id,kind,ref,created_at) "
+            f"VALUES({mark},{mark},{mark},{mark})", (gid, _RUN_ORIGIN, ref, now))
+    return gid, False
 
 
 def _settle_spend(agent_id: str, gid: int, *, cost: float, idem: str,
@@ -1428,6 +1475,9 @@ def _screen_admission(
     if mapped and (not req_risk
                    or risk_rank(mapped) > risk_rank(req_risk)):
         req_risk = mapped
+    # Neither a declaration nor an operator rating: treat it as high, so an
+    # agent cannot skip the approval floor by leaving the risk out.
+    req_risk = req_risk or "high"
     # The capability gate rates the tool name too. An external tool unrated in
     # Lightwork takes the operator's enrollment rating; without one it keeps
     # the unrated high floor and is refused under a lower ceiling.

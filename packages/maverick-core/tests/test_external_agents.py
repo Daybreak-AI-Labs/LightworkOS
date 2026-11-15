@@ -397,6 +397,18 @@ def test_screen_parks_an_approval_at_the_floor():
         xa.approval_status("sf-quotebot", 999999)
 
 
+def test_screen_treats_an_undeclared_unrated_risk_as_high():
+    _enroll(max_risk="high", allow_tools=[*_RATED_TOOLS, "mystery_tool"])
+    verdict = xa.screen("sf-quotebot", "mystery_tool", detail="do a thing")
+    assert verdict["allowed"] is False and verdict["requires_approval"] is True
+    status = xa.approval_status(
+        "sf-quotebot", verdict["approval_id"],
+        expected_binding_sha256=verdict["approval_binding_sha256"])
+    assert status["risk"] == "high"
+    # The operator's enrollment rating still stands in for a declaration.
+    assert xa.screen("sf-quotebot", "research")["rule"] == "allow"
+
+
 def test_screen_backlog_is_bounded_before_approval_and_notification(monkeypatch):
     from maverick.world_model import WorldModel
 
@@ -685,6 +697,30 @@ def test_idempotent_run_ingest_never_double_counts():
     # A different key is a different run.
     other = xa.record_run("sf-quotebot", dict(run, idempotency_key="run-002"))
     assert other["goal_id"] != first["goal_id"]
+
+
+def test_concurrent_run_reports_with_one_key_create_one_goal(monkeypatch):
+    _enroll()
+    gate = threading.Barrier(2, timeout=10)
+    clean = xa._clean_text
+
+    def _both_past_the_lookup(text, **kw):
+        if text == "Quote A":
+            gate.wait()
+        return clean(text, **kw)
+
+    monkeypatch.setattr(xa, "_clean_text", _both_past_the_lookup)
+    run = {"title": "Quote A", "outcome": "success", "summary": "s",
+           "cost_dollars": 1.0, "idempotency_key": "race-1"}
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: xa.record_run("sf-quotebot", dict(run)),
+                                range(2)))
+    assert results[0]["goal_id"] == results[1]["goal_id"]
+    assert sorted(bool(r.get("duplicate")) for r in results) == [False, True]
+    row = xa.roster()[0]
+    assert row["runs"] == 1 and row["spent_dollars"] == pytest.approx(1.0)
+    from maverick.world_model import WorldModel
+    assert [g.title for g in WorldModel().list_goals()].count("Quote A") == 1
 
 
 def test_operator_tool_risk_floors_the_declared_risk():

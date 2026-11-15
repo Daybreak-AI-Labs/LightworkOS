@@ -223,6 +223,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the refusal names the storage boundary.
 - An automation opportunity is not proposed while any completed run has no
   recorded cost, and the reason shown says so.
+- An outside agent that screens an action without a risk level, for a tool
+  you did not rate at enrollment, is treated as high risk and waits for
+  approval. Rate the tool at enrollment, or have the agent send a risk.
+- Two outside-agent run reports with the same idempotency key now record one
+  task, even when they arrive together. The world database moves to schema
+  53 on first open.
+- A federation peer that the trust registry refuses (missing, revoked or
+  expired) can no longer fetch this node's agent card or poll a task's
+  status with its shared token. Register the peer in `[agent_trust]`.
 
 ### Fixed
 
