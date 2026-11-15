@@ -97,6 +97,20 @@ def _resolve_via_socket(host: str, rtype: str) -> str:
 _RTYPES = ("A", "AAAA", "MX", "TXT", "CNAME", "NS")
 
 
+def _egress_denial(name: str) -> str | None:
+    """Why the policy forbids looking up ``name``, or None.
+
+    A query carries the name to a resolver, which can carry data out, so the
+    network posture and the enterprise, tenant and tool egress lists apply as
+    they do to http_fetch. A policy that cannot be read refuses.
+    """
+    from ._sdk_egress import sdk_egress_denial
+
+    target = f"[{name}]" if ":" in name else name
+    denial = sdk_egress_denial("dns_lookup", f"https://{target}/")
+    return f"ERROR: {denial}" if denial else None
+
+
 def _op_resolve(host: str, rtype: str) -> str:
     if not host:
         return "ERROR: resolve requires host"
@@ -104,6 +118,8 @@ def _op_resolve(host: str, rtype: str) -> str:
     if rtype not in _RTYPES:
         # The schema enum is advisory; dnspython would resolve any type it knows.
         return f"ERROR: rtype must be one of {', '.join(_RTYPES)}"
+    if denial := _egress_denial(host):
+        return denial
     if _have_dnspython():
         return _resolve_via_dnspython(host, rtype)
     return _resolve_via_socket(host, rtype)
@@ -112,6 +128,8 @@ def _op_resolve(host: str, rtype: str) -> str:
 def _op_reverse(ip: str) -> str:
     if not ip:
         return "ERROR: reverse requires ip"
+    if denial := _egress_denial(ip):
+        return denial
     if _have_dnspython():
         import dns.resolver
         import dns.reversename

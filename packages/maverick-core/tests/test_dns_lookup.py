@@ -57,3 +57,30 @@ def test_dns_rejects_record_types_outside_the_schema(monkeypatch):
     from maverick.tools.dns_lookup import dns_lookup
     out = dns_lookup().fn({"op": "resolve", "host": "example.com", "type": "AXFR"})
     assert out.startswith("ERROR") and "rtype" in out
+
+
+def test_dns_lookup_obeys_the_egress_policy(monkeypatch):
+    """A DNS query carries the name to a resolver, so the network posture and
+    the egress lists that hold http_fetch hold dns_lookup too."""
+    import maverick.tenant.egress as egress
+    seen: list[tuple[str, str]] = []
+
+    def _deny(tool, host):
+        seen.append((tool, host))
+        return False
+
+    monkeypatch.setattr(egress, "egress_allowed", _deny)
+    monkeypatch.setattr("maverick.tools.dns_lookup._have_dnspython", lambda: False)
+
+    def _no_resolve(*a, **k):
+        raise AssertionError("a denied name must not be resolved")
+
+    monkeypatch.setattr("socket.getaddrinfo", _no_resolve)
+    monkeypatch.setattr("socket.gethostbyaddr", _no_resolve)
+    from maverick.tools.dns_lookup import dns_lookup
+    tool = dns_lookup()
+    out = tool.fn({"op": "resolve", "host": "secret.attacker.example", "type": "A"})
+    assert out.startswith("ERROR") and "egress policy" in out
+    out = tool.fn({"op": "reverse", "ip": "203.0.113.9"})
+    assert out.startswith("ERROR") and "egress policy" in out
+    assert seen == [("dns_lookup", "secret.attacker.example"), ("dns_lookup", "203.0.113.9")]
