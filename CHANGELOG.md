@@ -224,8 +224,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - An automation opportunity is not proposed while any completed run has no
   recorded cost, and the reason shown says so.
 - Slack sends its bot token only to `https://files.slack.com` and follows
-  no redirects for shared files. Files stored outside Slack are not opened;
-  the person is told to upload the file to Slack instead.
+  no redirects for shared files. Files stored outside Slack are not opened,
+  and the person is told when a shared file was not opened or fetched.
 - A sealed discovery title is now signed for that purpose only and cannot
   pass as a signed eDiscovery export. `verify_export` also rejects a
   manifest that is not an export manifest. Titles and exports made by

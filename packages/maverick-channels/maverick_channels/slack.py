@@ -64,6 +64,8 @@ except ImportError:
 _SLACK_FILE_HOSTS = frozenset({"files.slack.com"})
 _REMOTE_FILE_NOTE = ("A file you shared is stored outside Slack, so I did not open it. "
                      "Upload the file to Slack itself if you want me to read it.")
+_MISSING_FILE_NOTE = ("I could not fetch a file you shared, so I did not read it. "
+                      "Try uploading it to Slack again.")
 
 
 def _remote_file(f: dict) -> bool:
@@ -186,16 +188,20 @@ class SlackChannel(Channel):
                     and msg.provider_sender_id == msg.principal_id)
 
     async def _prepare(self, msg, route):
-        files = route.get("files") or []
+        files = [f for f in (route.get("files") or [])[:10] if isinstance(f, dict)]
         msg.attachments = await self._download_files({"files": files})
-        if any(_remote_file(f) for f in files[:10] if isinstance(f, dict)):
+        remote = sum(1 for f in files if _remote_file(f))
+        notes = [_REMOTE_FILE_NOTE] if remote else []
+        if len(files) - remote > len(msg.attachments):
+            notes.append(_MISSING_FILE_NOTE)
+        if notes:
             # The message text is sealed at admission, so tell the person here.
             try:
                 await self._web.chat_postMessage(
-                    channel=msg.user_id, text=_REMOTE_FILE_NOTE, mrkdwn=False,
+                    channel=msg.user_id, text=" ".join(notes), mrkdwn=False,
                     thread_ts=route.get("reply_to"))
             except Exception:  # noqa: BLE001 -- a note never blocks the task
-                log.warning("slack: could not post the outside-file note", exc_info=True)
+                log.warning("slack: could not post the file note", exc_info=True)
         return msg
 
     async def _send_saved(self, msg, reply, route):
@@ -486,6 +492,8 @@ class SlackChannel(Channel):
             # An answer is the reply's text: files sent with it are not fetched.
             files = [] if reply_only else [{key: value for key, value in item.items() if key in {
                 "id", "name", "mimetype", "size", "url_private", "url_private_download",
+                # Slack's remote-file markers: the download step must see them.
+                "is_external", "mode", "filetype",
             }} for item in (event.get("files") or [])[:10]]
             text = self._strip_mention(event.get("text") or "")
             in_room = (event.get("type") == "app_mention"
