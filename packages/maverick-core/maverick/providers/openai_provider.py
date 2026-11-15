@@ -23,6 +23,7 @@ import math
 import os
 import re
 from collections.abc import Callable
+from types import SimpleNamespace
 from typing import Any
 
 from ..budget import Budget, UsageAccountingError
@@ -108,6 +109,30 @@ def _strict_usage_count(v: object, field: str, *, missing_ok: bool = False) -> i
     if n < 0:
         raise UsageAccountingError(f"invalid OpenAI usage.{field}: negative token count {n}")
     return n
+
+
+# Providers already warned that they omit usage (one warning per process).
+_ESTIMATE_WARNED: set[str] = set()
+
+
+def _estimated_tokens(text: str) -> int:
+    """About four characters per token, rounded up: a planning estimate."""
+    return math.ceil(len(text) / 4)
+
+
+def _estimated_request_tokens(kwargs: dict) -> int:
+    return _estimated_tokens(json.dumps(
+        [kwargs.get("messages"), kwargs.get("tools")], default=str, ensure_ascii=False,
+    ))
+
+
+def _estimated_reply_tokens(resp: Any) -> int:
+    message = getattr((getattr(resp, "choices", None) or [None])[0], "message", None)
+    parts = [getattr(message, "content", None), getattr(message, "reasoning_content", None)]
+    for call in getattr(message, "tool_calls", None) or []:
+        function = getattr(call, "function", None)
+        parts += [getattr(function, "name", None), getattr(function, "arguments", None)]
+    return _estimated_tokens("".join(p for p in parts if isinstance(p, str)))
 
 
 def _extract_tool_result_text(content: Any) -> str:
@@ -485,6 +510,7 @@ class OpenAIClient:
         model: str | None = None,
         price_model_prefix: str = "",
         usage_required: bool = True,
+        estimated_input_tokens: int = 0,
     ) -> LLMResponse:
         # Record usage first: the call is paid even when its content cannot
         # be parsed below, and a parse error must not skip the charge. A reply
@@ -497,13 +523,25 @@ class OpenAIClient:
                 raise UsageAccountingError(
                     "OpenAI response missing token usage; cannot enforce budget"
                 )
+            estimated = not usage
             if not usage:
-                # Self-hosted server omitted usage (see USAGE_REQUIRED). Its ids
-                # price at $0, so there is nothing to enforce: the getattr chain
-                # below reads 0/0 and records a $0, zero-token call (which keeps
-                # the call counted) instead of aborting the turn.
-                log.debug("%s omitted token usage; recording $0 self-hosted call",
-                          price_model_prefix.rstrip(":") or "provider")
+                # Self-hosted server omitted usage (see USAGE_REQUIRED). Charge
+                # an estimate from the text length instead of a zero-token call:
+                # a server on a public address is not free, and token limits
+                # apply to every server.
+                usage = SimpleNamespace(
+                    prompt_tokens=max(int(estimated_input_tokens), 0),
+                    completion_tokens=_estimated_reply_tokens(resp),
+                )
+                source = price_model_prefix.rstrip(":") or "provider"
+                log_once = log.warning if source not in _ESTIMATE_WARNED else log.debug
+                _ESTIMATE_WARNED.add(source)
+                log_once(
+                    "%s omitted token usage; charging an estimated %d input and "
+                    "%d output tokens from the text length (the cost line marks "
+                    "these calls estimated)",
+                    source, usage.prompt_tokens, usage.completion_tokens,
+                )
             # Extract cached-token counts where the provider reports
             # them. Vendors expose this on the usage object under
             # different field names; we try the known shapes and fall
@@ -550,6 +588,8 @@ class OpenAIClient:
                 cache_read_tok=cache_read_tok,
                 cache_read_mult=cls.CACHE_READ_MULT,
             )
+            if estimated:
+                budget.mark_usage_estimated()
         if no_choices:
             # Some OpenAI-compatible gateways (and OpenAI/Azure content-filter)
             # return an empty ``choices`` list on an upstream/filter error. An
@@ -773,6 +813,9 @@ class OpenAIClient:
             resp, budget, model=model or kwargs.get("model"),
             price_model_prefix=self.PRICE_MODEL_PREFIX,
             usage_required=self.USAGE_REQUIRED,
+            # Passed only when used so subclass overrides keep working.
+            **({} if self.USAGE_REQUIRED else
+               {"estimated_input_tokens": _estimated_request_tokens(kwargs)}),
         )
 
     async def complete_async(
@@ -807,4 +850,7 @@ class OpenAIClient:
             resp, budget, model=model or kwargs.get("model"),
             price_model_prefix=self.PRICE_MODEL_PREFIX,
             usage_required=self.USAGE_REQUIRED,
+            # Passed only when used so subclass overrides keep working.
+            **({} if self.USAGE_REQUIRED else
+               {"estimated_input_tokens": _estimated_request_tokens(kwargs)}),
         )

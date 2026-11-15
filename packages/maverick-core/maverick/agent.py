@@ -3633,7 +3633,9 @@ class Agent:
             from .governance import Verdict as _GV
             from .safety.tool_risk import risk_rank as _rr
             from .safety.tool_risk import tool_risk as _tr
-            _autonomy_levels_enabled = _aa.levels_enabled()
+            # Also on when the setting cannot be read: decide() then holds
+            # every consequential action at the lowest level (observe).
+            _autonomy_levels_enabled = _aa.levels_gate_active()
             _risk = _tr(name)
             # Disabled => the gate is a strict no-op (kernel rule 1: byte-for-byte
             # historical behaviour). Low-risk tools (reads/searches) and the

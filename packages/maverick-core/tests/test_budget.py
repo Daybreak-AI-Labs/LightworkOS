@@ -163,6 +163,93 @@ def test_strict_pricing_allows_known_and_selfhosted(monkeypatch):
     assert _lookup_price("ollama:llama-4-maverick") == (0.0, 0.0)
 
 
+_CEILING = budget_mod._SELF_HOSTED_PUBLIC_CEILING
+
+
+@pytest.mark.parametrize("table,env,expected", [
+    ({}, {}, (0.0, 0.0)),  # default localhost
+    ({"base_url": "http://10.0.0.5:11434"}, {}, (0.0, 0.0)),
+    ({"base_url": "http://ollama:11434"}, {}, (0.0, 0.0)),  # compose service name
+    ({"base_url": "http://100.101.1.2:11434"}, {}, (0.0, 0.0)),  # Tailscale / CGNAT
+    ({"base_url": "http://gpu.tail1234.ts.net:11434"}, {}, (0.0, 0.0)),  # MagicDNS
+    ({"base_url": "http://gpu.home:11434"}, {}, (0.0, 0.0)),
+    ({"base_url": "http://gpu.corp:11434"}, {}, (0.0, 0.0)),
+    ({"base_url": "http://gpu.example.org:11434"}, {}, _CEILING),  # not known private
+    ({}, {"VLLM_BASE_URL": "https://api.openai.com"}, _CEILING),
+    ({"base_url": "https://api.openai.com"}, {}, _CEILING),
+    ({"base_url": "https://gpu.example.com", "price_per_mtok": [0.5, 1.5]}, {}, (0.5, 1.5)),
+    ({"base_url": "https://gpu.example.com", "price_per_mtok": "free"}, {}, (0.0, 0.0)),
+    ({"base_url": "https://gpu.example.com", "price_per_mtok": "cheap"}, {}, _CEILING),
+])
+def test_self_hosted_route_is_free_only_on_a_private_address(monkeypatch, caplog, table, env, expected):
+    """DR 8: a self-hosted adapter pointed at a public address may be a paid
+    service. Without a price or an explicit "free", charge a safety ceiling and
+    say so, so the spending limit still holds."""
+    monkeypatch.setenv("MAVERICK_BILLING_STRICT", "1")
+    for name in ("VLLM_BASE_URL", "TGI_BASE_URL"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr("maverick.config.get_provider_config", lambda provider: dict(table))
+    budget_mod._UNPRICED_WARNED.clear()
+    provider = "vllm" if env else "ollama"
+    with caplog.at_level(logging.WARNING, logger="maverick.budget"):
+        quote = budget_mod._lookup_price_quote(f"{provider}:some-model")
+    assert quote.rates == expected
+    assert ("public address" in caplog.text) is (expected == _CEILING)
+
+
+@pytest.mark.parametrize("url,private", [
+    ("http://134744072:11434/v1", False),  # 8.8.8.8 written as one number
+    ("http://0x08080808:11434", False),  # 8.8.8.8 in hex
+    ("http://[::ffff:8.8.8.8]:11434", False),
+    ("http://0177.0.0.1:11434", True),  # octal loopback
+    ("http://127.1:11434", True),
+    ("http://2130706433:11434", True),  # 127.0.0.1 as one number
+    ("http://0x7f000001:11434", True),
+    ("http://[fd00::5]:11434", True),  # unique local
+    ("http://169.254.169.254", False),  # cloud metadata is not a model server
+    ("http://ollama:11434", True),  # a real single-label name
+])
+def test_ip_literals_are_classified_by_address_not_by_name(url, private):
+    """The OS resolver turns numeric hosts into addresses without DNS; price
+    them by the address, never by the single-label name rule."""
+    assert budget_mod._is_private_endpoint(url) is private
+
+
+def test_ceiling_charge_is_named_in_the_cap_error_and_cost_line(monkeypatch):
+    """A cap tripped by the safety ceiling says so and names the fix."""
+    monkeypatch.setattr("maverick.config.get_provider_config",
+                        lambda provider: {"base_url": "https://gpu.example.org"})
+    budget = Budget(max_dollars=1.0)
+    with pytest.raises(budget_mod.BudgetExceeded) as exceeded:
+        for _ in range(3):
+            budget.record_tokens(0, 10_000, model="ollama:llama3")
+    for text in (str(exceeded.value), budget.summary()):
+        assert "safety ceiling" in text and "ollama:llama3" in text
+        assert "mark it free" in text
+    budget.mark_usage_estimated()
+    assert "estimated" in budget.summary()
+
+
+def test_doctor_names_a_public_self_hosted_server_without_a_price(monkeypatch, capsys):
+    import maverick.health as health
+
+    tables = {"ollama": {"base_url": "https://gpu.example.com"},
+              "vllm": {"base_url": "http://127.0.0.1:8000"}}
+    for name in ("VLLM_BASE_URL", "TGI_BASE_URL"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr("maverick.config.get_provider_config",
+                        lambda provider: dict(tables.get(provider, {})))
+    health._FAILURES.clear()
+    health._check_self_hosted_prices()
+    out = capsys.readouterr().out
+    assert "ollama price" in out and "gpu.example.com" in out and "price_per_mtok" in out
+    assert "cannot tell" in out and "not on this machine" not in out
+    assert "vllm" not in out and "tgi" not in out
+    assert health._FAILURES == []  # advisory, not a failure
+
+
 def test_strict_pricing_prices_openrouter_models_the_provider_lists_as_free(monkeypatch):
     """OpenRouter's own listing says a model costs $0 for prompt and completion
     (its ``:free`` and stealth preview models). That published rate must price

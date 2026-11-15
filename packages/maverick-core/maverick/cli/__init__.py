@@ -489,6 +489,17 @@ class _MainGroup(click.Group):
         ctx.meta["maverick.help_only"] = _asks_for_help(None, self, ctx.info_name or "", args)
         return super().parse_args(ctx, args)
 
+    def invoke(self, ctx: click.Context):
+        """Show a refusal to open the records database as a plain message."""
+        try:
+            return super().invoke(ctx)
+        except RuntimeError as exc:
+            from ..world_model import WorldBackendUnreadable
+
+            if isinstance(exc, WorldBackendUnreadable):
+                raise click.ClickException(str(exc)) from exc
+            raise
+
 
 @click.group(cls=_MainGroup, epilog=(
     "New here? Start with these four:\n"

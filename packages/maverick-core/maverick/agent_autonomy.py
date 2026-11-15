@@ -44,7 +44,10 @@ Two hard floors this dial can never cross:
 Off by default (kernel rule 1): when ``[workforce] levels`` is not enabled the
 resolver returns ``SUGGEST`` for every consequential action -- byte-for-byte the
 historical "draft, a human commits" behavior. Pure and fail-open: any error
-degrades to ``SUGGEST`` (more cautious), never to ``AUTO``.
+degrades to ``SUGGEST`` (more cautious), never to ``AUTO``. A levels setting
+that cannot be read (an unreadable settings file or a value that is not a
+boolean) holds every consequential action at ``OBSERVE`` and never widens a
+tool grant; ``levels_problem`` says why.
 """
 from __future__ import annotations
 
@@ -335,7 +338,49 @@ def default_profile_for(name: str) -> AutonomyProfile:
     return _STANDARD
 
 
-# -- config binding (impure; fail-open) ------------------------------------
+# -- config binding (impure) -----------------------------------------------
+#
+# Two switches read the same setting. ``levels_enabled`` widens a pack's tool
+# grant (domain.domain_capability) and needs a readable "on". The gate
+# (``levels_gate_active``) is also on when the setting cannot be read: then
+# every consequential action falls back to OBSERVE, the lowest level, and
+# ``levels_problem`` says why (shown by ``maverick doctor`` and the dashboard).
+
+_ENV_ON = frozenset({"1", "true", "yes", "on"})
+_ENV_OFF = frozenset({"0", "false", "no", "off"})
+
+
+def _levels_setting(override: bool | None) -> tuple[bool, str | None]:
+    """``(enabled, problem)`` for the levels setting. Never raises."""
+    import os
+    if override is None:
+        env = os.environ.get("MAVERICK_WORKFORCE_LEVELS", "").strip().lower()
+    else:
+        env = "1" if override else "0"
+    if env in _ENV_OFF:
+        return False, None
+    try:
+        from .config import config_source_errors, get_workforce, load_config
+
+        settings = get_workforce()
+        errors = config_source_errors()
+        if errors:
+            return False, "Lightwork cannot read " + "; ".join(
+                f"{path} ({message})" for path, message in sorted(errors.items()))
+        if env in _ENV_ON:
+            return True, None
+        if env:
+            # A present malformed override cannot fall through to a permissive
+            # config value and accidentally turn the authority dial on.
+            return False, "MAVERICK_WORKFORCE_LEVELS is not on, off, true or false"
+        raw = load_config().get("workforce", {})
+        if not isinstance(raw, dict) or ("levels" in raw and not isinstance(raw["levels"], bool)):
+            return False, "[workforce] levels is not true or false"
+        return settings.get("levels") is True, None
+    except Exception:  # pragma: no cover -- config must never crash a run
+        log.warning("agent_autonomy: levels setting unreadable", exc_info=True)
+        return False, "the setting could not be read"
+
 
 def levels_enabled(override: bool | None = None) -> bool:
     """Whether the client has turned on per-agent autonomy levels.
@@ -343,29 +388,22 @@ def levels_enabled(override: bool | None = None) -> bool:
     Off by default (kernel rule 1); ``MAVERICK_WORKFORCE_LEVELS`` overrides the
     ``[workforce] levels`` config either way. ``override`` (a what-if analysis)
     takes the environment override's place for this one call, with the same
-    fail-closed rules, and changes nothing global. Never raises."""
-    import os
-    if override is None:
-        env = os.environ.get("MAVERICK_WORKFORCE_LEVELS", "").strip().lower()
-    else:
-        env = "1" if override else "0"
-    if env in {"0", "false", "no", "off"}:
-        return False
-    try:
-        from .config import config_source_errors, get_workforce
+    fail-closed rules, and changes nothing global. A setting that cannot be
+    read is not "on": it never widens a tool grant. Never raises."""
+    return _levels_setting(override)[0]
 
-        settings = get_workforce()
-        if config_source_errors():
-            return False
-        if env in {"1", "true", "yes", "on"}:
-            return True
-        if env:
-            # A present malformed override cannot fall through to a permissive
-            # config value and accidentally turn the authority dial on.
-            return False
-        return settings.get("levels") is True
-    except Exception:  # pragma: no cover -- config must never block a run
-        return False
+
+def levels_problem(override: bool | None = None) -> str | None:
+    """Why the levels setting cannot be trusted, in plain words, or None."""
+    return _levels_setting(override)[1]
+
+
+def levels_gate_active(override: bool | None = None) -> bool:
+    """Whether the runtime gate checks each consequential action: when levels
+    are on, and when the setting cannot be read (then at the lowest level)."""
+    if override is None:  # call bare so a patched levels_enabled() still applies
+        return levels_enabled() or levels_problem() is not None
+    return levels_enabled(override) or levels_problem(override) is not None
 
 
 def effective_profile(
@@ -405,7 +443,15 @@ def decide(
 ) -> AutonomyVerdict:
     """One-call resolution against live config: layer the client override on the
     pack profile and resolve the verdict for ``action``. This is the seam a
-    runtime gate calls; pure :func:`resolve` stays test-friendly."""
+    runtime gate calls; pure :func:`resolve` stays test-friendly. A setting
+    that cannot be read holds the action at OBSERVE, the lowest level."""
+    problem = levels_problem()
+    if problem is not None:
+        decision, execute_by = _decision_for(AutonomyLevel.OBSERVE)
+        return AutonomyVerdict(
+            AutonomyLevel.OBSERVE, decision, execute_by,
+            f"{problem}, so this agent can only watch until it is fixed",
+        )
     return resolve(
         effective_profile(name, pack_profile),
         action=action,
@@ -638,6 +684,8 @@ __all__ = [
     "clamp_down",
     "resolve",
     "levels_enabled",
+    "levels_gate_active",
+    "levels_problem",
     "effective_profile",
     "default_profile_for",
     "decide",

@@ -3801,6 +3801,26 @@ async def runtime_policy_exception_handler(
     )
 
 
+from maverick.world_model import WorldBackendUnreadable as _WorldBackendUnreadable  # noqa: E402
+
+
+@app.exception_handler(_WorldBackendUnreadable)
+async def world_backend_refused_handler(request: Request, exc: _WorldBackendUnreadable):
+    """The records database was refused (Postgres was last used and the
+    settings no longer choose it): a plain 503, never a generic 500. The
+    details, which name files, stay in the log and in ``maverick doctor``."""
+    log.error("records database refused on %s: %s", request.url.path, exc)
+    detail = ("Lightwork will not open a local records database, because it last used "
+              "its Postgres database and the settings no longer choose one. "
+              "An administrator can run maverick doctor to see what to fix.")
+    if _wants_html(request):
+        return templates.TemplateResponse(request, "error.html", {
+            "status": 503, "title": "Records database unavailable", "message": detail,
+            "path": request.url.path, "gate": "", "reauthenticate": "", "feature": {},
+        }, status_code=503)
+    return JSONResponse({"detail": detail, "code": "records_database_refused"}, status_code=503)
+
+
 @app.exception_handler(FlowPayloadError)
 async def flow_payload_exception_handler(request: Request, exc: FlowPayloadError):
     """Expose a recovery action without leaking private payload or key details."""

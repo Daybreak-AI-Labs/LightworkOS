@@ -824,6 +824,25 @@ def test_write_config_emits_local_first_model_for_local_provider(tmp_path: Path,
     assert parsed["local_first"]["model"].startswith("ollama:")
 
 
+def test_self_hosted_step_asks_a_public_server_for_its_price(tmp_path: Path, monkeypatch):
+    """DR 8: a self-hosted server off this machine and off a private network
+    may charge. The step asks for its price (or "free") and writes it."""
+    from maverick_installer import wizard
+
+    answers = iter(["https://gpu.example.com", "abc", "0.5", "1.5"])
+    monkeypatch.setattr(wizard, "_q_text", lambda message, default="": next(answers))
+    monkeypatch.setattr(wizard, "_q_select", lambda message, choices, default=None: choices[0])
+    options = {"vllm": wizard.pick_self_hosted("vllm")}
+    assert options["vllm"] == {"base_url": "https://gpu.example.com", "price_per_mtok": [0.5, 1.5]}
+    parsed = _write_full_config(tmp_path, monkeypatch, providers=["anthropic", "vllm"],
+                                provider_options=options)
+    assert parsed["providers"]["vllm"]["price_per_mtok"] == [0.5, 1.5]
+    assert parsed["providers"]["vllm"]["base_url"] == "https://gpu.example.com"
+    # A private address is never asked for a price.
+    monkeypatch.setattr(wizard, "_q_text", lambda message, default="": "http://10.1.2.3:8000")
+    assert wizard.pick_self_hosted("tgi") == {"base_url": "http://10.1.2.3:8000"}
+
+
 def test_write_config_emits_self_learning_distill_local(tmp_path: Path, monkeypatch):
     parsed = _write_full_config(
         tmp_path, monkeypatch,

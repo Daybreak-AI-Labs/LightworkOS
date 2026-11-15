@@ -483,13 +483,20 @@ def _resolved_view(name: str, directory: str | Path | None = None) -> dict | Non
     base = _base_profile(name, raw)
     errors, warnings = lint_profile(prof)
     readiness = workflow_readiness(prof)
-    from .agent_autonomy import default_profile_for, effective_profile, levels_enabled, resolve
+    from .agent_autonomy import (
+        default_profile_for,
+        effective_profile,
+        levels_enabled,
+        levels_problem,
+        resolve,
+    )
     from .config import get_workforce
 
     pack_autonomy = prof.autonomy or default_profile_for(name)
     current_autonomy = effective_profile(name, prof.autonomy)
     config_override = bool(get_workforce().get("agents", {}).get(name))
     autonomy_enabled = levels_enabled()
+    autonomy_problem = levels_problem()
     return {
         "name": name,
         "generation": _override_generation(name, (Path(directory) if directory else user_dir()) / f"{name}.toml"),
@@ -525,6 +532,7 @@ def _resolved_view(name: str, directory: str | Path | None = None) -> dict | Non
             "high": current_autonomy.high.value if current_autonomy.high else None,
             "onboarding": current_autonomy.onboarding,
             "levels_enabled": autonomy_enabled,
+            "levels_problem": autonomy_problem,
             "config_override": config_override,
             "pack_default": pack_autonomy.default.value,
             "pack": {
@@ -534,8 +542,11 @@ def _resolved_view(name: str, directory: str | Path | None = None) -> dict | Non
                 "high": pack_autonomy.high.value if pack_autonomy.high else None,
                 "onboarding": pack_autonomy.onboarding,
             },
+            # The level the runtime gate applies: watch-only (observe) while
+            # the setting cannot be read (agent_autonomy.decide).
             "effective": {
-                risk: resolve(current_autonomy, risk=risk, levels_enabled=autonomy_enabled).level.value
+                risk: "observe" if autonomy_problem else
+                resolve(current_autonomy, risk=risk, levels_enabled=autonomy_enabled).level.value
                 for risk in ("low", "medium", "high")
             },
         },

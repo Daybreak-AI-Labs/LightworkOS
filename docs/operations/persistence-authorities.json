@@ -13783,7 +13783,8 @@
       "review": "module purpose and persistence seam read; contract-family classification (not every operation tested)",
       "governed_namespaces": [],
       "literal_path_hints": [
-        "world.db"
+        "world.db",
+        "world_backend"
       ],
       "observed_mechanism_markers": {
         "begin_immediate": 7,
@@ -13908,6 +13909,18 @@
           "function": "_apply_migrations",
           "kind": "commit",
           "expression": "self.conn.commit()"
+        },
+        {
+          "line": 5554,
+          "function": "_world_backend_marker",
+          "kind": "data_dir",
+          "expression": "data_dir('world_backend', tenant=None)"
+        },
+        {
+          "line": 5566,
+          "function": "_record_world_backend",
+          "kind": "atomic_write_text",
+          "expression": "atomic_write_text(marker, backend + '\\n')"
         }
       ]
     },

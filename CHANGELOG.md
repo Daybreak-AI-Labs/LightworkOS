@@ -409,6 +409,40 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   person has no conversation, and shows what it actually removed.
 - Erasing a person also deletes the durable-execution checkpoints of their
   goals, which kept failed or stopped goals' transcripts.
+- An Ollama, vLLM or TGI model is free only when its server is on this
+  machine or a private network. A server on a public address is charged a
+  safety ceiling ($10/$50 per million tokens) until you set
+  `[providers.<name>] price_per_mtok` to its price or `"free"`; setup asks,
+  and `maverick doctor` names unpriced servers. A reply with no token counts
+  is charged an estimate from its text length.
+- Tailscale addresses (100.64.0.0/10) and names ending in `.ts.net`, `.home`
+  or `.corp` count as private, so their self-hosted models stay free. When
+  the safety ceiling priced any spend, the spending-limit message and the
+  cost line say so and name the fix. An administrator can mark an Ollama,
+  vLLM or TGI server free under Settings > Prices, which also shows how each
+  one is charged now; a server marked free in `config.toml` must be changed
+  there. The Copilot cannot make this change yet (nor other price changes).
+  The cost line counts calls whose token counts were estimated.
+- Lightwork now remembers which database it last used (`world_backend` in
+  the data folder). If that was Postgres and a settings file cannot be read,
+  it refuses to start and names the file and line instead of opening a local
+  database. Fix the file, or set `MAVERICK_WORLD_BACKEND=sqlite` to use the
+  local database on purpose.
+- Only `sqlite` and `postgres` are accepted for `MAVERICK_WORLD_BACKEND` and
+  `[world_model] backend`; any other value now stops start-up with a plain
+  message. Once Postgres was used, settings that no longer name a database
+  are refused too. A deployment that switched from Postgres back to the
+  local database must name `sqlite` explicitly once
+  (`[world_model] backend = "sqlite"` or `MAVERICK_WORLD_BACKEND=sqlite`);
+  the choice is remembered. The Helm chart now always sets the variable from
+  `worldModel.backend`. The CLI and dashboard show the refusal as a plain
+  message instead of an error trace.
+- When the independence-levels setting cannot be read (an unreadable
+  settings file, or `[workforce] levels` or `MAVERICK_WORKFORCE_LEVELS` that
+  is not true or false), every agent can only watch: consequential actions
+  are refused instead of the levels check switching off. `maverick doctor`
+  and the Workforce and Agents pages say so. Tool grants widen only when the
+  setting reads as on.
 
 ### Fixed
 
