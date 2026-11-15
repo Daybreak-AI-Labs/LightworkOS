@@ -325,10 +325,17 @@ def _decoded_base64(text: str) -> Iterator[str]:
 def score_text(text: str) -> tuple[float, list[str]]:
     """Return the highest plain/decoded score and all matched pattern names.
 
-    Decode one layer of complete base64 or base64url runs, up to 8192 encoded
-    characters / 6144 decoded bytes each. Binary, longer, whitespace-split and
-    nested encodings receive only their original-text score. Existing plain-text
-    matches are always retained; separate candidates do not add their weights.
+    Decode one layer of base64 or base64url runs of 5 to 8192 encoded characters
+    (6144 decoded bytes), at most 1024 runs per call. Binary, longer and nested
+    encodings receive only their original-text score. A run ends at whitespace,
+    so each piece of a split encoding is decoded on its own: base64 wrapped at 76
+    columns is scored line by line, catching phrases that fall within one line,
+    while pieces that are not valid base64 or UTF-8 on their own are ignored.
+
+    The score is the maximum of the plain-text score and each decoded run's
+    score; separate candidates do not add their weights. The names are the
+    plain-text matches followed by every new name from any decoded run, so they
+    can list rules from different candidates whose weights were never summed.
     """
     if not text:
         return 0.0, []
