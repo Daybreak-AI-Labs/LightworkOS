@@ -129,8 +129,8 @@ def measure_lift(
     tasks: list, *, run, score, confidence: float = 0.95,
     bootstrap: int = 2000, seed: int = 1234,
 ) -> LiftResult:
-    """Run each task under learning FROZEN (control) then LIVE (treatment),
-    score both, and return the paired lift.
+    """Run every task under learning FROZEN (control), then every task LIVE
+    (treatment), score both, and return the paired lift.
 
     ``run(task, frozen: bool) -> output`` performs one attempt with learning
     forced off/on (this fn sets ``MAVERICK_LEARNING_FROZEN`` around the call via
@@ -138,6 +138,10 @@ def measure_lift(
     verifier-backed success score in ``[0, 1]``. Both are injected so this is
     testable without a live agent. Each task is run once per arm, in order, so a
     deterministic ``run``/``score`` yields a deterministic result.
+
+    Every control run comes before any treatment run: freezing stops learning
+    writes but not recall, so a control run after a live one could use what
+    the live arm had just learned and understate the lift.
     """
     _validate_confidence(confidence)
     baseline: list[float] = []
@@ -146,6 +150,7 @@ def measure_lift(
         with forced_freeze(True):
             b_out = run(task, True)
         baseline.append(float(score(task, b_out)))
+    for task in tasks:
         with forced_freeze(False):
             t_out = run(task, False)
         treatment.append(float(score(task, t_out)))
