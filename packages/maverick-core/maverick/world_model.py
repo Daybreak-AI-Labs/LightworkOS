@@ -5593,7 +5593,8 @@ def _world_backend_marker() -> Path:
 
 
 def _record_world_backend(backend: str) -> None:
-    """Remember the database this install last opened (best effort)."""
+    """Remember that this install used Postgres, or deliberately left it (best
+    effort). An install that only ever used the local database has no marker."""
     marker = _world_backend_marker()
     try:
         if marker.is_file() and marker.read_text(encoding="utf-8").strip() == backend:
@@ -5639,8 +5640,11 @@ def _refuse_silent_local_fallback() -> None:
         )
     if env:
         # An explicit choice (postgres was handled by the caller). Remember a
-        # deliberate move to the local database so later starts need no flag.
-        _record_world_backend("sqlite")
+        # deliberate move away from Postgres so later starts need no flag. A
+        # machine that never used Postgres has no marker and gets none: opening
+        # the local database must not write anything beside it.
+        if _last_world_backend() == "postgres":
+            _record_world_backend("sqlite")
         return
     from .config import config_path, config_source_errors, load_config
 
@@ -5664,7 +5668,9 @@ def _refuse_silent_local_fallback() -> None:
             "overlay), which Lightwork does not understand. Use "
             '"sqlite" for the local database or "postgres" for the shared one.'
         )
-    if choice == "sqlite" or last != "postgres":
+    if last != "postgres":
+        return
+    if choice == "sqlite":
         _record_world_backend("sqlite")
         return
     raise WorldBackendUnreadable(
