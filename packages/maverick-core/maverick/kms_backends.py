@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import ipaddress
 import os
 import re
 from typing import Any
@@ -163,6 +164,21 @@ class VaultTransitKMS:
         self.key_id = _require(key_id or os.environ.get("MAVERICK_KMS_KEY_ID")
                                or cfg.get("key_id"), "key_id")
         self.address = address or cfg.get("address") or os.environ.get("VAULT_ADDR")
+        if self.address is not None:
+            try:
+                target = urlsplit(self.address)
+                host = target.hostname or ""
+                try:
+                    loopback = ipaddress.ip_address(host).is_loopback
+                except ValueError:
+                    loopback = host.lower() == "localhost"
+                port = target.port
+                safe = (bool(host) and (port is None or port > 0) and not target.username and not target.password
+                        and (target.scheme == "https" or (target.scheme == "http" and loopback)))
+            except (TypeError, ValueError):
+                safe = False
+            if not safe:
+                raise EncryptionUnavailable("Vault requires an HTTPS address or an HTTP loopback address")
         self.token = token or os.environ.get("VAULT_TOKEN")
         self.mount = mount or cfg.get("mount") or TEXT_SETTINGS["kms.mount"].runtime_default
         self._client = client

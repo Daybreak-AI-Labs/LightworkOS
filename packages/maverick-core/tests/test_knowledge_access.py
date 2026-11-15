@@ -2238,3 +2238,45 @@ def test_untracked_lexical_projection_makes_revocation_clear_everything(access):
     # The fail-safe cleared the stale set; only the re-derived survivor is back.
     assert len(service._lexical) == 1
     assert set(service._lexical) == set(service._lexical_owner)
+
+
+def test_recovery_delivers_the_confirmed_source_revocation_hook(access):
+    service, registry, rights, _ = access
+    source = _dataset(registry, rights, "tenant-a", "hook-recovery")
+    request = service.submit_request("tenant-a", "user:admin", source,
+        request_type="exclusion", reason="Exclude source", request_key="hook-recovery")
+    service.after_source_revoked = lambda row: (_ for _ in ()).throw(RuntimeError("interrupted hook"))
+    evidence = _sha("hook review")
+    with pytest.raises(RuntimeError, match="interrupted hook"):
+        service.decide_request("tenant-a", "user:admin", request["id"], expected_revision=request["revision"],
+            decision="approve", evidence_sha256=evidence)
+    applying = service.get_request("tenant-a", request["id"])
+    delivered = []
+    service.after_source_revoked = lambda row: delivered.append((row["id"], registry.inspect("tenant-a", source)["state"]))
+    done = service.decide_request("tenant-a", "user:admin", request["id"], expected_revision=applying["revision"],
+        decision="approve", evidence_sha256=evidence)
+    assert delivered == [(request["id"], "revoked")]
+    assert done["status"] == "approved"
+
+
+@pytest.mark.parametrize("constraint", ["no_human_display", "machine_use_only", "no_read"])
+def test_published_derivatives_keep_current_human_display_constraints(access, monkeypatch, constraint):
+    from dataclasses import asdict
+
+    from maverick import knowledge_task_context as context
+
+    service, registry, rights, _ = access
+    reference = _dataset(registry, rights, "tenant-a", "restricted-analysis",
+        action="analyze", usage_constraints=(constraint,))
+    goal = SimpleNamespace(id=1, title="Analysis", description="Compare evidence", created_at=1,
+                           owner="user:alice", status="done")
+    monkeypatch.setattr(context, "enabled", lambda: True)
+    monkeypatch.setattr(context, "service", lambda: service)
+    with tenant_scope(tenant="tenant-a"):
+        context._write(goal.id, {"tenant": "tenant-a", "owner": goal.owner, "brief_sha": context._brief(goal),
+            "references": [asdict(reference)], "purpose": PURPOSE, "phase": "published", "result": "Restricted derivative"})
+        # The source is legitimately usable by an analysis worker, but not for display.
+        assert service.materialize_at_job_start("tenant-a", goal.owner, [reference],
+            purpose=PURPOSE, action="analyze", job_id="check-analysis")["count"] == 1
+        with pytest.raises(context.SourceContextUnavailable):
+            context.read_analysis(SimpleNamespace(get_goal=lambda _: goal), goal.id, goal.owner)

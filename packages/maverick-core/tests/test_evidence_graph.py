@@ -470,3 +470,35 @@ def test_graph_listing_refuses_unbounded_namespace(monkeypatch):
 
     with pytest.raises(ValueError, match="10000-node operational limit"):
         evidence_graph.list_nodes()
+
+
+def test_ingester_cannot_review_own_evidence():
+    node = evidence_graph.ingest(source="drill", source_id="self-review", evidence_type="drill",
+        title="Restore", summary="Observed restore", controls=["RES-01"], attributes={}, actor="user:alice")
+    with pytest.raises(ValueError, match="different"):
+        evidence_graph.decide(node["id"], decision="approved", rationale="I observed it",
+            reviewer="user:alice", expected_revision=node["revision"])
+    assert evidence_graph.get(node["id"])["status"] == "pending_review"
+
+
+def test_superseded_security_revisions_can_release_graph_capacity(monkeypatch):
+    mapped = security_ops.map_evidence("MFA", "MFA", control_ids=["IAM-02"], submitted_by="analyst")
+    current = security_ops.decide_evidence(mapped["id"], "approved", "Reviewed", "reviewer", mapped["revision"])
+    old = evidence_graph.collect_security_evidence(actor="collector")[0]
+    for _ in range(2):
+        current = security_ops.decide_evidence(mapped["id"], "rejected", "Refreshing", "reviewer", current["revision"])
+        current = security_ops.decide_evidence(mapped["id"], "approved", "Reviewed again", "reviewer", current["revision"])
+        latest = evidence_graph.collect_security_evidence(actor="collector")[0]
+    monkeypatch.setattr(evidence_graph, "_MAX_GRAPH_NODES", 2)
+    from maverick import audit
+
+    with monkeypatch.context() as unavailable_audit:
+        unavailable_audit.setattr(audit, "record", lambda *a, **kw: False)
+        with pytest.raises(ValueError, match="could be safely retired"):
+            evidence_graph.list_nodes()
+        assert len(evidence_graph._STORE.list()) == 3
+    evidence_graph._STORE.retry_pending(limit=10)
+    nodes = evidence_graph.list_nodes()
+    assert len(nodes) <= 2
+    assert any(node["id"] == latest["id"] and node["status"] == "approved" for node in nodes)
+    assert evidence_graph.get(old["id"]) is None

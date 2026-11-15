@@ -83,8 +83,11 @@ def incident_reporting_posture(now: float, due_soon_seconds: float = 2 * _DAY) -
 
 
 def _incident_section(now: float, due_soon_seconds: float) -> tuple[dict[str, Any], int]:
-    section = incident_reporting_posture(now, due_soon_seconds)
-    return section, section["overdue_count"] + section["due_soon_count"]
+    try:
+        section = incident_reporting_posture(now, due_soon_seconds)
+        return section, section["overdue_count"] + section["due_soon_count"]
+    except Exception:
+        return {"enabled": False, "error": "unavailable"}, 0
 
 
 def _literacy_section(now: float, expiring_days: int) -> tuple[dict[str, Any], int]:
@@ -95,44 +98,44 @@ def _literacy_section(now: float, expiring_days: int) -> tuple[dict[str, Any], i
             return {"enabled": False}, 0
         gaps = ai_literacy.literacy_gaps(now=now)
         plane_status = ai_literacy.literacy_plane_status(now=now)
+        horizon = now + expiring_days * _DAY
+        expiring = 0
+        for person in gaps.get("persons") or []:
+            for state in person.get("trainings") or []:
+                valid_until = state.get("valid_until")
+                if (
+                    state.get("status") == "current"
+                    and valid_until is not None
+                    and float(valid_until) <= horizon
+                ):
+                    expiring += 1
+        counts = gaps.get("counts") or {}
+        missing = int(counts.get("missing") or 0)
+        expired = int(counts.get("expired") or 0)
+        canonical = plane_status.get("canonical") or {}
+        canonical_summary = canonical.get("summary") or {}
+        canonical_gaps = int(canonical_summary.get("coverage_gaps") or 0)
+        reconciliation_required = bool(plane_status.get("reconciliation_required"))
+        section = {
+            "enabled": True,
+            "missing": missing,
+            "expired": expired,
+            "expiring_soon": expiring,
+            "canonical_coverage_gaps": canonical_gaps,
+            "canonical_available": canonical.get("available") is True,
+            "data_plane": "role_compatibility",
+            "authoritative_for_compliance": False,
+            "unreconciled_ai_literacy_data": reconciliation_required,
+            "reconciliation_notice": plane_status.get("notice"),
+            "citation": "Art. 4",
+        }
+        return (
+            section,
+            missing + expired + expiring + canonical_gaps
+            + (1 if reconciliation_required else 0),
+        )
     except Exception:
         return {"enabled": False, "error": "unavailable"}, 0
-    horizon = now + expiring_days * _DAY
-    expiring = 0
-    for person in gaps.get("persons") or []:
-        for state in person.get("trainings") or []:
-            valid_until = state.get("valid_until")
-            if (
-                state.get("status") == "current"
-                and valid_until is not None
-                and float(valid_until) <= horizon
-            ):
-                expiring += 1
-    counts = gaps.get("counts") or {}
-    missing = int(counts.get("missing") or 0)
-    expired = int(counts.get("expired") or 0)
-    canonical = plane_status.get("canonical") or {}
-    canonical_summary = canonical.get("summary") or {}
-    canonical_gaps = int(canonical_summary.get("coverage_gaps") or 0)
-    reconciliation_required = bool(plane_status.get("reconciliation_required"))
-    section = {
-        "enabled": True,
-        "missing": missing,
-        "expired": expired,
-        "expiring_soon": expiring,
-        "canonical_coverage_gaps": canonical_gaps,
-        "canonical_available": canonical.get("available") is True,
-        "data_plane": "role_compatibility",
-        "authoritative_for_compliance": False,
-        "unreconciled_ai_literacy_data": reconciliation_required,
-        "reconciliation_notice": plane_status.get("notice"),
-        "citation": "Art. 4",
-    }
-    return (
-        section,
-        missing + expired + expiring + canonical_gaps
-        + (1 if reconciliation_required else 0),
-    )
 
 
 def _conformity_section(now: float) -> tuple[dict[str, Any], int]:
@@ -167,22 +170,22 @@ def _vendor_section(now: float, renewal_days: int) -> tuple[dict[str, Any], int]
         if not vm.enabled():
             return {"enabled": False}, 0
         renewals = vm.contract_renewals(now=now, due_soon_days=renewal_days)
+        overdue = [
+            f"{entry['vendor_id']}:{entry['kind']}"
+            for entry in renewals["overdue"]
+        ]
+        due_soon = [
+            f"{entry['vendor_id']}:{entry['kind']}"
+            for entry in renewals["due_soon"]
+        ]
+        section = {
+            "enabled": True,
+            "contracts_overdue": overdue[:_MAX_IDS],
+            "contracts_due_soon": due_soon[:_MAX_IDS],
+        }
+        return section, len(overdue) + len(due_soon)
     except Exception:
         return {"enabled": False, "error": "unavailable"}, 0
-    overdue = [
-        f"{entry['vendor_id']}:{entry['kind']}"
-        for entry in renewals["overdue"]
-    ]
-    due_soon = [
-        f"{entry['vendor_id']}:{entry['kind']}"
-        for entry in renewals["due_soon"]
-    ]
-    section = {
-        "enabled": True,
-        "contracts_overdue": overdue[:_MAX_IDS],
-        "contracts_due_soon": due_soon[:_MAX_IDS],
-    }
-    return section, len(overdue) + len(due_soon)
 
 
 def _data_map_section(now: float) -> tuple[dict[str, Any], int]:
@@ -193,17 +196,17 @@ def _data_map_section(now: float) -> tuple[dict[str, Any], int]:
         if not dm.enabled():
             return {"enabled": False}, 0
         posture = dm.data_map_posture()
+        unlinked = int(posture.get("unlinked_flagged_assets") or 0)
+        section = {
+            "enabled": True,
+            "unlinked_flagged_assets": unlinked,
+            "special_category_assets": int(
+                posture.get("special_category_assets") or 0
+            ),
+        }
+        return section, unlinked
     except Exception:
         return {"enabled": False, "error": "unavailable"}, 0
-    unlinked = int(posture.get("unlinked_flagged_assets") or 0)
-    section = {
-        "enabled": True,
-        "unlinked_flagged_assets": unlinked,
-        "special_category_assets": int(
-            posture.get("special_category_assets") or 0
-        ),
-    }
-    return section, unlinked
 
 
 def digest(
@@ -236,6 +239,8 @@ def digest(
     estate, estate_count = _data_map_section(current)
     return {
         "generated_at": current,
+        "complete": all(not section.get("error") and section.get("complete") is not False
+                        for section in (incidents, literacy, conformity, vendors, estate)),
         "attention_count": (
             incident_count + literacy_count + conformity_count
             + vendor_count + estate_count
