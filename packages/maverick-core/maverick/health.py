@@ -118,6 +118,25 @@ def _check_governance_tool_names(cfg: dict) -> None:
         _row(YELLOW, "governance", f.message)
 
 
+def _check_policy_overlays() -> None:
+    """Advisory: workspace settings and agent overrides on disk that try to
+    loosen your organisation's policy. They still load; the looser part is
+    ignored, and this lists it so an administrator can tidy the file."""
+    try:
+        from .config import tenant_policy_loosenings
+        from .domain import clamped_workspace_domains
+        loosened = tenant_policy_loosenings()
+        clamped = clamped_workspace_domains()
+    except Exception:  # pragma: no cover -- the doctor must never break
+        return
+    for workspace, keys in sorted(loosened.items())[:8]:
+        _row(YELLOW, "workspace policy", f"{workspace}: ignored {', '.join(keys)}",
+             fix="A workspace can only make these settings stricter. Remove them from its config.toml.")
+    for name, reasons in sorted(clamped.items())[:8]:
+        _row(YELLOW, "agent override", f"{name}: {'; '.join(reasons)}",
+             fix="The looser part is ignored. Edit the override so it only narrows the built-in agent.")
+
+
 def _sdk_import_failure(
     name: str, exc: ImportError, install_fix: str
 ) -> tuple[str, str]:
@@ -967,6 +986,7 @@ def diagnose() -> int:
     cfg = _check_config()
     _check_config_lint(cfg)
     _check_governance_tool_names(cfg)
+    _check_policy_overlays()
     _check_config_perms()
     _check_profile()
     _check_data_residency(cfg)

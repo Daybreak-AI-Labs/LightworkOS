@@ -1797,3 +1797,33 @@ def test_deleting_the_wizard_env_file_withdraws_what_it_exported(tmp_path, monke
     env.unlink()
     config_module._load_env_file(env)
     assert name not in os.environ
+
+
+def test_a_tenant_overlay_can_only_tighten_organisation_policy(tmp_path, monkeypatch):
+    from maverick import config
+    from maverick.governance import Policy
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    monkeypatch.delenv("MAVERICK_CONFIG", raising=False)
+    (tmp_path / "config.toml").write_text(
+        '[governance]\ndeny_actions = ["shell"]\nrequire_human_min_risk = "medium"\n', encoding="utf-8")
+    tenant = tmp_path / "tenants" / "acme" / "config.toml"
+    tenant.parent.mkdir(parents=True)
+    tenant.write_text(
+        '[governance]\ndeny_actions = ["browser"]\nrequire_human_min_risk = "none"\n'
+        '[capabilities]\nbrowser = true\n[sandbox]\ntimeout = 30\n[budget]\nmax_dollars = 2.0\n',
+        encoding="utf-8")
+    config.reset_config_cache()
+    monkeypatch.setenv("MAVERICK_TENANT", "acme")
+
+    cfg = config.load_config()
+    assert cfg["governance"] == {"deny_actions": ["shell", "browser"], "require_human_min_risk": "medium"}
+    assert config.get_capabilities()["browser"] is False
+    assert cfg["sandbox"]["timeout"] == 30 and cfg["budget"]["max_dollars"] == 2.0
+    policy = Policy.from_config()
+    assert policy.deny_actions == {"shell", "browser"} and policy.require_human_min_risk == "medium"
+    assert config.tenant_ignored_settings() == {
+        "governance.deny_actions", "governance.require_human_min_risk", "capabilities.browser"}
+    monkeypatch.delenv("MAVERICK_TENANT")
+    assert config.tenant_policy_loosenings() == {"acme": [
+        "governance.deny_actions", "governance.require_human_min_risk", "capabilities.browser"]}

@@ -393,40 +393,65 @@ def overlay_profile(base: DomainProfile, patch: dict) -> DomainProfile:
     return DomainProfile(name=base.name, **data)
 
 
-_RISK_RANK = {"low": 0, "medium": 1, "high": 2}
+_RISK_ORDER = ("low", "medium", "high", None)
+
+
+def _gates(profile: DomainProfile) -> set[tuple[str, str]]:
+    return {(step.name, step.gate) for step in profile.workflow if step.gate}
+
+
+def _clamp_overlay(base: DomainProfile, merged: DomainProfile) -> tuple[DomainProfile, list[str]]:
+    """Keep only the parts of an overlay that are at least as strict as its base.
+
+    Returns the clamped profile and one reason per ignored looser field. The
+    editor refuses a save with any reason; a file already on disk loads with
+    the looser part ignored (:func:`clamped_workspace_domains`).
+    """
+    from dataclasses import replace
+
+    from .policy_tighten import tighten
+
+    changes: dict = {}
+    reasons: list[str] = []
+
+    def apply(field_name: str, kind: str, message: str, order=()) -> None:
+        upper, lower = getattr(base, field_name), getattr(merged, field_name)
+        try:
+            value, loosened = tighten(kind, upper, lower, order=order)
+        except ValueError:
+            value, loosened = upper, True
+        if loosened:
+            reasons.append(message)
+            changes[field_name] = value
+
+    apply("allow_tools", "allow_list", "allow_tools cannot add tools beyond the built-in pack: "
+          + ", ".join(sorted(set(merged.allow_tools) - set(base.allow_tools))))
+    apply("deny_tools", "deny_list", "deny_tools cannot remove built-in denied tools: "
+          + ", ".join(sorted(set(base.deny_tools) - set(merged.deny_tools))))
+    apply("max_risk", "rank", f"max_risk cannot be raised above the built-in pack ({base.max_risk})",
+          order=_RISK_ORDER)
+    for field_name in ("allow_paths", "allow_hosts"):
+        apply(field_name, "allow_list", f"{field_name} cannot broaden the built-in pack's scope")
+    apply("mcp_servers", "subset", "mcp_servers cannot add entries beyond the built-in pack: "
+          + ", ".join(sorted(set(merged.mcp_servers) - set(base.mcp_servers))))
+    apply("refuse", "deny_list", "refuse cannot remove the built-in pack's refusals")
+    if not _gates(base) <= _gates(merged):
+        reasons.append("workflow cannot remove the built-in pack's review gates")
+        changes["workflow"] = list(base.workflow)
+    if base.output.gate and merged.output.gate != base.output.gate:
+        reasons.append("output cannot remove the built-in pack's review gate")
+        changes["output"] = replace(merged.output, gate=base.output.gate)
+    if merged.compartment != base.compartment:
+        reasons.append("compartment cannot differ from the built-in pack")
+        changes["compartment"] = base.compartment
+    return (replace(merged, **changes) if changes else merged), reasons
 
 
 def _envelope_errors(base: DomainProfile | None, merged: DomainProfile) -> list[str]:
     """Reject an overlay that broadens the pack it inherits from."""
     if base is None:
         return []
-    errors: list[str] = []
-    added_tools = sorted(set(merged.allow_tools) - set(base.allow_tools))
-    if added_tools:
-        errors.append("allow_tools cannot add tools beyond the built-in pack: "
-                      + ", ".join(added_tools))
-    missing_denies = sorted(set(base.deny_tools) - set(merged.deny_tools))
-    if missing_denies:
-        errors.append("deny_tools cannot remove built-in denied tools: "
-                      + ", ".join(missing_denies))
-    base_rank = _RISK_RANK.get(str(base.max_risk or ""))
-    merged_rank = _RISK_RANK.get(str(merged.max_risk or ""))
-    if base_rank is not None and merged_rank is not None and merged_rank > base_rank:
-        errors.append(f"max_risk cannot be raised above the built-in pack ({base.max_risk})")
-    if merged.compartment != base.compartment:
-        errors.append("compartment cannot differ from the built-in pack")
-    for field_name in ("allow_paths", "allow_hosts"):
-        inherited = set(getattr(base, field_name))
-        current = set(getattr(merged, field_name))
-        # Empty path/host scopes mean unrestricted. Dropping a non-empty
-        # inherited scope broadens it; adding a scope to an empty one narrows.
-        if inherited and (not current or not current <= inherited):
-            errors.append(f"{field_name} cannot broaden the built-in pack's scope")
-    added_servers = sorted(set(merged.mcp_servers) - set(base.mcp_servers))
-    if added_servers:
-        errors.append("mcp_servers cannot add entries beyond the built-in pack: "
-                      + ", ".join(added_servers))
-    return errors
+    return _clamp_overlay(base, merged)[1]
 
 
 def render_workflow_prompt(workflow: list[WorkflowStep]) -> str:
@@ -468,8 +493,9 @@ def extends_errors(name: str, patch: dict, base: DomainProfile | None,
 _MAX_EXTENDS_DEPTH = 32
 
 
-def _resolved_catalog() -> tuple[dict[str, DomainProfile], dict[str, list[str]]]:
-    """Resolve workspace packs, retaining rejected names for lint diagnostics.
+def _resolved_catalog() -> tuple[dict[str, DomainProfile], dict[str, list[str]], dict[str, list[str]]]:
+    """Resolve workspace packs, retaining rejected names for lint diagnostics
+    and, per pack, the looser overlay fields that were ignored.
 
     A pack is resolved after the workspace pack it extends, whatever the file
     names, so a fork always inherits its base's restrictions.
@@ -477,6 +503,7 @@ def _resolved_catalog() -> tuple[dict[str, DomainProfile], dict[str, list[str]]]
     builtin = builtin_domains()
     resolved = dict(builtin)
     rejected: dict[str, list[str]] = {}
+    clamped: dict[str, list[str]] = {}
     raw = _load_raw_domains(user_dir(), rejected=rejected)
     for name in rejected:
         resolved.pop(name, None)
@@ -497,7 +524,10 @@ def _resolved_catalog() -> tuple[dict[str, DomainProfile], dict[str, list[str]]]
             if not errors:
                 errors, _ = lint_profile(profile)
             if base is not None and not errors:
-                errors.extend(_envelope_errors(base, profile))
+                # Looser parts are ignored, not refused: the pack keeps loading.
+                profile, ignored = _clamp_overlay(base, profile)
+                if ignored:
+                    clamped[name] = ignored
         except Exception:
             # A hand-edited pack with malformed field types must not interrupt
             # discovery or become active through the workspace catalog.
@@ -514,7 +544,7 @@ def _resolved_catalog() -> tuple[dict[str, DomainProfile], dict[str, list[str]]]
 
     for name in raw:
         resolve(name, 0)
-    return resolved, rejected
+    return resolved, rejected, clamped
 
 
 def available_domains() -> dict[str, DomainProfile]:
@@ -524,6 +554,11 @@ def available_domains() -> dict[str, DomainProfile]:
     it does not set. Unsafe files remain inactive until corrected.
     """
     return _resolved_catalog()[0]
+
+
+def clamped_workspace_domains() -> dict[str, list[str]]:
+    """Workspace overlays that load with their looser fields ignored, and why."""
+    return _resolved_catalog()[2]
 
 
 def rejected_workspace_domains() -> dict[str, list[str]]:

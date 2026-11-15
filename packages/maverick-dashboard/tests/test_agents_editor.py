@@ -24,6 +24,12 @@ def _clean_builtin_name() -> str:
     raise AssertionError("no lint-error-clean built-in pack found")
 
 
+def _builtin_gates(name: str) -> list[dict]:
+    from maverick.domain import builtin_dir, load_domains
+    return [{"name": s.name, "instruction": s.instruction, "tools": list(s.tools), "gate": s.gate}
+            for s in load_domains(builtin_dir())[name].workflow if s.gate]
+
+
 @pytest.fixture(autouse=True)
 def _isolated(tmp_path, monkeypatch):
     from maverick import world_model
@@ -221,18 +227,20 @@ class TestOverrideLifecycle:
 
     def test_workflow_edit_round_trips(self):
         name = _clean_builtin_name()
+        gated = _builtin_gates(name)  # an override may only add review gates
         steps = [{"name": "intake", "instruction": "Read the request.",
-                  "tools": [], "gate": None}]
+                  "tools": [], "gate": None}, *gated]
         r = _publish(name, {"workflow": steps})
         assert r.status_code == 200 and r.json()["confirmed"], r.text
         view = client.get(f"/api/v1/agents/{name}").json()
-        assert [s["name"] for s in view["workflow"]] == ["intake"]
+        assert [s["name"] for s in view["workflow"]] == ["intake", *(s["name"] for s in gated)]
 
     def test_page_renders_workflow_as_editable_rows(self):
         name = _clean_builtin_name()
         published = _publish(name, {"workflow": [
             {"name": "intake", "instruction": "Read the request.", "tools": [], "gate": None},
             {"name": "review", "instruction": "Check it.", "tools": [], "gate": "approval"},
+            *_builtin_gates(name),
         ]})
         assert published.status_code == 200 and published.json()["confirmed"], published.text
         html = client.get(f"/agents?name={name}").text

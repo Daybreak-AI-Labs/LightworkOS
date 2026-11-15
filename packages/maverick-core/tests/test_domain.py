@@ -337,19 +337,29 @@ class TestAvailableDomainsOverlay:
             assert domains[fork].allow_hosts == ["example.com"]
 
     def test_workspace_override_cannot_expand_builtin_tools(self, tmp_path, monkeypatch):
+        # An override already on disk keeps loading; its looser parts are ignored.
+        from maverick.domain import clamped_workspace_domains
+
         name = "aero_avionics"
         base = load_domains(builtin_dir())[name]
         assert not lint_profile(base)[0]
         assert "web_search" not in base.allow_tools
         monkeypatch.setenv("MAVERICK_DOMAINS_DIR", str(tmp_path))
         (tmp_path / f"{name}.toml").write_text(
-            f'name = "{name}"\n'
-            f'allow_tools = {json.dumps([*base.allow_tools, "web_search"])}\n',
+            f'name = "{name}"\npersona = "Narrowed."\n'
+            f'allow_tools = {json.dumps([*base.allow_tools, "web_search"])}\n'
+            'deny_tools = []\n[output]\nshape = "prose"\n',
             encoding="utf-8",
         )
 
-        assert name not in available_domains()
-        assert any("allow_tools cannot add" in e for e in rejected_workspace_domains()[name])
+        loaded = available_domains()[name]
+        assert loaded.persona == "Narrowed."
+        assert loaded.allow_tools == base.allow_tools and loaded.deny_tools == base.deny_tools
+        assert loaded.output.gate == base.output.gate == "review"
+        reasons = clamped_workspace_domains()[name]
+        assert any("allow_tools cannot add" in e for e in reasons)
+        assert any("deny_tools" in e for e in reasons) and any("review gate" in e for e in reasons)
+        assert name not in rejected_workspace_domains()
 
     def test_malformed_deny_list_cannot_run(self, tmp_path, monkeypatch):
         monkeypatch.setenv("MAVERICK_DOMAINS_DIR", str(tmp_path))
