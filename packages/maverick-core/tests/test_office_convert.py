@@ -89,73 +89,116 @@ def test_registered():
 
 
 
-def _isolation(monkeypatch, available):
-    """Pretend the host does (or does not) allow ``unshare -rn``."""
+
+class _Host:
+    """A fake host: which launches succeed, and what the local exec saw."""
+
+    def __init__(self, monkeypatch, *, namespace=0, uno=None):
+        from maverick.sandbox.local import ExecResult, LocalBackend
+        from maverick.tools import document_processing as dp
+
+        self.calls, self.namespace, self.uno = [], namespace, uno or {}
+        monkeypatch.setattr(dp, "_LOCAL_LAUNCH", {})
+        monkeypatch.setattr(dp.sys, "platform", "linux")
+        monkeypatch.setattr(dp.shutil, "which", lambda name: "/usr/bin/unshare" if name == "unshare" else None)
+        monkeypatch.setattr(dp, "_uno_pythons", lambda: ["/venv/python", "/usr/bin/python3"])
+
+        def exec_(backend, cmd, timeout=None, stdin=None):
+            self.calls.append(cmd)
+            if isinstance(cmd, str):  # the worker run itself
+                return None
+            code = self.namespace if cmd[2] == "true" else self.uno.get(cmd[2], 1)
+            return ExecResult("", "", code)
+        monkeypatch.setattr(LocalBackend, "exec", exec_)
+
+
+def test_local_launch_needs_a_namespace_and_a_python_that_imports_uno(monkeypatch):
     from maverick.tools import document_processing as dp
 
-    monkeypatch.setattr(dp, "_NETWORK_ISOLATION", {})
-    monkeypatch.setattr(dp.sys, "platform", "linux")
-    monkeypatch.setattr(dp.shutil, "which", lambda name: "/usr/bin/unshare" if name == "unshare" else None)
-    probes = []
+    host = _Host(monkeypatch, uno={"/usr/bin/python3": 0})
+    assert dp.local_convert_launch() == (("/usr/bin/unshare", "-rn", "/usr/bin/python3", "-I"), None)
+    assert host.calls[1:] == [["/usr/bin/unshare", "-rn", py, "-I", "-c", "import uno"]
+                              for py in ("/venv/python", "/usr/bin/python3")]
+    host.calls.clear()
+    assert dp.local_convert_launch()[0] and host.calls == []  # success is kept
+    host = _Host(monkeypatch)
+    assert dp.local_convert_launch() == (None, dp.NO_LOCAL_UNO)
+    host = _Host(monkeypatch, namespace=1)
+    assert dp.local_convert_launch() == (None, dp.NO_LOCAL_ISOLATION)
 
-    def probe(self, cmd, timeout=None, stdin=None):
-        probes.append(cmd)
-        from maverick.sandbox.local import ExecResult
-        return ExecResult("", "", 0 if available else 1)
-    return probes, probe
+
+def test_a_failed_probe_is_retried_later_and_a_timeout_is_not_kept(monkeypatch):
+    from maverick.tools import document_processing as dp
+
+    clock = [1000.0]
+    monkeypatch.setattr(dp.time, "monotonic", lambda: clock[0])
+    host = _Host(monkeypatch, namespace=124)
+    assert dp.local_convert_launch()[0] is None
+    host.namespace = 0
+    host.uno["/venv/python"] = 0
+    assert dp.local_convert_launch()[0] is not None  # a timeout was not remembered
+    host = _Host(monkeypatch, namespace=1)
+    assert dp.local_convert_launch()[0] is None
+    host.namespace = 0
+    host.uno["/venv/python"] = 0
+    assert dp.local_convert_launch()[0] is None  # a failure is kept briefly
+    clock[0] += dp._FAILURE_RETRY_SECONDS + 1
+    assert dp.local_convert_launch()[0] == ("/usr/bin/unshare", "-rn", "/venv/python", "-I")
 
 
-@pytest.mark.parametrize("available", [True, False])
-def test_local_conversion_runs_only_inside_a_network_namespace(monkeypatch, tmp_path, available):
+@pytest.mark.parametrize("uno", [{"/usr/bin/python3": 0}, {}])
+def test_local_conversion_is_offered_only_when_it_can_run(monkeypatch, tmp_path, uno):
     # LibreOffice fetches linked images and objects; on the host that is
     # unchecked network access driven by an untrusted document.
     from maverick.sandbox.local import LocalBackend
-    from maverick.tools import document_processing as dp
 
-    probes, probe = _isolation(monkeypatch, available)
-    monkeypatch.setattr(LocalBackend, "exec", probe)
-    assert dp.local_network_isolation() == (("/usr/bin/unshare", "-rn") if available else None)
-    dp.local_network_isolation()
-    assert probes == [["/usr/bin/unshare", "-rn", "true"]]  # probed once
+    host = _Host(monkeypatch, uno=uno)
+    available = bool(uno)
     tool = office_convert(LocalBackend(tmp_path))
-    ops = tool.input_schema["properties"]["op"]["enum"]
-    assert ("to_pdf" in ops) is available
-    assert available or "Docker, Podman or Kubernetes" in tool.description
-    runs = []
-    monkeypatch.setattr(LocalBackend, "exec", lambda self, cmd, timeout=None, stdin=None: runs.append(cmd))
+    assert ("to_pdf" in tool.input_schema["properties"]["op"]["enum"]) is available
+    assert available or "Python bridge" in tool.description
     (tmp_path / "page.html").write_text('<img src="http://127.0.0.1:9/linked.png">')
     out = tool.fn({"op": "to_pdf", "input_path": "page.html"})
     assert out.startswith("ERROR") and not (tmp_path / "page.pdf").exists()
+    runs = [cmd for cmd in host.calls if isinstance(cmd, str)]
     if available:
-        assert len(runs) == 1 and runs[0].startswith("/usr/bin/unshare -rn ")
+        assert len(runs) == 1 and runs[0].startswith("/usr/bin/unshare -rn /usr/bin/python3 -I engine.py")
     else:
-        assert runs == [] and "Docker, Podman or Kubernetes" in out
+        assert runs == [] and "Python bridge" in out
 
 
-def _python_with_uno():
-    import shutil
-    import subprocess
-    import sys
-    for python in (sys.executable, shutil.which("python3")):
-        if python and subprocess.run([python, "-c", "import uno"], capture_output=True).returncode == 0:
-            return python
-    return None
+def test_other_backends_offer_conversion_only_where_it_runs(monkeypatch, tmp_path):
+    from maverick.sandbox.docker import DockerBackend
+
+    monkeypatch.setattr(DockerBackend, "_verify_docker", lambda self: None)
+    docker = office_convert(DockerBackend(workdir=tmp_path))
+    assert "to_pdf" in docker.input_schema["properties"]["op"]["enum"]
+
+    class SSHBackend:
+        workdir = tmp_path
+    other = office_convert(SSHBackend())
+    assert other.input_schema["properties"]["op"]["enum"] == ["formats"]
+    assert "Docker, Podman or Kubernetes" in other.description
 
 
-def test_local_conversion_cannot_reach_a_listener(monkeypatch, tmp_path):
+def test_local_conversion_with_this_python_converts_or_is_not_offered(tmp_path):
+    # No interpreter patching: whatever runs these tests is the real worker
+    # candidate, and LibreOffice must not reach a local listener.
     import http.server
     import shutil
-    import subprocess
-    import sys
     import threading
 
-    python = _python_with_uno()
-    if not (sys.platform.startswith("linux") and shutil.which("soffice") and python
-            and subprocess.run(["unshare", "-rn", "true"], capture_output=True).returncode == 0):
-        pytest.skip("needs LibreOffice with Python UNO and unprivileged network namespaces")
     from maverick.sandbox.local import LocalBackend
     from maverick.tools import document_processing as dp
 
+    dp._LOCAL_LAUNCH.clear()
+    tool = office_convert(LocalBackend(tmp_path))
+    launch, reason = dp.local_convert_launch()
+    if launch is None:
+        assert tool.input_schema["properties"]["op"]["enum"] == ["formats"] and reason in tool.description
+        return
+    if not shutil.which("soffice"):
+        pytest.skip("LibreOffice is not installed")
     hits = []
 
     class Handler(http.server.BaseHTTPRequestHandler):
@@ -170,14 +213,12 @@ def test_local_conversion_cannot_reach_a_listener(monkeypatch, tmp_path):
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     port = server.server_address[1]
-    monkeypatch.setattr(dp, "_NETWORK_ISOLATION", {})
-    monkeypatch.setattr(dp.sys, "executable", python)
     (tmp_path / "page.html").write_text(
         f'<html><head><link rel="stylesheet" href="http://127.0.0.1:{port}/s.css"></head>'
         f'<body background="http://127.0.0.1:{port}/bg.png"><p>hello</p>'
         f'<img src="http://127.0.0.1:{port}/linked.png"></body></html>')
     try:
-        out = office_convert(LocalBackend(tmp_path)).fn({"op": "to_pdf", "input_path": "page.html"})
+        out = tool.fn({"op": "to_pdf", "input_path": "page.html"})
     finally:
         server.shutdown()
     assert out.startswith("wrote "), out
