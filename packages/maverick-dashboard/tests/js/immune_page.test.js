@@ -71,7 +71,7 @@ test("unavailable data-flow records do not claim that nothing left", async (t) =
   const ui = await fixture({ summary: { ...SUMMARY, ifc: { available: false, mode: "block", events: 0, recent: [] } } });
   t.after(() => ui.window.close());
   const table = ui.doc.getElementById("ic-ifc-rows").textContent;
-  assert.match(table, /not available right now, so this page cannot say whether any reached a tool that sends it outside/);
+  assert.match(table, /not available right now\. This page cannot say whether any reached a tool that sends it outside/);
   assert.doesNotMatch(table, /No sensitive data has reached/);
 });
 

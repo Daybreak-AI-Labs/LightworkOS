@@ -138,7 +138,7 @@
       function (r) { return (r.explicit || []).length ? "Yes" : "No"; },
       function (r) { return OUTCOME[r.outcome] || human(r.outcome); }
     ], ifc.available ? "No sensitive data has reached a tool that sends it outside." :
-      "The record of where sensitive data went is not available right now, so this page cannot say whether any reached a tool that sends it outside. Refresh to try again.", function (r) {
+      "The record of where sensitive data went is not available right now. This page cannot say whether any reached a tool that sends it outside. Refresh to try again.", function (r) {
       return (r.labels || []).filter(function (label) {
         return Object.prototype.hasOwnProperty.call(labelDescriptions, label);
       }).map(function (label) { return labelDescriptions[label]; }).join(" ");
