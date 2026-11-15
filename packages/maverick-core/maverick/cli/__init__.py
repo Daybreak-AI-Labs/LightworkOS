@@ -6179,6 +6179,11 @@ def _unlink_attachments_with_pending(attachment_paths) -> tuple[int, list[str]]:
             pending_file.unlink()
     except OSError as exc:
         errors.append(f"pending attachment list: {_erasure_failure_label(exc)}")
+    # A list set aside earlier may still name files on disk; until someone
+    # handles it, no erase can claim that nothing remains.
+    for aside in sorted(pending_file.parent.glob(f"{pending_file.name}.unusable-*")):
+        errors.append(f"{aside.name} may list attachment files still on disk: check the "
+                      f"folders it lists and delete those files, then delete {aside.name}")
     for error in errors:
         click.echo(
             "warning: could not remove an attachment file "

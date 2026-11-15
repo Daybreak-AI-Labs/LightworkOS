@@ -1113,6 +1113,12 @@ def test_an_unusable_pending_list_never_strands_this_runs_attachment_files(monke
     assert attachment.exists() and "private" not in pending.read_text(encoding="utf-8")
 
     monkeypatch.setattr(Path, "unlink", real_unlink)
+    aside = pending.with_name(pending.name + ".unusable-1")
+    result = CliRunner().invoke(main, erase)
+    # The set-aside list may still name files on disk: incomplete until handled.
+    assert result.exit_code == 1, result.output
+    assert aside.name in result.output and "then delete" in result.output
+    assert not attachment.exists() and not pending.exists()
+    aside.unlink()
     result = CliRunner().invoke(main, erase)
     assert result.exit_code == 0, result.output
-    assert not attachment.exists() and not pending.exists()
