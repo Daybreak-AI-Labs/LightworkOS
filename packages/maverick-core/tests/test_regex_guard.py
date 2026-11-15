@@ -37,3 +37,16 @@ def test_results_invalid_patterns_and_fast_path(monkeypatch):
     assert e.value.index == 1
     with pytest.raises(rg.PatternInvalid):
         rg.guarded_search("a" * 1001, "a")
+
+
+def test_search_pairs_checks_every_pair_in_one_child(monkeypatch):
+    from maverick.tools import _regex_guard as guard
+
+    spawned = []
+    real = guard._run_child
+    monkeypatch.setattr(guard, "_run_child", lambda *a, **k: spawned.append(1) or real(*a, **k))
+    pairs = [("^[a-z0-9-]+$", f"name-{i}") for i in range(100)] + [("^[a-z0-9-]+$", "Not Valid!"), ("!", "x!")]
+    assert guard.guarded_search_pairs(pairs, timeout_s=5.0) == [True] * 100 + [False, True]
+    assert spawned == [1]
+    with pytest.raises(guard.PatternTimeout):
+        guard.guarded_search_pairs([("^(a+)+$", "a" * 40 + "!")], timeout_s=0.5)

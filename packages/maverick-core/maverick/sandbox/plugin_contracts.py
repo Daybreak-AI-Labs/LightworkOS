@@ -9,9 +9,97 @@ Network denial is enforced by the container, never by a monkeypatched client.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import hashlib
 import inspect
 import json
+
+# Time for ONE guarded child to check the pattern/answer pairs of a
+# validation, with room for interpreter start-up on a loaded machine.
+_PATTERN_BUDGET_S = 5.0
+# Recording rounds before the real pass, each ONE guarded child. A round
+# records twice, assuming unknown pairs match and then that they do not, so
+# every anyOf/oneOf alternative and both if branches are reached at once;
+# a later round is needed only for a branch chosen by an earlier real result
+# (nested if/then). The worst case is this many guarded children.
+_MAX_PATTERN_ROUNDS = 16
+# None outside validate(); else (known results, pairs still unknown or None,
+# the answer assumed for an unknown pair while recording).
+_STATE: contextvars.ContextVar = contextvars.ContextVar("plugin_pattern_state", default=None)
+
+
+class PatternCheckUnavailable(ValueError):
+    """The plugin's patterns could not be checked; nothing was run."""
+
+    def __init__(self) -> None:
+        super().__init__("Lightwork could not finish checking these answers against the "
+                         "plugin's rules. Nothing was run. Try again, or shorten the answers.")
+
+
+def _check_pairs(pairs, *, budget_s=_PATTERN_BUDGET_S) -> dict:
+    """``{(pattern, text): matched}`` for ``pairs``, in one guarded child."""
+    ordered = sorted(pairs)
+    try:
+        from maverick.tools._regex_guard import RegexGuardError, guarded_search_pairs
+    except ImportError:  # only inside a container image without the host package
+        import re
+        return {(p, t): re.search(p, t) is not None for p, t in ordered}
+    try:
+        results = guarded_search_pairs(ordered, timeout_s=budget_s)
+    except RegexGuardError as exc:
+        raise PatternCheckUnavailable from exc
+    return dict(zip(ordered, results, strict=True))
+
+
+def _matches(pattern, text):
+    """``re.search`` for a plugin-chosen pattern, under the regex guard.
+
+    In a recording pass an unknown pair is noted and answered "matches"; the
+    real pass answers only from pairs already checked."""
+    state = _STATE.get()
+    if state is None:  # validator(schema).validate(...) without validate()
+        return _check_pairs({(pattern, text)})[(pattern, text)]
+    known, unknown, assumed = state
+    if (pattern, text) in known:
+        return known[(pattern, text)]
+    if unknown is None:  # the real pass never uses an assumed answer
+        raise PatternCheckUnavailable
+    unknown.add((pattern, text))
+    return assumed
+
+
+def _guarded_validator_class():
+    """Draft 2020-12 with every plugin regex evaluated by :func:`_matches`."""
+    from jsonschema import Draft202012Validator, ValidationError, validators
+
+    def pattern(validator, patrn, instance, schema):
+        if validator.is_type(instance, "string") and not _matches(patrn, instance):
+            yield ValidationError(f"{instance!r} does not match {patrn!r}")
+
+    def pattern_properties(validator, patterns, instance, schema):
+        if validator.is_type(instance, "object"):
+            for patrn, subschema in patterns.items():
+                for key, value in instance.items():
+                    if _matches(patrn, key):
+                        yield from validator.descend(value, subschema, path=key, schema_path=patrn)
+
+    def additional_properties(validator, extra_schema, instance, schema):
+        if not validator.is_type(instance, "object"):
+            return
+        known, patterns = schema.get("properties", {}), list(schema.get("patternProperties", {}))
+        extras = [key for key in instance
+                  if key not in known and not any(_matches(p, key) for p in patterns)]
+        if validator.is_type(extra_schema, "object"):
+            for key in extras:
+                yield from validator.descend(instance[key], extra_schema, path=key)
+        elif not extra_schema and extras:
+            names = ", ".join(repr(key) for key in sorted(extras))
+            yield ValidationError(f"Additional properties are not allowed ({names} unexpected)")
+
+    return validators.extend(Draft202012Validator, {
+        "pattern": pattern, "patternProperties": pattern_properties,
+        "additionalProperties": additional_properties,
+    })
 
 
 def validator(schema):
@@ -20,6 +108,7 @@ def validator(schema):
     if not isinstance(schema, dict) or schema.get("type") != "object":
         raise ValueError("input schema must declare an object")
     Draft202012Validator.check_schema(schema)
+    seen = set()
     def refs(value):
         if isinstance(value, dict):
             # Every reference keyword resolves through the default registry,
@@ -27,17 +116,43 @@ def validator(schema):
             for key in ("$ref", "$dynamicRef", "$recursiveRef"):
                 if key in value and not str(value[key]).startswith("#"):
                     raise ValueError("external schema references are unsupported")
+            seen.update(key for key in ("patternProperties", "unevaluatedProperties") if key in value)
             for child in value.values():
                 refs(child)
         elif isinstance(value, list):
             for child in value:
                 refs(child)
     refs(schema)
-    return Draft202012Validator(schema, format_checker=FormatChecker())
+    if seen == {"patternProperties", "unevaluatedProperties"}:
+        # jsonschema matches patternProperties for unevaluatedProperties with
+        # plain re.search, outside the regex guard.
+        raise ValueError("patternProperties with unevaluatedProperties is unsupported")
+    return _guarded_validator_class()(schema, format_checker=FormatChecker())
 
 
 def validate(schema, sample):
-    validator(schema).validate(sample)
+    """Validate ``sample``; plugin patterns are checked only against the
+    strings jsonschema actually tests them on, in one guarded child per
+    recording round (normally one, at most _MAX_PATTERN_ROUNDS)."""
+    checked = validator(schema)
+    known: dict = {}
+    for _ in range(_MAX_PATTERN_ROUNDS):
+        unknown: set = set()
+        for assumed in (True, False):
+            token = _STATE.set((known, unknown, assumed))
+            try:
+                for _error in checked.iter_errors(sample):
+                    pass
+            finally:
+                _STATE.reset(token)
+        if not unknown:
+            break
+        known.update(_check_pairs(unknown))
+    token = _STATE.set((known, None, False))
+    try:
+        checked.validate(sample)
+    finally:
+        _STATE.reset(token)
 
 
 def reviewed_schema(schema, expected):

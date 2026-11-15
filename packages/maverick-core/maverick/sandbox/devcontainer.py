@@ -58,7 +58,14 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .local import _SECRET_ENV_RE, ExecResult, container_user_args, scrub_env
+from .local import (
+    _SECRET_ENV_RE,
+    ExecResult,
+    cap_output,
+    container_user_args,
+    run_capped,
+    scrub_env,
+)
 
 log = logging.getLogger(__name__)
 
@@ -288,13 +295,10 @@ class DevcontainerBackend:
         args.extend([self.spec.image, "sh", "-c", cmd])
 
         try:
-            result = subprocess.run(
-                args, capture_output=True, text=True, errors="replace", timeout=effective,
-                env=scrub_env(),
-            )
+            result = run_capped(args, timeout=effective, env=scrub_env())
             return ExecResult(
-                stdout=result.stdout[-8000:],
-                stderr=result.stderr[-2000:],
+                stdout=cap_output(result.stdout),
+                stderr=cap_output(result.stderr, 2000),
                 exit_code=result.returncode,
             )
         except subprocess.TimeoutExpired as e:
@@ -311,7 +315,7 @@ class DevcontainerBackend:
             if isinstance(stdout, bytes):
                 stdout = stdout.decode("utf-8", errors="replace")
             return ExecResult(
-                stdout=stdout[-8000:],
+                stdout=cap_output(stdout),
                 stderr=f"TIMEOUT after {effective}s",
                 exit_code=124,
             )

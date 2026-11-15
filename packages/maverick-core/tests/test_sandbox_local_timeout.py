@@ -127,6 +127,56 @@ def test_exec_success_and_failure_paths_unchanged(tmp_path):
     assert bad.stderr.strip() == "oops"
 
 
+@_POSIX_ONLY
+def test_large_output_is_capped_with_a_visible_note(tmp_path):
+    res = LocalBackend(workdir=tmp_path).exec("head -c 20000000 /dev/zero | tr '\\0' a; echo; echo END")
+    assert res.ok
+    assert res.stdout.startswith("[output truncated: showing the last 8,000 characters]\n")
+    assert res.stdout.endswith("END\n") and len(res.stdout) < 8100
+
+
+@_POSIX_ONLY
+@pytest.mark.skipif(not os.path.isdir("/proc/self"), reason="needs /proc")
+def test_a_detached_child_is_reaped_only_when_the_command_times_out(tmp_path):
+    import signal
+
+    def detach(name, tail):
+        pidfile = tmp_path / name
+        res = LocalBackend(workdir=tmp_path).exec(
+            f"setsid sh -c 'echo $$ > {pidfile}; exec sleep 300' >/dev/null 2>&1 & "
+            f"while [ ! -s {pidfile} ]; do sleep 0.05; done; {tail}", timeout=2.0)
+        return res, int(pidfile.read_text().strip())
+
+    # A command that finishes normally may leave a detached server running.
+    res, kept = detach("kept.pid", "echo started")
+    try:
+        assert res.ok and "started" in res.stdout
+        time.sleep(0.3)
+        assert not _gone(kept), "a deliberately detached process was killed after a normal exit"
+    finally:
+        os.kill(kept, signal.SIGKILL)
+    # A command that runs out of time takes its detached children with it.
+    res, escaped = detach("escaped.pid", "sleep 300")
+    assert res.exit_code == 124
+    deadline = time.time() + 5.0
+    while not _gone(escaped) and time.time() < deadline:
+        time.sleep(0.05)
+    assert _gone(escaped), "a detached child survived a timed-out command"
+
+
+@_POSIX_ONLY
+def test_a_background_writer_does_not_stretch_the_timeout(tmp_path):
+    from maverick.sandbox.local import run_capped
+
+    started = time.monotonic()
+    res = LocalBackend(workdir=tmp_path).exec("sleep 30 & echo x", timeout=2.0)
+    assert res.exit_code == 124 and "x" in res.stdout
+    assert time.monotonic() - started < 3.5
+    started = time.monotonic()
+    run_capped(["sh", "-c", "sleep 30 & echo x"], timeout=10.0)
+    assert time.monotonic() - started < 6.5   # one shared 5 s grace, not one per pipe
+
+
 # ---- sandbox.exec accepts a per-call timeout kwarg ----
 
 class TestSandboxExecTimeout:

@@ -138,7 +138,8 @@ def test_exec_builds_mkdir_cd_and_quotes_command(monkeypatch):
     inner = shlex.quote("echo $HOME")
     command = f"mkdir -p {quoted} && cd {quoted} && sh -c {inner}"
     assert remote == _marking_255(f"timeout --signal=KILL 60.000000s sh -c {shlex.quote(command)}", _MARK)
-    assert kwargs["capture_output"] is True
+    # Output is drained through bounded pipes (sandbox.local.run_capped).
+    assert isinstance(kwargs["stdout"], int) and isinstance(kwargs["stderr"], int)
     assert kwargs["text"] is True
     assert result.stdout == "hi"
     assert result.stderr == "warn"

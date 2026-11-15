@@ -54,7 +54,9 @@ budgets plus a one-hour recovery allowance. It does not guarantee retention
 through node eviction, cluster deletion or storage failure. If the cluster is
 unreachable, stopping background writers also cannot be confirmed; the active
 deadline remains the backstop. Expired pod objects may need operator cleanup.
-There is no automatic deletion of failed-transfer local recovery directories.
+Failed-transfer local recovery directories are kept for seven days. After
+that, the next Kubernetes transfer removes them and logs a warning that names
+each one. Copy anything you still need out of a recovery directory before then.
 
 ## Limits and deployment qualification
 

@@ -57,6 +57,23 @@ def test_scope_with_unicode_line_separator_keeps_the_ledger_readable(tmp_path):
     consent.grant_persistent("later", "", path=path)
 
 
+def test_a_full_ledger_still_records_every_revocation(monkeypatch, tmp_path):
+    path = tmp_path / "consent.ledger"
+    monkeypatch.setattr(consent, "_MAX_LEDGER_RECORDS", 12)
+    monkeypatch.setattr(consent, "_REVOCATION_HEADROOM_RECORDS", 2)
+    granted = []
+    with pytest.raises(consent.ConsentLedgerError, match="kept free"):
+        for index in range(12):
+            consent.grant_persistent("act", f"scope-{index}", path=path)
+            granted.append(f"scope-{index}")
+    assert granted
+    for scope in granted:
+        assert consent.revoke("act", scope, path=path, strict=True) is True
+    assert consent.list_grants(path=path) == []
+    # A tombstone for an authority that was never granted uses the headroom.
+    consent.revoke("act", "never-granted", path=path, strict=True, write_tombstone=True)
+
+
 def test_tampered_record_invalidates_the_authority(tmp_path):
     path = tmp_path / "consent.ledger"
     consent.grant_persistent("force-push", "main", path=path)

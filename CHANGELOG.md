@@ -363,6 +363,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The `~/.maverick/.env` loader now ignores security-authority settings
   in any letter case (such as `maverick_approver_keys`), as Windows reads
   them case-insensitively. Set those in the service environment instead.
+- Approvals for protected settings now hold a file lock, so several dashboard
+  workers cannot lose each other's approvals. An unreadable approval ledger is
+  kept as `config_proposals.json.corrupt-<number>` and a warning names it.
+- The standing-consent ledger now refuses a new grant while the space left is
+  needed to revoke existing grants, so a revocation always succeeds.
+- Sandbox commands now keep only the end of their output while they run. Long
+  output starts with "[output truncated: showing the last 8,000 characters]".
+- When a local sandbox command times out or is cancelled, processes it
+  started in a new session (`setsid`) are now stopped too. After a normal
+  exit they keep running, as before.
+- Plugin input schemas with `pattern` or `patternProperties` are now checked
+  under the regex time limit, only against the answers they apply to. If the
+  check cannot finish, the form says so and nothing runs. A schema that combines
+  `patternProperties` with `unevaluatedProperties` is refused.
+- Kubernetes recovery folders under `sandbox-recovery/` are removed seven days
+  after a failed transfer. Copy out anything you need before then.
 
 ### Fixed
 
