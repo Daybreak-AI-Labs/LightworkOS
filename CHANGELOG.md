@@ -244,7 +244,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   restoring the day or a retired key's public key.
 - A rerun of `maverick erase` that finds no conversation now also clears the
   AI reply cache and retries attachment files an earlier run could not
-  remove, so it finishes the job or names again what remains.
+  remove, so it finishes the job or names again what remains. The list of
+  such files keeps only folders and name digests; an unusable list is kept
+  aside as `pending_attachment_files.json.unusable-<n>` to check by hand.
 - The privacy request page's erase button now runs the erase even when the
   person has no conversation, and shows what it actually removed.
 - Erasing a person also deletes the durable-execution checkpoints of their

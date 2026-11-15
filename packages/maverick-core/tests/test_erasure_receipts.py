@@ -1083,3 +1083,36 @@ def test_a_rerun_finishes_or_again_names_what_remains(monkeypatch):
     result = CliRunner().invoke(main, erase)
     assert result.exit_code == 0, result.output
     assert purged and not attachment.exists()
+
+
+def test_an_unusable_pending_list_never_strands_this_runs_attachment_files(monkeypatch):
+    """An unusable list is kept aside, this run's files are still removed,
+    and the new list records leftovers without their file names."""
+    from maverick.paths import data_dir
+
+    world = _cli_world()
+    attachment = Path.home() / "private.txt"
+    _seed_complete_graph(world, attachment)
+    world.close()
+    pending = data_dir("erasure", "pending_attachment_files.json")
+    pending.parent.mkdir(parents=True, exist_ok=True)
+    pending.write_text('"a string, not a list"', encoding="utf-8")
+    real_unlink = Path.unlink
+
+    def broken_unlink(self, *args, **kwargs):
+        if self == attachment:
+            raise OSError(5, "busy")
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", broken_unlink)
+    erase = ["erase", "--channel", "telegram", "--user", "alice", "--yes"]
+    result = CliRunner().invoke(main, erase)
+    assert result.exit_code == 1, result.output
+    assert "kept aside" in result.output
+    assert pending.with_name(pending.name + ".unusable-1").read_text() == '"a string, not a list"'
+    assert attachment.exists() and "private" not in pending.read_text(encoding="utf-8")
+
+    monkeypatch.setattr(Path, "unlink", real_unlink)
+    result = CliRunner().invoke(main, erase)
+    assert result.exit_code == 0, result.output
+    assert not attachment.exists() and not pending.exists()

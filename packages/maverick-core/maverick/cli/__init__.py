@@ -6094,12 +6094,63 @@ def _subject_residue_verification(world, channel: str, user: str, failures: list
 _PENDING_ATTACHMENTS = ("erasure", "pending_attachment_files.json")
 
 
+def _pending_attachment_entry(path) -> dict:
+    """A leftover file as its folder and a digest of its name.
+
+    Stored names start with the uploaded file name, which can name the
+    person; the folder (``<attachments>/<goal id>``) and the digest find the
+    file again without keeping that name.
+    """
+    import hashlib
+
+    target = Path(path)
+    return {"dir": str(target.parent),
+            "name_sha256": hashlib.sha256(target.name.encode("utf-8")).hexdigest()}
+
+
+def _pending_attachment_paths(entry: dict) -> list[Path]:
+    import hashlib
+
+    folder = Path(entry["dir"])
+    if not folder.is_dir():
+        return []
+    return [child for child in folder.iterdir()
+            if hashlib.sha256(child.name.encode("utf-8")).hexdigest() == entry["name_sha256"]]
+
+
+def _read_pending_attachments(pending_file: Path) -> tuple[list[dict], str | None]:
+    """The pending list, or ``([], note)`` after keeping an unusable one aside."""
+    import json
+    import re
+
+    if not pending_file.exists():
+        return [], None
+    try:
+        entries = json.loads(pending_file.read_text(encoding="utf-8"))
+        if isinstance(entries, list) and all(
+                isinstance(e, dict) and set(e) == {"dir", "name_sha256"}
+                and isinstance(e["dir"], str) and isinstance(e["name_sha256"], str)
+                and re.fullmatch(r"[0-9a-f]{64}", e["name_sha256"]) for e in entries):
+            return entries, None
+    except (OSError, ValueError):
+        pass
+    n = 1
+    while pending_file.with_name(f"{pending_file.name}.unusable-{n}").exists():
+        n += 1
+    aside = pending_file.with_name(f"{pending_file.name}.unusable-{n}")
+    try:
+        pending_file.rename(aside)
+    except OSError as exc:
+        return [], f"pending attachment list is unusable and could not be moved ({_erasure_failure_label(exc)})"
+    return [], f"pending attachment list was unusable and is kept aside as {aside.name}; check it by hand"
+
+
 def _unlink_attachments_with_pending(attachment_paths) -> tuple[int, list[str]]:
     """Unlink attachment files, keeping any that fail for the next erase run.
 
     Their database rows are already gone, so a failed unlink is remembered in
-    a private list; every later erase (with or without a conversation) tries
-    those files again until they are gone.
+    a private list (folder and name digest only) that every later erase,
+    with or without a conversation, tries again until the files are gone.
     """
     import json
 
@@ -6107,20 +6158,19 @@ def _unlink_attachments_with_pending(attachment_paths) -> tuple[int, list[str]]:
     from ..paths import data_dir
 
     pending_file = data_dir(*_PENDING_ATTACHMENTS)
-    try:
-        pending = json.loads(pending_file.read_text(encoding="utf-8")) if pending_file.exists() else []
-    except (OSError, ValueError) as exc:
-        return 0, [f"pending attachment list: {_erasure_failure_label(exc)}"]
-    paths = list(dict.fromkeys([*map(str, attachment_paths), *pending]))
+    entries, note = _read_pending_attachments(pending_file)
+    errors: list[str] = [note] if note else []
+    targets = [Path(p) for p in attachment_paths]
+    for entry in entries:
+        targets.extend(_pending_attachment_paths(entry))
     removed = 0
-    errors: list[str] = []
-    left: list[str] = []
-    for path in paths:
-        count, failed = _unlink_erasure_attachments([path])
+    left: list[dict] = []
+    for target in dict.fromkeys(targets):
+        count, failed = _unlink_erasure_attachments([target])
         removed += count
         if failed:
             errors.extend(failed)
-            left.append(path)
+            left.append(_pending_attachment_entry(target))
     try:
         if left:
             ensure_private_directory(pending_file.parent)
