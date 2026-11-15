@@ -234,8 +234,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   started in a new session (`setsid`) are now stopped too. After a normal
   exit they keep running, as before.
 - Plugin input schemas with `pattern` or `patternProperties` are now checked
-  under the regex time limit; a schema that combines `patternProperties` with
-  `unevaluatedProperties` is refused.
+  under the regex time limit, in one check per answer set. If it cannot finish,
+  the form says so and nothing runs. A schema that combines
+  `patternProperties` with `unevaluatedProperties` is refused.
 - Kubernetes recovery folders under `sandbox-recovery/` are removed seven days
   after a failed transfer. Copy out anything you need before then.
 - The built-in Shield now reports a URL longer than 2,048 characters as the

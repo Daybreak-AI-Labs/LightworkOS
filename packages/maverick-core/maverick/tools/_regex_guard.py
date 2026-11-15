@@ -27,14 +27,19 @@ DEFAULT_TIMEOUT_S = 1.0
 _MAX_CHILD_OUTPUT = 64 * 1024
 _QUANTIFIER_CHARS = frozenset("*+?{")
 
-# Reads {"p": [patterns], "t": text, "f": flags} from stdin and prints the
-# list of match results. The patterns were already compiled by the parent.
+# Reads {"p": [patterns], "t": text or [texts], "f": flags} from stdin and
+# prints the match results: one per pattern for a text, one row of results
+# per pattern for a list of texts. The parent already compiled the patterns.
 _CHILD = (
     "import json, re, sys\n"
     "d = json.loads(sys.stdin.read())\n"
     "rx = [re.compile(p, d['f']) for p in d['p']]\n"
-    "print(json.dumps([r.search(d['t']) is not None for r in rx]))\n"
+    "t = d['t']\n"
+    "out = ([[r.search(x) is not None for x in t] for r in rx] if isinstance(t, list)\n"
+    "       else [r.search(t) is not None for r in rx])\n"
+    "print(json.dumps(out))\n"
 )
+MAX_TABLE_PAIRS = 250_000
 
 
 class RegexGuardError(ValueError):
@@ -64,7 +69,7 @@ def pattern_error(pattern: str) -> str | None:
     return None
 
 
-def _run_child(payload: bytes, timeout_s: float) -> bytes:
+def _run_child(payload: bytes, timeout_s: float, *, limit: int | None = _MAX_CHILD_OUTPUT) -> bytes:
     from . import scrub_child_env
     proc = subprocess.Popen(
         [sys.executable, "-I", "-c", _CHILD],
@@ -82,7 +87,7 @@ def _run_child(payload: bytes, timeout_s: float) -> bytes:
     if proc.returncode != 0:
         tail = err[-200:].decode("utf-8", "replace")
         raise RegexGuardError(f"regex child failed (exit {proc.returncode}): {tail}")
-    return out[:_MAX_CHILD_OUTPUT]
+    return out if limit is None else out[:limit]
 
 
 def guarded_search_all(
@@ -112,6 +117,41 @@ def guarded_search_all(
         raise RegexGuardError("regex child returned malformed output") from e
     if not (isinstance(result, list) and len(result) == len(patterns)
             and all(isinstance(r, bool) for r in result)):
+        raise RegexGuardError("regex child returned malformed output")
+    return result
+
+
+def guarded_search_table(
+    patterns: list[str], texts: list[str], *, flags: int = 0,
+    timeout_s: float = DEFAULT_TIMEOUT_S,
+) -> list[list[bool]]:
+    """``table[i][j]`` is ``re.search(patterns[i], texts[j], flags) is not
+    None``; every pair is evaluated in ONE child within one ``timeout_s``.
+
+    Raises like :func:`guarded_search_all`, and ``RegexGuardError`` when a
+    text is too long or there are more than ``MAX_TABLE_PAIRS`` pairs.
+    """
+    if len(patterns) * len(texts) > MAX_TABLE_PAIRS:
+        raise RegexGuardError(f"more than {MAX_TABLE_PAIRS} pattern checks at once")
+    if any(len(text) > MAX_TEXT_CHARS for text in texts):
+        raise RegexGuardError(f"text longer than {MAX_TEXT_CHARS} characters")
+    for i, pattern in enumerate(patterns):
+        problem = pattern_error(pattern)
+        if problem:
+            raise PatternInvalid(i, problem)
+    if not patterns or not texts:
+        return [[] for _ in patterns]
+    if not any(_QUANTIFIER_CHARS & set(p) for p in patterns):
+        return [[re.search(p, t, flags) is not None for t in texts] for p in patterns]
+    payload = json.dumps({"p": patterns, "t": texts, "f": int(flags)}).encode("utf-8")
+    raw = _run_child(payload, timeout_s, limit=None)
+    try:
+        result = json.loads(raw.decode("utf-8"))
+    except ValueError as e:
+        raise RegexGuardError("regex child returned malformed output") from e
+    if not (isinstance(result, list) and len(result) == len(patterns)
+            and all(isinstance(row, list) and len(row) == len(texts)
+                    and all(isinstance(r, bool) for r in row) for row in result)):
         raise RegexGuardError("regex child returned malformed output")
     return result
 

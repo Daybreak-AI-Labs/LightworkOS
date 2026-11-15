@@ -60,25 +60,41 @@ def test_schema_ref_and_invalid_sample_refuse_before_dispatch():
     assert called == []
 
 
-def test_plugin_patterns_run_under_the_regex_guard(monkeypatch):
+def test_plugin_patterns_cost_one_guarded_check_per_validation(monkeypatch):
     # A plugin-chosen pattern is matched on the host against the operator's
-    # practice text; a backtracking pattern must not stall the process.
-    pytest.importorskip("jsonschema")
-    from jsonschema import ValidationError
+    # practice text. Every pattern/answer pair is checked in one guarded
+    # child, and a check that cannot finish says so (no jsonschema needed).
     from maverick.tools import _regex_guard
 
-    seen = []
-    real = _regex_guard.guarded_search
-    monkeypatch.setattr(_regex_guard, "guarded_search",
-                        lambda pattern, text, **kw: seen.append((pattern, text)) or real(pattern, text, **kw))
-    schema = {"type": "object", "properties": {"text": {"type": "string", "pattern": "^(\\w+\\s?)+$"}},
-              "patternProperties": {"^x-(a+)+$": {"type": "string"}}, "additionalProperties": False}
-    with pytest.raises(ValidationError, match="could not be checked"):
-        contracts.validate(schema, {"text": "a" * 30 + "!"})
-    contracts.validate(schema, {"text": "plain words", "x-aaa": "ok"})
+    spawned = []
+    real = _regex_guard._run_child
+    monkeypatch.setattr(_regex_guard, "_run_child", lambda *a, **k: spawned.append(1) or real(*a, **k))
+    schema = {"type": "object", "properties": {"tags": {"type": "array", "items": {
+        "type": "string", "pattern": "^[a-z0-9-]+$"}}}, "patternProperties": {"^x-(a+)+$": {}}}
+    sample = {"tags": [f"tag-{i}" for i in range(100)], "x-aaa": "ok"}
+    table = contracts._pattern_table(schema, sample)
+    assert spawned == [1]
+    assert table[("^[a-z0-9-]+$", "tag-7")] is True and table[("^x-(a+)+$", "tags")] is False
+    with pytest.raises(contracts.PatternCheckUnavailable, match="could not finish checking"):
+        contracts._pattern_table({"type": "object", "properties": {"t": {"pattern": "^(\\w+\\s?)+$"}}},
+                                 {"t": "a" * 40 + "!"}, budget_s=0.5)
+
+
+def test_plugin_patterns_are_validated_from_the_table():
+    pytest.importorskip("jsonschema")
+    from jsonschema import ValidationError
+
+    schema = {"type": "object", "properties": {"tags": {"type": "array", "items": {
+        "type": "string", "pattern": "^[a-z0-9-]+$"}}},
+        "patternProperties": {"^x-(a+)+$": {"type": "string"}}, "additionalProperties": False}
+    contracts.validate(schema, {"tags": [f"tag-{i}" for i in range(100)], "x-aaa": "ok"})
+    with pytest.raises(ValidationError, match="does not match"):
+        contracts.validate(schema, {"tags": ["Bad Tag"]})
     with pytest.raises(ValidationError, match="not allowed"):
-        contracts.validate(schema, {"text": "plain", "other": "x"})
-    assert ("^x-(a+)+$", "x-aaa") in seen and ("^x-(a+)+$", "other") in seen
+        contracts.validate(schema, {"other": "x"})
+    with pytest.raises(contracts.PatternCheckUnavailable):
+        contracts.validate({"type": "object", "properties": {"t": {"type": "string", "pattern": "^(\\w+\\s?)+$"}}},
+                           {"t": "a" * 30 + "!"})
     with pytest.raises(ValueError, match="unevaluatedProperties"):
         contracts.validator({"type": "object", "patternProperties": {"a": {}}, "unevaluatedProperties": False})
 
