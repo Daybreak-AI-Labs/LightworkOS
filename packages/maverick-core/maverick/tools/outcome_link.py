@@ -48,8 +48,12 @@ def _run_factory(world, goal_id: int | None):
             episodes = world.list_episodes(goal_id=goal_id, limit=1)
             if not episodes:
                 return "ERROR: no episode to link (the run hasn't started acting yet)"
-            from ..consequence import link_outcome_key
-            if not link_outcome_key(k[:256], goal_id, episodes[0].id):
+            from ..consequence import OutcomeKeyOwned, link_outcome_key
+            try:
+                linked = link_outcome_key(k[:256], goal_id, episodes[0].id)
+            except OutcomeKeyOwned as exc:
+                return f"ERROR: {exc}"
+            if not linked:
                 return "ERROR: outcome key was not linked; learning is paused or the record could not be saved"
             return (
                 f"Linked '{k[:256]}' to this run. A downstream outcome reported "

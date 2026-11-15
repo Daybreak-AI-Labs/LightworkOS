@@ -237,6 +237,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the count again from Agent trust > Partner request limits, or with
   `maverick trust admission-limit PEER --limit N` or `--reset`. Earlier
   requests stay on record, and each change is audited.
+- Only the task that linked an outcome key, or an administrator, can link that
+  key to different work. Other runs get an error and the link stays. Links
+  saved earlier keep working.
 
 ### Fixed
 

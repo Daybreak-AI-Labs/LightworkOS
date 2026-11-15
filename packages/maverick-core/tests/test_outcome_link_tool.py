@@ -105,3 +105,18 @@ def test_tool_registered_only_when_consequence_on(tmp_path, monkeypatch):
     monkeypatch.setenv("MAVERICK_CONSEQUENCE", "1")
     reg2 = base_registry(w, sb, goal_id=1)
     assert "remember_outcome_key" in {t.name for t in reg2.all()}
+
+
+def test_only_the_owning_run_or_an_operator_can_relink_a_key(tmp_path, monkeypatch):
+    monkeypatch.setattr("maverick.paths.data_dir", lambda *p, **k: tmp_path.joinpath(*p))
+    consequence.reset_shared()
+    assert "Linked" in remember_outcome_key(_World([_Ep(55)]), goal_id=7).fn({"key": "invoice:INV-9"})
+    # Another run cannot take the key (and its reward).
+    taken = remember_outcome_key(_World([_Ep(80)]), goal_id=8).fn({"key": "invoice:INV-9"})
+    assert taken.startswith("ERROR:") and "another task" in taken
+    assert consequence.shared_correlation().resolve("invoice:INV-9") == (7, 55)
+    # The owning run may move it to its later episode; an operator may reassign it.
+    assert "Linked" in remember_outcome_key(_World([_Ep(56)]), goal_id=7).fn({"key": "invoice:INV-9"})
+    assert consequence.shared_correlation().resolve("invoice:INV-9") == (7, 56)
+    assert consequence.link_outcome_key("invoice:INV-9", 8, 80, operator=True) is True
+    assert consequence.shared_correlation().resolve("invoice:INV-9") == (8, 80)

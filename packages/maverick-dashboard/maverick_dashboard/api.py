@@ -5545,10 +5545,14 @@ def _link_outcome_reviewed(request, payload):
     assert_goal_access(request, g)
     if not w.episode_exists(goal_id, episode_id):
         raise HTTPException(status_code=404, detail="no such episode")
-    from maverick.consequence import ConsequenceWriteUncertain, link_outcome_key
+    from maverick.consequence import ConsequenceWriteUncertain, OutcomeKeyOwned, link_outcome_key
 
     try:
-        recorded = link_outcome_key(payload.key, goal_id, episode_id)
+        # Only the task that holds the key, or an administrator, may move it.
+        recorded = link_outcome_key(payload.key, goal_id, episode_id,
+                                    operator=has_permission(request, "admin"))
+    except OutcomeKeyOwned as exc:
+        raise HTTPException(409, str(exc)) from exc
     except ConsequenceWriteUncertain as exc:
         raise HTTPException(503, "This connection may already be saved. Its outcome is unconfirmed; check the original connection before trying again.") from exc
     if not recorded:
