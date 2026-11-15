@@ -6050,6 +6050,52 @@ def _refuse_subject_under_legal_hold(ctx, channel: str, user: str) -> None:
         ctx.exit(1)
 
 
+def _refuse_unerasable_audit(ctx, channel: str, user: str) -> None:
+    """Refuse before anything is deleted when the subject's audit lines cannot go.
+
+    Erasure is all or nothing from the person's view: an audit day that holds
+    the subject but cannot be rewritten (unreadable, a signed chain that does
+    not verify, no signing key here) would otherwise leave them behind after
+    their conversations were already deleted.
+    """
+    from ..audit.erase import erase_blockers
+
+    try:
+        blockers = erase_blockers(channel, user)
+    except Exception as exc:  # failure-policy: fail_closed -- unchecked is not erasable
+        blockers = [f"the audit log could not be checked ({_erasure_failure_label(exc)})"]
+    if not blockers:
+        return
+    ctx.obj["erase_refusal"] = (
+        "Nothing was erased. Some earlier activity records about this person cannot be "
+        "changed safely. Ask your administrator to check the activity record, then try again."
+    )
+    click.echo(
+        "error: erasure refused; nothing was deleted. These audit days hold this "
+        "subject and cannot be erased yet: " + "; ".join(blockers)
+        + ". Then run erase again.",
+        err=True,
+    )
+    ctx.exit(1)
+
+
+def _exit_if_erasure_incomplete(ctx, verification: dict, failures: list[str],
+                                detail: str | None) -> None:
+    """Exit 1 naming what remains unless the erasure is complete and certified."""
+    if verification.get("clean") and not failures:
+        return
+    residual = verification.get("residual") or {}
+    parts = []
+    if residual:
+        parts.append(f"{sum(int(n or 0) for n in residual.values())} item(s) remain: " + ", ".join(
+            f"{store}={count}" for store, count in sorted(residual.items())))
+    parts.extend(failures)
+    if not parts:
+        parts.append(detail or "no clean erasure certificate")
+    click.echo("error: erasure incomplete (" + "; ".join(parts) + ")", err=True)
+    ctx.exit(1)
+
+
 def _scrub_subject_audit(channel: str, user: str, failures: list[str]) -> int:
     """Scrub the subject's prior audit lines; record a failure instead of raising."""
     from .. import audit
@@ -6099,6 +6145,150 @@ def _subject_residue_verification(world, channel: str, user: str, failures: list
         failures.append("could not verify: " + ", ".join(unread))
 
 
+_PENDING_ATTACHMENTS = ("erasure", "pending_attachment_files.json")
+
+
+def _pending_attachment_entry(path) -> dict:
+    """A leftover file as its folder and a digest of its name.
+
+    Stored names start with the uploaded file name, which can name the
+    person; the folder (``<attachments>/<goal id>``) and the digest find the
+    file again without keeping that name.
+    """
+    import hashlib
+
+    target = Path(path)
+    return {"dir": str(target.parent),
+            "name_sha256": hashlib.sha256(target.name.encode("utf-8")).hexdigest()}
+
+
+def _pending_attachment_paths(entry: dict) -> list[Path]:
+    import hashlib
+
+    folder = Path(entry["dir"])
+    if not folder.is_dir():
+        return []
+    return [child for child in folder.iterdir()
+            if hashlib.sha256(child.name.encode("utf-8")).hexdigest() == entry["name_sha256"]]
+
+
+def _read_pending_attachments(pending_file: Path) -> tuple[list[dict], str | None]:
+    """The pending list, or ``([], note)`` after keeping an unusable one aside."""
+    import json
+    import re
+
+    if not pending_file.exists():
+        return [], None
+    try:
+        entries = json.loads(pending_file.read_text(encoding="utf-8"))
+        if isinstance(entries, list) and all(
+                isinstance(e, dict) and set(e) == {"dir", "name_sha256"}
+                and isinstance(e["dir"], str) and isinstance(e["name_sha256"], str)
+                and re.fullmatch(r"[0-9a-f]{64}", e["name_sha256"]) for e in entries):
+            return entries, None
+    except (OSError, ValueError):
+        pass
+    n = 1
+    while pending_file.with_name(f"{pending_file.name}.unusable-{n}").exists():
+        n += 1
+    aside = pending_file.with_name(f"{pending_file.name}.unusable-{n}")
+    try:
+        pending_file.rename(aside)
+    except OSError as exc:
+        return [], f"pending attachment list is unusable and could not be moved ({_erasure_failure_label(exc)})"
+    return [], f"pending attachment list was unusable and is kept aside as {aside.name}; check it by hand"
+
+
+def _unlink_attachments_with_pending(attachment_paths) -> tuple[int, list[str]]:
+    """Unlink attachment files, keeping any that fail for the next erase run.
+
+    Their database rows are already gone, so a failed unlink is remembered in
+    a private list (folder and name digest only) that every later erase,
+    with or without a conversation, tries again until the files are gone.
+    """
+    import json
+
+    from ..file_lock import atomic_write_text, ensure_private_directory
+    from ..paths import data_dir
+
+    pending_file = data_dir(*_PENDING_ATTACHMENTS)
+    entries, note = _read_pending_attachments(pending_file)
+    errors: list[str] = [note] if note else []
+    targets = [Path(p) for p in attachment_paths]
+    for entry in entries:
+        targets.extend(_pending_attachment_paths(entry))
+    removed = 0
+    left: list[dict] = []
+    for target in dict.fromkeys(targets):
+        count, failed = _unlink_erasure_attachments([target])
+        removed += count
+        if failed:
+            errors.extend(failed)
+            left.append(_pending_attachment_entry(target))
+    try:
+        if left:
+            ensure_private_directory(pending_file.parent)
+            atomic_write_text(pending_file, json.dumps(left), mode=0o600)
+        elif pending_file.exists():
+            pending_file.unlink()
+    except OSError as exc:
+        errors.append(f"pending attachment list: {_erasure_failure_label(exc)}")
+    # A list set aside earlier may still name files on disk; until someone
+    # handles it, no erase can claim that nothing remains.
+    for aside in sorted(pending_file.parent.glob(f"{pending_file.name}.unusable-*")):
+        errors.append(f"{aside.name} may list attachment files still on disk: check the "
+                      f"folders it lists and delete those files, then delete {aside.name}")
+    for error in errors:
+        click.echo(
+            "warning: could not remove an attachment file "
+            f"({error}); the clean certificate is withheld.",
+            err=True,
+        )
+    return removed, errors
+
+
+def _purge_llm_cache_for_erasure() -> str | None:
+    """Clear this tenant's AI reply cache, which holds the subject's prompts.
+
+    It is content-addressed, so it cannot be purged by subject; every
+    authority goes. Only when the cache database already exists, so a
+    cache-disabled install does not create one.
+    """
+    try:
+        from ..cache.llm import LLMCache, default_db_path
+        if default_db_path().exists():
+            LLMCache().purge_all_authorities_for_erasure(confirmed=True)
+    except Exception as exc:  # failure-policy: fail_closed -- reported, withholds the certificate
+        error = _erasure_failure_label(exc)
+        click.echo(
+            f"warning: could not clear the LLM cache ({error}); it may retain prior prompts.",
+            err=True,
+        )
+        return error
+    return None
+
+
+def _erase_subject_stores(world, channel: str, user: str, note_users, attachment_paths):
+    """Erase every store keyed by the subject rather than by a conversation row.
+
+    One list of steps for the conversation erase and for a rerun that finds
+    no conversation, so a rerun finishes what an earlier run left or names
+    again what remains. Returns ``(counts, failures)``.
+    """
+    removed_attachments, failures = _unlink_attachments_with_pending(attachment_paths)
+    removed_notes, notes_error = _erase_conversation_user_notes(channel, note_users)
+    if notes_error:
+        failures.append(f"user_notes: {notes_error}")
+    fact_keys = world.delete_facts_matching(_fact_subject_token(channel, user))
+    cache_error = _purge_llm_cache_for_erasure()
+    if cache_error:
+        failures.append(f"llm_cache: {cache_error}")
+    audit_scrubbed = _scrub_subject_audit(channel, user, failures)
+    knowledge = _erase_subject_knowledge_strict(channel, user, failures)
+    return {"attachments": removed_attachments, "notes": removed_notes,
+            "fact_keys": fact_keys, "audit": audit_scrubbed, "knowledge": knowledge}, failures
+
+
 def _erase_subject_residue(ctx, world, channel: str, user: str, yes: bool) -> None:
     """Scrub the subject-keyed stores when no conversation row matches.
 
@@ -6111,23 +6301,22 @@ def _erase_subject_residue(ctx, world, channel: str, user: str, yes: bool) -> No
     from .. import audit
 
     _refuse_subject_under_legal_hold(ctx, channel, user)
+    _refuse_unerasable_audit(ctx, channel, user)
     if not yes:
         click.echo(f"This will erase stored facts, notes, audit lines and "
                    f"knowledge for {channel}:{user}.")
         click.confirm("Proceed?", abort=True)
-    scrubbed_fact_keys = world.delete_facts_matching(_fact_subject_token(channel, user))
-    removed_notes, notes_error = _erase_conversation_user_notes(
-        channel, [types.SimpleNamespace(user_id=user)]
+    stores, failures = _erase_subject_stores(
+        world, channel, user, [types.SimpleNamespace(user_id=user)], [],
     )
-    failures = [f"user_notes: {notes_error}"] if notes_error else []
-    audit_scrubbed = _scrub_subject_audit(channel, user, failures)
-    knowledge_removed = _erase_subject_knowledge_strict(channel, user, failures)
+    scrubbed_fact_keys, removed_notes = stores["fact_keys"], stores["notes"]
+    audit_scrubbed, knowledge_removed = stores["audit"], stores["knowledge"]
     knowledge_chunks = sum(knowledge_removed.values())
     if isinstance(ctx.obj, dict):  # for in-process callers (the dashboard)
         # The same list object: failures found below are reported too.
         ctx.obj["erase_residue"] = {
             "removed": (audit_scrubbed + len(scrubbed_fact_keys) + removed_notes
-                        + knowledge_chunks),
+                        + knowledge_chunks + stores["attachments"]),
             "failures": failures,
         }
     # The same record-of-processing marker as a conversation erase, without
@@ -6136,7 +6325,7 @@ def _erase_subject_residue(ctx, world, channel: str, user: str, yes: bool) -> No
         recorded = audit.record(
             "erase", channel=channel, erasure_id=secrets.token_hex(16),
             durable_proof=False, auxiliary_checks_passed=not failures,
-            conversations=0, turns=0, goals=0, attachments=0,
+            conversations=0, turns=0, goals=0, attachments=stores["attachments"],
             audit_lines_scrubbed=audit_scrubbed,
             facts_scrubbed=len(scrubbed_fact_keys),
             user_notes_scrubbed=removed_notes,
@@ -6150,6 +6339,7 @@ def _erase_subject_residue(ctx, world, channel: str, user: str, yes: bool) -> No
     except Exception as exc:  # pragma: no cover - defensive
         failures.append(f"audit_record: {_erasure_failure_label(exc)}")
     click.echo(
+        f"{stores['attachments']} attachment file(s), "
         f"{audit_scrubbed} audit event(s) scrubbed, "
         f"{len(scrubbed_fact_keys)} fact(s) scrubbed, "
         f"{removed_notes} user note(s) scrubbed, "
@@ -6203,6 +6393,7 @@ def erase(ctx, channel: str, user: str, yes: bool) -> None:
     # conversation with >10k turns doesn't leave orphan attachments.
     conv_ids = [c.id for c in convs]
     _refuse_under_legal_hold(ctx, world, conv_ids)
+    _refuse_unerasable_audit(ctx, channel, user)
     (
         erasure_plan,
         erasure_manifest,
@@ -6217,112 +6408,24 @@ def erase(ctx, channel: str, user: str, yes: bool) -> None:
         erasure_plan,
     )
 
-    # Step 4: now that DB rows are gone, unlink files. File bytes remain
-    # personal data even when their database metadata is gone, so any unlink
-    # failure blocks the clean certificate while leaving deletion completed.
-    removed_attachments, attachment_errors = _unlink_erasure_attachments(
-        attachment_paths
+    # Every store keyed by the subject (files, notes, facts, the AI reply cache,
+    # audit lines, knowledge) goes through ONE list of steps, the same one a
+    # rerun without a conversation takes, so a rerun finishes what this left.
+    stores, closure_failures = _erase_subject_stores(
+        world, channel, user, convs, attachment_paths,
     )
-    for error in attachment_errors:
-        click.echo(
-            "warning: erased the database but could not remove an attachment "
-            f"file ({error}); the clean certificate is withheld.",
-            err=True,
-        )
-
-    # Step 4b: remove derived per-user preference notes from the dreaming
-    # store. These live outside world.db, so the SQL cascade above cannot
-    # erase them; use the concrete matched conversation user_ids so CLI
-    # family erasure (local -> local:<uuid>) removes every scoped note.
-    removed_user_notes, user_notes_error = _erase_conversation_user_notes(
-        channel,
-        convs,
-    )
-
-    # Step 4c: scrub explicitly user-scoped global facts. Facts are global
-    # key/value pairs with no per-user attribution, so erase only touches
-    # facts deliberately keyed as user:<channel>:<user_id>:<name>. Arbitrary
-    # substring matching is unsafe for short/common user ids because it can
-    # delete unrelated operator knowledge or other users' data.
-    fact_subject = _fact_subject_token(channel, user)
-    scrubbed_fact_keys = world.delete_facts_matching(fact_subject)
-
-    # Step 4d: the optional LLM cache (MAVERICK_LLM_CACHE=1) is content-
-    # addressed on the full prompt -- system + messages include the user's
-    # goal text and the model's replies, so the cache retains exactly the
-    # PII we just erased. It can't be purged by subject (the key is a hash of
-    # content, not tied to a user), so clear every authority in this tenant's
-    # disposable cache. Ordinary cache.clear() is intentionally principal-
-    # scoped and would leave other historical authorities behind. Only when
-    # the dynamically resolved DB already exists, so a cache-disabled install
-    # does not create an empty cache file. Best-effort after the command's
-    # irreversible --yes confirmation above.
-    llm_cache_error: str | None = None
-    try:
-        from ..cache.llm import LLMCache, default_db_path
-        _llm_cache_db = default_db_path()
-        if _llm_cache_db.exists():
-            LLMCache().purge_all_authorities_for_erasure(confirmed=True)
-    except Exception as exc:  # pragma: no cover - defensive
-        llm_cache_error = _erasure_failure_label(exc)
-        click.echo(
-            f"warning: erased the database but could not clear the LLM cache "
-            f"({llm_cache_error}); it may retain prior prompts.",
-            err=True,
-        )
-
-    # Step 5: scrub the subject from PRIOR audit-log lines. Audit payloads
-    # (goal_start / tool_call / channel events) carry channel:user_id, so
-    # without this the identity we just erased stayed readable in
-    # ~/.maverick/audit/*.ndjson -- an Art.17 gap (scrub_user was dead
-    # code, never called). Done BEFORE recording the erase event below so
-    # that event (which hashes the subject) isn't itself scrubbed.
-    # If [audit] sign is enabled scrub_user verifies the chain before mutating
-    # it and re-anchors only the files it changed (leaving PII in place would
-    # violate Art.17, but blindly re-signing old tampering would destroy audit
-    # evidence).
-    audit_scrubbed = 0
-    audit_scrub_error: str | None = None
-    try:
-        from ..audit import scrub_user
-        audit_scrubbed, _ = scrub_user(channel, user, strict=True)
-    except Exception as exc:
-        audit_scrub_error = _erasure_failure_label(exc)
-        click.echo(
-            f"warning: erased the database but could not scrub the audit log "
-            f"({audit_scrub_error}); use the receipt id with `erase-verify` "
-            "after repairing audit storage.",
-            err=True,
-        )
-
-    # Step 5b: erase the subject's document chunks from the knowledge plane.
-    # A subject's uploaded documents are ingested with a `subject` provenance
-    # stamp; without this, their embedded chunks survived erasure in the vector
-    # store (an Art.17 gap for any deployment with knowledge RAG on). Fail-soft:
-    # knowledge is optional and a KB error must not abort the erase we've done.
-    knowledge_removed = _erase_subject_knowledge(channel, user)
-
-    # Scrubbing may have re-anchored signed audit files, so drop any cached
-    # signer before appending the erase marker. The compatibility hook is safe:
-    # it refuses to rewrite already-broken chains unless the erase helper
-    # verified them before mutation.
-    from .. import audit
-
-    audit_reanchor_error: str | None = None
-    try:
-        audit.reanchor_after_erase()
-    except Exception as e:  # pragma: no cover - defensive
-        audit_reanchor_error = _erasure_failure_label(e)
-        click.echo(
-            f"warning: audit re-anchor failed ({audit_reanchor_error})",
-            err=True,
-        )
-
+    removed_attachments = stores["attachments"]
+    removed_user_notes = stores["notes"]
+    scrubbed_fact_keys = stores["fact_keys"]
+    audit_scrubbed = stores["audit"]
+    knowledge_removed = stores["knowledge"]
     # GDPR Art. 30: record that an erasure happened without deriving a stable
     # identifier from the subject. Low-entropy user IDs (phone numbers, short
     # handles, numeric IDs) are enumerable, so even a truncated hash can
     # re-identify the erased person if audit logs are read.
     import secrets
+
+    from .. import audit
 
     knowledge_chunks = sum(knowledge_removed.values())
     erasure_id = (
@@ -6330,29 +6433,6 @@ def erase(ctx, channel: str, user: str, yes: bool) -> None:
         if isinstance(erasure_manifest, dict)
         else secrets.token_hex(16)
     )
-    closure_failures = [
-        *attachment_errors,
-        *(
-            [f"user_notes: {user_notes_error}"]
-            if user_notes_error is not None
-            else []
-        ),
-        *(
-            [f"llm_cache: {llm_cache_error}"]
-            if llm_cache_error is not None
-            else []
-        ),
-        *(
-            [f"audit_scrub: {audit_scrub_error}"]
-            if audit_scrub_error is not None
-            else []
-        ),
-        *(
-            [f"audit_reanchor: {audit_reanchor_error}"]
-            if audit_reanchor_error is not None
-            else []
-        ),
-    ]
     audit_record_error: str | None = None
     try:
         audit_recorded = audit.record(
@@ -6471,6 +6551,8 @@ def erase(ctx, channel: str, user: str, yes: bool) -> None:
             err=True,
         )
     _print_erased_extras(knowledge_removed, scrubbed_fact_keys)
+    _exit_if_erasure_incomplete(ctx, verification, closure_failures,
+                                closure_error or receipt_error)
 
 
 def _print_erased_extras(knowledge_removed, scrubbed_fact_keys) -> None:

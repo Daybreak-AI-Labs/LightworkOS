@@ -644,6 +644,19 @@ def test_waiting_outlines_are_listed_and_cleared_with_confirmation(client, audit
     assert client.post(f"{LO}/donations/clear", json={"confirm": True}).json() == {"cleared": 0}
 
 
+def test_turning_sharing_off_deletes_the_waiting_outlines_and_says_how_many(client, audit_rows):
+    from maverick.paths import data_dir
+    assert _save_setting(client, [{"id": "telemetry.donate_trajectories", "value": True}]).status_code == 200
+    outbox = data_dir("outbox")
+    outbox.mkdir(parents=True, exist_ok=True)
+    (outbox / "trj_1.json").write_text("{}")
+    (outbox / "trj_2.json").write_text("{}")
+    saved = _save_setting(client, [{"id": "telemetry.donate_trajectories", "value": False}])
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["notice"] == "2 queued items deleted."
+    assert list(outbox.glob("*.json")) == []
+
+
 # ---- model planning, reward model, shorthand ---------------------------------------------------
 
 def test_model_planning_reads_and_scores_through_the_kernel(client):

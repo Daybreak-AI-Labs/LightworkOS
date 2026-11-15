@@ -271,7 +271,9 @@ def trust_unrevoke_cmd(agent_id: str) -> None:
 @click.option("--direction", type=click.Choice(["inbound", "outbound"]),
               default="inbound")
 def trust_verify_cmd(agent_id, tools, risk, direction) -> None:
-    """Replay the trust decision for AGENT_ID and print allow/deny + reason."""
+    """Replay the trust decision for AGENT_ID and print allow/deny + reason.
+
+    Exits 1 on DENY, so a script reading the exit code sees the refusal."""
     from .. import agent_trust
     req = [x.strip() for x in tools.split(",") if x.strip()]
     if direction == "outbound":
@@ -282,6 +284,8 @@ def trust_verify_cmd(agent_id, tools, risk, direction) -> None:
     verdict = click.style("ALLOW", fg="green") if d.allowed else click.style(
         "DENY", fg="red")
     click.echo(f"{direction} {agent_id!r}: {verdict}  rule={d.rule}  {d.reason}")
+    if not d.allowed:
+        raise SystemExit(1)
 
 
 @trust_group.command("admission-limit")

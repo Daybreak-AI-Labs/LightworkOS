@@ -30,7 +30,7 @@ def test_erase_succeeds_and_removes_facts(tmp_path, monkeypatch):
     os.environ.pop("MAVERICK_DB", None)
     import maverick.audit as audit_mod
     monkeypatch.setattr(audit_mod, "scrub_user", lambda *a, **k: (0, 0))
-    monkeypatch.setattr(audit_mod, "record", lambda kind, **payload: None)
+    monkeypatch.setattr(audit_mod, "record", lambda kind, **payload: True)
     monkeypatch.setattr(audit_mod, "reanchor_after_erase", lambda *a, **k: None)
 
     db = tmp_path / "world.db"
@@ -72,7 +72,7 @@ def test_erase_clears_llm_cache(tmp_path, monkeypatch):
     os.environ.pop("MAVERICK_DB", None)
     import maverick.audit as audit_mod
     monkeypatch.setattr(audit_mod, "scrub_user", lambda *a, **k: (0, 0))
-    monkeypatch.setattr(audit_mod, "record", lambda kind, **payload: None)
+    monkeypatch.setattr(audit_mod, "record", lambda kind, **payload: True)
     monkeypatch.setattr(audit_mod, "reanchor_after_erase", lambda *a, **k: None)
 
     # Point the LLM cache at a temp db and seed it with a prompt+answer.

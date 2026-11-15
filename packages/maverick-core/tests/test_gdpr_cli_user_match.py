@@ -139,14 +139,16 @@ def test_erase_uses_backend_erase_hook_for_non_sqlite_world(monkeypatch, tmp_pat
     monkeypatch.setattr(cli_mod, "open_world", lambda _path: fake_world)
     monkeypatch.setattr(audit_mod, "scrub_user", lambda *_args, **_kwargs: (0, 0))
     monkeypatch.setattr(audit_mod, "reanchor_after_erase", lambda: 0)
-    monkeypatch.setattr(audit_mod, "record", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(audit_mod, "record", lambda *_args, **_kwargs: True)
 
     result = CliRunner().invoke(
         main,
         ["--db", str(tmp_path / "ignored.db"), "erase", "--channel", "telegram", "--user", "u123", "--yes"],
     )
 
-    assert result.exit_code == 0, result.output
+    # A backend with no pre-delete receipt cannot certify the erasure: exit 1, say so.
+    assert result.exit_code == 1, result.output
+    assert "error: erasure incomplete" in result.output
     assert fake_world.erase_calls == [[42]]
     assert "erased 1 conversation(s), 3 turn(s), 1 goal(s)" in result.output
 

@@ -379,6 +379,36 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `patternProperties` with `unevaluatedProperties` is refused.
 - Kubernetes recovery folders under `sandbox-recovery/` are removed seven days
   after a failed transfer. Copy out anything you need before then.
+- Turning off "Share anonymous work patterns" deletes the records still
+  waiting in the outbox and says how many. Training ingest and export also
+  re-check the setting and export nothing from this installation's outbox
+  while it is off or the configuration cannot be read.
+- `maverick trust verify` exits 1 when the decision is DENY (it exited 0).
+  Scripts that read its exit code now see the refusal.
+- `maverick erase` (and the dashboard's erase a person) is all or nothing:
+  it refuses before deleting anything when an audit day holding the person
+  cannot be rewritten, naming the day and why. Repair it and run erase again.
+- `maverick erase` exits 1 with "erasure incomplete" and what remains when
+  data is left or the erasure cannot be certified; it used to exit 0.
+- An audit erase re-signs the day in memory and writes it once, so a missing
+  signing key leaves the day unchanged instead of broken. A day with rows
+  written while signing was off can be erased; erase never signs those rows
+  or any row that did not verify, so the day verifies exactly as before.
+- `maverick erase` also refuses a day whose tip anchor, tip ledger or
+  published checkpoint already reports a break, so an erase never hides a
+  truncated or edited day. Each refusal names the step to take, such as
+  restoring the day or a retired key's public key. The checkpoint check
+  covers the default store, the custody store and the folder chosen in the
+  audit checkpoint settings; a chosen folder that cannot be read refuses.
+- A rerun of `maverick erase` that finds no conversation now also clears the
+  AI reply cache and retries attachment files an earlier run could not
+  remove, so it finishes the job or names again what remains. The list of
+  such files keeps only folders and name digests; an unusable list is kept
+  aside as `pending_attachment_files.json.unusable-<n>` to check by hand.
+- The privacy request page's erase button now runs the erase even when the
+  person has no conversation, and shows what it actually removed.
+- Erasing a person also deletes the durable-execution checkpoints of their
+  goals, which kept failed or stopped goals' transcripts.
 
 ### Fixed
 

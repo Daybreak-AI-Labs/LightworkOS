@@ -831,7 +831,8 @@ SETTINGS: tuple[Setting, ...] = (
       "toggle", "Privacy", False, "maverick.privacy", weaker=False, env=("MAVERICK_ANON",),
       warning="Names and personal details will be written to logs and records again."),
     S("telemetry", "donate_trajectories", "Share anonymous work patterns",
-      "Contribute outline information about completed work, never its text, to improve models.",
+      "Contribute outline information about completed work, never its text, to improve models. "
+      "Turning it off deletes anything still waiting to be shared.",
       "toggle", "Privacy", False, "maverick.donation", weaker=True,
       warning="Outline information about your completed work will be shared."),
     S("analytics", "mcp_client_language", "Count which programming languages connect",
