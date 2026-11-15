@@ -1387,7 +1387,13 @@ class TaskEngine:
                 self._persist_task(task)
                 return False
             task.set_state("working")
-            self._persist_task(task)
+            try:
+                self._persist_task(task)
+            except Exception:
+                # The run will not start. A task left "working" in memory is
+                # never evicted, so enough of these would fill the table.
+                task.set_state("failed")
+                raise
             return True
 
     def _reject_task(
