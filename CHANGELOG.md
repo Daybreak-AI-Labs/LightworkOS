@@ -223,6 +223,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the refusal names the storage boundary.
 - An automation opportunity is not proposed while any completed run has no
   recorded cost, and the reason shown says so.
+- An Ollama, vLLM or TGI model is free only when its server is on this
+  machine or a private network. A server on a public address is charged a
+  safety ceiling ($10/$50 per million tokens) until you set
+  `[providers.<name>] price_per_mtok` to its price or `"free"`; setup asks,
+  and `maverick doctor` names unpriced servers. A reply with no token counts
+  is charged an estimate from its text length.
 
 ### Fixed
 

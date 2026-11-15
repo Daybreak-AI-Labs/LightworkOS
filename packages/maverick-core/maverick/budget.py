@@ -694,16 +694,12 @@ def _lookup_price_quote(  # noqa: C901 - ordered evidence and policy precedence
             if quote is not None:
                 return quote
 
-    # Unknown self-hosted ids incur no metered API-token charge. This does not
-    # claim infrastructure is free; the source makes the accounting scope
-    # explicit and auditable.
+    # Unknown self-hosted ids incur no metered API-token charge only when the
+    # server is on this machine or a private network, or the operator said it
+    # is free. A self-hosted adapter can point at a paid public service.
     provider = requested.split(":", 1)[0] if ":" in requested else requested
     if ":" in requested and provider in ("ollama", "vllm", "tgi"):
-        return _tracked_policy_price(
-            requested,
-            (0.0, 0.0),
-            evidence_id="self-hosted-api-metering-policy-2026-07-29",
-        )
+        return _self_hosted_quote(requested, provider)
 
     # OpenRouter publishes a per-model price list; a model it lists at $0 for
     # prompt and completion incurs no metered charge. The discovery cache holds
@@ -754,6 +750,149 @@ def _lookup_price_quote(  # noqa: C901 - ordered evidence and policy precedence
         applicability=(
             "Estimate-only unknown-model fallback; no vendor-specific "
             "pricing evidence"
+        ),
+    )
+
+
+# Charged for a self-hosted route on a public address with no price set. It is
+# deliberately high (above any open-weight hosted rate on the rate card) so a
+# paid service behind a self-hosted adapter cannot slip past a spending limit.
+_SELF_HOSTED_PUBLIC_CEILING = (10.0, 50.0)
+_SELF_HOSTED_DEFAULT_URLS = {
+    "ollama": "http://localhost:11434",
+    "vllm": "http://localhost:8000",
+    "tgi": "http://localhost:8080",
+}
+# Names that only resolve on a local network: a single-label name (a Docker
+# Compose service such as ``ollama``) or a reserved private-use suffix.
+_LOCAL_NAME_SUFFIXES = (".local", ".internal", ".lan", ".home.arpa")
+
+
+def _self_hosted_endpoint(provider: str) -> tuple[str | None, object]:
+    """The address a self-hosted adapter calls and the price set for it.
+
+    Mirrors ``LLM._provider_client_config``: ``[providers.<name>] base_url``,
+    then the provider's environment variable, then the adapter default. An
+    unreadable configuration yields ``(None, None)``: the address is unknown.
+    """
+    try:
+        from .config import PROVIDER_BASE_URL_ENV_MAP, config_source_errors
+        from .llm import _provider_config_snapshot
+
+        if config_source_errors(include_tenant=True):
+            return None, None
+        table, environment = _provider_config_snapshot(provider)
+    except Exception:
+        log.debug("self-hosted endpoint for %s is unreadable", provider, exc_info=True)
+        return None, None
+    if not isinstance(table, dict):
+        return None, None
+    url = table.get("base_url")
+    url = url.strip() if isinstance(url, str) else ""
+    for env_name in PROVIDER_BASE_URL_ENV_MAP.get(provider, ()):
+        url = url or environment.get(env_name, "").strip()
+    return url or _SELF_HOSTED_DEFAULT_URLS[provider], table.get("price_per_mtok")
+
+
+def _is_private_endpoint(url: str | None) -> bool:
+    from urllib.parse import urlparse
+
+    from .enterprise import _is_local_endpoint
+
+    if _is_local_endpoint(url):
+        return True
+    try:
+        host = (urlparse(url or "").hostname or "").rstrip(".").lower()
+    except ValueError:
+        return False
+    if not host or host.replace(".", "").isdigit() or ":" in host:
+        return False  # a public IP literal; private ones passed above
+    return "." not in host or host.endswith(_LOCAL_NAME_SUFFIXES)
+
+
+def _declared_endpoint_price(value: object) -> tuple[float, float] | None:
+    """``"free"`` or ``[input, output]`` USD per million tokens, else None."""
+    if isinstance(value, str) and value.strip().lower() == "free":
+        return (0.0, 0.0)
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        return None
+    if any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in value):
+        return None
+    rates = (float(value[0]), float(value[1]))
+    return rates if all(math.isfinite(v) and 0 <= v <= 1_000_000 for v in rates) else None
+
+
+def self_hosted_price_gaps() -> list[tuple[str, str]]:
+    """Configured self-hosted servers charged the safety ceiling.
+
+    Returns ``(provider, address)`` for each ollama/vllm/tgi server that is set
+    up, is not on this machine or a private network, and has no usable
+    ``price_per_mtok``. ``maverick doctor`` and Settings show these.
+    """
+    from .config import PROVIDER_BASE_URL_ENV_MAP, get_provider_config
+
+    gaps = []
+    for provider in _SELF_HOSTED_DEFAULT_URLS:
+        try:
+            configured = bool(get_provider_config(provider)) or any(
+                os.environ.get(name, "").strip()
+                for name in PROVIDER_BASE_URL_ENV_MAP.get(provider, ())
+            )
+        except Exception:
+            configured = False
+        if not configured:
+            continue
+        url, raw_price = _self_hosted_endpoint(provider)
+        if _declared_endpoint_price(raw_price) is not None:
+            continue
+        if raw_price is None and _is_private_endpoint(url):
+            continue
+        gaps.append((provider, url or "an address Lightwork cannot read"))
+    return gaps
+
+
+def _self_hosted_quote(requested: str, provider: str) -> ModelPrice:
+    url, raw_price = _self_hosted_endpoint(provider)
+    declared = _declared_endpoint_price(raw_price)
+    if declared == (0.0, 0.0) or (declared is None and raw_price is None
+                                  and _is_private_endpoint(url)):
+        return _tracked_policy_price(
+            requested,
+            (0.0, 0.0),
+            evidence_id="self-hosted-api-metering-policy-2026-07-29",
+        )
+    if declared is not None:
+        basis = "Administrator-entered USD price per million tokens"
+        rates, version, evidence_id = declared, "operator-ceiling-v1", "self-hosted-declared-price-v1"
+    else:
+        if requested not in _UNPRICED_WARNED:
+            _UNPRICED_WARNED.add(requested)
+            log.warning(
+                "%s is a self-hosted model on a public address with no usable "
+                "price set, so Lightwork charges a safety ceiling of $%.2f/$%.2f per "
+                "million tokens. Set [providers.%s] price_per_mtok to its real "
+                "price or \"free\", or run the setup wizard.",
+                requested, *_SELF_HOSTED_PUBLIC_CEILING, provider,
+            )
+        basis = "Safety ceiling for a self-hosted model on a public address"
+        rates, version = _SELF_HOSTED_PUBLIC_CEILING, "self-hosted-public-ceiling-v1"
+        evidence_id = version
+    return ModelPrice(
+        model_id=requested,
+        input_per_mtok=rates[0],
+        output_per_mtok=rates[1],
+        source=f"config://providers.{provider}.price_per_mtok",
+        as_of="2026-11-15",
+        fetched_at="2026-11-15T00:00:00Z",
+        currency="USD",
+        confidence=0.0,
+        verified=False,
+        rate_card_version=version,
+        evidence_id=evidence_id,
+        pricing_basis=basis,
+        applicability=(
+            "Spend-limit estimate for a self-hosted route; the provider's "
+            "invoice remains authoritative."
         ),
     )
 

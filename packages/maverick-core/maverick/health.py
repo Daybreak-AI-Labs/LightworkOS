@@ -683,6 +683,23 @@ def _check_data_residency(cfg: dict) -> None:
              fix="set VERTEX_LOCATION to an in-region value (if Vertex is used)")
 
 
+def _check_self_hosted_prices() -> None:
+    """A self-hosted server on a public address with no price is charged a
+    safety ceiling. Say so, so the operator can set the real price."""
+    try:
+        from .budget import _SELF_HOSTED_PUBLIC_CEILING, self_hosted_price_gaps
+        gaps = self_hosted_price_gaps()
+    except Exception:  # pragma: no cover -- the report must not crash doctor
+        return
+    for provider, address in gaps:
+        _row(YELLOW, f"{provider} price",
+             f"{address} is not on this machine or a private network and has no "
+             f"price, so each call is charged ${_SELF_HOSTED_PUBLIC_CEILING[0]:g}/"
+             f"${_SELF_HOSTED_PUBLIC_CEILING[1]:g} per million tokens",
+             fix=f'set [providers.{provider}] price_per_mtok = [input, output] '
+                 'or "free", or run: maverick init')
+
+
 def _check_config_perms() -> None:
     """Config may hold tokens/secrets — warn if it's group/world-accessible."""
     try:
@@ -970,6 +987,7 @@ def diagnose() -> int:
     _check_config_perms()
     _check_profile()
     _check_data_residency(cfg)
+    _check_self_hosted_prices()
     _check_client_binding()
     _check_proxy_auth()
     _check_anthropic()

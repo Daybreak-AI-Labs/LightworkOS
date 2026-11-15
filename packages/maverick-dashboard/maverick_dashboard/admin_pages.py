@@ -158,6 +158,8 @@ def _settings_response(request: Request, saved: str = "", *, notice: str = "",
             "label": label, "spec": spec,
             "status": ("Will stop before a paid request" if quote is None else
                        "Administrator ceiling" if quote.rate_card_version == "operator-ceiling-v1" else
+                       "Safety ceiling: public server with no price set"
+                       if quote.rate_card_version == "self-hosted-public-ceiling-v1" else
                        "Tracked price" if quote.verified else "Estimate only"),
             "ready": quote is not None,
         })

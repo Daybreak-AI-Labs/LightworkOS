@@ -212,6 +212,7 @@
         <td><span class="badge {{ 'active' if route.ready else 'blocked' }}">{{ route.status }}</span></td>
       </tr>{% endfor %}</tbody>
     </table>
+    <p class="muted">A self-hosted model server on a public address is charged a safety ceiling until you set its price. Enter its price below, or mark it free by running setup again.</p>
     <p class="muted">For a company contract or private gateway, enter the <strong>highest USD input and output rates</strong> that apply to the exact model route, including any cache charges. Lightwork uses them to guard its spending limit and assumes no cache discount. Your provider's invoice remains the final bill. An entered rate is shown as an estimate and is never invoice evidence.</p>
     <form method="post" action="/settings/models/rate" class="settings-row-form" data-settings-local="true">
       <label class="settings-field">Model

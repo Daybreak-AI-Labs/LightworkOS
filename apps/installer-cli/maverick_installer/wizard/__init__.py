@@ -1015,6 +1015,77 @@ def pick_vertex() -> dict[str, Any]:
     return {"project_id": project, "region": region, "model_id": model_id}
 
 
+_SELF_HOSTED_DEFAULT_URLS = {
+    "ollama": "http://localhost:11434",
+    "vllm": "http://localhost:8000",
+    "tgi": "http://localhost:8080",
+}
+
+
+def _ask_price_per_mtok(kind: str) -> float:
+    while True:
+        raw = _q_text(f"  {kind} price in US dollars per million tokens", default="").strip()
+        try:
+            value = float(raw)
+        except ValueError:
+            value = -1.0
+        if 0 <= value <= 1_000_000:
+            return value
+        console.print("[yellow]Enter a number such as 0.5.[/yellow]")
+
+
+def pick_self_hosted(prov: str) -> dict[str, Any]:
+    """Where a self-hosted model server runs and, on a public address, what it
+    charges; written to ``[providers.<prov>]``. Lightwork prices a server as
+    free only on this machine or a private network, so a paid service behind
+    a self-hosted adapter cannot slip past a spending limit."""
+    from maverick.budget import _is_private_endpoint
+
+    label = {"ollama": "Ollama", "vllm": "vLLM", "tgi": "TGI"}[prov]
+    env_name = {"vllm": "VLLM_BASE_URL", "tgi": "TGI_BASE_URL"}.get(prov, "")
+    default = os.environ.get(env_name, "").strip() if env_name else ""
+    url = _q_text(f"  Address of your {label} server",
+                  default=default or _SELF_HOSTED_DEFAULT_URLS[prov]).strip()
+    url = url or _SELF_HOSTED_DEFAULT_URLS[prov]
+    if _is_private_endpoint(url):
+        return {"base_url": url}
+    console.print(
+        "[dim]This server is not on this machine or a private network, so it may "
+        "charge for use. Without a price, Lightwork charges a high safety "
+        "ceiling to keep your spending limit.[/dim]"
+    )
+    pick = _q_select(
+        "  What does this server charge?",
+        [
+            "price - Enter its price per million tokens",
+            "free  - Nothing; I run it myself",
+            "later - I do not know yet; use the safety ceiling",
+        ],
+        default="price - Enter its price per million tokens",
+    )
+    choice = pick.split()[0]
+    if choice == "free":
+        return {"base_url": url, "price_per_mtok": "free"}
+    if choice == "price":
+        return {"base_url": url, "price_per_mtok": [
+            _ask_price_per_mtok("Input"), _ask_price_per_mtok("Output"),
+        ]}
+    return {"base_url": url}
+
+
+def _pick_provider_options(providers: list[str]) -> dict[str, dict[str, Any]]:
+    """The provider-specific questions for the chosen providers."""
+    options: dict[str, dict[str, Any]] = {}
+    if "bedrock" in providers:
+        options["bedrock"] = pick_bedrock_auth()
+    if "vertex" in providers:
+        options["vertex"] = pick_vertex()
+    for prov in providers:
+        if prov in _SELF_HOSTED_DEFAULT_URLS:
+            options[prov] = pick_self_hosted(prov)
+    return options
+
+
 def pick_per_tenant_keys() -> bool:
     """Offer per-tenant BYOK provider keys (multi-tenant deployments only).
 
@@ -4248,8 +4319,14 @@ def _cfg_providers(
             continue
         if env_name:
             lines.append(f'api_key = "${{{env_name}}}"')
-        if prov == "ollama":
+        hosted = options.get(prov) or {}
+        if prov in _SELF_HOSTED_DEFAULT_URLS and hosted.get("base_url"):
+            _emit_kv(lines, "base_url", str(hosted["base_url"]))
+        elif prov == "ollama":
             lines.append('base_url = "http://localhost:11434"')
+        if prov in _SELF_HOSTED_DEFAULT_URLS and hosted.get("price_per_mtok") is not None:
+            lines.append("# Price on a public address: [input, output] USD per million tokens, or \"free\".")
+            _emit_kv(lines, "price_per_mtok", hosted["price_per_mtok"])
         if prov == "openai_compatible":
             lines.append('base_url = "${OPENAI_COMPATIBLE_BASE_URL}"')
         lines.append("")
@@ -6637,11 +6714,7 @@ def run(fast: bool = False, resume: bool = False) -> int:
 
     provider_options = state.get("provider_options")
     if provider_options is None:
-        provider_options = {}
-        if "bedrock" in providers:
-            provider_options["bedrock"] = pick_bedrock_auth()
-        if "vertex" in providers:
-            provider_options["vertex"] = pick_vertex()
+        provider_options = _pick_provider_options(providers)
         state["provider_options"] = provider_options
         _save_partial(state)
 
