@@ -249,6 +249,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Fetching the public A2A agent card no longer writes an agent-trust
   denial to the audit log on every anonymous request; task requests still
   record theirs.
+- The `~/.maverick/.env` loader now ignores security-authority settings
+  in any letter case (such as `maverick_approver_keys`), as Windows reads
+  them case-insensitively. Set those in the service environment instead.
 
 ### Fixed
 

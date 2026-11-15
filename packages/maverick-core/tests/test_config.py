@@ -1797,3 +1797,23 @@ def test_deleting_the_wizard_env_file_withdraws_what_it_exported(tmp_path, monke
     env.unlink()
     config_module._load_env_file(env)
     assert name not in os.environ
+
+
+def test_env_file_authority_filter_ignores_name_case(tmp_path, monkeypatch):
+    # Windows environment names are case-insensitive: a lower-case line would
+    # set MAVERICK_APPROVER_KEYS there, so it is refused like the upper-case one.
+    import os
+
+    from maverick import config
+
+    names = ("maverick_approver_keys", "lightwork_audit_signing_key", "Maverick_Test_Case_Ok")
+    for name in names:
+        monkeypatch.setenv(name, "seed")  # so monkeypatch removes what the load exports
+        monkeypatch.delenv(name)
+    env = tmp_path / ".env"
+    env.write_text("".join(f"{name}=from-file\n" for name in names), encoding="utf-8")
+    config.reset_config_cache()
+    config._load_env_file(env)
+    assert "maverick_approver_keys" not in os.environ
+    assert "lightwork_audit_signing_key" not in os.environ
+    assert os.environ["Maverick_Test_Case_Ok"] == "from-file"
