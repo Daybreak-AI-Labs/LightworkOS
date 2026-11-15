@@ -144,3 +144,46 @@ def test_closing_no_path_tenant_world_is_ignored(tmp_path, monkeypatch):
     finally:
         client.reset_client_cache()
         wm._tenant_worlds.clear()
+
+
+def test_unreadable_config_after_postgres_refuses_local_fallback(tmp_path, monkeypatch):
+    """DR 4: once Postgres was used, a config that cannot be read must not
+    silently open a local database; the refusal names the file and line. A
+    machine that only ever used the local database still opens it."""
+    import maverick.world_model_backends as backends
+    from maverick.world_model import WorldBackendUnreadable, WorldModel, open_world
+
+    monkeypatch.delenv("MAVERICK_WORLD_BACKEND", raising=False)
+    home = tmp_path / ".maverick"
+    home.mkdir(exist_ok=True)
+    config = home / "config.toml"
+    monkeypatch.setenv("MAVERICK_HOME", str(home))
+    monkeypatch.setenv("MAVERICK_CONFIG", str(config))
+    monkeypatch.setattr(backends, "open_postgres_world", lambda: "pg-world")
+    import maverick.world_model as wm
+    from maverick import client
+
+    # A client bound in the environment needs no config to open its local
+    # world, which is the path that used to fall back silently.
+    monkeypatch.setenv("MAVERICK_CLIENT_ID", "acme")
+    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
+    monkeypatch.setattr(wm, "_tenant_worlds", type(wm._tenant_worlds)())
+    client.reset_client_cache()
+
+    # Local-only history: a broken config still opens the local database.
+    config.write_text('[budget\nmax_dollars = 1\n', encoding="utf-8")
+    assert isinstance(open_world(), WorldModel)
+
+    config.write_text('[world_model]\nbackend = "postgres"\n', encoding="utf-8")
+    assert open_world() == "pg-world"
+    config.write_text('[world_model]\nbackend = "postgres"\n[budget\n', encoding="utf-8")
+    with pytest.raises(WorldBackendUnreadable) as refused:
+        open_world()
+    assert str(config) in str(refused.value) and "line 3" in str(refused.value)
+
+    # A deliberate choice still works: the environment names the backend.
+    monkeypatch.setenv("MAVERICK_WORLD_BACKEND", "sqlite")
+    assert isinstance(open_world(), WorldModel)
+    client.reset_client_cache()
+    for world in wm._tenant_worlds.values():
+        world.close()

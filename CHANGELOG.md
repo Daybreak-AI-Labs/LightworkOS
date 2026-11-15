@@ -229,6 +229,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `[providers.<name>] price_per_mtok` to its price or `"free"`; setup asks,
   and `maverick doctor` names unpriced servers. A reply with no token counts
   is charged an estimate from its text length.
+- Lightwork now remembers which database it last used (`world_backend` in
+  the data folder). If that was Postgres and a settings file cannot be read,
+  it refuses to start and names the file and line instead of opening a local
+  database. Fix the file, or set `MAVERICK_WORLD_BACKEND=sqlite` to use the
+  local database on purpose.
 
 ### Fixed
 

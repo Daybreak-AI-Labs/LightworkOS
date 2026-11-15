@@ -5543,6 +5543,64 @@ def reclaim_window_seconds(default: float = 60.0) -> float:
     return default
 
 
+class WorldBackendUnreadable(RuntimeError):
+    """Postgres was the last database used, but the configuration that names
+    the database cannot be read. Opening the local database instead would
+    write work where nobody looks, so Lightwork refuses to start."""
+
+
+def _world_backend_marker() -> Path:
+    # Deployment-wide, like the Postgres backend itself: never tenant-scoped.
+    return data_dir("world_backend", tenant=None)
+
+
+def _record_world_backend(backend: str) -> None:
+    """Remember the database this install last opened (best effort)."""
+    marker = _world_backend_marker()
+    try:
+        if marker.is_file() and marker.read_text(encoding="utf-8").strip() == backend:
+            return
+        from .file_lock import atomic_write_text
+
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(marker, backend + "\n")
+    except OSError:
+        log.warning("could not record the world database in use at %s", marker, exc_info=True)
+
+
+def _refuse_silent_local_fallback() -> None:
+    """Refuse the local database when Postgres may have been lost.
+
+    The backend comes from configuration. With a readable configuration that
+    selects the local database, record it. With an unreadable one, refuse only
+    if Postgres was the last database used: a machine that has only ever used
+    the local database keeps working. ``MAVERICK_WORLD_BACKEND`` is an explicit
+    choice and is always honoured.
+    """
+    if os.environ.get("MAVERICK_WORLD_BACKEND", "").strip():
+        return
+    from .config import config_source_errors
+
+    errors = config_source_errors(include_tenant=True)
+    if not errors:
+        _record_world_backend("sqlite")
+        return
+    marker = _world_backend_marker()
+    try:
+        last = marker.read_text(encoding="utf-8").strip() if marker.is_file() else ""
+    except OSError:
+        last = ""
+    if last != "postgres":
+        return
+    problems = "; ".join(f"{path}: {message}" for path, message in sorted(errors.items()))
+    raise WorldBackendUnreadable(
+        "Lightwork last used its Postgres database, but its settings cannot be "
+        f"read: {problems}. Fix that file and start again; Lightwork will not "
+        "switch to a local database on its own. To use the local database on "
+        "purpose, set MAVERICK_WORLD_BACKEND=sqlite."
+    )
+
+
 def open_world(path: Path | None = None) -> Any:
     """Open the configured world-model backend.
 
@@ -5583,7 +5641,11 @@ def open_world(path: Path | None = None) -> Any:
             raise practice.PracticeUnavailable(practice.POSTGRES_REASON)
         from .world_model_backends import open_postgres_world
 
-        return open_postgres_world()
+        world = open_postgres_world()
+        _record_world_backend("postgres")
+        return world
+    if path is None or Path(path) in (DEFAULT_DB, data_dir("world.db")):
+        _refuse_silent_local_fallback()
     if path is None:
         # No explicit path: honor the client/tenant floor so every canonical
         # world entry point opens the one per-client DB (see docstring).
