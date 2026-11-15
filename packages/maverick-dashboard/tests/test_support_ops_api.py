@@ -147,6 +147,9 @@ def test_value_report_adds_learning_and_record_checks(client, monkeypatch):
 
 def test_charts_are_for_installation_administrators(client, monkeypatch):
     from maverick import tool_latency
+    # The latency table is per process and folds new tool names into one
+    # overflow row once it is full, so start from an empty table.
+    tool_latency.reset()
     tool_latency.record("read_file", 12.0)
     data = client.get("/api/v1/insights/charts", params={"days": 7}).json()
     assert len(data["tasks"]) == 7 and any(r["tool"] == "read_file" for r in data["tools"])
