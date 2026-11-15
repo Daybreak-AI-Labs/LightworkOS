@@ -266,6 +266,64 @@ def test_shutdown_refuses_new_http_work_and_readiness_but_keeps_liveness(monkeyp
     assert client.get("/livez").status_code == 200
 
 
+@pytest.mark.parametrize("token", [None, "refusal-test-token"])  # pragma: allowlist secret
+def test_unrecoverable_interrupted_restore_keeps_liveness_and_explains(monkeypatch, token):
+    from fastapi.testclient import TestClient
+    from maverick import backup
+    from maverick_dashboard.app import app
+
+    message = ("An earlier restore stopped part-way in /home/private/tenants/acme, so "
+               "Lightwork did not start. Set MAVERICK_BACKUP_SIGNING_KEY to the key used.")
+
+    def refuse():
+        raise backup.RestoreRecoveryRefused(message)
+
+    monkeypatch.setattr(backup, "recover_interrupted_restore", refuse)
+    if token:
+        monkeypatch.setenv("MAVERICK_DASHBOARD_TOKEN", token)
+    else:
+        monkeypatch.delenv("MAVERICK_DASHBOARD_TOKEN", raising=False)
+    with TestClient(app, base_url="http://127.0.0.1", headers={"Origin": "http://127.0.0.1"}) as client:
+        assert client.get("/livez").status_code == 200
+        for probe in ("/healthz", "/readyz"):
+            answer = client.get(probe)
+            # The desktop reads this identity as "Lightwork, not ready" and opens
+            # the page below; probes never carry paths or workspace names.
+            assert answer.status_code == 503
+            assert answer.headers["x-lightwork-service"] == "dashboard-v1"
+            assert "acme" not in answer.text and "/home/" not in answer.text
+            assert "server log" in answer.json()["detail"]
+        page = client.get("/", headers={"Accept": "text/html"})
+        refused = client.get("/api/v1/facts")
+        # Websockets are refused too; none reaches the half-restored folder.
+        from starlette.websockets import WebSocketDisconnect
+
+        with pytest.raises(WebSocketDisconnect) as closed:
+            with client.websocket_connect("/ws/v1/runs/1/events") as socket:
+                socket.receive_json()
+        assert closed.value.code == 1008
+        if token:
+            # A visitor gets only the short message, plus a form where the
+            # administrator enters the dashboard token to see the steps.
+            assert page.status_code == 503 and "acme" not in page.text
+            assert 'name="token"' in page.text
+            assert refused.status_code == 503 and "acme" not in refused.text
+            owner = client.get("/api/v1/facts", headers={"Authorization": f"Bearer {token}"})
+            assert owner.json()["detail"] == message
+            wrong = client.post("/restore-recovery/steps", data={"token": "not-it"})
+            assert wrong.status_code == 403 and "acme" not in wrong.text
+            steps = client.post("/restore-recovery/steps", data={"token": token})
+            assert steps.status_code == 503 and "MAVERICK_BACKUP_SIGNING_KEY" in steps.text
+        else:
+            # The local owner (the desktop opens "/") sees what to do.
+            assert page.status_code == 503 and "text/html" in page.headers["content-type"]
+            assert "MAVERICK_BACKUP_SIGNING_KEY" in page.text
+            assert refused.status_code == 503
+            assert refused.json()["detail"] == message
+        assert "consent_scan" not in app.state.lifecycle_supervisor.components
+    patch_state(monkeypatch, app.state, "restore_refusal", None, raising=False)
+
+
 def test_actual_composed_dashboard_registers_all_default_components():
     from fastapi.testclient import TestClient
     from maverick_dashboard.app import app

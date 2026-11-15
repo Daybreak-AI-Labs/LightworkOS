@@ -330,6 +330,39 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The SSH sandbox now says "The ssh connection failed" when ssh itself
   exits 255, and no longer reports a remote command's own exit 255 as a
   connection failure.
+- A restore that stopped part-way, in any workspace, is now undone when the
+  dashboard, a CLI command, `maverick-mcp`, `maverick-evolve`, the gRPC
+  server or the arq queue worker starts. If its record cannot be checked
+  (for example the backup signing key changed), start-up stops with a
+  message saying what to do. The dashboard then answers `/livez`, gives
+  probes a short message, closes websockets, and shows the full steps to
+  the local owner, or to an administrator who enters the dashboard token
+  on its page. `--help` still works.
+- On Postgres, a world read made inside an open world transaction (such as
+  the check before a conversation alternative is created) now joins that
+  transaction. It no longer commits it early or, with `pool_size = 1`,
+  waits for a second connection until the pool times out.
+- On Postgres in tenant compatibility mode, erasing a conversation no
+  longer fails when a child task was later claimed by another workspace;
+  that child is kept and only its link to the erased task is removed.
+- A Kubernetes workspace transfer now refuses file names containing
+  `< > " | ? *` (as it already refused `:`): a backup cannot hold them.
+  Copies already kept in `sandbox-recovery` with such names are left out of
+  backups with a warning instead of stopping every backup; rename them to
+  keep them.
+- `maverick start --domain D --coding-mode --best-of-n N` now applies the
+  department's profile and gates to every attempt; the domain was dropped.
+- `maverick share` now refuses `--db` and a run number that is not in the
+  workspace's world, instead of uploading run-log events from another run
+  with the same number. Share such runs from their own workspace.
+- An A2A task whose start could not be saved is now marked failed, so it
+  no longer holds a task slot until the server restarts.
+- Fetching the public A2A agent card no longer writes an agent-trust
+  denial to the audit log on every anonymous request; task requests still
+  record theirs.
+- The `~/.maverick/.env` loader now ignores security-authority settings
+  in any letter case (such as `maverick_approver_keys`), as Windows reads
+  them case-insensitively. Set those in the service environment instead.
 
 ### Fixed
 

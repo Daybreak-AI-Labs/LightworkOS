@@ -982,7 +982,19 @@ def _stage(root: Path, stage: Path, *, include_keys: bool | frozenset,
         if total + info.st_size > _expanded_limit():
             raise BackupError("live data exceeds configured backup archive limits")
         file_lock.ensure_private_file(source)
-        rel = _safe_relative_path(relative.as_posix(), label="backup source path").as_posix()
+        try:
+            rel = _safe_relative_path(relative.as_posix(), label="backup source path").as_posix()
+        except BackupError:
+            # The workspace's own folder, or a tenant's in a whole-home backup.
+            parts = relative.parts
+            if not (parts[0] == "sandbox-recovery"
+                    or (parts[0] == "tenants" and parts[2:3] == ("sandbox-recovery",))):
+                raise
+            # Review copies kept from a failed workspace transfer, made before
+            # transfers refused such names. Leave the one file out, not the backup.
+            log.warning("backup leaves out a kept transfer copy whose name a "
+                        "backup cannot hold: %s", relative.as_posix())
+            continue
         destination = stage / Path(*PurePosixPath(rel).parts)
         if _is_sqlite_file(source):
             digest, size = _consistent_db_copy(source, destination)
@@ -1746,6 +1758,129 @@ def restore_backup(
         key is not None,
     )
     return root
+
+
+class RestoreRecoveryRefused(BackupError):
+    """An interrupted restore was found at start-up and could not be undone.
+
+    The message is written for the operator: what happened and what to do."""
+
+
+def recover_interrupted_restore() -> bool:
+    """Undo restores that stopped part-way, before normal start-up.
+
+    A crash during :func:`restore_backup` leaves its journal behind and the
+    data folder half old, half new. Every workspace folder is checked (the
+    home folder and each ``tenants/<name>``), because one process may serve
+    them all. Each rollback runs under the same lock a restore holds, so it
+    never runs beside another process's restore (it waits for that restore to
+    finish instead). Returns True when it rolled one back. Raises
+    :class:`RestoreRecoveryRefused` when a journal cannot be checked or
+    undone; the caller must not start normal work in any workspace, because
+    background work in one process reaches every workspace.
+    """
+    from .paths import maverick_home
+
+    home = _filesystem_path(maverick_home())
+    roots = [home]
+    tenants = home / "tenants"
+    if tenants.is_dir() and not tenants.is_symlink():
+        roots += sorted(p for p in tenants.iterdir() if p.is_dir() and not p.is_symlink())
+    rolled_back = False
+    for root in roots:
+        rolled_back = _recover_interrupted_root(home, root) or rolled_back
+    return rolled_back
+
+
+def _recover_interrupted_root(home: Path, root: Path) -> bool:
+    tx_root = _transaction_root(root)
+    if not os.path.lexists(tx_root):
+        return False
+    try:
+        with file_lock.cross_process_lock(root / _RESTORE_LOCK_TARGET, strict=True):
+            if not os.path.lexists(tx_root):
+                return False
+            _recover_transactions(root, allow_unsigned=False)
+    except (BackupError, OSError, RuntimeError) as exc:
+        log.error("a restore that stopped part-way in %s could not be undone: %s", root, exc)
+        raise RestoreRecoveryRefused(
+            f"An earlier restore stopped part-way in {root}, so Lightwork did not start. "
+            + _refusal_hint(home, root, tx_root, exc)
+        ) from exc
+    log.warning("rolled back a restore that stopped part-way in %s", root)
+    return True
+
+
+def _file_key_id(path: Path) -> str | None:
+    try:
+        if not path.is_file():
+            return None
+        return _key_id(_decode_operator_key(path.read_text(encoding="utf-8")))
+    except (OSError, UnicodeDecodeError, BackupError):
+        return None
+
+
+def _journal_key_ids(tx_root: Path) -> set[str]:
+    """Key ids the journals claim, read without trusting them (for the hint)."""
+    ids: set[str] = set()
+    try:
+        for tx in tx_root.iterdir():
+            journal = tx / _JOURNAL
+            if journal.is_file() and journal.stat().st_size <= MAX_MANIFEST_BYTES:
+                auth = json.loads(journal.read_bytes()).get("authentication")
+                if isinstance(auth, dict) and isinstance(auth.get("key_id"), str):
+                    ids.add(auth["key_id"])
+    except (OSError, ValueError, AttributeError):
+        pass
+    return ids
+
+
+def _refusal_hint(home: Path, root: Path, tx_root: Path, exc: Exception) -> str:
+    """What the operator should do, matched to the key that signed the journal."""
+    claimed = _journal_key_ids(tx_root)
+    if _file_key_id(root / "backups" / "recovery" / "operator.key") in claimed:
+        return (
+            "That restore was started from Workspace recovery. Open local recovery mode "
+            "from Lightwork Desktop and restore the same snapshot again. Lightwork first "
+            "puts back the files the stopped restore replaced."
+        )
+    move = (
+        f"move the folder {tx_root} out of the data folder and restore a backup. "
+        "That folder keeps copies of the files as they were before the restore."
+    )
+    if _file_key_id(home / "backups" / "installation-recovery" / "operator.key") in claimed:
+        # Start-up refuses while installation recovery is unfinished, so this
+        # shows only after it ended; there is nothing left to finish there.
+        return (
+            "That restore was started by installation recovery, which has since ended. "
+            "To continue, " + move
+        )
+    integrity = (
+        "The record of that restore did not pass its integrity check, so Lightwork "
+        "will not use it. To continue, " + move
+    )
+    move = "Otherwise " + move
+    try:
+        key = _operator_key(required=False)
+    except BackupError:
+        key = None
+    if key is None:
+        return (
+            f"Set {_SIGNING_KEY_ENV} to the backup key used for that restore, then start "
+            "Lightwork again. Lightwork then puts back the files the restore replaced. "
+            + move
+        )
+    if _key_id(key) in claimed:
+        if isinstance(exc, BackupError):  # the key is right, so the record changed
+            return integrity
+        return (
+            "Lightwork could not put back the files the restore replaced. Check that the "
+            "data folder can be read and written, then start Lightwork again. " + move
+        )
+    return (
+        f"If {_SIGNING_KEY_ENV} changed since that restore, set it back and start "
+        "Lightwork again. " + move
+    )
 
 
 def verify_backup(tarball: str | Path) -> dict[str, Any]:

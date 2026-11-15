@@ -417,6 +417,7 @@ def _a2a_trust_block(
     principal: str = "anon",
     *,
     trust_state: tuple[bool, dict[str, Any]] | None = None,
+    record: bool = True,
 ) -> str | None:
     """Default-deny admission for the A2A surface when the plane is engaged.
 
@@ -425,6 +426,8 @@ def _a2a_trust_block(
     caller falls back to the surface-wide ``"a2a"`` entry. So engaging the plane
     does not leave A2A open at its medium ceiling to anyone with the bearer (the
     prior tighten-only, fail-open gap). Returns ``None`` (admit) when disengaged.
+    ``record=False`` reads the decision without writing an audit denial (the
+    public agent card asks this on every anonymous fetch).
     """
     try:
         from . import agent_trust
@@ -438,7 +441,8 @@ def _a2a_trust_block(
     agent_id = _agent_id_of(principal) or "a2a"
     decision = agent_trust.decide_inbound(agent_id, registry=registry, enforced=True)
     if decision.denied:
-        agent_trust.record_denied(agent_id, decision, direction="inbound")
+        if record:
+            agent_trust.record_denied(agent_id, decision, direction="inbound")
         return decision.reason
     return None
 
@@ -1047,7 +1051,7 @@ class TaskEngine:
 
     # ---- auth + limits -------------------------------------------------
 
-    def auth_error(self, authorization: str | None) -> dict | None:
+    def auth_error(self, authorization: str | None, *, record: bool = True) -> dict | None:
         """Return a JSON-RPC error object if the request isn't authorised,
         else None.
 
@@ -1057,7 +1061,7 @@ class TaskEngine:
         Bearer required unless ``MAVERICK_A2A_ALLOW_UNAUTHENTICATED`` is on, no
         shared token is configured and the request presents no bearer
         (configured per-caller tokens do not by themselves refuse an anonymous
-        request)."""
+        request). ``record=False`` writes no audit denial (agent-card discovery)."""
         env_token = str(_a2a_value("MAVERICK_A2A_TOKEN", "token", "") or "").strip()
         given = ""
         if authorization and authorization.startswith("Bearer "):
@@ -1071,7 +1075,7 @@ class TaskEngine:
                 per_caller = None
         if not env_token and per_caller is None and not given:
             if _a2a_flag("MAVERICK_A2A_ALLOW_UNAUTHENTICATED", "allow_unauthenticated"):
-                block = _a2a_trust_block("anon")
+                block = _a2a_trust_block("anon", record=record)
                 return (
                     _err(_AUTH_REQUIRED, f"refused by agent trust plane: {block}")
                     if block else None
@@ -1086,13 +1090,13 @@ class TaskEngine:
             return _err(_AUTH_REQUIRED, "missing bearer token")
         if env_token and hmac.compare_digest(env_token.encode(), given.encode()):
             principal = "bearer:" + hashlib.sha256(given.encode()).hexdigest()
-            block = _a2a_trust_block(principal)
+            block = _a2a_trust_block(principal, record=record)
             return (
                 _err(_AUTH_REQUIRED, f"refused by agent trust plane: {block}")
                 if block else None
             )
         if per_caller is not None:
-            block = _a2a_trust_block(f"agent:{per_caller.id}")
+            block = _a2a_trust_block(f"agent:{per_caller.id}", record=record)
             return (
                 _err(_AUTH_REQUIRED, f"refused by agent trust plane: {block}")
                 if block else None
@@ -1387,7 +1391,13 @@ class TaskEngine:
                 self._persist_task(task)
                 return False
             task.set_state("working")
-            self._persist_task(task)
+            try:
+                self._persist_task(task)
+            except Exception:
+                # The run will not start. A task left "working" in memory is
+                # never evicted, so enough of these would fill the table.
+                task.set_state("failed")
+                raise
             return True
 
     def _reject_task(

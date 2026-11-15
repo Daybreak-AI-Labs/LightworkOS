@@ -1208,10 +1208,23 @@ async def _lifespan(app: FastAPI):
         previous.assert_restart_allowed()
     supervisor = ShutdownSupervisor(shutdown_seconds())
     app.state.lifecycle_supervisor = supervisor
+    app.state.restore_refusal = None
     register_main_components(app, supervisor)
     try:
         supervisor.release_control_plane = current() is None
         _acquire_control_plane(role="dashboard")
+        # A restore that stopped part-way is undone before anything reads the
+        # data folder. If it cannot be undone, only /livez answers normally;
+        # every other request gets the operator's recovery message.
+        from maverick.backup import RestoreRecoveryRefused, recover_interrupted_restore
+
+        try:
+            await run_in_threadpool(recover_interrupted_restore)
+        except RestoreRecoveryRefused as exc:
+            log.error("%s", exc)
+            app.state.restore_refusal = str(exc)
+            yield
+            return
         _assert_dashboard_auth_configured()
         open_postgres_pools()
         open_goal_admission()
@@ -15795,6 +15808,11 @@ from .request_activity import RequestActivityMiddleware  # noqa: E402
 
 app.add_middleware(RequestMemoMiddleware)
 app.add_middleware(RequestActivityMiddleware)
+# Outside every other layer: while start-up refused a half-restored data
+# folder, no request or websocket reaches a route (see restore_refusal).
+from .restore_refusal import RestoreRefusalGate  # noqa: E402
+
+app.add_middleware(RestoreRefusalGate)
 # Added last, so outermost: one OTLP span per request, when tracing is on. Decided
 # here, once; with tracing off nothing is added and a request pays nothing for it.
 request_spans.install(app)

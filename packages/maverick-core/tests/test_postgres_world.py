@@ -2606,3 +2606,104 @@ def test_legacy_no_tenant_records_open_under_encryption_and_foreign_ones_stay_wi
         assert legacy() is None
     finally:
         reset_tenant(tok)
+@pytest.mark.parametrize("pool_size", ["0", "1"])
+def test_nested_tx_joins_the_outer_transaction(monkeypatch, pool_size):
+    """A read inside an open transaction (a submission guard reading the world)
+    used to commit the outer transaction so far, or wait on a second pooled
+    connection. It now runs inside the outer transaction."""
+    from maverick.world_model_backends.postgres import PostgresWorldModel
+
+    monkeypatch.setenv("MAVERICK_PG_POOL_SIZE", pool_size)
+    w = PostgresWorldModel(dsn=_DSN)
+    title = f"nested-tx-{pool_size}-{os.getpid()}"
+    try:
+        with pytest.raises(RuntimeError, match="outer fails"):
+            with w._tx() as cur:
+                cur.execute("INSERT INTO goals (title, status, created_at, updated_at) "
+                            "VALUES (%s, 'pending', 0, 0)", (title,))
+                seen = w.query("SELECT COUNT(*) FROM goals WHERE title=?", (title,))
+                assert seen[0][0] == 1  # the inner read sees the outer write
+                import psycopg
+
+                with pytest.raises(psycopg.errors.UndefinedColumn):
+                    w.query("SELECT no_such_column FROM goals")
+                cur.execute("SELECT 1")  # an inner failure leaves the outer usable
+                raise RuntimeError("outer fails")
+        assert w.query("SELECT COUNT(*) FROM goals WHERE title=?", (title,))[0][0] == 0
+    finally:
+        w.close()
+
+
+def test_erasure_unlinks_a_child_another_tenant_claimed(world, monkeypatch):
+    """Compatibility mode: running a legacy child under tenant B stamps B on
+    the child only. Erasing the legacy parent's conversation then failed the
+    whole erasure on the child's parent_id reference."""
+    from maverick.world_model_backends import postgres as pg
+
+    tenant = "claim-" + uuid.uuid4().hex
+    monkeypatch.setattr(pg, "_strict_tenant_isolation", lambda: False)
+    active = [None]
+    monkeypatch.setattr(pg, "_active_tenant", lambda: active[0])
+    conv = world.get_or_create_conversation("erase-claimed", uuid.uuid4().hex).id
+    parent = world.create_goal("legacy parent")
+    child = world.create_goal("legacy child", parent_id=parent)
+    world.append_turn(conv, "user", "private text", goal_id=parent)
+    active[0] = tenant
+    try:
+        assert world.bind_goal_execution_principal(child, "user:b")
+        with world._tx() as cur:
+            cur.execute("SELECT tenant_id FROM goals WHERE id=%s", (child,))
+            assert cur.fetchone()[0] == tenant
+        active[0] = None
+        goals, _paths, _turns = world.erase_conversations([conv])
+        assert parent in goals and child not in goals
+        with world._tx() as cur:
+            cur.execute("SELECT parent_id, tenant_id FROM goals WHERE id=%s", (child,))
+            assert cur.fetchone() == (None, tenant)  # the other tenant's row is kept
+    finally:
+        with world._tx() as cur:
+            cur.execute("DELETE FROM turns WHERE conversation_id=%s", (conv,))
+            cur.execute("DELETE FROM conversations WHERE id=%s", (conv,))
+            cur.execute("UPDATE goals SET parent_id=NULL WHERE id=%s", (child,))
+            cur.execute("DELETE FROM goals WHERE id IN (%s,%s)", (parent, child))
+
+
+def test_chat_action_guard_read_keeps_the_submission_lock_and_tenant(monkeypatch):
+    """The original trigger: SubmissionStore.create holds a transaction with an
+    advisory lock and the tenant setting, and its before_create guard reads
+    the world (task_handoffs.closure -> world.query). That inner read used to
+    commit the outer transaction, dropping both before the INSERTs."""
+    import psycopg
+    from maverick.attachment_submissions import SubmissionStore
+    from maverick.task_handoffs import closure
+    from maverick.world_model_backends import postgres as pg
+    from maverick.world_model_backends.postgres import PostgresWorldModel
+
+    tenant = "guard-" + uuid.uuid4().hex
+    monkeypatch.setattr(pg, "_active_tenant", lambda: tenant)
+    w = PostgresWorldModel(dsn=_DSN)
+    w._rls = True  # bind the tenant setting so it can be observed
+    try:
+        source = w.create_goal("earlier message")
+        seen = []
+
+        def guard(connection):
+            assert closure(w, source) is None  # the nested world read
+            connection.execute("SELECT pg_backend_pid(), current_setting('maverick.tenant', true)")
+            pid, bound = connection.fetchone()
+            with psycopg.connect(_DSN, autocommit=True) as other:
+                held = other.execute(
+                    "SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND pid=%s AND granted",
+                    (pid,)).fetchone()[0]
+            seen.append((bound, held))
+
+        receipt = SubmissionStore(w).create(
+            token="guard-" + uuid.uuid4().hex, fingerprint="fp", owner="owner",
+            title="alternative", description="", manifest=[], before_create=guard)
+        assert receipt["created"]
+        assert seen == [(tenant, 1), (tenant, 1)]  # before and after the INSERTs
+        with psycopg.connect(_DSN, autocommit=True) as other:
+            assert other.execute("SELECT tenant_id FROM goals WHERE id=%s",
+                                 (receipt["goal_id"],)).fetchone() == (tenant,)
+    finally:
+        w.close()

@@ -262,3 +262,16 @@ def test_concurrent_adopt_keeps_one_bak_and_no_temp(tmp_path):
     assert list(out.glob("*.bak")) == [bak]      # exactly one backup
     assert bak.read_text() == PACK               # and it is the PRISTINE pack
     assert list(out.glob("*.tmp")) == []
+
+
+def test_adopt_and_live_stop_at_the_start_up_gate(monkeypatch, capsys):
+    # The standalone script used to skip the checks `maverick` runs first.
+    from maverick import installation_recovery
+    from maverick_evolve.cli import main
+
+    def refuse():
+        raise installation_recovery.MaintenanceError("An earlier restore stopped part-way.")
+
+    monkeypatch.setattr(installation_recovery, "require_normal_start", refuse)
+    assert main(["--live", "--cases", "missing.json"]) == 1
+    assert "An earlier restore stopped part-way." in capsys.readouterr().err

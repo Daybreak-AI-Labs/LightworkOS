@@ -259,6 +259,10 @@ def register_main_components(app, supervisor):
 @asynccontextmanager
 async def supervised_runtime(app, name, runtime, *, scheduler=None):
     """Composed lifespans join the same supervisor; small embedders still work."""
+    if getattr(app.state, "restore_refusal", None):
+        # Start-up refused to touch a half-restored data folder; stay idle.
+        yield
+        return
     supervisor = getattr(app.state, "lifecycle_supervisor", None)
     if supervisor is not None:
         selected = scheduler if scheduler is not None else runtime

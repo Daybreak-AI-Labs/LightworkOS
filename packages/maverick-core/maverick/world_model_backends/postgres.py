@@ -32,7 +32,7 @@ import secrets
 import threading
 import time
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager, nullcontext, suppress
 from dataclasses import dataclass
 from urllib.parse import quote
 
@@ -1497,7 +1497,14 @@ class PostgresWorldModel:
         ``_reconnect_if_broken()`` opens a fresh one on the NEXT call rather
         than repeating ``OperationalError`` forever until the process
         restarts.
+
+        A ``_tx`` opened while this thread already holds one joins it under a
+        savepoint (see :meth:`_nested_tx`): it never commits the outer
+        transaction early, nor waits for a second pooled connection.
         """
+        if getattr(self._tx_depth, "value", 0):
+            yield from self._nested_tx()
+            return
         if self._pool is not None:
             # Pooled: each tx gets its own connection; the pool's context
             # commits on success and rolls back on error, so no shared lock.
@@ -1509,11 +1516,12 @@ class PostgresWorldModel:
                         cur.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
                     self._set_tenant_guc(cur)
                     self._note_encryption_posture(cur)
-                    self._tx_depth.value = getattr(self._tx_depth, "value", 0) + 1
+                    self._tx_depth.value, self._tx_depth.conn = 1, conn
+                    self._tx_depth.scope = (_active_tenant(), _active_workspace())
                     try:
                         yield cur
                     finally:
-                        self._tx_depth.value -= 1
+                        self._tx_depth.value, self._tx_depth.conn = 0, None
                 finally:
                     cur.close()
             return
@@ -1527,11 +1535,12 @@ class PostgresWorldModel:
                     cur.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
                 self._set_tenant_guc(cur)
                 self._note_encryption_posture(cur)
-                self._tx_depth.value = getattr(self._tx_depth, "value", 0) + 1
+                self._tx_depth.value, self._tx_depth.conn = 1, self.conn
+                self._tx_depth.scope = (_active_tenant(), _active_workspace())
                 try:
                     yield cur
                 finally:
-                    self._tx_depth.value -= 1
+                    self._tx_depth.value, self._tx_depth.conn = 0, None
                 self.conn.commit()
             except (psycopg.OperationalError, psycopg.InterfaceError):
                 try:
@@ -1553,6 +1562,34 @@ class PostgresWorldModel:
             finally:
                 if cur is not None:
                     cur.close()
+
+    def _nested_tx(self) -> Iterator:
+        """Run a nested ``_tx`` inside the transaction this thread holds.
+
+        A savepoint confines an inner failure to the inner statements, so the
+        outer transaction stays usable. The outer transaction's tenant binding
+        (a transaction-local setting) and locks stay in force; a nested scope
+        for another workspace is refused rather than re-binding the outer one.
+        """
+        if self._rls and self._tx_depth.scope != (_active_tenant(), _active_workspace()):
+            raise RuntimeError("a nested world transaction cannot switch workspace")
+        depth = self._tx_depth.value
+        name = f"maverick_nested_{depth}"
+        cur = self._tx_depth.conn.cursor()
+        try:
+            cur.execute(f"SAVEPOINT {name}")
+            self._tx_depth.value = depth + 1
+            try:
+                yield cur
+            except BaseException:
+                with suppress(Exception):  # a dead connection fails the outer tx anyway
+                    cur.execute(f"ROLLBACK TO SAVEPOINT {name}")
+                raise
+            finally:
+                self._tx_depth.value = depth
+            cur.execute(f"RELEASE SAVEPOINT {name}")
+        finally:
+            cur.close()
 
     def _note_encryption_posture(self, cur) -> None:
         if not getattr(self, "_posture_ready", False):
@@ -5756,16 +5793,14 @@ class PostgresWorldModel:
                 # default, unlike the SQLite path that defers FK checks for the
                 # transaction. Break edges inside the soon-to-be-deleted tree so
                 # a single goal DELETE cannot fail on parent_id references.
-                gfrag, gfparams = _erasure_tenant_scope("tenant_id")
-                edge_sql = (
-                    "UPDATE goals SET parent_id = NULL "
-                    "WHERE parent_id = ANY(%s)"
+                # Not tenant-scoped: in compatibility mode a legacy child that
+                # ran under another tenant was stamped with that tenant while
+                # its parent was not. Its link to a goal deleted here must go
+                # too (as ON DELETE SET NULL would); nothing else in it changes.
+                cur.execute(
+                    "UPDATE goals SET parent_id = NULL WHERE parent_id = ANY(%s)",
+                    (gids,),
                 )
-                edge_params: list = [gids]
-                if gfrag:
-                    edge_sql += " AND " + gfrag
-                    edge_params += gfparams
-                cur.execute(edge_sql, tuple(edge_params))
                 cur.execute(
                     "UPDATE event_goal_admissions SET sealed_contract=NULL, "
                     "delivery_state='federation_retired' WHERE admission_key LIKE 'federation:%%' "

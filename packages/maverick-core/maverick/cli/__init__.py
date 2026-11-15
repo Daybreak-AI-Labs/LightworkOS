@@ -459,7 +459,38 @@ def _configure_cli_text_streams() -> None:
             continue
 
 
-@click.group(epilog=(
+def _asks_for_help(parent: click.Context | None, command: click.Command,
+                   name: str, args: list[str]) -> bool:
+    """Whether Click itself would read ``args`` as a help request.
+
+    Uses each command's own option parser, without running any callback, so
+    ``--help`` after ``--`` or as an option's value is data, not a request.
+    """
+    ctx = click.Context(command, parent=parent, info_name=name, resilient_parsing=True)
+    try:
+        opts, rest, _order = command.make_parser(ctx).parse_args(list(args))
+    except click.UsageError:
+        return False  # the real parse reports it, after the gate
+    help_option = command.get_help_option(ctx)
+    if help_option is not None and opts.get(help_option.name):
+        return True
+    if isinstance(command, click.Group) and rest:
+        child = command.get_command(ctx, rest[0])
+        if child is not None:
+            return _asks_for_help(ctx, child, rest[0], rest[1:])
+    return False
+
+
+class _MainGroup(click.Group):
+    """Notes whether a command only asks for its help text, so the start-up
+    gate (see ``main``) can let help through while normal work is refused."""
+
+    def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+        ctx.meta["maverick.help_only"] = _asks_for_help(None, self, ctx.info_name or "", args)
+        return super().parse_args(ctx, args)
+
+
+@click.group(cls=_MainGroup, epilog=(
     "New here? Start with these four:\n"
     "\n"
     "\b\n"
@@ -485,9 +516,13 @@ def main(ctx: click.Context, db: str | None, model: str | None) -> None:
         "dashboard", "installation-maintenance", "version", "doctor",
         "config-lint", "preflight",
     }:
-        from ..installation_recovery import MaintenanceError, assert_normal_start_allowed
+        from ..installation_recovery import MaintenanceError, require_normal_start
         try:
-            assert_normal_start_allowed()
+            # `maverick <command> --help` only prints text; it must work while
+            # start-up is refused, so the person can read what to do.
+            if not ctx.meta.get("maverick.help_only") and require_normal_start():
+                click.echo("Lightwork undid a restore that stopped part-way. "
+                           "Your data is as it was before that restore.", err=True)
         except MaintenanceError as exc:
             raise click.ClickException(str(exc)) from exc
     if ctx.invoked_subcommand == "mcp":
@@ -4154,6 +4189,7 @@ def start(
                     result = _asyncio.run(run_goal_best_of_n(
                         llm, world, bud, goal_id,
                         sandbox=sandbox, max_depth=max_depth, n=best_of_n,
+                        domain=domain,
                     ))
                 else:
                     result = k.run_goal_sync(
@@ -4211,13 +4247,31 @@ def report_issue(ctx, goal_id: int, repo: str | None) -> None:
 
 @main.command("share")
 @click.argument("goal_id", type=int)
-def share(goal_id: int) -> None:
+@click.pass_context
+def share(ctx: click.Context, goal_id: int) -> None:
     """Share a run as a sanitized, private GitHub gist.
 
     Exports the run's trajectory (secrets scrubbed) and uploads it as a
     secret gist. Needs a GitHub token in GITHUB_TOKEN (or GH_TOKEN).
+    Only runs of the workspace's own world can be shared.
     """
     from ..run_share import share_run
+    from ..workspace import Workspace
+
+    # The run log is shared by the workspace, and goal ids from another
+    # --db world repeat ids of this one, so they cannot be told apart.
+    if Path(ctx.obj["db"]).resolve() != Path(Workspace.current().db_path).resolve():
+        click.echo("ERROR: share works only with the workspace's own world. "
+                   "Run it again without --db.", err=True)
+        sys.exit(1)
+    world = open_world(ctx.obj["db"])
+    try:
+        found = world.get_goal(goal_id) is not None
+    finally:
+        world.close()
+    if not found:
+        click.echo(f"ERROR: there is no run #{goal_id} in this workspace.", err=True)
+        sys.exit(1)
     try:
         url = share_run(goal_id)
     except RuntimeError as e:

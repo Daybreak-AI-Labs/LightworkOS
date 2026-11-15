@@ -1265,6 +1265,10 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - process sh
     del argv
     from maverick.deployment import require_enterprise_or_die
 
+    from .server import _require_normal_start
+
+    _require_normal_start()
+
     # Same start-up preflight as the stdio and HTTP MCP entry points.
     require_enterprise_or_die()
     gateway = build_gateway_from_config()

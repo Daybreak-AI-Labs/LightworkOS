@@ -304,8 +304,11 @@ def _load_env_file_locked(path: Path) -> None:
             continue
         name, sep, value = line.partition("=")
         name = name.strip()
-        canonical = ("MAVERICK_" + name[len("LIGHTWORK_"):]
-                     if name.startswith("LIGHTWORK_") else name)
+        # Windows environment names ignore case: `maverick_approver_keys`
+        # there sets MAVERICK_APPROVER_KEYS, so compare upper-cased names.
+        upper = name.upper()
+        canonical = ("MAVERICK_" + upper[len("LIGHTWORK_"):]
+                     if upper.startswith("LIGHTWORK_") else upper)
         if not sep or not _ENV_NAME_RE.match(name) or canonical in _WIZARD_FORBIDDEN_AUTHORITY_ENV:
             continue
         value = value.strip()
