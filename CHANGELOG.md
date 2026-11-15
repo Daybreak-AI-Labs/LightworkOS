@@ -229,9 +229,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A cancel that arrives after a task finished no longer replaces "done".
   The task stays finished, and the chat supervisor and the gRPC cancel say
   that it had already finished.
-- Startup recovery (`maverick serve`, the dashboard on SQLite and
-  `maverick status`) no longer marks queued tasks as stuck. Only running
-  tasks that went quiet are blocked; queued tasks wait for their worker.
+- With a queue or gRPC worker configured, startup recovery (`maverick
+  serve`, the dashboard on SQLite and `maverick status`) no longer marks
+  queued tasks as stuck; they wait for their worker. The in-process default
+  still blocks them, since nothing else would start them after a crash.
 - Retrying a workflow whose approved high-risk step failed now asks for a
   new approval at that step's gate, then continues the saved work. Before,
   the retry was refused. Approve or reject the new request as usual.

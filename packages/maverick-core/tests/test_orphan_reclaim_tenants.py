@@ -54,12 +54,10 @@ def _stranded_tenant(tenant: str) -> tuple[int, int]:
     return pending, active
 
 
-def _assert_reclaimed(tenant: str, goal_ids: tuple[int, int]) -> None:
+def _assert_reclaimed(tenant: str, goal_ids: tuple[int, ...]) -> None:
     w = world_for_tenant(tenant)
-    pending, active = goal_ids
-    # A queued goal may legitimately wait for a worker; only the run is stuck.
-    assert w.get_goal(pending).status == "pending"
-    assert w.get_goal(active).status == "blocked"
+    for gid in goal_ids:
+        assert w.get_goal(gid).status == "blocked"
 
 
 # --- tenancy ON: every tenant's world.db is swept -------------------------
@@ -81,7 +79,7 @@ def test_reclaims_orphans_across_all_tenant_worlds(monkeypatch):
 
     reclaimed = server_mod._reclaim_tenant_orphans()
 
-    assert reclaimed == 2  # 2 tenants x 1 active (pending goals stay queued)
+    assert reclaimed == 4  # 2 tenants x (1 pending + 1 active)
     _assert_reclaimed("a", a_goals)
     _assert_reclaimed("b", b_goals)
 
@@ -102,7 +100,7 @@ def test_reclaim_does_not_populate_tenant_world_cache(monkeypatch):
 
     reclaimed = server_mod._reclaim_tenant_orphans()
 
-    assert reclaimed == 3
+    assert reclaimed == 6
     assert wm._tenant_worlds == {}
 
     for tenant, goal_ids in goals.items():
@@ -128,7 +126,7 @@ def test_reclaim_skips_unreadable_tenant_dir_fail_soft(monkeypatch):
 
     reclaimed = server_mod._reclaim_tenant_orphans()
 
-    assert reclaimed == 1  # only the 'good' tenant's active goal
+    assert reclaimed == 2  # only the 'good' tenant's two goals
     _assert_reclaimed("good", good)
 
 
@@ -164,3 +162,23 @@ def test_disabled_does_not_sweep_tenant_worlds(monkeypatch):
     w = world_for_tenant("a")
     for gid in a_goals:
         assert w.get_goal(gid).status in ("pending", "active")
+
+
+def test_queue_worker_keeps_its_queued_goals_at_startup(monkeypatch):
+    """With a queue worker configured, a pending goal belongs to the durable
+    queue; start-up recovery blocks only the running one."""
+    monkeypatch.setenv("MAVERICK_TENANT_BY_USER", "1")
+    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
+    monkeypatch.setenv("MAVERICK_ORPHAN_RECLAIM_SECONDS", "0")
+    monkeypatch.setenv("MAVERICK_GRPC_DISPATCH_TARGET", "worker.internal:50051")
+
+    pending, active = _stranded_tenant("q")
+    import maverick.world_model as wm
+    for w in list(wm._tenant_worlds.values()):
+        w.close()
+    wm._tenant_worlds.clear()
+
+    assert server_mod._reclaim_tenant_orphans() == 1
+    w = world_for_tenant("q")
+    assert w.get_goal(pending).status == "pending"
+    assert w.get_goal(active).status == "blocked"

@@ -174,6 +174,9 @@ def _reclaim_tenant_orphans() -> int:
         entries = list(tenants_dir.iterdir())
     except OSError:  # missing dir (no tenant has run yet) or unreadable -> nothing to sweep
         return 0
+    from .runner import startup_reclaim_statuses
+
+    statuses = startup_reclaim_statuses()
     total = 0
     for entry in entries:
         try:
@@ -183,7 +186,7 @@ def _reclaim_tenant_orphans() -> int:
             if not world_db.is_file():
                 continue
             with WorldModel(world_db) as world:
-                total += world.reclaim_orphan_goals()
+                total += world.reclaim_orphan_goals(statuses=statuses)
         except Exception:  # one bad tenant dir must not abort the sweep
             log.exception("orphan reclaim failed for tenant dir %s", entry.name)
     return total
@@ -735,13 +738,16 @@ class Server:
         """Run all channels concurrently. One channel crashing logs but doesn't kill others."""
         if not self._channels:
             raise ValueError("no channels registered")
-        # Reclaim any goals stuck in 'active' from a prior
+        # Reclaim any goals stuck in 'active' (and, with the in-process
+        # dispatcher, 'pending': nothing else would start them) from a prior
         # crash. Without this, SIGKILL/OOM mid-run leaves ghosts that
         # show in /goals forever. Sweeps the default world; with per-user
         # tenancy on, _reclaim_tenant_orphans() also sweeps every tenant's
         # own world.db (a crash strands goals there too).
         try:
-            reclaimed = self.world.reclaim_orphan_goals()
+            from .runner import startup_reclaim_statuses
+
+            reclaimed = self.world.reclaim_orphan_goals(statuses=startup_reclaim_statuses())
             reclaimed += _reclaim_tenant_orphans()
             if reclaimed:
                 log.warning("reclaimed %d orphan goal(s) from prior crash", reclaimed)

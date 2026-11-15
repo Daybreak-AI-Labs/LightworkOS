@@ -72,7 +72,10 @@ from `active` to `blocked` with result
 `[process restarted mid-run]` only when neither their `updated_at` nor their
 liveness heartbeat (`heartbeat_at`) has moved for 60 seconds by default.
 `MAVERICK_ORPHAN_RECLAIM_SECONDS` can change that window; live goals keep
-heartbeating. Queued `pending` goals are left for their worker.
+heartbeating. With the default in-process dispatcher, stale `pending` goals
+are blocked the same way, because nothing else would start them after a
+crash. With a queue (`[queue] backend`) or gRPC worker configured, `pending`
+goals belong to that worker and are left queued.
 
 If you see active goals that *should* be running, check `/metrics`:
 `maverick_concurrent_goals` should be > 0. If it's 0 but rows remain

@@ -5068,11 +5068,14 @@ def status(ctx, cost: bool) -> None:
     """Show recent goals and open questions."""
     world = open_world(ctx.obj["db"])
     # Self-heal: a CLI run killed mid-flight (or pre-fix crash) leaves goals
-    # stranded in 'active'. The dashboard reclaims these on startup,
+    # stranded in 'active' (or, with the in-process dispatcher, 'pending').
+    # The dashboard reclaims these on startup,
     # but a CLI-only user never triggers that -- so do it here, where the
     # ghosts are seen. Only touches rows older than the reclaim age window.
     try:
-        world.reclaim_orphan_goals()
+        from ..runner import startup_reclaim_statuses
+
+        world.reclaim_orphan_goals(statuses=startup_reclaim_statuses())
     except Exception:  # pragma: no cover -- never block `status` on cleanup
         pass
     if cost:
