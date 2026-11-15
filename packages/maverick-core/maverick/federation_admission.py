@@ -9,14 +9,18 @@ and execution, and that boundary is explicitly unknown.
 The existing tenant/peer correlation bounds apply to retained admissions,
 including erased-goal tombstones. They are storage limits, not an expiring
 replay window; capacity pressure never silently reopens an old correlation.
-No code removes admission rows, so the bounds are lifetime caps: a peer or
-tenant that reaches one is refused until an operator clears old rows.
+No code removes admission rows, so the bounds are lifetime caps. An operator
+can raise one peer's limit or start its count again (``set_admission_limit``,
+``maverick trust admission-limit`` and the dashboard Agent trust page). A reset
+only moves where counting starts: every retained row still answers a repeated
+correlation, so no reset or raise reopens a replay.
 """
 from __future__ import annotations
 
 import contextvars
 import hashlib
 import json
+import logging
 import math
 import time
 from contextlib import contextmanager
@@ -32,6 +36,8 @@ DISPATCHING = "federation_dispatching"
 RUNNING = "federation_running"
 RETIRED = "federation_retired"
 _permit = contextvars.ContextVar("federation_execution_permit", default=None)
+_LIMITS_FILE = "federation_admission_limits.json"
+log = logging.getLogger(__name__)
 
 
 class FederationAdmissionRequired(RuntimeError):
@@ -110,19 +116,21 @@ def reserve(world, *, peer: str, correlation: str, digest: str, title: str,
                     contract["peer"] != peer or contract["correlation"] != correlation):
                 raise FederationAdmissionRequired("federation receipt identity mismatch")
             return Reservation(key, int(row[0]), str(row[1]), contract)
-        from .federation import _CORRELATION_CACHE_MAX, _CORRELATION_PER_PEER_MAX
-        peer_key = PREFIX + "peer:" + hashlib.sha256(json.dumps(
-            [current_tenant_id_strict(), peer], separators=(",", ":"),
-        ).encode()).hexdigest()
-        tenant = f"tenant_id={mark} AND " if postgres else ""
-        args = (scope[0], PREFIX + "%") if postgres else (PREFIX + "%",)
-        result = db.execute(f"SELECT COUNT(*) FROM event_goal_admissions WHERE {tenant}admission_key LIKE {mark}", args)
-        total = int((db if postgres else result).fetchone()[0])
-        args = (scope[0], peer_key) if postgres else (peer_key,)
-        result = db.execute(f"SELECT COUNT(*) FROM event_goal_admissions WHERE {tenant}trigger_key={mark}", args)
-        per_peer = int((db if postgres else result).fetchone()[0])
-        if total >= _CORRELATION_CACHE_MAX or per_peer >= min(_CORRELATION_CACHE_MAX, _CORRELATION_PER_PEER_MAX):
+        from .federation import _CORRELATION_CACHE_MAX
+        peer_key = _peer_key(peer)
+        limits = _read_limits(strict=False)
+        total, per_peer = _counts(db, mark, scope[0] if postgres else None, peer, limits)
+        if total >= _CORRELATION_CACHE_MAX:
             raise FederationAdmissionRejected("correlation replay ledger capacity is full")
+        if per_peer >= _peer_limit(peer, limits):
+            log.warning(
+                "federation: peer %r reached its limit of %d accepted requests and was refused. "
+                "To let it continue, raise or reset the limit: `maverick trust admission-limit "
+                "%s --limit N` or `--reset`, or Agent trust > Partner request limits.",
+                peer, _peer_limit(peer, limits), peer)
+            raise FederationAdmissionRejected(
+                "correlation replay ledger capacity is full for this peer; "
+                "the receiving operator can raise or reset its limit")
         if admit_new is not None and not admit_new():
             raise FederationAdmissionRejected("rate limit exceeded")
         now = time.time()
@@ -157,6 +165,116 @@ def reserve(world, *, peer: str, correlation: str, digest: str, title: str,
             f"created_at,request_digest,sealed_contract) VALUES({marks})",
             (*scope, peer_key, goal_id, HELD, now, digest, _enc_field(encoded)))
         return Reservation(key, goal_id, HELD, contract)
+
+
+def _peer_key(peer: str) -> str:
+    return PREFIX + "peer:" + hashlib.sha256(json.dumps(
+        [current_tenant_id_strict(), peer], separators=(",", ":"),
+    ).encode()).hexdigest()
+
+
+def _limits_path():
+    from .paths import data_dir
+    return data_dir(_LIMITS_FILE)
+
+
+def _read_limits(*, strict: bool) -> dict:
+    """Operator limits per peer: ``{peer: {"limit": int|None, "counted_from":
+    float|None}}``. An unreadable file means the defaults apply (the stricter
+    reading); ``strict`` raises instead, so an edit never overwrites it."""
+    path = _limits_path()
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raise ValueError("limits file is not an object")
+        return {str(k): v for k, v in raw.items() if isinstance(v, dict)}
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as exc:
+        if strict:
+            raise ValueError("the saved partner request limits could not be read") from exc
+        log.warning("federation: %s is unreadable; default admission limits apply", path)
+        return {}
+
+
+def _peer_limit(peer: str, limits: dict) -> int:
+    from .federation import _CORRELATION_CACHE_MAX, _CORRELATION_PER_PEER_MAX
+    raw = (limits.get(peer) or {}).get("limit")
+    chosen = raw if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0 else _CORRELATION_PER_PEER_MAX
+    return min(_CORRELATION_CACHE_MAX, chosen)
+
+
+def _counted_from(entry: dict | None) -> float | None:
+    raw = (entry or {}).get("counted_from")
+    return float(raw) if isinstance(raw, (int, float)) and not isinstance(raw, bool) and math.isfinite(raw) else None
+
+
+def _counts(db, mark: str, tenant_id, peer: str, limits: dict) -> tuple[int, int]:
+    """(workspace total, this peer's count) of retained admissions, each peer
+    counted from its last operator reset."""
+    postgres = tenant_id is not None
+    tenant = f"tenant_id={mark} AND " if postgres else ""
+    lead = (tenant_id,) if postgres else ()
+
+    def count(where: str, args: tuple) -> int:
+        result = db.execute(f"SELECT COUNT(*) FROM event_goal_admissions WHERE {tenant}{where}", (*lead, *args))
+        return int((db if postgres else result).fetchone()[0])
+
+    total = count(f"admission_key LIKE {mark}", (PREFIX + "%",))
+    for name, entry in limits.items():
+        since = _counted_from(entry)
+        if since is not None:
+            total -= count(f"trigger_key={mark} AND created_at<={mark}", (_peer_key(name), since))
+    since = _counted_from(limits.get(peer))
+    if since is None:
+        per_peer = count(f"trigger_key={mark}", (_peer_key(peer),))
+    else:
+        per_peer = count(f"trigger_key={mark} AND created_at>{mark}", (_peer_key(peer), since))
+    return total, per_peer
+
+
+def admission_usage(world, peer: str) -> dict:
+    """How many requests ``peer`` has used of its limit in this workspace."""
+    limits = _read_limits(strict=False)
+    with _transaction(world, "federation-capacity") as (db, mark, _, scope, postgres):
+        _, used = _counts(db, mark, scope[0] if postgres else None, peer, limits)
+    limit = _peer_limit(peer, limits)
+    return {"peer": peer, "used": used, "limit": limit, "reached": used >= limit,
+            "counted_from": _counted_from(limits.get(peer))}
+
+
+def set_admission_limit(peer: str, *, limit: int | None = None, reset: bool = False,
+                        actor: str) -> dict:
+    """Raise (or set) ``peer``'s admission limit and/or restart its count.
+
+    Operator-only: callers check authority. The audit row is written before
+    the change is saved; a refused or failed audit write changes nothing."""
+    from .audit import EventKind, audit_event
+    from .federation import _CORRELATION_CACHE_MAX
+    from .file_lock import atomic_write_text, cross_process_lock
+    if limit is None and not reset:
+        raise ValueError("choose a new limit, a reset, or both")
+    if limit is not None and (isinstance(limit, bool) or not isinstance(limit, int)
+                              or not 1 <= limit <= _CORRELATION_CACHE_MAX):
+        raise ValueError(f"the limit must be a whole number from 1 to {_CORRELATION_CACHE_MAX:,}")
+    path = _limits_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with cross_process_lock(path):
+        limits = _read_limits(strict=True)
+        old_limit = _peer_limit(peer, limits)
+        entry = dict(limits.get(peer) or {})
+        if limit is not None:
+            entry["limit"] = limit
+        if reset:
+            entry["counted_from"] = time.time()
+        new_limit = _peer_limit(peer, {peer: entry})
+        if not audit_event(EventKind.FEDERATION_ADMISSION_LIMIT_CHANGED, agent="federation",
+                           peer=peer, actor=actor, old_limit=old_limit, new_limit=new_limit,
+                           reset=bool(reset)):
+            raise RuntimeError("the change could not be recorded in the audit log, so it was not made")
+        limits[peer] = entry
+        atomic_write_text(path, json.dumps(limits, sort_keys=True))
+    return {"peer": peer, "limit": new_limit, "counted_from": _counted_from(entry)}
 
 
 def current_ceiling_allows(reservation: Reservation, *, capability, max_dollars, max_wall_seconds) -> bool:

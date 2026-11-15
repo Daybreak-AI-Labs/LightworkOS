@@ -256,3 +256,38 @@ def test_turning_blocking_off_needs_confirmation_and_is_recorded(tmp_path, monke
     (row,) = audit_rows
     assert row["kind"] == EventKind.SETTING_CHANGED and row["actor"] == "user:ada"
     assert (row["old"], row["new"], row["confirmed"]) == (True, False, True)
+
+
+def test_partner_request_limit_is_shown_and_raised_by_an_administrator(tmp_path, monkeypatch):
+    from fastapi import HTTPException
+    from maverick import audit, config, federation, world_model
+    from maverick import federation_admission as admission
+    from maverick_dashboard import trust_page_api
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('[federation]\npeers = [{name = "edge", target = "edge:1", token = "t"}]\n')
+    monkeypatch.setenv("MAVERICK_CONFIG", str(cfg))
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    monkeypatch.setattr(federation, "_CORRELATION_PER_PEER_MAX", 1)
+    rows = []
+    monkeypatch.setattr(audit, "record", lambda kind, **kw: rows.append((kind, kw)) or True)
+    config.reset_config_cache()
+    with world_model.WorldModel(world_model.DEFAULT_DB) as world:
+        admission.reserve(world, peer="edge", correlation="c1", digest="a" * 64, title="t",
+                          description="", capability=None, max_dollars=1, max_wall_seconds=1)
+
+    page = client.get("/trust").text
+    assert "Partner request limits" in page and "Limit reached" in page
+    assert "data-tr-limit" in page
+
+    assert client.post("/api/v1/trust/federation/nobody/limit", json={"reset": True}).status_code == 404
+    r = client.post("/api/v1/trust/federation/edge/limit", json={"limit": 5})
+    assert r.status_code == 200 and r.json()["limit"] == 5 and r.json()["reached"] is False
+    assert [kw["new_limit"] for kind, kw in rows if kind == "federation_admission_limit_changed"] == [5]
+
+    def deny(request, permission):
+        raise HTTPException(status_code=403, detail="forbidden")
+
+    monkeypatch.setattr(trust_page_api, "require_permission", deny)
+    assert client.post("/api/v1/trust/federation/edge/limit", json={"reset": True}).status_code == 403
+    config.reset_config_cache()

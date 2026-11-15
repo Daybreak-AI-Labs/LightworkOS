@@ -186,3 +186,42 @@ def test_native_pg_capacity_race_never_overadmits(postgres_test_dsn, monkeypatch
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(attempt, range(2)))
     assert len([result for result in results if result is not None]) == 1
+
+
+def test_operator_can_raise_or_reset_a_full_peer_admission_limit(tmp_path, monkeypatch, caplog):
+    from maverick import audit, federation
+    from maverick import federation_admission as admission
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    monkeypatch.setattr(federation, "_CORRELATION_PER_PEER_MAX", 1)
+    events = []
+    monkeypatch.setattr(audit, "record", lambda kind, **kw: events.append((kind, kw)) or True)
+
+    def reserve(world, correlation):
+        return admission.reserve(world, peer="sender", correlation=correlation,
+                                 digest=correlation * 64, title="Read report", description="",
+                                 capability=None, max_dollars=2, max_wall_seconds=10)
+
+    with WorldModel(tmp_path / "world.db") as world:
+        first = reserve(world, "a")
+        with pytest.raises(admission.FederationAdmissionRejected, match="ledger capacity"):
+            reserve(world, "b")
+        assert "maverick trust admission-limit sender" in caplog.text
+        assert admission.admission_usage(world, "sender") == {
+            "peer": "sender", "used": 1, "limit": 1, "reached": True, "counted_from": None}
+
+        admission.set_admission_limit("sender", limit=2, actor="ops@corp.test")
+        assert reserve(world, "b").goal_id != first.goal_id
+        with pytest.raises(admission.FederationAdmissionRejected):
+            reserve(world, "c")
+
+        admission.set_admission_limit("sender", reset=True, actor="ops@corp.test")
+        usage = admission.admission_usage(world, "sender")
+        assert usage["used"] == 0 and usage["limit"] == 2 and usage["counted_from"]
+        assert reserve(world, "c").goal_id
+        # Retained rows still recognise an earlier request: no replay reopens.
+        assert reserve(world, "a").goal_id == first.goal_id
+
+    changed = [kw for kind, kw in events if kind == "federation_admission_limit_changed"]
+    assert [(c["peer"], c["actor"], c["new_limit"], c["reset"]) for c in changed] == [
+        ("sender", "ops@corp.test", 2, False), ("sender", "ops@corp.test", 2, True)]

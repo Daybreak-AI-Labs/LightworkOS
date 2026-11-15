@@ -232,6 +232,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A federation peer that the trust registry refuses (missing, revoked or
   expired) can no longer fetch this node's agent card or poll a task's
   status with its shared token. Register the peer in `[agent_trust]`.
+- A federation peer that reaches its request limit is still refused, and the
+  log now says how to continue. An administrator can raise the limit or start
+  the count again from Agent trust > Partner request limits, or with
+  `maverick trust admission-limit PEER --limit N` or `--reset`. Earlier
+  requests stay on record, and each change is audited.
 
 ### Fixed
 

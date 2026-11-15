@@ -284,6 +284,36 @@ def trust_verify_cmd(agent_id, tools, risk, direction) -> None:
     click.echo(f"{direction} {agent_id!r}: {verdict}  rule={d.rule}  {d.reason}")
 
 
+@trust_group.command("admission-limit")
+@click.argument("peer")
+@click.option("--limit", type=click.IntRange(min=1), default=None,
+              help="New limit of accepted requests for this peer.")
+@click.option("--reset", is_flag=True,
+              help="Start counting this peer's requests again from now.")
+def trust_admission_limit_cmd(peer: str, limit: int | None, reset: bool) -> None:
+    """Show, raise or reset how many requests federation PEER may send.
+
+    Earlier requests are always kept, so a repeated request is still
+    recognised after a raise or a reset. Each change is written to the audit
+    log."""
+    from .. import federation
+    from .. import federation_admission as admission
+    from ._agent_control_plane_groups import _actor
+    if peer not in {p.name for p in federation.load_peers()}:
+        raise click.ClickException(f"{peer!r} is not a federation peer in [federation] peers")
+    if limit is not None or reset:
+        try:
+            admission.set_admission_limit(peer, limit=limit, reset=reset, actor=_actor())
+        except (ValueError, RuntimeError) as exc:
+            raise click.ClickException(str(exc)) from exc
+        if reset:
+            click.echo(f"{peer}: counting again from now")
+    with open_world() as world:
+        usage = admission.admission_usage(world, peer)
+    note = "  (limit reached: new requests are refused)" if usage["reached"] else ""
+    click.echo(f"{peer}: {usage['used']:,} of {usage['limit']:,} requests used{note}")
+
+
 @main.group("client")
 def client_group() -> None:
     """Inspect, export, or erase this installation's bound local client data.

@@ -10,6 +10,10 @@
   while keeping its connection tokens, expiry and block state (re-registering
   would drop them).
 
+* ``POST /api/v1/trust/federation/{peer}/limit`` -- raise a federation
+  peer's request limit or start its count again, administrators only
+  (``maverick trust admission-limit``).
+
 Restoring a blocked agent (``maverick trust unrevoke``) already has an API.
 """
 from __future__ import annotations
@@ -21,7 +25,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 
-from .auth import require_global_permission, require_permission
+from .auth import caller_principal, require_global_permission, require_permission
 
 router = APIRouter(prefix="/api/v1/trust", tags=["agent-trust-page"])
 
@@ -54,6 +58,12 @@ class AgentLimitsIn(BaseModel):
     max_dollars: float | None = Field(default=None, ge=0)
     max_wall_seconds: float | None = Field(default=None, ge=0)
     data_scopes: list[str] = Field(default_factory=list, max_length=256)
+
+
+class PeerLimitIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    limit: int | None = Field(default=None, ge=1, le=250_000)
+    reset: bool = False
 
 
 _REASONS = {
@@ -208,3 +218,47 @@ async def update_agent(request: Request, agent_id: str, body: AgentLimitsIn) -> 
     except agent_trust.AgentTrustError as exc:
         raise HTTPException(status_code=503, detail="The list of outside agents could not be saved.") from exc
     return {"ok": True, "id": agent_id}
+
+
+def federation_limits() -> list[dict] | None:
+    """Each federation peer's request use against its limit, for the page.
+    ``None`` when the counts could not be read."""
+    from maverick import federation
+    from maverick import federation_admission as admission
+    from maverick.world_model import open_world
+
+    peers = [p.name for p in federation.load_peers()]
+    if not peers:
+        return []
+    try:
+        with open_world() as world:
+            return [admission.admission_usage(world, name) for name in peers]
+    except Exception:
+        return None
+
+
+@router.post("/federation/{peer}/limit")
+async def set_peer_limit(request: Request, peer: str, body: PeerLimitIn) -> dict:
+    require_permission(request, "admin")
+    from maverick import federation
+    from maverick import federation_admission as admission
+    from maverick.audit import AuditRefused
+    from maverick.world_model import open_world
+
+    if peer not in {p.name for p in federation.load_peers()}:
+        raise HTTPException(status_code=404, detail="That partner is not set up on this installation.")
+    if body.limit is None and not body.reset:
+        raise HTTPException(status_code=422, detail="Choose a new limit or start the count again.")
+    actor = caller_principal(request) or "authorized-local-operator"
+
+    def write() -> dict:
+        admission.set_admission_limit(peer, limit=body.limit, reset=body.reset, actor=str(actor))
+        with open_world() as world:
+            return admission.admission_usage(world, peer)
+
+    try:
+        return await run_in_threadpool(write)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="The saved limits could not be read, so nothing was changed.") from exc
+    except (AuditRefused, RuntimeError) as exc:
+        raise HTTPException(status_code=503, detail="The change could not be recorded, so it was not made.") from exc
