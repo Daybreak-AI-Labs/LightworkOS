@@ -227,6 +227,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   CLI command starts. If its record cannot be checked (for example the
   backup signing key changed), start-up stops with a message saying what to
   do; the dashboard still answers `/livez` and returns that message elsewhere.
+- On Postgres, a world read made inside an open world transaction (such as
+  the check before a conversation alternative is created) now joins that
+  transaction. It no longer commits it early or, with `pool_size = 1`,
+  waits for a second connection until the pool times out.
 
 ### Fixed
 

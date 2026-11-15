@@ -2529,3 +2529,31 @@ def test_results_page_and_monthly_spend_match_the_sqlite_backend(world):
                       cost_dollars=3.0, input_tokens=1, output_tokens=1)
     assert world.total_spend(owner=owner, since=before - 1)["dollars"] == 3.0
     assert world.total_spend(owner=owner, since=time.time() + 60)["dollars"] == 0
+
+
+@pytest.mark.parametrize("pool_size", ["0", "1"])
+def test_nested_tx_joins_the_outer_transaction(monkeypatch, pool_size):
+    """A read inside an open transaction (a submission guard reading the world)
+    used to commit the outer transaction so far, or wait on a second pooled
+    connection. It now runs inside the outer transaction."""
+    from maverick.world_model_backends.postgres import PostgresWorldModel
+
+    monkeypatch.setenv("MAVERICK_PG_POOL_SIZE", pool_size)
+    w = PostgresWorldModel(dsn=_DSN)
+    title = f"nested-tx-{pool_size}-{os.getpid()}"
+    try:
+        with pytest.raises(RuntimeError, match="outer fails"):
+            with w._tx() as cur:
+                cur.execute("INSERT INTO goals (title, status, created_at, updated_at) "
+                            "VALUES (%s, 'pending', 0, 0)", (title,))
+                seen = w.query("SELECT COUNT(*) FROM goals WHERE title=?", (title,))
+                assert seen[0][0] == 1  # the inner read sees the outer write
+                import psycopg
+
+                with pytest.raises(psycopg.errors.UndefinedColumn):
+                    w.query("SELECT no_such_column FROM goals")
+                cur.execute("SELECT 1")  # an inner failure leaves the outer usable
+                raise RuntimeError("outer fails")
+        assert w.query("SELECT COUNT(*) FROM goals WHERE title=?", (title,))[0][0] == 0
+    finally:
+        w.close()
