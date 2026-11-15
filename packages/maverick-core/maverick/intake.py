@@ -641,6 +641,8 @@ def build_intake_agent(ctx, session: IntakeSession | None = None, *, llm=None, k
     from .tools import ToolRegistry
     from .tools.intake_tools import intake_tools
 
+    if getattr(ctx, "sandbox", None) is None:
+        raise ValueError("conversational intake requires an upload workspace")
     session = session or IntakeSession()
     agent = Agent(
         ctx=ctx, role="intake",
@@ -652,6 +654,7 @@ def build_intake_agent(ctx, session: IntakeSession | None = None, *, llm=None, k
     # so replace it with an intake-only registry before adding onboarding tools.
     agent.tools = ToolRegistry()
     for tool in intake_tools(session, llm=llm or getattr(ctx, "llm", None),
-                             kb=kb or getattr(ctx, "knowledge", None)):
+                             kb=kb or getattr(ctx, "knowledge", None),
+                             sandbox=ctx.sandbox):
         agent.tools.register(tool)
     return agent, session

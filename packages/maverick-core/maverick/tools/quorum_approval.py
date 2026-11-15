@@ -33,7 +33,7 @@ def _check(args: dict[str, Any]) -> str:
         if not isinstance(a, dict):
             continue
         who = str(a.get("approver") or "").strip().lower()
-        if not who:
+        if not who or who in approvers:
             continue
         approvers.add(who)
         role = str(a.get("role") or "").strip().lower()
