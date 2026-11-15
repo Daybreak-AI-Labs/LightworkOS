@@ -1032,8 +1032,7 @@ def _merge_tenant(cfg: dict, tenant: dict, path: Path) -> dict:
     """A tenant overlay may only tighten governance, safety, capabilities,
     sandbox and security settings; a looser value is ignored, logged once and listed by
     ``maverick doctor`` (:func:`tenant_policy_loosenings`)."""
-    from .policy_tighten import merge_tenant_overlay
-    merged, ignored, fixed = merge_tenant_overlay(cfg, tenant, _deep_merge_config)
+    merged, ignored, fixed = _tighten_tenant(cfg, tenant)
     marker = (str(path), tuple(ignored), tuple(fixed))
     if (ignored or fixed) and marker not in _LOOSENING_LOGGED:
         _LOOSENING_LOGGED.add(marker)
@@ -1043,11 +1042,21 @@ def _merge_tenant(cfg: dict, tenant: dict, path: Path) -> dict:
     return merged
 
 
+def _tighten_tenant(cfg: dict, tenant: dict) -> tuple[dict, list[str], list[str]]:
+    """:func:`policy_tighten.merge_tenant_overlay`, also reporting a policy
+    section the tenant wrote as something other than a table (the loader
+    already reads it as empty)."""
+    from .policy_tighten import merge_tenant_overlay
+    merged, ignored, fixed = merge_tenant_overlay(cfg, tenant, _deep_merge_config)
+    message = getattr(tenant, "message", "") if isinstance(tenant, _UnreadableTable) else ""
+    ignored += [name for name in ("safety", "sandbox") if f"[{name}] must be a configuration table" in message]
+    return merged, ignored, fixed
+
+
 def tenant_policy_loosenings() -> dict[str, list[str]]:
     """Workspace overlays on disk whose looser policy settings are ignored,
     keyed by workspace folder, compared with the organisation's settings."""
     from .paths import maverick_home
-    from .policy_tighten import merge_tenant_overlay
     root = maverick_home() / "tenants"
     if not root.is_dir():
         return {}
@@ -1058,7 +1067,7 @@ def tenant_policy_loosenings() -> dict[str, list[str]]:
             tenant = _load_config_file(path, interpolate=False)
         except Exception:  # unreadable files are reported by the config checks
             continue
-        _, ignored, fixed = merge_tenant_overlay(upper, tenant, _deep_merge_config)
+        _, ignored, fixed = _tighten_tenant(upper, tenant)
         if ignored or fixed:
             found[path.parent.name] = ignored + [f"{key} (set by your organisation)" for key in fixed]
     return found
@@ -1069,12 +1078,11 @@ def tenant_ignored_settings() -> set[str]:
     tcfg = tenant_config_path()
     if tcfg is None or not _present(tcfg):
         return set()
-    from .policy_tighten import merge_tenant_overlay
     try:
         tenant = _load_config_file(tcfg, interpolate=False)
     except Exception:
         return set()
-    _, ignored, fixed = merge_tenant_overlay(load_global_config(), tenant, _deep_merge_config)
+    _, ignored, fixed = _tighten_tenant(load_global_config(), tenant)
     return set(ignored) | set(fixed)
 
 
