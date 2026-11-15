@@ -1808,6 +1808,20 @@ def _pick_runtime_toggles() -> dict[str, Any]:
     }
 
 
+def _ask_ed25519_keys(prompt: str) -> list[str]:
+    """Ask until every entry is a 64-hex Ed25519 public key; store lower case.
+
+    The kernel compares keys as lower-case hex and refuses a malformed set,
+    so a typo saved here would silently block every signed update later.
+    """
+    while True:
+        raw = _q_text(prompt, default="")
+        keys = [k.strip().lower() for k in raw.split(",") if k.strip()]
+        if all(re.fullmatch(r"[0-9a-f]{64}", key) for key in keys):
+            return list(dict.fromkeys(keys))
+        console.print("[yellow]Each key must be 64 hexadecimal characters (0-9, a-f).[/yellow]")
+
+
 def _ask_insight_exchange(advanced: dict[str, Any]) -> None:
     """Trusted peer keys for federated insight exchange (needs dreaming)."""
     # Federated insight exchange rides on dreaming: trusted peer keys are
@@ -1818,11 +1832,8 @@ def _ask_insight_exchange(advanced: dict[str, Any]) -> None:
         "(signed bundles via `maverick insights-export/-import`)",
         default=False,
     ):
-        raw = _q_text(
-            "  Trusted peer insight pubkeys (comma-separated hex Ed25519)",
-            default="",
-        )
-        advanced["insight_pubkeys"] = [k.strip() for k in raw.split(",") if k.strip()]
+        advanced["insight_pubkeys"] = _ask_ed25519_keys(
+            "  Trusted peer insight pubkeys (comma-separated hex Ed25519)")
 
 
 def _ask_flow_followups(advanced: dict[str, Any]) -> None:
@@ -2070,11 +2081,8 @@ def _ask_regulated_deployment(advanced: dict[str, Any]) -> None:
         default=False,
     ):
         advanced["tax_update_url"] = _q_text("  Constants update URL", default="").strip()
-        raw = _q_text(
-            "  Trusted publisher pubkeys (comma-separated hex Ed25519)",
-            default="",
-        )
-        advanced["tax_pubkeys"] = [k.strip() for k in raw.split(",") if k.strip()]
+        advanced["tax_pubkeys"] = _ask_ed25519_keys(
+            "  Trusted publisher pubkeys (comma-separated hex Ed25519)")
     # Regulated-deployment posture: data-residency region + a compliance
     # disclosure line. These map to the independent [residency]/[compliance]
     # scalar tables a regulated deployment needs.

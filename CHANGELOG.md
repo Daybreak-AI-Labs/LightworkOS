@@ -246,6 +246,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The calendar tool checks every CalDAV request, redirects included, against
   the egress policy (`[enterprise] allowed_hosts`, tenant egress). Add your
   CalDAV server's host to the allow-list in enterprise mode.
+- The setup wizard re-asks for trusted insight and tax publisher keys until
+  each is 64 hexadecimal characters, and saves them in lower case.
 
 ### Fixed
 

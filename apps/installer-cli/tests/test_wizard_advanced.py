@@ -1431,3 +1431,27 @@ def test_public_chat_is_off_by_default_and_on_only_when_chosen(tmp_path, monkeyp
 
     config.reset_config_cache()
     assert public_chat_api.public_chat_enabled() is True
+
+
+def test_ed25519_key_prompts_reprompt_until_every_key_is_64_hex(monkeypatch):
+    # A typo used to be saved and every signed update silently refused later.
+    import io
+
+    from maverick_installer import wizard
+    from maverick_installer.wizard import advanced as step
+    from rich.console import Console
+
+    good, other = "AB" * 32, "0c" * 32
+    for ask, key, start in ((step._ask_insight_exchange, "insight_pubkeys", {"dreaming": True}),
+                            (step._ask_regulated_deployment, "tax_pubkeys", {})):
+        texts = ["https://updates.example/tax"] if key == "tax_pubkeys" else []
+        texts += ["abc, " + good, "zz" * 32, f"{good}, {other}"]
+        confirms = [True]
+        monkeypatch.setattr(wizard, "_q_confirm", lambda *a, c=confirms, **k: c.pop(0) if c else False)
+        monkeypatch.setattr(wizard, "_q_text", lambda *a, t=texts, **k: t.pop(0) if t else "")
+        monkeypatch.setattr(wizard, "_q_checkbox", lambda *a, **k: [])
+        monkeypatch.setattr(wizard, "_q_select", lambda message, choices, default=None: default or choices[0])
+        monkeypatch.setattr(wizard, "console", Console(file=io.StringIO(), width=120))
+        advanced = dict(start)
+        ask(advanced)
+        assert advanced[key] == [good.lower(), other]
