@@ -496,6 +496,7 @@ def _resolved_view(name: str, directory: str | Path | None = None) -> dict | Non
     current_autonomy = effective_profile(name, prof.autonomy)
     config_override = bool(get_workforce().get("agents", {}).get(name))
     autonomy_enabled = levels_enabled()
+    autonomy_problem = levels_problem()
     return {
         "name": name,
         "generation": _override_generation(name, (Path(directory) if directory else user_dir()) / f"{name}.toml"),
@@ -531,7 +532,7 @@ def _resolved_view(name: str, directory: str | Path | None = None) -> dict | Non
             "high": current_autonomy.high.value if current_autonomy.high else None,
             "onboarding": current_autonomy.onboarding,
             "levels_enabled": autonomy_enabled,
-            "levels_problem": levels_problem(),
+            "levels_problem": autonomy_problem,
             "config_override": config_override,
             "pack_default": pack_autonomy.default.value,
             "pack": {
@@ -541,8 +542,11 @@ def _resolved_view(name: str, directory: str | Path | None = None) -> dict | Non
                 "high": pack_autonomy.high.value if pack_autonomy.high else None,
                 "onboarding": pack_autonomy.onboarding,
             },
+            # The level the runtime gate applies: watch-only (observe) while
+            # the setting cannot be read (agent_autonomy.decide).
             "effective": {
-                risk: resolve(current_autonomy, risk=risk, levels_enabled=autonomy_enabled).level.value
+                risk: "observe" if autonomy_problem else
+                resolve(current_autonomy, risk=risk, levels_enabled=autonomy_enabled).level.value
                 for risk in ("low", "medium", "high")
             },
         },

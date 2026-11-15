@@ -243,14 +243,15 @@ def _clean_builtin_name() -> str:
     raise AssertionError("no lint-error-clean built-in pack found")
 
 
-@pytest.mark.parametrize("levels_on", [False, True])
+@pytest.mark.parametrize("levels_on", [False, True, "garbled"])
 def test_specialist_levels_match_the_runtime_gate(client, monkeypatch, tmp_path, levels_on):
     from maverick import agent_autonomy
     from maverick.domain import available_domains
     from maverick.domain_edit import resolved_view
     from maverick_dashboard import effective_access
     monkeypatch.setenv("MAVERICK_DOMAINS_DIR", str(tmp_path / "domains"))
-    monkeypatch.setenv("MAVERICK_WORKFORCE_LEVELS", "1" if levels_on else "0")
+    monkeypatch.setenv("MAVERICK_WORKFORCE_LEVELS",
+                       "enabled" if levels_on == "garbled" else "1" if levels_on else "0")
     name = _clean_builtin_name()
     view = resolved_view(name)
     report = effective_access.agent(name, view)
@@ -259,7 +260,12 @@ def test_specialist_levels_match_the_runtime_gate(client, monkeypatch, tmp_path,
         # The level shown is the one the runtime gate decides for that risk.
         assert tier["level"] == agent_autonomy.decide(name, profile, risk=tier["risk"]).level.value
         assert tier["label"] and tier["means"] and tier["rule"]
-    if not levels_on:
+    if levels_on == "garbled":
+        # DR 11: an unreadable setting holds every action at watch-only.
+        assert {t["level"] for t in report["tiers"]} == {"observe"}
+        assert "cannot be used" in report["tiers"][0]["rule"]
+        assert "MAVERICK_WORKFORCE_LEVELS" in report["tiers"][0]["rule"]
+    elif not levels_on:
         assert {t["level"] for t in report["tiers"]} == {"suggest"}
         assert report["tiers"][0]["rule"].startswith("Independence levels are off")
     else:

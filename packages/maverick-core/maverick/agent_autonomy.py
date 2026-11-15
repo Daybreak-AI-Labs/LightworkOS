@@ -365,8 +365,8 @@ def _levels_setting(override: bool | None) -> tuple[bool, str | None]:
         settings = get_workforce()
         errors = config_source_errors()
         if errors:
-            return False, "a settings file cannot be read: " + "; ".join(
-                f"{path}: {message}" for path, message in sorted(errors.items()))
+            return False, "Lightwork cannot read " + "; ".join(
+                f"{path} ({message})" for path, message in sorted(errors.items()))
         if env in _ENV_ON:
             return True, None
         if env:
@@ -450,7 +450,7 @@ def decide(
         decision, execute_by = _decision_for(AutonomyLevel.OBSERVE)
         return AutonomyVerdict(
             AutonomyLevel.OBSERVE, decision, execute_by,
-            f"independence setting unusable ({problem}) -- watch only until it is fixed",
+            f"{problem}, so this agent can only watch until it is fixed",
         )
     return resolve(
         effective_profile(name, pack_profile),

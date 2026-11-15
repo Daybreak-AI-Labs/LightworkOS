@@ -233,3 +233,5 @@ async def test_malformed_levels_setting_falls_back_to_observe(monkeypatch, tmp_p
     verdict = aa.decide("fin_clerk", AutonomyProfile(default=AutonomyLevel.AUTO), risk="high")
     assert verdict.level is AutonomyLevel.OBSERVE and verdict.decision == "deny"
     assert "config.toml" in verdict.reason and aa.levels_gate_active()
+    # The reason names the unreadable file and line, not the levels setting.
+    assert "line 3" in verdict.reason and "independence setting unusable" not in verdict.reason
