@@ -246,6 +246,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   with the same number. Share such runs from their own workspace.
 - An A2A task whose start could not be saved is now marked failed, so it
   no longer holds a task slot until the server restarts.
+- Fetching the public A2A agent card no longer writes an agent-trust
+  denial to the audit log on every anonymous request; task requests still
+  record theirs.
 
 ### Fixed
 

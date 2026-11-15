@@ -115,7 +115,7 @@ def build_agent_card(base_url: str | None = None) -> dict[str, Any]:
     from .a2a_tasks import TaskEngine
 
     security = [{"lightworkBearer": []}]
-    if TaskEngine().auth_error(None) is None:
+    if TaskEngine().auth_error(None, record=False) is None:
         security.insert(0, {})
     return {
         "protocolVersion": A2A_PROTOCOL_VERSION,
