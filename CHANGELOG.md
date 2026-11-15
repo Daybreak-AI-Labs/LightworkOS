@@ -223,6 +223,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the refusal names the storage boundary.
 - An automation opportunity is not proposed while any completed run has no
   recorded cost, and the reason shown says so.
+- The gRPC server starts again: its generated stubs now import as part of
+  the package. Stubs an earlier release generated are rebuilt on next start;
+  with runtime generation off, run `maverick gen-stubs` after upgrading.
 
 ### Fixed
 
