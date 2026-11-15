@@ -580,12 +580,13 @@ def workforce_posture(request: Request) -> dict:
     Current authority posture and candidates who can be reviewed for graduation.
     """
     require_permission(request, "view")
-    from maverick.agent_autonomy import graduation_candidates, levels_enabled
+    from maverick.agent_autonomy import graduation_candidates, levels_enabled, levels_problem
     from maverick.domain_audit import autonomy_posture
 
     s = autonomy_posture()
     out: dict = {
         "levels_enabled": levels_enabled(),
+        "levels_problem": levels_problem(),
         "autonomy_posture": s.get("autonomy_posture", {}),
         "packs_onboarding": s.get("packs_onboarding", 0),
         "graduation_candidates": [],

@@ -209,3 +209,27 @@ async def test_coordination_not_gated_by_dial(monkeypatch, tmp_path, _high_risk_
 
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])
+
+
+@pytest.mark.asyncio
+async def test_malformed_levels_setting_falls_back_to_observe(monkeypatch, tmp_path, _high_risk_act):
+    """DR 11: a setting Lightwork cannot read holds every agent to the lowest
+    level (observe) instead of switching the gate off, and says why. It does
+    not widen any tool grant: that switch needs a readable "on"."""
+    import maverick.agent_autonomy as aa
+
+    _enable(monkeypatch)
+    monkeypatch.setenv("MAVERICK_WORKFORCE_LEVELS", "enabled")
+    agent = _agent(tmp_path, AutonomyProfile(default=AutonomyLevel.AUTO, onboarding=False))
+    out = await agent._run_tool("act", {})
+    assert "done" not in out and "DENIED" in out
+    assert "data" in await agent._run_tool("look", {})
+    assert aa.levels_enabled() is False  # no tool widening
+    assert "MAVERICK_WORKFORCE_LEVELS" in aa.levels_problem()
+    # An unreadable settings file is the same: observe, with the file named.
+    monkeypatch.delenv("MAVERICK_WORKFORCE_LEVELS")
+    monkeypatch.setattr("maverick.config.config_source_errors",
+                        lambda *a, **k: {"config.toml": "line 3: bad"})
+    verdict = aa.decide("fin_clerk", AutonomyProfile(default=AutonomyLevel.AUTO), risk="high")
+    assert verdict.level is AutonomyLevel.OBSERVE and verdict.decision == "deny"
+    assert "config.toml" in verdict.reason and aa.levels_gate_active()

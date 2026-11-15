@@ -234,6 +234,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   it refuses to start and names the file and line instead of opening a local
   database. Fix the file, or set `MAVERICK_WORLD_BACKEND=sqlite` to use the
   local database on purpose.
+- When the independence-levels setting cannot be read (an unreadable
+  settings file, or `[workforce] levels` or `MAVERICK_WORKFORCE_LEVELS` that
+  is not true or false), every agent can only watch: consequential actions
+  are refused instead of the levels check switching off. `maverick doctor`
+  and the Workforce and Agents pages say so. Tool grants widen only when the
+  setting reads as on.
 
 ### Fixed
 

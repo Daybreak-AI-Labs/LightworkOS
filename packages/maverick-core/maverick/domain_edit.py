@@ -483,7 +483,13 @@ def _resolved_view(name: str, directory: str | Path | None = None) -> dict | Non
     base = _base_profile(name, raw)
     errors, warnings = lint_profile(prof)
     readiness = workflow_readiness(prof)
-    from .agent_autonomy import default_profile_for, effective_profile, levels_enabled, resolve
+    from .agent_autonomy import (
+        default_profile_for,
+        effective_profile,
+        levels_enabled,
+        levels_problem,
+        resolve,
+    )
     from .config import get_workforce
 
     pack_autonomy = prof.autonomy or default_profile_for(name)
@@ -525,6 +531,7 @@ def _resolved_view(name: str, directory: str | Path | None = None) -> dict | Non
             "high": current_autonomy.high.value if current_autonomy.high else None,
             "onboarding": current_autonomy.onboarding,
             "levels_enabled": autonomy_enabled,
+            "levels_problem": levels_problem(),
             "config_override": config_override,
             "pack_default": pack_autonomy.default.value,
             "pack": {

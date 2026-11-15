@@ -557,3 +557,17 @@ def test_depth_suffix_and_bare_principal_match_exactly():
     assert graduation_status("fin_clerk", _approved("fin_clerk", 10)).sample == 10
     # a different exact agent must not pick these up
     assert graduation_status("clerk", _approved("agent:fin_clerk-3", 10)).sample == 0
+
+
+def test_doctor_says_an_unreadable_levels_setting_holds_agents_to_watch_only(monkeypatch, capsys):
+    import maverick.health as health
+
+    monkeypatch.setenv("MAVERICK_WORKFORCE_LEVELS", "2")
+    monkeypatch.setattr("maverick.config.config_source_errors", lambda *a, **k: {})
+    health._FAILURES.clear()
+    health._check_autonomy_levels()
+    out = capsys.readouterr().out
+    assert "independence levels" in out and "only watch" in out
+    monkeypatch.setenv("MAVERICK_WORKFORCE_LEVELS", "off")
+    health._check_autonomy_levels()
+    assert capsys.readouterr().out == ""

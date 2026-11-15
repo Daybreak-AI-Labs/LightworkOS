@@ -683,6 +683,20 @@ def _check_data_residency(cfg: dict) -> None:
              fix="set VERTEX_LOCATION to an in-region value (if Vertex is used)")
 
 
+def _check_autonomy_levels() -> None:
+    """An independence-levels setting that cannot be read holds every agent
+    to watch-only. Say so, so the operator can fix the setting."""
+    try:
+        from .agent_autonomy import levels_problem
+        problem = levels_problem()
+    except Exception:  # pragma: no cover -- the report must not crash doctor
+        return
+    if problem:
+        _row(YELLOW, "independence levels",
+             f"{problem}; every agent can only watch until this is fixed",
+             fix="correct [workforce] levels or MAVERICK_WORKFORCE_LEVELS (true or false)")
+
+
 def _check_self_hosted_prices() -> None:
     """A self-hosted server on a public address with no price is charged a
     safety ceiling. Say so, so the operator can set the real price."""
@@ -988,6 +1002,7 @@ def diagnose() -> int:
     _check_profile()
     _check_data_residency(cfg)
     _check_self_hosted_prices()
+    _check_autonomy_levels()
     _check_client_binding()
     _check_proxy_auth()
     _check_anthropic()
