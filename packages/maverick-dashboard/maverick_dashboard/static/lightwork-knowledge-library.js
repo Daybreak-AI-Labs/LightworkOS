@@ -179,18 +179,19 @@
         : total + (total === 1 ? " document is waiting." : " documents are waiting.");
     }
     documents.forEach(function (item) {
+      // Stacked into labelled cards on a phone; long names and matching text wrap.
       var tr = el("tr");
-      var th = el("th", null, item.source); th.scope = "row"; tr.appendChild(th);
-      tr.appendChild(el("td", null, human(item.collection)));
-      tr.appendChild(el("td", null, item.reason));
-      var quote = el("td"); quote.appendChild(el("q", null, item.excerpt)); tr.appendChild(quote);
-      var actions = el("td");
+      function cell(label, child) { var td = el("td"); td.dataset.label = label; td.appendChild(child); tr.appendChild(td); return td; }
+      cell("Document", el("span", "ka-note", item.source));
+      cell("Collection", el("span", "ka-note", human(item.collection)));
+      cell("Why it was held", el("span", "ka-note", item.reason));
+      cell("Matching text", el("q", "ka-source", item.excerpt));
+      var actions = cell("Actions", document.createDocumentFragment());
       var include = button("Include", function () { return decideHeld(item, "include", body.context); }, "btn");
       include.setAttribute("aria-label", "Include " + item.source);
       var keep = button("Keep out", function () { return decideHeld(item, "keep_out", body.context); }, "btn btn--ghost");
       keep.setAttribute("aria-label", "Keep " + item.source + " out");
       actions.append(include, keep);
-      tr.appendChild(actions);
       heldBody.appendChild(tr);
     });
   }
