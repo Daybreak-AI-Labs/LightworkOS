@@ -609,17 +609,9 @@ def _store_for(
     )
 
 
-def attach_privacy_drop_management_composition(  # noqa: C901 - explicit app-state seams
-    app: FastAPI,
-) -> None:
-    """Install lazy stock seams; no tenant store is opened during attachment."""
-
-    if not isinstance(app, FastAPI):
-        raise TypeError("DROP composition requires a FastAPI application")
-    state = app.state
-    deployment_enabled_probe = getattr(state, "privacy_drop_management_enabled_probe", None)
-    deployment_readiness_probe = getattr(state, "privacy_drop_management_readiness_probe", None)
-
+def _drop_management_readiness_bindings(
+    app, state, deployment_enabled_probe, deployment_readiness_probe,
+):
     def enabled_probe(tenant_id: str) -> bool:
         try:
             enabled = privacy_drop_management_composition_enabled(
@@ -778,9 +770,10 @@ def attach_privacy_drop_management_composition(  # noqa: C901 - explicit app-sta
 
     def readiness_probe(tenant_id: str) -> bool:
         return readiness_report(tenant_id).get("locally_operational") is True
+    return enabled_probe, readiness_report, readiness_probe
 
-    state.privacy_drop_management_enabled_probe = enabled_probe
 
+def _attach_drop_authority_factories(app, state):
     if not callable(getattr(state, "privacy_drop_principal_key_authority_factory", None)):
 
         def key_authority_factory(
@@ -850,7 +843,10 @@ def attach_privacy_drop_management_composition(  # noqa: C901 - explicit app-sta
             )
 
         state.privacy_drop_record_authority_resolver = authority_resolver
+    return None
 
+
+def _attach_drop_management_factories(app, state, readiness_probe):
     if not callable(getattr(state, "privacy_drop_management_store_factory", None)):
 
         def store_factory(
@@ -962,7 +958,10 @@ def attach_privacy_drop_management_composition(  # noqa: C901 - explicit app-sta
             )
 
         state.privacy_drop_management_maintenance_cycle_runner = maintenance_cycle_runner
+    return None
 
+
+def _attach_drop_management_scheduler(app, state):
     if getattr(state, "privacy_drop_management_scheduler", None) is None:
         configured_scheduler = getattr(
             state,
@@ -1024,6 +1023,31 @@ def attach_privacy_drop_management_composition(  # noqa: C901 - explicit app-sta
                 clock=_clock(app),
             )
             attach_drop_managed_scheduler(app, runtime)
+    return None
+
+
+def attach_privacy_drop_management_composition(
+    app: FastAPI,
+) -> None:
+    """Install lazy stock seams; no tenant store is opened during attachment."""
+
+    if not isinstance(app, FastAPI):
+        raise TypeError("DROP composition requires a FastAPI application")
+    state = app.state
+    deployment_enabled_probe = getattr(state, "privacy_drop_management_enabled_probe", None)
+    deployment_readiness_probe = getattr(state, "privacy_drop_management_readiness_probe", None)
+
+    (enabled_probe, readiness_report, readiness_probe) = _drop_management_readiness_bindings(
+        app, state, deployment_enabled_probe, deployment_readiness_probe,
+    )
+
+    state.privacy_drop_management_enabled_probe = enabled_probe
+
+    _attach_drop_authority_factories(app, state)
+
+    _attach_drop_management_factories(app, state, readiness_probe)
+
+    _attach_drop_management_scheduler(app, state)
 
     state.privacy_drop_management_readiness_probe = readiness_probe
     state.privacy_drop_management_readiness_report = readiness_report

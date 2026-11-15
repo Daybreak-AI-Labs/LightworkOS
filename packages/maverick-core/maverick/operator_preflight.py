@@ -818,7 +818,284 @@ def _local_audit_key_error(
     return ""
 
 
-def _gateway_evidence_checks(  # noqa: C901 - explicit read-only posture matrix
+def _gateway_custody_check(
+    custody_path_error, material_error, offhost, require_offhost, private_keys,
+):
+    if custody_path_error:
+        custody = Check(
+            "gateway_key_custody",
+            "Gateway signing-key custody",
+            "blocked",
+            f"Gateway key custody is unsafe: {custody_path_error}.",
+            "maverick doctor",
+        )
+    elif material_error:
+        custody = Check(
+            "gateway_key_custody",
+            "Gateway signing-key custody",
+            "blocked",
+            f"Gateway signing-key material failed validation. {material_error}",
+            "maverick doctor",
+        )
+    elif offhost:
+        custody = Check(
+            "gateway_key_custody",
+            "Gateway signing-key custody",
+            "ready",
+            "An externally managed or injected signing-key posture is present.",
+        )
+    elif require_offhost:
+        custody = Check(
+            "gateway_key_custody",
+            "Gateway signing-key custody",
+            "blocked",
+            "Off-host signing-key custody is required but not configured.",
+            "configure KMS-wrapped or injected audit signing-key custody",
+        )
+    elif private_keys:
+        custody = Check(
+            "gateway_key_custody",
+            "Gateway signing-key custody",
+            "attention",
+            (
+                "A validated, restricted local signing key is present; use "
+                "off-host custody for stronger production separation."
+            ),
+            "configure KMS-wrapped or injected audit signing-key custody",
+        )
+    else:
+        custody = Check(
+            "gateway_key_custody",
+            "Gateway signing-key custody",
+            "attention",
+            "No signing key has been provisioned yet; preflight did not create one.",
+            "configure KMS-wrapped or injected audit signing-key custody",
+        )
+    return custody
+
+
+def _gateway_signing_check(
+    material_error, require_offhost, offhost, injected, wrapped, private_keys,
+):
+    crypto_ready = _module_available("cryptography")
+    if not crypto_ready:
+        signing = Check(
+            "gateway_signing",
+            "Gateway signing capability",
+            "blocked",
+            "Ed25519 signing support is not installed.",
+            "python -m pip install cryptography",
+        )
+    elif material_error:
+        signing = Check(
+            "gateway_signing",
+            "Gateway signing capability",
+            "blocked",
+            (
+                "Ed25519 support is installed, but configured signing-key "
+                "material failed validation."
+            ),
+            "maverick doctor",
+        )
+    elif require_offhost and not offhost:
+        signing = Check(
+            "gateway_signing",
+            "Gateway signing capability",
+            "blocked",
+            (
+                "Signing would be refused because off-host key custody is "
+                "required and no validated off-host source is configured."
+            ),
+            "maverick doctor",
+        )
+    elif injected:
+        signing = Check(
+            "gateway_signing",
+            "Gateway signing capability",
+            "ready",
+            "The injected Ed25519 signing key passed offline validation.",
+        )
+    elif wrapped:
+        signing = Check(
+            "gateway_signing",
+            "Gateway signing capability",
+            "ready",
+            (
+                "The KMS-wrapped signing-key envelope and offline backend "
+                "prerequisites passed; preflight did not contact the KMS."
+            ),
+        )
+    elif private_keys:
+        signing = Check(
+            "gateway_signing",
+            "Gateway signing capability",
+            "ready",
+            "The local Ed25519 private/public keypair passed validation.",
+        )
+    else:
+        signing = Check(
+            "gateway_signing",
+            "Gateway signing capability",
+            "ready",
+            "Ed25519 signing support is installed.",
+        )
+    return signing
+
+
+def _gateway_trust_check(
+    custody_path_error, local_error, key_dir, private_path_is_restricted, injected_markers,
+):
+    trust_error = (
+        f"The audit trust-registry path is unsafe: {custody_path_error}."
+        if custody_path_error
+        else ""
+    )
+    if not trust_error and local_error:
+        trust_error = (
+            "The protected local signing-key registry failed validation."
+        )
+    trusted_count = 0
+    trusted_keys: dict[str, str] = {}
+    if not trust_error and key_dir.exists() and not key_dir.is_dir():
+        trust_error = "The audit trust-registry path is not a directory."
+    elif not trust_error and key_dir.is_dir():
+        try:
+            from .file_lock import atomic_read_bytes
+
+            for public_path in sorted(key_dir.glob("*.pub")):
+                if not re.fullmatch(r"[0-9a-f]{16}", public_path.stem):
+                    raise ValueError("invalid key id")
+                raw = atomic_read_bytes(public_path)
+                if (
+                    len(raw) != 32
+                    or hashlib.sha256(raw).hexdigest()[:16]
+                    != public_path.stem
+                    or not private_path_is_restricted(public_path, 0o644)
+                ):
+                    raise ValueError("malformed or unprotected public key")
+                has_custody = (
+                    public_path.with_suffix(".key").exists()
+                    or public_path.with_suffix(".injected").exists()
+                )
+                if not has_custody:
+                    raise ValueError("unprovisioned public key")
+                trusted_count += 1
+                trusted_keys[public_path.stem] = raw.hex()
+            for marker_path in injected_markers:
+                if (
+                    not re.fullmatch(r"[0-9a-f]{16}", marker_path.stem)
+                    or not marker_path.with_suffix(".pub").is_file()
+                    or not private_path_is_restricted(marker_path, 0o600)
+                    or atomic_read_bytes(marker_path)
+                ):
+                    raise ValueError("malformed injected-key marker")
+        except (OSError, ValueError):
+            trust_error = "The protected trust registry failed validation."
+    if trust_error:
+        trust = Check(
+            "gateway_trust_registry",
+            "Gateway trust registry",
+            "blocked",
+            trust_error,
+            "maverick doctor",
+        )
+    elif trusted_count:
+        trust = Check(
+            "gateway_trust_registry",
+            "Gateway trust registry",
+            "ready",
+            f"{trusted_count} protected public trust root(s) are present.",
+        )
+    else:
+        trust = Check(
+            "gateway_trust_registry",
+            "Gateway trust registry",
+            "attention",
+            "No public trust root exists yet; preflight did not provision one.",
+            "issue the first governed gateway delivery after configuring custody",
+        )
+    return trust, trusted_keys
+
+
+def _gateway_ledger_check(ledger_path_error, ledger_dir, tenant, trusted_keys):
+    ledger_error = (
+        f"Gateway ledger custody is unsafe: {ledger_path_error}."
+        if ledger_path_error
+        else ""
+    )
+    initialized = 0
+    if not ledger_error:
+        from .ai_evidence_ledger import SegmentedReceiptLedger
+
+        for stem, identity_key, payload_key in (
+            (
+                "interaction_receipts",
+                "receipt_id",
+                "receipt_payload_sha256",
+            ),
+            ("assurance_packets", "packet_id", "packet_sha256"),
+        ):
+            legacy = ledger_dir / f"{stem}.ndjson"
+            artifacts = (
+                legacy,
+                ledger_dir / f"{stem}.segments",
+                ledger_dir / f"{stem}.index.sqlite3",
+                ledger_dir / f"{stem}.index-state.json",
+            )
+            if not any(path.exists() for path in artifacts):
+                continue
+            initialized += 1
+            if not trusted_keys:
+                ledger_error = (
+                    "An existing signed gateway ledger has no validated "
+                    "protected trust root."
+                )
+                break
+            ledger = SegmentedReceiptLedger(
+                legacy,
+                tenant_id=tenant,
+                identity_key=identity_key,
+                payload_key=payload_key,
+            )
+            valid, detail = ledger.verify_integrity_read_only(
+                trusted_public_keys=trusted_keys,
+            )
+            if not valid:
+                ledger_error = (
+                    f"The {stem.replace('_', ' ')} ledger failed read-only "
+                    f"integrity validation ({detail})."
+                )
+                break
+    if ledger_error:
+        ledgers = Check(
+            "gateway_ledgers",
+            "Gateway signed ledgers",
+            "blocked",
+            ledger_error,
+            "maverick doctor",
+        )
+    elif initialized:
+        ledgers = Check(
+            "gateway_ledgers",
+            "Gateway signed ledgers",
+            "ready",
+            (
+                f"{initialized} gateway ledger namespace(s) passed signed "
+                "row, authenticated-state, and read-only index verification."
+            ),
+        )
+    else:
+        ledgers = Check(
+            "gateway_ledgers",
+            "Gateway signed ledgers",
+            "attention",
+            "No gateway ledger exists yet; preflight did not create evidence state.",
+            "issue the first governed gateway delivery",
+        )
+    return ledgers
+
+
+def _gateway_evidence_checks(
     cfg: dict[str, Any] | None,
 ) -> tuple[Check, Check, Check, Check]:
     """Inspect signing custody, trust, and ledger paths without creating state."""
@@ -968,264 +1245,19 @@ def _gateway_evidence_checks(  # noqa: C901 - explicit read-only posture matrix
     offhost = (injected and not injected_error) or (
         wrapped and not wrapped_error
     )
-    if custody_path_error:
-        custody = Check(
-            "gateway_key_custody",
-            "Gateway signing-key custody",
-            "blocked",
-            f"Gateway key custody is unsafe: {custody_path_error}.",
-            "maverick doctor",
-        )
-    elif material_error:
-        custody = Check(
-            "gateway_key_custody",
-            "Gateway signing-key custody",
-            "blocked",
-            f"Gateway signing-key material failed validation. {material_error}",
-            "maverick doctor",
-        )
-    elif offhost:
-        custody = Check(
-            "gateway_key_custody",
-            "Gateway signing-key custody",
-            "ready",
-            "An externally managed or injected signing-key posture is present.",
-        )
-    elif require_offhost:
-        custody = Check(
-            "gateway_key_custody",
-            "Gateway signing-key custody",
-            "blocked",
-            "Off-host signing-key custody is required but not configured.",
-            "configure KMS-wrapped or injected audit signing-key custody",
-        )
-    elif private_keys:
-        custody = Check(
-            "gateway_key_custody",
-            "Gateway signing-key custody",
-            "attention",
-            (
-                "A validated, restricted local signing key is present; use "
-                "off-host custody for stronger production separation."
-            ),
-            "configure KMS-wrapped or injected audit signing-key custody",
-        )
-    else:
-        custody = Check(
-            "gateway_key_custody",
-            "Gateway signing-key custody",
-            "attention",
-            "No signing key has been provisioned yet; preflight did not create one.",
-            "configure KMS-wrapped or injected audit signing-key custody",
-        )
-
-    crypto_ready = _module_available("cryptography")
-    if not crypto_ready:
-        signing = Check(
-            "gateway_signing",
-            "Gateway signing capability",
-            "blocked",
-            "Ed25519 signing support is not installed.",
-            "python -m pip install cryptography",
-        )
-    elif material_error:
-        signing = Check(
-            "gateway_signing",
-            "Gateway signing capability",
-            "blocked",
-            (
-                "Ed25519 support is installed, but configured signing-key "
-                "material failed validation."
-            ),
-            "maverick doctor",
-        )
-    elif require_offhost and not offhost:
-        signing = Check(
-            "gateway_signing",
-            "Gateway signing capability",
-            "blocked",
-            (
-                "Signing would be refused because off-host key custody is "
-                "required and no validated off-host source is configured."
-            ),
-            "maverick doctor",
-        )
-    elif injected:
-        signing = Check(
-            "gateway_signing",
-            "Gateway signing capability",
-            "ready",
-            "The injected Ed25519 signing key passed offline validation.",
-        )
-    elif wrapped:
-        signing = Check(
-            "gateway_signing",
-            "Gateway signing capability",
-            "ready",
-            (
-                "The KMS-wrapped signing-key envelope and offline backend "
-                "prerequisites passed; preflight did not contact the KMS."
-            ),
-        )
-    elif private_keys:
-        signing = Check(
-            "gateway_signing",
-            "Gateway signing capability",
-            "ready",
-            "The local Ed25519 private/public keypair passed validation.",
-        )
-    else:
-        signing = Check(
-            "gateway_signing",
-            "Gateway signing capability",
-            "ready",
-            "Ed25519 signing support is installed.",
-        )
-
-    trust_error = (
-        f"The audit trust-registry path is unsafe: {custody_path_error}."
-        if custody_path_error
-        else ""
+    custody = _gateway_custody_check(
+        custody_path_error, material_error, offhost, require_offhost, private_keys,
     )
-    if not trust_error and local_error:
-        trust_error = (
-            "The protected local signing-key registry failed validation."
-        )
-    trusted_count = 0
-    trusted_keys: dict[str, str] = {}
-    if not trust_error and key_dir.exists() and not key_dir.is_dir():
-        trust_error = "The audit trust-registry path is not a directory."
-    elif not trust_error and key_dir.is_dir():
-        try:
-            from .file_lock import atomic_read_bytes
 
-            for public_path in sorted(key_dir.glob("*.pub")):
-                if not re.fullmatch(r"[0-9a-f]{16}", public_path.stem):
-                    raise ValueError("invalid key id")
-                raw = atomic_read_bytes(public_path)
-                if (
-                    len(raw) != 32
-                    or hashlib.sha256(raw).hexdigest()[:16]
-                    != public_path.stem
-                    or not private_path_is_restricted(public_path, 0o644)
-                ):
-                    raise ValueError("malformed or unprotected public key")
-                has_custody = (
-                    public_path.with_suffix(".key").exists()
-                    or public_path.with_suffix(".injected").exists()
-                )
-                if not has_custody:
-                    raise ValueError("unprovisioned public key")
-                trusted_count += 1
-                trusted_keys[public_path.stem] = raw.hex()
-            for marker_path in injected_markers:
-                if (
-                    not re.fullmatch(r"[0-9a-f]{16}", marker_path.stem)
-                    or not marker_path.with_suffix(".pub").is_file()
-                    or not private_path_is_restricted(marker_path, 0o600)
-                    or atomic_read_bytes(marker_path)
-                ):
-                    raise ValueError("malformed injected-key marker")
-        except (OSError, ValueError):
-            trust_error = "The protected trust registry failed validation."
-    if trust_error:
-        trust = Check(
-            "gateway_trust_registry",
-            "Gateway trust registry",
-            "blocked",
-            trust_error,
-            "maverick doctor",
-        )
-    elif trusted_count:
-        trust = Check(
-            "gateway_trust_registry",
-            "Gateway trust registry",
-            "ready",
-            f"{trusted_count} protected public trust root(s) are present.",
-        )
-    else:
-        trust = Check(
-            "gateway_trust_registry",
-            "Gateway trust registry",
-            "attention",
-            "No public trust root exists yet; preflight did not provision one.",
-            "issue the first governed gateway delivery after configuring custody",
-        )
-
-    ledger_error = (
-        f"Gateway ledger custody is unsafe: {ledger_path_error}."
-        if ledger_path_error
-        else ""
+    signing = _gateway_signing_check(
+        material_error, require_offhost, offhost, injected, wrapped, private_keys,
     )
-    initialized = 0
-    if not ledger_error:
-        from .ai_evidence_ledger import SegmentedReceiptLedger
 
-        for stem, identity_key, payload_key in (
-            (
-                "interaction_receipts",
-                "receipt_id",
-                "receipt_payload_sha256",
-            ),
-            ("assurance_packets", "packet_id", "packet_sha256"),
-        ):
-            legacy = ledger_dir / f"{stem}.ndjson"
-            artifacts = (
-                legacy,
-                ledger_dir / f"{stem}.segments",
-                ledger_dir / f"{stem}.index.sqlite3",
-                ledger_dir / f"{stem}.index-state.json",
-            )
-            if not any(path.exists() for path in artifacts):
-                continue
-            initialized += 1
-            if not trusted_keys:
-                ledger_error = (
-                    "An existing signed gateway ledger has no validated "
-                    "protected trust root."
-                )
-                break
-            ledger = SegmentedReceiptLedger(
-                legacy,
-                tenant_id=tenant,
-                identity_key=identity_key,
-                payload_key=payload_key,
-            )
-            valid, detail = ledger.verify_integrity_read_only(
-                trusted_public_keys=trusted_keys,
-            )
-            if not valid:
-                ledger_error = (
-                    f"The {stem.replace('_', ' ')} ledger failed read-only "
-                    f"integrity validation ({detail})."
-                )
-                break
-    if ledger_error:
-        ledgers = Check(
-            "gateway_ledgers",
-            "Gateway signed ledgers",
-            "blocked",
-            ledger_error,
-            "maverick doctor",
-        )
-    elif initialized:
-        ledgers = Check(
-            "gateway_ledgers",
-            "Gateway signed ledgers",
-            "ready",
-            (
-                f"{initialized} gateway ledger namespace(s) passed signed "
-                "row, authenticated-state, and read-only index verification."
-            ),
-        )
-    else:
-        ledgers = Check(
-            "gateway_ledgers",
-            "Gateway signed ledgers",
-            "attention",
-            "No gateway ledger exists yet; preflight did not create evidence state.",
-            "issue the first governed gateway delivery",
-        )
+    (trust, trusted_keys) = _gateway_trust_check(
+        custody_path_error, local_error, key_dir, private_path_is_restricted, injected_markers,
+    )
+
+    ledgers = _gateway_ledger_check(ledger_path_error, ledger_dir, tenant, trusted_keys)
     return custody, signing, trust, ledgers
 
 

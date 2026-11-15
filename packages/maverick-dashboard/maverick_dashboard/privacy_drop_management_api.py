@@ -275,12 +275,8 @@ def _record_out(
     }
 
 
-def create_privacy_drop_management_router(  # noqa: C901 - explicit trust-boundary routing
-    dependencies: DROPManagementDependencies | None = None,
-) -> APIRouter:
-    deps = dependencies or DROPManagementDependencies()
-    router = APIRouter(prefix="/privacy/drop", tags=["privacy-drop-management"])
-
+def _privacy_drop_management_capability_routes(deps):
+    """Bind capability and related router operations."""
     def capability(request: Request, ops: Any, tenant: str) -> tuple[bool, bool]:
         return _probe_status(request, deps, ops, tenant)
 
@@ -373,7 +369,11 @@ def create_privacy_drop_management_router(  # noqa: C901 - explicit trust-bounda
                 detail="DROP management store is unavailable",
             )
         return ops, tenant, actor, store, resolver
+    return capability, composition, readiness
 
+
+def _privacy_drop_management_call_routes():
+    """Bind call and related router operations."""
     async def call(ops: Any, function: Callable[..., Any], *args: object, **kwargs: object):
         try:
             return await run_in_threadpool(function, *args, **kwargs)
@@ -450,7 +450,13 @@ def create_privacy_drop_management_router(  # noqa: C901 - explicit trust-bounda
         ):
             raise HTTPException(status_code=409, detail="DROP record authority changed")
         return authority
+    return call, resolve_authority
 
+
+def _privacy_drop_management_status_routes(
+    call, capability, composition, deps, readiness, resolve_authority, router,
+):
+    """Bind status and related router operations."""
     @router.get("/status")
     async def status(request: Request, response: Response) -> dict[str, object]:
         require_permission(request, "view")
@@ -647,6 +653,19 @@ def create_privacy_drop_management_router(  # noqa: C901 - explicit trust-bounda
         record = await call(ops, store.get_request, authority)
         _secure(response)
         return _record_out(ops, record, tenant_id=tenant, authority=authority)
+
+
+def create_privacy_drop_management_router(
+    dependencies: DROPManagementDependencies | None = None,
+) -> APIRouter:
+    deps = dependencies or DROPManagementDependencies()
+    router = APIRouter(prefix="/privacy/drop", tags=["privacy-drop-management"])
+
+    capability, composition, readiness = _privacy_drop_management_capability_routes(deps)
+    call, resolve_authority = _privacy_drop_management_call_routes()
+    _privacy_drop_management_status_routes(
+        call, capability, composition, deps, readiness, resolve_authority, router,
+    )
 
     return router
 
