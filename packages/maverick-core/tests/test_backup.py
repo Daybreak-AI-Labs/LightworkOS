@@ -1365,6 +1365,39 @@ def test_startup_points_a_recovery_centre_restore_to_recovery_mode(monkeypatch):
     assert tx_root.exists()
 
 
+def test_startup_names_the_true_cause_for_a_tampered_or_ended_recovery_journal(monkeypatch):
+    import json
+
+    from maverick.paths import data_dir, maverick_home
+
+    root = data_dir()
+    tx_root = _crashed_restore(monkeypatch, root)
+    journal = next(tx_root.iterdir()) / backup._JOURNAL
+    document = json.loads(journal.read_text())
+    document["entries"] = []  # altered after signing; the key id still matches
+    journal.write_text(json.dumps(document))
+    with pytest.raises(backup.RestoreRecoveryRefused) as refused:
+        backup.recover_interrupted_restore()
+    message = str(refused.value)
+    assert "integrity check" in message and "read and written" not in message
+    assert "as they were before the restore" in message
+
+    # Installation recovery has ended by the time this can show (its marker
+    # refuses start-up first), so the message does not send the person there.
+    key = bytes(range(3, 35))
+    store = maverick_home() / "backups" / "installation-recovery"
+    store.mkdir(parents=True)
+    (store / "operator.key").write_text(key.hex())
+    document["authentication"] = {"algorithm": "hmac-sha256", "key_id": backup._key_id(key),
+                                  "signature": "0" * 64}
+    journal.write_text(json.dumps(document))
+    with pytest.raises(backup.RestoreRecoveryRefused) as refused:
+        backup.recover_interrupted_restore()
+    message = str(refused.value)
+    assert "installation recovery" in message and "Install & updates" not in message
+    assert "as they were before the restore" in message
+
+
 def test_backup_leaves_out_an_unportable_name_in_sandbox_recovery_copies(caplog):
     # Copies kept from a failed Kubernetes transfer could hold `what?.txt`
     # (legal on Linux), which aborted every later backup.

@@ -1805,7 +1805,7 @@ def _recover_interrupted_root(home: Path, root: Path) -> bool:
         log.error("a restore that stopped part-way in %s could not be undone: %s", root, exc)
         raise RestoreRecoveryRefused(
             f"An earlier restore stopped part-way in {root}, so Lightwork did not start. "
-            + _refusal_hint(home, root, tx_root)
+            + _refusal_hint(home, root, tx_root, exc)
         ) from exc
     log.warning("rolled back a restore that stopped part-way in %s", root)
     return True
@@ -1835,7 +1835,7 @@ def _journal_key_ids(tx_root: Path) -> set[str]:
     return ids
 
 
-def _refusal_hint(home: Path, root: Path, tx_root: Path) -> str:
+def _refusal_hint(home: Path, root: Path, tx_root: Path, exc: Exception) -> str:
     """What the operator should do, matched to the key that signed the journal."""
     claimed = _journal_key_ids(tx_root)
     if _file_key_id(root / "backups" / "recovery" / "operator.key") in claimed:
@@ -1844,15 +1844,22 @@ def _refusal_hint(home: Path, root: Path, tx_root: Path) -> str:
             "from Lightwork Desktop and restore the same snapshot again. Lightwork first "
             "puts back the files the stopped restore replaced."
         )
-    if _file_key_id(home / "backups" / "installation-recovery" / "operator.key") in claimed:
-        return (
-            "That restore was started by installation recovery. Open Install & updates "
-            "in Lightwork Desktop to finish it."
-        )
     move = (
-        f"Otherwise move the folder {tx_root} out of the data folder and restore a "
-        "backup. That folder keeps copies of the files as they were before the restore."
+        f"move the folder {tx_root} out of the data folder and restore a backup. "
+        "That folder keeps copies of the files as they were before the restore."
     )
+    if _file_key_id(home / "backups" / "installation-recovery" / "operator.key") in claimed:
+        # Start-up refuses while installation recovery is unfinished, so this
+        # shows only after it ended; there is nothing left to finish there.
+        return (
+            "That restore was started by installation recovery, which has since ended. "
+            "To continue, " + move
+        )
+    integrity = (
+        "The record of that restore did not pass its integrity check, so Lightwork "
+        "will not use it. To continue, " + move
+    )
+    move = "Otherwise " + move
     try:
         key = _operator_key(required=False)
     except BackupError:
@@ -1864,6 +1871,8 @@ def _refusal_hint(home: Path, root: Path, tx_root: Path) -> str:
             + move
         )
     if _key_id(key) in claimed:
+        if isinstance(exc, BackupError):  # the key is right, so the record changed
+            return integrity
         return (
             "Lightwork could not put back the files the restore replaced. Check that the "
             "data folder can be read and written, then start Lightwork again. " + move
