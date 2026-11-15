@@ -121,17 +121,40 @@ def _draft(spec, use_ai: bool, principal: str, actor: str) -> dict:
 
 
 def _approve(profile, plan, docs: list[tuple[str, bytes]], actor: str, principal: str = "") -> dict:
+    """Save an approved agent, then load its documents.
+
+    The agent is bound to its document collection before it is saved, as the
+    command line does, so the saved file names where its documents go. If the
+    save or an audit write fails, nothing is loaded and the file is removed."""
+    from maverick.intake import bind_pending_collection, onboarding_knowledge_base
+    kb, problem = onboarding_knowledge_base() if docs else (None, None)
+    try:
+        collection = bind_pending_collection(profile) if kb is not None else None
+        refused = _save_approved(profile, actor, len(docs))
+        if refused is not None:
+            return refused
+        loaded, note = _load_documents(profile, docs, kb, problem, collection)
+    finally:
+        if kb is not None:
+            kb.close()
+    added = ""
+    if plan is not None and not plan.is_empty():
+        try:
+            added = _equip(profile, plan, principal or actor, actor)
+        except Exception:
+            log.warning("capability provisioning after onboarding failed", exc_info=True)
+    return {"saved": True, "name": profile.name, "documents_loaded": int(loaded or 0),
+            "message": " ".join(part for part in (note, added) if part)}
+
+
+def _save_approved(profile, actor: str, documents: int) -> dict | None:
+    """Audit, save and confirm the agent; a refusal dict, or None once saved."""
     from maverick.audit import AuditRefused, audit_event
     from maverick.domain import available_domains
-    from maverick.intake import (
-        IntakeSpec,
-        attach_docs_to_profile,
-        onboarding_knowledge_base,
-        save_profile,
-    )
+    from maverick.intake import save_profile
     try:
         audit_event("business_agent_approval_requested", agent="dashboard", actor=actor,
-                    agent_name=profile.name, documents=len(docs))
+                    agent_name=profile.name, documents=documents)
     except AuditRefused:
         return {"saved": False, "message": "The activity log couldn't record this approval, so nothing was saved."}
     from maverick.agent_tests_policy import NEW_SPECIALIST_NEEDS_TESTS, NewSpecialistNeedsTests
@@ -150,38 +173,39 @@ def _approve(profile, plan, docs: list[tuple[str, bytes]], actor: str, principal
             saved_path.unlink(missing_ok=True)
             return {"saved": False, "message": "This agent did not pass its final setup check. Nothing was added."}
         audit_event("business_agent_approved", agent="dashboard", actor=actor,
-                    agent_name=profile.name, documents=len(docs))
+                    agent_name=profile.name, documents=documents)
     except AuditRefused:
         saved_path.unlink(missing_ok=True)
         return {"saved": False, "message": "The activity log couldn't record this approval, so nothing was saved."}
     except Exception:
         saved_path.unlink(missing_ok=True)
         return {"saved": False, "message": "This agent could not be confirmed. Nothing was added."}
-    loaded, note = 0, ""
+    return None
+
+
+def _load_documents(profile, docs, kb, problem, collection) -> tuple[int, str]:
+    """Load uploads into the agent's bound collection; (chunks, note)."""
+    from maverick.intake import IntakeSpec, attach_docs_to_profile, held_in
+    if not docs:
+        return 0, ""
+    if kb is None:
+        return 0, ("Company documents are turned off, so the documents weren't loaded. An administrator can turn "
+                   "them on in settings." if problem == "disabled"
+                   else "The documents couldn't be loaded right now, so the agent has no document memory yet.")
     with tempfile.TemporaryDirectory(prefix="lw-onboard-") as folder:
-        paths = []
+        paths, names = [], {}
         for index, (name, data) in enumerate(docs):
             safe = "".join(c for c in Path(name).name if c.isalnum() or c in "._- ")[:100] or f"document-{index}"
             target = Path(folder) / f"{index:02d}-{safe}"
             target.write_bytes(data)
             paths.append(str(target))
-        if paths:
-            kb, problem = onboarding_knowledge_base()
-            if kb is None:
-                note = ("Company documents are turned off, so the documents weren't loaded. An administrator can turn "
-                        "them on in settings." if problem == "disabled"
-                        else "The documents couldn't be loaded right now, so the agent has no document memory yet.")
-            else:
-                spec = IntakeSpec(name=profile.name, doc_paths=paths)
-                loaded = attach_docs_to_profile(spec, profile, kb)
-    added = ""
-    if plan is not None and not plan.is_empty():
-        try:
-            added = _equip(profile, plan, principal or actor, actor)
-        except Exception:
-            log.warning("capability provisioning after onboarding failed", exc_info=True)
-    return {"saved": True, "name": profile.name, "documents_loaded": int(loaded or 0),
-            "message": " ".join(part for part in (note, added) if part)}
+            names[str(target)] = safe
+        spec = IntakeSpec(name=profile.name, doc_paths=paths, doc_names=names)
+        loaded = attach_docs_to_profile(spec, profile, kb, collection=collection)
+    held = held_in(kb, collection)
+    note = (f"{held} document(s) were held because part of the text reads like instructions to an assistant. "
+            "An administrator can review them under Held documents in the Knowledge library.") if held else ""
+    return loaded, note
 
 
 def _equip(profile, plan, principal: str, actor: str) -> str:

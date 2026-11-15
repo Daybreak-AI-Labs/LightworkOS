@@ -35,6 +35,7 @@ import io
 import logging
 import os
 import re
+from urllib.parse import urlsplit
 
 from .base import Channel, IncomingMessage, is_allowed, normalize_allowlist
 from .delivery import (
@@ -57,6 +58,31 @@ try:
 except ImportError:
     _HAVE_SLACK = False
     SocketModeClient = AsyncWebClient = SocketModeResponse = None  # type: ignore
+
+
+# Hosts that serve Slack-hosted private files. The bot token goes nowhere else.
+_SLACK_FILE_HOSTS = frozenset({"files.slack.com"})
+_REMOTE_FILE_NOTE = ("A file you shared is stored outside Slack, so I did not open it. "
+                     "Upload the file to Slack itself if you want me to read it.")
+_MISSING_FILE_NOTE = ("I could not fetch a file you shared, so I did not read it. "
+                      "Try uploading it to Slack again.")
+
+
+def _remote_file(f: dict) -> bool:
+    """Slack marks a remote (app-linked) file with any of these fields."""
+    return bool(f.get("is_external")) or f.get("mode") == "external" or f.get("filetype") == "remote"
+
+
+def _slack_file_url(url) -> bool:
+    if not isinstance(url, str):
+        return False
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return False
+    return (parts.scheme == "https" and parts.hostname in _SLACK_FILE_HOSTS
+            and port in (None, 443) and parts.username is None and parts.password is None)
 
 
 class SlackChannel(Channel):
@@ -162,7 +188,20 @@ class SlackChannel(Channel):
                     and msg.provider_sender_id == msg.principal_id)
 
     async def _prepare(self, msg, route):
-        msg.attachments = await self._download_files({"files": route.get("files", [])})
+        files = [f for f in (route.get("files") or [])[:10] if isinstance(f, dict)]
+        msg.attachments = await self._download_files({"files": files})
+        remote = sum(1 for f in files if _remote_file(f))
+        notes = [_REMOTE_FILE_NOTE] if remote else []
+        if len(files) - remote > len(msg.attachments):
+            notes.append(_MISSING_FILE_NOTE)
+        if notes:
+            # The message text is sealed at admission, so tell the person here.
+            try:
+                await self._web.chat_postMessage(
+                    channel=msg.user_id, text=" ".join(notes), mrkdwn=False,
+                    thread_ts=route.get("reply_to"))
+            except Exception:  # noqa: BLE001 -- a note never blocks the task
+                log.warning("slack: could not post the file note", exc_info=True)
         return msg
 
     async def _send_saved(self, msg, reply, route):
@@ -192,7 +231,10 @@ class SlackChannel(Channel):
         """Download a message's shared files into IncomingMessage.attachments.
 
         Slack file objects carry ``url_private_download`` which requires the
-        bot token as a bearer header (and the ``files:read`` scope). Each
+        bot token as a bearer header (and the ``files:read`` scope). The token
+        goes only to an https Slack file host, without following redirects:
+        a remote file's ``url_private`` is chosen by another app and can point
+        anywhere, so remote files are skipped. Each
         file becomes ``{"filename", "mime", "data"}``; the server stores them
         under the same size/mime/magic-byte rules as a dashboard upload.
         Best-effort: a missing scope or a failed download just means no
@@ -207,10 +249,15 @@ class SlackChannel(Channel):
             return []
         out: list[dict] = []
         headers = {"Authorization": f"Bearer {self.bot_token}"}
-        async with aiohttp.ClientSession(headers=headers) as session:
+        async with aiohttp.ClientSession() as session:
             for f in files[:10]:
+                if not isinstance(f, dict) or _remote_file(f):
+                    continue
                 url = f.get("url_private_download") or f.get("url_private")
                 if not url:
+                    continue
+                if not _slack_file_url(url):
+                    log.warning("slack: file URL is not a Slack file host; attachment refused")
                     continue
                 size = f.get("size")
                 if isinstance(size, str) and len(size) <= 10 and size.isascii() and size.isdecimal():
@@ -219,8 +266,10 @@ class SlackChannel(Channel):
                     log.warning("slack: file has no valid bounded size; attachment refused")
                     continue
                 try:
-                    async with session.get(url) as resp:
+                    async with session.get(url, headers=headers, allow_redirects=False) as resp:
                         resp.raise_for_status()
+                        if resp.status != 200:
+                            raise ValueError(f"unexpected Slack file status {resp.status}")
                         data = bytearray()
                         # StreamReader.read(n) may return a buffered prefix.
                         # Read through EOF, allowing one extra byte to detect
@@ -443,6 +492,8 @@ class SlackChannel(Channel):
             # An answer is the reply's text: files sent with it are not fetched.
             files = [] if reply_only else [{key: value for key, value in item.items() if key in {
                 "id", "name", "mimetype", "size", "url_private", "url_private_download",
+                # Slack's remote-file markers: the download step must see them.
+                "is_external", "mode", "filetype",
             }} for item in (event.get("files") or [])[:10]]
             text = self._strip_mention(event.get("text") or "")
             in_room = (event.get("type") == "app_mention"

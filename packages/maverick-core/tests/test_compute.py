@@ -106,3 +106,19 @@ def test_compute_evaluate_rejects_arbitrary_code():
     from maverick.tools.compute import compute
     out = compute().fn({"op": "evaluate", "expr": "__import__('os')"})
     assert "ERROR" in out
+
+
+def test_compute_symbolic_op_is_stopped_at_its_time_limit(monkeypatch):
+    # sympy cannot be interrupted in a thread; a slow integral used to pin
+    # the worker past the goal's wall-clock cap.
+    import time
+
+    pytest.importorskip("sympy")
+    from maverick.tools import compute as module
+
+    monkeypatch.setattr(module, "_SYMBOLIC_TIMEOUT", 3.0)
+    started = time.monotonic()
+    out = module.compute().fn({"op": "integrate", "var": "x",
+                               "expr": "exp(sin(x))*sin(x)**3/(1+cos(x)**7)"})
+    assert out.startswith("ERROR") and "did not finish" in out
+    assert time.monotonic() - started < 20

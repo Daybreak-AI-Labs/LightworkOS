@@ -136,12 +136,26 @@ def _connect(uno, pipe):
     raise RuntimeError("LibreOffice did not start within 30 seconds")
 
 
+_OFFICE_PROFILE = """<?xml version="1.0" encoding="UTF-8"?>
+<oor:items xmlns:oor="http://openoffice.org/2001/registry" xmlns:xs="http://www.w3.org/2001/XMLSchema" \
+xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<item oor:path="/org.openoffice.Office.Common/Security/Scripting">\
+<prop oor:name="BlockUntrustedRefererLinks" oor:op="fuse"><value>true</value></prop></item>
+</oor:items>
+"""
+
+
 @contextmanager
 def _office_document(source, *, readonly=False):
     import uno
 
     pipe = "lightwork_" + uuid.uuid4().hex
     with tempfile.TemporaryDirectory(prefix="lightwork-office-") as profile:
+        # Defence in depth only: this setting blocks some linked-resource
+        # fetches but not stylesheets or page backgrounds. The worker's lack
+        # of network is the boundary.
+        Path(profile, "user").mkdir()
+        Path(profile, "user", "registrymodifications.xcu").write_text(_OFFICE_PROFILE, encoding="utf-8")
         args = ["soffice", "--headless", "--norestore", "--nodefault", "--nofirststartwizard",
                 "-env:UserInstallation=" + Path(profile).as_uri(),
                 f"--accept=pipe,name={pipe};urp;StarOffice.ComponentContext"]

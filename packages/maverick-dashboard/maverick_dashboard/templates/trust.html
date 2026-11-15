@@ -142,6 +142,54 @@
   <p id="tr-check-result" role="status" aria-live="polite"></p>
 </div>
 
+{% if federation_limits is none or federation_limits.peers or federation_limits.unreadable %}
+<div class="section-head"><h2 id="tr-limits-title">Partner request limits</h2></div>
+<div class="panel" aria-labelledby="tr-limits-title">
+  <p>Each partner installation may send a set number of requests. Every request is kept, so a repeated one is always recognised.</p>
+  {% if federation_limits is none %}
+  <p role="alert">Couldn't load the partner request counts. <button type="button" class="btn btn--ghost" id="tr-limits-retry">Try again</button></p>
+  {% elif federation_limits.unreadable %}
+  <p role="alert">The saved request limits can't be read, so new partner requests are turned away. Requests already accepted still work.</p>
+  {% if can_admin_federation %}<p>Starting over keeps the unreadable copy and puts every partner back on the standard limit. <button type="button" class="btn" id="tr-limits-start-over">Start over</button></p>
+  {% else %}<p>Ask an administrator to start over.</p>{% endif %}
+  {% else %}
+  {% set store = federation_limits.peers[0] %}
+  <p>Kept requests: {{ "{:,}".format(store.storage_used) }} of {{ "{:,}".format(store.storage_limit) }}.
+    {% if store.storage_full %}<span class="badge failure">Storage full</span>{% endif %}</p>
+  {% if store.storage_full %}
+  <p role="alert">Storage for partner requests is full, so every partner is turned away. Raising one partner's limit won't help.</p>
+  {% endif %}
+  {% if can_admin_federation %}<p class="muted">Keeping more requests uses more disk space and makes each check a little slower. <button type="button" class="btn btn--ghost" id="tr-storage-raise" data-limit="{{ store.storage_limit }}">Raise storage limit</button></p>{% endif %}
+  <div style="overflow-x:auto">
+  <table>
+    <thead><tr><th scope="col">Partner</th><th scope="col">Requests used</th><th scope="col">Status</th>{% if can_admin_federation %}<th scope="col">Actions</th>{% endif %}</tr></thead>
+    <tbody>
+      {% for p in federation_limits.peers %}
+      {% set label = p.peer | humanize %}
+      <tr>
+        <td><strong>{{ label }}</strong></td>
+        <td>{{ "{:,}".format(p.used) }} of {{ "{:,}".format(p.limit) }}</td>
+        <td>
+          {% if p.storage_full %}<span class="badge failure">Turned away: storage full</span>
+          {% elif p.reached %}<span class="badge failure">Limit reached</span>
+          <div class="muted" style="font-size:var(--text-xs)">New requests from this partner are turned away. Raise the limit or start the count again to let it continue.</div>
+          {% else %}<span class="badge active">Within limit</span>{% endif %}
+        </td>
+        {% if can_admin_federation %}
+        <td><div class="tr-actions">
+          <button type="button" class="btn btn--ghost" data-tr-limit="{{ p.peer }}" data-limit="{{ p.limit }}" data-name="{{ label }}" aria-label="Raise the limit for {{ label }}">Raise limit</button>
+          <button type="button" class="btn btn--ghost" data-tr-limit-reset="{{ p.peer }}" data-name="{{ label }}" aria-label="Start the count again for {{ label }}">Start count again</button>
+        </div></td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
 {% if can_admin %}
 <div class="section-head"><h2 id="tr-form-title">Add an outside agent</h2></div>
 <div class="panel">
@@ -324,6 +372,43 @@
         undo: function () { if (row) row.hidden = false; b.focus(); },
         done: function () { reloadSoon("Agent removed."); }
       });
+    });
+  });
+
+  var limitsRetry = document.getElementById("tr-limits-retry");
+  if (limitsRetry) limitsRetry.addEventListener("click", function () { window.location.reload(); });
+  var storageRaise = document.getElementById("tr-storage-raise");
+  if (storageRaise) storageRaise.addEventListener("click", async function () {
+    var current = Number(storageRaise.getAttribute("data-limit"));
+    var answer = await window.mvForm("Raise the storage limit", [
+      { key: "limit", label: "Partner requests to keep", type: "number", default: String(current * 2) }
+    ], { okText: "Raise storage limit" });
+    if (!answer) return;
+    var limit = Math.floor(Number(answer.limit));
+    if (!(limit > current) || limit > 2000000) { window.mvToast("Choose a number above " + current.toLocaleString() + " and no more than 2,000,000.", { error: true }); return; }
+    send("/api/v1/trust/federation/limits/storage", { method: "POST", body: JSON.stringify({ limit: limit }) }, "Storage limit raised.", "raise the storage limit");
+  });
+  var limitsStartOver = document.getElementById("tr-limits-start-over");
+  if (limitsStartOver) limitsStartOver.addEventListener("click", async function () {
+    if (!(await window.mvConfirm("Start over with the standard limit for every partner? The unreadable copy is kept.", { okText: "Start over" }))) return;
+    send("/api/v1/trust/federation/limits/start-over", { method: "POST", body: "{}" }, "Standard limits restored.", "start over");
+  });
+  document.querySelectorAll("[data-tr-limit]").forEach(function (b) {
+    b.addEventListener("click", async function () {
+      var current = Number(b.getAttribute("data-limit"));
+      var answer = await window.mvForm("Raise the limit for " + b.getAttribute("data-name"), [
+        { key: "limit", label: "Requests this partner may send", type: "number", default: String(current * 2) }
+      ], { okText: "Raise limit" });
+      if (!answer) return;
+      var limit = Math.floor(Number(answer.limit));
+      if (!(limit > current) || limit > 2000000) { window.mvToast("Choose a number above " + current.toLocaleString() + " and no more than 2,000,000.", { error: true }); return; }
+      send("/api/v1/trust/federation/" + encodeURIComponent(b.getAttribute("data-tr-limit")) + "/limit", { method: "POST", body: JSON.stringify({ limit: limit }) }, "Limit raised.", "raise this limit");
+    });
+  });
+  document.querySelectorAll("[data-tr-limit-reset]").forEach(function (b) {
+    b.addEventListener("click", async function () {
+      if (!(await window.mvConfirm("Start counting requests from " + b.getAttribute("data-name") + " again? Earlier requests stay on record.", { okText: "Start again" }))) return;
+      send("/api/v1/trust/federation/" + encodeURIComponent(b.getAttribute("data-tr-limit-reset")) + "/limit", { method: "POST", body: JSON.stringify({ reset: true }) }, "Count started again.", "start the count again");
     });
   });
 

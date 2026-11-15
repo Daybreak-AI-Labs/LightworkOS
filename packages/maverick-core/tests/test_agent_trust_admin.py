@@ -275,3 +275,37 @@ def test_concurrent_revoke_is_not_lost_against_a_put():
     by_id = {e.get("id"): e for e in agent_trust._load_managed()}
     assert by_id["vega"].get("revoked") is True   # the revoke survived
     assert "rigel" in by_id                        # and so did the concurrent add
+
+
+def test_cli_admission_limit_shows_raises_and_resets(monkeypatch, tmp_path):
+    from maverick import audit, config, world_model
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('[federation]\npeers = [{name = "edge", target = "edge:1", token = "t"}]\n')
+    monkeypatch.setenv("MAVERICK_CONFIG", str(cfg))
+    monkeypatch.setattr(world_model, "DEFAULT_DB", tmp_path / "world.db")
+    monkeypatch.setattr(audit, "record", lambda kind, **kw: True)
+    config.reset_config_cache()
+
+    r = _run("trust", "admission-limit", "edge")
+    assert r.exit_code == 0 and "0 of 50,000" in r.output
+    r = _run("trust", "admission-limit", "edge", "--limit", "60000")
+    assert r.exit_code == 0 and "60,000" in r.output
+    r = _run("trust", "admission-limit", "edge", "--reset")
+    assert r.exit_code == 0 and "counting again" in r.output
+    r = _run("trust", "admission-limit", "nobody", "--reset")
+    assert r.exit_code != 0 and "not a federation peer" in r.output
+    from maverick import federation_admission as admission
+    admission._limits_path().write_text("{broken", encoding="utf-8")
+    r = _run("trust", "admission-limit", "edge")
+    assert r.exit_code != 0 and "can't be read" in r.output and "--start-over" in r.output
+    r = _run("trust", "admission-limit", "--start-over")
+    assert r.exit_code == 0 and "unusable-" in r.output
+    assert "0 of 50,000" in _run("trust", "admission-limit", "edge").output
+    from maverick import federation
+    monkeypatch.setattr(federation, "_CORRELATION_CACHE_MAX", 0)
+    r = _run("trust", "admission-limit", "edge")
+    assert "full: every partner's new requests are refused" in r.output
+    r = _run("trust", "admission-limit", "edge", "--storage", "300000")
+    assert r.exit_code == 0 and "0 of 300,000 partner requests kept" in r.output
+    config.reset_config_cache()

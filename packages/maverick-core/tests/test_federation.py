@@ -290,7 +290,8 @@ def test_status_result_is_screened_when_trust_plane_is_engaged(monkeypatch):
         "goal_title": f"echo {token}", "correlation_id": "cs",
         "auth_token": "tok"})
     assert out["accepted"] is True
-    monkeypatch.setattr(agent_trust, "load_trust_state", lambda: (True, {}))
+    monkeypatch.setattr(agent_trust, "load_trust_state",
+                        lambda: (True, {"A": agent_trust.TrustedAgent(id="A")}))
     monkeypatch.setattr(federation, "_shield_block", lambda text: None)
     redacted = svc.call("GoalStatus", {"goal_id": out["goal_id"], "auth_token": "tok"})
     assert redacted["status"] == "done"
@@ -299,6 +300,28 @@ def test_status_result_is_screened_when_trust_plane_is_engaged(monkeypatch):
     monkeypatch.setattr(federation, "_shield_block", lambda text: "exfiltration")
     blocked = svc.call("GoalStatus", {"goal_id": out["goal_id"], "auth_token": "tok"})
     assert blocked["result"] == "result withheld: blocked by the safety screen (exfiltration)"
+
+
+def test_hello_and_status_consult_the_trust_plane(monkeypatch):
+    """A peer the engaged trust plane refuses (absent or revoked) cannot probe
+    the agent card or poll a goal on its still-valid shared token."""
+    from maverick import agent_trust
+
+    svc = _service()
+    out = svc.call("DelegateGoal", {"goal_title": "t", "correlation_id": "ct",
+                                    "auth_token": "tok"})
+    assert out["accepted"] is True
+    denials = []
+    monkeypatch.setattr(agent_trust, "record_denied",
+                        lambda *a, **k: denials.append((a, k)))
+    revoked = agent_trust.TrustedAgent(id="A", revoked=True)
+    for registry in ({}, {"A": revoked}):
+        monkeypatch.setattr(agent_trust, "load_trust_state", lambda r=registry: (True, r))
+        with pytest.raises(FederationAuthError, match="trust"):
+            svc.call("Hello", {"auth_token": "tok"})
+        with pytest.raises(FederationAuthError, match="trust"):
+            svc.call("GoalStatus", {"goal_id": out["goal_id"], "auth_token": "tok"})
+    assert len(denials) == 4
 
 
 # ---- capability narrowing on accept ----------------------------------------

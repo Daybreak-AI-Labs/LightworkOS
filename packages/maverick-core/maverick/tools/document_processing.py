@@ -5,12 +5,15 @@ import hashlib
 import importlib
 import io
 import json
+import logging
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -25,6 +28,8 @@ from ..sandbox.kubernetes import KubernetesBackend
 from ..sandbox.local import LocalBackend
 from ..sandbox.podman import PodmanBackend
 from ..sandbox.workspace_transfer import _read, _relative, _write
+
+log = logging.getLogger(__name__)
 
 _JOB_SCHEMA = "lightwork.document-job.v1"
 _MAX_OUTPUT_BYTES = 64 * 1024 * 1024
@@ -83,12 +88,97 @@ def verify_release_document_runtime() -> None:
     compile(source, "document_engine.py", "exec")
 
 
+NO_LOCAL_ISOLATION = (
+    "Office conversion is off on this computer, because a document could make it fetch web addresses. "
+    "Choose the Docker, Podman or Kubernetes sandbox backend to convert documents; "
+    "see docs/document-processing.md.")
+NO_LOCAL_UNO = (
+    "Office conversion is off on this computer, because LibreOffice's Python bridge is not available to "
+    "this Python. Install LibreOffice with its Python bridge (python3-uno), or choose the Docker, Podman "
+    "or Kubernetes sandbox backend; see docs/document-processing.md.")
+NO_CONTAINER = ("Native document processing needs a Docker, Podman or Kubernetes sandbox; "
+                "see docs/document-processing.md")
+_FAILURE_RETRY_SECONDS = 300.0
+_LOCAL_LAUNCH: dict[str, tuple[float, tuple[str, ...] | None, str | None]] = {}
+
+
+def _uno_pythons() -> list[str]:
+    """Interpreters that may run the self-contained worker, in order of preference."""
+    candidates = [sys.executable]
+    soffice = shutil.which("soffice")
+    if soffice:
+        # Bundled LibreOffice builds (Windows, macOS, AppImage) ship their own Python.
+        program = Path(soffice).resolve().parent
+        candidates += [str(program / name) for name in ("python", "python3", "python.exe")]
+    candidates.append(shutil.which("python3") or "")
+    found: list[str] = []
+    for candidate in candidates:
+        if candidate and candidate not in found and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            found.append(candidate)
+    return found
+
+
+def _probe_local_convert() -> tuple[tuple[str, ...] | None, str | None, bool]:
+    """(launch, reason, settled): ``settled`` is False when a probe timed out or broke."""
+    unshare = shutil.which("unshare") if sys.platform.startswith("linux") else None
+    if unshare is None:
+        return None, NO_LOCAL_ISOLATION, True
+    with tempfile.TemporaryDirectory(prefix="netns-probe-") as directory:
+        backend = LocalBackend(workdir=Path(directory), timeout=10)
+        namespace = backend.exec([unshare, "-rn", "true"]).exit_code
+        if namespace:
+            return None, NO_LOCAL_ISOLATION, namespace != 124
+        timed_out = False
+        for python in _uno_pythons():
+            code = backend.exec([unshare, "-rn", python, "-I", "-c", "import uno"]).exit_code
+            if code == 0:
+                return (unshare, "-rn", python, "-I"), None, True
+            timed_out = timed_out or code == 124
+    return None, NO_LOCAL_UNO, not timed_out
+
+
+def local_convert_launch() -> tuple[tuple[str, ...] | None, str | None]:
+    """The argv prefix that runs the document worker with no network, or (None, reason).
+
+    LibreOffice fetches a document's linked images, stylesheets and objects,
+    and no profile setting stops every kind. ``unshare -rn`` starts the worker
+    in a new user and network namespace whose only interface is a down
+    loopback. The worker is a standalone stdlib script, so any interpreter
+    that can import LibreOffice's ``uno`` bridge inside that namespace may run
+    it, isolated (``-I``). Success is kept for the process; a failure is
+    retried after a few minutes, and a timed-out probe is not remembered.
+    """
+    now = time.monotonic()
+    cached = _LOCAL_LAUNCH.get("convert")
+    if cached is not None and (cached[1] is not None or now < cached[0]):
+        return cached[1], cached[2]
+    try:
+        launch, reason, settled = _probe_local_convert()
+    except Exception:  # failure-policy: fail_closed -- no proof of isolation means no local conversion
+        log.warning("document worker: local conversion probe failed", exc_info=True)
+        return None, NO_LOCAL_ISOLATION
+    if settled:
+        _LOCAL_LAUNCH["convert"] = (now + _FAILURE_RETRY_SECONDS, launch, reason)
+    return launch, reason
+
+
+def conversion_unavailable(sandbox) -> str | None:
+    """Why office conversion cannot run with ``sandbox``, or None when it can."""
+    if sandbox is None or isinstance(sandbox, LocalBackend):
+        return local_convert_launch()[1]
+    if isinstance(sandbox, (DockerBackend, PodmanBackend, KubernetesBackend)):
+        return None
+    return NO_CONTAINER
+
+
 @contextmanager
 def _worker(sandbox, request, *, allow_local=False):
     cfg = get_document_tools()
     local = allow_local and (sandbox is None or isinstance(sandbox, LocalBackend))
+    if local and request.get("operation") == "convert" and (reason := local_convert_launch()[1]):
+        raise RuntimeError(reason)
     if not local and not isinstance(sandbox, (DockerBackend, PodmanBackend, KubernetesBackend)):
-        raise RuntimeError("Native document processing needs a Docker, Podman or Kubernetes sandbox; see docs/document-processing.md")
+        raise RuntimeError(NO_CONTAINER)
     parent = ensure_private_directory(data_dir("document-processing"))
     with tempfile.TemporaryDirectory(prefix="job-", dir=parent) as directory:
         stage = Path(directory)
@@ -122,6 +212,11 @@ def _execute(stage, worker):
     (stage / "request.json").write_text(json.dumps(request), encoding="utf-8")
     if isinstance(worker, LocalBackend):
         argv = [sys.executable, "engine.py"]
+        if request["operation"] == "convert":
+            launch, reason = local_convert_launch()
+            if launch is None:
+                raise RuntimeError(reason)
+            argv = [*launch, "engine.py"]
         command = subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)
     else:
         command = "/usr/bin/python3 engine.py"

@@ -10,6 +10,8 @@ import sys
 import types
 from unittest.mock import MagicMock
 
+import pytest
+
 
 def _fake_httpx(monkeypatch, **methods):
     mod = types.ModuleType("httpx")
@@ -223,7 +225,7 @@ def test_vertex_requires_config(monkeypatch):
     monkeypatch.delenv("VERTEX_PROJECT", raising=False)
     _fake_httpx(monkeypatch)
     from maverick.tools.vertex_tool import vertex_tool
-    out = vertex_tool().fn({"op": "generate", "prompt": "hi"})
+    out = vertex_tool().fn({"op": "generate", "model": "m", "prompt": "hi"})
     assert "ERROR" in out and "VERTEX" in out
 
 
@@ -238,6 +240,73 @@ def test_vertex_generate(monkeypatch):
     out = vertex_tool().fn({"op": "generate", "model": "gemini-2.5-pro", "prompt": "hi"})
     assert out == "hello from vertex"
     assert ":generateContent" in post.call_args.args[0]
+
+
+def test_vertex_generate_obeys_the_model_allow_list_and_has_no_built_in_model(monkeypatch):
+    # Users own model choice: the tool names no model of its own, and a model
+    # outside [access] allowed_models is refused before any request is sent.
+    monkeypatch.setenv("VERTEX_ACCESS_TOKEN", "t")
+    monkeypatch.setenv("VERTEX_PROJECT", "proj")
+    monkeypatch.setattr("maverick.runtime_overrides.allowed_models",
+                        lambda: {"vertex:approved-model"})
+    post = MagicMock(return_value=_resp(200, {
+        "candidates": [{"content": {"parts": [{"text": "ok"}]}}]}))
+    _fake_httpx(monkeypatch, post=post)
+    from maverick.tools.vertex_tool import vertex_tool
+    out = vertex_tool().fn({"op": "generate", "prompt": "hi"})
+    assert out.startswith("ERROR") and "model" in out
+    out = vertex_tool().fn({"op": "generate", "model": "other-model", "prompt": "hi"})
+    assert out.startswith("ERROR") and "allowed_models" in out
+    assert post.call_count == 0
+    assert vertex_tool().fn({"op": "generate", "model": "approved-model", "prompt": "hi"}) == "ok"
+    # Product text names no model either; it says how the allow-list spells one.
+    description = vertex_tool().input_schema["properties"]["model"]["description"]
+    assert "gemini" not in description.lower() and "vertex:<model id>" in description
+
+
+def test_vertex_calls_are_metered_against_provider_spend(monkeypatch):
+    # Each Vertex request is a paid provider call, so it goes through the same
+    # provider spend accounting (and caps) as web_search.
+    monkeypatch.setenv("VERTEX_ACCESS_TOKEN", "t")
+    monkeypatch.setenv("VERTEX_PROJECT", "proj")
+    post = MagicMock(return_value=_resp(200, {"predictions": [1]}))
+    _fake_httpx(monkeypatch, post=post)
+    import maverick.tools.vertex_tool as vt
+    from maverick.provider_cost_cap import ProviderCapExceeded
+    metered = []
+
+    def meter(provider, callback, **metadata):
+        metered.append((provider, metadata.get("category")))
+        return callback()
+
+    monkeypatch.setattr(vt, "metered_provider_call", meter)
+    vt.vertex_tool().fn({"op": "predict", "endpoint_id": "7", "instances": [1]})
+    vt.vertex_tool().fn({"op": "generate", "model": "m", "prompt": "hi"})
+    assert metered == [("vertex", "inference"), ("vertex", "generation")]
+
+    def refuse(provider, callback, **metadata):
+        raise ProviderCapExceeded(provider, 5.0, 5.0, "2026-11")
+
+    monkeypatch.setattr(vt, "metered_provider_call", refuse)
+    with pytest.raises(ProviderCapExceeded):
+        vt.vertex_tool().fn({"op": "generate", "model": "m", "prompt": "hi"})
+    assert post.call_count == 2
+
+
+def test_vertex_refuses_plainly_under_a_vertex_spending_cap(monkeypatch):
+    # No Vertex model has a verified price, so a call cannot be held to a
+    # [budget.provider_caps] vertex cap: say so instead of an accounting error.
+    monkeypatch.setenv("VERTEX_ACCESS_TOKEN", "t")
+    monkeypatch.setenv("VERTEX_PROJECT", "proj")
+    monkeypatch.setattr("maverick.provider_cost_cap.caps_from_config", lambda: {"vertex": 5.0})
+    post = MagicMock(return_value=_resp(200, {"predictions": [1]}))
+    _fake_httpx(monkeypatch, post=post)
+    from maverick.tools.vertex_tool import vertex_tool
+    for args in ({"op": "generate", "model": "m", "prompt": "hi"},
+                 {"op": "predict", "endpoint_id": "7", "instances": [1]}):
+        out = vertex_tool().fn(args)
+        assert out.startswith("ERROR") and "spending cap" in out and "price" in out
+    assert post.call_count == 0
 
 
 def test_vertex_ids_cannot_leave_their_path_segment(monkeypatch):
@@ -312,6 +381,33 @@ def test_oracle_multistatement_read_needs_confirm(monkeypatch):
     })
     assert "DRY RUN" in out
     post.assert_not_called()
+
+
+@pytest.mark.parametrize("statement", [
+    # Oracle q-quoting hides the semicolon from a plain quote scanner.
+    "select q'[a'b]' from dual; delete from t",
+    # ORDS runs a script: a SQL*Plus command ends at its line, and a lone "/"
+    # line ends a SQL statement, so no semicolon is needed for a second one.
+    "show user\ndelete from t",
+    "select 1 from dual\n/\ndelete from t",
+    # SQL*Plus (SQLBLANKLINES OFF, the default) also ends a statement at a
+    # blank line or at a line holding only ".".
+    "select 1 from dual\n\ndelete from t;",
+    "select 1 from dual\n.\ndelete from t",
+    "select 1 from dual\n   \ndelete from t",
+])
+def test_oracle_script_tricks_cannot_pass_as_a_read(monkeypatch, statement):
+    monkeypatch.setenv("ORACLE_ORDS_URL", "https://h/ords/me")
+    monkeypatch.setenv("ORACLE_ORDS_TOKEN", "t")
+    post = MagicMock()
+    _fake_httpx(monkeypatch, post=post)
+    from maverick.tools.oracle_tool import oracle_tool
+    out = oracle_tool().fn({"op": "sql", "statement": statement})
+    assert "DRY RUN" in out
+    post.assert_not_called()
+    if "delete" in statement and "q'" not in statement and "show" not in statement:
+        # A read with a blank line inside is legitimate SQL elsewhere, so say why.
+        assert "ends a statement" in out
 
 
 def test_oracle_backslash_quote_multistatement_read_needs_confirm(monkeypatch):

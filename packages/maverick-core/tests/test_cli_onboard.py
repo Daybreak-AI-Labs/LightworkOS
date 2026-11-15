@@ -147,7 +147,7 @@ def test_onboard_approval_ingests_enabled_knowledge_then_saves(tmp_path, monkeyp
     ingested = []
 
     class FakeKnowledgeBase:
-        def __init__(self, store, embedder, shield=None):
+        def __init__(self, store, embedder, shield=None, held=None):
             self.store = store
             self.embedder = embedder
             self.shield = shield
@@ -170,6 +170,9 @@ def test_onboard_approval_ingests_enabled_knowledge_then_saves(tmp_path, monkeyp
     monkeypatch.setenv("MAVERICK_CONFIG", str(cfg))
     monkeypatch.setenv("MAVERICK_DOMAINS_DIR", str(tmp_path / "domains"))
     monkeypatch.setitem(sys.modules, "maverick_knowledge", fake_knowledge)
+    # Onboarding gives the knowledge base the workspace's held-document store.
+    monkeypatch.setitem(sys.modules, "maverick_knowledge.held",
+                        SimpleNamespace(HeldDocuments=lambda _path: object()))
 
     result = CliRunner().invoke(
         main,

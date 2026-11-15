@@ -43,11 +43,12 @@ _POSIX_RESOURCE_LIMITS = os.name == "posix"
 _RESOURCE_LIMITED_PARSERS = {
     "pdf_text", "evidence_pdf_text", "image_meta",
     "spreadsheet_read", "spreadsheet_info", "spreadsheet_set_cell",
+    "compute_symbolic",
 }
 # Channel-upload parsers that ran isolated without limits before: where POSIX
 # resource limits are unavailable they keep the bounded output and timeout and
 # run without rlimits, rather than refusing every document.
-_LIMITS_BEST_EFFORT = {"pdf_text", "image_meta"}
+_LIMITS_BEST_EFFORT = {"pdf_text", "image_meta", "compute_symbolic"}
 _warned_no_limits = False
 
 # Applied inside the child, before loading data or importing the parser. A
@@ -102,6 +103,13 @@ PARSERS: dict[str, ParserEntry] = {
     "spreadsheet_set_cell": ParserEntry(
         name="spreadsheet_set_cell", module="maverick.tools.spreadsheet",
         func="_isolated_xlsx_set_cell", feeds="workspace XLSX edits", memory_safe=False,
+    ),
+    "compute_symbolic": ParserEntry(
+        name="compute_symbolic",
+        module="maverick.tools.compute",
+        func="_isolated_symbolic",
+        feeds="model-written math expressions (compute tool)",
+        memory_safe=True,  # pure-Python SymPy; isolated for its time limit
     ),
     "image_meta": ParserEntry(
         name="image_meta",

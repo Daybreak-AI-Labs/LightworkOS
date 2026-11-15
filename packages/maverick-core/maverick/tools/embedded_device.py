@@ -5,7 +5,7 @@ debug their own board would let an agent poke at any board it can reach. The
 tool is therefore deliberately narrow and explicit — every operation names its
 exact target (config file, address, register); there is no scan, no
 autodetect-and-flash, and the destructive operations (``jtag_flash_write``,
-``jtag_reset``) are disabled until the operator opts in with
+``jtag_reset``, ``i2c_write``) are disabled until the operator opts in with
 ``[embedded] allow_flash = true`` in ``~/.maverick/config.toml``.
 
 JTAG/SWD ops (mediated through the local ``openocd`` binary; the command line
@@ -19,7 +19,7 @@ I2C ops (a pure protocol layer over an injected bus seam
 ``bus(addr, write_bytes, read_len) -> bytes``; the default adapter
 lazy-imports ``smbus2`` — the ``i2c`` extra — for /dev/i2c-*):
   - i2c_read                     write-then-read transaction (register read)
-  - i2c_write                    write transaction (register write)
+  - i2c_write                    write transaction (register write; DESTRUCTIVE — gated)
   - i2c_dump                     read a region and render an i2cdump-style table
   - i2c_parse_dump               parse an i2cdump-style hex table back to bytes
 
@@ -47,6 +47,10 @@ MAX_I2C_BYTES = 256
 _FLASH_DISABLED = (
     "ERROR: flashing disabled; set [embedded] allow_flash = true "
     "in ~/.maverick/config.toml (destructive ops are opt-in)"
+)
+_I2C_WRITE_DISABLED = (
+    "ERROR: I2C writes disabled; set [embedded] allow_flash = true "
+    "in ~/.maverick/config.toml (a register write can change an EEPROM or a regulator)"
 )
 _OPENOCD_MISSING = "ERROR: openocd not found — install OpenOCD and connect a probe"
 
@@ -98,8 +102,11 @@ _SCHEMA: dict[str, Any] = {
 
 
 def _flash_allowed() -> bool:
+    from .._envparse import coerce_bool
     from ..config import load_config
-    return bool((load_config() or {}).get("embedded", {}).get("allow_flash", False))
+    section = (load_config() or {}).get("embedded")
+    value = section.get("allow_flash") if isinstance(section, dict) else None
+    return coerce_bool(value, default=False)
 
 
 def _safe_path(sandbox, user_path: str) -> str:
@@ -342,6 +349,8 @@ def _op_i2c_read(args: dict, sandbox, bus) -> str:
 
 
 def _op_i2c_write(args: dict, sandbox, bus) -> str:
+    if not _flash_allowed():
+        return _I2C_WRITE_DISABLED
     addr = _i2c_addr(args)
     payload = _write_prefix(args) + _parse_hex_bytes(args.get("data") or "")
     if len(payload) > MAX_I2C_BYTES:
@@ -436,8 +445,8 @@ def embedded_device(sandbox=None, bus=None) -> Tool:
             "JTAG/I2C access to the operator's OWN embedded devices. JTAG via "
             "the local openocd binary: jtag_halt, jtag_resume, jtag_reset "
             "(gated), jtag_read_mem (bounded mdw), jtag_flash_write (gated, "
-            "workspace file only). I2C transactions: i2c_read, i2c_write, "
-            "i2c_dump, i2c_parse_dump. Destructive ops (reset, flash) require "
+            "workspace file only). I2C transactions: i2c_read, i2c_write (gated), "
+            "i2c_dump, i2c_parse_dump. Destructive ops (reset, flash, I2C write) require "
             "[embedded] allow_flash = true in config. Every op names its "
             "explicit target — there is no device autodetection."
         ),

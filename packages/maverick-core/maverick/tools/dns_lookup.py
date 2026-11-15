@@ -15,7 +15,9 @@ Use cases the agent might hit:
 """
 from __future__ import annotations
 
+import ipaddress
 import logging
+import re
 import socket
 from typing import Any
 
@@ -97,13 +99,84 @@ def _resolve_via_socket(host: str, rtype: str) -> str:
 _RTYPES = ("A", "AAAA", "MX", "TXT", "CNAME", "NS")
 
 
+# One DNS label: letters, digits, hyphen (not at either end) and underscore
+# (``_dmarc``, ``_sip._tcp``).
+_LABEL = re.compile(r"^[A-Za-z0-9_](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?$")
+
+
+def _is_ip(name: str) -> bool:
+    try:
+        ipaddress.ip_address(name)
+    except ValueError:
+        return False
+    return True
+
+
+def _plain_name_error(name: str, *, ip_only: bool = False) -> str | None:
+    """Why ``name`` is not a plain hostname (or IP), or None when it is.
+
+    The egress check judges a host, so the name sent to the resolver must be
+    exactly that host: anything a URL parser would cut short (``#``, ``?``,
+    ``/``, ``@``) or a resolver would read differently is refused first.
+    """
+    if _is_ip(name):
+        return None
+    if ip_only:
+        return f"ERROR: {name[:80]!r} is not an IP address"
+    bare = name.rstrip(".")
+    if not bare or len(bare) > 253 or not all(_LABEL.match(label) for label in bare.split(".")):
+        return f"ERROR: {name[:80]!r} is not a plain hostname"
+    return None
+
+
+def _egress_denial(name: str) -> str | None:
+    """Why the policy forbids looking up ``name``, or None.
+
+    A query carries the name to a resolver, which can carry data out, so the
+    network posture and the enterprise, tenant and tool egress lists apply as
+    they do to http_fetch. A policy that cannot be read refuses.
+    """
+    from ._sdk_egress import sdk_egress_denial
+
+    # The policy judges the host without a root dot (``example.com.`` and
+    # ``example.com`` are one host, and allow-lists are written without it).
+    bare = name.rstrip(".")
+    target = f"[{bare}]" if ":" in bare else bare
+    url = f"https://{target}/"
+    from urllib.parse import urlsplit
+    if (urlsplit(url).hostname or "").rstrip(".") != bare.lower():
+        return f"ERROR: {name[:80]!r} is not a plain hostname"
+    denial = sdk_egress_denial("dns_lookup", url)
+    return f"ERROR: {denial}" if denial else None
+
+
+def _ascii_name(host: str) -> str | None:
+    """``host`` in its ASCII (``xn--``) form, or None when it has none."""
+    if host.isascii():
+        return host
+    try:
+        return host.encode("idna").decode("ascii")
+    except UnicodeError:
+        return None
+
+
 def _op_resolve(host: str, rtype: str) -> str:
     if not host:
         return "ERROR: resolve requires host"
+    # Check and resolve the same ASCII name, never a Unicode spelling that a
+    # resolver would convert on its own.
+    ascii_host = _ascii_name(host)
+    if ascii_host is None:
+        return f"ERROR: {host[:80]!r} has no ASCII (xn--) form; give the name in that form"
+    host = ascii_host
     rtype = rtype.upper()
     if rtype not in _RTYPES:
         # The schema enum is advisory; dnspython would resolve any type it knows.
         return f"ERROR: rtype must be one of {', '.join(_RTYPES)}"
+    if problem := _plain_name_error(host):
+        return problem
+    if denial := _egress_denial(host):
+        return denial
     if _have_dnspython():
         return _resolve_via_dnspython(host, rtype)
     return _resolve_via_socket(host, rtype)
@@ -112,6 +185,10 @@ def _op_resolve(host: str, rtype: str) -> str:
 def _op_reverse(ip: str) -> str:
     if not ip:
         return "ERROR: reverse requires ip"
+    if problem := _plain_name_error(ip, ip_only=True):
+        return problem
+    if denial := _egress_denial(ip):
+        return denial
     if _have_dnspython():
         import dns.resolver
         import dns.reversename

@@ -69,6 +69,27 @@ def _cfg(key: str, env: str, default: str = "") -> str:
         return default
 
 
+def _guard_caldav_session(client) -> None:
+    """Check every CalDAV request, redirects included, against the egress policy.
+
+    caldav sends through niquests (or requests). The process-wide egress guard
+    does not patch niquests, and server-chosen principal and redirect URLs can
+    name other hosts. Both libraries call ``Session.send`` once per hop.
+    """
+    from ..egress_guard import _check
+
+    session = getattr(client, "session", None)
+    send = getattr(session, "send", None)
+    if not callable(send):
+        raise RuntimeError("This caldav version's HTTP client cannot be checked against the egress policy.")
+
+    def guarded(request, **kwargs):
+        _check(str(request.url))
+        return send(request, **kwargs)
+
+    session.send = guarded
+
+
 def _get_caldav_calendar():
     """Resolve the user's selected calendar object via caldav."""
     try:
@@ -85,7 +106,11 @@ def _get_caldav_calendar():
             "Calendar requires CALDAV_URL + CALDAV_USER + CALDAV_PASSWORD "
             "(use an app password, not your account password)."
         )
+    from ..egress_guard import _check
+
+    _check(str(url))
     client = caldav.DAVClient(url=url, username=user, password=pw)
+    _guard_caldav_session(client)
     principal = client.principal()
     cals = principal.calendars()
     if not cals:

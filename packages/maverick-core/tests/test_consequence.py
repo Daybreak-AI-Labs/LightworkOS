@@ -121,8 +121,13 @@ def test_correlation_link_and_resolve_roundtrip(tmp_path):
 def test_correlation_latest_link_wins(tmp_path):
     corr = cq.CorrelationStore(path=tmp_path / "links.ndjson")
     corr.link("ticket:9", 1, 1, ts=10.0)
-    corr.link("ticket:9", 2, 2, ts=20.0)   # a later run re-touched the entity
-    assert corr.resolve("ticket:9") == (2, 2)
+    corr.link("ticket:9", 1, 2, ts=20.0)   # the same run re-touched the entity
+    assert corr.resolve("ticket:9") == (1, 2)
+    # Another run takes the key only through an operator's override.
+    with pytest.raises(cq.OutcomeKeyOwned):
+        corr.link("ticket:9", 2, 3, ts=30.0)
+    assert corr.link("ticket:9", 2, 3, ts=30.0, override=True)
+    assert corr.resolve("ticket:9") == (2, 3)
 
 
 def test_correlation_empty_key_rejected(tmp_path):
@@ -142,16 +147,18 @@ def test_correlation_native_workers_keep_the_latest_link_and_ignore_torn_rows(tm
     first, second = cq.CorrelationStore(path=path), cq.CorrelationStore(path=path)
     assert first.link("invoice:42", 1, 7, ts=10)
     assert second.resolve("invoice:42") == (1, 7)
-    assert second.link("invoice:42", 2, 8, ts=20)
+    # Workers relinking across runs act as operators here (override); the
+    # store still keeps the latest link and both workers see it.
+    assert second.link("invoice:42", 2, 8, ts=20, override=True)
     assert first.resolve("invoice:42") == (2, 8)
-    assert first.link("invoice:42", 1, 7, ts=15)
+    assert first.link("invoice:42", 1, 7, ts=15, override=True)
     assert first.resolve("invoice:42") == second.resolve("invoice:42") == (2, 8)
     assert not first.link("x" * 257, 3, 9)
     with path.open("ab") as stream:
         stream.write(b'{"key":"invoice:42","goal_id":3,"episode_id":9,"ts":30}')
     assert second.resolve("invoice:42") == (2, 8)
     # The unconfirmed torn row is discarded, not revived, and linking resumes.
-    assert first.link("invoice:42", 4, 10, ts=25)
+    assert first.link("invoice:42", 4, 10, ts=25, override=True)
     assert first.resolve("invoice:42") == second.resolve("invoice:42") == (4, 10)
     assert first.count() == second.count() == 1
 
@@ -193,7 +200,7 @@ def test_correlation_late_write_failure_preserves_prior_binding(tmp_path, monkey
         return native_sync(fd)
 
     monkeypatch.setattr(cq.os, "fsync", fail_first_data_sync)
-    assert not store.link("invoice:42", 2, 8)
+    assert not store.link("invoice:42", 1, 8)
     assert path.read_bytes() == original
     assert store.resolve("invoice:42") == (1, 7)
 

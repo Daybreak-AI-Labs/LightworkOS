@@ -903,7 +903,17 @@ def core_tool_names(role: str, *, extra=()) -> frozenset[str]:
 # (see test_no_collision_with_opt_in_ambient_cred_tools).
 AMBIENT_CRED_TOOL_NAMES = frozenset({
     "airtable", "asana", "clickup", "lambda", "dynamodb", "vercel", "gdrive",
+    "s3", "ses", "sns",
 })
+
+
+def opt_in_tool_hint(name: str) -> str:
+    """For a tool that registers only behind a setting, the setting to turn on."""
+    if name in AMBIENT_CRED_TOOL_NAMES:
+        return ("; it uses this server's own sign-ins and is offered only when "
+                "[tools] credential_connectors is on (MAVERICK_ENABLE_CRED_TOOLS)")
+    return ""
+
 
 # Hand-written connectors that still read operator-global environment
 # credentials directly. They are safe for the anonymous/local operator path,
@@ -1124,7 +1134,8 @@ def base_registry(
     reg.register(read_tool_result(goal_id=goal_id, principal=principal or None))
     reg.register(read_attachment_tool(world, goal_id))
     _register_local_workspace_tool(reg, sandbox, repo_map, has_local_workdir)
-    _register_local_workspace_tool(reg, sandbox, str_replace_editor, has_local_workdir)
+    _register_local_workspace_tool(
+        reg, sandbox, lambda sb: str_replace_editor(sb, goal_id=goal_id), has_local_workdir)
     # Governed session kernel. Registered ONLY when the operator has turned
     # it on: an unregistered tool costs no catalog tokens and cannot be
     # called, so the default deployment is unchanged.
@@ -1429,7 +1440,8 @@ def base_registry(
     reg.register(youtube())
     reg.register(notion())
     reg.register(obsidian())
-    _register_local_workspace_tool(reg, sandbox, spreadsheet, has_local_workdir)
+    _register_local_workspace_tool(
+        reg, sandbox, lambda sb: spreadsheet(sb, goal_id=goal_id), has_local_workdir)
     _register_local_workspace_tool(reg, sandbox, spreadsheet_read, has_local_workdir)
     reg.register(translate())
     reg.register(slack_bot())
@@ -1607,7 +1619,6 @@ def base_registry(
         ToolDescriptor("datadog", datadog_tool, True),
         ToolDescriptor("hubspot", hubspot_tool, True),
         ToolDescriptor("twilio", twilio_tool, True),
-        ToolDescriptor("s3", s3_tool, True),
     ))
     reg.register(serial_tool())
     register_descriptors(reg, (ToolDescriptor("elasticsearch", elasticsearch_tool, True),))
@@ -1665,6 +1676,13 @@ def base_registry(
         reg.register(dynamodb_tool())
         reg.register(vercel_tool())
         reg.register(gdrive_tool())
+        # boto3's default chain finds instance roles and ~/.aws, as lambda
+        # and dynamodb do.
+        register_descriptors(reg, (
+            ToolDescriptor("s3", s3_tool, True),
+            ToolDescriptor("ses", ses_tool, True),
+            ToolDescriptor("sns", sns_tool, True),
+        ))
     register_descriptors(reg, (
         ToolDescriptor("trello", trello_tool, True),
         ToolDescriptor("confluence", confluence_tool, True),
@@ -1682,8 +1700,6 @@ def base_registry(
         ToolDescriptor("home_assistant", home_assistant_tool, True),
         ToolDescriptor("reddit", reddit_tool, True),
         ToolDescriptor("bitbucket", bitbucket_tool, True),
-        ToolDescriptor("ses", ses_tool, True),
-        ToolDescriptor("sns", sns_tool, True),
     ))
     _register_local_workspace_tool(reg, sandbox, ffmpeg_tool, has_local_workdir)
     _register_local_workspace_tool(reg, sandbox, pandoc_tool, has_local_workdir)

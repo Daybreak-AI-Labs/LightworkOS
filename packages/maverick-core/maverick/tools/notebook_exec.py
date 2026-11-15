@@ -5,7 +5,8 @@ one script, obtains a one-use human approval, and runs it through the sandbox
 chokepoint so execution is confined and the backend is swappable in tests.
 No Jupyter kernel required — this runs the notebook's *code* the way the agent
 runs any other script. Cell magics (``%``/``!`` lines) are stripped since they're
-kernel-only. ``_extract_code`` is the pure, unit-tested core.
+kernel-only; a ``%``/``!`` line inside an open string, bracket or continuation
+is Python and is kept. ``_extract_code`` is the pure, unit-tested core.
 """
 from __future__ import annotations
 
@@ -58,19 +59,84 @@ _SCHEMA = {
 }
 
 
+class _OpenPython:
+    """Line-by-line state of the Python kept so far: open strings and brackets.
+
+    Enough of Python's lexer to tell where a new statement may begin: quotes
+    (single and triple, with backslash escapes), ``#`` comments, bracket depth
+    and backslash line continuation. One pass, so a large notebook stays linear.
+    """
+
+    def __init__(self) -> None:
+        self.quote = ""      # the open string's delimiter, or ""
+        self.depth = 0       # open (), [] and {}
+        self.continued = False
+
+    def at_boundary(self) -> bool:
+        return not (self.quote or self.depth or self.continued)
+
+    def feed(self, line: str) -> None:
+        self.continued = False
+        i, n = 0, len(line)
+        while i < n:
+            if self.quote:
+                i = self._in_string(line, i)
+                continue
+            ch = line[i]
+            if ch == "#":
+                return
+            if ch in "\"'":
+                self.quote = ch * 3 if line.startswith(ch * 3, i) else ch
+                i += len(self.quote)
+                continue
+            if ch in "([{":
+                self.depth += 1
+            elif ch in ")]}":
+                self.depth = max(0, self.depth - 1)
+            elif ch == "\\" and i == n - 1:
+                self.continued = True
+            i += 1
+        if len(self.quote) == 1 and not line.endswith("\\"):
+            self.quote = ""  # an unterminated one-line string ends with its line
+
+    def _in_string(self, line: str, i: int) -> int:
+        if line[i] == "\\":
+            return i + 2
+        if line.startswith(self.quote, i):
+            i += len(self.quote)
+            self.quote = ""
+            return i
+        return i + 1
+
+
+def _strip_magics(src: str) -> list[str]:
+    """Drop ``%``/``!`` magic lines that start a statement; keep the rest.
+
+    A line is a magic only where a new statement could begin. Inside a
+    triple-quoted string, an open bracket or a backslash continuation it is
+    part of the Python around it, so it stays.
+    """
+    state = _OpenPython()
+    kept: list[str] = []
+    for line in src.splitlines():
+        if line.lstrip().startswith(("%", "!")) and state.at_boundary():
+            continue
+        kept.append(line)
+        state.feed(line)
+    return kept
+
+
 def _extract_code(nb: dict) -> str:
     """Concatenate code-cell source from a parsed notebook, dropping magics."""
-    cells = nb.get("cells") or []
+    cells = (nb.get("cells") or []) if isinstance(nb, dict) else []
     chunks: list[str] = []
     for i, cell in enumerate(cells):
-        if cell.get("cell_type") != "code":
+        if not isinstance(cell, dict) or cell.get("cell_type") != "code":
             continue
         src = cell.get("source") or []
         if isinstance(src, list):
-            src = "".join(src)
-        lines = [ln for ln in str(src).splitlines()
-                 if not ln.lstrip().startswith(("%", "!"))]
-        body = "\n".join(lines).strip()
+            src = "".join(str(part) for part in src)
+        body = "\n".join(_strip_magics(str(src))).strip()
         if body:
             chunks.append(f"# --- cell {i} ---\n{body}")
     return "\n\n".join(chunks)

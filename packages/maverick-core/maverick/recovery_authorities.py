@@ -718,6 +718,9 @@ def authority_policy(relative: str, *, is_sqlite: bool) -> str | None:
             "jobs.db": "jobs",
             "world.db": "world",
             "knowledge.db": "passive_sqlite",
+            # Documents the knowledge screen held for an administrator: the
+            # same document text as knowledge.db, and no grant of authority.
+            "knowledge_held.db": "passive_sqlite",
             "provider_spend.sqlite3": "provider_spend_sqlite",
             "entity_graph/graph.db": "passive_sqlite",
             "privacy_automation/privacy-data-discovery.sqlite3": "privacy_discovery",

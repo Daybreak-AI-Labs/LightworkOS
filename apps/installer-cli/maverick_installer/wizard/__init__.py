@@ -76,6 +76,7 @@ from .advanced import _FEATURE_LOCKS as _FEATURE_LOCKS
 from .advanced import _LOCAL_FIRST_PROVIDERS as _LOCAL_FIRST_PROVIDERS
 from .advanced import _ask_chat_and_resource_followups as _ask_chat_and_resource_followups
 from .advanced import _ask_dashboard_followups as _ask_dashboard_followups
+from .advanced import _ask_ed25519_keys as _ask_ed25519_keys
 from .advanced import _ask_external_agent_followups as _ask_external_agent_followups
 from .advanced import _ask_flow_followups as _ask_flow_followups
 from .advanced import _ask_governed_execution_followups as _ask_governed_execution_followups
@@ -1528,11 +1529,12 @@ def pick_capabilities() -> dict[str, Any]:
         default=False,
     )
     # The embedded-device tool (JTAG/I2C) is always registered, but its
-    # DESTRUCTIVE ops (flash write, target reset) stay refused until the
+    # DESTRUCTIVE ops (flash write, target reset, I2C write) stay refused until the
     # operator opts in here -> [embedded] allow_flash. Default off.
     embedded_flash = _q_confirm(
         "Allow embedded-device flashing? The JTAG tool can erase/reflash YOUR "
-        "OWN connected device's firmware (OpenOCD). Off = it refuses flash/reset.",
+        "OWN connected device's firmware (OpenOCD) and write its I2C registers. "
+        "Off = it refuses flash, reset and I2C writes.",
         default=False,
     )
     deferred_tools = _q_confirm(

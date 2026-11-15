@@ -233,3 +233,27 @@ class TestTriggerOutcomeAttribution:
         counts = r.json()["outcomes"]["nightly"]
         assert counts.get("done") == 1
         assert counts.get("blocked") == 1
+
+
+def test_relinking_another_tasks_key_needs_an_administrator(tmp_path, monkeypatch):
+    from maverick_dashboard import api
+
+    monkeypatch.setenv("MAVERICK_CONSEQUENCE", "1")
+    consequence = _isolate(tmp_path, monkeypatch)
+    w = _world(tmp_path, monkeypatch)
+    first, other = w.create_goal("Bill the client", ""), w.create_goal("Other work", "")
+    first_ep, other_ep = w.start_episode(first), w.start_episode(other)
+    body = {"goal_id": first, "episode_id": first_ep, "key": "invoice:INV-7"}
+    assert client.post("/api/v1/outcomes/link", json=body).status_code == 204
+
+    real = api.has_permission
+    monkeypatch.setattr(api, "has_permission",
+                        lambda request, permission, **kw: permission != "admin" and real(request, permission, **kw))
+    taken = client.post("/api/v1/outcomes/link", json={**body, "goal_id": other, "episode_id": other_ep})
+    assert taken.status_code == 409 and "another task" in taken.json()["detail"]
+    assert consequence.shared_correlation().resolve("invoice:INV-7") == (first, first_ep)
+
+    monkeypatch.setattr(api, "has_permission", real)
+    moved = client.post("/api/v1/outcomes/link", json={**body, "goal_id": other, "episode_id": other_ep})
+    assert moved.status_code == 204
+    assert consequence.shared_correlation().resolve("invoice:INV-7") == (other, other_ep)

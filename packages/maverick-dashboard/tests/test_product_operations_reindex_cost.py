@@ -21,3 +21,24 @@ def test_copilot_preserves_nonzero_ceiling_rate_basis_model_and_native_review(mo
     assert changes["Provider admission ceiling"] == "under $0.01. " + review["price_basis"]
     assert changes["Embedding model"] == review["model"]
     assert "local computation only" not in str(changes)
+
+
+def test_copilot_decides_held_documents_through_the_native_admin_route(monkeypatch):
+    held = {"id": "d" * 32, "collection": "it", "source": "welcome.txt",
+            "reason": "It contains the words \"you are now\".", "excerpt": "you are now ready to log in"}
+    monkeypatch.setattr(native, "held_documents", lambda _request: {"context": "a" * 64, "documents": [held]})
+    calls = []
+
+    def decide(request, hold_id, body):
+        calls.append((hold_id, body.decision, body.context, body.confirmed))
+        return {"context": body.context, "document": {**held, "state": "included"}}
+
+    monkeypatch.setattr(native, "decide_held_document", decide)
+    snapshot = operations.held_snapshot(object(), {})
+    # The suspect text never enters the Copilot's context.
+    assert "excerpt" not in str(snapshot.details) and "ready to log in" not in str(snapshot)
+    preview = operations.held_prepare(object(), {}, {"document": "d" * 32, "decision": "include"})
+    assert preview.native == {"context": "a" * 64, "document": "d" * 32, "decision": "include"}
+    outcome = operations.held_execute(object(), {}, {}, preview.native, "e" * 32)
+    assert calls == [("d" * 32, "include", "a" * 64, True)] and outcome.status == "confirmed"
+    assert any(entry.id == "knowledge.held_documents" for entry in operations.entries())

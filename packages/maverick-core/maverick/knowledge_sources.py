@@ -521,7 +521,9 @@ class KnowledgeSources:
                                                extra_meta=provenance, replace_source=True, effect_guard=lambda: self._job_guard(job),
                                                publication_scope=self.publication_scope)
                         if not count:
-                            raise readers.SourceReadError("Native Knowledge screening refused this document; it was not imported.")
+                            raise readers.SourceReadError(
+                                "Knowledge held this document because part of it reads like instructions to an assistant. "
+                                "An administrator can include it under Held documents in the Knowledge library, then refresh this source.")
                         exact = kb.exact_document(collection, document_sha)
                         candidate = {"remote_id": item["id"], "name": item["name"], "provider_revision": item["revision"],
                                      "document_sha256": document_sha, "raw_sha256": raw_sha, "citation": _safe_citation(item.get("citation")),

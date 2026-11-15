@@ -249,6 +249,51 @@ def sources_prepare(request, selection, _arguments):
                    native={"open": {"label": "Open company Knowledge sources", "href": "/knowledge-access#knowledge-sources"}})
 
 
+class HeldInput(StrictInput):
+    document: str = Field(pattern=r"^[a-f0-9]{32}$")
+    decision: Literal["include", "keep_out"]
+
+
+_HELD_AFTER = {"include": "Included. Assistants read it only as quoted material, never as instructions.",
+               "keep_out": "Kept out of Knowledge. The held copy of its text is deleted. A new upload is held for a new review."}
+
+
+def held_snapshot(request, _selection):
+    from .knowledge_library_api import held_documents
+    value = held_documents(request)
+    documents = value["documents"]
+    # The matching excerpt is the suspect text itself, so it never enters the
+    # Copilot's context; the person reads it on the Knowledge page.
+    return Snapshot(digest([value["context"], documents]), "Held documents",
+                    "Knowledge held these documents because part of each reads like instructions to an assistant. "
+                    "An administrator can include each one or keep it out.",
+                    details={"documents": [{key: row[key] for key in ("id", "collection", "source", "reason")} for row in documents]},
+                    fields=[{"name": "document", "label": "Held document", "kind": "select", "required": True,
+                             "choices": [{"value": row["id"], "label": row["source"] + " / " + row["collection"]} for row in documents]},
+                            {"name": "decision", "label": "Decision", "kind": "select", "required": True,
+                             "choices": [{"value": "include", "label": "Include in Knowledge"}, {"value": "keep_out", "label": "Keep out"}]}],
+                    blocked="No documents are held right now." if not documents else "")
+
+
+def held_prepare(request, _selection, arguments):
+    from .knowledge_library_api import held_documents
+    value = held_documents(request)
+    row = next((item for item in value["documents"] if item["id"] == arguments["document"]), None)
+    if row is None:
+        raise HTTPException(409, "This held document is no longer here. Refresh the list.")
+    return Preview("Review why Knowledge held this document. Open the Knowledge library to read the matching text first.",
+                   changes=[{"label": row["source"] + " / " + row["collection"], "before": "Held. " + row["reason"],
+                             "after": _HELD_AFTER[arguments["decision"]]}],
+                   native={"context": value["context"], **arguments})
+
+
+def held_execute(request, _selection, _arguments, native, _operation):
+    from .knowledge_library_api import HeldDecisionIn, decide_held_document
+    result = decide_held_document(request, native["document"],
+                                  HeldDecisionIn(context=native["context"], decision=native["decision"], confirmed=True))
+    return Outcome("confirmed", _HELD_AFTER[native["decision"]], result["document"])
+
+
 def entries():
     from .product_operations_knowledge_feedback import feedback_entries
     return (*feedback_entries(), Adapter("knowledge.sources.configure", "Manage company Knowledge sources", "learning", "/knowledge-access#knowledge-sources",
@@ -258,4 +303,7 @@ def entries():
             Adapter("knowledge.assessment_precedents", "Review precedent answers and sources", "learning", "/privacy", ("/privacy", "/finance", "/security", "/approvals", "/knowledge-access"), PrecedentInput, precedent_snapshot, precedent_prepare),
             Adapter("knowledge.source_analysis", "Analyze an approved source", "learning", "/knowledge-access#source-analysis", ("/knowledge-access",), AnalysisInput, analysis_snapshot, analysis_prepare, analysis_execute, analysis_recover),
             Adapter("knowledge.rebuild", "Rebuild document search", "learning", "/knowledge-access", ("/knowledge-access",), RebuildInput, rebuild_snapshot, rebuild_prepare, rebuild_execute, rebuild_recover),
-            Adapter("knowledge.rebuild_job", "Review or control rebuild progress", "learning", "/knowledge-access", ("/knowledge-access",), JobInput, job_snapshot, job_prepare, job_execute))
+            Adapter("knowledge.rebuild_job", "Review or control rebuild progress", "learning", "/knowledge-access", ("/knowledge-access",), JobInput, job_snapshot, job_prepare, job_execute),
+            Adapter("knowledge.held_documents", "Include or keep out a held document", "learning", "/knowledge-access#ka-held",
+                    ("/knowledge-access",), HeldInput, held_snapshot, held_prepare, held_execute,
+                    aliases=("held documents", "missing uploaded document", "why was my document not added")))

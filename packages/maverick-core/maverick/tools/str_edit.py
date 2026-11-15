@@ -112,7 +112,21 @@ def _cmd_view(sandbox, target: Path, path_arg: str) -> str:
     return _view_file(sandbox, target)
 
 
-def _cmd_create(sandbox, target: Path, args: dict) -> str:
+def _write_charged(sandbox, target: Path, content: str, goal_id) -> None:
+    """Write ``content`` after charging it to the goal's file-write quota.
+
+    The quota is the one ``write_file`` uses (opt-in, default off), so moving
+    to this editor cannot step around the cap. Raises ``ValueError`` when the
+    write would cross it.
+    """
+    from ..file_quota import check_and_add
+    ok, msg = check_and_add(len(content.encode("utf-8", "replace")), goal_id=goal_id)
+    if not ok:
+        raise ValueError(msg)
+    write_text_contained(sandbox, target, content)
+
+
+def _cmd_create(sandbox, target: Path, args: dict, goal_id="default") -> str:
     if target.exists():
         return (
             f"ERROR: {target} already exists; use str_replace or "
@@ -120,7 +134,7 @@ def _cmd_create(sandbox, target: Path, args: dict) -> str:
         )
     content = args.get("file_text") or args.get("content") or ""
     try:
-        write_text_contained(sandbox, target, content)
+        _write_charged(sandbox, target, content, goal_id)
     except (ValueError, PermissionError, OSError) as e:
         return f"ERROR: {e}"
     return f"created {target} ({len(content)} bytes)"
@@ -153,7 +167,7 @@ def _str_replace_count_error(data: str, old: str, count: int) -> str:
     )
 
 
-def _cmd_str_replace(sandbox, target: Path, args: dict) -> str:
+def _cmd_str_replace(sandbox, target: Path, args: dict, goal_id="default") -> str:
     old = args.get("old_str")
     new = args.get("new_str")
     if old is None or new is None:
@@ -173,7 +187,7 @@ def _cmd_str_replace(sandbox, target: Path, args: dict) -> str:
         return _str_replace_count_error(data, old, count)
     try:
         new_data = data.replace(old, new.replace("\r\n", "\n"), 1)
-        write_text_contained(sandbox, target, new_data.replace("\n", eol))
+        _write_charged(sandbox, target, new_data.replace("\n", eol), goal_id)
     except (ValueError, PermissionError, OSError) as e:
         return f"ERROR: {e}"
     delta = len(new_data) - len(data)
@@ -181,7 +195,7 @@ def _cmd_str_replace(sandbox, target: Path, args: dict) -> str:
     return f"edited {target} ({sign}{delta} bytes)"
 
 
-def _cmd_insert(sandbox, target: Path, args: dict) -> str:
+def _cmd_insert(sandbox, target: Path, args: dict, goal_id="default") -> str:
     after = args.get("insert_line")
     text = args.get("new_str", "")
     if after is None:
@@ -206,13 +220,13 @@ def _cmd_insert(sandbox, target: Path, args: dict) -> str:
     ins = text.replace("\r\n", "\n").split("\n")
     new_lines = lines[:idx] + ins + lines[idx:]
     try:
-        write_text_contained(sandbox, target, eol.join(new_lines))
+        _write_charged(sandbox, target, eol.join(new_lines), goal_id)
     except (ValueError, PermissionError, OSError) as e:
         return f"ERROR: {e}"
     return f"inserted at line {idx} of {target}"
 
 
-def _dispatch_editor_command(sandbox, args: dict) -> str:
+def _dispatch_editor_command(sandbox, args: dict, goal_id="default") -> str:
     cmd = args.get("command", "")
     path_arg = args.get("path", "")
     if not cmd:
@@ -231,11 +245,11 @@ def _dispatch_editor_command(sandbox, args: dict) -> str:
         # line count) is a content oracle for files `view` hides.
         return f"ERROR: {cmd}({path_arg!r}) blocked in benchmark opaque mode (.git/tests)"
     if cmd == "create":
-        return _cmd_create(sandbox, target, args)
+        return _cmd_create(sandbox, target, args, goal_id)
     if cmd == "str_replace":
-        return _cmd_str_replace(sandbox, target, args)
+        return _cmd_str_replace(sandbox, target, args, goal_id)
     if cmd == "insert":
-        return _cmd_insert(sandbox, target, args)
+        return _cmd_insert(sandbox, target, args, goal_id)
 
     return (
         f"ERROR: unknown command {cmd!r}; expected one of: "
@@ -243,9 +257,11 @@ def _dispatch_editor_command(sandbox, args: dict) -> str:
     )
 
 
-def str_replace_editor(sandbox) -> Tool:
+def str_replace_editor(sandbox, goal_id: str | int | None = "default") -> Tool:
+    quota_goal_id = "default" if goal_id is None else goal_id
+
     def fn(args: dict) -> str:
-        return _dispatch_editor_command(sandbox, args)
+        return _dispatch_editor_command(sandbox, args, quota_goal_id)
 
     return Tool(
         name="str_replace_editor",

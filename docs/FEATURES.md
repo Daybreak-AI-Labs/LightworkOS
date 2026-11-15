@@ -5181,7 +5181,7 @@ tested without spawning py-spy.
   to the **operator's own** devices. JTAG mediates OpenOCD strictly through
   `sandbox.exec()` — halt/resume/reset, bounded memory reads (reads never
   auto-halt, so they can't silently change target state), flash write; the
-  destructive ops (flash, reset) stay refused until `[embedded] allow_flash
+  destructive ops (flash, reset, I2C write) stay refused until `[embedded] allow_flash
   = true` (default OFF, wizard-exposed). I2C is a pure protocol layer over
   an injected bus seam (`smbus2` via the `[i2c]` extra). Every op names its
   explicit target — no autodetect-and-flash; failures are `ERROR:` strings.

@@ -12,6 +12,13 @@ Auth:
 ops:
   - generate(model, prompt)            — Gemini generateContent
   - predict(endpoint_id, instances)    — custom deployed endpoint
+
+``generate`` names no model of its own (users own model choice) and refuses a
+model outside ``[access] allowed_models``. Every request leaves a provider
+spend receipt for ``vertex`` with an unknown cost: no Vertex model has a
+verified price, so a call is not charged to the run's dollar budget and
+cannot be held to a ``[budget.provider_caps] vertex`` cap. With that cap set,
+the tool refuses instead of sending.
 """
 from __future__ import annotations
 
@@ -21,6 +28,11 @@ import os
 from typing import Any
 
 from ..governed_http import guarded_sender as _governed_sender
+from ..provider_cost_cap import (
+    ProviderAccountingUnavailable,
+    ProviderCapExceeded,
+    metered_provider_call,
+)
 from . import Tool, safe_path_segment
 
 log = logging.getLogger(__name__)
@@ -29,7 +41,9 @@ _SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "op": {"type": "string", "enum": ["generate", "predict"]},
-        "model": {"type": "string", "description": "e.g. gemini-2.5-pro (generate)."},
+        "model": {"type": "string", "description": (
+            "Vertex model id to call (generate). Required; when [access] "
+            "allowed_models is set it must list vertex:<model id>.")},
         "prompt": {"type": "string"},
         "endpoint_id": {"type": "string", "description": "deployed endpoint id (predict)."},
         "instances": {"type": "array", "description": "predict instances."},
@@ -38,7 +52,6 @@ _SCHEMA: dict[str, Any] = {
 }
 
 _DEFAULT_LOCATION = "us-central1"
-_DEFAULT_MODEL = "gemini-2.5-pro"
 
 
 def _config() -> tuple[str, str, str]:
@@ -61,16 +74,37 @@ def _base() -> str:
             f"/locations/{loc}")
 
 
+def _post(url: str, body: dict, category: str):
+    """One paid Vertex request, with an unknown-cost provider receipt."""
+    from ..provider_cost_cap import caps_from_config
+    if "vertex" in caps_from_config():
+        raise RuntimeError(
+            "a spending cap is set for vertex ([budget.provider_caps]), but Vertex "
+            "calls have no known price, so they cannot be held to it; nothing was sent")
+    import httpx
+    return metered_provider_call(
+        "vertex",
+        lambda: _governed_sender(httpx.post)(url, headers=_headers(), json=body, timeout=120.0),
+        category=category, parent_category=category, service="vertex",
+    )
+
+
 def _op_generate(model: str, prompt: str) -> str:
     if not prompt:
         return "ERROR: generate requires prompt"
-    import httpx
-    seg = safe_path_segment(model or _DEFAULT_MODEL)
+    if not model:
+        return "ERROR: generate requires model (the Vertex model id to call)"
+    from ..llm import ModelNotAllowedError, require_model_allowed
+    try:
+        require_model_allowed(f"vertex:{model}")
+    except (ModelNotAllowedError, ValueError) as e:
+        return f"ERROR: {e}"
+    seg = safe_path_segment(model)
     if seg is None:
         return "ERROR: generate requires a valid model"
     url = f"{_base()}/publishers/google/models/{seg}:generateContent"
     body = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
-    r = _governed_sender(httpx.post)(url, headers=_headers(), json=body, timeout=120.0)
+    r = _post(url, body, "generation")
     try:
         data = r.json()
     except ValueError:
@@ -88,12 +122,11 @@ def _op_generate(model: str, prompt: str) -> str:
 def _op_predict(endpoint_id: str, instances: list) -> str:
     if not endpoint_id or not instances:
         return "ERROR: predict requires endpoint_id and instances"
-    import httpx
     seg = safe_path_segment(endpoint_id)
     if seg is None:
         return "ERROR: predict requires a valid endpoint_id"
     url = f"{_base()}/endpoints/{seg}:predict"
-    r = _governed_sender(httpx.post)(url, headers=_headers(), json={"instances": instances}, timeout=120.0)
+    r = _post(url, {"instances": instances}, "inference")
     try:
         data = r.json()
     except ValueError:
@@ -136,6 +169,8 @@ def _run(args: dict[str, Any]) -> str:
                                 (args.get("prompt") or "").strip())
         if op == "predict":
             return _op_predict((args.get("endpoint_id") or "").strip(), instances)
+    except (ProviderAccountingUnavailable, ProviderCapExceeded):
+        raise
     except RuntimeError as e:
         return f"ERROR: {e}"
     except Exception as e:
@@ -150,7 +185,9 @@ def vertex_tool() -> Tool:
             "Google Cloud Vertex AI over REST. ops: generate (Gemini "
             "generateContent), predict (custom deployed endpoint). Auth: "
             "VERTEX_ACCESS_TOKEN + VERTEX_PROJECT (+ VERTEX_LOCATION, "
-            "default us-central1)."
+            "default us-central1). Calls have no known price: they are not "
+            "charged to the run budget, and are refused under a vertex "
+            "spending cap."
         ),
         input_schema=_SCHEMA,
         fn=_run,

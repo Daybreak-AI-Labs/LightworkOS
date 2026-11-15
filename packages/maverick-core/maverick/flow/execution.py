@@ -661,7 +661,8 @@ def default_action_runner(
             )
             t = next((x for x in reg.all() if x.name == tool), None)
             if t is None:
-                result = f"ERROR: no such tool {tool!r}"
+                from ..tools import opt_in_tool_hint
+                result = f"ERROR: no such tool {tool!r}{opt_in_tool_hint(tool)}"
             else:
                 observation = native_authorized(
                     tool, params, call_id=call_id, principal=user_id,

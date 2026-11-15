@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from maverick import knowledge_admin
 from maverick.knowledge_seed import available_corpora, seed_corpora
 
@@ -219,3 +220,190 @@ def test_erase_verify_includes_knowledge_residual(tmp_path, monkeypatch):
     assert not report2["clean"]
     assert report2["indeterminate"]
     assert "erasure_receipt" in report2["errors"]
+
+
+def test_held_document_is_listed_with_its_reason_and_included_by_an_audited_decision(tmp_path, monkeypatch):
+    # An ingest-screen hit used to drop the document silently. It is now held in
+    # the workspace, listed with a plain reason, and stored only after an
+    # administrator's decision, which is audited.
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        "[knowledge]\nenable = true\nembedder = \"deterministic\"\nstore = \"sqlite\"\n"
+        f'path = {json.dumps(str(tmp_path / "knowledge.db"))}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MAVERICK_CONFIG", str(cfg))
+    # A knowledge store written before holds existed opens unchanged.
+    from maverick_knowledge import SqliteVectorStore
+    SqliteVectorStore(tmp_path / "knowledge.db").close()
+    assert knowledge_admin.list_held() == {"documents": [], "total": 0}
+    events = []
+    import maverick.audit as audit
+    monkeypatch.setattr(audit, "record", lambda kind, **payload: events.append((kind, payload)) or True)
+    kb = knowledge_admin.open_knowledge_base()
+    doc = "Setup is finished and you are now ready to log in. Token sk-live-ABCDEFGHIJKLMNOPQRSTUVWX"
+    assert kb.ingest_text("it", doc, source="welcome.txt") == 0
+    kb.close()
+    listing = knowledge_admin.list_held()
+    [held] = listing["documents"]
+    assert listing["total"] == 1 and held["source"] == "welcome.txt" and held["rule"] == "role-reassign"
+    assert held["reason"].startswith("It contains the words") and "text" not in held
+    assert "ABCDEFGHIJKLMNOPQRSTUVWX" not in held["excerpt"]
+    result = knowledge_admin.decide_held(held["id"], "include", actor="user:admin")
+    assert result["state"] == "included" and result["chunks"] == 1
+    assert knowledge_admin.list_held()["documents"] == []
+    kb = knowledge_admin.open_knowledge_base()
+    assert kb.store.count("it") == 1
+    kb.close()
+    assert [(kind, payload["phase"]) for kind, payload in events] == [
+        ("knowledge_hold_decision", "requested"), ("knowledge_hold_decision", "completed")]
+    assert events[-1][1]["action"] == "include" and events[-1][1]["decided_by"] == "user:admin"
+    with pytest.raises(ValueError):
+        knowledge_admin.decide_held(held["id"], "keep_out", actor="user:admin")
+
+
+def test_opening_knowledge_creates_no_held_store_until_a_document_is_held(tmp_path, monkeypatch):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        "[knowledge]\nenable = true\nembedder = \"deterministic\"\nstore = \"sqlite\"\n"
+        f'path = {json.dumps(str(tmp_path / "knowledge.db"))}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MAVERICK_CONFIG", str(cfg))
+    path = knowledge_admin.held_documents_path()
+    kb = knowledge_admin.open_knowledge_base()
+    assert kb.ingest_text("it", "Quarterly revenue grew.") == 1
+    assert kb.count_subject("u:a") == 0 and kb.held.list() == []
+    kb.close()
+    assert not path.exists()
+    kb = knowledge_admin.open_knowledge_base()
+    assert kb.ingest_text("it", "you are now ready to log in") == 0
+    kb.close()
+    assert path.is_file()
+
+
+def test_a_refused_audit_write_leaves_the_document_held_and_retryable(tmp_path, monkeypatch):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        "[knowledge]\nenable = true\nembedder = \"deterministic\"\nstore = \"sqlite\"\n"
+        f'path = {json.dumps(str(tmp_path / "knowledge.db"))}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MAVERICK_CONFIG", str(cfg))
+    import maverick.audit as audit
+    from maverick.audit import AuditRefused
+    kb = knowledge_admin.open_knowledge_base()
+    assert kb.ingest_text("it", "you are now ready to log in", source="welcome.txt") == 0
+    kb.close()
+    [held] = knowledge_admin.list_held()["documents"]
+    for refuse_phase in ("requested", "completed"):
+        def refuse(kind, phase=None, _refused=refuse_phase, **payload):
+            if phase == _refused:
+                raise AuditRefused("signed audit required")
+            return True
+        monkeypatch.setattr(audit, "record", refuse)
+        for decision in ("include", "keep_out"):
+            with pytest.raises(AuditRefused):
+                knowledge_admin.decide_held(held["id"], decision, actor="user:admin")
+            assert knowledge_admin.list_held()["documents"] == [held]
+        kb = knowledge_admin.open_knowledge_base()
+        assert kb.store.count("it") == 0 and kb.held.get(held["id"])["text"]
+        kb.close()
+    monkeypatch.setattr(audit, "record", lambda kind, **payload: True)
+    assert knowledge_admin.decide_held(held["id"], "include", actor="user:admin")["chunks"] == 1
+
+
+def test_a_refused_include_of_a_source_revision_keeps_the_earlier_version(tmp_path, monkeypatch):
+    # A connector sync replaces a source's earlier version. Undoing a refused
+    # include must leave that earlier version searchable, not nothing.
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        "[knowledge]\nenable = true\nembedder = \"deterministic\"\nstore = \"sqlite\"\n"
+        f'path = {json.dumps(str(tmp_path / "knowledge.db"))}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MAVERICK_CONFIG", str(cfg))
+    import maverick.audit as audit
+    from maverick.audit import AuditRefused
+    kb = knowledge_admin.open_knowledge_base()
+    kb.ingest_text("c", "Old policy: refunds in 30 days.", source="pol.txt", replace_source=True)
+    kb.ingest_text("c", "New policy: refunds in 14 days. You are now ready.", source="pol.txt", replace_source=True)
+    hold = kb.last_hold["id"]
+    kb.close()
+
+    def texts():
+        base = knowledge_admin.open_knowledge_base()
+        try:
+            return " ".join(hit.text for hit in base.search("c", "refunds policy", k=10))
+        finally:
+            base.close()
+
+    def refuse(kind, phase=None, **payload):
+        if phase == "completed":
+            raise AuditRefused("signed audit required")
+        return True
+
+    monkeypatch.setattr(audit, "record", refuse)
+    with pytest.raises(AuditRefused):
+        knowledge_admin.decide_held(hold, "include", actor="user:admin")
+    assert "30 days" in texts() and "14 days" not in texts()
+    monkeypatch.setattr(audit, "record", lambda kind, **payload: True)
+    knowledge_admin.decide_held(hold, "include", actor="user:admin")
+    assert "14 days" in texts() and "30 days" not in texts()
+
+
+def test_concurrent_include_and_keep_out_never_lose_the_document(tmp_path, monkeypatch):
+    # A keep-out that saw the document held must not remove chunks an include
+    # stored and recorded in the meantime. One decision wins; the other
+    # changes nothing and is told the document was already decided.
+    import threading
+
+    from maverick_knowledge.base import KnowledgeBase
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        "[knowledge]\nenable = true\nembedder = \"deterministic\"\nstore = \"sqlite\"\n"
+        f'path = {json.dumps(str(tmp_path / "knowledge.db"))}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MAVERICK_CONFIG", str(cfg))
+    import maverick.audit as audit
+    monkeypatch.setattr(audit, "record", lambda kind, **payload: True)
+    kb = knowledge_admin.open_knowledge_base()
+    assert kb.ingest_text("it", "Welcome. You are now ready to log in.") == 0
+    hold = kb.last_hold["id"]
+    kb.close()
+    keep_out_checked, include_done = threading.Event(), threading.Event()
+    real_unstore = KnowledgeBase.unstore_held
+
+    def paused_unstore(self, hold_id):
+        if threading.current_thread().name == "keep-out":
+            keep_out_checked.set()
+            include_done.wait(3)  # the include completes here when nothing serializes
+        return real_unstore(self, hold_id)
+
+    monkeypatch.setattr(KnowledgeBase, "unstore_held", paused_unstore)
+    outcomes = {}
+
+    def decide(name, decision):
+        try:
+            outcomes[name] = knowledge_admin.decide_held(hold, decision, actor="user:" + name)["state"]
+        except ValueError:
+            outcomes[name] = "already decided"
+        finally:
+            if name == "include":
+                include_done.set()
+
+    keeper = threading.Thread(target=decide, args=("keep-out", "keep_out"), name="keep-out")
+    keeper.start()
+    assert keep_out_checked.wait(5)
+    includer = threading.Thread(target=decide, args=("include", "include"), name="include")
+    includer.start()
+    keeper.join(10)
+    includer.join(10)
+    assert sorted(outcomes.values()) == ["already decided", "kept_out"] or \
+        sorted(outcomes.values()) == ["already decided", "included"]
+    kb = knowledge_admin.open_knowledge_base()
+    state = kb.held.get(hold)["state"]
+    stored = kb.store.count("it")
+    kb.close()
+    assert stored == (1 if state == "included" else 0)

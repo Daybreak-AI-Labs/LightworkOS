@@ -132,6 +132,22 @@ class TestExecution:
         assert outcome == 0.0
         assert result == "ERROR: unsafe direct action tool 'shell'"
 
+    def test_missing_opt_in_tool_names_the_setting_that_offers_it(self, tmp_path, monkeypatch):
+        # A saved flow can name s3 while credential connectors are off; the
+        # failure must say which setting registers the tool.
+        _patch_home(tmp_path, monkeypatch)
+        monkeypatch.delenv("MAVERICK_ENABLE_CRED_TOOLS", raising=False)
+        monkeypatch.setattr("maverick.tool_authz.authorize", lambda *a, **k: None)
+
+        class _W:
+            def open_questions(self, goal_id):
+                return []
+
+        run = execution.default_action_runner(world=_W())
+        result, outcome = run("s3", {"op": "list_buckets"}, {})
+        assert outcome == 0.0
+        assert "no such tool 's3'" in result and "credential_connectors" in result
+
     def test_flow_max_dollars_caps_agent_fan_out(self, tmp_path, monkeypatch):
         # Three chained agent nodes at the default $5 per-node reservation; a $12
         # aggregate cap lets 2 run and skips the 3rd (2*5=10 ok, +5 would exceed).

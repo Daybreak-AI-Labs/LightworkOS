@@ -223,6 +223,96 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the refusal names the storage boundary.
 - An automation opportunity is not proposed while any completed run has no
   recorded cost, and the reason shown says so.
+- A document whose text reads like instructions to an assistant (for example
+  "you are now ready to log in") is no longer dropped without a trace. It is
+  held, and Held documents in the Knowledge library shows why. An
+  administrator can include it, as quoted material only, or keep it out; a
+  kept-out document uploaded again is held for a new review.
+  Documents dropped before this change were never stored and cannot be
+  recovered; upload them again to have them held for review.
+- An outside agent that screens an action without a risk level now gets
+  Lightwork's own rating of that tool. A tool nothing rates is still refused,
+  as before, for an agent whose highest allowed risk is low or medium. For an
+  agent allowed high risk, it now waits for a person's approval instead of
+  running. Rate the tool at enrollment to avoid either.
+- Two outside-agent run reports with the same idempotency key now record one
+  task, even when they arrive together. The world database moves to schema
+  53 on first open.
+- A federation peer that the trust registry refuses (missing, revoked or
+  expired) can no longer fetch this node's agent card or poll a task's
+  status with its shared token. Register the peer in `[agent_trust]`.
+- A federation peer that reaches its request limit is still refused, and the
+  log now says how to continue. An administrator can raise the limit or start
+  the count again from Agent trust > Partner request limits, or with
+  `maverick trust admission-limit PEER --limit N` or `--reset`. Earlier
+  requests stay on record, and each change is audited. A reset does not free
+  the workspace's 250,000-request storage limit; once that is full every
+  partner is refused, and an installation administrator can raise it there
+  or with `--storage N` (more disk space, slightly slower checks). If the
+  saved limits can't be read, new partner requests are refused until an
+  installation administrator starts over (`--start-over`); the unreadable
+  file is kept. Installation administrators can also show and change these
+  limits through the dashboard Copilot (the Connections action family).
+- Only the task that linked an outcome key, a later turn of the same chat
+  or task by the same person, or an administrator can link that key to
+  different work. Other runs get an error and the link stays. Links saved
+  earlier keep working.
+- Slack sends its bot token only to `https://files.slack.com` and follows
+  no redirects for shared files. Files stored outside Slack are not opened,
+  and the person is told when a shared file was not opened or fetched.
+- A sealed discovery title is now signed for that purpose only and cannot
+  pass as a signed eDiscovery export. `verify_export` also rejects a
+  manifest that is not an export manifest. Titles and exports made by
+  earlier releases still verify.
+- A successful MCP tool result (no `isError`) is always treated as a
+  success, even when its text starts with "REFUSED", "DRY RUN" or a warning
+  sign. Such text no longer marks a high-risk action as not done, which had
+  let a rerun repeat it.
+- On the Local backend, `office_convert` now runs LibreOffice without network
+  access (`unshare -rn`), so a document's links cannot make the host fetch
+  any address. It uses the first Python that can load LibreOffice's bridge
+  (`uno`), so a pip or venv install whose own Python cannot load it now
+  converts; before, every such call failed. Where no such launch works
+  (macOS, Windows, restricted user namespaces, most containers, no bridge),
+  conversion is refused with the reason and not offered; use a Docker,
+  Podman or Kubernetes sandbox backend there.
+- The `compute` tool runs each SymPy operation in a separate process and
+  stops it after 10 seconds with a plain error. With SymPy installed this
+  includes plain `evaluate` (even `2+3*4`); each such call takes one to two
+  seconds longer while the process starts.
+- `maverick confidential-compute` no longer counts `/sys/firmware/tdx` as
+  proof of a TDX guest; that folder appears on TDX hosts. Guests are still
+  detected by `/dev/tdx_guest` or the `tdx_guest` CPU flag.
+- The calendar tool checks every CalDAV request, redirects included, against
+  the egress policy (`[enterprise] allowed_hosts`, tenant egress). Add your
+  CalDAV server's host to the allow-list in enterprise mode.
+- The setup wizard re-asks for trusted insight and tax publisher keys until
+  each is 64 hexadecimal characters, and saves them in lower case.
+- `dns_lookup` now obeys the network policy and egress lists: a name the
+  policy blocks is not looked up. Add the host to the allow list if needed.
+- `embedded_device` refuses `i2c_write` until `[embedded] allow_flash = true`,
+  the same opt-in as flash and reset. Turn it on to keep writing registers.
+- Hosted `image_edit` edits and every `huggingface` call need a human
+  approval when governed connectors are on, like `replicate run`.
+- `str_replace_editor` and `spreadsheet` writes count against
+  `[limits] file_write_quota_mb`, as `write_file` writes already did.
+- The `s3`, `ses` and `sns` tools appear only with
+  `[tools] credential_connectors` on (`MAVERICK_ENABLE_CRED_TOOLS`), like
+  `lambda` and `dynamodb`. Turn it on (the wizard now asks) to keep using
+  them; a saved flow that names one says which setting to turn on.
+- `vertex generate` has no built-in model: name one, and it must be on
+  `[access] allowed_models` (as `vertex:<model id>`) when that list is set.
+  Each Vertex call leaves a spend receipt with an unknown cost; it is not
+  charged to the run budget. With `[budget.provider_caps] vertex` set, the
+  tool refuses every call.
+- `oracle` asks for `confirm` when a read hides a second statement in
+  Oracle `q'...'` quoting, or after a `show`/`desc` line, a `/` line, a `.`
+  line or a blank line. Remove blank lines inside a query to run it as a read.
+- `notebook_exec` keeps `%` and `!` lines that sit inside a string, a bracket
+  or a continued line; only lines that start a statement are dropped.
+- Every built-in tool now has an explicit risk rating. Discovery and
+  read-only tools such as `find_tools` are low, so a low or medium
+  `max_risk` keeps them. Unrated plugin and MCP tools still count as high.
 
 ### Fixed
 

@@ -54,8 +54,22 @@ system packages or silently execute those opt-in parsers on the application host
 ## Office, image OCR, and LaTeX jobs
 
 The existing `office_convert`, image `ocr`, and LaTeX `render` tools also use
-the shared private worker. They retain their existing explicit Local backend
-route; Local runs on the host and does not provide container network isolation.
+the shared private worker. Image `ocr` and LaTeX `render` retain their existing
+explicit Local backend route; Local runs on the host and does not provide
+container network isolation. LibreOffice fetches a document's linked images,
+stylesheets and objects, so on the Local backend `office_convert` runs the
+worker inside `unshare -rn`: a new user and network namespace with no usable
+network. The worker is a standalone script, so it runs isolated (`-I`) under
+the first interpreter that can import LibreOffice's `uno` bridge inside that
+namespace: Lightwork's own Python, then a Python next to `soffice`, then the
+system `python3`. A working launch is remembered for the process; a failed
+check is retried after five minutes. Where no launch works (macOS, Windows,
+hosts that restrict user namespaces, most containers, or no Python bridge),
+conversion is refused with the reason and what to do, and the tool offers the
+model only its `formats` operation. Backends other than Local, Docker, Podman
+and Kubernetes are never offered conversion. The worker's profile
+also sets LibreOffice's `BlockUntrustedRefererLinks`; that setting alone is not
+enough, because it does not stop stylesheet or page-background fetches.
 On Docker, Podman and Kubernetes, the selected document worker image receives
 only job files, with network disabled. A missing host binary does not veto a
 capable container. Capability/version checks run inside the selected worker.

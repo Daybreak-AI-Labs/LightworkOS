@@ -119,6 +119,9 @@ def _min_cache_tokens(model_id: str) -> int:
 
 
 def _cached_system(text: str) -> list[dict]:
+    # The API rejects an empty or whitespace-only text block, so send none.
+    if not isinstance(text, str) or not text.strip():
+        return []
     return [_ephemeral({"type": "text", "text": text})]
 
 
@@ -441,6 +444,8 @@ class AnthropicClient:
             "messages": messages_out,
             "max_tokens": max_tokens,
         }
+        if not kwargs["system"]:
+            del kwargs["system"]
         if tools:
             kwargs["tools"] = _cached_tools(tools)
 
@@ -907,6 +912,8 @@ class AnthropicClient:
                 # cached and never answered.
                 "messages": [{"role": "user", "content": "warmup"}],
             }
+            if not kwargs["system"]:
+                del kwargs["system"]
             if tools:
                 kwargs["tools"] = _cached_tools(tools)
             from ..retry import sync_physical_attempt

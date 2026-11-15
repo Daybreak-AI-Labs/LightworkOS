@@ -4,6 +4,10 @@ from __future__ import annotations
 import re
 
 _DOLLAR_TAG = re.compile(r"\$(?:[A-Za-z_][A-Za-z_0-9]*)?\$")
+# Oracle alternative quoting: q'[...]', Q'{...}', nq'!...!'. The opening
+# delimiter is any non-space character; brackets close with their partner.
+_Q_QUOTE = re.compile(r"(?<![A-Za-z0-9_$#])[nN]?[qQ]'(\S)")
+_Q_CLOSE = {"[": "]", "(": ")", "{": "}", "<": ">"}
 
 
 def has_unconfirmed_statement_separator(
@@ -17,27 +21,33 @@ def has_unconfirmed_statement_separator(
     default single-quoted literals use SQL-standard doubled-quote escaping; set
     ``backslash_escapes`` only for dialects where backslash escapes quotes.
 
-    Dialects disagree about two lexical forms: PostgreSQL dollar-quoted strings
-    (``$tag$ ... $tag$``) and MySQL ``#`` line comments. Either can hide a
-    semicolon from a scanner that reads the other way, so the text is scanned
-    with each form on and off and a separator found by any reading counts.
+    Dialects disagree about three lexical forms: PostgreSQL dollar-quoted
+    strings (``$tag$ ... $tag$``), MySQL ``#`` line comments and Oracle
+    ``q'[...]'`` quoting. Each can hide a semicolon from a scanner that reads
+    the other way, so the text is scanned with each form on and off and a
+    separator found by any reading counts.
     """
     return any(
-        _scan_for_separator(sql, backslash_escapes, dollar, hash_comments)
+        _scan_for_separator(sql, backslash_escapes, (dollar, hash_comments, q_quotes))
         for dollar in (False, True)
         for hash_comments in (False, True)
+        for q_quotes in (False, True)
     )
 
 
 def _scan_for_separator(
-    sql: str, backslash_escapes: bool, dollar: bool, hash_comments: bool
+    sql: str, backslash_escapes: bool, forms: tuple[bool, bool, bool]
 ) -> bool:
+    dollar, hash_comments, q_quotes = forms
     i = 0
     n = len(sql)
     while i < n:
         ch = sql[i]
         nxt = sql[i + 1] if i + 1 < n else ""
 
+        if q_quotes and (q_end := _consume_q_quoted(sql, i)):
+            i = q_end
+            continue
         if ch == "'":
             i = _consume_single_quoted(sql, i, backslash_escapes=backslash_escapes)
             continue
@@ -63,6 +73,16 @@ def _scan_for_separator(
             return True
         i += 1
     return False
+
+
+def _consume_q_quoted(sql: str, start: int) -> int:
+    """End of an Oracle ``q'X...X'`` literal starting at ``start``, or 0."""
+    match = _Q_QUOTE.match(sql, start)
+    if match is None:
+        return 0
+    close = _Q_CLOSE.get(match.group(1), match.group(1)) + "'"
+    end = sql.find(close, match.end())
+    return len(sql) if end == -1 else end + len(close)
 
 
 def _consume_dollar_quoted(sql: str, start: int) -> int:

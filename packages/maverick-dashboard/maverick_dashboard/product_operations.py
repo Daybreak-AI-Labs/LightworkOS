@@ -265,6 +265,7 @@ def _adapter_modules():
         product_operations_notifications,
         product_operations_operator_acquisition,
         product_operations_outcome_pilots,
+        product_operations_partner_limits,
         product_operations_personal_data,
         product_operations_personal_push_setup,
         product_operations_plugin_environment,
@@ -456,6 +457,7 @@ def _adapter_modules():
         product_operations_webhook_subscriptions,
         product_operations_continuous_evidence,
         product_operations_viewpoints,
+        product_operations_partner_limits,
     )
 
 

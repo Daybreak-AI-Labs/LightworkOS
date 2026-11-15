@@ -166,6 +166,16 @@
     <h3>Starter content</h3>
     <p class="muted">Public summaries of regulations (such as GDPR and the EU AI Act) that assistants can cite. Loading again replaces, never duplicates.</p>
     <ul id="ka-library-starters"></ul>
+    {% if knowledge_can_review %}
+    <div id="ka-held">
+      <h3 id="ka-held-heading">Held documents</h3>
+      <p class="muted">Knowledge holds a document when part of it reads like instructions to an assistant. Held documents are not searched. Include one to add it as quoted material, or keep it out.</p>
+      <p class="muted" id="ka-held-status" role="status" aria-live="polite">Loading held documents…</p>
+      <div class="ka-table"><table class="table--stacked"><caption class="sr-only">Documents waiting for an administrator</caption>
+        <thead><tr><th scope="col">Document</th><th scope="col">Collection</th><th scope="col">Why it was held</th><th scope="col">Matching text</th><th scope="col">Actions</th></tr></thead>
+        <tbody id="ka-held-documents"></tbody></table></div>
+    </div>
+    {% endif %}
   </section>
 
   {% if knowledge_sources_available %}

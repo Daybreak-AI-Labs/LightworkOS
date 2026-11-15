@@ -186,3 +186,129 @@ def test_native_pg_capacity_race_never_overadmits(postgres_test_dsn, monkeypatch
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(attempt, range(2)))
     assert len([result for result in results if result is not None]) == 1
+
+
+def test_operator_can_raise_or_reset_a_full_peer_admission_limit(tmp_path, monkeypatch, caplog):
+    from maverick import audit, federation
+    from maverick import federation_admission as admission
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    monkeypatch.setattr(federation, "_CORRELATION_PER_PEER_MAX", 1)
+    events = []
+    monkeypatch.setattr(audit, "record", lambda kind, **kw: events.append((kind, kw)) or True)
+
+    def reserve(world, correlation):
+        return admission.reserve(world, peer="sender", correlation=correlation,
+                                 digest=correlation * 64, title="Read report", description="",
+                                 capability=None, max_dollars=2, max_wall_seconds=10)
+
+    with WorldModel(tmp_path / "world.db") as world:
+        first = reserve(world, "a")
+        with pytest.raises(admission.FederationAdmissionRejected, match="ledger capacity"):
+            reserve(world, "b")
+        assert "maverick trust admission-limit sender" in caplog.text
+        usage = admission.admission_usage(world, "sender")
+        assert {k: usage[k] for k in ("peer", "used", "limit", "reached", "counted_from")} == {
+            "peer": "sender", "used": 1, "limit": 1, "reached": True, "counted_from": None}
+        assert usage["storage_full"] is False
+
+        admission.set_admission_limit("sender", limit=2, actor="ops@corp.test")
+        assert reserve(world, "b").goal_id != first.goal_id
+        with pytest.raises(admission.FederationAdmissionRejected):
+            reserve(world, "c")
+
+        admission.set_admission_limit("sender", reset=True, actor="ops@corp.test")
+        usage = admission.admission_usage(world, "sender")
+        assert usage["used"] == 0 and usage["limit"] == 2 and usage["counted_from"]
+        assert reserve(world, "c").goal_id
+        # Retained rows still recognise an earlier request: no replay reopens.
+        assert reserve(world, "a").goal_id == first.goal_id
+
+    changed = [kw for kind, kw in events if kind == "federation_admission_limit_changed"]
+    assert [(c["peer"], c["actor"], c["new_limit"], c["reset"]) for c in changed] == [
+        ("sender", "ops@corp.test", 2, False), ("sender", "ops@corp.test", 2, True)]
+
+
+def _limits_harness(tmp_path, monkeypatch):
+    from maverick import audit
+    from maverick import federation_admission as admission
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    events = []
+    monkeypatch.setattr(audit, "record", lambda kind, **kw: events.append((kind, kw)) or True)
+
+    def reserve(world, correlation, peer="sender"):
+        return admission.reserve(world, peer=peer, correlation=correlation,
+                                 digest=correlation * 64, title="Read report", description="",
+                                 capability=None, max_dollars=2, max_wall_seconds=10)
+    return admission, reserve, events
+
+
+def test_unreadable_limits_refuse_new_requests_until_an_administrator_starts_over(
+        tmp_path, monkeypatch, caplog):
+    admission, reserve, events = _limits_harness(tmp_path, monkeypatch)
+    with WorldModel(tmp_path / "world.db") as world:
+        first = reserve(world, "a")
+        admission.set_admission_limit("sender", limit=3, actor="ops")
+        path = admission._limits_path()
+        path.write_text("{not json", encoding="utf-8")
+        with pytest.raises(admission.FederationAdmissionRejected, match="limits could not be read"):
+            reserve(world, "b")
+        assert "maverick trust admission-limit --start-over" in caplog.text
+        assert reserve(world, "a").goal_id == first.goal_id  # admitted requests still answer
+        with pytest.raises(admission.LimitsUnreadable):
+            admission.admission_usage(world, "sender")
+        with pytest.raises(admission.LimitsUnreadable):
+            admission.set_admission_limit("sender", limit=10, actor="ops")
+
+        admission.start_over_limits(actor="ops")
+        assert not path.exists()
+        assert [p.name for p in path.parent.glob(path.name + ".unusable-*")]
+        assert reserve(world, "b").goal_id
+    assert events[-1][1]["start_over"] is True
+
+
+def test_a_peer_reset_does_not_free_workspace_storage(tmp_path, monkeypatch):
+    from maverick import federation
+
+    admission, reserve, _ = _limits_harness(tmp_path, monkeypatch)
+    monkeypatch.setattr(federation, "_CORRELATION_CACHE_MAX", 2)
+    with WorldModel(tmp_path / "world.db") as world:
+        reserve(world, "a")
+        reserve(world, "b")
+        admission.set_admission_limit("sender", reset=True, actor="ops")
+        with pytest.raises(admission.FederationAdmissionRejected, match="capacity is full$"):
+            reserve(world, "c")
+
+
+@pytest.mark.parametrize("saved", ['{"sender": {"limit": "1"}}', '{"sender": 1}',
+                                   '{"sender": {"limit": true}}', '{"sender": {"counted_from": "x"}}'])
+def test_hand_edited_limits_that_are_not_usable_count_as_unreadable(tmp_path, monkeypatch, saved):
+    admission, reserve, _ = _limits_harness(tmp_path, monkeypatch)
+    path = admission._limits_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(saved, encoding="utf-8")
+    with WorldModel(tmp_path / "world.db") as world:
+        with pytest.raises(admission.FederationAdmissionRejected, match="limits could not be read"):
+            reserve(world, "a")
+
+
+def test_full_workspace_storage_is_reported_and_an_administrator_can_raise_it(tmp_path, monkeypatch):
+    from maverick import federation
+
+    admission, reserve, events = _limits_harness(tmp_path, monkeypatch)
+    monkeypatch.setattr(federation, "_CORRELATION_CACHE_MAX", 2)
+    with WorldModel(tmp_path / "world.db") as world:
+        reserve(world, "a")
+        reserve(world, "b", peer="other")
+        usage = admission.admission_usage(world, "sender")
+        assert usage["storage_full"] is True and usage["storage_used"] == 2
+        assert usage["storage_limit"] == 2
+        with pytest.raises(admission.FederationAdmissionRejected, match="capacity is full$"):
+            reserve(world, "c")
+        admission.set_storage_limit(3, actor="ops")
+        assert reserve(world, "c").goal_id
+        assert admission.admission_usage(world, "sender")["storage_full"] is True
+    assert events[-1][1]["peer"] == "*" and events[-1][1]["new_limit"] == 3
+    with pytest.raises(ValueError):
+        admission.set_admission_limit("*", limit=5, actor="ops")

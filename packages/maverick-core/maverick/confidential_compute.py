@@ -9,10 +9,10 @@ confidential-compute` can gate — that its memory is actually encrypted before
 it trusts the box.
 
 Reads standard guest indicators: the ``/dev/{tdx,sev}-guest`` attestation
-devices, the TDX firmware sysfs entry, and the TDX guest CPU flag. AMD SEV
-CPU capability flags are intentionally not treated as guest proof, because a
-host or container can expose them without protecting this process as an SEV-SNP
-guest. Path/cpuinfo access is injected so the detection is tested
+devices and the TDX guest CPU flag. AMD SEV CPU capability flags and the
+``/sys/firmware/tdx`` sysfs tree (the TDX *host* module interface) are
+intentionally not treated as guest proof, because a host or container can
+expose them without protecting this process as a confidential guest. Path/cpuinfo access is injected so the detection is tested
 deterministically without the hardware.
 """
 from __future__ import annotations
@@ -47,9 +47,6 @@ def detect(*, exists=None, cpuinfo: str | None = None) -> dict:
     if exists("/dev/tdx_guest"):
         tdx = True
         indicators.append("/dev/tdx_guest")
-    if exists("/sys/firmware/tdx"):
-        tdx = True
-        indicators.append("/sys/firmware/tdx")
     if "tdx_guest" in flags:
         tdx = True
         indicators.append("cpuflag:tdx_guest")
