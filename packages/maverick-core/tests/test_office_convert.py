@@ -88,14 +88,98 @@ def test_registered():
     assert "office_convert" in names
 
 
-def test_local_backend_refuses_office_conversion(monkeypatch, tmp_path):
+
+def _isolation(monkeypatch, available):
+    """Pretend the host does (or does not) allow ``unshare -rn``."""
+    from maverick.tools import document_processing as dp
+
+    monkeypatch.setattr(dp, "_NETWORK_ISOLATION", {})
+    monkeypatch.setattr(dp.sys, "platform", "linux")
+    monkeypatch.setattr(dp.shutil, "which", lambda name: "/usr/bin/unshare" if name == "unshare" else None)
+    probes = []
+
+    def probe(self, cmd, timeout=None, stdin=None):
+        probes.append(cmd)
+        from maverick.sandbox.local import ExecResult
+        return ExecResult("", "", 0 if available else 1)
+    return probes, probe
+
+
+@pytest.mark.parametrize("available", [True, False])
+def test_local_conversion_runs_only_inside_a_network_namespace(monkeypatch, tmp_path, available):
     # LibreOffice fetches linked images and objects; on the host that is
     # unchecked network access driven by an untrusted document.
     from maverick.sandbox.local import LocalBackend
+    from maverick.tools import document_processing as dp
 
-    calls = []
-    monkeypatch.setattr(LocalBackend, "exec", lambda self, *a, **k: calls.append(a))
+    probes, probe = _isolation(monkeypatch, available)
+    monkeypatch.setattr(LocalBackend, "exec", probe)
+    assert dp.local_network_isolation() == (("/usr/bin/unshare", "-rn") if available else None)
+    dp.local_network_isolation()
+    assert probes == [["/usr/bin/unshare", "-rn", "true"]]  # probed once
+    tool = office_convert(LocalBackend(tmp_path))
+    ops = tool.input_schema["properties"]["op"]["enum"]
+    assert ("to_pdf" in ops) is available
+    assert available or "Docker, Podman or Kubernetes" in tool.description
+    runs = []
+    monkeypatch.setattr(LocalBackend, "exec", lambda self, cmd, timeout=None, stdin=None: runs.append(cmd))
     (tmp_path / "page.html").write_text('<img src="http://127.0.0.1:9/linked.png">')
-    out = office_convert(LocalBackend(tmp_path)).fn({"op": "to_pdf", "input_path": "page.html"})
-    assert out.startswith("ERROR") and "Docker, Podman or Kubernetes" in out
-    assert calls == [] and not (tmp_path / "page.pdf").exists()
+    out = tool.fn({"op": "to_pdf", "input_path": "page.html"})
+    assert out.startswith("ERROR") and not (tmp_path / "page.pdf").exists()
+    if available:
+        assert len(runs) == 1 and runs[0].startswith("/usr/bin/unshare -rn ")
+    else:
+        assert runs == [] and "Docker, Podman or Kubernetes" in out
+
+
+def _python_with_uno():
+    import shutil
+    import subprocess
+    import sys
+    for python in (sys.executable, shutil.which("python3")):
+        if python and subprocess.run([python, "-c", "import uno"], capture_output=True).returncode == 0:
+            return python
+    return None
+
+
+def test_local_conversion_cannot_reach_a_listener(monkeypatch, tmp_path):
+    import http.server
+    import shutil
+    import subprocess
+    import sys
+    import threading
+
+    python = _python_with_uno()
+    if not (sys.platform.startswith("linux") and shutil.which("soffice") and python
+            and subprocess.run(["unshare", "-rn", "true"], capture_output=True).returncode == 0):
+        pytest.skip("needs LibreOffice with Python UNO and unprivileged network namespaces")
+    from maverick.sandbox.local import LocalBackend
+    from maverick.tools import document_processing as dp
+
+    hits = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            hits.append(self.path)
+            self.send_response(404)
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    port = server.server_address[1]
+    monkeypatch.setattr(dp, "_NETWORK_ISOLATION", {})
+    monkeypatch.setattr(dp.sys, "executable", python)
+    (tmp_path / "page.html").write_text(
+        f'<html><head><link rel="stylesheet" href="http://127.0.0.1:{port}/s.css"></head>'
+        f'<body background="http://127.0.0.1:{port}/bg.png"><p>hello</p>'
+        f'<img src="http://127.0.0.1:{port}/linked.png"></body></html>')
+    try:
+        out = office_convert(LocalBackend(tmp_path)).fn({"op": "to_pdf", "input_path": "page.html"})
+    finally:
+        server.shutdown()
+    assert out.startswith("wrote "), out
+    assert (tmp_path / "page.pdf").read_bytes().startswith(b"%PDF-")
+    assert hits == []

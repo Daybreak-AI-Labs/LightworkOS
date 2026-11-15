@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -83,15 +84,40 @@ def verify_release_document_runtime() -> None:
     compile(source, "document_engine.py", "exec")
 
 
+NO_LOCAL_ISOLATION = (
+    "Office conversion is off on this computer, because a document could make it fetch web addresses. "
+    "Choose the Docker, Podman or Kubernetes sandbox backend to convert documents; "
+    "see docs/document-processing.md.")
+_NETWORK_ISOLATION: dict[str, bool] = {}
+
+
+def local_network_isolation() -> tuple[str, ...] | None:
+    """The argv prefix that runs a local command with no network, or None.
+
+    LibreOffice fetches a document's linked images, stylesheets and objects,
+    and no profile setting stops every kind. ``unshare -rn`` starts it in a new
+    user and network namespace whose only interface is a down loopback.
+    Whether this host allows that is probed once, through the local sandbox.
+    """
+    unshare = shutil.which("unshare") if sys.platform.startswith("linux") else None
+    if unshare is None:
+        return None
+    if unshare not in _NETWORK_ISOLATION:
+        try:
+            with tempfile.TemporaryDirectory(prefix="netns-probe-") as directory:
+                probe = LocalBackend(workdir=Path(directory), timeout=10).exec([unshare, "-rn", "true"])
+            _NETWORK_ISOLATION[unshare] = probe.exit_code == 0
+        except Exception:  # failure-policy: fail_closed -- no proof of isolation means no local conversion
+            _NETWORK_ISOLATION[unshare] = False
+    return (unshare, "-rn") if _NETWORK_ISOLATION[unshare] else None
+
+
 @contextmanager
 def _worker(sandbox, request, *, allow_local=False):
     cfg = get_document_tools()
     local = allow_local and (sandbox is None or isinstance(sandbox, LocalBackend))
-    if local and request.get("operation") == "convert":
-        # LibreOffice fetches a document's linked images and objects, and the
-        # host has no network boundary, so conversion needs a container.
-        raise RuntimeError("Office conversion needs a Docker, Podman or Kubernetes sandbox, because a document "
-                           "can make this computer fetch web addresses; see docs/document-processing.md")
+    if local and request.get("operation") == "convert" and local_network_isolation() is None:
+        raise RuntimeError(NO_LOCAL_ISOLATION)
     if not local and not isinstance(sandbox, (DockerBackend, PodmanBackend, KubernetesBackend)):
         raise RuntimeError("Native document processing needs a Docker, Podman or Kubernetes sandbox; see docs/document-processing.md")
     parent = ensure_private_directory(data_dir("document-processing"))
@@ -127,6 +153,11 @@ def _execute(stage, worker):
     (stage / "request.json").write_text(json.dumps(request), encoding="utf-8")
     if isinstance(worker, LocalBackend):
         argv = [sys.executable, "engine.py"]
+        if request["operation"] == "convert":
+            isolation = local_network_isolation()
+            if isolation is None:
+                raise RuntimeError(NO_LOCAL_ISOLATION)
+            argv = [*isolation, *argv]
         command = subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)
     else:
         command = "/usr/bin/python3 engine.py"

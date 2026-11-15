@@ -106,7 +106,29 @@ def _run(args: dict[str, Any], sandbox) -> str:
     return f"ERROR: unknown op {op!r}"
 
 
+def _conversion_available(sandbox) -> bool:
+    """Container backends always; the Local backend only with network isolation."""
+    from ..sandbox.local import LocalBackend
+    from .document_processing import local_network_isolation
+
+    if sandbox is not None and not isinstance(sandbox, LocalBackend):
+        return True
+    return local_network_isolation() is not None
+
+
 def office_convert(sandbox=None) -> Tool:
+    if not _conversion_available(sandbox):
+        # Offer only what will work: conversion would be refused here.
+        from .document_processing import NO_LOCAL_ISOLATION
+
+        schema = {**_OFFICE_SCHEMA, "properties": {
+            **_OFFICE_SCHEMA["properties"], "op": {"type": "string", "enum": ["formats"]}}}
+        return Tool(
+            name="office_convert",
+            description="Lists LibreOffice formats only. " + NO_LOCAL_ISOLATION,
+            input_schema=schema,
+            fn=lambda args: _run(args, sandbox),
+        )
     return Tool(
         name="office_convert",
         description=(

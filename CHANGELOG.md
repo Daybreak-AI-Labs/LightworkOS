@@ -234,9 +234,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   success, even when its text starts with "REFUSED", "DRY RUN" or a warning
   sign. Such text no longer marks a high-risk action as not done, which had
   let a rerun repeat it.
-- `office_convert` no longer runs LibreOffice on the host (Local backend). A
-  document's linked images could make the host fetch any address. Configure a
-  Docker, Podman or Kubernetes document worker to keep converting.
+- On the Local backend, `office_convert` now runs LibreOffice without network
+  access (`unshare -rn`), so a document's links cannot make the host fetch
+  any address. Where the host does not allow that (macOS, Windows, restricted
+  user namespaces, most containers), conversion is refused and not offered;
+  use a Docker, Podman or Kubernetes sandbox backend there.
 - The `compute` tool runs each SymPy operation in a separate process and
   stops it after 10 seconds with a plain error. With SymPy installed this
   includes plain `evaluate` (even `2+3*4`); each such call takes one to two
