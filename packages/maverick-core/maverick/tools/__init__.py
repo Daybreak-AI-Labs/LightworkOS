@@ -1124,7 +1124,8 @@ def base_registry(
     reg.register(read_tool_result(goal_id=goal_id, principal=principal or None))
     reg.register(read_attachment_tool(world, goal_id))
     _register_local_workspace_tool(reg, sandbox, repo_map, has_local_workdir)
-    _register_local_workspace_tool(reg, sandbox, str_replace_editor, has_local_workdir)
+    _register_local_workspace_tool(
+        reg, sandbox, lambda sb: str_replace_editor(sb, goal_id=goal_id), has_local_workdir)
     # Governed session kernel. Registered ONLY when the operator has turned
     # it on: an unregistered tool costs no catalog tokens and cannot be
     # called, so the default deployment is unchanged.
@@ -1429,7 +1430,8 @@ def base_registry(
     reg.register(youtube())
     reg.register(notion())
     reg.register(obsidian())
-    _register_local_workspace_tool(reg, sandbox, spreadsheet, has_local_workdir)
+    _register_local_workspace_tool(
+        reg, sandbox, lambda sb: spreadsheet(sb, goal_id=goal_id), has_local_workdir)
     _register_local_workspace_tool(reg, sandbox, spreadsheet_read, has_local_workdir)
     reg.register(translate())
     reg.register(slack_bot())
