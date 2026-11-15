@@ -276,6 +276,13 @@ class KnowledgeBase:
         A document an administrator included is admitted with a marker that
         makes retrieval quote it; the rule itself still trips. A document kept
         out earlier is held again: that decision covered one upload."""
+        # The administrator's decision on this exact document is what admits it
+        # and what makes it quoted, whether or not the current screen (with or
+        # without a Shield) would still trip.
+        latest = self.held.latest(collection, document_sha256)
+        if latest is not None and (latest["state"] == INCLUDED
+                                   or (admit_hold and latest["id"] == admit_hold and latest["state"] == HELD)):
+            return {"held_rule": latest["rule"], "held_included": True}
         tripped = self._screen(document_text)
         for chunk in chunks:
             if tripped is not None:
@@ -284,10 +291,6 @@ class KnowledgeBase:
         if tripped is None:
             return {}
         rule, excerpt = tripped
-        latest = self.held.latest(collection, document_sha256)
-        if latest is not None and (latest["state"] == INCLUDED
-                                   or (admit_hold and latest["id"] == admit_hold and latest["state"] == HELD)):
-            return {"held_rule": rule, "held_included": True}
         self.last_hold = self.held.hold(
             collection=collection, doc_sha256=document_sha256, source=args["source"],
             subject=args["subject"], rule=rule, excerpt=excerpt, text=document_text, args=args,
