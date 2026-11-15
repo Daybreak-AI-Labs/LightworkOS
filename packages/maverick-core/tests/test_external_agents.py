@@ -405,8 +405,18 @@ def test_screen_treats_an_undeclared_unrated_risk_as_high():
         "sf-quotebot", verdict["approval_id"],
         expected_binding_sha256=verdict["approval_binding_sha256"])
     assert status["risk"] == "high"
+    # Waiting for a person is not a denial: nothing counts toward containment.
+    assert not xa._load_sidecar()["sf-quotebot"].get("denials")
     # The operator's enrollment rating still stands in for a declaration.
     assert xa.screen("sf-quotebot", "research")["rule"] == "allow"
+
+
+def test_screen_uses_lightworks_own_rating_when_the_risk_is_undeclared():
+    _enroll(allow_tools=[*_RATED_TOOLS, "web_search"])  # default ceiling: medium
+    for _ in range(6):
+        verdict = xa.screen("sf-quotebot", "web_search", detail="look it up")
+        assert verdict["allowed"] is True and verdict["rule"] == "allow"
+    assert not xa._load_sidecar()["sf-quotebot"].get("contained")
 
 
 def test_screen_backlog_is_bounded_before_approval_and_notification(monkeypatch):

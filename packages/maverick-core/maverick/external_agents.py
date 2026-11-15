@@ -1475,9 +1475,6 @@ def _screen_admission(
     if mapped and (not req_risk
                    or risk_rank(mapped) > risk_rank(req_risk)):
         req_risk = mapped
-    # Neither a declaration nor an operator rating: treat it as high, so an
-    # agent cannot skip the approval floor by leaving the risk out.
-    req_risk = req_risk or "high"
     # The capability gate rates the tool name too. An external tool unrated in
     # Lightwork takes the operator's enrollment rating; without one it keeps
     # the unrated high floor and is refused under a lower ceiling.
@@ -1491,6 +1488,13 @@ def _screen_admission(
                       correlation_id=correlation)
         return (_deny_and_count(agent_id, tool, decision.rule,
                                 decision.reason), meta, decision, req_risk)
+    # No declaration and no operator rating: use Lightwork's own rating of
+    # the tool, else treat it as high for the approval floor only (it waits
+    # for a person). The ceiling above saw only what was actually claimed.
+    if not req_risk:
+        from .safety.tool_risk import tool_risk, tool_risk_is_unrated
+        req_risk = ("high" if not tool or tool_risk_is_unrated(tool)
+                    else tool_risk(tool))
     if meta is None:
         return (_screen_verdict(agent_id, tool, False, "not_enrolled",
                                 "agent has a trust entry but no enrollment"),
