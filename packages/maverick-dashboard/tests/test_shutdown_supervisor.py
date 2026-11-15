@@ -295,13 +295,25 @@ def test_unrecoverable_interrupted_restore_keeps_liveness_and_explains(monkeypat
             assert "server log" in answer.json()["detail"]
         page = client.get("/", headers={"Accept": "text/html"})
         refused = client.get("/api/v1/facts")
+        # Websockets are refused too; none reaches the half-restored folder.
+        from starlette.websockets import WebSocketDisconnect
+
+        with pytest.raises(WebSocketDisconnect) as closed:
+            with client.websocket_connect("/ws/v1/runs/1/events") as socket:
+                socket.receive_json()
+        assert closed.value.code == 1008
         if token:
-            # Without the token the request is refused (by authentication or
-            # this answer) and never shows the details; the holder sees them.
-            assert {page.status_code, refused.status_code} <= {401, 503}
-            assert "acme" not in page.text and "acme" not in refused.text
+            # A visitor gets only the short message, plus a form where the
+            # administrator enters the dashboard token to see the steps.
+            assert page.status_code == 503 and "acme" not in page.text
+            assert 'name="token"' in page.text
+            assert refused.status_code == 503 and "acme" not in refused.text
             owner = client.get("/api/v1/facts", headers={"Authorization": f"Bearer {token}"})
             assert owner.json()["detail"] == message
+            wrong = client.post("/restore-recovery/steps", data={"token": "not-it"})
+            assert wrong.status_code == 403 and "acme" not in wrong.text
+            steps = client.post("/restore-recovery/steps", data={"token": token})
+            assert steps.status_code == 503 and "MAVERICK_BACKUP_SIGNING_KEY" in steps.text
         else:
             # The local owner (the desktop opens "/") sees what to do.
             assert page.status_code == 503 and "text/html" in page.headers["content-type"]

@@ -1502,54 +1502,9 @@ from .ai_governance_loop_composition import (  # noqa: E402
     install_ai_governance_loop_composition,
 )
 
-_RESTORE_REFUSAL_PUBLIC = (
-    "An earlier restore stopped part-way, so Lightwork did not start. The next step "
-    "is in the Lightwork server log on the computer that runs it."
-)
-
-
-def _restore_refusal_response(request: Request, refusal: str):
-    """Answer while start-up refused a half-restored data folder.
-
-    Probes keep the desktop's identity header and get a short fixed message
-    (no folder paths or workspace names), like recovery mode. The full next
-    step goes only to the static-token holder or the local owner.
-    """
-    from html import escape
-
-    from . import auth as auth_boundary
-
-    headers = {"Cache-Control": "no-store", "X-Lightwork-Service": "dashboard-v1"}
-    path = route_path(request)
-    if path in {"/healthz", "/readyz"}:
-        return JSONResponse({"status": "restore_recovery", "detail": _RESTORE_REFUSAL_PUBLIC},
-                            status_code=503, headers=headers)
-    try:
-        trusted = auth_boundary._dashboard_token_authenticated(request) or (
-            not request.headers.get("authorization")
-            and _is_loopback_client(request.client.host if request.client else "")
-            and _is_loopback_request_host(request)
-            and auth_boundary.anonymous_local_access_allowed()
-        )
-    except Exception:  # an unreadable auth setting never widens what is shown
-        trusted = False
-    detail = refusal if trusted else _RESTORE_REFUSAL_PUBLIC
-    if "text/html" in request.headers.get("accept", ""):
-        page = ("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
-                "<title>Lightwork did not start</title>"
-                "<link rel=\"stylesheet\" href=\"/static/lightwork.css\"></head><body><main>"
-                "<h1>Lightwork did not start</h1><p>" + escape(detail) + "</p>"
-                "</main></body></html>")
-        return HTMLResponse(page, status_code=503, headers=headers)
-    return JSONResponse({"detail": detail}, status_code=503, headers=headers)
-
 
 @app.middleware("http")
 async def _shutdown_admission(request: Request, call_next):
-    refusal = getattr(request.app.state, "restore_refusal", None)
-    if (refusal and route_path(request) != "/livez"
-            and not (route_path(request).startswith("/static/") and request.method in {"GET", "HEAD"})):
-        return _restore_refusal_response(request, refusal)
     supervisor = getattr(request.app.state, "lifecycle_supervisor", None)
     if (supervisor is not None and supervisor.phase in {"stopping", "draining", "degraded"}
             and route_path(request) != "/livez"):
@@ -15851,6 +15806,11 @@ from .request_activity import RequestActivityMiddleware  # noqa: E402
 
 app.add_middleware(RequestMemoMiddleware)
 app.add_middleware(RequestActivityMiddleware)
+# Outside every other layer: while start-up refused a half-restored data
+# folder, no request or websocket reaches a route (see restore_refusal).
+from .restore_refusal import RestoreRefusalGate  # noqa: E402
+
+app.add_middleware(RestoreRefusalGate)
 # Added last, so outermost: one OTLP span per request, when tracing is on. Decided
 # here, once; with tracing off nothing is added and a request pays nothing for it.
 request_spans.install(app)
