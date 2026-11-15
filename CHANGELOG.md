@@ -234,6 +234,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - On Postgres in tenant compatibility mode, erasing a conversation no
   longer fails when a child task was later claimed by another workspace;
   that child is kept and only its link to the erased task is removed.
+- A Kubernetes workspace transfer now refuses file names containing
+  `< > " | ? *` (as it already refused `:`): a backup cannot hold them.
+  Copies already kept in `sandbox-recovery` with such names are left out of
+  backups with a warning instead of stopping every backup; rename them to
+  keep them.
 
 ### Fixed
 

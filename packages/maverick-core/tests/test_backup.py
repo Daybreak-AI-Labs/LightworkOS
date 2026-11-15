@@ -1335,6 +1335,27 @@ def test_startup_recovers_interrupted_restore_or_refuses_with_plain_message(monk
     assert backup.recover_interrupted_restore() is False
 
 
+def test_backup_leaves_out_an_unportable_name_in_sandbox_recovery_copies(caplog):
+    # Copies kept from a failed Kubernetes transfer could hold `what?.txt`
+    # (legal on Linux), which aborted every later backup.
+    from maverick.paths import data_dir
+
+    root = data_dir()
+    _seed(root)
+    kept = data_dir("sandbox-recovery") / "k8s-1" / "input"
+    kept.mkdir(parents=True)
+    (kept / "what?.txt").write_text("x")
+    (kept / "ok.txt").write_text("y")
+    with tarfile.open(backup.create_backup()) as archive:
+        names = archive.getnames()
+    assert any(name.endswith("sandbox-recovery/k8s-1/input/ok.txt") for name in names)
+    assert not any("what?" in name for name in names)
+    assert "what?.txt" in caplog.text
+    (root / "other?.txt").write_text("z")  # elsewhere the backup still refuses
+    with pytest.raises(backup.BackupError, match="unsafe"):
+        backup.create_backup()
+
+
 def test_cli_refuses_to_start_on_unrecoverable_restore_with_the_message(monkeypatch):
     from click.testing import CliRunner
     from maverick.cli import main

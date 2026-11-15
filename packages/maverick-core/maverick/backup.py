@@ -982,7 +982,16 @@ def _stage(root: Path, stage: Path, *, include_keys: bool | frozenset,
         if total + info.st_size > _expanded_limit():
             raise BackupError("live data exceeds configured backup archive limits")
         file_lock.ensure_private_file(source)
-        rel = _safe_relative_path(relative.as_posix(), label="backup source path").as_posix()
+        try:
+            rel = _safe_relative_path(relative.as_posix(), label="backup source path").as_posix()
+        except BackupError:
+            if relative.parts[0] != "sandbox-recovery":
+                raise
+            # Review copies kept from a failed workspace transfer, made before
+            # transfers refused such names. Leave the one file out, not the backup.
+            log.warning("backup leaves out a kept transfer copy whose name a "
+                        "backup cannot hold: %s", relative.as_posix())
+            continue
         destination = stage / Path(*PurePosixPath(rel).parts)
         if _is_sqlite_file(source):
             digest, size = _consistent_db_copy(source, destination)

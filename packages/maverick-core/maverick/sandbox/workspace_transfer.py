@@ -84,6 +84,12 @@ def recovery_directory() -> Path:
     return file_lock.ensure_private_directory(parent / ("k8s-" + uuid.uuid4().hex))
 
 
+# Characters Windows and a backup archive cannot hold in a name (backup.py
+# refuses the same set): a copy kept under sandbox-recovery would otherwise
+# abort every later backup.
+_UNPORTABLE = frozenset(':<>"|?*')
+
+
 def _relative(name: str) -> str:
     # Tar permits './file'; normalize only that prefix, never '..' or aliases.
     while name.startswith("./"):
@@ -94,7 +100,8 @@ def _relative(name: str) -> str:
                 *(f"LPT{i}" for i in range(10))}
     if (not name or len(name) > 4096 or len(parts) > 128
             or PurePosixPath(name).is_absolute() or "\\" in name
-            or any(part in {"", ".", ".."} or ":" in part or part.endswith((".", " "))
+            or any(part in {"", ".", ".."} or any(c in _UNPORTABLE for c in part)
+                   or part.endswith((".", " "))
                    or any(ord(c) < 32 for c in part)
                    or part.split(".")[0].upper() in reserved for part in parts)):
         raise WorkspaceTransferError("workspace contains an unsafe or aliased path")

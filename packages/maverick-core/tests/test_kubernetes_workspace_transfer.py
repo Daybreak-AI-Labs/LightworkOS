@@ -144,7 +144,10 @@ def test_failed_export_retains_pod_and_original_workspace(monkeypatch, tmp_path)
                                       ("hardlink", tarfile.LNKTYPE),
                                       ("device", tarfile.CHRTYPE),
                                       ("a/../b", tarfile.REGTYPE),
-                                      ("file:stream", tarfile.REGTYPE)])
+                                      ("file:stream", tarfile.REGTYPE),
+                                      # Names a backup cannot hold either.
+                                      ("what?.txt", tarfile.REGTYPE),
+                                      ('a"b|c*d<e>f', tarfile.REGTYPE)])
 def test_untrusted_archive_rejects_escapes_and_special_entries(tmp_path, name, kind):
     archive = tmp_path / "export.tar"
     with tarfile.open(archive, "w") as stream:
