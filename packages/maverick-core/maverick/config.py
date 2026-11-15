@@ -1026,16 +1026,17 @@ _LOOSENING_LOGGED: set[tuple[str, tuple[str, ...]]] = set()
 
 
 def _merge_tenant(cfg: dict, tenant: dict, path: Path) -> dict:
-    """A tenant overlay may only tighten governance, safety, capabilities and
-    sandbox settings; a looser value is ignored, logged once and listed by
+    """A tenant overlay may only tighten governance, safety, capabilities,
+    sandbox and security settings; a looser value is ignored, logged once and listed by
     ``maverick doctor`` (:func:`tenant_policy_loosenings`)."""
     from .policy_tighten import merge_tenant_overlay
-    merged, ignored = merge_tenant_overlay(cfg, tenant, _deep_merge_config)
-    marker = (str(path), tuple(ignored))
-    if ignored and marker not in _LOOSENING_LOGGED:
+    merged, ignored, fixed = merge_tenant_overlay(cfg, tenant, _deep_merge_config)
+    marker = (str(path), tuple(ignored), tuple(fixed))
+    if (ignored or fixed) and marker not in _LOOSENING_LOGGED:
         _LOOSENING_LOGGED.add(marker)
-        logging.getLogger(__name__).warning("workspace settings %s cannot loosen your organisation's policy; "
-                    "ignored: %s", path, ", ".join(ignored))
+        logging.getLogger(__name__).warning(
+            "workspace settings %s cannot loosen your organisation's policy; ignored: %s; "
+            "set by your organisation: %s", path, ", ".join(ignored) or "none", ", ".join(fixed) or "none")
     return merged
 
 
@@ -1054,9 +1055,9 @@ def tenant_policy_loosenings() -> dict[str, list[str]]:
             tenant = _load_config_file(path, interpolate=False)
         except Exception:  # unreadable files are reported by the config checks
             continue
-        _, ignored = merge_tenant_overlay(upper, tenant, _deep_merge_config)
-        if ignored:
-            found[path.parent.name] = ignored
+        _, ignored, fixed = merge_tenant_overlay(upper, tenant, _deep_merge_config)
+        if ignored or fixed:
+            found[path.parent.name] = ignored + [f"{key} (set by your organisation)" for key in fixed]
     return found
 
 
@@ -1070,7 +1071,8 @@ def tenant_ignored_settings() -> set[str]:
         tenant = _load_config_file(tcfg, interpolate=False)
     except Exception:
         return set()
-    return set(merge_tenant_overlay(load_global_config(), tenant, _deep_merge_config)[1])
+    _, ignored, fixed = merge_tenant_overlay(load_global_config(), tenant, _deep_merge_config)
+    return set(ignored) | set(fixed)
 
 
 class AgentStepConfigError(ValueError):

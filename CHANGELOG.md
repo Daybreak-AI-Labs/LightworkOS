@@ -228,7 +228,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   through `tenant_query`, which adds the tenant boundary. Code that calls
   `query` directly must move to `tenant_query` or pass `system=True`.
 - A workspace's `config.toml` and a workspace agent override can only make
-  governance, safety, capabilities and sandbox settings stricter. A looser
+  governance, safety, capabilities, sandbox and security settings stricter;
+  an unset organisation value counts as the product default. A looser
   value is ignored, logged, listed by `maverick doctor` and shown in Settings
   or on the agent page as "Set by your organisation"; the file still loads.
   Remove the looser values from the file to clear the warning.

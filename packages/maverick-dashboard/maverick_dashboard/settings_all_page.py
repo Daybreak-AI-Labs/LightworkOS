@@ -740,7 +740,8 @@ def _organisation_fixed(setting: catalog.Setting, layers: dict[str, Any]) -> boo
     section = config.load_global_config().get(setting.section) or {}
     if not isinstance(section, dict):
         return True
-    return bool(merge_tenant_section(setting.section, section, {setting.key: value})[1])
+    _, ignored, fixed = merge_tenant_section(setting.section, section, {setting.key: value})
+    return bool(ignored or fixed)
 
 
 def _row(setting: catalog.Setting, layers: dict[str, Any]) -> dict[str, Any]:
