@@ -5996,6 +5996,52 @@ def _refuse_subject_under_legal_hold(ctx, channel: str, user: str) -> None:
         ctx.exit(1)
 
 
+def _refuse_unerasable_audit(ctx, channel: str, user: str) -> None:
+    """Refuse before anything is deleted when the subject's audit lines cannot go.
+
+    Erasure is all or nothing from the person's view: an audit day that holds
+    the subject but cannot be rewritten (unreadable, a signed chain that does
+    not verify, no signing key here) would otherwise leave them behind after
+    their conversations were already deleted.
+    """
+    from ..audit.erase import erase_blockers
+
+    try:
+        blockers = erase_blockers(channel, user)
+    except Exception as exc:  # failure-policy: fail_closed -- unchecked is not erasable
+        blockers = [f"the audit log could not be checked ({_erasure_failure_label(exc)})"]
+    if not blockers:
+        return
+    ctx.obj["erase_refusal"] = (
+        "Nothing was erased. Some earlier activity records about this person cannot be "
+        "changed safely. Ask your administrator to check the activity record, then try again."
+    )
+    click.echo(
+        "error: erasure refused; nothing was deleted. These audit days hold this "
+        "subject and cannot be erased: " + "; ".join(blockers)
+        + ". Repair them (`maverick audit verify` shows the breaks) and run erase again.",
+        err=True,
+    )
+    ctx.exit(1)
+
+
+def _exit_if_erasure_incomplete(ctx, verification: dict, failures: list[str],
+                                detail: str | None) -> None:
+    """Exit 1 naming what remains unless the erasure is complete and certified."""
+    if verification.get("clean") and not failures:
+        return
+    residual = verification.get("residual") or {}
+    parts = []
+    if residual:
+        parts.append(f"{sum(int(n or 0) for n in residual.values())} item(s) remain: " + ", ".join(
+            f"{store}={count}" for store, count in sorted(residual.items())))
+    parts.extend(failures)
+    if not parts:
+        parts.append(detail or "no clean erasure certificate")
+    click.echo("error: erasure incomplete (" + "; ".join(parts) + ")", err=True)
+    ctx.exit(1)
+
+
 def _scrub_subject_audit(channel: str, user: str, failures: list[str]) -> int:
     """Scrub the subject's prior audit lines; record a failure instead of raising."""
     from .. import audit
@@ -6057,6 +6103,7 @@ def _erase_subject_residue(ctx, world, channel: str, user: str, yes: bool) -> No
     from .. import audit
 
     _refuse_subject_under_legal_hold(ctx, channel, user)
+    _refuse_unerasable_audit(ctx, channel, user)
     if not yes:
         click.echo(f"This will erase stored facts, notes, audit lines and "
                    f"knowledge for {channel}:{user}.")
@@ -6149,6 +6196,7 @@ def erase(ctx, channel: str, user: str, yes: bool) -> None:
     # conversation with >10k turns doesn't leave orphan attachments.
     conv_ids = [c.id for c in convs]
     _refuse_under_legal_hold(ctx, world, conv_ids)
+    _refuse_unerasable_audit(ctx, channel, user)
     (
         erasure_plan,
         erasure_manifest,
@@ -6417,6 +6465,8 @@ def erase(ctx, channel: str, user: str, yes: bool) -> None:
             err=True,
         )
     _print_erased_extras(knowledge_removed, scrubbed_fact_keys)
+    _exit_if_erasure_incomplete(ctx, verification, closure_failures,
+                                closure_error or receipt_error)
 
 
 def _print_erased_extras(knowledge_removed, scrubbed_fact_keys) -> None:

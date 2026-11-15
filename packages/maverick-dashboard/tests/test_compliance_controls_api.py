@@ -292,6 +292,31 @@ def test_erase_does_not_claim_everything_when_a_clean_up_step_failed(monkeypatch
     assert body["receipt_id"]
 
 
+def test_erase_refuses_before_deleting_when_an_activity_record_cannot_be_changed():
+    import json as _json
+
+    from maverick.audit.events import AuditEvent, EventKind
+    from maverick.audit.writer import AuditLog
+    from maverick.paths import data_dir
+
+    _seed_person()
+    ad = data_dir("audit")
+    log = AuditLog(audit_dir=ad, sign=True)
+    for title in ("one", "two"):
+        assert log.record(AuditEvent(ts=1000.0, kind=EventKind.GOAL_START,
+                                     payload={"channel": "slack", "user_id": "U123", "title": title}))
+    day = sorted(ad.glob("*.ndjson"))[0]
+    rows = [_json.loads(line) for line in day.read_text(encoding="utf-8").splitlines()]
+    rows[0]["title"] = "tampered"
+    day.write_text("".join(_json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    response = client.post("/api/v1/compliance/people/erase",
+                           json={"channel": "slack", "user": "U123"})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["erased"] is False and body["message"].startswith("Nothing was erased.")
+    assert [p["user"] for p in client.get("/api/v1/compliance/people").json()["people"]] == ["U123"]
+
+
 def test_erase_reports_a_refused_erasure_record_as_uncertified(monkeypatch):
     _seed_person()
     import maverick.audit as audit

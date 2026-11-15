@@ -152,3 +152,26 @@ def test_approvals_parked_by_an_erased_goal_lose_their_content(tmp_path):
         assert world.get_approval(other).detail == "keep"
     finally:
         world.close()
+
+
+def test_durable_checkpoints_of_an_erased_goal_are_erased(tmp_path):
+    """A failed or stopped goal keeps its resumable transcript in the
+    checkpoints table; erasing the subject must take it too."""
+    from maverick.checkpoint import Checkpointer
+    from maverick.world_model import WorldModel
+    world = WorldModel(tmp_path / "checkpoint-erasure.db")
+    try:
+        conversation = world.get_or_create_conversation("dashboard", "alice")
+        goal = world.create_goal("private", owner="user:alice")
+        other = world.create_goal("other work", owner="user:bob")
+        world.append_turn(conversation.id, "user", "private", goal_id=goal)
+        checkpoints = Checkpointer(world)
+        for identifier in (goal, other):
+            assert checkpoints.save(goal_id=identifier, agent_id="orchestrator-0", step_seq=1,
+                                    messages=[{"role": "user", "content": "Alice, 12 Elm St"}],
+                                    budget={})
+        world.erase_conversations([conversation.id])
+        assert checkpoints.latest(goal, "orchestrator-0") is None
+        assert checkpoints.latest(other, "orchestrator-0") is not None
+    finally:
+        world.close()

@@ -229,6 +229,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   while it is off or the configuration cannot be read.
 - `maverick trust verify` exits 1 when the decision is DENY (it exited 0).
   Scripts that read its exit code now see the refusal.
+- `maverick erase` (and the dashboard's erase a person) is all or nothing:
+  it refuses before deleting anything when an audit day holding the person
+  cannot be rewritten, naming the day and why. Repair it and run erase again.
+- `maverick erase` exits 1 with "erasure incomplete" and what remains when
+  data is left or the erasure cannot be certified; it used to exit 0.
+- An audit erase re-signs the day in memory and writes it once, so a missing
+  signing key leaves the day unchanged instead of broken. A day that began
+  unsigned and continued signed can now be erased.
+- Erasing a person also deletes the durable-execution checkpoints of their
+  goals, which kept failed or stopped goals' transcripts.
 
 ### Fixed
 

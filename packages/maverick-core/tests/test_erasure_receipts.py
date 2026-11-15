@@ -841,7 +841,9 @@ def _assert_cli_auxiliary_failure_withholds_certificate(
         main,
         ["erase", "--channel", "telegram", "--user", "alice", "--yes"],
     )
-    assert erased.exit_code == 0, erased.output
+    # An erasure that cannot be certified exits non-zero and says why.
+    assert erased.exit_code == 1, erased.output
+    assert "error: erasure incomplete" in erased.output
     assert "verification: CLEAN" not in erased.output
     assert "auxiliary closure: no" in erased.output
     assert "without a clean certificate" in erased.output
@@ -928,7 +930,8 @@ def test_receipt_failure_does_not_block_cli_deletion(monkeypatch):
         ["erase", "--channel", "telegram", "--user", "alice", "--yes"],
     )
 
-    assert erased.exit_code == 0, erased.output
+    assert erased.exit_code == 1, erased.output
+    assert "error: erasure incomplete" in erased.output
     assert "deletion will continue" in erased.output
     assert "durable proof: no" in erased.output
     assert "without a clean certificate" in erased.output
@@ -956,7 +959,8 @@ def test_manifest_failure_still_uses_the_in_memory_plan_for_deletion(
         ["erase", "--channel", "telegram", "--user", "alice", "--yes"],
     )
 
-    assert erased.exit_code == 0, erased.output
+    assert erased.exit_code == 1, erased.output
+    assert "error: erasure incomplete" in erased.output
     assert "manifest could not be created" in erased.output
     assert "verification will remain indeterminate" in erased.output
     assert "without a clean certificate" in erased.output
@@ -985,6 +989,9 @@ class _PostgresEraseCursor:
 
     def fetchall(self):
         return next(self._rows)
+
+    def fetchone(self):
+        return (None,)  # no durable-execution checkpoints table
 
 
 def test_postgres_delete_contract_covers_descendants_and_every_child(

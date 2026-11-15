@@ -160,3 +160,48 @@ def test_reanchor_noop_when_signing_disabled(tmp_path):
     before = path.read_text(encoding="utf-8")
     assert log.reanchor_after_erase() == 0
     assert path.read_text(encoding="utf-8") == before
+
+
+def test_erase_without_a_signer_leaves_the_day_untouched(_isolate_keys, tmp_path, monkeypatch):
+    """The re-signed day is built in memory and published in one write, so an
+    erase that cannot re-sign changes nothing and never leaves a broken day."""
+    from maverick.audit import signing
+    from maverick.audit.erase import scrub_user
+    from maverick.audit.signing import verify_chain
+
+    _log, ad, path = _signed_log(tmp_path)
+    before = path.read_bytes()
+
+    def no_signer():
+        raise signing.OffHostSigningRequiredError("no off-host key here")
+
+    monkeypatch.setattr(signing, "_load_or_create_keypair", no_signer)
+    with pytest.raises(signing.OffHostSigningRequiredError):
+        scrub_user("telegram", "alice", audit_dir=ad, strict=True)
+    assert path.read_bytes() == before
+    assert verify_chain(path) == []
+
+
+def test_erase_of_a_day_with_an_unsigned_start_keeps_it_verifiable(_isolate_keys, tmp_path):
+    """A day that began unsigned and continued signed can be erased: the subject
+    goes from both parts and the day verifies exactly as before."""
+    from maverick.audit.erase import scrub_user
+    from maverick.audit.events import AuditEvent, EventKind
+    from maverick.audit.signing import verify_chain
+    from maverick.audit.writer import AuditLog
+
+    ad = tmp_path / "audit"
+    for sign, users in ((False, ("alice", "bob")), (True, ("alice", "bob"))):
+        log = AuditLog(audit_dir=ad, sign=sign)
+        for uid in users:
+            assert log.record(AuditEvent(ts=1000.0, kind=EventKind.GOAL_START,
+                                         payload={"channel": "telegram", "user_id": uid,
+                                                  "title": f"{uid} goal"}))
+    path = sorted(ad.glob("*.ndjson"))[0]
+    before = [(b.line_no, b.reason) for b in verify_chain(path)]
+    assert before == [(1, "unsigned"), (2, "unsigned")]
+
+    matched, _ = scrub_user("telegram", "alice", audit_dir=ad, strict=True)
+    assert matched == 2
+    assert "alice" not in path.read_text(encoding="utf-8")
+    assert [(b.line_no, b.reason) for b in verify_chain(path)] == before

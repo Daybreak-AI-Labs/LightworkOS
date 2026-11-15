@@ -2471,6 +2471,30 @@ def test_erase_conversations_deletes_all_goal_child_rows(world):
     assert world.signoffs_for_goals([gid]) == {}
 
 
+def test_erase_conversations_erases_durable_checkpoints(world):
+    """Where a checkpoints table exists, an erased goal's resumable transcript goes too."""
+    conv = world.get_or_create_conversation("slack", f"erase-{uuid.uuid4().hex}")
+    gid = world.create_goal("secret goal")
+    other = world.create_goal("other goal")
+    world.append_turn(conv.id, "user", "please remember this", goal_id=gid)
+    with world._tx() as cur:
+        cur.execute("SELECT to_regclass('checkpoints')")
+        created = cur.fetchone()[0] is None
+        cur.execute("CREATE TABLE IF NOT EXISTS checkpoints (goal_id BIGINT NOT NULL, messages TEXT)")
+        cur.execute("INSERT INTO checkpoints (goal_id, messages) VALUES (%s, 'Alice, 12 Elm St'), "
+                    "(%s, 'keep')", (gid, other))
+    try:
+        world.erase_conversations([conv.id])
+        with world._tx() as cur:
+            cur.execute("SELECT goal_id FROM checkpoints WHERE goal_id = ANY(%s)", ([gid, other],))
+            assert [row[0] for row in cur.fetchall()] == [other]
+    finally:
+        with world._tx() as cur:
+            cur.execute("DROP TABLE checkpoints" if created
+                        else "DELETE FROM checkpoints WHERE goal_id = ANY(%s)",
+                        () if created else ([gid, other],))
+
+
 def test_query_rewrites_sqlite_paramstyle_and_buckets_days(world):
     """The dashboard boards write SQLite-paramstyle SQL once and run it on
     either backend; this is the live Postgres half of that contract."""

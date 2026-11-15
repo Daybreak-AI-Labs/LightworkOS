@@ -4925,6 +4925,11 @@ class WorldModel:
                 )
                 removed_turns += int(cursor.rowcount)
 
+            # Durable-execution checkpoints (maverick.checkpoint) hold a failed or
+            # stopped goal's transcript in a table created on first use.
+            checkpoints = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='checkpoints'"
+            ).fetchone() is not None
             if goal_ids:
                 for chunk in self._chunks(goal_ids):
                     goal_placeholders = ",".join("?" * len(chunk))
@@ -4944,6 +4949,7 @@ class WorldModel:
                         "questions",
                         "share_links",
                         "signoffs",
+                        *(("checkpoints",) if checkpoints else ()),
                     ):
                         conn.execute(
                             f"DELETE FROM {table} "

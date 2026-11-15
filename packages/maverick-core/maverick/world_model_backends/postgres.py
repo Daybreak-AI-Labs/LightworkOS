@@ -5638,6 +5638,11 @@ class PostgresWorldModel:
                         f"DELETE FROM {table} WHERE goal_id = ANY(%s)",
                         (gids,),
                     )
+                # Durable-execution checkpoints hold a goal's transcript in a
+                # table created on first use; erase them wherever one exists.
+                cur.execute("SELECT to_regclass('checkpoints')")
+                if cur.fetchone()[0] is not None:
+                    cur.execute("DELETE FROM checkpoints WHERE goal_id = ANY(%s)", (gids,))
                 # Source-linked live and historical facts can retain output
                 # derived from the subject's episodes. IDs are globally unique,
                 # and the active tenant predicate prevents cross-tenant prefix

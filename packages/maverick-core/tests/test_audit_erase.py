@@ -17,7 +17,8 @@ def test_erase_emits_non_subject_derived_audit_event(tmp_path, monkeypatch):
     captured: list = []
     monkeypatch.setattr(
         audit_mod, "record",
-        lambda kind, **payload: captured.append((kind, payload)),
+        # The sink acknowledges the marker; an unacknowledged one is an incomplete erasure.
+        lambda kind, **payload: captured.append((kind, payload)) or True,
     )
 
     db = tmp_path / "world.db"
@@ -64,7 +65,7 @@ def test_erase_cascades_subgoals_without_fk_abort(tmp_path, monkeypatch):
     from maverick import cli as cli_mod
     from maverick.world_model import WorldModel
 
-    monkeypatch.setattr(audit_mod, "record", lambda kind, **payload: None)
+    monkeypatch.setattr(audit_mod, "record", lambda kind, **payload: True)
     # scrub_user touches the real ~/.maverick/audit dir; neutralize for hermeticity.
     monkeypatch.setattr("maverick.audit.scrub_user", lambda *a, **k: (0, 0))
 
@@ -199,3 +200,71 @@ def test_audit_erase_keeps_non_object_line_instead_of_crashing(tmp_path):
     assert matched == 1
     lines = day.read_text().splitlines()
     assert lines[-1] == "123" and "alice" not in day.read_text()
+
+
+# --- erasure is all or nothing from the person's view ---
+
+def _person_with_a_conversation(tmp_path):
+    import os
+
+    os.environ.pop("MAVERICK_DB", None)
+    from maverick.world_model import WorldModel
+
+    db = tmp_path / "world.db"
+    wm = WorldModel(db)
+    conv_id = wm.get_or_create_conversation("telegram", "u123").id
+    wm.append_turn(conv_id, "user", "hi there", goal_id=wm.create_goal("hello"))
+    wm.close()
+    return db
+
+
+def _erase(db):
+    from click.testing import CliRunner
+    from maverick import cli as cli_mod
+
+    return CliRunner().invoke(cli_mod.main, ["--db", str(db), "erase", "--channel", "telegram",
+                                             "--user", "u123", "--yes"])
+
+
+def test_erase_refuses_before_deleting_when_an_audit_day_cannot_be_erased(tmp_path):
+    import json
+
+    from maverick.audit.events import AuditEvent, EventKind
+    from maverick.audit.writer import AuditLog
+    from maverick.paths import data_dir
+    from maverick.world_model import WorldModel
+
+    db = _person_with_a_conversation(tmp_path)
+    ad = data_dir("audit")
+    log = AuditLog(audit_dir=ad, sign=True)
+    for title in ("one", "two"):
+        assert log.record(AuditEvent(ts=1000.0, kind=EventKind.GOAL_START,
+                                     payload={"channel": "telegram", "user_id": "u123",
+                                              "title": title}))
+    day = sorted(ad.glob("*.ndjson"))[0]
+    rows = [json.loads(line) for line in day.read_text(encoding="utf-8").splitlines()]
+    rows[0]["title"] = "tampered"
+    day.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+
+    result = _erase(db)
+    assert result.exit_code == 1, result.output
+    assert "nothing was deleted" in result.output and day.name in result.output
+    wm = WorldModel(db)
+    try:
+        assert [c.user_id for c in wm.list_conversations("telegram")] == ["u123"]
+    finally:
+        wm.close()
+
+
+def test_erase_exits_non_zero_and_says_what_remains(tmp_path, monkeypatch):
+    import maverick.audit as audit_mod
+
+    db = _person_with_a_conversation(tmp_path)
+
+    def broken_scrub(*args, **kwargs):
+        raise OSError("disk")
+
+    monkeypatch.setattr(audit_mod, "scrub_user", broken_scrub)
+    result = _erase(db)
+    assert result.exit_code == 1, result.output
+    assert "erasure incomplete" in result.output and "audit_scrub" in result.output
