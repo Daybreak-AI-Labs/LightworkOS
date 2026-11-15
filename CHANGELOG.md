@@ -223,6 +223,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the refusal names the storage boundary.
 - An automation opportunity is not proposed while any completed run has no
   recorded cost, and the reason shown says so.
+- Stop and rename now work on a running task. Its heartbeat no longer counts
+  as a change since you reviewed it. A schema migration adds the column; it
+  runs on the next start of SQLite and Postgres.
 
 ### Fixed
 

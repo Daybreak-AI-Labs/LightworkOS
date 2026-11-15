@@ -72,7 +72,7 @@ log = logging.getLogger(__name__)
 # intentional override from the untouched compatibility constant.
 _INITIAL_DEFAULT_DB = data_dir("world.db")
 DEFAULT_DB = _INITIAL_DEFAULT_DB
-SCHEMA_VERSION = 52
+SCHEMA_VERSION = 53
 DEFAULT_BUSY_TIMEOUT_MS = 5000
 WAL_SWITCH_BUSY_TIMEOUT_MS = 50
 WAL_SWITCH_RETRY_SECONDS = 5.0
@@ -461,6 +461,9 @@ def _bootstrap_schema(conn: sqlite3.Connection) -> str:
 
 
 MIGRATIONS: dict[int, list[str]] = {
+    # v53: a running goal's liveness heartbeat has its own timestamp, so it no
+    # longer changes ``updated_at``, the version a reviewed Stop or edit binds.
+    53: ["ALTER TABLE goals ADD COLUMN heartbeat_at REAL"],
     # v52: Postgres stores per-tenant rebinding completion in the database.
     # SQLite retains its adjacent marker; the table keeps schema heads aligned.
     52: ["CREATE TABLE IF NOT EXISTS encryption_migrations ("
@@ -1747,7 +1750,7 @@ class WorldModel:
                     "UPDATE goals SET status = 'blocked', "
                     "result = COALESCE(result, '') || ?, "
                     "updated_at = MAX(updated_at + 0.000001, ?) "
-                    f"WHERE status IN ({marks}) AND (? = 0 OR updated_at <= ?)",
+                    f"WHERE status IN ({marks}) AND (? = 0 OR MAX(updated_at, COALESCE(heartbeat_at, 0)) <= ?)",
                     (marker, now, *statuses, max_age_seconds, cutoff),
                 )
                 return cur.rowcount
@@ -1759,7 +1762,7 @@ class WorldModel:
             # is negligible.
             rows = conn.execute(
                 "SELECT id, result FROM goals "
-                f"WHERE status IN ({marks}) AND (? = 0 OR updated_at <= ?)",
+                f"WHERE status IN ({marks}) AND (? = 0 OR MAX(updated_at, COALESCE(heartbeat_at, 0)) <= ?)",
                 (*statuses, max_age_seconds, cutoff),
             ).fetchall()
             from .crypto_at_rest import EncryptionUnavailable
@@ -1787,7 +1790,7 @@ class WorldModel:
                     cur = conn.execute(
                         "UPDATE goals SET status = 'blocked', updated_at = MAX(updated_at + 0.000001, ?) "
                         f"WHERE id = ? AND status IN ({marks}) "
-                        "AND (? = 0 OR updated_at <= ?)",
+                        "AND (? = 0 OR MAX(updated_at, COALESCE(heartbeat_at, 0)) <= ?)",
                         (now, row["id"], *statuses, max_age_seconds, cutoff),
                     )
                     reclaimed += cur.rowcount
@@ -1796,7 +1799,7 @@ class WorldModel:
                     "UPDATE goals SET status = 'blocked', result = ?, "
                     "updated_at = MAX(updated_at + 0.000001, ?) "
                     f"WHERE id = ? AND status IN ({marks}) "
-                    "AND (? = 0 OR updated_at <= ?)",
+                    "AND (? = 0 OR MAX(updated_at, COALESCE(heartbeat_at, 0)) <= ?)",
                     (new_result, now, row["id"], *statuses, max_age_seconds, cutoff),
                 )
                 reclaimed += cur.rowcount
@@ -2602,8 +2605,10 @@ class WorldModel:
     def touch_goal(
         self, goal_id: int, *, expected_owner: str | None = None,
     ) -> bool:
-        """Refresh a live goal's ``updated_at`` — the orphan-reclaim liveness
-        signal — without any other side effect.
+        """Refresh a live goal's ``heartbeat_at`` — the orphan-reclaim liveness
+        signal — without any other side effect. ``updated_at`` stays put: it
+        is the version a reviewed Stop or edit binds to, and a heartbeat is
+        not a change the reviewer needs to see again.
 
         A pure keep-alive for work running OUTSIDE this process (external
         agents heartbeating a run, remote workers between status writes):
@@ -2612,7 +2617,7 @@ class WorldModel:
         in-flight rows qualify; terminal goals are never revived. The owner
         predicate rides in the same statement so authorization cannot be
         separated from the touch by a race."""
-        sql = ("UPDATE goals SET updated_at = MAX(updated_at + 0.000001, ?) "
+        sql = ("UPDATE goals SET heartbeat_at = MAX(COALESCE(heartbeat_at, 0), ?) "
                "WHERE id = ? AND status IN ('active', 'pending')")
         params: tuple[Any, ...] = (time.time(), int(goal_id))
         if expected_owner is not None:

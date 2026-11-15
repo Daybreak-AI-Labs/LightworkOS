@@ -35,7 +35,7 @@ def _active(world, *, age: float) -> int:
 def _age(world, goal_id: int, seconds: float) -> None:
     with world._writing() as conn:
         conn.execute(
-            "UPDATE goals SET updated_at = ? WHERE id = ?",
+            "UPDATE goals SET updated_at = ?, heartbeat_at = NULL WHERE id = ?",
             (time.time() - seconds, goal_id),
         )
 
@@ -108,7 +108,8 @@ def test_live_heartbeat_prevents_reclaim_then_stopping_allows_it(world):
     stop = start_goal_heartbeat(worker_world, goal_id, interval=0.02)
     try:
         deadline = time.monotonic() + 2.0
-        while world.get_goal(goal_id).updated_at < time.time() - 5:
+        while (world.query("SELECT heartbeat_at FROM goals WHERE id=?", (goal_id,))[0][0]
+               or 0) < time.time() - 5:
             assert time.monotonic() < deadline, "live run did not heartbeat"
             time.sleep(0.01)
         assert world.reclaim_orphan_goals() == 0  # restarted dashboard startup

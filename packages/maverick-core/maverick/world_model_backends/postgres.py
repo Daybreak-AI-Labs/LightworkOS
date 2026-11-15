@@ -767,6 +767,9 @@ MIGRATIONS.append((52, [
     "CHECK (scope = CASE WHEN tenant_id IS NULL THEN 'n:' ELSE 't:' || tenant_id END))",
 ]))
 
+# v53: heartbeats get their own liveness timestamp (mirrors SQLite v53).
+MIGRATIONS.append((53, ["ALTER TABLE goals ADD COLUMN IF NOT EXISTS heartbeat_at DOUBLE PRECISION"]))
+
 _PG_SCHEMA_VERSION = MIGRATIONS[-1][0]
 
 _MIGRATIONS_TABLE = (
@@ -2105,13 +2108,13 @@ class PostgresWorldModel:
     def touch_goal(
         self, goal_id: int, *, expected_owner: str | None = None,
     ) -> bool:
-        """Refresh a live goal's ``updated_at`` (the orphan-reclaim liveness
-        signal) with no other side effect — the external-agent heartbeat
+        """Refresh a live goal's ``heartbeat_at`` (the orphan-reclaim liveness
+        signal; ``updated_at`` stays the reviewed version) with no other side effect — the external-agent heartbeat
         primitive, mirroring the SQLite semantics: only in-flight rows
         qualify, and the owner predicate rides in the same statement."""
         now = time.time()
         frag, fparams = _mutation_tenant_scope()
-        sql = ("UPDATE goals SET updated_at=GREATEST(updated_at + 0.000001, %s) "
+        sql = ("UPDATE goals SET heartbeat_at=GREATEST(heartbeat_at, %s) "
                "WHERE id=%s AND status IN ('active', 'pending')")
         params: list = [now, int(goal_id)]
         if expected_owner is not None:
@@ -3244,7 +3247,7 @@ class PostgresWorldModel:
                 "UPDATE goals SET status = 'blocked', "
                 "result = COALESCE(result, '') || %s, "
                 "updated_at = GREATEST(updated_at + 0.000001, %s) "
-                f"WHERE status IN ({marks}) AND (%s = 0 OR updated_at <= %s)"
+                f"WHERE status IN ({marks}) AND (%s = 0 OR GREATEST(updated_at, COALESCE(heartbeat_at, 0)) <= %s)"
             )
             params: list = [marker, now, *statuses, max_age_seconds, cutoff]
             if frag:
@@ -3260,7 +3263,7 @@ class PostgresWorldModel:
         # set on startup is tiny, so the row-by-row cost is negligible.
         sel = (
             "SELECT id, result FROM goals "
-            f"WHERE status IN ({marks}) AND (%s = 0 OR updated_at <= %s)"
+            f"WHERE status IN ({marks}) AND (%s = 0 OR GREATEST(updated_at, COALESCE(heartbeat_at, 0)) <= %s)"
         )
         sparams: list = [*statuses, max_age_seconds, cutoff]
         if frag:
@@ -3295,7 +3298,7 @@ class PostgresWorldModel:
                     update = (
                         "UPDATE goals SET status = 'blocked', updated_at = GREATEST(updated_at + 0.000001, %s) "
                         f"WHERE id = %s AND status IN ({marks}) "
-                        "AND (%s = 0 OR updated_at <= %s)"
+                        "AND (%s = 0 OR GREATEST(updated_at, COALESCE(heartbeat_at, 0)) <= %s)"
                     )
                     if frag:
                         update += " AND " + frag
@@ -3306,7 +3309,7 @@ class PostgresWorldModel:
                     "UPDATE goals SET status = 'blocked', result = %s, "
                     "updated_at = GREATEST(updated_at + 0.000001, %s) "
                     f"WHERE id = %s AND status IN ({marks}) "
-                    "AND (%s = 0 OR updated_at <= %s)"
+                    "AND (%s = 0 OR GREATEST(updated_at, COALESCE(heartbeat_at, 0)) <= %s)"
                 )
                 if frag:
                     update += " AND " + frag

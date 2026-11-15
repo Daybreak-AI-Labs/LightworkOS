@@ -60,3 +60,23 @@ def test_receipt_cannot_be_reused_for_a_different_review(world):
     goal_stop.stop(world, identifier, **args)
     with pytest.raises(goal_stop.GoalMutationConflict):
         goal_stop.stop(world, identifier, **{**args, "expected_updated_at": args["expected_updated_at"] + 1})
+
+
+def test_heartbeat_does_not_invalidate_a_reviewed_stop(world):
+    identifier = world.create_goal("Long research run", owner="user:alice")
+    world.set_goal_status(identifier, "active")
+    args = dict(actor="user:alice", operation_id="b" * 32, expected_owner="user:alice",
+                expected_updated_at=float(world.get_goal(identifier).updated_at))
+    # The run's liveness heartbeat is not a change the reviewer must see again.
+    assert world.touch_goal(identifier)
+    assert world.get_goal(identifier).updated_at == args["expected_updated_at"]
+    assert goal_stop.stop(world, identifier, **args)["stop_requested"]
+    assert world.get_goal(identifier).status == "cancelled"
+    # A heartbeat still keeps the run out of crash recovery.
+    active = world.create_goal("Live run", owner="user:alice")
+    world.set_goal_status(active, "active")
+    with world._writing() as connection:
+        connection.execute("UPDATE goals SET updated_at = updated_at - 600 WHERE id=?", (active,))
+    assert world.touch_goal(active)
+    assert world.reclaim_orphan_goals(statuses=("active",), resolved_window_seconds=60) == 0
+    assert world.get_goal(active).status == "active"
