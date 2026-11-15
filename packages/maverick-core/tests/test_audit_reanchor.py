@@ -292,15 +292,15 @@ def test_an_anchored_day_stays_erasable_after_an_earlier_erase(_isolate_keys, tm
         assert _state(ad, path) == ([], [])
 
 
-def test_a_retired_key_without_its_public_key_names_the_key_to_restore(_isolate_keys, tmp_path):
+def test_a_retired_key_without_its_public_key_names_the_key_to_restore(
+        _isolate_keys, tmp_path, monkeypatch):
     from maverick.audit import signing
     from maverick.audit.erase import erase_blockers
 
     _log, ad, path = _signed_log(tmp_path)
-    retired = signing._active_key_id(signing._key_dir())
-    signing.rotate_audit_keypair()
-    for old in signing._key_dir().glob(f"{retired}*"):
-        old.unlink()
+    # The rows' key is no longer among the trusted public keys (a retired key
+    # whose .pub file is gone).
+    monkeypatch.setattr(signing, "trusted_audit_public_keys", dict)
     (blocker,) = erase_blockers("telegram", "alice", audit_dir=ad)
     assert "public key is not available" in blocker and "MAVERICK_AUDIT_TRUSTED_PUBLIC_KEYS" in blocker
     assert "backup restore" not in blocker
