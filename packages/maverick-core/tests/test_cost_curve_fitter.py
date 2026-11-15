@@ -66,3 +66,28 @@ def test_gather_groups_by_provider():
     assert len(grouped["anthropic"]) == 2
     curves = fit_all(_World(eps))
     assert "anthropic" in curves and curves["anthropic"].n == 2
+
+
+def test_tool_fits_only_the_running_owners_episodes(monkeypatch):
+    # owner=None is the admin view of every principal's episodes; the agent
+    # tool must ask for the running goal owner's, as spend_report does.
+    from maverick.cost.curve_fitter import cost_curve_tool
+
+    asked = []
+
+    class _OwnedWorld:
+        def list_episodes(self, limit=500, owner=None):
+            asked.append(owner)
+            return [_Ep(0.1, "anthropic", 100, 50)] if owner == "alice" else [
+                _Ep(9.0, "anthropic", 1, 1)]
+
+    monkeypatch.setattr("maverick.memory_ownership.current_owner", lambda **_: "alice")
+    out = cost_curve_tool(_OwnedWorld()).fn({"op": "fit"})
+    assert asked == ["alice"] and '"n": 1' in out
+
+    def _unknown(**_):
+        raise ValueError("Current memory ownership is unavailable")
+
+    monkeypatch.setattr("maverick.memory_ownership.current_owner", _unknown)
+    out = cost_curve_tool(_OwnedWorld()).fn({"op": "fit"})
+    assert out.startswith("ERROR") and asked == ["alice"]

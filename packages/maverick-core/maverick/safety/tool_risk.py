@@ -300,7 +300,7 @@ _DEFAULT_RISK: dict[str, str] = {
     "workspace_snapshot": "high",
     # medium: reaches the network or reads other people's data, without an
     # effect of its own.
-    "audio_understanding": "medium", "cost_curve": "medium", "embeddings": "medium",
+    "audio_understanding": "medium", "embeddings": "medium",
     "github_repo_search": "medium", "read_pdf": "medium", "youtube": "medium",
     # low: reads the run's or workspace's own non-secret state, lists what
     # exists, builds a payload it does not send, or computes over caller input.
@@ -316,7 +316,7 @@ _DEFAULT_RISK: dict[str, str] = {
     "citation_verifier": "low", "collusion_detector": "low", "compaction_classifier": "low",
     "comparative_replay": "low", "consent_check": "low", "consent_ergonomics": "low",
     "constrained_output": "low", "containment_mode": "low", "coordinated_disclosure": "low",
-    "cost_attribution": "low", "cost_aware_router": "low", "cost_guardrail": "low",
+    "cost_attribution": "low", "cost_curve": "low", "cost_aware_router": "low", "cost_guardrail": "low",
     "cost_of_quality": "low", "crewai_adapter": "low", "cross_repo_deps": "low",
     "crypto_budget_receipt": "low", "data_minimization": "low", "data_residency": "low",
     "decision_explainer": "low", "diff_to_expected": "low", "differential_privacy": "low",
