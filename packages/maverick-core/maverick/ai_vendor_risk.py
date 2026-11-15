@@ -452,35 +452,7 @@ def _public(record: Mapping[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in record.items() if key != "_audit_pending"}
 
 
-def _validated_record(  # noqa: C901 - one complete persisted-record trust boundary
-    record: Mapping[str, Any],
-) -> dict[str, Any]:
-    row = dict(record)
-    if row.get("schema") != AI_VENDOR_SCHEMA:
-        raise AIVendorRiskStateError("AI vendor-risk record schema is invalid")
-    if row.get("tenant_sha256") != _tenant_sha256():
-        raise AIVendorRiskStateError("AI vendor-risk tenant binding is invalid")
-    try:
-        vendor = _text(row.get("vendor"), "persisted vendor", 300)
-        _text(row.get("assessed_by"), "persisted assessed_by", 256)
-    except ValueError as exc:
-        raise AIVendorRiskStateError("AI vendor-risk identity metadata is invalid") from exc
-    if _vendor_key(vendor) != row.get("vendor_key"):
-        raise AIVendorRiskStateError("AI vendor-risk vendor identity is invalid")
-    expected_snapshot, expected_template_digest = _template_snapshot()
-    if (
-        row.get("template_revision") != 1
-        or row.get("template_digest") != expected_template_digest
-        or row.get("template_snapshot") != expected_snapshot
-    ):
-        raise AIVendorRiskStateError("AI vendor-risk questionnaire binding is invalid")
-    claimed = row.get("assessment_sha256")
-    if not isinstance(claimed, str) or not _DIGEST_RE.fullmatch(claimed):
-        raise AIVendorRiskStateError("AI vendor-risk assessment digest is invalid")
-    if _sha256(_assessment_payload(row)) != claimed:
-        raise AIVendorRiskStateError("AI vendor-risk assessment binding does not verify")
-    if row.get("status") not in {"pending_review", *_DECISIONS}:
-        raise AIVendorRiskStateError("AI vendor-risk lifecycle is invalid")
+def _validated_record_answers(row):
     answers = row.get("answers")
     if not isinstance(answers, dict) or set(answers) != set(_QUESTION_BY_ID):
         raise AIVendorRiskStateError("AI vendor-risk answers are invalid")
@@ -498,6 +470,10 @@ def _validated_record(  # noqa: C901 - one complete persisted-record trust bound
             raise AIVendorRiskStateError(
                 f"AI vendor-risk answer {qid!r} note is invalid"
             ) from exc
+    return answers
+
+
+def _validated_record_documents(row):
     documents = row.get("documents")
     if not isinstance(documents, list) or len(documents) > _MAX_DOCUMENTS:
         raise AIVendorRiskStateError("AI vendor-risk document evidence is invalid")
@@ -523,6 +499,10 @@ def _validated_record(  # noqa: C901 - one complete persisted-record trust bound
         ): item["evidence"]
         for item in documents
     }
+    return evidence_by_binding
+
+
+def _validated_record_sources(row, answers, evidence_by_binding):
     sources = row.get("answer_sources")
     if not isinstance(sources, dict) or set(sources) != set(_QUESTION_BY_ID):
         raise AIVendorRiskStateError("AI vendor-risk answer provenance is invalid")
@@ -596,6 +576,10 @@ def _validated_record(  # noqa: C901 - one complete persisted-record trust bound
             or not isinstance(source.get("citation"), Mapping)
         ):
             raise AIVendorRiskStateError("prior AI vendor answer provenance is invalid")
+    return sources
+
+
+def _validate_record_prior_answers(row, sources):
     prior_citations = row.get("prior_citations")
     skipped = row.get("skipped_prior_questions")
     if (
@@ -629,18 +613,10 @@ def _validated_record(  # noqa: C901 - one complete persisted-record trust bound
             raise AIVendorRiskStateError("AI vendor prior-answer citation is invalid")
     if citation_questions != set(skipped):
         raise AIVendorRiskStateError("AI vendor prior-answer binding is invalid")
+    return None
 
-    session = AssessmentSession(
-        type=AI_VENDOR_TEMPLATE.type,
-        subject=vendor,
-        template_revision=1,
-        template_digest=expected_template_digest,
-        template_snapshot=expected_snapshot,
-    )
-    for qid, answer in answers.items():
-        session.record(qid, answer["answer"], answer.get("note") or "")
-    if row.get("result") != asdict(session.evaluate()):
-        raise AIVendorRiskStateError("AI vendor-risk deterministic result is invalid")
+
+def _validate_record_review(row, claimed):
     review = row.get("review")
     if row.get("status") == "pending_review":
         if review is not None:
@@ -662,6 +638,55 @@ def _validated_record(  # noqa: C901 - one complete persisted-record trust bound
             _text(review.get("rationale"), "persisted rationale", 4000)
         except ValueError as exc:
             raise AIVendorRiskStateError("AI vendor-risk human review is invalid") from exc
+    return None
+
+
+def _validated_record(
+    record: Mapping[str, Any],
+) -> dict[str, Any]:
+    row = dict(record)
+    if row.get("schema") != AI_VENDOR_SCHEMA:
+        raise AIVendorRiskStateError("AI vendor-risk record schema is invalid")
+    if row.get("tenant_sha256") != _tenant_sha256():
+        raise AIVendorRiskStateError("AI vendor-risk tenant binding is invalid")
+    try:
+        vendor = _text(row.get("vendor"), "persisted vendor", 300)
+        _text(row.get("assessed_by"), "persisted assessed_by", 256)
+    except ValueError as exc:
+        raise AIVendorRiskStateError("AI vendor-risk identity metadata is invalid") from exc
+    if _vendor_key(vendor) != row.get("vendor_key"):
+        raise AIVendorRiskStateError("AI vendor-risk vendor identity is invalid")
+    expected_snapshot, expected_template_digest = _template_snapshot()
+    if (
+        row.get("template_revision") != 1
+        or row.get("template_digest") != expected_template_digest
+        or row.get("template_snapshot") != expected_snapshot
+    ):
+        raise AIVendorRiskStateError("AI vendor-risk questionnaire binding is invalid")
+    claimed = row.get("assessment_sha256")
+    if not isinstance(claimed, str) or not _DIGEST_RE.fullmatch(claimed):
+        raise AIVendorRiskStateError("AI vendor-risk assessment digest is invalid")
+    if _sha256(_assessment_payload(row)) != claimed:
+        raise AIVendorRiskStateError("AI vendor-risk assessment binding does not verify")
+    if row.get("status") not in {"pending_review", *_DECISIONS}:
+        raise AIVendorRiskStateError("AI vendor-risk lifecycle is invalid")
+    answers = _validated_record_answers(row)
+    evidence_by_binding = _validated_record_documents(row)
+    sources = _validated_record_sources(row, answers, evidence_by_binding)
+    _validate_record_prior_answers(row, sources)
+
+    session = AssessmentSession(
+        type=AI_VENDOR_TEMPLATE.type,
+        subject=vendor,
+        template_revision=1,
+        template_digest=expected_template_digest,
+        template_snapshot=expected_snapshot,
+    )
+    for qid, answer in answers.items():
+        session.record(qid, answer["answer"], answer.get("note") or "")
+    if row.get("result") != asdict(session.evaluate()):
+        raise AIVendorRiskStateError("AI vendor-risk deterministic result is invalid")
+    _validate_record_review(row, claimed)
     return _public(row)
 
 

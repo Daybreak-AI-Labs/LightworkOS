@@ -97,6 +97,10 @@ def version() -> str:
 
 _COHORT = ("maverick", "maverick_dashboard", "maverick_shield", "maverick_channels",
            "maverick_evolve", "maverick_knowledge", "maverick_mcp", "maverick_installer")
+# gRPC stubs are generated into the package the first time they are needed.
+# They are build output: counting them would make a running application look
+# like a different build as soon as they appear.
+_GENERATED_SOURCE = ("_pb2.py", "_pb2_grpc.py")
 
 
 def application_identity() -> str:
@@ -116,6 +120,8 @@ def application_identity() -> str:
             continue
         root = Path(spec.origin).parent
         for source in sorted(root.rglob("*.py")):
+            if source.name.endswith(_GENERATED_SOURCE):
+                continue
             digest.update(source.relative_to(root).as_posix().encode() + b"\0")
             digest.update(hashlib.sha256(source.read_bytes()).digest())
     return "source-sha256:" + digest.hexdigest()

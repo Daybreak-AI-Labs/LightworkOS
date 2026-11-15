@@ -205,7 +205,7 @@ class TrcContinuousEvidenceDependencies:
         self.store_for = store_for
 
 
-def create_trc_continuous_evidence_router(  # noqa: C901
+def create_trc_continuous_evidence_router(
     dependencies: TrcContinuousEvidenceDependencies | None = None,
 ) -> APIRouter:
     deps = dependencies or TrcContinuousEvidenceDependencies()
@@ -277,6 +277,20 @@ def create_trc_continuous_evidence_router(  # noqa: C901
                 detail="continuous-evidence operation failed",
             ) from exc
 
+    _register_continuous_evidence_runtime_routes(router)
+
+    _register_continuous_evidence_definition_routes(authority, call, router)
+
+    _register_continuous_evidence_enrollment_routes(authority, call, router)
+
+    _register_continuous_evidence_job_routes(authority, call, router)
+
+    _register_continuous_evidence_observation_routes(authority, call, router)
+
+    return router
+
+
+def _register_continuous_evidence_runtime_routes(router):
     @router.get("/status")
     async def status(request: Request):
         require_permission(request, "view")
@@ -367,6 +381,9 @@ def create_trc_continuous_evidence_router(  # noqa: C901
             "estate_completeness_claimed": False,
         }
 
+
+
+def _register_continuous_evidence_definition_routes(authority, call, router):
     @router.put("/definitions/{definition_id}/versions/{version}")
     async def register_definition(
         request: Request,
@@ -458,6 +475,9 @@ def create_trc_continuous_evidence_router(  # noqa: C901
             )
         )
 
+
+
+def _register_continuous_evidence_enrollment_routes(authority, call, router):
     @router.put("/enrollments/{enrollment_id}")
     async def enroll(
         request: Request,
@@ -530,6 +550,9 @@ def create_trc_continuous_evidence_router(  # noqa: C901
             )
         )
 
+
+
+def _register_continuous_evidence_job_routes(authority, call, router):
     @router.post("/jobs/enqueue-due")
     async def enqueue_due(request: Request, body: EnqueueIn):
         require_global_permission(request, "admin")
@@ -571,6 +594,9 @@ def create_trc_continuous_evidence_router(  # noqa: C901
         items = await call(evidence, store.list_runs, limit=limit)
         return {"items": _jsonable(items), "count": len(items)}
 
+
+
+def _register_continuous_evidence_observation_routes(authority, call, router):
     @router.get("/observations")
     async def list_observations(
         request: Request,
@@ -611,7 +637,6 @@ def create_trc_continuous_evidence_router(  # noqa: C901
         evidence, store = authority(request)
         return _jsonable(await call(evidence, store.purge_expired, **body.model_dump()))
 
-    return router
 
 
 router = create_trc_continuous_evidence_router()

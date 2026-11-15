@@ -1757,404 +1757,48 @@ class GovernedDocumentVault:
                 (selected,),
             ).fetchall()]
 
-    def verify_integrity(  # noqa: C901 - complete closed-schema forensic walk
+    def verify_integrity(
         self,
         *,
         verify_content: bool = True,
     ) -> dict[str, object]:
         if type(verify_content) is not bool:
             raise VaultValidationError("document_vault_verify_content_invalid")
-        documents = revisions = authorities = grants = tombstones = events = 0
-        anchor_count = 0
         with closing(self._connect()) as connection, connection:
             self._verify_meta(connection)
             integrity_state = self._verify_integrity_state(connection)
-            document_rows: dict[str, sqlite3.Row] = {}
-            documents_by_sha: dict[str, sqlite3.Row] = {}
-            for row in connection.execute(
-                "SELECT * FROM governed_documents ORDER BY document_ref"
-            ):
-                self._head_on(connection, row["document_ref"])
-                document_sha = _text_sha256(row["document_ref"])
-                if document_sha in documents_by_sha:
-                    raise VaultIntegrityError(
-                        "document_vault_document_integrity_invalid"
-                    )
-                document_rows[row["document_ref"]] = row
-                documents_by_sha[document_sha] = row
-                documents += 1
-            revision_rows: dict[tuple[str, int], sqlite3.Row] = {}
-            for row in connection.execute(
-                "SELECT * FROM governed_document_revisions ORDER BY document_ref,content_revision"
-            ):
-                ciphertext = bytes(row["encrypted_content"])
-                material = {
-                    "schema": "lightwork.governed-document-content-revision.v1",
-                    "document_ref": row["document_ref"],
-                    "content_revision": row["content_revision"],
-                    "ciphertext_sha256": row["ciphertext_sha256"],
-                    "content_sha256": row["content_sha256"],
-                    "byte_size": row["byte_size"],
-                    "created_at": row["created_at"],
-                }
-                if (
-                    not hmac.compare_digest(row["row_sha256"], canonical_sha256(material))
-                    or not hmac.compare_digest(
-                        row["ciphertext_sha256"], hashlib.sha256(ciphertext).hexdigest()
-                    )
-                ):
-                    raise VaultIntegrityError("document_vault_content_integrity_invalid")
-                if verify_content:
-                    try:
-                        from .crypto_at_rest import unseal
+            (
+                document_rows, documents_by_sha, revision_rows, documents, revisions,
+            ) = self._verify_document_content_rows(
+                connection, verify_content,
+            )
+            (
+                authority_rows, tombstone_rows, authorities, grants, tombstones,
+            ) = self._verify_document_authority_rows(
+                connection,
+            )
+            (
+                prior, events, audit_correlations,
+            ) = self._verify_document_audit_rows(
+                connection,
+            )
 
-                        with tenant_scope(tenant=self.tenant_id):
-                            plaintext = unseal(ciphertext)
-                    except Exception as exc:
-                        raise VaultIntegrityError("document_vault_content_decryption_failed") from exc
-                    if (
-                        len(plaintext) != row["byte_size"]
-                        or not hmac.compare_digest(
-                            hashlib.sha256(plaintext).hexdigest(), row["content_sha256"]
-                        )
-                    ):
-                        raise VaultIntegrityError("document_vault_content_integrity_invalid")
-                key = (row["document_ref"], row["content_revision"])
-                if key in revision_rows:
-                    raise VaultIntegrityError("document_vault_content_integrity_invalid")
-                revision_rows[key] = row
-                revisions += 1
-            authority_rows: dict[str, list[sqlite3.Row]] = {}
-            for row in connection.execute(
-                "SELECT * FROM governed_document_authorities "
-                "ORDER BY document_ref,authority_revision"
-            ):
-                if not hmac.compare_digest(
-                    row["row_sha256"],
-                    canonical_sha256(self._authority_material(row)),
-                ):
-                    raise VaultIntegrityError(
-                        "document_vault_authority_integrity_invalid"
-                    )
-                authority_rows.setdefault(row["document_ref"], []).append(row)
-                authorities += 1
-            for row in connection.execute("SELECT * FROM governed_document_grants"):
-                self._grant_on(connection, row["grant_sha256"])
-                grants += 1
-            tombstone_rows: dict[str, sqlite3.Row] = {}
-            for row in connection.execute(
-                "SELECT * FROM governed_document_tombstones ORDER BY document_sha256"
-            ):
-                if not hmac.compare_digest(
-                    row["tombstone_sha256"],
-                    canonical_sha256(self._tombstone_material(row)),
-                ):
-                    raise VaultIntegrityError(
-                        "document_vault_tombstone_integrity_invalid"
-                    )
-                tombstone_rows[row["document_sha256"]] = row
-                tombstones += 1
-            prior = GENESIS_SHA256
-            expected = 1
-            audit_correlations: dict[tuple[object, ...], int] = {}
-            for row in connection.execute("SELECT * FROM governed_document_audit ORDER BY sequence"):
-                material = {
-                    "schema": "lightwork.governed-document-vault-audit.v1",
-                    "sequence": row["sequence"],
-                    "event_type": row["event_type"],
-                    "subject_sha256": row["subject_sha256"],
-                    "actor_sha256": row["actor_sha256"],
-                    "detail_sha256": row["detail_sha256"],
-                    "occurred_at": row["occurred_at"],
-                    "previous_sha256": row["previous_sha256"],
-                }
-                if (
-                    row["sequence"] != expected
-                    or not hmac.compare_digest(row["previous_sha256"], prior)
-                    or not hmac.compare_digest(row["event_sha256"], canonical_sha256(material))
-                ):
-                    raise VaultIntegrityError("document_vault_audit_integrity_invalid")
-                prior = row["event_sha256"]
-                expected += 1
-                events += 1
-                if row["event_type"] in {_INGEST_EVENT, _REVOKE_EVENT, _PURGE_EVENT}:
-                    key = (
-                        row["event_type"],
-                        row["subject_sha256"],
-                        row["detail_sha256"],
-                        row["occurred_at"],
-                    )
-                    audit_correlations[key] = audit_correlations.get(key, 0) + 1
+            (
+                authority_anchors, tombstone_anchors, anchor_correlations, anchor_prior, anchor_count,
+            ) = self._verify_document_anchor_rows(
+                connection, integrity_state,
+            )
 
-            authority_anchors: dict[str, list[sqlite3.Row]] = {}
-            tombstone_anchors: dict[str, list[sqlite3.Row]] = {}
-            anchor_correlations: dict[tuple[object, ...], int] = {}
-            anchor_prior = GENESIS_SHA256
-            anchor_expected = 1
-            for row in connection.execute(
-                "SELECT * FROM governed_document_integrity_anchors ORDER BY sequence"
-            ):
-                kind = row["record_kind"]
-                revision = row["authority_revision"]
-                event_type = row["event_type"]
-                strings = (
-                    row["document_sha256"],
-                    row["authority_sha256"],
-                    row["record_sha256"],
-                    row["audit_detail_sha256"],
-                    row["previous_sha256"],
-                    row["anchor_sha256"],
-                )
-                kind_valid = (
-                    kind == "authority"
-                    and isinstance(revision, int)
-                    and not isinstance(revision, bool)
-                    and revision >= 1
-                    and event_type
-                    == (_INGEST_EVENT if revision == 1 else _REVOKE_EVENT)
-                ) or (
-                    kind == "tombstone"
-                    and isinstance(revision, int)
-                    and not isinstance(revision, bool)
-                    and revision >= 1
-                    and event_type == _PURGE_EVENT
-                ) or (
-                    kind == "legacy_tombstone"
-                    and revision == 0
-                    and event_type == _PURGE_EVENT
-                )
-                if (
-                    row["sequence"] != anchor_expected
-                    or not kind_valid
-                    or any(
-                        not isinstance(value, str)
-                        or _DIGEST_RE.fullmatch(value) is None
-                        for value in strings
-                    )
-                    or not isinstance(row["occurred_at"], (int, float))
-                    or isinstance(row["occurred_at"], bool)
-                    or not hmac.compare_digest(row["previous_sha256"], anchor_prior)
-                    or not hmac.compare_digest(
-                        row["anchor_sha256"],
-                        canonical_sha256(self._integrity_anchor_material(row)),
-                    )
-                ):
-                    raise VaultIntegrityError(
-                        "document_vault_completeness_anchor_invalid"
-                    )
-                correlation = (
-                    event_type,
-                    row["document_sha256"],
-                    row["audit_detail_sha256"],
-                    row["occurred_at"],
-                )
-                anchor_correlations[correlation] = (
-                    anchor_correlations.get(correlation, 0) + 1
-                )
-                if kind == "authority":
-                    authority_anchors.setdefault(row["document_sha256"], []).append(row)
-                else:
-                    tombstone_anchors.setdefault(row["document_sha256"], []).append(row)
-                anchor_prior = row["anchor_sha256"]
-                anchor_expected += 1
-                anchor_count += 1
-            if (
-                anchor_count != integrity_state["anchor_count"]
-                or not hmac.compare_digest(
-                    anchor_prior, integrity_state["terminal_sha256"]
-                )
-            ):
-                raise VaultIntegrityError("document_vault_completeness_state_invalid")
+            self._verify_document_correlations(
+                tombstone_anchors, anchor_correlations, audit_correlations,
+            )
 
-            legacy_document_shas = {
-                document_sha
-                for document_sha, rows in tombstone_anchors.items()
-                if any(row["record_kind"] == "legacy_tombstone" for row in rows)
-            }
-            for key, count in anchor_correlations.items():
-                if audit_correlations.get(key) != count:
-                    raise VaultIntegrityError(
-                        "document_vault_completeness_audit_invalid"
-                    )
-            for key, count in audit_correlations.items():
-                if (
-                    anchor_correlations.get(key) != count
-                    and not (
-                        key[0] in {_INGEST_EVENT, _REVOKE_EVENT}
-                        and key[1] in legacy_document_shas
-                    )
-                ):
-                    raise VaultIntegrityError(
-                        "document_vault_completeness_audit_invalid"
-                    )
-
-            for document_ref, head in document_rows.items():
-                document_sha = _text_sha256(document_ref)
-                if document_sha in tombstone_rows or document_sha in tombstone_anchors:
-                    raise VaultIntegrityError(
-                        "document_vault_tombstone_completeness_invalid"
-                    )
-                expected_content_revisions = set(
-                    range(1, int(head["content_revision"]) + 1)
-                )
-                actual_content_revisions = {
-                    revision
-                    for ref, revision in revision_rows
-                    if ref == document_ref
-                }
-                current_content = revision_rows.get(
-                    (document_ref, head["content_revision"])
-                )
-                if (
-                    actual_content_revisions != expected_content_revisions
-                    or current_content is None
-                    or current_content["content_sha256"] != head["content_sha256"]
-                    or current_content["byte_size"] != head["byte_size"]
-                ):
-                    raise VaultIntegrityError(
-                        "document_vault_content_integrity_invalid"
-                    )
-                history = authority_rows.get(document_ref, [])
-                anchors = authority_anchors.get(document_sha, [])
-                expected_authority_revisions = list(
-                    range(1, int(head["authority_revision"]) + 1)
-                )
-                if (
-                    [row["authority_revision"] for row in history]
-                    != expected_authority_revisions
-                    or [row["authority_revision"] for row in anchors]
-                    != expected_authority_revisions
-                ):
-                    raise VaultIntegrityError(
-                        "document_vault_authority_completeness_invalid"
-                    )
-                for authority_row, anchor in zip(history, anchors, strict=True):
-                    revision = authority_row["authority_revision"]
-                    expected_state = "active" if revision == 1 else "revoked"
-                    expected_event = _INGEST_EVENT if revision == 1 else _REVOKE_EVENT
-                    expected_authority_sha = canonical_sha256(
-                        _authority_material(
-                            tenant_sha256=self.tenant_sha256,
-                            document_ref=document_ref,
-                            product_area=head["product_area"],
-                            record_type=head["record_type"],
-                            safe_display_name=head["safe_display_name"],
-                            media_type=head["media_type"],
-                            byte_size=head["byte_size"],
-                            content_sha256=head["content_sha256"],
-                            content_revision=authority_row["content_revision"],
-                            authority_revision=revision,
-                            state=expected_state,
-                        )
-                    )
-                    detail = (
-                        {
-                            "authority_sha256": expected_authority_sha,
-                            "content_sha256": head["content_sha256"],
-                        }
-                        if revision == 1
-                        else {
-                            "authority_revision": revision,
-                            "authority_sha256": expected_authority_sha,
-                        }
-                    )
-                    if (
-                        authority_row["state"] != expected_state
-                        or authority_row["authority_sha256"] != expected_authority_sha
-                        or anchor["event_type"] != expected_event
-                        or anchor["authority_sha256"] != expected_authority_sha
-                        or anchor["record_sha256"] != authority_row["row_sha256"]
-                        or anchor["audit_detail_sha256"]
-                        != canonical_sha256(detail)
-                        or anchor["occurred_at"] != authority_row["occurred_at"]
-                    ):
-                        raise VaultIntegrityError(
-                            "document_vault_authority_completeness_invalid"
-                        )
-                latest = history[-1]
-                if (
-                    latest["content_revision"] != head["content_revision"]
-                    or latest["state"] != head["state"]
-                    or latest["authority_sha256"] != head["authority_sha256"]
-                ):
-                    raise VaultIntegrityError(
-                        "document_vault_authority_completeness_invalid"
-                    )
-
-            for document_ref in authority_rows:
-                if document_ref not in document_rows:
-                    raise VaultIntegrityError(
-                        "document_vault_authority_completeness_invalid"
-                    )
-            for document_sha, tombstone_row in tombstone_rows.items():
-                if document_sha in documents_by_sha:
-                    raise VaultIntegrityError(
-                        "document_vault_tombstone_completeness_invalid"
-                    )
-                anchors = tombstone_anchors.get(document_sha, [])
-                if len(anchors) != 1:
-                    raise VaultIntegrityError(
-                        "document_vault_tombstone_completeness_invalid"
-                    )
-                anchor = anchors[0]
-                if (
-                    anchor["record_sha256"] != tombstone_row["tombstone_sha256"]
-                    or anchor["authority_sha256"]
-                    != tombstone_row["final_authority_sha256"]
-                    or anchor["occurred_at"] != tombstone_row["purged_at"]
-                    or anchor["audit_detail_sha256"]
-                    != canonical_sha256(
-                        {"tombstone_sha256": tombstone_row["tombstone_sha256"]}
-                    )
-                ):
-                    raise VaultIntegrityError(
-                        "document_vault_tombstone_completeness_invalid"
-                    )
-                historical = authority_anchors.get(document_sha, [])
-                if anchor["record_kind"] == "legacy_tombstone":
-                    if historical:
-                        raise VaultIntegrityError(
-                            "document_vault_authority_completeness_invalid"
-                        )
-                    continue
-                expected_revisions = list(
-                    range(1, int(anchor["authority_revision"]) + 1)
-                )
-                if (
-                    [row["authority_revision"] for row in historical]
-                    != expected_revisions
-                    or not historical
-                    or historical[-1]["authority_sha256"]
-                    != tombstone_row["final_authority_sha256"]
-                ):
-                    raise VaultIntegrityError(
-                        "document_vault_authority_completeness_invalid"
-                    )
-                for history_anchor in historical:
-                    revision = history_anchor["authority_revision"]
-                    detail = (
-                        {
-                            "authority_sha256": history_anchor["authority_sha256"],
-                            "content_sha256": tombstone_row["final_content_sha256"],
-                        }
-                        if revision == 1
-                        else {
-                            "authority_revision": revision,
-                            "authority_sha256": history_anchor["authority_sha256"],
-                        }
-                    )
-                    if history_anchor["audit_detail_sha256"] != canonical_sha256(detail):
-                        raise VaultIntegrityError(
-                            "document_vault_authority_completeness_invalid"
-                        )
-            if set(tombstone_anchors) != set(tombstone_rows):
-                raise VaultIntegrityError(
-                    "document_vault_tombstone_completeness_invalid"
-                )
-            if set(authority_anchors) - (set(documents_by_sha) | set(tombstone_rows)):
-                raise VaultIntegrityError(
-                    "document_vault_authority_completeness_invalid"
-                )
+            self._verify_document_heads(
+                document_rows, tombstone_rows, tombstone_anchors, revision_rows, authority_rows, authority_anchors,
+            )
+            self._verify_document_tombstones(
+                tombstone_rows, documents_by_sha, tombstone_anchors, authority_anchors,
+            )
         return {
             "schema": "lightwork.governed-document-vault-integrity.v1",
             "ok": True,
@@ -2169,6 +1813,440 @@ class GovernedDocumentVault:
             "audit_head_sha256": prior,
             "content_verified": verify_content,
         }
+
+    def _verify_document_content_rows(
+        self, connection, verify_content,
+    ):
+        documents = revisions = 0
+        document_rows: dict[str, sqlite3.Row] = {}
+        documents_by_sha: dict[str, sqlite3.Row] = {}
+        for row in connection.execute(
+            "SELECT * FROM governed_documents ORDER BY document_ref"
+        ):
+            self._head_on(connection, row["document_ref"])
+            document_sha = _text_sha256(row["document_ref"])
+            if document_sha in documents_by_sha:
+                raise VaultIntegrityError(
+                    "document_vault_document_integrity_invalid"
+                )
+            document_rows[row["document_ref"]] = row
+            documents_by_sha[document_sha] = row
+            documents += 1
+        revision_rows: dict[tuple[str, int], sqlite3.Row] = {}
+        for row in connection.execute(
+            "SELECT * FROM governed_document_revisions ORDER BY document_ref,content_revision"
+        ):
+            ciphertext = bytes(row["encrypted_content"])
+            material = {
+                "schema": "lightwork.governed-document-content-revision.v1",
+                "document_ref": row["document_ref"],
+                "content_revision": row["content_revision"],
+                "ciphertext_sha256": row["ciphertext_sha256"],
+                "content_sha256": row["content_sha256"],
+                "byte_size": row["byte_size"],
+                "created_at": row["created_at"],
+            }
+            if (
+                not hmac.compare_digest(row["row_sha256"], canonical_sha256(material))
+                or not hmac.compare_digest(
+                    row["ciphertext_sha256"], hashlib.sha256(ciphertext).hexdigest()
+                )
+            ):
+                raise VaultIntegrityError("document_vault_content_integrity_invalid")
+            if verify_content:
+                try:
+                    from .crypto_at_rest import unseal
+
+                    with tenant_scope(tenant=self.tenant_id):
+                        plaintext = unseal(ciphertext)
+                except Exception as exc:
+                    raise VaultIntegrityError("document_vault_content_decryption_failed") from exc
+                if (
+                    len(plaintext) != row["byte_size"]
+                    or not hmac.compare_digest(
+                        hashlib.sha256(plaintext).hexdigest(), row["content_sha256"]
+                    )
+                ):
+                    raise VaultIntegrityError("document_vault_content_integrity_invalid")
+            key = (row["document_ref"], row["content_revision"])
+            if key in revision_rows:
+                raise VaultIntegrityError("document_vault_content_integrity_invalid")
+            revision_rows[key] = row
+            revisions += 1
+        return (
+            document_rows, documents_by_sha, revision_rows, documents, revisions,
+        )
+
+
+    def _verify_document_authority_rows(
+        self, connection,
+    ):
+        authorities = grants = tombstones = 0
+        authority_rows: dict[str, list[sqlite3.Row]] = {}
+        for row in connection.execute(
+            "SELECT * FROM governed_document_authorities "
+            "ORDER BY document_ref,authority_revision"
+        ):
+            if not hmac.compare_digest(
+                row["row_sha256"],
+                canonical_sha256(self._authority_material(row)),
+            ):
+                raise VaultIntegrityError(
+                    "document_vault_authority_integrity_invalid"
+                )
+            authority_rows.setdefault(row["document_ref"], []).append(row)
+            authorities += 1
+        for row in connection.execute("SELECT * FROM governed_document_grants"):
+            self._grant_on(connection, row["grant_sha256"])
+            grants += 1
+        tombstone_rows: dict[str, sqlite3.Row] = {}
+        for row in connection.execute(
+            "SELECT * FROM governed_document_tombstones ORDER BY document_sha256"
+        ):
+            if not hmac.compare_digest(
+                row["tombstone_sha256"],
+                canonical_sha256(self._tombstone_material(row)),
+            ):
+                raise VaultIntegrityError(
+                    "document_vault_tombstone_integrity_invalid"
+                )
+            tombstone_rows[row["document_sha256"]] = row
+            tombstones += 1
+        return (
+            authority_rows, tombstone_rows, authorities, grants, tombstones,
+        )
+
+
+    def _verify_document_audit_rows(
+        self, connection,
+    ):
+        events = 0
+        prior = GENESIS_SHA256
+        expected = 1
+        audit_correlations: dict[tuple[object, ...], int] = {}
+        for row in connection.execute("SELECT * FROM governed_document_audit ORDER BY sequence"):
+            material = {
+                "schema": "lightwork.governed-document-vault-audit.v1",
+                "sequence": row["sequence"],
+                "event_type": row["event_type"],
+                "subject_sha256": row["subject_sha256"],
+                "actor_sha256": row["actor_sha256"],
+                "detail_sha256": row["detail_sha256"],
+                "occurred_at": row["occurred_at"],
+                "previous_sha256": row["previous_sha256"],
+            }
+            if (
+                row["sequence"] != expected
+                or not hmac.compare_digest(row["previous_sha256"], prior)
+                or not hmac.compare_digest(row["event_sha256"], canonical_sha256(material))
+            ):
+                raise VaultIntegrityError("document_vault_audit_integrity_invalid")
+            prior = row["event_sha256"]
+            expected += 1
+            events += 1
+            if row["event_type"] in {_INGEST_EVENT, _REVOKE_EVENT, _PURGE_EVENT}:
+                key = (
+                    row["event_type"],
+                    row["subject_sha256"],
+                    row["detail_sha256"],
+                    row["occurred_at"],
+                )
+                audit_correlations[key] = audit_correlations.get(key, 0) + 1
+        return (
+            prior, events, audit_correlations,
+        )
+
+
+    def _verify_document_anchor_rows(
+        self, connection, integrity_state,
+    ):
+        anchor_count = 0
+        authority_anchors: dict[str, list[sqlite3.Row]] = {}
+        tombstone_anchors: dict[str, list[sqlite3.Row]] = {}
+        anchor_correlations: dict[tuple[object, ...], int] = {}
+        anchor_prior = GENESIS_SHA256
+        anchor_expected = 1
+        for row in connection.execute(
+            "SELECT * FROM governed_document_integrity_anchors ORDER BY sequence"
+        ):
+            kind = row["record_kind"]
+            revision = row["authority_revision"]
+            event_type = row["event_type"]
+            strings = (
+                row["document_sha256"],
+                row["authority_sha256"],
+                row["record_sha256"],
+                row["audit_detail_sha256"],
+                row["previous_sha256"],
+                row["anchor_sha256"],
+            )
+            kind_valid = (
+                kind == "authority"
+                and isinstance(revision, int)
+                and not isinstance(revision, bool)
+                and revision >= 1
+                and event_type
+                == (_INGEST_EVENT if revision == 1 else _REVOKE_EVENT)
+            ) or (
+                kind == "tombstone"
+                and isinstance(revision, int)
+                and not isinstance(revision, bool)
+                and revision >= 1
+                and event_type == _PURGE_EVENT
+            ) or (
+                kind == "legacy_tombstone"
+                and revision == 0
+                and event_type == _PURGE_EVENT
+            )
+            if (
+                row["sequence"] != anchor_expected
+                or not kind_valid
+                or any(
+                    not isinstance(value, str)
+                    or _DIGEST_RE.fullmatch(value) is None
+                    for value in strings
+                )
+                or not isinstance(row["occurred_at"], (int, float))
+                or isinstance(row["occurred_at"], bool)
+                or not hmac.compare_digest(row["previous_sha256"], anchor_prior)
+                or not hmac.compare_digest(
+                    row["anchor_sha256"],
+                    canonical_sha256(self._integrity_anchor_material(row)),
+                )
+            ):
+                raise VaultIntegrityError(
+                    "document_vault_completeness_anchor_invalid"
+                )
+            correlation = (
+                event_type,
+                row["document_sha256"],
+                row["audit_detail_sha256"],
+                row["occurred_at"],
+            )
+            anchor_correlations[correlation] = (
+                anchor_correlations.get(correlation, 0) + 1
+            )
+            if kind == "authority":
+                authority_anchors.setdefault(row["document_sha256"], []).append(row)
+            else:
+                tombstone_anchors.setdefault(row["document_sha256"], []).append(row)
+            anchor_prior = row["anchor_sha256"]
+            anchor_expected += 1
+            anchor_count += 1
+        if (
+            anchor_count != integrity_state["anchor_count"]
+            or not hmac.compare_digest(
+                anchor_prior, integrity_state["terminal_sha256"]
+            )
+        ):
+            raise VaultIntegrityError("document_vault_completeness_state_invalid")
+        return (
+            authority_anchors, tombstone_anchors, anchor_correlations, anchor_prior, anchor_count,
+        )
+
+
+    def _verify_document_correlations(
+        self, tombstone_anchors, anchor_correlations, audit_correlations,
+    ):
+        legacy_document_shas = {
+            document_sha
+            for document_sha, rows in tombstone_anchors.items()
+            if any(row["record_kind"] == "legacy_tombstone" for row in rows)
+        }
+        for key, count in anchor_correlations.items():
+            if audit_correlations.get(key) != count:
+                raise VaultIntegrityError(
+                    "document_vault_completeness_audit_invalid"
+                )
+        for key, count in audit_correlations.items():
+            if (
+                anchor_correlations.get(key) != count
+                and not (
+                    key[0] in {_INGEST_EVENT, _REVOKE_EVENT}
+                    and key[1] in legacy_document_shas
+                )
+            ):
+                raise VaultIntegrityError(
+                    "document_vault_completeness_audit_invalid"
+                )
+
+
+    def _verify_document_heads(
+        self, document_rows, tombstone_rows, tombstone_anchors, revision_rows, authority_rows, authority_anchors,
+    ):
+        for document_ref, head in document_rows.items():
+            document_sha = _text_sha256(document_ref)
+            if document_sha in tombstone_rows or document_sha in tombstone_anchors:
+                raise VaultIntegrityError(
+                    "document_vault_tombstone_completeness_invalid"
+                )
+            expected_content_revisions = set(
+                range(1, int(head["content_revision"]) + 1)
+            )
+            actual_content_revisions = {
+                revision
+                for ref, revision in revision_rows
+                if ref == document_ref
+            }
+            current_content = revision_rows.get(
+                (document_ref, head["content_revision"])
+            )
+            if (
+                actual_content_revisions != expected_content_revisions
+                or current_content is None
+                or current_content["content_sha256"] != head["content_sha256"]
+                or current_content["byte_size"] != head["byte_size"]
+            ):
+                raise VaultIntegrityError(
+                    "document_vault_content_integrity_invalid"
+                )
+            history = authority_rows.get(document_ref, [])
+            anchors = authority_anchors.get(document_sha, [])
+            expected_authority_revisions = list(
+                range(1, int(head["authority_revision"]) + 1)
+            )
+            if (
+                [row["authority_revision"] for row in history]
+                != expected_authority_revisions
+                or [row["authority_revision"] for row in anchors]
+                != expected_authority_revisions
+            ):
+                raise VaultIntegrityError(
+                    "document_vault_authority_completeness_invalid"
+                )
+            for authority_row, anchor in zip(history, anchors, strict=True):
+                revision = authority_row["authority_revision"]
+                expected_state = "active" if revision == 1 else "revoked"
+                expected_event = _INGEST_EVENT if revision == 1 else _REVOKE_EVENT
+                expected_authority_sha = canonical_sha256(
+                    _authority_material(
+                        tenant_sha256=self.tenant_sha256,
+                        document_ref=document_ref,
+                        product_area=head["product_area"],
+                        record_type=head["record_type"],
+                        safe_display_name=head["safe_display_name"],
+                        media_type=head["media_type"],
+                        byte_size=head["byte_size"],
+                        content_sha256=head["content_sha256"],
+                        content_revision=authority_row["content_revision"],
+                        authority_revision=revision,
+                        state=expected_state,
+                    )
+                )
+                detail = (
+                    {
+                        "authority_sha256": expected_authority_sha,
+                        "content_sha256": head["content_sha256"],
+                    }
+                    if revision == 1
+                    else {
+                        "authority_revision": revision,
+                        "authority_sha256": expected_authority_sha,
+                    }
+                )
+                if (
+                    authority_row["state"] != expected_state
+                    or authority_row["authority_sha256"] != expected_authority_sha
+                    or anchor["event_type"] != expected_event
+                    or anchor["authority_sha256"] != expected_authority_sha
+                    or anchor["record_sha256"] != authority_row["row_sha256"]
+                    or anchor["audit_detail_sha256"]
+                    != canonical_sha256(detail)
+                    or anchor["occurred_at"] != authority_row["occurred_at"]
+                ):
+                    raise VaultIntegrityError(
+                        "document_vault_authority_completeness_invalid"
+                    )
+            latest = history[-1]
+            if (
+                latest["content_revision"] != head["content_revision"]
+                or latest["state"] != head["state"]
+                or latest["authority_sha256"] != head["authority_sha256"]
+            ):
+                raise VaultIntegrityError(
+                    "document_vault_authority_completeness_invalid"
+                )
+
+        for document_ref in authority_rows:
+            if document_ref not in document_rows:
+                raise VaultIntegrityError(
+                    "document_vault_authority_completeness_invalid"
+                )
+
+
+    def _verify_document_tombstones(
+        self, tombstone_rows, documents_by_sha, tombstone_anchors, authority_anchors,
+    ):
+        for document_sha, tombstone_row in tombstone_rows.items():
+            if document_sha in documents_by_sha:
+                raise VaultIntegrityError(
+                    "document_vault_tombstone_completeness_invalid"
+                )
+            anchors = tombstone_anchors.get(document_sha, [])
+            if len(anchors) != 1:
+                raise VaultIntegrityError(
+                    "document_vault_tombstone_completeness_invalid"
+                )
+            anchor = anchors[0]
+            if (
+                anchor["record_sha256"] != tombstone_row["tombstone_sha256"]
+                or anchor["authority_sha256"]
+                != tombstone_row["final_authority_sha256"]
+                or anchor["occurred_at"] != tombstone_row["purged_at"]
+                or anchor["audit_detail_sha256"]
+                != canonical_sha256(
+                    {"tombstone_sha256": tombstone_row["tombstone_sha256"]}
+                )
+            ):
+                raise VaultIntegrityError(
+                    "document_vault_tombstone_completeness_invalid"
+                )
+            historical = authority_anchors.get(document_sha, [])
+            if anchor["record_kind"] == "legacy_tombstone":
+                if historical:
+                    raise VaultIntegrityError(
+                        "document_vault_authority_completeness_invalid"
+                    )
+                continue
+            expected_revisions = list(
+                range(1, int(anchor["authority_revision"]) + 1)
+            )
+            if (
+                [row["authority_revision"] for row in historical]
+                != expected_revisions
+                or not historical
+                or historical[-1]["authority_sha256"]
+                != tombstone_row["final_authority_sha256"]
+            ):
+                raise VaultIntegrityError(
+                    "document_vault_authority_completeness_invalid"
+                )
+            for history_anchor in historical:
+                revision = history_anchor["authority_revision"]
+                detail = (
+                    {
+                        "authority_sha256": history_anchor["authority_sha256"],
+                        "content_sha256": tombstone_row["final_content_sha256"],
+                    }
+                    if revision == 1
+                    else {
+                        "authority_revision": revision,
+                        "authority_sha256": history_anchor["authority_sha256"],
+                    }
+                )
+                if history_anchor["audit_detail_sha256"] != canonical_sha256(detail):
+                    raise VaultIntegrityError(
+                        "document_vault_authority_completeness_invalid"
+                    )
+        if set(tombstone_anchors) != set(tombstone_rows):
+            raise VaultIntegrityError(
+                "document_vault_tombstone_completeness_invalid"
+            )
+        if set(authority_anchors) - (set(documents_by_sha) | set(tombstone_rows)):
+            raise VaultIntegrityError(
+                "document_vault_authority_completeness_invalid"
+            )
+
 
     def status(self) -> dict[str, object]:
         integrity = self.verify_integrity(verify_content=False)

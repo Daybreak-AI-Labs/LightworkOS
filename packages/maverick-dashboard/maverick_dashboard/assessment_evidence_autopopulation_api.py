@@ -127,15 +127,8 @@ def _jsonable(value: Any) -> Any:
     return value
 
 
-def create_assessment_evidence_autopopulation_router(  # noqa: C901
-    dependencies: AssessmentEvidenceDependencies | None = None,
-) -> APIRouter:
-    deps = dependencies or AssessmentEvidenceDependencies()
-    router = APIRouter(
-        prefix="/assessment-evidence-autopopulation",
-        tags=["assessment-evidence-autopopulation"],
-    )
-
+def _assessment_evidence_autopopulation_enabled_routes(deps):
+    """Bind enabled and related router operations."""
     def enabled(request: Request, tenant: str) -> bool:
         selected = getattr(
             request.app.state,
@@ -230,7 +223,11 @@ def create_assessment_evidence_autopopulation_router(  # noqa: C901
         ):
             return HTTPException(status_code=503, detail=str(exc))
         return HTTPException(status_code=503, detail="assessment evidence operation failed")
+    return enabled, service, translate
 
+
+def _assessment_evidence_autopopulation_status_routes(deps, enabled, router, service, translate):
+    """Bind status and related router operations."""
     @router.get("/status")
     async def status(request: Request) -> dict[str, Any]:
         require_permission(request, "audit")
@@ -389,6 +386,9 @@ def create_assessment_evidence_autopopulation_router(  # noqa: C901
             raise translate(exc) from exc
         return {"purged_ids": list(purged), "purged": len(purged)}
 
+
+def _assessment_evidence_autopopulation_integrity_routes(router, service, translate):
+    """Bind integrity and related router operations."""
     @router.get("/integrity")
     async def integrity(request: Request) -> dict[str, Any]:
         require_permission(request, "audit")
@@ -398,6 +398,20 @@ def create_assessment_evidence_autopopulation_router(  # noqa: C901
         except Exception as exc:
             raise translate(exc) from exc
         return _jsonable(report)
+
+
+def create_assessment_evidence_autopopulation_router(
+    dependencies: AssessmentEvidenceDependencies | None = None,
+) -> APIRouter:
+    deps = dependencies or AssessmentEvidenceDependencies()
+    router = APIRouter(
+        prefix="/assessment-evidence-autopopulation",
+        tags=["assessment-evidence-autopopulation"],
+    )
+
+    enabled, service, translate = _assessment_evidence_autopopulation_enabled_routes(deps)
+    _assessment_evidence_autopopulation_status_routes(deps, enabled, router, service, translate)
+    _assessment_evidence_autopopulation_integrity_routes(router, service, translate)
 
     return router
 

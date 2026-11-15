@@ -16,6 +16,9 @@ from maverick import backup, client, config, crypto_at_rest, file_lock, quotas
 from maverick import workspace_recovery as recovery
 from maverick.paths import data_dir, tenant_scope
 
+# The workspace fixture replaces this with a fixed label; one test needs the real one.
+_APPLICATION_IDENTITY = recovery.application_identity
+
 
 @pytest.fixture(autouse=True)
 def isolated_workspace(monkeypatch, tmp_path):
@@ -707,3 +710,26 @@ def test_the_fresh_rehearsal_process_runs_the_same_application_code(tmp_path, mo
     assert str(Path(importlib.util.find_spec("maverick").origin).parent.parent) in roots
     assert "/somewhere/else" not in roots
     assert "MAVERICK_ENCRYPTION_KEY" not in environment
+
+
+def test_application_identity_ignores_generated_grpc_stubs(tmp_path, monkeypatch):
+    # The gRPC stubs are written into the package at run time, the first time
+    # anything needs them. Their appearance must not read as a different build,
+    # or a bootstrap recovery in progress is refused part-way through.
+    package = tmp_path / "pkg"
+    (package / "grpc_api").mkdir(parents=True)
+    (package / "__init__.py").write_text("")
+    (package / "module.py").write_text("value = 1\n")
+    spec = SimpleNamespace(origin=str(package / "__init__.py"))
+    monkeypatch.setattr(recovery, "_COHORT", ("pkg",))
+    monkeypatch.setattr(
+        recovery, "importlib",
+        SimpleNamespace(util=SimpleNamespace(find_spec=lambda name: spec)))
+
+    before = _APPLICATION_IDENTITY()
+    (package / "grpc_api" / "maverick_pb2.py").write_text("# generated\n")
+    (package / "grpc_api" / "maverick_pb2_grpc.py").write_text("# generated\n")
+    assert _APPLICATION_IDENTITY() == before
+
+    (package / "module.py").write_text("value = 2\n")
+    assert _APPLICATION_IDENTITY() != before

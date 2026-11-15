@@ -3005,114 +3005,146 @@ def _coerce_table(setting: Setting, value: object) -> dict:  # noqa: C901 - one 
     return out
 
 
-def _coerce_cell(setting: Setting, column: Column, value: object) -> object:  # noqa: C901 - one branch per column kind
+def _coerce_cell(setting: Setting, column: Column, value: object) -> object:
     """Validate one cell of a grid or rules row."""
     where = f"{setting.label}, {column.label.lower()}"
     kind = column.kind
     allowed = [v for v, _ in column.choices]
     if kind in {"select", "pick"}:
-        if value is None:
-            value = column.default if column.default is not None else ""
-        text = value if isinstance(value, str) else None
-        if text is None or text not in allowed and not (text == "" and not column.required):
-            raise SettingError(f"{where}: choose one of the listed options.")
-        if column.required and not text:
-            raise SettingError(f"{where}: choose an option for each row.")
-        return text
+        return _coerce_cell_select(column, value, where, allowed)
     if kind == "picks":
-        if value is None:
-            value = []
-        if not isinstance(value, list) or len(value) > column.max_items:
-            raise SettingError(f"{where}: choose at most {column.max_items}.")
-        picked: list[str] = []
-        for item in value:
-            if not isinstance(item, str) or item not in allowed:
-                raise SettingError(f"{where}: choose from the listed options.")
-            if item not in picked:
-                picked.append(item)
-        if column.required and not picked:
-            raise SettingError(f"{where}: choose at least one for each row.")
-        return picked
+        return _coerce_cell_picks(column, value, where, allowed)
     if kind == "switch":
-        if value is None:
-            value = bool(column.default)
-        if not isinstance(value, bool):
-            raise SettingError(f"{where}: choose on or off.")
-        return value
+        return _coerce_cell_switch(column, value, where)
     if kind == "number":
-        if value is None or value == "":
-            raise SettingError(f"{where}: enter a number for each row.")
-        if not _is_number(value) or not math.isfinite(float(value)):
-            raise SettingError(f"{where}: enter a number.")
-        if column.minimum is not None and value < column.minimum:
-            raise SettingError(f"{where}: enter at least {_fmt(column.minimum)}.")
-        if column.maximum is not None and value > column.maximum:
-            raise SettingError(f"{where}: enter at most {_fmt(column.maximum)}.")
-        if column.integer:
-            if value != int(value):
-                raise SettingError(f"{where}: enter a whole number.")
-            return int(value)
-        return float(value)
+        return _coerce_cell_number(column, value, where)
     if kind in {"path", "program"}:
-        # A file on the server (``program``: one Lightwork runs).
-        text = "" if value is None else value
-        if not isinstance(text, str):
-            raise SettingError(f"{where}: enter a location on the server.")
-        text = text.strip()
-        if not text:
-            if column.required:
-                raise SettingError(f"{where}: fill this in for each row.")
-            return ""
-        from . import settings_paths
-
-        try:
-            return settings_paths.check(text, kind="file", program=kind == "program")
-        except settings_paths.PathRefused as exc:
-            raise SettingError(f"{where}: {exc}") from exc
+        return _coerce_cell_path(column, value, where, kind)
     if kind == "color":
-        text = "" if value is None else value
-        if not isinstance(text, str) or (text and not re.fullmatch(_COLOR, text.strip())):
-            raise SettingError(f"{where}: choose a colour.")
-        if column.required and not text.strip():
-            raise SettingError(f"{where}: choose a colour for each row.")
-        return text.strip().lower()
+        return _coerce_cell_color(column, value, where)
     if kind in {"text", "secret"}:
-        if value is None:
-            value = ""
-        if not isinstance(value, str):
-            raise SettingError(f"{where}: enter text.")
-        text = value.strip()
-        if len(text) > column.max_length:
-            raise SettingError(f"{where}: use at most {column.max_length} characters.")
-        if text and column.pattern and not re.fullmatch(column.pattern, text):
-            raise SettingError(f"{where}: each entry must be {column.item_error}.")
-        if kind == "text" and column.required and not text:
-            raise SettingError(f"{where}: fill this in for each row.")
-        return text  # an empty secret keeps the row's saved one (settings_all_page)
+        return _coerce_cell_text(column, value, where, kind)
     if kind == "words":
-        if value is None:
-            value = ""
-        if isinstance(value, str):
-            value = value.split(",")
-        if not isinstance(value, list) or len(value) > column.max_items:
-            raise SettingError(f"{where}: use at most {column.max_items} entries.")
-        words: list[str] = []
-        for raw in value:
-            if not isinstance(raw, str):
-                raise SettingError(f"{where}: each entry must be text.")
-            item = raw.strip()
-            if not item:
-                continue
-            if len(item) > column.max_length or (
-                column.pattern and not re.fullmatch(column.pattern, item)
-            ):
-                raise SettingError(f"{where}: each entry must be {column.item_error}.")
-            if item not in words:
-                words.append(item)
-        if column.required and not words:
-            raise SettingError(f"{where}: enter at least one for each row.")
-        return words
+        return _coerce_cell_words(column, value, where)
     raise SettingError(f"{setting.label}: this setting cannot be changed here.")  # pragma: no cover
+
+
+def _coerce_cell_select(column, value, where, allowed):
+    if value is None:
+        value = column.default if column.default is not None else ""
+    text = value if isinstance(value, str) else None
+    if text is None or text not in allowed and not (text == "" and not column.required):
+        raise SettingError(f"{where}: choose one of the listed options.")
+    if column.required and not text:
+        raise SettingError(f"{where}: choose an option for each row.")
+    return text
+
+
+def _coerce_cell_picks(column, value, where, allowed):
+    if value is None:
+        value = []
+    if not isinstance(value, list) or len(value) > column.max_items:
+        raise SettingError(f"{where}: choose at most {column.max_items}.")
+    picked: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or item not in allowed:
+            raise SettingError(f"{where}: choose from the listed options.")
+        if item not in picked:
+            picked.append(item)
+    if column.required and not picked:
+        raise SettingError(f"{where}: choose at least one for each row.")
+    return picked
+
+
+def _coerce_cell_switch(column, value, where):
+    if value is None:
+        value = bool(column.default)
+    if not isinstance(value, bool):
+        raise SettingError(f"{where}: choose on or off.")
+    return value
+
+
+def _coerce_cell_number(column, value, where):
+    if value is None or value == "":
+        raise SettingError(f"{where}: enter a number for each row.")
+    if not _is_number(value) or not math.isfinite(float(value)):
+        raise SettingError(f"{where}: enter a number.")
+    if column.minimum is not None and value < column.minimum:
+        raise SettingError(f"{where}: enter at least {_fmt(column.minimum)}.")
+    if column.maximum is not None and value > column.maximum:
+        raise SettingError(f"{where}: enter at most {_fmt(column.maximum)}.")
+    if column.integer:
+        if value != int(value):
+            raise SettingError(f"{where}: enter a whole number.")
+        return int(value)
+    return float(value)
+
+
+def _coerce_cell_path(column, value, where, kind):
+    # A file on the server (``program``: one Lightwork runs).
+    text = "" if value is None else value
+    if not isinstance(text, str):
+        raise SettingError(f"{where}: enter a location on the server.")
+    text = text.strip()
+    if not text:
+        if column.required:
+            raise SettingError(f"{where}: fill this in for each row.")
+        return ""
+    from . import settings_paths
+
+    try:
+        return settings_paths.check(text, kind="file", program=kind == "program")
+    except settings_paths.PathRefused as exc:
+        raise SettingError(f"{where}: {exc}") from exc
+
+
+def _coerce_cell_color(column, value, where):
+    text = "" if value is None else value
+    if not isinstance(text, str) or (text and not re.fullmatch(_COLOR, text.strip())):
+        raise SettingError(f"{where}: choose a colour.")
+    if column.required and not text.strip():
+        raise SettingError(f"{where}: choose a colour for each row.")
+    return text.strip().lower()
+
+
+def _coerce_cell_text(column, value, where, kind):
+    if value is None:
+        value = ""
+    if not isinstance(value, str):
+        raise SettingError(f"{where}: enter text.")
+    text = value.strip()
+    if len(text) > column.max_length:
+        raise SettingError(f"{where}: use at most {column.max_length} characters.")
+    if text and column.pattern and not re.fullmatch(column.pattern, text):
+        raise SettingError(f"{where}: each entry must be {column.item_error}.")
+    if kind == "text" and column.required and not text:
+        raise SettingError(f"{where}: fill this in for each row.")
+    return text  # an empty secret keeps the row's saved one (settings_all_page)
+
+
+def _coerce_cell_words(column, value, where):
+    if value is None:
+        value = ""
+    if isinstance(value, str):
+        value = value.split(",")
+    if not isinstance(value, list) or len(value) > column.max_items:
+        raise SettingError(f"{where}: use at most {column.max_items} entries.")
+    words: list[str] = []
+    for raw in value:
+        if not isinstance(raw, str):
+            raise SettingError(f"{where}: each entry must be text.")
+        item = raw.strip()
+        if not item:
+            continue
+        if len(item) > column.max_length or (
+            column.pattern and not re.fullmatch(column.pattern, item)
+        ):
+            raise SettingError(f"{where}: each entry must be {column.item_error}.")
+        if item not in words:
+            words.append(item)
+    if column.required and not words:
+        raise SettingError(f"{where}: enter at least one for each row.")
+    return words
 
 
 def _grid_spec(setting: Setting, row: dict) -> object:

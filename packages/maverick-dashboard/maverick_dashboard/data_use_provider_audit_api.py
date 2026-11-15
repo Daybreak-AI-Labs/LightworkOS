@@ -239,15 +239,8 @@ def _jsonable(value: Any) -> Any:
     return value
 
 
-def create_data_use_provider_audit_router(  # noqa: C901 - one closed operator surface
-    dependencies: DataUseProviderAuditDependencies | None = None,
-) -> APIRouter:
-    deps = dependencies or DataUseProviderAuditDependencies()
-    router = APIRouter(
-        prefix="/data-use/providers/audit",
-        tags=["data-use-provider-audit"],
-    )
-
+def _data_use_provider_audit_authority_routes(deps):
+    """Bind authority and related router operations."""
     def authority(request: Request):
         from maverick import data_use_provider_audit as audit
 
@@ -316,7 +309,11 @@ def create_data_use_provider_audit_router(  # noqa: C901 - one closed operator s
                 status_code=503,
                 detail="provider-audit dependency is unavailable",
             ) from exc
+    return authority, call
 
+
+def _data_use_provider_audit_worker_for_routes(authority, call, deps, router):
+    """Bind worker for and related router operations."""
     def worker_for(
         request: Request,
         tenant: str,
@@ -529,7 +526,11 @@ def create_data_use_provider_audit_router(  # noqa: C901 - one closed operator s
         if isinstance(result, dict):
             result["valid"] = True
         return result
+    return read_grants_for, worker_for
 
+
+def _data_use_provider_audit_run_once_routes(authority, call, read_grants_for, router, worker_for):
+    """Bind run once and related router operations."""
     @router.post("/admin/run-once")
     async def run_once(request: Request, body: RunOnceIn):
         require_global_permission(request, "admin")
@@ -605,6 +606,22 @@ def create_data_use_provider_audit_router(  # noqa: C901 - one closed operator s
                 **body.model_dump(),
             )
         )
+
+
+def create_data_use_provider_audit_router(
+    dependencies: DataUseProviderAuditDependencies | None = None,
+) -> APIRouter:
+    deps = dependencies or DataUseProviderAuditDependencies()
+    router = APIRouter(
+        prefix="/data-use/providers/audit",
+        tags=["data-use-provider-audit"],
+    )
+
+    authority, call = _data_use_provider_audit_authority_routes(deps)
+    (read_grants_for, worker_for) = _data_use_provider_audit_worker_for_routes(
+        authority, call, deps, router,
+    )
+    _data_use_provider_audit_run_once_routes(authority, call, read_grants_for, router, worker_for)
 
     return router
 

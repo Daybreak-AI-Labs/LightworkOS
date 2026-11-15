@@ -18,9 +18,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   authenticate.
 - Dependency support now includes pypdf 7, cyclonedx-bom 8 and websockets 17,
   while simplejson must remain below 4; use the supplied dependency constraints.
-- Shield's published held-out base64 evasion detection is now 71.0% (22 of 31),
-  measured without a readable plaintext cue; use this corrected result when
-  assessing protection.
+- Shield's published held-out base64 evasion detection is now 83.9% (26 of 31),
+  measured without a readable plaintext cue; use this result when assessing
+  protection. Prompt-attack scoring now decodes one bounded layer of base64,
+  so text that carries a base64-encoded instruction can be flagged where it
+  was not before.
 - An IMAP source's password variable must be named as a mailbox password (for
   example `IMAP_PASSWORD`), and the product's own credential variables are
   refused. The name is checked on every poll as well as on save, so an existing

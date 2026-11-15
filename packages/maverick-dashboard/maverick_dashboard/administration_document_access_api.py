@@ -138,15 +138,8 @@ def _public_record(record: Any) -> dict[str, Any]:
     return {field: getattr(record, field) for field in fields}
 
 
-def create_administration_document_access_router(  # noqa: C901
-    dependencies: DocumentAccessDependencies | None = None,
-) -> APIRouter:
-    deps = dependencies or DocumentAccessDependencies()
-    router = APIRouter(
-        prefix="/administration/document-access",
-        tags=["administration-document-access"],
-    )
-
+def _administration_document_access_capability_routes(deps):
+    """Bind capability and related router operations."""
     def capability(request: Request, tenant: str) -> tuple[Any, bool]:
         from maverick import administration_document_access as access
 
@@ -235,7 +228,11 @@ def create_administration_document_access_router(  # noqa: C901
                 detail="document-access authority is unavailable",
             )
         return access, tenant, principal, service
+    return authority, capability, readiness
 
+
+def _administration_document_access_call_routes(authority, capability, readiness, router):
+    """Bind call and related router operations."""
     async def call(access, function, *args, **kwargs):
         try:
             return await run_in_threadpool(function, *args, **kwargs)
@@ -369,7 +366,11 @@ def create_administration_document_access_router(  # noqa: C901
         if minted.download_token is not None:
             result["download_token"] = minted.download_token
         return result
+    return call
 
+
+def _administration_document_access_redeem_token_routes(authority, call, router):
+    """Bind redeem token and related router operations."""
     @router.post("/tokens/redeem")
     async def redeem_token(request: Request, body: ClaimTokenIn):
         require_permission(request, "operate")
@@ -450,6 +451,20 @@ def create_administration_document_access_router(  # noqa: C901
         require_permission(request, "audit")
         access, _tenant, _principal, service = authority(request)
         return _jsonable(await call(access, service.store.verify_integrity))
+
+
+def create_administration_document_access_router(
+    dependencies: DocumentAccessDependencies | None = None,
+) -> APIRouter:
+    deps = dependencies or DocumentAccessDependencies()
+    router = APIRouter(
+        prefix="/administration/document-access",
+        tags=["administration-document-access"],
+    )
+
+    authority, capability, readiness = _administration_document_access_capability_routes(deps)
+    call = _administration_document_access_call_routes(authority, capability, readiness, router)
+    _administration_document_access_redeem_token_routes(authority, call, router)
 
     return router
 

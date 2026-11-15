@@ -1423,7 +1423,7 @@ class HoldoutQueryLedger:
             raise HoldoutLedgerTampered("holdout ledger tip is invalid")
         return state
 
-    def _apply_event(  # noqa: C901 -- one replay validator owns every transition
+    def _apply_event(
         self, state: _State, event: dict[str, Any],
     ) -> None:
         kind = event.get("event")
@@ -1460,104 +1460,119 @@ class HoldoutQueryLedger:
         except ValueError as exc:
             raise HoldoutLedgerTampered("holdout ledger event has an invalid digest") from exc
         if kind == "policy":
-            if digest in state.policies:
-                raise HoldoutLedgerTampered("holdout ledger repeats a policy")
-            policy = AlphaBudget.from_dict(event.get("policy"))
-            created_at = event.get("created_at")
-            if (isinstance(created_at, bool) or not isinstance(created_at, (int, float))
-                    or not math.isfinite(float(created_at)) or float(created_at) < 0):
-                raise HoldoutLedgerTampered("holdout policy timestamp is invalid")
-            state.policies[digest] = policy
-            state.counts[digest] = 0
-            state.reserved_costs[digest] = EvaluationCost()
-            state.actual_costs[digest] = EvaluationCost()
-            return
+            return self._apply_policy_event(state, event, digest)
         if kind == "boundary_attempt":
-            query_id = event.get("query_id")
-            surface = event.get("surface")
-            attempted_at = event.get("attempted_at")
-            if not isinstance(query_id, str) or query_id not in state.queries:
-                raise HoldoutLedgerTampered(
-                    "boundary attempt does not reference a committed query")
-            query = state.queries[query_id]
-            if query.get("holdout_sha256") != digest:
-                raise HoldoutLedgerTampered(
-                    "boundary attempt holdout does not match its query")
-            final_set_sha256 = query.get("final_set_sha256", "")
-            if final_set_sha256 and final_set_sha256 in state.retirements:
-                raise HoldoutLedgerTampered(
-                    "boundary attempt was recorded after final-set retirement")
-            if not isinstance(surface, str) or surface not in _ATTEMPT_SURFACES:
-                raise HoldoutLedgerTampered("boundary attempt surface is invalid")
-            if (isinstance(attempted_at, bool)
-                    or not isinstance(attempted_at, (int, float))
-                    or not math.isfinite(float(attempted_at))
-                    or float(attempted_at) < 0):
-                raise HoldoutLedgerTampered("boundary attempt timestamp is invalid")
-            state.boundary_attempts += 1
-            state.boundary_attempts_by_holdout[digest] = (
-                state.boundary_attempts_by_holdout.get(digest, 0) + 1)
-            return
+            return self._apply_boundary_attempt_event(state, event, digest)
         if kind == "retire_final_set":
-            query_id = event.get("query_id")
-            final_set_sha256 = event.get("final_set_sha256")
-            result_sha256 = event.get("result_sha256")
-            outcome = event.get("outcome")
-            retired_at = event.get("retired_at")
-            if not isinstance(query_id, str):
-                raise HoldoutLedgerTampered(
-                    "final-set retirement query id is invalid")
-            query = state.queries.get(query_id)
-            if (query is None or query.get("holdout_sha256") != digest):
-                raise HoldoutLedgerTampered(
-                    "final-set retirement does not reference its query")
-            if (not isinstance(final_set_sha256, str)
-                    or not _HEX_256.fullmatch(final_set_sha256)
-                    or query.get("final_set_sha256") != final_set_sha256
-                    or state.reserved_final_sets.get(final_set_sha256) != query_id
-                    or final_set_sha256 in state.retirements):
-                raise HoldoutLedgerTampered("final-set retirement is invalid")
-            if (not isinstance(result_sha256, str)
-                    or not _HEX_256.fullmatch(result_sha256)):
-                raise HoldoutLedgerTampered(
-                    "final-set result digest is invalid")
-            if not isinstance(outcome, str) or outcome not in _EVALUATION_OUTCOMES:
-                raise HoldoutLedgerTampered("final-set outcome is invalid")
-            if (isinstance(retired_at, bool)
-                    or not isinstance(retired_at, (int, float))
-                    or not math.isfinite(float(retired_at)) or float(retired_at) < 0):
-                raise HoldoutLedgerTampered("final-set retirement timestamp is invalid")
-            declared_cost = query.get("declared_cost")
-            if not isinstance(declared_cost, EvaluationCost):
-                raise HoldoutLedgerTampered("query cost reservation is invalid")
-            actual_cost = (
-                EvaluationCost.from_dict(event.get("actual_cost"), tampered=True)
-                if version == _EVENT_VERSION else EvaluationCost()
-            )
-            exceeded = actual_cost.exceeds(declared_cost)
-            if exceeded is not None:
-                raise HoldoutLedgerTampered(
-                    f"evaluation {exceeded} exceeds its committed reservation")
-            try:
-                state.reserved_costs[digest] = state.reserved_costs.get(
-                    digest, EvaluationCost()).minus(declared_cost)
-                state.actual_costs[digest] = state.actual_costs.get(
-                    digest, EvaluationCost()).plus(actual_cost)
-            except ValueError as exc:
-                raise HoldoutLedgerTampered(
-                    "evaluation cost accounting is inconsistent") from exc
-            if state.reserved_costs[digest].plus(
-                    state.actual_costs[digest]).exceeds(
-                        state.policies[digest].cost_limit) is not None:
-                raise HoldoutLedgerTampered("evaluation cost cap was exceeded")
-            state.retirements[final_set_sha256] = {
-                "query_id": query_id, "outcome": outcome,
-                "result_sha256": result_sha256,
-                "actual_cost": actual_cost,
-            }
-            return
+            return self._apply_retire_final_set_event(state, event, digest, version)
         if kind != "query" or digest not in state.policies:
             raise HoldoutLedgerTampered("holdout ledger event transition is invalid")
+        return self._apply_query_event(state, event, digest, version, sequence)
+
+    def _apply_policy_event(self, state, event, digest) -> None:
+        if digest in state.policies:
+            raise HoldoutLedgerTampered("holdout ledger repeats a policy")
+        policy = AlphaBudget.from_dict(event.get("policy"))
+        created_at = event.get("created_at")
+        if (isinstance(created_at, bool) or not isinstance(created_at, (int, float))
+                or not math.isfinite(float(created_at)) or float(created_at) < 0):
+            raise HoldoutLedgerTampered("holdout policy timestamp is invalid")
+        state.policies[digest] = policy
+        state.counts[digest] = 0
+        state.reserved_costs[digest] = EvaluationCost()
+        state.actual_costs[digest] = EvaluationCost()
+        return
+
+
+    def _apply_boundary_attempt_event(self, state, event, digest) -> None:
+        query_id = event.get("query_id")
+        surface = event.get("surface")
+        attempted_at = event.get("attempted_at")
+        if not isinstance(query_id, str) or query_id not in state.queries:
+            raise HoldoutLedgerTampered(
+                "boundary attempt does not reference a committed query")
+        query = state.queries[query_id]
+        if query.get("holdout_sha256") != digest:
+            raise HoldoutLedgerTampered(
+                "boundary attempt holdout does not match its query")
+        final_set_sha256 = query.get("final_set_sha256", "")
+        if final_set_sha256 and final_set_sha256 in state.retirements:
+            raise HoldoutLedgerTampered(
+                "boundary attempt was recorded after final-set retirement")
+        if not isinstance(surface, str) or surface not in _ATTEMPT_SURFACES:
+            raise HoldoutLedgerTampered("boundary attempt surface is invalid")
+        if (isinstance(attempted_at, bool)
+                or not isinstance(attempted_at, (int, float))
+                or not math.isfinite(float(attempted_at))
+                or float(attempted_at) < 0):
+            raise HoldoutLedgerTampered("boundary attempt timestamp is invalid")
+        state.boundary_attempts += 1
+        state.boundary_attempts_by_holdout[digest] = (
+            state.boundary_attempts_by_holdout.get(digest, 0) + 1)
+        return
+
+
+    def _apply_retire_final_set_event(self, state, event, digest, version) -> None:
+        query_id = event.get("query_id")
+        final_set_sha256 = event.get("final_set_sha256")
+        result_sha256 = event.get("result_sha256")
+        outcome = event.get("outcome")
+        retired_at = event.get("retired_at")
+        if not isinstance(query_id, str):
+            raise HoldoutLedgerTampered(
+                "final-set retirement query id is invalid")
+        query = state.queries.get(query_id)
+        if (query is None or query.get("holdout_sha256") != digest):
+            raise HoldoutLedgerTampered(
+                "final-set retirement does not reference its query")
+        if (not isinstance(final_set_sha256, str)
+                or not _HEX_256.fullmatch(final_set_sha256)
+                or query.get("final_set_sha256") != final_set_sha256
+                or state.reserved_final_sets.get(final_set_sha256) != query_id
+                or final_set_sha256 in state.retirements):
+            raise HoldoutLedgerTampered("final-set retirement is invalid")
+        if (not isinstance(result_sha256, str)
+                or not _HEX_256.fullmatch(result_sha256)):
+            raise HoldoutLedgerTampered(
+                "final-set result digest is invalid")
+        if not isinstance(outcome, str) or outcome not in _EVALUATION_OUTCOMES:
+            raise HoldoutLedgerTampered("final-set outcome is invalid")
+        if (isinstance(retired_at, bool)
+                or not isinstance(retired_at, (int, float))
+                or not math.isfinite(float(retired_at)) or float(retired_at) < 0):
+            raise HoldoutLedgerTampered("final-set retirement timestamp is invalid")
+        declared_cost = query.get("declared_cost")
+        if not isinstance(declared_cost, EvaluationCost):
+            raise HoldoutLedgerTampered("query cost reservation is invalid")
+        actual_cost = (
+            EvaluationCost.from_dict(event.get("actual_cost"), tampered=True)
+            if version == _EVENT_VERSION else EvaluationCost()
+        )
+        exceeded = actual_cost.exceeds(declared_cost)
+        if exceeded is not None:
+            raise HoldoutLedgerTampered(
+                f"evaluation {exceeded} exceeds its committed reservation")
+        try:
+            state.reserved_costs[digest] = state.reserved_costs.get(
+                digest, EvaluationCost()).minus(declared_cost)
+            state.actual_costs[digest] = state.actual_costs.get(
+                digest, EvaluationCost()).plus(actual_cost)
+        except ValueError as exc:
+            raise HoldoutLedgerTampered(
+                "evaluation cost accounting is inconsistent") from exc
+        if state.reserved_costs[digest].plus(
+                state.actual_costs[digest]).exceeds(
+                    state.policies[digest].cost_limit) is not None:
+            raise HoldoutLedgerTampered("evaluation cost cap was exceeded")
+        state.retirements[final_set_sha256] = {
+            "query_id": query_id, "outcome": outcome,
+            "result_sha256": result_sha256,
+            "actual_cost": actual_cost,
+        }
+        return
+
+
+    def _apply_query_event(self, state, event, digest, version, sequence) -> None:
         query_id = event.get("query_id")
         purpose = event.get("purpose")
         if (not isinstance(query_id, str) or not _QUERY_ID.fullmatch(query_id)
@@ -1633,6 +1648,7 @@ class HoldoutQueryLedger:
         state.counts[digest] = expected_ordinal
         state.reserved_costs[digest] = state.reserved_costs.get(
             digest, EvaluationCost()).plus(declared_cost)
+
 
     def _append_event(
         self, conn: sqlite3.Connection, state: _State, payload: dict[str, Any],

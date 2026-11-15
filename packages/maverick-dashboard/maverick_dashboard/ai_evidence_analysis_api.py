@@ -533,7 +533,7 @@ def _safe_record(record: Any) -> dict[str, object]:
         ) from exc
 
 
-def create_ai_evidence_analysis_router(  # noqa: C901 - route-local trust boundaries
+def create_ai_evidence_analysis_router(
     dependencies: AiEvidenceAnalysisDependencies | None = None,
 ) -> APIRouter:
     deps = dependencies or AiEvidenceAnalysisDependencies()
@@ -623,6 +623,20 @@ def create_ai_evidence_analysis_router(  # noqa: C901 - route-local trust bounda
                 detail="AI evidence-analysis retention policy is unavailable",
             ) from exc
 
+    call = _make_analysis_call()
+
+    _register_analysis_status_routes(authority, call, deps, lifetime, router)
+
+    _register_analysis_record_routes(authority, call, router)
+
+    _register_analysis_review_routes(authority, call, router)
+
+    _register_analysis_purge_route(authority, call, deps, router)
+
+    return router
+
+
+def _make_analysis_call():
     async def call(evidence, function, *args, **kwargs):
         try:
             return await run_in_threadpool(function, *args, **kwargs)
@@ -664,6 +678,10 @@ def create_ai_evidence_analysis_router(  # noqa: C901 - route-local trust bounda
                 detail="AI evidence-analysis dependency is unavailable",
             ) from exc
 
+    return call
+
+
+def _register_analysis_status_routes(authority, call, deps, lifetime, router):
     @router.get("/status")
     async def status(request: Request, response: Response):
         require_permission(request, "view")
@@ -844,6 +862,9 @@ def create_ai_evidence_analysis_router(  # noqa: C901 - route-local trust bounda
         _secure(response)
         return _safe_record(record)
 
+
+
+def _register_analysis_record_routes(authority, call, router):
     @router.get("/analyses")
     async def list_analyses(
         request: Request,
@@ -891,6 +912,9 @@ def create_ai_evidence_analysis_router(  # noqa: C901 - route-local trust bounda
         _secure(response)
         return {"items": items, "count": len(items)}
 
+
+
+def _register_analysis_review_routes(authority, call, router):
     @router.post("/analyses/{analysis_id}/review")
     async def review(
         request: Request,
@@ -966,6 +990,9 @@ def create_ai_evidence_analysis_router(  # noqa: C901 - route-local trust bounda
         _secure(response)
         return {"analysis_ids": items, "count": len(items), "as_of": "server_clock"}
 
+
+
+def _register_analysis_purge_route(authority, call, deps, router):
     @router.post("/retention/purge")
     async def purge(request: Request, response: Response, body: PurgeIn):
         require_permission(request, "admin")
@@ -1032,7 +1059,6 @@ def create_ai_evidence_analysis_router(  # noqa: C901 - route-local trust bounda
         _secure(response)
         return payload
 
-    return router
 
 
 router = create_ai_evidence_analysis_router()

@@ -178,7 +178,7 @@ def _flow_successors(
     return out
 
 
-def _analyse_flow_graph(  # noqa: C901 - bounded abstract flow interpreter
+def _analyse_flow_graph(
     root: Any,
     *,
     flow_store: Any,
@@ -202,6 +202,26 @@ def _analyse_flow_graph(  # noqa: C901 - bounded abstract flow interpreter
     counted_flows: set[str] = set()
     counted_subflows: set[str] = set()
 
+    register_tool = _make_flow_tool_registrar(result, tool_risk_is_classified, tool_risk, RISK_LEVELS, risk_rank, is_retry_safe)
+
+    resolve_subflow = _make_flow_subflow_resolver(manifest, result, loaded_snapshots, flow_store)
+
+    analyse = _make_flow_analyser(result, analysed_states, counted_flows, register_tool, resolve_subflow, counted_subflows)
+
+    root_id = str(getattr(root, "id", "") or "<root>")
+    analyse(
+        root,
+        inherited_approval=False,
+        depth=0,
+        token=f"root:{root_id}",
+        location=root_id,
+        active_subflows=frozenset({f"root:{root_id}"}),
+        approval_can_authorize=True,
+    )
+    return result
+
+
+def _make_flow_tool_registrar(result, tool_risk_is_classified, tool_risk, RISK_LEVELS, risk_rank, is_retry_safe):
     def register_tool(tool_value: Any, location: str, approved: bool) -> None:
         tool = str(tool_value or "").strip()
         if not tool:
@@ -236,6 +256,10 @@ def _analyse_flow_graph(  # noqa: C901 - bounded abstract flow interpreter
             if not approved:
                 result.approval_gaps.add(f"{location}:{tool}")
 
+    return register_tool
+
+
+def _make_flow_subflow_resolver(manifest, result, loaded_snapshots, flow_store):
     def resolve_subflow(ref: str) -> tuple[Any | None, str]:
         if manifest is not None:
             if ref not in manifest:
@@ -273,7 +297,11 @@ def _analyse_flow_graph(  # noqa: C901 - bounded abstract flow interpreter
         version = int(getattr(child, "version", 0) or 0)
         return child, f"live:{ref}:{revision}:v{version}"
 
-    def analyse(  # noqa: C901 - node kinds intentionally mirror the flow IR
+    return resolve_subflow
+
+
+def _make_flow_analyser(result, analysed_states, counted_flows, register_tool, resolve_subflow, counted_subflows):
+    def analyse(
         flow: Any,
         *,
         inherited_approval: bool,
@@ -283,137 +311,163 @@ def _analyse_flow_graph(  # noqa: C901 - bounded abstract flow interpreter
         active_subflows: frozenset[str],
         approval_can_authorize: bool,
     ) -> None:
-        if depth > _FLOW_MAX_DEPTH:
-            result.fail(f"{location}: flow analysis exceeded the depth limit")
-            return
-        state_key = (token, bool(inherited_approval))
-        if state_key in analysed_states:
-            return
-        analysed_states.add(state_key)
-        nodes = _flow_nodes(flow)
-        if not nodes:
-            result.fail(f"{location}: flow has no readable nodes")
-            return
-        if token not in counted_flows:
-            counted_flows.add(token)
-            if result.node_count + len(nodes) > _FLOW_MAX_NODES:
-                result.fail(f"{location}: flow analysis exceeded the node limit")
-                return
-            result.node_count += len(nodes)
-            for node in nodes.values():
-                kind = str(_node_attr(node, "kind", "") or "")
-                result.kinds.add(kind or "<unknown>")
-                if kind == "approval":
-                    result.approval_nodes += 1
+        return _analyse_flow_nodes(
+            flow,
+            inherited_approval=inherited_approval,
+            depth=depth,
+            token=token,
+            location=location,
+            active_subflows=active_subflows,
+            approval_can_authorize=approval_can_authorize,
+            result=result,
+            analysed_states=analysed_states,
+            counted_flows=counted_flows,
+            register_tool=register_tool,
+            analyse=analyse,
+            resolve_subflow=resolve_subflow,
+            counted_subflows=counted_subflows,
+        )
 
-        start = str(getattr(flow, "start", "") or "")
-        if start not in nodes:
-            result.fail(f"{location}: flow start cannot be resolved")
+    return analyse
+
+
+def _analyse_flow_nodes(  # noqa: C901 - node kinds intentionally mirror the flow IR
+    flow: Any,
+    *,
+    inherited_approval: bool,
+    depth: int,
+    token: str,
+    location: str,
+    active_subflows: frozenset[str],
+    approval_can_authorize: bool,
+    result,
+    analysed_states,
+    counted_flows,
+    register_tool,
+    analyse,
+    resolve_subflow,
+    counted_subflows,
+) -> None:
+    if depth > _FLOW_MAX_DEPTH:
+        result.fail(f"{location}: flow analysis exceeded the depth limit")
+        return
+    state_key = (token, bool(inherited_approval))
+    if state_key in analysed_states:
+        return
+    analysed_states.add(state_key)
+    nodes = _flow_nodes(flow)
+    if not nodes:
+        result.fail(f"{location}: flow has no readable nodes")
+        return
+    if token not in counted_flows:
+        counted_flows.add(token)
+        if result.node_count + len(nodes) > _FLOW_MAX_NODES:
+            result.fail(f"{location}: flow analysis exceeded the node limit")
             return
-        queue: deque[tuple[str, bool]] = deque([(start, inherited_approval)])
-        seen: set[tuple[str, bool]] = set()
-        while queue:
-            node_id, approved = queue.popleft()
-            route_state = (node_id, approved)
-            if route_state in seen:
-                continue
-            seen.add(route_state)
-            node = nodes.get(node_id)
-            if node is None:
-                result.fail(f"{location}: route targets missing node {node_id!r}")
-                continue
+        result.node_count += len(nodes)
+        for node in nodes.values():
             kind = str(_node_attr(node, "kind", "") or "")
-            node_location = f"{location}/{node_id}"
-            if kind == "action":
-                register_tool(_node_attr(node, "tool", ""), node_location, approved)
-            elif kind == "agent":
-                # Agent nodes deliberately omit a tool allow-list.  Until the
-                # invoked pack/release is pinned into the IR, its action surface
-                # is unknowable and therefore cannot inherit a guessed medium.
-                unresolved = f"agent:{node_location}"
-                result.unresolved_tools.add(unresolved)
-                result.risky_actions.add(unresolved)
-                if not approved:
-                    result.approval_gaps.add(unresolved)
-                result.fail(f"{node_location}: agent tool surface is not pinned")
-            elif kind in {"foreach", "while", "scope"}:
-                body = _node_attr(node, "body")
-                if body is None:
-                    result.fail(f"{node_location}: {kind} body is missing")
-                else:
-                    analyse(
-                        body,
-                        inherited_approval=approved,
-                        depth=depth + 1,
-                        token=f"{token}/{node_id}:body",
-                        location=f"{node_location}:body",
-                        active_subflows=active_subflows,
-                        approval_can_authorize=False,
-                    )
-            elif kind == "parallel":
-                branches = list(_node_attr(node, "branches", []) or [])
-                if not branches:
-                    result.fail(f"{node_location}: parallel branches are missing")
-                for index, branch in enumerate(branches):
-                    analyse(
-                        branch,
-                        inherited_approval=approved,
-                        depth=depth + 1,
-                        token=f"{token}/{node_id}:branch:{index}",
-                        location=f"{node_location}:branch:{index}",
-                        active_subflows=active_subflows,
-                        approval_can_authorize=False,
-                    )
-            elif kind == "subflow":
-                ref = str(_node_attr(node, "flow_ref", "") or "").strip()
-                if not ref:
-                    result.unresolved_subflows.add("<missing>")
-                    result.fail(f"{node_location}: subflow reference is missing")
-                else:
-                    child, child_token = resolve_subflow(ref)
-                    cycle_token = child_token
-                    if cycle_token in active_subflows:
-                        result.unresolved_subflows.add(ref)
-                        result.fail(f"{node_location}: cyclic subflow {ref!r} is not executable")
-                    elif child is not None:
-                        if cycle_token not in counted_subflows:
-                            if len(counted_subflows) >= _FLOW_MAX_SUBFLOWS:
-                                result.fail("flow analysis exceeded the subflow limit")
-                                child = None
-                            else:
-                                counted_subflows.add(cycle_token)
-                                result.subflow_count += 1
-                        if child is not None:
-                            analyse(
-                                child,
-                                inherited_approval=approved,
-                                depth=depth + 1,
-                                token=child_token,
-                                location=f"{node_location}:subflow:{ref}",
-                                active_subflows=active_subflows | {cycle_token},
-                                approval_can_authorize=False,
-                            )
-            elif kind not in {
-                "approval", "branch", "switch", "delay", "wait_event", "setvar",
-            }:
-                result.fail(f"{node_location}: unknown node kind {kind!r}")
+            result.kinds.add(kind or "<unknown>")
+            if kind == "approval":
+                result.approval_nodes += 1
 
-            for target, next_approved in _flow_successors(
-                node, approved, approval_can_authorize=approval_can_authorize,
-            ):
-                queue.append((target, next_approved))
+    start = str(getattr(flow, "start", "") or "")
+    if start not in nodes:
+        result.fail(f"{location}: flow start cannot be resolved")
+        return
+    queue: deque[tuple[str, bool]] = deque([(start, inherited_approval)])
+    seen: set[tuple[str, bool]] = set()
+    while queue:
+        node_id, approved = queue.popleft()
+        route_state = (node_id, approved)
+        if route_state in seen:
+            continue
+        seen.add(route_state)
+        node = nodes.get(node_id)
+        if node is None:
+            result.fail(f"{location}: route targets missing node {node_id!r}")
+            continue
+        kind = str(_node_attr(node, "kind", "") or "")
+        node_location = f"{location}/{node_id}"
+        if kind == "action":
+            register_tool(_node_attr(node, "tool", ""), node_location, approved)
+        elif kind == "agent":
+            # Agent nodes deliberately omit a tool allow-list.  Until the
+            # invoked pack/release is pinned into the IR, its action surface
+            # is unknowable and therefore cannot inherit a guessed medium.
+            unresolved = f"agent:{node_location}"
+            result.unresolved_tools.add(unresolved)
+            result.risky_actions.add(unresolved)
+            if not approved:
+                result.approval_gaps.add(unresolved)
+            result.fail(f"{node_location}: agent tool surface is not pinned")
+        elif kind in {"foreach", "while", "scope"}:
+            body = _node_attr(node, "body")
+            if body is None:
+                result.fail(f"{node_location}: {kind} body is missing")
+            else:
+                analyse(
+                    body,
+                    inherited_approval=approved,
+                    depth=depth + 1,
+                    token=f"{token}/{node_id}:body",
+                    location=f"{node_location}:body",
+                    active_subflows=active_subflows,
+                    approval_can_authorize=False,
+                )
+        elif kind == "parallel":
+            branches = list(_node_attr(node, "branches", []) or [])
+            if not branches:
+                result.fail(f"{node_location}: parallel branches are missing")
+            for index, branch in enumerate(branches):
+                analyse(
+                    branch,
+                    inherited_approval=approved,
+                    depth=depth + 1,
+                    token=f"{token}/{node_id}:branch:{index}",
+                    location=f"{node_location}:branch:{index}",
+                    active_subflows=active_subflows,
+                    approval_can_authorize=False,
+                )
+        elif kind == "subflow":
+            ref = str(_node_attr(node, "flow_ref", "") or "").strip()
+            if not ref:
+                result.unresolved_subflows.add("<missing>")
+                result.fail(f"{node_location}: subflow reference is missing")
+            else:
+                child, child_token = resolve_subflow(ref)
+                cycle_token = child_token
+                if cycle_token in active_subflows:
+                    result.unresolved_subflows.add(ref)
+                    result.fail(f"{node_location}: cyclic subflow {ref!r} is not executable")
+                elif child is not None:
+                    if cycle_token not in counted_subflows:
+                        if len(counted_subflows) >= _FLOW_MAX_SUBFLOWS:
+                            result.fail("flow analysis exceeded the subflow limit")
+                            child = None
+                        else:
+                            counted_subflows.add(cycle_token)
+                            result.subflow_count += 1
+                    if child is not None:
+                        analyse(
+                            child,
+                            inherited_approval=approved,
+                            depth=depth + 1,
+                            token=child_token,
+                            location=f"{node_location}:subflow:{ref}",
+                            active_subflows=active_subflows | {cycle_token},
+                            approval_can_authorize=False,
+                        )
+        elif kind not in {
+            "approval", "branch", "switch", "delay", "wait_event", "setvar",
+        }:
+            result.fail(f"{node_location}: unknown node kind {kind!r}")
 
-    root_id = str(getattr(root, "id", "") or "<root>")
-    analyse(
-        root,
-        inherited_approval=False,
-        depth=0,
-        token=f"root:{root_id}",
-        location=root_id,
-        active_subflows=frozenset({f"root:{root_id}"}),
-        approval_can_authorize=True,
-    )
-    return result
+        for target, next_approved in _flow_successors(
+            node, approved, approval_can_authorize=approval_can_authorize,
+        ):
+            queue.append((target, next_approved))
+
 
 
 def flow_surface(flow_id: str) -> dict[str, Any] | None:
