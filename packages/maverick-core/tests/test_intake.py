@@ -220,6 +220,23 @@ class TestRunIntake:
         assert not kb.search("finance", "POISONED", k=3)
         assert kb.search(prof.knowledge_sources[0], "POISONED", k=3)
 
+    def test_attach_binds_the_collection_when_every_document_is_held(self, tmp_path):
+        # A held upload is included into this collection later, so the profile
+        # must reference it, and the hold shows the upload's own file name.
+        from maverick.intake import run_intake
+        from maverick_knowledge import DeterministicEmbedder, KnowledgeBase
+
+        doc = tmp_path / "00-welcome.txt"
+        doc.write_text("Your account is ready and you are now ready to log in.")
+        kb = KnowledgeBase(embedder=DeterministicEmbedder(dim=64))
+        spec = IntakeSpec(name="Kappa", doc_paths=[str(doc)], doc_names={str(doc): "Welcome.txt"})
+        prof = run_intake(spec, kb=kb)
+        assert attach_docs_to_profile(spec, prof, kb) == 0
+        [held] = kb.held.list()
+        assert prof.knowledge_sources == [held["collection"]]
+        assert held["collection"].startswith("intake_pending_kappa_")
+        assert held["source"] == "Welcome.txt"
+
 
 class TestIntakeSession:
     def test_records_and_finalizes(self, tmp_path):

@@ -223,6 +223,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the refusal names the storage boundary.
 - An automation opportunity is not proposed while any completed run has no
   recorded cost, and the reason shown says so.
+- A document whose text reads like instructions to an assistant (for example
+  "you are now ready to log in") is no longer dropped without a trace. It is
+  held, and Held documents in the Knowledge library shows why. An
+  administrator can include it, as quoted material only, or keep it out; a
+  kept-out document uploaded again is held for a new review.
+  Documents dropped before this change were never stored and cannot be
+  recovered; upload them again to have them held for review.
 
 ### Fixed
 

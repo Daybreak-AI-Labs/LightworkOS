@@ -72,6 +72,7 @@ _PASSIVE_PROTECTED_NAMESPACES = frozenset({
 _PASSIVE_SQLITE_PATHS = frozenset({
     "world.db",
     "knowledge.db",
+    "knowledge_held.db",
     "entity_graph/graph.db",
 })
 _PASSIVE_AUTHORITY_POLICIES = frozenset({

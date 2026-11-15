@@ -64,6 +64,9 @@ class IntakeSpec:
     industry: str = ""
     goals: list[str] = field(default_factory=list)
     doc_paths: list[str] = field(default_factory=list)
+    # Optional display names for doc_paths (an upload's original file name
+    # when the path is a temporary copy). Used as the document's source.
+    doc_names: dict[str, str] = field(default_factory=dict)
 
 
 def _slug(name: str) -> str:
@@ -346,7 +349,8 @@ def ingest_docs(spec: IntakeSpec, kb, collection: str | None = None,
     docs = 0
     for path in spec.doc_paths:
         try:
-            n = kb.ingest_path(collection, path, ingested_by=ingested_by)
+            n = kb.ingest_path(collection, path, ingested_by=ingested_by,
+                               source=spec.doc_names.get(path) or None)
             total += n
             if n:
                 docs += 1
@@ -514,20 +518,40 @@ def build_llm_proposer(llm, *, model: str | None = None, budget=None):
     return propose
 
 
-def attach_docs_to_profile(spec: IntakeSpec, profile: DomainProfile, kb) -> int:
+def bind_pending_collection(profile: DomainProfile) -> str:
+    """Bind ``profile`` to a new isolated collection for its uploads, so a
+    caller can save the profile before loading the documents into it."""
+    collection = _pending_collection(profile.name)
+    profile.knowledge_sources = [collection]
+    return collection
+
+
+def attach_docs_to_profile(spec: IntakeSpec, profile: DomainProfile, kb, *,
+                           collection: str | None = None) -> int:
     """Ingest approved intake documents and bind the profile to their collection.
 
     The collection is isolated and non-predictable so newly onboarded documents
     do not collide with or poison existing domain collections. Call this only
-    after the user has approved activation.
+    after the user has approved activation. Pass ``collection`` from
+    :func:`bind_pending_collection` when the profile was saved already bound.
     """
     if not spec.doc_paths:
         return 0
-    collection = _pending_collection(profile.name)
+    collection = collection or _pending_collection(profile.name)
     total = ingest_docs(spec, kb, collection=collection)
-    if total:
+    # A held document is included into this collection later, so the profile
+    # is bound to it even when every document is waiting for review.
+    if total or held_in(kb, collection):
         profile.knowledge_sources = [collection]
     return total
+
+
+def held_in(kb, collection: str) -> int:
+    """Documents in ``collection`` waiting for an administrator's review."""
+    held = getattr(kb, "held", None)
+    if held is None:
+        return 0
+    return sum(1 for row in held.list(limit=10_000) if row["collection"] == collection)
 
 
 def onboarding_knowledge_base():
@@ -555,7 +579,9 @@ def onboarding_knowledge_base():
             shield = Shield.from_config(warn_if_missing=False)
         except Exception:
             pass
-        kb = KnowledgeBase(store=build_store(kcfg), embedder=build_embedder(kcfg), shield=shield)
+        from .knowledge_admin import held_store
+        kb = KnowledgeBase(store=build_store(kcfg), embedder=build_embedder(kcfg), shield=shield,
+                           held=held_store())
         try:  # OCR uploaded diagrams/images when the vision extra is installed
             from maverick_knowledge.image import build_ocr_describer
             kb.image_describer = build_ocr_describer()
