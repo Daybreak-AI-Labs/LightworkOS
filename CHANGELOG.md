@@ -238,8 +238,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   document's linked images could make the host fetch any address. Configure a
   Docker, Podman or Kubernetes document worker to keep converting.
 - The `compute` tool runs each SymPy operation in a separate process and
-  stops it after 10 seconds with a plain error. Each SymPy call now takes
-  about a second longer while the process starts.
+  stops it after 10 seconds with a plain error. With SymPy installed this
+  includes plain `evaluate` (even `2+3*4`); each such call takes one to two
+  seconds longer while the process starts.
 - `maverick confidential-compute` no longer counts `/sys/firmware/tdx` as
   proof of a TDX guest; that folder appears on TDX hosts. Guests are still
   detected by `/dev/tdx_guest` or the `tdx_guest` CPU flag.
