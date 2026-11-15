@@ -229,3 +229,78 @@ def test_erase_never_signs_a_row_that_arrived_unsigned(_isolate_keys, tmp_path):
     assert matched == 2
     assert [(b.line_no, b.reason) for b in verify_chain(path)] == before
     assert '"sig"' not in path.read_text(encoding="utf-8").splitlines()[2]
+
+
+def _anchored_past_day(tmp_path):
+    """A completed, anchored signed day: alice, bob, alice, bob."""
+    from maverick.audit.signing import ensure_anchors
+    from maverick.audit.writer import reset_signer_after_erase
+
+    _log, ad, path = _signed_log(tmp_path)
+    past = path.with_name("2020-01-01.ndjson")
+    path.rename(past)
+    reset_signer_after_erase(ad)
+    assert ensure_anchors(ad) == 1
+    return ad, past
+
+
+def _state(ad, path):
+    from maverick.audit.signing import verify_anchors, verify_chain
+
+    return ([(b.line_no, b.reason) for b in verify_chain(path)],
+            [b.reason for b in verify_anchors(ad)])
+
+
+@pytest.mark.parametrize("damage", ["truncated_tail", "stripped_last_row", "inserted_unsigned_row"])
+def test_erase_refuses_a_day_whose_anchor_already_reports_a_break(_isolate_keys, tmp_path, damage):
+    """Erase is never a repair: a day the tip ledger already flags is refused
+    unchanged, and every break is still reported afterwards."""
+    import json
+
+    from maverick.audit.erase import erase_blockers, scrub_user
+
+    ad, path = _anchored_past_day(tmp_path)
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    if damage == "truncated_tail":
+        lines = lines[:-1]
+    elif damage == "stripped_last_row":
+        row = json.loads(lines[-1])
+        for field in ("hash", "sig", "key_id", "prev_hash"):
+            row.pop(field)
+        row["title"] = "edited"
+        lines[-1] = json.dumps(row) + "\n"
+    else:
+        lines.append(json.dumps({"kind": "approval", "agent": "admin"}) + "\n")
+    path.write_text("".join(lines), encoding="utf-8")
+    before_bytes, before = path.read_bytes(), _state(ad, path)
+    assert any(r.startswith("anchor_") for r in before[1])
+
+    assert erase_blockers("telegram", "alice", audit_dir=ad)
+    with pytest.raises(RuntimeError):
+        scrub_user("telegram", "alice", audit_dir=ad, strict=True)
+    assert path.read_bytes() == before_bytes
+    assert _state(ad, path) == before
+
+
+def test_an_anchored_day_stays_erasable_after_an_earlier_erase(_isolate_keys, tmp_path):
+    from maverick.audit.erase import erase_blockers, scrub_user
+
+    ad, path = _anchored_past_day(tmp_path)
+    for subject in ("alice", "bob"):
+        assert erase_blockers("telegram", subject, audit_dir=ad) == []
+        assert scrub_user("telegram", subject, audit_dir=ad, strict=True)[0] == 2
+        assert _state(ad, path) == ([], [])
+
+
+def test_a_retired_key_without_its_public_key_names_the_key_to_restore(_isolate_keys, tmp_path):
+    from maverick.audit import signing
+    from maverick.audit.erase import erase_blockers
+
+    _log, ad, path = _signed_log(tmp_path)
+    retired = signing._active_key_id(signing._key_dir())
+    signing.rotate_audit_keypair()
+    for old in signing._key_dir().glob(f"{retired}*"):
+        old.unlink()
+    (blocker,) = erase_blockers("telegram", "alice", audit_dir=ad)
+    assert "public key is not available" in blocker and "MAVERICK_AUDIT_TRUSTED_PUBLIC_KEYS" in blocker
+    assert "backup restore" not in blocker

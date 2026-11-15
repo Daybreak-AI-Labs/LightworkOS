@@ -238,6 +238,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   signing key leaves the day unchanged instead of broken. A day with rows
   written while signing was off can be erased; erase never signs those rows
   or any row that did not verify, so the day verifies exactly as before.
+- `maverick erase` also refuses a day whose tip anchor, tip ledger or
+  published checkpoint already reports a break, so an erase never hides a
+  truncated or edited day. Each refusal names the step to take, such as
+  restoring the day or a retired key's public key.
 - A rerun of `maverick erase` that finds no conversation now also clears the
   AI reply cache and retries attachment files an earlier run could not
   remove, so it finishes the job or names again what remains.

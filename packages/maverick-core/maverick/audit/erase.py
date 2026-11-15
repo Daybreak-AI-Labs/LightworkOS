@@ -124,31 +124,108 @@ def _arrived_signed(event: dict | None) -> bool:
     return bool(event and event.get("sig") and event.get("hash") and event.get("key_id"))
 
 
-def _verify_signed_chain(path: Path) -> bool:
-    """Validate a signed chain before the authorized erase. False = abort.
+_RESTORE_DAY = "Restore the day from a backup (`maverick backup restore`)"
+_DAY_ANCHOR_BREAKS = frozenset({
+    "anchor_tip_mismatch", "anchor_count_mismatch", "anchored_file_deleted", "unreadable_segment",
+})
+
+
+def _chain_problem(path: Path) -> str | None:
+    """Operator text for a signed-chain break in ``path``, or None.
 
     Rows written with signing off (``unsigned``: no hash, sig or key_id) are
     accepted wherever they are: they were never in the chain and the erase
-    keeps them out of it, verbatim apart from the erased subject. Any other
-    break refuses: erase re-signs only rows that verified, never repairs.
+    keeps them out of it. Any other break refuses: erase re-signs only rows
+    that verified, never repairs.
     """
     try:
         from .signing import verify_chain
 
-        breaks = verify_chain(path)
+        breaks = [b for b in verify_chain(path) if b.reason != "unsigned"]
     # failure-policy: fail_closed
     except Exception as e:  # pragma: no cover - defensive/crypto missing
-        log.warning("audit erase: could not verify %s before rewrite: %s", path, e)
-        return False
-    breaks = [b for b in breaks if b.reason != "unsigned"]
-    if breaks:
-        log.warning(
-            "audit erase: refusing to rewrite %s; signed chain is not clean (%s)",
-            path,
-            breaks[0],
-        )
-        return False
-    return True
+        return f"{path.name} could not be checked ({type(e).__name__}); run erase again"
+    if not breaks:
+        return None
+    if all(b.reason == "no_pubkey" for b in breaks):
+        return (f"{path.name} has rows signed by a key whose public key is not available "
+                "here: put that key's .pub file back in the audit key folder, or pin it "
+                "in MAVERICK_AUDIT_TRUSTED_PUBLIC_KEYS")
+    return (f"{path.name} has signed rows that do not verify "
+            f"({', '.join(sorted({b.reason for b in breaks}))}; see `maverick audit verify`); "
+            f"erase will not re-sign them. {_RESTORE_DAY}")
+
+
+def _anchor_problem(path: Path, *, reanchors: bool) -> str | None:
+    """Operator text for a tip-ledger break that concerns ``path``, or None.
+
+    A day the ledger already flags (rows removed, added or changed after it
+    was anchored) is refused: a new anchor would replace the evidence. When
+    the erase would add an anchor (``reanchors``), any break in the ledger
+    itself refuses too.
+    """
+    from .signing import verify_anchors
+
+    day = path.stem
+    try:
+        breaks = verify_anchors(path.parent)
+    # failure-policy: fail_closed
+    except Exception as e:  # pragma: no cover - defensive
+        return f"the audit tip ledger could not be checked ({type(e).__name__}); run erase again"
+    mine = [b for b in breaks if b.reason in _DAY_ANCHOR_BREAKS
+            and (b.detail.startswith(f"{day}:") or b.detail.startswith(f"{day}.ndjson"))]
+    if mine:
+        return (f"{path.name} no longer matches its tip anchor "
+                f"({', '.join(sorted({b.reason for b in mine}))}; see `maverick audit verify`); "
+                f"erase will not re-anchor it. {_RESTORE_DAY}")
+    ledger = [b for b in breaks if b.reason not in _DAY_ANCHOR_BREAKS]
+    if reanchors and ledger:
+        return ("the audit tip ledger reports a break "
+                f"({', '.join(sorted({b.reason for b in ledger}))}; see `maverick audit verify`); "
+                "erase will not add to it. Restore anchors.ndjson from a backup "
+                "(`maverick backup restore`)")
+    return None
+
+
+def _checkpoint_problem(path: Path) -> str | None:
+    """A published checkpoint (default store) that requires more rows than the day has."""
+    store = path.parent.parent / "audit-checkpoints"
+    if not store.is_dir():
+        return None
+    from .checkpoints import verify_checkpoints
+
+    try:
+        breaks = verify_checkpoints(path.parent, store)
+    # failure-policy: fail_closed
+    except Exception as e:  # pragma: no cover - defensive
+        return f"published checkpoints could not be checked ({type(e).__name__}); run erase again"
+    if any(b.reason == "audit_tail_truncated" and f"{path.name} " in b.detail for b in breaks):
+        return (f"{path.name} has fewer rows than its published checkpoint (see "
+                f"`maverick audit checkpoint verify`). {_RESTORE_DAY}")
+    return None
+
+
+def _integrity_problem(path: Path, *, any_signed: bool) -> str | None:
+    """Why rewriting ``path`` would hide a break ``maverick audit verify`` reports.
+
+    Erase is never a repair: a day whose chain, tip anchor or published
+    checkpoint already reports a break is left unchanged.
+    """
+    return ((_chain_problem(path) if any_signed else None)
+            or _anchor_problem(path, reanchors=any_signed)
+            or _checkpoint_problem(path))
+
+
+def _ensure_anchors(audit_dir: Path) -> None:
+    """Anchor completed days first, exactly as a starting audit writer does,
+    so a day the ledger has not yet recorded is checked like every other."""
+    try:
+        from .signing import ensure_anchors
+
+        ensure_anchors(audit_dir)
+    # failure-policy: fail_soft_with_audit
+    except Exception as e:  # pragma: no cover - defensive
+        log.warning("audit erase: could not anchor completed days first: %s", e)
 
 
 def _build_parts(
@@ -274,11 +351,11 @@ def _process_file_locked(
     # If this is a signed audit file, validate it before making the authorized
     # erase mutation. Re-signing may only bless changes we just made to a
     # previously clean chain, never unrelated old tampering.
-    if any_signed and not _verify_signed_chain(path):
+    problem = _integrity_problem(path, any_signed=any_signed)
+    if problem:
+        log.warning("audit erase: refusing to rewrite %s: %s", path.name, problem)
         if strict:
-            raise RuntimeError(
-                "signed audit chain failed pre-erasure integrity verification"
-            )
+            raise RuntimeError("audit day failed pre-erasure integrity verification")
         return 0, len(rows)
 
     parts, written = _build_parts(rows, channel, user_id, delete=delete)
@@ -357,6 +434,7 @@ def scrub_user(
     total_scanned = 0
     if not audit_dir.exists():
         return 0, 0
+    _ensure_anchors(audit_dir)
     for path in sorted(audit_dir.glob("*.ndjson")):
         m, w = _process_file(
             path,
@@ -389,12 +467,11 @@ def _day_blocker(path: Path, channel: str, user_id: str) -> str | None:
         return (f"{path.name} cannot be read: restore the at-rest encryption key, or restore "
                 "the file from a backup (`maverick backup restore`)")
     rows, matched, any_signed = _scan_rows(original, channel, user_id)
-    if not matched or not any_signed:
+    if not matched:
         return None
-    if not _verify_signed_chain(path):
-        return (f"{path.name} has signed rows that do not verify (see `maverick audit verify`); "
-                "erase will not re-sign them. Restore the day from a backup "
-                "(`maverick backup restore`)")
+    problem = _integrity_problem(path, any_signed=any_signed)
+    if problem or not any_signed:
+        return problem
     try:
         from .signing import _load_or_create_keypair
 
@@ -424,6 +501,7 @@ def erase_blockers(
         audit_dir = data_dir("audit")
     if not audit_dir.exists():
         return []
+    _ensure_anchors(audit_dir)
     blockers = []
     for path in sorted(audit_dir.glob("*.ndjson")):
         if path.is_dir():
@@ -448,6 +526,7 @@ def delete_user(
     total_scanned = 0
     if not audit_dir.exists():
         return 0, 0
+    _ensure_anchors(audit_dir)
     for path in sorted(audit_dir.glob("*.ndjson")):
         m, w = _process_file(path, channel, user_id, delete=True)
         total_matched += m
