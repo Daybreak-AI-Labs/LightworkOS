@@ -36,6 +36,8 @@ _TOOL_NAMES = {
     "write_file": "Write a file", "apply_patch": "Change files", "read_file": "Read a file",
     "research": "Research the web", "web_search": "Search the web", "memory": "Change saved memory",
     "clipboard": "Use the clipboard", "http": "Call another website",
+    "payload_compress": "Measure how much text compresses",
+    "what_changed_digest": "Summarize what changed",
 }
 
 DECISIONS = {
