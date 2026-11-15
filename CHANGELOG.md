@@ -225,7 +225,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   recorded cost, and the reason shown says so.
 - Stop and rename now work on a running task. Its heartbeat no longer counts
   as a change since you reviewed it. A schema migration adds the column; it
-  runs on the next start of SQLite and Postgres.
+  runs on the next start of SQLite and Postgres. Stop also works while a
+  chat answer is still being written.
 - A cancel that arrives after a task finished no longer replaces "done".
   The task stays finished, and the chat supervisor and the gRPC cancel say
   that it had already finished.

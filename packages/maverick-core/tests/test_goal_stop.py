@@ -80,3 +80,16 @@ def test_heartbeat_does_not_invalidate_a_reviewed_stop(world):
     assert world.touch_goal(active)
     assert world.reclaim_orphan_goals(statuses=("active",), resolved_window_seconds=60) == 0
     assert world.get_goal(active).status == "active"
+
+
+def test_streamed_answer_preview_does_not_invalidate_a_reviewed_stop(world):
+    identifier = world.create_goal("Chat answer", owner="user:alice")
+    world.set_goal_status(identifier, "active")
+    args = dict(actor="user:alice", operation_id="d" * 32, expected_owner="user:alice",
+                expected_updated_at=float(world.get_goal(identifier).updated_at))
+    # The live preview keeps arriving while the person reviews and clicks Stop.
+    assert world.set_goal_partial_result(identifier, "Hello, I am")
+    assert world.set_goal_partial_result(identifier, "Hello, I am still writing")
+    assert world.get_goal(identifier).result == "Hello, I am still writing"
+    assert goal_stop.stop(world, identifier, **args)["stop_requested"]
+    assert world.get_goal(identifier).status == "cancelled"

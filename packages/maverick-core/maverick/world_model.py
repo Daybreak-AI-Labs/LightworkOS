@@ -1717,9 +1717,9 @@ class WorldModel:
         a sibling process (dashboard restarting while `maverick serve`
         is mid-goal would flip the live goal to 'blocked'). Default now
         is 60 seconds: only reclaim goals whose `updated_at` is at
-        least a minute stale. Live goals re-touch updated_at via
-        set_goal_status('active') and via the runner's status writes,
-        so any goal currently being driven won't qualify. Multi-process
+        least a minute stale. Live goals refresh ``heartbeat_at`` (the run
+        heartbeat and answer previews) or write ``updated_at`` through status
+        writes, so any goal currently being driven won't qualify. Multi-process
         deployments with very slow turns can raise this via
         ``MAVERICK_ORPHAN_RECLAIM_SECONDS``.
 
@@ -2482,15 +2482,16 @@ class WorldModel:
         """Replace a RUNNING goal's result with the answer written so far.
 
         The chat page's live preview. It never touches a terminal goal, so the
-        orchestrator's final write wins any race with a late preview; it
-        advances the optimistic review version like every goal write; and it
+        orchestrator's final write wins any race with a late preview. Like the
+        heartbeat it refreshes only ``heartbeat_at``, not ``updated_at`` (the
+        version a reviewed Stop binds to), so Stop works mid-answer; and it
         revokes no sign-off because a non-terminal goal cannot carry one.
         Returns whether a row changed.
         """
         now = time.time()
         with self._writing() as conn:
             cur = conn.execute(
-                "UPDATE goals SET result = ?, updated_at = MAX(updated_at + 0.000001, ?) "
+                "UPDATE goals SET result = ?, heartbeat_at = MAX(COALESCE(heartbeat_at, 0), ?) "
                 "WHERE id = ? AND status NOT IN "
                 "('done', 'completed', 'failed', 'cancelled', 'blocked', 'error')",
                 (_enc_field(text, "goals.result"), now, goal_id),

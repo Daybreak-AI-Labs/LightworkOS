@@ -1965,11 +1965,12 @@ class PostgresWorldModel:
 
     def set_goal_partial_result(self, goal_id: int, text: str) -> bool:
         """Replace a running goal's result with the answer written so far;
-        matches the SQLite backend (non-terminal rows only, no sign-off effect)."""
+        matches the SQLite backend (non-terminal rows only, no sign-off effect,
+        refreshes ``heartbeat_at`` and keeps the reviewed ``updated_at``)."""
         now = time.time()
         frag, fparams = _mutation_tenant_scope()
         sql = (
-            "UPDATE goals SET result=%s, updated_at=GREATEST(updated_at + 0.000001, %s) "
+            "UPDATE goals SET result=%s, heartbeat_at=GREATEST(heartbeat_at, %s) "
             "WHERE id=%s AND status NOT IN "
             "('done','completed','failed','cancelled','blocked','error')"
         )

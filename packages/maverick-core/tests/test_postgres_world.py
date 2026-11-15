@@ -962,6 +962,7 @@ def test_heartbeat_keeps_review_version_and_finished_goal_stays_done(world):
     world.set_goal_status(g, "active")
     reviewed = float(world.get_goal(g).updated_at)
     assert world.touch_goal(g)
+    assert world.set_goal_partial_result(g, "Answer so far")
     assert float(world.get_goal(g).updated_at) == reviewed
     assert goal_stop.stop(world, g, actor="user:alice", operation_id="c" * 32,
                           expected_updated_at=reviewed, expected_owner="user:alice")["stop_requested"]
