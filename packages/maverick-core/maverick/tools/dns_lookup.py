@@ -15,7 +15,9 @@ Use cases the agent might hit:
 """
 from __future__ import annotations
 
+import ipaddress
 import logging
+import re
 import socket
 from typing import Any
 
@@ -97,6 +99,36 @@ def _resolve_via_socket(host: str, rtype: str) -> str:
 _RTYPES = ("A", "AAAA", "MX", "TXT", "CNAME", "NS")
 
 
+# One DNS label: letters, digits, hyphen (not at either end) and underscore
+# (``_dmarc``, ``_sip._tcp``).
+_LABEL = re.compile(r"^[A-Za-z0-9_](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?$")
+
+
+def _is_ip(name: str) -> bool:
+    try:
+        ipaddress.ip_address(name)
+    except ValueError:
+        return False
+    return True
+
+
+def _plain_name_error(name: str, *, ip_only: bool = False) -> str | None:
+    """Why ``name`` is not a plain hostname (or IP), or None when it is.
+
+    The egress check judges a host, so the name sent to the resolver must be
+    exactly that host: anything a URL parser would cut short (``#``, ``?``,
+    ``/``, ``@``) or a resolver would read differently is refused first.
+    """
+    if _is_ip(name):
+        return None
+    if ip_only:
+        return f"ERROR: {name[:80]!r} is not an IP address"
+    bare = name.rstrip(".")
+    if not bare or len(bare) > 253 or not all(_LABEL.match(label) for label in bare.split(".")):
+        return f"ERROR: {name[:80]!r} is not a plain hostname"
+    return None
+
+
 def _egress_denial(name: str) -> str | None:
     """Why the policy forbids looking up ``name``, or None.
 
@@ -107,7 +139,11 @@ def _egress_denial(name: str) -> str | None:
     from ._sdk_egress import sdk_egress_denial
 
     target = f"[{name}]" if ":" in name else name
-    denial = sdk_egress_denial("dns_lookup", f"https://{target}/")
+    url = f"https://{target}/"
+    from urllib.parse import urlsplit
+    if (urlsplit(url).hostname or "") != name.lower().rstrip("."):
+        return f"ERROR: {name[:80]!r} is not a plain hostname"
+    denial = sdk_egress_denial("dns_lookup", url)
     return f"ERROR: {denial}" if denial else None
 
 
@@ -118,6 +154,8 @@ def _op_resolve(host: str, rtype: str) -> str:
     if rtype not in _RTYPES:
         # The schema enum is advisory; dnspython would resolve any type it knows.
         return f"ERROR: rtype must be one of {', '.join(_RTYPES)}"
+    if problem := _plain_name_error(host):
+        return problem
     if denial := _egress_denial(host):
         return denial
     if _have_dnspython():
@@ -128,6 +166,8 @@ def _op_resolve(host: str, rtype: str) -> str:
 def _op_reverse(ip: str) -> str:
     if not ip:
         return "ERROR: reverse requires ip"
+    if problem := _plain_name_error(ip, ip_only=True):
+        return problem
     if denial := _egress_denial(ip):
         return denial
     if _have_dnspython():

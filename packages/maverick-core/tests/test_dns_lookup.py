@@ -1,6 +1,8 @@
 """Tests for the dns_lookup tool (maverick.tools.dns_lookup)."""
 from __future__ import annotations
 
+import pytest
+
 # ---------- DNS lookup tool ----------
 
 def test_dns_requires_op():
@@ -84,3 +86,37 @@ def test_dns_lookup_obeys_the_egress_policy(monkeypatch):
     out = tool.fn({"op": "reverse", "ip": "203.0.113.9"})
     assert out.startswith("ERROR") and "egress policy" in out
     assert seen == [("dns_lookup", "secret.attacker.example"), ("dns_lookup", "203.0.113.9")]
+
+
+@pytest.mark.parametrize("dnspython", [True, False])
+@pytest.mark.parametrize("name", [
+    "example.com#DATA.attacker.test", "example.com?DATA.attacker.test",
+    "example.com/DATA.attacker.test", "a b.example.com", "user@example.com",
+    "example..com", "-bad.example.com",
+])
+def test_dns_lookup_refuses_names_that_are_not_plain_hostnames(monkeypatch, dnspython, name):
+    # The egress check must judge the exact name sent to the resolver, so a
+    # name a URL parser would cut short is refused before any check or lookup.
+    import sys
+    import types
+
+    import maverick.tenant.egress as egress
+    monkeypatch.setattr(egress, "egress_allowed",
+                        lambda *a: pytest.fail("policy consulted for a malformed name"))
+
+    def _no_lookup(*a, **k):
+        raise AssertionError("a malformed name must not be resolved")
+
+    resolver = types.ModuleType("dns.resolver")
+    resolver.resolve = _no_lookup
+    package = types.ModuleType("dns")
+    package.resolver = resolver
+    monkeypatch.setitem(sys.modules, "dns", package)
+    monkeypatch.setitem(sys.modules, "dns.resolver", resolver)
+    monkeypatch.setattr("maverick.tools.dns_lookup._have_dnspython", lambda: dnspython)
+    monkeypatch.setattr("socket.getaddrinfo", _no_lookup)
+    from maverick.tools.dns_lookup import dns_lookup
+    out = dns_lookup().fn({"op": "resolve", "host": name, "type": "A"})
+    assert out.startswith("ERROR") and "hostname" in out
+    out = dns_lookup().fn({"op": "reverse", "ip": name})
+    assert out.startswith("ERROR")
