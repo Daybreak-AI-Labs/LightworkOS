@@ -195,7 +195,7 @@
     "storage_primitive": 12,
     "world": 4,
     "mixed_api": 8,
-    "knowledge": 4,
+    "knowledge": 6,
     "draft": 3,
     "test_only": 16,
     "derived_analytics": 2
@@ -21056,6 +21056,57 @@
           "function": "__init__",
           "kind": "connect",
           "expression": "psycopg.connect(self._dsn, autocommit=True)"
+        }
+      ]
+    },
+    {
+      "path": "packages/maverick-knowledge/maverick_knowledge/held.py",
+      "contract": "knowledge",
+      "owner": "packages/maverick-knowledge/maverick_knowledge/held.py",
+      "purpose": "Documents the knowledge ingest screen held for an administrator's decision; never searchable.",
+      "referenced_store_owners": [],
+      "review": "Source purpose, path construction and persistence call sites reviewed; restored as passive SQLite with knowledge.db (recovery_authorities). Distributed deployment is not qualified.",
+      "governed_namespaces": [],
+      "literal_path_hints": [],
+      "observed_mechanism_markers": {
+        "create_table": 1
+      },
+      "source_sites": [
+        {
+          "line": 65,
+          "function": "__init__",
+          "kind": "connect",
+          "expression": "sqlite3.connect(':memory:', check_same_thread=False)"
+        },
+        {
+          "line": 85,
+          "function": "_transaction",
+          "kind": "connect",
+          "expression": "sqlite3.connect(self._path, factory=ClosingConnection)"
+        }
+      ]
+    },
+    {
+      "path": "packages/maverick-core/maverick/knowledge_admin.py",
+      "contract": "knowledge",
+      "owner": "packages/maverick-knowledge/maverick_knowledge/held.py",
+      "purpose": "Governed knowledge administration: erasure, residual counts and decisions on held documents.",
+      "referenced_store_owners": [
+        "maverick_knowledge.held",
+        "maverick_knowledge.store"
+      ],
+      "review": "Source purpose, path construction and persistence call sites reviewed; restored as passive SQLite with knowledge.db (recovery_authorities). Distributed deployment is not qualified.",
+      "governed_namespaces": [],
+      "literal_path_hints": [
+        "knowledge_held.db"
+      ],
+      "observed_mechanism_markers": {},
+      "source_sites": [
+        {
+          "line": 162,
+          "function": "decide_held",
+          "kind": "cross_process_lock",
+          "expression": "cross_process_lock(held_documents_path(tenant), strict=True)"
         }
       ]
     },
