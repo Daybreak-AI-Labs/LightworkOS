@@ -853,6 +853,21 @@ def _declared_endpoint_price(value: object) -> tuple[float, float] | None:
     return rates if all(math.isfinite(v) and 0 <= v <= 1_000_000 for v in rates) else None
 
 
+def self_hosted_price_state(provider: str) -> str:
+    """How a self-hosted provider's routes are priced now: ``"marked_free"``,
+    ``"private"`` (free because the server is private), ``"priced"`` (a set
+    price) or ``"ceiling"`` (the safety ceiling)."""
+    url, raw_price = _self_hosted_endpoint(provider)
+    declared = _declared_endpoint_price(raw_price)
+    if declared == (0.0, 0.0):
+        return "marked_free"
+    if declared is not None:
+        return "priced"
+    if raw_price is None and _is_private_endpoint(url):
+        return "private"
+    return "ceiling"
+
+
 def self_hosted_price_gaps() -> list[tuple[str, str]]:
     """Configured self-hosted servers charged the safety ceiling.
 

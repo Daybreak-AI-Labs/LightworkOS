@@ -214,6 +214,9 @@
     </table>
     <p class="muted">Lightwork charges a safety ceiling for a self-hosted model server it cannot tell is private. Enter its price below, or mark it free here.</p>
     <h4>Mark a self-hosted server free</h4>
+    <table data-self-hosted-prices><thead><tr><th scope="col">Server</th><th scope="col">Charge now</th></tr></thead>
+      <tbody>{% for row in self_hosted_states %}<tr><td>{{ row.label }}</td><td>{{ row.state }}</td></tr>{% endfor %}</tbody>
+    </table>
     <form method="post" action="/settings/models/self-hosted-free" class="settings-row-form" data-settings-local="true">
       <label class="settings-field">Server
         <select class="select" name="provider" required>
@@ -228,8 +231,8 @@
           <option value="off">Charge it again</option>
         </select>
       </label>
-      <label class="settings-field"><input type="checkbox" name="confirm" required>
-        I run this server, or I checked that it charges nothing.
+      <label class="settings-field"><input type="checkbox" name="confirm">
+        Needed to mark it free: I run this server, or I checked that it charges nothing.
       </label>
       <button class="btn" type="submit">Save server charge</button>
     </form>

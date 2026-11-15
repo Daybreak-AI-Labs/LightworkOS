@@ -100,11 +100,21 @@ def test_admin_can_mark_a_self_hosted_server_free(monkeypatch, tmp_path):
     assert c.post("/settings/models/self-hosted-free",
                   data={"provider": "openai", "free": "on", "confirm": "on"},
                   headers=headers, follow_redirects=False).status_code == 400
+    assert "Marked free" in c.get("/settings").text
+    # Charging again needs no "charges nothing" confirmation.
     cleared = c.post("/settings/models/self-hosted-free",
-                     data={"provider": "ollama", "free": "off", "confirm": "on"},
+                     data={"provider": "ollama", "free": "off"},
                      headers=headers, follow_redirects=False)
     assert cleared.status_code == 303
     assert _lookup_price_quote("ollama:llama3").rates != (0.0, 0.0)
+    assert "Safety ceiling" in c.get("/settings").text
+    # Free set in config.toml by setup cannot be cleared here: say which file.
+    config_path().write_text('[providers.ollama]\nbase_url = "https://gpu.example.org"\n'
+                             'price_per_mtok = "free"\n', encoding="utf-8")
+    kept = c.post("/settings/models/self-hosted-free", data={"provider": "ollama", "free": "off"},
+                  headers=headers, follow_redirects=False)
+    assert kept.status_code == 409 and str(config_path()) in kept.json()["detail"]
+    assert _lookup_price_quote("ollama:llama3").rates == (0.0, 0.0)
 
 
 def test_settings_has_bounded_sections_keyboard_tabs_and_search(monkeypatch, tmp_path):
