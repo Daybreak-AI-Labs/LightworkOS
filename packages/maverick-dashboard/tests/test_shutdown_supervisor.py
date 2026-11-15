@@ -266,22 +266,48 @@ def test_shutdown_refuses_new_http_work_and_readiness_but_keeps_liveness(monkeyp
     assert client.get("/livez").status_code == 200
 
 
-def test_unrecoverable_interrupted_restore_keeps_liveness_and_explains(monkeypatch):
+@pytest.mark.parametrize("token", [None, "refusal-test-token"])  # pragma: allowlist secret
+def test_unrecoverable_interrupted_restore_keeps_liveness_and_explains(monkeypatch, token):
     from fastapi.testclient import TestClient
     from maverick import backup
     from maverick_dashboard.app import app
 
-    message = "An earlier restore stopped part-way, so Lightwork did not start."
+    message = ("An earlier restore stopped part-way in /home/private/tenants/acme, so "
+               "Lightwork did not start. Set MAVERICK_BACKUP_SIGNING_KEY to the key used.")
 
     def refuse():
         raise backup.RestoreRecoveryRefused(message)
 
     monkeypatch.setattr(backup, "recover_interrupted_restore", refuse)
+    if token:
+        monkeypatch.setenv("MAVERICK_DASHBOARD_TOKEN", token)
+    else:
+        monkeypatch.delenv("MAVERICK_DASHBOARD_TOKEN", raising=False)
     with TestClient(app, base_url="http://127.0.0.1", headers={"Origin": "http://127.0.0.1"}) as client:
         assert client.get("/livez").status_code == 200
-        assert client.get("/readyz").status_code == 503
+        for probe in ("/healthz", "/readyz"):
+            answer = client.get(probe)
+            # The desktop reads this identity as "Lightwork, not ready" and opens
+            # the page below; probes never carry paths or workspace names.
+            assert answer.status_code == 503
+            assert answer.headers["x-lightwork-service"] == "dashboard-v1"
+            assert "acme" not in answer.text and "/home/" not in answer.text
+            assert "server log" in answer.json()["detail"]
+        page = client.get("/", headers={"Accept": "text/html"})
         refused = client.get("/api/v1/facts")
-        assert refused.status_code == 503 and refused.json()["detail"] == message
+        if token:
+            # Without the token the request is refused (by authentication or
+            # this answer) and never shows the details; the holder sees them.
+            assert {page.status_code, refused.status_code} <= {401, 503}
+            assert "acme" not in page.text and "acme" not in refused.text
+            owner = client.get("/api/v1/facts", headers={"Authorization": f"Bearer {token}"})
+            assert owner.json()["detail"] == message
+        else:
+            # The local owner (the desktop opens "/") sees what to do.
+            assert page.status_code == 503 and "text/html" in page.headers["content-type"]
+            assert "MAVERICK_BACKUP_SIGNING_KEY" in page.text
+            assert refused.status_code == 503
+            assert refused.json()["detail"] == message
         assert "consent_scan" not in app.state.lifecycle_supervisor.components
     patch_state(monkeypatch, app.state, "restore_refusal", None, raising=False)
 

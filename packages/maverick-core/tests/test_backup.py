@@ -1293,10 +1293,8 @@ def test_commit_journal_failure_rolls_back(monkeypatch):
     assert not (root / backup._RESTORE_TX_ROOT).exists()
 
 
-def test_startup_recovers_interrupted_restore_or_refuses_with_plain_message(monkeypatch):
-    from maverick.paths import data_dir
-
-    root = data_dir()
+def _crashed_restore(monkeypatch, root):
+    """Leave a restore journal behind as a crash mid-restore would."""
     _seed(root)
     archive = backup.create_backup()
     (root / "agent_trust.json").write_text('[{"id":"live-new"}]')
@@ -1320,12 +1318,26 @@ def test_startup_recovers_interrupted_restore_or_refuses_with_plain_message(monk
     monkeypatch.setattr(backup, "_rollback", real_rollback)
     tx_root = root / backup._RESTORE_TX_ROOT
     assert tx_root.exists()
+    return tx_root
+
+
+def test_startup_recovers_interrupted_restore_or_refuses_with_plain_message(monkeypatch):
+    from maverick.paths import data_dir
+
+    root = data_dir()
+    tx_root = _crashed_restore(monkeypatch, root)
+    # A process bound to another workspace (or none, like the dashboard) still
+    # finds this workspace's journal.
+    monkeypatch.delenv("MAVERICK_CLIENT_ID")
+    client.reset_client_cache()
 
     monkeypatch.setenv("MAVERICK_BACKUP_SIGNING_KEY", bytes(range(1, 33)).hex())
     with pytest.raises(backup.RestoreRecoveryRefused) as refused:
         backup.recover_interrupted_restore()
-    assert "MAVERICK_BACKUP_SIGNING_KEY" in str(refused.value)
-    assert "Traceback" not in str(refused.value)
+    message = str(refused.value)
+    assert "MAVERICK_BACKUP_SIGNING_KEY" in message
+    assert "as they were before the restore" in message
+    assert "Detail" not in message and "allow_unsigned" not in message
     assert tx_root.exists()
 
     monkeypatch.setenv("MAVERICK_BACKUP_SIGNING_KEY", bytes(range(32)).hex())
@@ -1333,6 +1345,24 @@ def test_startup_recovers_interrupted_restore_or_refuses_with_plain_message(monk
     assert (root / "agent_trust.json").read_text() == '[{"id":"live-new"}]'
     assert not tx_root.exists()
     assert backup.recover_interrupted_restore() is False
+
+
+def test_startup_points_a_recovery_centre_restore_to_recovery_mode(monkeypatch):
+    from maverick.paths import data_dir
+
+    root = data_dir()
+    recovery_key = bytes(range(2, 34))
+    store = root / "backups" / "recovery"
+    store.mkdir(parents=True)
+    (store / "operator.key").write_text(recovery_key.hex())
+    with backup.recovery_scope(root, "acme", recovery_key):
+        tx_root = _crashed_restore(monkeypatch, root)
+    with pytest.raises(backup.RestoreRecoveryRefused) as refused:
+        backup.recover_interrupted_restore()
+    message = str(refused.value)
+    assert "recovery mode" in message
+    assert "MAVERICK_BACKUP_SIGNING_KEY" not in message
+    assert tx_root.exists()
 
 
 def test_backup_leaves_out_an_unportable_name_in_sandbox_recovery_copies(caplog):
@@ -1368,6 +1398,10 @@ def test_cli_refuses_to_start_on_unrecoverable_restore_with_the_message(monkeypa
     assert result.exit_code == 1
     assert "An earlier restore stopped part-way." in result.output
     assert "Traceback" not in result.output
+    # Help, version and doctor still answer, so the person can find the way out.
+    for args in (["--help"], ["backup", "--help"], ["backup", "restore", "--help"], ["version"]):
+        shown = CliRunner().invoke(main, args)
+        assert shown.exit_code == 0, (args, shown.output)
 
 
 def test_next_restore_recovers_retained_applying_journal(monkeypatch):

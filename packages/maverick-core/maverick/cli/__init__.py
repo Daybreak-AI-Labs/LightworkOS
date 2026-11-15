@@ -459,7 +459,16 @@ def _configure_cli_text_streams() -> None:
             continue
 
 
-@click.group(epilog=(
+class _MainGroup(click.Group):
+    """Notes whether a command only asks for its help text, so the start-up
+    gate (see ``main``) can let help through while normal work is refused."""
+
+    def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+        ctx.meta["maverick.help_only"] = "--help" in args
+        return super().parse_args(ctx, args)
+
+
+@click.group(cls=_MainGroup, epilog=(
     "New here? Start with these four:\n"
     "\n"
     "\b\n"
@@ -485,17 +494,14 @@ def main(ctx: click.Context, db: str | None, model: str | None) -> None:
         "dashboard", "installation-maintenance", "version", "doctor",
         "config-lint", "preflight",
     }:
-        from ..installation_recovery import MaintenanceError, assert_normal_start_allowed
+        from ..installation_recovery import MaintenanceError, require_normal_start
         try:
-            assert_normal_start_allowed()
-        except MaintenanceError as exc:
-            raise click.ClickException(str(exc)) from exc
-        from ..backup import RestoreRecoveryRefused, recover_interrupted_restore
-        try:
-            if recover_interrupted_restore():
+            # `maverick <command> --help` only prints text; it must work while
+            # start-up is refused, so the person can read what to do.
+            if not ctx.meta.get("maverick.help_only") and require_normal_start():
                 click.echo("Lightwork undid a restore that stopped part-way. "
                            "Your data is as it was before that restore.", err=True)
-        except RestoreRecoveryRefused as exc:
+        except MaintenanceError as exc:
             raise click.ClickException(str(exc)) from exc
     if ctx.invoked_subcommand == "mcp":
         from .._mcp_parent_guard import ParentGuardError, arm_from_environment

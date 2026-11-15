@@ -223,10 +223,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the refusal names the storage boundary.
 - An automation opportunity is not proposed while any completed run has no
   recorded cost, and the reason shown says so.
-- A restore that stopped part-way is now undone when the dashboard or a
-  CLI command starts. If its record cannot be checked (for example the
-  backup signing key changed), start-up stops with a message saying what to
-  do; the dashboard still answers `/livez` and returns that message elsewhere.
+- A restore that stopped part-way, in any workspace, is now undone when the
+  dashboard, a CLI command, `maverick-mcp` or `maverick-evolve` starts. If
+  its record cannot be checked (for example the backup signing key
+  changed), start-up stops with a message saying what to do. The dashboard
+  then answers `/livez`, gives probes a short message, and shows the full
+  steps to the local owner or token holder. `--help` still works.
 - On Postgres, a world read made inside an open world transaction (such as
   the check before a conversation alternative is created) now joins that
   transaction. It no longer commits it early or, with `pool_size = 1`,
