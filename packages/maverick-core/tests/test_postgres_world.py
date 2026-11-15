@@ -2591,3 +2591,44 @@ def test_erasure_unlinks_a_child_another_tenant_claimed(world, monkeypatch):
             cur.execute("DELETE FROM conversations WHERE id=%s", (conv,))
             cur.execute("UPDATE goals SET parent_id=NULL WHERE id=%s", (child,))
             cur.execute("DELETE FROM goals WHERE id IN (%s,%s)", (parent, child))
+
+
+def test_chat_action_guard_read_keeps_the_submission_lock_and_tenant(monkeypatch):
+    """The original trigger: SubmissionStore.create holds a transaction with an
+    advisory lock and the tenant setting, and its before_create guard reads
+    the world (task_handoffs.closure -> world.query). That inner read used to
+    commit the outer transaction, dropping both before the INSERTs."""
+    import psycopg
+    from maverick.attachment_submissions import SubmissionStore
+    from maverick.task_handoffs import closure
+    from maverick.world_model_backends import postgres as pg
+    from maverick.world_model_backends.postgres import PostgresWorldModel
+
+    tenant = "guard-" + uuid.uuid4().hex
+    monkeypatch.setattr(pg, "_active_tenant", lambda: tenant)
+    w = PostgresWorldModel(dsn=_DSN)
+    w._rls = True  # bind the tenant setting so it can be observed
+    try:
+        source = w.create_goal("earlier message")
+        seen = []
+
+        def guard(connection):
+            assert closure(w, source) is None  # the nested world read
+            connection.execute("SELECT pg_backend_pid(), current_setting('maverick.tenant', true)")
+            pid, bound = connection.fetchone()
+            with psycopg.connect(_DSN, autocommit=True) as other:
+                held = other.execute(
+                    "SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND pid=%s AND granted",
+                    (pid,)).fetchone()[0]
+            seen.append((bound, held))
+
+        receipt = SubmissionStore(w).create(
+            token="guard-" + uuid.uuid4().hex, fingerprint="fp", owner="owner",
+            title="alternative", description="", manifest=[], before_create=guard)
+        assert receipt["created"]
+        assert seen == [(tenant, 1), (tenant, 1)]  # before and after the INSERTs
+        with psycopg.connect(_DSN, autocommit=True) as other:
+            assert other.execute("SELECT tenant_id FROM goals WHERE id=%s",
+                                 (receipt["goal_id"],)).fetchone() == (tenant,)
+    finally:
+        w.close()
