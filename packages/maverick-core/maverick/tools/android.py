@@ -123,9 +123,9 @@ def _op_uninstall(device: str, package: str) -> str:
 def _op_screenshot(device: str, out_path: str, sandbox: Any = None) -> str:
     if not out_path:
         return "ERROR: screenshot requires out_path"
-    from .ffmpeg_tool import _safe_path
+    from .ffmpeg_tool import _safe_output_path
     try:
-        out_path = _safe_path(sandbox, out_path)
+        out_path = _safe_output_path(sandbox, out_path)
     except ValueError as e:
         return f"ERROR: {e}"
     # adb exec-out screencap streams the png bytes directly.
