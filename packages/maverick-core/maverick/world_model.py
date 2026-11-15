@@ -72,7 +72,7 @@ log = logging.getLogger(__name__)
 # intentional override from the untouched compatibility constant.
 _INITIAL_DEFAULT_DB = data_dir("world.db")
 DEFAULT_DB = _INITIAL_DEFAULT_DB
-SCHEMA_VERSION = 53
+SCHEMA_VERSION = 54
 DEFAULT_BUSY_TIMEOUT_MS = 5000
 WAL_SWITCH_BUSY_TIMEOUT_MS = 50
 WAL_SWITCH_RETRY_SECONDS = 5.0
@@ -461,6 +461,9 @@ def _bootstrap_schema(conn: sqlite3.Connection) -> str:
 
 
 MIGRATIONS: dict[int, list[str]] = {
+    # v54: a running goal's liveness heartbeat has its own timestamp, so it no
+    # longer changes ``updated_at``, the version a reviewed Stop or edit binds.
+    54: ["ALTER TABLE goals ADD COLUMN heartbeat_at REAL"],
     # v53: an external agent's run report key binds one goal. The unique
     # index makes a concurrent retry with the same key reuse that goal.
     53: ["CREATE UNIQUE INDEX IF NOT EXISTS idx_goal_origins_external_run "
@@ -1703,10 +1706,10 @@ class WorldModel:
 
     def reclaim_orphan_goals(
         self, *, max_age_seconds: float = 60.0,
-        statuses: tuple[str, ...] = ("active", "pending"),
+        statuses: tuple[str, ...] = ("active",),
         resolved_window_seconds: float | None = None,
     ) -> int:
-        """Mark goals stuck in 'active' or 'pending' as 'blocked'.
+        """Mark goals stuck in 'active' (or, when asked, 'pending') as 'blocked'.
 
         Called on startup to recover from SIGKILL / OOM / crash mid-run.
         Without this, a process death between create_goal() and
@@ -1718,9 +1721,9 @@ class WorldModel:
         a sibling process (dashboard restarting while `maverick serve`
         is mid-goal would flip the live goal to 'blocked'). Default now
         is 60 seconds: only reclaim goals whose `updated_at` is at
-        least a minute stale. Live goals re-touch updated_at via
-        set_goal_status('active') and via the runner's status writes,
-        so any goal currently being driven won't qualify. Multi-process
+        least a minute stale. Live goals refresh ``heartbeat_at`` (the run
+        heartbeat and answer previews) or write ``updated_at`` through status
+        writes, so any goal currently being driven won't qualify. Multi-process
         deployments with very slow turns can raise this via
         ``MAVERICK_ORPHAN_RECLAIM_SECONDS``.
 
@@ -1728,8 +1731,10 @@ class WorldModel:
         goal, even when its monotonic review timestamp is ahead of the wall
         clock. Positive windows continue to require the full stale interval.
 
-        A periodic sweep passes only ``("active",)``; queued ``pending`` goals
-        may legitimately wait longer than the stale window.
+        Only ``active`` goals are reclaimed by default: a queued ``pending``
+        goal may legitimately wait longer than the stale window (for a worker,
+        a schedule or a concurrency slot). A caller that knows its pending rows
+        have no other owner passes ``("active", "pending")``.
 
         Returns rows reclaimed.
         """
@@ -1751,7 +1756,7 @@ class WorldModel:
                     "UPDATE goals SET status = 'blocked', "
                     "result = COALESCE(result, '') || ?, "
                     "updated_at = MAX(updated_at + 0.000001, ?) "
-                    f"WHERE status IN ({marks}) AND (? = 0 OR updated_at <= ?)",
+                    f"WHERE status IN ({marks}) AND (? = 0 OR MAX(updated_at, COALESCE(heartbeat_at, 0)) <= ?)",
                     (marker, now, *statuses, max_age_seconds, cutoff),
                 )
                 return cur.rowcount
@@ -1763,7 +1768,7 @@ class WorldModel:
             # is negligible.
             rows = conn.execute(
                 "SELECT id, result FROM goals "
-                f"WHERE status IN ({marks}) AND (? = 0 OR updated_at <= ?)",
+                f"WHERE status IN ({marks}) AND (? = 0 OR MAX(updated_at, COALESCE(heartbeat_at, 0)) <= ?)",
                 (*statuses, max_age_seconds, cutoff),
             ).fetchall()
             from .crypto_at_rest import EncryptionUnavailable
@@ -1791,7 +1796,7 @@ class WorldModel:
                     cur = conn.execute(
                         "UPDATE goals SET status = 'blocked', updated_at = MAX(updated_at + 0.000001, ?) "
                         f"WHERE id = ? AND status IN ({marks}) "
-                        "AND (? = 0 OR updated_at <= ?)",
+                        "AND (? = 0 OR MAX(updated_at, COALESCE(heartbeat_at, 0)) <= ?)",
                         (now, row["id"], *statuses, max_age_seconds, cutoff),
                     )
                     reclaimed += cur.rowcount
@@ -1800,7 +1805,7 @@ class WorldModel:
                     "UPDATE goals SET status = 'blocked', result = ?, "
                     "updated_at = MAX(updated_at + 0.000001, ?) "
                     f"WHERE id = ? AND status IN ({marks}) "
-                    "AND (? = 0 OR updated_at <= ?)",
+                    "AND (? = 0 OR MAX(updated_at, COALESCE(heartbeat_at, 0)) <= ?)",
                     (new_result, now, row["id"], *statuses, max_age_seconds, cutoff),
                 )
                 reclaimed += cur.rowcount
@@ -2434,8 +2439,10 @@ class WorldModel:
                 "WHEN status = 'done' THEN completed_at "
                 "ELSE MAX(updated_at + 0.000001, ?) END, "
                 "status = ?, updated_at = MAX(updated_at + 0.000001, ?), "
-                "result = COALESCE(?, result) WHERE id = ?",
-                (status, now, status, now, _enc_field(result, "goals.result"), goal_id),
+                "result = COALESCE(?, result) WHERE id = ? "
+                # A finished task stays finished: a late cancel changes nothing.
+                "AND NOT (status = 'done' AND ? = 'cancelled')",
+                (status, now, status, now, _enc_field(result, "goals.result"), goal_id, status),
                 )
                 self._goal_changed(goal_id)
             # A sign-off is authority over one immutable terminal payload, not
@@ -2479,15 +2486,16 @@ class WorldModel:
         """Replace a RUNNING goal's result with the answer written so far.
 
         The chat page's live preview. It never touches a terminal goal, so the
-        orchestrator's final write wins any race with a late preview; it
-        advances the optimistic review version like every goal write; and it
+        orchestrator's final write wins any race with a late preview. Like the
+        heartbeat it refreshes only ``heartbeat_at``, not ``updated_at`` (the
+        version a reviewed Stop binds to), so Stop works mid-answer; and it
         revokes no sign-off because a non-terminal goal cannot carry one.
         Returns whether a row changed.
         """
         now = time.time()
         with self._writing() as conn:
             cur = conn.execute(
-                "UPDATE goals SET result = ?, updated_at = MAX(updated_at + 0.000001, ?) "
+                "UPDATE goals SET result = ?, heartbeat_at = MAX(COALESCE(heartbeat_at, 0), ?) "
                 "WHERE id = ? AND status NOT IN "
                 "('done', 'completed', 'failed', 'cancelled', 'blocked', 'error')",
                 (_enc_field(text, "goals.result"), now, goal_id),
@@ -2606,8 +2614,10 @@ class WorldModel:
     def touch_goal(
         self, goal_id: int, *, expected_owner: str | None = None,
     ) -> bool:
-        """Refresh a live goal's ``updated_at`` — the orphan-reclaim liveness
-        signal — without any other side effect.
+        """Refresh a live goal's ``heartbeat_at`` — the orphan-reclaim liveness
+        signal — without any other side effect. ``updated_at`` stays put: it
+        is the version a reviewed Stop or edit binds to, and a heartbeat is
+        not a change the reviewer needs to see again.
 
         A pure keep-alive for work running OUTSIDE this process (external
         agents heartbeating a run, remote workers between status writes):
@@ -2616,7 +2626,7 @@ class WorldModel:
         in-flight rows qualify; terminal goals are never revived. The owner
         predicate rides in the same statement so authorization cannot be
         separated from the touch by a race."""
-        sql = ("UPDATE goals SET updated_at = MAX(updated_at + 0.000001, ?) "
+        sql = ("UPDATE goals SET heartbeat_at = MAX(COALESCE(heartbeat_at, 0), ?) "
                "WHERE id = ? AND status IN ('active', 'pending')")
         params: tuple[Any, ...] = (time.time(), int(goal_id))
         if expected_owner is not None:

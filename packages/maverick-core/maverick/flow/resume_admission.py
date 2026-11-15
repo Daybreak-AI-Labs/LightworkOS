@@ -26,6 +26,8 @@ class ResumeAdmission:
     approval_actor: str
     approval_binding: str
     approval_expired: bool
+    # Set when a retry must first pause at this approval gate for a new review.
+    reapproval_gate: str = ""
 
 
 RETRY_NEEDS_APPROVAL = (
@@ -33,6 +35,36 @@ RETRY_NEEDS_APPROVAL = (
     "Retrying would send it again without a new review. Start a new run so a "
     "person can review it again."
 )
+
+
+RETRY_APPROVAL_NOTE = "This step failed before. Approving runs it again."
+
+
+def retry_approval_gate(flow: Flow, prior: store.FlowRun) -> str:
+    """The approval that guards the failed step, so a retry can ask it again.
+
+    Only a plain approve/reject gate whose next step is the failed top-level step
+    qualifies. "" means a retry has no gate to ask and stays refused.
+    """
+    if not prior.cursor or flow.node(prior.cursor) is None:
+        return ""
+    gates = sorted(node.id for node in flow.nodes.values()
+                   if node.kind == "approval" and not node.choices
+                   and node.next == prior.cursor)
+    return gates[0] if gates else ""
+
+
+def _retry_after_approval(flow: Flow, prior: store.FlowRun, resume: dict,
+                          not_resumable: type[ValueError]) -> dict:
+    """An approved re-review continues the failed step from its saved work."""
+    gate = flow.node(prior.cursor) if prior.cursor else None
+    if gate is None or gate.next != prior.retry_cursor or flow.node(prior.retry_cursor) is None:
+        raise not_resumable("the approved retry no longer matches this run")
+    retry = {"node_id": prior.retry_cursor, "data": resume["data"], "rerun": True,
+             "decision": resume["decision"]}
+    if prior.continuation:
+        retry["continuation"] = prior.continuation
+    return retry
 
 
 def _failed_leaves(flow: Flow, frame: object, depth: int = 0) -> list[FlowNode] | None:
@@ -130,12 +162,17 @@ def prepare_saved_resume(
     submitted, resume_data = prepare_resume_inputs(flow, prior, inputs)
     resume = {"node_id": prior.cursor, "data": resume_data}
     actor, selected_binding, is_expired = "", "", False
+    gate = ""
     if retry:
         refusal = retry_approval_refusal(flow, prior)
-        if refusal:
+        gate = retry_approval_gate(flow, prior) if refusal else ""
+        if refusal and not gate:
             raise not_resumable(refusal)
         resume["rerun"] = True
-        if prior.continuation:
+        if gate:
+            # Pause at the gate again; the saved work resumes once approved.
+            resume["node_id"] = gate
+        elif prior.continuation:
             resume["continuation"] = prior.continuation
     elif is_approval:
         approval = prepare_approval_decision(
@@ -145,8 +182,11 @@ def prepare_saved_resume(
         )
         actor, selected_binding, is_expired = approval.actor, approval.binding, approval.expired
         resume.update(approval.resume_fields)
+        if prior.retry_cursor and resume.get("decision") == "approved":
+            resume = _retry_after_approval(flow, prior, resume, not_resumable)
     return ResumeAdmission(
         prior=prior, flow=flow, owner=owner or prior.owner, resume=resume,
         submitted_inputs=submitted, approval_resume=is_approval,
         approval_actor=actor, approval_binding=selected_binding, approval_expired=is_expired,
+        reapproval_gate=gate,
     )

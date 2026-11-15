@@ -194,6 +194,20 @@ def test_cancel_confirmed(world, ledger):
     assert world.get_goal(gid).status == "cancelled"
 
 
+def test_cancel_after_recorded_success_keeps_the_task_done(world, ledger):
+    gid = world.create_goal("deploy the api")
+    sup = make_supervisor(world, ledger, confirm=lambda _d: True)
+    # The task finishes while the cancel is being confirmed.
+    world.set_goal_status(gid, "active")
+    sup.confirm = lambda _d: world.set_goal_status(gid, "done", result="shipped") or True
+    out = sup.handle(f"cancel goal {gid}")
+    assert "already finished" in out and "Nothing changed" in out
+    goal = world.get_goal(gid)
+    assert (goal.status, goal.result) == ("done", "shipped")
+    world.set_goal_status(gid, "cancelled")  # any later cancel is refused too
+    assert world.get_goal(gid).status == "done"
+
+
 def test_prioritize_records_fact_not_fake_column(world, ledger):
     gid = world.create_goal("deploy the api")
     sup = make_supervisor(world, ledger, confirm=lambda _d: True)

@@ -443,6 +443,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   are refused instead of the levels check switching off. `maverick doctor`
   and the Workforce and Agents pages say so. Tool grants widen only when the
   setting reads as on.
+- Stop and rename now work on a running task. Its heartbeat no longer counts
+  as a change since you reviewed it. A schema migration adds the column; it
+  runs on the next start of SQLite and Postgres. Stop also works while a
+  chat answer is still being written.
+- A cancel that arrives after a task finished no longer replaces "done".
+  The task stays finished, and the chat supervisor and the gRPC cancel say
+  that it had already finished.
+- With a queue or gRPC worker configured, startup recovery (`maverick
+  serve`, the dashboard on SQLite and `maverick status`) no longer marks
+  queued tasks as stuck; they wait for their worker. The in-process default
+  still blocks them, since nothing else would start them after a crash.
+- Retrying a workflow whose approved high-risk step failed now asks for a
+  new approval at that step's gate, then continues the saved work. Before,
+  the retry was refused. Approve or reject the new request as usual.
+- The `computer` tool no longer asks to approve mouse or keyboard input it
+  cannot send. It says input is not supported yet; screenshots still work.
+- When "hold risky tasks for a person" is on, a resumed task skips the
+  check only if a person approved its exact current words. Changed words,
+  and tasks that ran while the check was off, are asked about again.
 
 ### Fixed
 

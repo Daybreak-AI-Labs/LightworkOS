@@ -2906,7 +2906,7 @@ def test_retry_from_failure_resumes_at_failed_node(monkeypatch, tmp_path):
     assert c.post("/api/v1/flows/runs/ry/retry?from_failure=1").status_code == 409
 
 
-def test_retry_of_a_failed_gated_action_is_refused_visibly(monkeypatch, tmp_path):
+def test_retry_of_a_failed_gated_action_asks_for_a_fresh_approval(monkeypatch, tmp_path):
     _isolate(monkeypatch, tmp_path)
     from maverick.flow import execution, store
     from maverick_dashboard import automation_queue as aq
@@ -2929,13 +2929,13 @@ def test_retry_of_a_failed_gated_action_is_refused_visibly(monkeypatch, tmp_path
         release_id=release["published_revision"], definition_revision=published.revision,
         subflow_digests=metadata["subflow_digests"]))
     r = c.post("/api/v1/flows/runs/rg/retry?from_failure=1")
-    assert r.status_code == 409 and "without a new review" in r.json()["detail"]
-    # A delivery already queued records the reason instead of dropping it.
-    aq.enqueue_flow_resume("fgate", "rg", owner="", from_failure=True)
+    assert r.status_code == 200, r.text
+    assert r.json()["approval_required"] is True
     _drain(aq)
+    # The run waits at its gate again with a new card; nothing was re-sent.
     run = store.load_run("rg")
-    assert run.status == "failed" and "without a new review" in run.error
-    assert run.error.startswith("refused | ")
+    assert (run.status, run.cursor, run.retry_cursor) == ("paused_approval", "a", "b")
+    assert run.human["approval_card"]
     assert sent == []
 
 

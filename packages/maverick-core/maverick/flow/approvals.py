@@ -305,6 +305,10 @@ def paused_operation_binding(
         "budget_limit_dollars": getattr(run, "budget_limit_dollars", None),
         "submitted_inputs": dict(inputs or {}),
         "authority": dict(authority or {}),
+        # A fresh approval of a failed step also binds the work it continues.
+        **({"retry_cursor": str(run.retry_cursor),
+            "retry_continuation_sha256": digest(dict(run.continuation or {}))}
+           if getattr(run, "retry_cursor", "") else {}),
     })
 
 

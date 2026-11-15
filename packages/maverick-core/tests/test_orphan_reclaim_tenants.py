@@ -162,3 +162,23 @@ def test_disabled_does_not_sweep_tenant_worlds(monkeypatch):
     w = world_for_tenant("a")
     for gid in a_goals:
         assert w.get_goal(gid).status in ("pending", "active")
+
+
+def test_queue_worker_keeps_its_queued_goals_at_startup(monkeypatch):
+    """With a queue worker configured, a pending goal belongs to the durable
+    queue; start-up recovery blocks only the running one."""
+    monkeypatch.setenv("MAVERICK_TENANT_BY_USER", "1")
+    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
+    monkeypatch.setenv("MAVERICK_ORPHAN_RECLAIM_SECONDS", "0")
+    monkeypatch.setenv("MAVERICK_GRPC_DISPATCH_TARGET", "worker.internal:50051")
+
+    pending, active = _stranded_tenant("q")
+    import maverick.world_model as wm
+    for w in list(wm._tenant_worlds.values()):
+        w.close()
+    wm._tenant_worlds.clear()
+
+    assert server_mod._reclaim_tenant_orphans() == 1
+    w = world_for_tenant("q")
+    assert w.get_goal(pending).status == "pending"
+    assert w.get_goal(active).status == "blocked"

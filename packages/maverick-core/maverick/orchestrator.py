@@ -1706,7 +1706,62 @@ def _goal_already_ran(world: Any, goal_id: int) -> bool:
         return False
 
 
-async def _goal_risk_gate(goal_id: int, goal: Any, *, resuming: bool) -> tuple[dict, str | None]:
+_RISK_ADMISSION = "risk_admission"
+
+
+def _goal_text_sha256(goal: Any) -> str:
+    text = f"{goal.title or ''}\0{getattr(goal, 'description', '') or ''}"
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _record_risk_admission(world: Any, goal_id: int, goal: Any) -> None:
+    """Remember the exact words a person approved at the start check.
+
+    Written only after a person-held check approved the start, and kept as one
+    current record per task. A start the gate did not hold (gate off, or a
+    tier below it) records nothing, so it never lets later words through.
+    """
+    import json
+    import time
+    import uuid
+
+    from .goal_mutations import _transaction
+
+    text = _goal_text_sha256(goal)
+    try:
+        with _transaction(world, goal_id) as (execute, encode, _decode, _postgres, _tenant):
+            execute("DELETE FROM goal_mutation_receipts WHERE goal_id=? AND kind=?",
+                    (goal_id, _RISK_ADMISSION))
+            execute("INSERT INTO goal_mutation_receipts "
+                    "(goal_id,kind,operation_id,actor,request_hash,receipt,created_at) "
+                    "VALUES(?,?,?,?,?,?,?)",
+                    (goal_id, _RISK_ADMISSION, uuid.uuid4().hex, "orchestrator", text,
+                     encode(json.dumps({"text_sha256": text, "approved_by_person": True})),
+                     time.time()))
+    except Exception:  # a later resume then asks again: the safe direction
+        log.warning("goal #%s: could not record the start approval", goal_id, exc_info=True)
+
+
+def _resume_was_let_through(world: Any, goal_id: int, goal: Any) -> bool:
+    """Whether a person approved exactly these words at an earlier start.
+
+    Any other words, or missing or unreadable evidence, mean no."""
+    import json
+
+    from .goal_mutations import _transaction
+
+    try:
+        with _transaction(world, goal_id) as (execute, _encode, decode, _postgres, _tenant):
+            row = execute("SELECT receipt FROM goal_mutation_receipts WHERE goal_id=? AND kind=? "
+                          "ORDER BY created_at DESC LIMIT 1", (goal_id, _RISK_ADMISSION)).fetchone()
+        saved = json.loads(decode(row[0])) if row is not None else {}
+    except Exception:
+        return False
+    return saved.get("approved_by_person") is True and saved.get("text_sha256") == _goal_text_sha256(goal)
+
+
+async def _goal_risk_gate(goal_id: int, goal: Any, *, resuming: bool,
+                          world: Any = None) -> tuple[dict, str | None]:
     """Classify a task from its words before it starts; hold it for a person
     only when an administrator turned that on (``[safety]
     goal_risk_require_human``, off by default).
@@ -1719,7 +1774,11 @@ async def _goal_risk_gate(goal_id: int, goal: Any, *, resuming: bool) -> tuple[d
         goal.title or "", getattr(goal, "description", "") or "")
     record = {"risk_tier": classified.tier, "risk_effective": effective,
               "risk_signals": list(classified.signals)}
-    if not needs_person or resuming:
+    if not needs_person:
+        return record, None
+    # A resume skips the check only for the exact words a person approved at
+    # an earlier start: retitled or never-approved words are checked again.
+    if resuming and world is not None and _resume_was_let_through(world, goal_id, goal):
         return record, None
     from .immune import twin
     if twin.active():  # a production twin replays the run; it never asks a person
@@ -1738,6 +1797,8 @@ async def _goal_risk_gate(goal_id: int, goal: Any, *, resuming: bool) -> tuple[d
         verdict = None
     if verdict is not None and verdict.granted:
         record["start_approved_by"] = str(getattr(verdict, "actor", "") or verdict.source)
+        if world is not None:
+            _record_risk_admission(world, goal_id, goal)
         return record, None
     if verdict is not None and verdict.source not in ("no-decision", "non-tty-deny"):
         return record, (f"A person decided not to start this task. It looks {effective} "
@@ -2700,7 +2761,8 @@ async def _run_goal_impl(  # noqa: C901  -- core goal-execution loop
     # requester from it. A resumed task was already let through once.
     _risk_record, _risk_refusal = await _goal_risk_gate(
         goal_id, goal,
-        resuming=resume_episode_id is not None or (bool(resume) and _goal_already_ran(world, goal_id)))
+        resuming=resume_episode_id is not None or (bool(resume) and _goal_already_ran(world, goal_id)),
+        world=world)
     if _risk_refusal:
         world.set_goal_status(goal_id, "blocked", result=_risk_refusal)
         log.warning("goal #%s not started: %s", goal_id, _risk_refusal)

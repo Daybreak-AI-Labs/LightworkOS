@@ -1255,6 +1255,9 @@ class FlowRun:
     execution_channel: str = ""
     execution_user_id: str = ""
     allowed_suites: list[str] | None = None
+    # The failed step a retry continues once its approval gate is approved
+    # again; set only while the run waits for that fresh approval.
+    retry_cursor: str = ""
     # A listing record is a projection, never a checkpoint that can be saved.
     metadata_only: bool = field(default=False, repr=False, compare=False)
     # Private execution frames, excluded from public to_dict projections.
@@ -1283,6 +1286,7 @@ class FlowRun:
             "execution_channel": self.execution_channel,
             "execution_user_id": self.execution_user_id,
             "allowed_suites": self.allowed_suites,
+            "retry_cursor": self.retry_cursor,
         }
 
     @staticmethod
@@ -1338,6 +1342,7 @@ class FlowRun:
                 if isinstance(d.get("allowed_suites"), list)
                 else None
             ),
+            retry_cursor=str(d.get("retry_cursor") or ""),
         )
 
 

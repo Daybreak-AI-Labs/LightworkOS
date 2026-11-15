@@ -2527,7 +2527,9 @@ async def _reclaim_orphans() -> None:
                     _world, resolved_window_seconds=window,
                 )
         else:
-            n = _world().reclaim_orphan_goals()
+            from maverick.runner import startup_reclaim_statuses
+
+            n = _world().reclaim_orphan_goals(statuses=startup_reclaim_statuses())
             from maverick.paths import current_tenant_id_strict
             if current_tenant_id_strict() is None:
                 from .orphan_sweeper import reclaim_registered_sqlite

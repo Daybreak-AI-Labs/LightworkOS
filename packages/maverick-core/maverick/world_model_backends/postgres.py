@@ -773,6 +773,9 @@ MIGRATIONS.append((53, [
     "ON goal_origins(ref) WHERE kind = 'external_run'",
 ]))
 
+# v54: heartbeats get their own liveness timestamp (mirrors SQLite v54).
+MIGRATIONS.append((54, ["ALTER TABLE goals ADD COLUMN IF NOT EXISTS heartbeat_at DOUBLE PRECISION"]))
+
 _PG_SCHEMA_VERSION = MIGRATIONS[-1][0]
 
 _MIGRATIONS_TABLE = (
@@ -1977,9 +1980,11 @@ class PostgresWorldModel:
             "WHEN status='done' THEN completed_at "
             "ELSE GREATEST(updated_at + 0.000001, %s) END, "
             "status=%s, result=COALESCE(%s, result), "
-            "updated_at=GREATEST(updated_at + 0.000001, %s) WHERE id=%s"
+            "updated_at=GREATEST(updated_at + 0.000001, %s) WHERE id=%s "
+            # A finished task stays finished: a late cancel changes nothing.
+            "AND NOT (status='done' AND %s='cancelled')"
         )
-        params: list = [status, now, status, _seal(result, "goals.result"), now, goal_id]
+        params: list = [status, now, status, _seal(result, "goals.result"), now, goal_id, status]
         if frag:
             sql += " AND " + frag
             params += fparams
@@ -2067,11 +2072,12 @@ class PostgresWorldModel:
 
     def set_goal_partial_result(self, goal_id: int, text: str) -> bool:
         """Replace a running goal's result with the answer written so far;
-        matches the SQLite backend (non-terminal rows only, no sign-off effect)."""
+        matches the SQLite backend (non-terminal rows only, no sign-off effect,
+        refreshes ``heartbeat_at`` and keeps the reviewed ``updated_at``)."""
         now = time.time()
         frag, fparams = _mutation_tenant_scope()
         sql = (
-            "UPDATE goals SET result=%s, updated_at=GREATEST(updated_at + 0.000001, %s) "
+            "UPDATE goals SET result=%s, heartbeat_at=GREATEST(heartbeat_at, %s) "
             "WHERE id=%s AND status NOT IN "
             "('done','completed','failed','cancelled','blocked','error')"
         )
@@ -2212,13 +2218,13 @@ class PostgresWorldModel:
     def touch_goal(
         self, goal_id: int, *, expected_owner: str | None = None,
     ) -> bool:
-        """Refresh a live goal's ``updated_at`` (the orphan-reclaim liveness
-        signal) with no other side effect — the external-agent heartbeat
+        """Refresh a live goal's ``heartbeat_at`` (the orphan-reclaim liveness
+        signal; ``updated_at`` stays the reviewed version) with no other side effect — the external-agent heartbeat
         primitive, mirroring the SQLite semantics: only in-flight rows
         qualify, and the owner predicate rides in the same statement."""
         now = time.time()
         frag, fparams = _mutation_tenant_scope()
-        sql = ("UPDATE goals SET updated_at=GREATEST(updated_at + 0.000001, %s) "
+        sql = ("UPDATE goals SET heartbeat_at=GREATEST(heartbeat_at, %s) "
                "WHERE id=%s AND status IN ('active', 'pending')")
         params: list = [now, int(goal_id)]
         if expected_owner is not None:
@@ -3316,7 +3322,7 @@ class PostgresWorldModel:
 
     def reclaim_orphan_goals(
         self, *, max_age_seconds: float = 60.0,
-        statuses: tuple[str, ...] = ("active", "pending"),
+        statuses: tuple[str, ...] = ("active",),
         resolved_window_seconds: float | None = None,
         exact_tenant: bool = False,
     ) -> int:
@@ -3329,8 +3335,8 @@ class PostgresWorldModel:
         A resolved zero window explicitly reclaims every active/pending goal
         in scope, including monotonic review timestamps ahead of the wall clock.
         Positive windows continue to require the full stale interval.
-        The periodic dashboard sweep passes only ``("active",)`` so queued
-        ``pending`` goals are left for their dispatcher. ``exact_tenant``
+        Only ``active`` goals are reclaimed by default so queued ``pending``
+        goals are left for their dispatcher; a caller may ask for both. ``exact_tenant``
         excludes compatibility-mode NULL rows from that background sweep.
         Returns the number of rows reclaimed.
         """
@@ -3359,7 +3365,7 @@ class PostgresWorldModel:
                 "UPDATE goals SET status = 'blocked', "
                 "result = COALESCE(result, '') || %s, "
                 "updated_at = GREATEST(updated_at + 0.000001, %s) "
-                f"WHERE status IN ({marks}) AND (%s = 0 OR updated_at <= %s)"
+                f"WHERE status IN ({marks}) AND (%s = 0 OR GREATEST(updated_at, COALESCE(heartbeat_at, 0)) <= %s)"
             )
             params: list = [marker, now, *statuses, max_age_seconds, cutoff]
             if frag:
@@ -3375,7 +3381,7 @@ class PostgresWorldModel:
         # set on startup is tiny, so the row-by-row cost is negligible.
         sel = (
             "SELECT id, result FROM goals "
-            f"WHERE status IN ({marks}) AND (%s = 0 OR updated_at <= %s)"
+            f"WHERE status IN ({marks}) AND (%s = 0 OR GREATEST(updated_at, COALESCE(heartbeat_at, 0)) <= %s)"
         )
         sparams: list = [*statuses, max_age_seconds, cutoff]
         if frag:
@@ -3410,7 +3416,7 @@ class PostgresWorldModel:
                     update = (
                         "UPDATE goals SET status = 'blocked', updated_at = GREATEST(updated_at + 0.000001, %s) "
                         f"WHERE id = %s AND status IN ({marks}) "
-                        "AND (%s = 0 OR updated_at <= %s)"
+                        "AND (%s = 0 OR GREATEST(updated_at, COALESCE(heartbeat_at, 0)) <= %s)"
                     )
                     if frag:
                         update += " AND " + frag
@@ -3421,7 +3427,7 @@ class PostgresWorldModel:
                     "UPDATE goals SET status = 'blocked', result = %s, "
                     "updated_at = GREATEST(updated_at + 0.000001, %s) "
                     f"WHERE id = %s AND status IN ({marks}) "
-                    "AND (%s = 0 OR updated_at <= %s)"
+                    "AND (%s = 0 OR GREATEST(updated_at, COALESCE(heartbeat_at, 0)) <= %s)"
                 )
                 if frag:
                     update += " AND " + frag

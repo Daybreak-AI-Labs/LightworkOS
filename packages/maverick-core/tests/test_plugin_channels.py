@@ -106,7 +106,7 @@ def test_plugin_channels_are_started_and_stopped_by_the_server(monkeypatch, tmp_
     PluginWithConfig.stopped.clear()
     server = _build(monkeypatch, tmp_path, {"pager": {"enabled": True}},
                     {"pager": PluginWithConfig})
-    monkeypatch.setattr(server.world, "reclaim_orphan_goals", lambda: 0, raising=False)
+    monkeypatch.setattr(server.world, "reclaim_orphan_goals", lambda **_kwargs: 0, raising=False)
     monkeypatch.setattr(server_mod, "_reclaim_tenant_orphans", lambda: 0)
     asyncio.run(server.run())
     assert PluginWithConfig.started == ["pager"] and PluginWithConfig.stopped == ["pager"]

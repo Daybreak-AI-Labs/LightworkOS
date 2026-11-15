@@ -955,6 +955,23 @@ def test_reclaim_skips_fresh_goals(world):
     assert world.get_goal(g).status == "active"
 
 
+def test_heartbeat_keeps_review_version_and_finished_goal_stays_done(world):
+    from maverick import goal_stop
+
+    g = world.create_goal("heartbeat", owner="user:alice")
+    world.set_goal_status(g, "active")
+    reviewed = float(world.get_goal(g).updated_at)
+    assert world.touch_goal(g)
+    assert world.set_goal_partial_result(g, "Answer so far")
+    assert float(world.get_goal(g).updated_at) == reviewed
+    assert goal_stop.stop(world, g, actor="user:alice", operation_id="c" * 32,
+                          expected_updated_at=reviewed, expected_owner="user:alice")["stop_requested"]
+    done = world.create_goal("finished")
+    world.set_goal_status(done, "done", result="shipped")
+    world.set_goal_status(done, "cancelled", result="late cancel")
+    assert (world.get_goal(done).status, world.get_goal(done).result) == ("done", "shipped")
+
+
 def test_schema_version_is_int(world):
     assert isinstance(world.schema_version, int)
     assert world.schema_version >= 1
