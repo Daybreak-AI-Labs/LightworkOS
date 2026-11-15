@@ -39,9 +39,10 @@ def test_sev_cpuflags_are_not_guest_proof():
                    "indicators": []}
 
 
-def test_firmware_sysfs_tdx():
-    rep = detect(exists=_exists(["/sys/firmware/tdx"]), cpuinfo="")
-    assert rep["tdx"] is True
+def test_tdx_host_firmware_sysfs_is_not_guest_proof():
+    # /sys/firmware/tdx/tdx_module is the TDX *host* ABI (used by libvirt).
+    rep = detect(exists=_exists(["/sys/firmware/tdx", "/sys/firmware/tdx/tdx_module"]), cpuinfo="")
+    assert rep["tdx"] is False and rep["confidential"] is False
 
 
 def test_cli_confidential_compute(monkeypatch):
