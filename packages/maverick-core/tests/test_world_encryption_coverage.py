@@ -371,6 +371,9 @@ def test_postgres_legacy_null_tenant_row_opens_with_its_own_unbound_binding(monk
         assert postgres._unseal(legacy, "facts.value", legacy_row=True) == "legacy@example.test"
         assert postgres._unseal(legacy, "facts.value") == _UNSEALED_WITHHELD
         assert postgres._unseal(foreign, "facts.value", legacy_row=True) == _UNSEALED_WITHHELD
+        # A value this tenant wrote into a legacy row still opens with its binding.
+        own = postgres._seal("acme note", "facts.value")
+        assert postgres._unseal(own, "facts.value", legacy_row=True) == "acme note"
     finally:
         paths._TENANT.reset(token)
 

@@ -1165,28 +1165,58 @@ def _seal(text, context=None):
     return _enc_field(text, context, bind_tenant=True)
 
 
+def _legacy_of(table: str, id_column: str) -> str:
+    """SQL for "the row of ``table`` that ``id_column`` names has no tenant".
+
+    Child tables (goal_events, artifacts, questions, episodes, signoffs,
+    turns) carry no tenant column; their tenant is the parent's. Selected next
+    to sealed columns so reads can apply :func:`_unseal`'s ``legacy_row``."""
+    return (f"COALESCE((SELECT lp.tenant_id IS NULL FROM {table} lp "
+            f"WHERE lp.id = {id_column}), FALSE)")
+
+
 def _unseal(text, context=None, *, legacy_row=False):
     """Inverse of :func:`_seal` (no-op when at-rest is off; legacy plaintext and
     strict-mode handling identical to the SQLite backend). A value bound to
     another column than ``context`` is withheld.
 
-    ``legacy_row`` marks a row whose ``tenant_id`` is NULL: an unbound caller
-    sealed it, so it opens with the empty tenant binding (as a SQLite world
-    opens from any context). Visibility stays with the caller's tenant scope."""
-    from ..world_model import _dec_field
-    if legacy_row:
+    ``legacy_row`` marks a row whose own tenant column (or its parent's, for
+    a child table) is NULL. An unbound caller sealed it, so it first opens with
+    the empty tenant binding, as a SQLite world opens from any context; a
+    value the active tenant wrote into such a row still opens with its own
+    binding. A token bound to any other tenant fails both. Visibility stays
+    with the caller's tenant scope, and write paths keep exact-tenant scope,
+    so they never see a legacy row under a tenant."""
+    from ..world_model import _UNSEALED_WITHHELD, _dec_field
+    if legacy_row and _active_tenant() is not None:
         from ..crypto_at_rest import unbound_row_scope
         with unbound_row_scope():
-            return _dec_field(text, context=context)
+            value = _dec_field(text, context=context)
+        if value != _UNSEALED_WITHHELD:
+            return value
     return _dec_field(text, context=context)
+
+
+def _unseal_page(values, contexts, legacy) -> list:
+    """Batch :func:`_unseal` for a result page: one key lookup for ordinary
+    rows, per-value opening for legacy ones."""
+    from ..world_model import _dec_fields
+    plain = iter(_dec_fields([v for v, old in zip(values, legacy, strict=True) if not old],
+                             [c for c, old in zip(contexts, legacy, strict=True) if not old]))
+    return [_unseal(v, c, legacy_row=True) if old else next(plain)
+            for v, c, old in zip(values, contexts, legacy, strict=True)]
 
 
 def _dec_goal_row(row) -> PGGoal:
     """Build a PGGoal from a row, unsealing the at-rest-encrypted text columns
     (title / description / result). Reuses the SQLite backend's field codec so
     sealing semantics (legacy-plaintext passthrough, strict-mode withhold) are
-    identical across backends. No-op when at-rest encryption is off."""
-    return _goal_from_decoded_row(row, _unseal(row[2], "goals.title"), _unseal(row[3], "goals.description"), _unseal(row[8], "goals.result"))
+    identical across backends. No-op when at-rest encryption is off. Column 13,
+    when selected, is ``tenant_id IS NULL`` (see :func:`_unseal`)."""
+    legacy = len(row) > 13 and bool(row[13])
+    return _goal_from_decoded_row(row, _unseal(row[2], "goals.title", legacy_row=legacy),
+                                  _unseal(row[3], "goals.description", legacy_row=legacy),
+                                  _unseal(row[8], "goals.result", legacy_row=legacy))
 
 
 def _goal_from_decoded_row(row, title, description, result) -> PGGoal:
@@ -1204,11 +1234,10 @@ def _dec_goal_rows(rows) -> list[PGGoal]:
     """Decode a page with the same shared at-rest policy as SQLite."""
     if not rows:
         return []
-    from ..world_model import _dec_fields
-
-    decoded = iter(_dec_fields(
+    decoded = iter(_unseal_page(
         [value for row in rows for value in (row[2], row[3], row[8])],
-        [c for _row in rows for c in ("goals.title", "goals.description", "goals.result")]))
+        [c for _row in rows for c in ("goals.title", "goals.description", "goals.result")],
+        [len(row) > 13 and bool(row[13]) for row in rows for _ in range(3)]))
     return [
         _goal_from_decoded_row(row, next(decoded), next(decoded), next(decoded))
         for row in rows
@@ -1220,9 +1249,12 @@ def _dec_approval_row(r):
     plaintext metadata, sealed neither here nor in SQLite). Row order: id,
     action, risk, scope, detail, provenance, status, requested_at, decided_at,
     claimed_by, claimed_at, decided_by, approvals_required, requested_by,
-    goal_id, department, undo_hold."""
+    goal_id, department, undo_hold, and optionally tenant_id IS NULL."""
     from ..world_records import Approval
-    return Approval(r[0], _unseal(r[1], "approvals.action"), r[2], _unseal(r[3], "approvals.scope"), _unseal(r[4], "approvals.detail"),
+    legacy = len(r) > 17 and bool(r[17])
+    return Approval(r[0], _unseal(r[1], "approvals.action", legacy_row=legacy), r[2],
+                    _unseal(r[3], "approvals.scope", legacy_row=legacy),
+                    _unseal(r[4], "approvals.detail", legacy_row=legacy),
                     r[5], r[6], r[7], r[8], r[9], r[10], r[11],
                     int(r[12]) if len(r) > 12 and r[12] is not None else 1,
                     r[13] if len(r) > 13 else None,
@@ -1247,9 +1279,12 @@ def _dec_approval_audit_row(r):
 
 def _dec_question_row(r):
     """Build a Question, unsealing the question text and the answer. Row order:
-    id, goal_id, question, asked_at, answer, answered_at."""
+    id, goal_id, question, asked_at, answer, answered_at, and optionally whether
+    the parent goal has no tenant."""
     from ..world_records import Question
-    return Question(r[0], r[1], _unseal(r[2], "questions.question"), r[3], _unseal(r[4], "questions.answer"), r[5])
+    legacy = len(r) > 6 and bool(r[6])
+    return Question(r[0], r[1], _unseal(r[2], "questions.question", legacy_row=legacy), r[3],
+                    _unseal(r[4], "questions.answer", legacy_row=legacy), r[5])
 
 
 def _connection_kwargs(dsn: str) -> dict:
@@ -1811,21 +1846,23 @@ class PostgresWorldModel:
 
     def goal_connection_selection(self, goal_id: int) -> str:
         frag, params = _tenant_scope()
-        sql, args = "SELECT connection_selection FROM goals WHERE id=%s", [goal_id]
+        sql = "SELECT connection_selection, tenant_id IS NULL FROM goals WHERE id=%s"
+        args = [goal_id]
         if frag:
             sql += " AND " + frag
             args += params
         with self._tx() as cur:
             cur.execute(sql, args)
             row = cur.fetchone()
-        return _unseal(row[0], "goals.connection_selection") if row and row[0] else ""
+        return (_unseal(row[0], "goals.connection_selection", legacy_row=row[1])
+                if row and row[0] else "")
 
     def get_goal(self, goal_id: int) -> PGGoal | None:
         frag, params = _tenant_scope()
         sql = (
             "SELECT id, parent_id, title, description, status, "
             "created_at, updated_at, deadline, result, owner, execution_principal, "
-            "domain, project_id "
+            "domain, project_id, tenant_id IS NULL "
             "FROM goals WHERE id=%s"
         )
         p: list = [goal_id]
@@ -1853,7 +1890,7 @@ class PostgresWorldModel:
         sql = (
             "SELECT id, parent_id, title, description, status, "
             "created_at, updated_at, deadline, result, owner, execution_principal, "
-            "domain, project_id FROM goals WHERE id = ANY(%s)"
+            "domain, project_id, tenant_id IS NULL FROM goals WHERE id = ANY(%s)"
         )
         if scope:
             sql += " AND " + scope
@@ -2216,7 +2253,7 @@ class PostgresWorldModel:
         sealed = at_rest_enabled()
         cols = ("SELECT id, parent_id, title, description, status, "
                 "created_at, updated_at, deadline, result, owner, "
-                "execution_principal, domain, project_id FROM goals")
+                "execution_principal, domain, project_id, tenant_id IS NULL FROM goals")
         frag, fparams = _tenant_scope()
         cap = max(1, int(limit))
         if sealed:
@@ -2295,7 +2332,8 @@ class PostgresWorldModel:
         sql = (
             "SELECT id, action, risk, scope, detail, provenance, status, "
             "requested_at, decided_at, claimed_by, claimed_at, decided_by, "
-            "approvals_required, requested_by, goal_id, department, undo_hold "
+            "approvals_required, requested_by, goal_id, department, undo_hold, "
+            "tenant_id IS NULL "
             "FROM approvals"
         )
         p: list = list(params) if frag else []
@@ -2320,7 +2358,8 @@ class PostgresWorldModel:
         sql = (
             "SELECT id, action, risk, scope, detail, provenance, status, "
             "requested_at, decided_at, claimed_by, claimed_at, decided_by, "
-            "approvals_required, requested_by, goal_id, department, undo_hold "
+            "approvals_required, requested_by, goal_id, department, undo_hold, "
+            "tenant_id IS NULL "
             "FROM approvals WHERE " + " AND ".join(where)
             + " ORDER BY requested_at DESC, id DESC"
         )
@@ -2349,18 +2388,19 @@ class PostgresWorldModel:
         with self._tx() as cur:
             if frag:
                 cur.execute(
-                    "SELECT ge.content FROM goal_events ge "
+                    "SELECT ge.content, " + _legacy_of("goals", "ge.goal_id") + " FROM goal_events ge "
                     "JOIN goals g ON g.id = ge.goal_id WHERE " + frag +
                     " ORDER BY ge.id DESC LIMIT %s",
                     tuple([*fparams, int(limit)]),
                 )
             else:
                 cur.execute(
-                    "SELECT content FROM goal_events ORDER BY id DESC LIMIT %s",
+                    "SELECT content, " + _legacy_of("goals", "goal_id")
+                    + " FROM goal_events ORDER BY id DESC LIMIT %s",
                     (int(limit),),
                 )
             rows = cur.fetchall()
-        return [_unseal(r[0], "goal_events.content") for r in rows if r and r[0]]
+        return [_unseal(r[0], "goal_events.content", legacy_row=r[1]) for r in rows if r and r[0]]
 
     # ---- Projects (migration v15) -------------------------------------------
 
@@ -2368,9 +2408,10 @@ class PostgresWorldModel:
     def _project_from_row(row) -> dict:
         # row: (id, name, description, owner, domain, status, created_at)
         # name/description are sealed at rest; owner/domain/status are plaintext.
+        legacy = len(row) > 7 and bool(row[7])
         return {
-            "id": row[0], "name": _unseal(row[1], "projects.name") or "",
-            "description": _unseal(row[2], "projects.description") or "",
+            "id": row[0], "name": _unseal(row[1], "projects.name", legacy_row=legacy) or "",
+            "description": _unseal(row[2], "projects.description", legacy_row=legacy) or "",
             "owner": row[3], "domain": row[4], "status": row[5],
             "created_at": row[6],
         }
@@ -2389,7 +2430,7 @@ class PostgresWorldModel:
             )
             return int(cur.fetchone()[0])
 
-    _PROJECT_COLS = "id, name, description, owner, domain, status, created_at"
+    _PROJECT_COLS = "id, name, description, owner, domain, status, created_at, tenant_id IS NULL"
 
     def get_project(self, project_id: int) -> dict | None:
         frag, params = _tenant_scope()
@@ -2588,8 +2629,8 @@ class PostgresWorldModel:
         # Callers already assert goal access, but bound the read to the active
         # tenant's goals at the DB layer too so a future caller can't leak.
         frag, fparams = _tenant_scope()
-        sql = ("SELECT id, goal_id, kind, title, content, version, created_at "
-               "FROM artifacts WHERE goal_id=%s")
+        sql = ("SELECT id, goal_id, kind, title, content, version, created_at, "
+               + _legacy_of("goals", "goal_id") + " FROM artifacts WHERE goal_id=%s")
         params: list = [int(goal_id)]
         if frag:
             sql += " AND goal_id IN (SELECT id FROM goals WHERE " + frag + ")"
@@ -2599,7 +2640,8 @@ class PostgresWorldModel:
             cur.execute(sql, tuple(params))
             rows = cur.fetchall()
         return [{"id": r[0], "goal_id": r[1], "kind": r[2], "title": r[3] or "",
-                 "content": _unseal(r[4], "artifacts.content") or "", "version": r[5], "created_at": r[6]}
+                 "content": _unseal(r[4], "artifacts.content", legacy_row=r[7]) or "",
+                 "version": r[5], "created_at": r[6]}
                 for r in rows]
 
     def latest_artifacts(self, goal_id: int) -> list[dict]:
@@ -2788,8 +2830,8 @@ class PostgresWorldModel:
         frag, fparams = _tenant_scope()
         with self._tx() as cur:
             cur.execute(
-                "SELECT goal_id, decision, decided_by, note, created_at "
-                "FROM signoffs WHERE goal_id=%s "
+                "SELECT goal_id, decision, decided_by, note, created_at, "
+                + _legacy_of("goals", "goal_id") + " FROM signoffs WHERE goal_id=%s "
                 "AND goal_id IN (SELECT id FROM goals WHERE " + frag + ")",
                 (int(goal_id), *fparams),
             )
@@ -2797,7 +2839,7 @@ class PostgresWorldModel:
         if not r:
             return None
         return {"goal_id": r[0], "decision": r[1], "decided_by": r[2],
-                "note": _unseal(r[3], "signoffs.note"), "created_at": r[4]}
+                "note": _unseal(r[3], "signoffs.note", legacy_row=r[5]), "created_at": r[4]}
 
     def signoffs_for_goals(self, goal_ids) -> dict[int, str]:
         """Map ``goal_id -> decision`` for a batch of goals (goals with no
@@ -2857,7 +2899,7 @@ class PostgresWorldModel:
         frag, fparams = _tenant_scope("g.tenant_id")
         sql = ("SELECT g.id, g.parent_id, g.title, g.description, g.status, "
                "g.created_at, g.updated_at, g.deadline, g.result, g.owner, "
-               "g.execution_principal, g.domain, g.project_id FROM goals g "
+               "g.execution_principal, g.domain, g.project_id, g.tenant_id IS NULL FROM goals g "
                "JOIN goal_origins o ON o.goal_id = g.id "
                "WHERE o.kind=%s AND o.ref=%s")
         params: list = [str(kind), str(ref)]
@@ -2896,7 +2938,7 @@ class PostgresWorldModel:
         sql = (
             "SELECT id, parent_id, title, description, status, "
             "created_at, updated_at, deadline, result, owner, execution_principal, "
-            "domain, project_id "
+            "domain, project_id, tenant_id IS NULL "
             "FROM goals "
             "WHERE status IN ('pending', 'in_progress', 'running')"
         )
@@ -2937,7 +2979,7 @@ class PostgresWorldModel:
             cur.execute(
                 "SELECT id, parent_id, title, description, status, "
                 "created_at, updated_at, deadline, result, owner, execution_principal, "
-                "domain, project_id FROM goals WHERE id IN ("
+                "domain, project_id, tenant_id IS NULL FROM goals WHERE id IN ("
                 "SELECT id FROM (SELECT id, ROW_NUMBER() OVER "
                 "(PARTITION BY domain ORDER BY id DESC) AS n "
                 f"FROM goals WHERE {' AND '.join(conds)}) ranked WHERE n <= %s) "
@@ -2983,7 +3025,7 @@ class PostgresWorldModel:
         sql = (
             "SELECT id, parent_id, title, description, status, "
             "created_at, updated_at, deadline, result, owner, execution_principal, "
-            "domain, project_id "
+            "domain, project_id, tenant_id IS NULL "
             "FROM goals"
         )
         params: list = []
@@ -3027,7 +3069,7 @@ class PostgresWorldModel:
         """Completed root tasks with saved output for the owner's Results page
         (mirrors SQLite); subtasks stay in their parent conversation."""
         sql = ("SELECT id, parent_id, title, description, status, created_at, updated_at, "
-               "deadline, result, owner, execution_principal, domain, project_id FROM goals "
+               "deadline, result, owner, execution_principal, domain, project_id, tenant_id IS NULL FROM goals "
                "WHERE owner = %s AND parent_id IS NULL AND status = 'done' AND result IS NOT NULL")
         params: list = [str(owner)]
         frag, fparams = _tenant_scope()
@@ -3045,7 +3087,7 @@ class PostgresWorldModel:
                              limit: int = 250) -> list[tuple]:
         """Tenant and owner predicates precede the bounded keyset page."""
         sql = ("SELECT id,parent_id,title,description,status,created_at,updated_at,deadline,"
-               "result,owner,execution_principal,domain,project_id,alert_state_revision,"
+               "result,owner,execution_principal,domain,project_id,tenant_id IS NULL,alert_state_revision,"
                "alert_result_revision FROM goals WHERE owner=%s AND id>%s AND "
                "(status NOT IN ('done','cancelled') OR updated_at>=%s OR "
                "EXISTS(SELECT 1 FROM questions q WHERE q.goal_id=goals.id AND q.answer IS NULL))")
@@ -3059,15 +3101,15 @@ class PostgresWorldModel:
         with self._tx() as cur:
             cur.execute(sql, tuple(params))
             rows = cur.fetchall()
-        return [(_dec_goal_row(row[:13]), int(row[13]), int(row[14])) for row in rows]
+        return [(_dec_goal_row(row[:14]), int(row[14]), int(row[15])) for row in rows]
 
     def conversation_summaries(self, *, owner: str | None = None,
                                limit: int = 25, before_id: int | None = None):
         """Root creation order with owner/tenant filters before the limit."""
         from ..goal_views import ConversationSummary
-        from ..world_model import _dec_fields
 
-        sql = "SELECT id,title,status,updated_at,owner FROM goals WHERE parent_id IS NULL"
+        sql = ("SELECT id,title,status,updated_at,owner,tenant_id IS NULL FROM goals "
+               "WHERE parent_id IS NULL")
         params = []
         if owner is not None:
             sql += " AND owner=%s"
@@ -3084,14 +3126,16 @@ class PostgresWorldModel:
         with self._tx() as cursor:
             cursor.execute(sql, tuple(params))
             rows = cursor.fetchall()
-        titles = _dec_fields([row[1] for row in rows], "goals.title")
+        titles = _unseal_page([row[1] for row in rows], ["goals.title"] * len(rows),
+                              [bool(row[5]) for row in rows])
         return [ConversationSummary(row[0], title, row[2], row[3], str(row[4] or ""))
                 for row, title in zip(rows, titles, strict=True)]
 
     def goal_stream_state(self, goal_id: int, *, include_result: bool = False):
         from ..goal_views import GoalStreamState
 
-        columns = "id,status,owner,result" if include_result else "id,status,owner"
+        columns = ("id,status,owner,result,tenant_id IS NULL" if include_result
+                   else "id,status,owner")
         sql = f"SELECT {columns} FROM goals WHERE id=%s"
         params = [goal_id]
         scope, scope_params = _tenant_scope()
@@ -3104,7 +3148,8 @@ class PostgresWorldModel:
         if row is None:
             return None
         return GoalStreamState(row[0], row[1], str(row[2] or ""),
-                               _unseal(row[3], "goals.result") if include_result else "")
+                               _unseal(row[3], "goals.result", legacy_row=row[4])
+                               if include_result else "")
 
     def most_recent_goal(self) -> PGGoal | None:
         """Most-recently-updated goal regardless of status; mirrors SQLite."""
@@ -3112,7 +3157,7 @@ class PostgresWorldModel:
         sql = (
             "SELECT id, parent_id, title, description, status, "
             "created_at, updated_at, deadline, result, owner, execution_principal, "
-            "domain, project_id "
+            "domain, project_id, tenant_id IS NULL "
             "FROM goals"
         )
         if frag:
@@ -3128,7 +3173,7 @@ class PostgresWorldModel:
         sql = (
             "SELECT id, parent_id, title, description, status, "
             "created_at, updated_at, deadline, result, owner, execution_principal, "
-            "domain, project_id "
+            "domain, project_id, tenant_id IS NULL "
             "FROM goals "
             "WHERE status IN ('active', 'blocked')"
         )
@@ -3148,7 +3193,7 @@ class PostgresWorldModel:
         sql = (
             "SELECT id, parent_id, title, description, status, "
             "created_at, updated_at, deadline, result, owner, execution_principal, "
-            "domain, project_id "
+            "domain, project_id, tenant_id IS NULL "
             "FROM goals "
             "WHERE status IN ('active', 'pending')"
         )
@@ -3179,7 +3224,7 @@ class PostgresWorldModel:
             cur.execute(
                 "SELECT id, parent_id, title, description, status, created_at, "
                 "updated_at, deadline, result, owner, execution_principal, "
-                "domain, project_id "
+                "domain, project_id, tenant_id IS NULL "
                 "FROM goals WHERE "
                 + " AND ".join(conds)
                 + " ORDER BY updated_at DESC LIMIT %s",
@@ -3193,7 +3238,7 @@ class PostgresWorldModel:
         sql = (
             "SELECT id, parent_id, title, description, status, created_at, "
             "updated_at, deadline, result, owner, execution_principal, "
-            "domain, project_id "
+            "domain, project_id, tenant_id IS NULL "
             "FROM goals WHERE parent_id = %s"
         )
         params: list = [parent_id]
@@ -3427,7 +3472,8 @@ class PostgresWorldModel:
             "e.id, e.goal_id, e.started_at, e.ended_at, e.outcome, "
             "COALESCE(e.cost_dollars, 0), COALESCE(e.input_tokens, 0), "
             "COALESCE(e.output_tokens, 0), COALESCE(e.tool_calls, 0), "
-            "COALESCE(e.cache_read_tokens, 0), COALESCE(e.cache_write_tokens, 0)"
+            "COALESCE(e.cache_read_tokens, 0), COALESCE(e.cache_write_tokens, 0), "
+            + _legacy_of("goals", "e.goal_id")
         )
         frag, fparams = _tenant_scope("g.tenant_id")
         conds: list[str] = []
@@ -3453,7 +3499,8 @@ class PostgresWorldModel:
             cur.execute(sql, tuple(params))
             rows = cur.fetchall()
         # outcome (index 4) is sealed at rest; the rest are numeric/timestamps.
-        return [EpisodeSpend(r[0], r[1], r[2], r[3], _unseal(r[4], "episodes.outcome"),
+        return [EpisodeSpend(r[0], r[1], r[2], r[3],
+                             _unseal(r[4], "episodes.outcome", legacy_row=r[11]),
                              r[5], r[6], r[7], r[8], r[9], r[10]) for r in rows]
 
     def episode_costs_since(self, since: float, *, limit: int = 100_000) -> list[tuple[str, float, float]]:
@@ -3579,7 +3626,8 @@ class PostgresWorldModel:
         if frag:
             table += " JOIN goals g ON g.id = ge.goal_id"
         sql = (
-            "SELECT ge.id, ge.goal_id, ge.agent, ge.kind, ge.content, ge.ts "
+            "SELECT ge.id, ge.goal_id, ge.agent, ge.kind, ge.content, ge.ts, "
+            + _legacy_of("goals", "ge.goal_id") + " "
             f"FROM {table} WHERE ge.goal_id=%s AND ge.id > %s"
         )
         params: list = [goal_id, since_id]
@@ -3592,7 +3640,9 @@ class PostgresWorldModel:
             cur.execute(sql, tuple(params))
             rows = cur.fetchall()
         # content (index 4) is sealed at rest.
-        return [GoalEvent(r[0], r[1], r[2], r[3], _unseal(r[4], "goal_events.content"), r[5]) for r in rows]
+        return [GoalEvent(r[0], r[1], r[2], r[3],
+                          _unseal(r[4], "goal_events.content", legacy_row=r[6]), r[5])
+                for r in rows]
 
     def recent_goal_events(self, goal_id: int, limit: int = 200) -> list:
         from ..world_records import GoalEvent
@@ -3605,8 +3655,9 @@ class PostgresWorldModel:
         params: list = [goal_id, *fparams, limit]
         with self._tx() as cur:
             cur.execute(
-                "SELECT id, goal_id, agent, kind, content, ts FROM ("
-                "SELECT ge.id, ge.goal_id, ge.agent, ge.kind, ge.content, ge.ts "
+                "SELECT id, goal_id, agent, kind, content, ts, legacy FROM ("
+                "SELECT ge.id, ge.goal_id, ge.agent, ge.kind, ge.content, ge.ts, "
+                + _legacy_of("goals", "ge.goal_id") + " AS legacy "
                 f"FROM {table} WHERE ge.goal_id=%s{scope} "
                 "ORDER BY ge.id DESC LIMIT %s"
                 ") recent ORDER BY id ASC",
@@ -3614,7 +3665,9 @@ class PostgresWorldModel:
             )
             rows = cur.fetchall()
         # content (index 4) is sealed at rest.
-        return [GoalEvent(r[0], r[1], r[2], r[3], _unseal(r[4], "goal_events.content"), r[5]) for r in rows]
+        return [GoalEvent(r[0], r[1], r[2], r[3],
+                          _unseal(r[4], "goal_events.content", legacy_row=r[6]), r[5])
+                for r in rows]
 
     # ----- facts (global key/value memory) -----
 
@@ -4220,7 +4273,8 @@ class PostgresWorldModel:
         return affected > 0
 
     def open_questions(self, goal_id: int | None = None) -> list:
-        cols = "q.id, q.goal_id, q.question, q.asked_at, q.answer, q.answered_at"
+        cols = ("q.id, q.goal_id, q.question, q.asked_at, q.answer, q.answered_at, "
+                + _legacy_of("goals", "q.goal_id"))
         frag, fparams = _tenant_scope("g.tenant_id")
         table = "questions q"
         scope = ""
@@ -4247,7 +4301,8 @@ class PostgresWorldModel:
         frag, fparams = _tenant_scope("g.tenant_id")
         with self._tx() as cur:
             cur.execute(
-                "SELECT q.id, q.goal_id, q.question, q.asked_at, q.answer, q.answered_at "
+                "SELECT q.id, q.goal_id, q.question, q.asked_at, q.answer, q.answered_at, "
+                + _legacy_of("goals", "q.goal_id") + " "
                 "FROM questions q JOIN goals g ON g.id = q.goal_id "
                 "WHERE q.answer IS NULL AND g.status = 'blocked' "
                 "AND g.owner = %s AND g.execution_principal = %s "
@@ -4289,7 +4344,8 @@ class PostgresWorldModel:
             scope = " AND " + frag
         with self._tx() as cur:
             cur.execute(
-                "SELECT q.id, q.goal_id, q.question, q.asked_at, q.answer, q.answered_at "
+                "SELECT q.id, q.goal_id, q.question, q.asked_at, q.answer, q.answered_at, "
+                + _legacy_of("goals", "q.goal_id") + " "
                 f"FROM {table} WHERE q.goal_id = %s{scope} ORDER BY q.id",
                 tuple([goal_id, *fparams]),
             )
@@ -4365,7 +4421,8 @@ class PostgresWorldModel:
         sql = (
             "SELECT id, action, risk, scope, detail, provenance, status, "
             "requested_at, decided_at, claimed_by, claimed_at, decided_by, "
-            "approvals_required, requested_by, goal_id, department, undo_hold "
+            "approvals_required, requested_by, goal_id, department, undo_hold, "
+            "tenant_id IS NULL "
             "FROM approvals WHERE id = %s"
         )
         p: list = [approval_id]
@@ -4408,7 +4465,8 @@ class PostgresWorldModel:
         sql = (
             "SELECT id, action, risk, scope, detail, provenance, status, "
             "requested_at, decided_at, claimed_by, claimed_at, decided_by, "
-            "approvals_required, requested_by, goal_id, department, undo_hold "
+            "approvals_required, requested_by, goal_id, department, undo_hold, "
+            "tenant_id IS NULL "
             "FROM approvals WHERE status = 'pending'"
         )
         if frag:
@@ -5191,14 +5249,16 @@ class PostgresWorldModel:
         params: list = [conversation_id, *fparams, limit]
         with self._tx() as cur:
             cur.execute(
-                "SELECT t.id, t.conversation_id, t.goal_id, t.role, t.content, t.ts "
+                "SELECT t.id, t.conversation_id, t.goal_id, t.role, t.content, t.ts, "
+                + _legacy_of("conversations", "t.conversation_id") + " "
                 f"FROM {table} "
                 f"WHERE t.conversation_id = %s{scope} ORDER BY t.id DESC LIMIT %s",
                 tuple(params),
             )
             rows = cur.fetchall()
         # content (index 4) is sealed at rest.
-        return list(reversed([Turn(r[0], r[1], r[2], r[3], _unseal(r[4], "turns.content"), r[5])
+        return list(reversed([Turn(r[0], r[1], r[2], r[3],
+                                   _unseal(r[4], "turns.content", legacy_row=r[6]), r[5])
                               for r in rows]))
 
     def list_conversations(self, channel: str | None = None) -> list:
