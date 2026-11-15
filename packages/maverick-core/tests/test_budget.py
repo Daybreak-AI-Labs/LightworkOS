@@ -199,6 +199,24 @@ def test_self_hosted_route_is_free_only_on_a_private_address(monkeypatch, caplog
     assert ("public address" in caplog.text) is (expected == _CEILING)
 
 
+@pytest.mark.parametrize("url,private", [
+    ("http://134744072:11434/v1", False),  # 8.8.8.8 written as one number
+    ("http://0x08080808:11434", False),  # 8.8.8.8 in hex
+    ("http://[::ffff:8.8.8.8]:11434", False),
+    ("http://0177.0.0.1:11434", True),  # octal loopback
+    ("http://127.1:11434", True),
+    ("http://2130706433:11434", True),  # 127.0.0.1 as one number
+    ("http://0x7f000001:11434", True),
+    ("http://[fd00::5]:11434", True),  # unique local
+    ("http://169.254.169.254", False),  # cloud metadata is not a model server
+    ("http://ollama:11434", True),  # a real single-label name
+])
+def test_ip_literals_are_classified_by_address_not_by_name(url, private):
+    """The OS resolver turns numeric hosts into addresses without DNS; price
+    them by the address, never by the single-label name rule."""
+    assert budget_mod._is_private_endpoint(url) is private
+
+
 def test_ceiling_charge_is_named_in_the_cap_error_and_cost_line(monkeypatch):
     """A cap tripped by the safety ceiling says so and names the fix."""
     monkeypatch.setattr("maverick.config.get_provider_config",

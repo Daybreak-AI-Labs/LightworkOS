@@ -768,8 +768,6 @@ _SELF_HOSTED_DEFAULT_URLS = {
 # Compose service such as ``ollama``), a reserved private-use suffix, a
 # Tailscale MagicDNS name, or a common home or company suffix. No DNS lookup.
 _LOCAL_NAME_SUFFIXES = (".local", ".internal", ".lan", ".home.arpa", ".home", ".corp", ".ts.net")
-# Carrier-grade NAT space, used by Tailscale for its private addresses.
-_CGNAT = ipaddress.ip_network("100.64.0.0/10")
 
 
 def _self_hosted_endpoint(provider: str) -> tuple[str | None, object]:
@@ -798,24 +796,49 @@ def _self_hosted_endpoint(provider: str) -> tuple[str | None, object]:
     return url or _SELF_HOSTED_DEFAULT_URLS[provider], table.get("price_per_mtok")
 
 
+# Address ranges priced as private: loopback, RFC 1918, link-local, unique
+# local (IPv6) and carrier-grade NAT (Tailscale). Cloud metadata is excluded.
+_PRIVATE_NETWORKS = tuple(ipaddress.ip_network(net) for net in (
+    "127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+    "169.254.0.0/16", "100.64.0.0/10", "::1/128", "fc00::/7", "fe80::/10",
+))
+_METADATA_ADDRESSES = frozenset(ipaddress.ip_address(a) for a in ("169.254.169.254", "fd00:ec2::254"))
+
+
+def _host_address(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """The address a numeric host names, in every form the OS resolver
+    accepts without DNS (dotted, short, decimal, hex, octal, IPv6)."""
+    import socket
+
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        try:
+            address = ipaddress.IPv4Address(socket.inet_aton(host))
+        except (OSError, ValueError):
+            return None
+    mapped = getattr(address, "ipv4_mapped", None)
+    return mapped if mapped is not None else address
+
+
 def _is_private_endpoint(url: str | None) -> bool:
     from urllib.parse import urlparse
 
     from .enterprise import _is_local_endpoint
 
-    if _is_local_endpoint(url):
-        return True
     try:
         host = (urlparse(url or "").hostname or "").rstrip(".").lower()
     except ValueError:
         return False
-    try:
-        return ipaddress.ip_address(host) in _CGNAT
-    except ValueError:
-        pass
-    if not host or ":" in host:
+    if not host:
         return False
-    return "." not in host or host.endswith(_LOCAL_NAME_SUFFIXES)
+    address = _host_address(host)
+    if address is not None:
+        return address not in _METADATA_ADDRESSES and any(
+            address in net for net in _PRIVATE_NETWORKS if net.version == address.version)
+    if _is_local_endpoint(url):
+        return True
+    return ":" not in host and ("." not in host or host.endswith(_LOCAL_NAME_SUFFIXES))
 
 
 def _declared_endpoint_price(value: object) -> tuple[float, float] | None:
