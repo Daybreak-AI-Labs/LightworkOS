@@ -1165,11 +1165,19 @@ def _seal(text, context=None):
     return _enc_field(text, context, bind_tenant=True)
 
 
-def _unseal(text, context=None):
+def _unseal(text, context=None, *, legacy_row=False):
     """Inverse of :func:`_seal` (no-op when at-rest is off; legacy plaintext and
     strict-mode handling identical to the SQLite backend). A value bound to
-    another column than ``context`` is withheld."""
+    another column than ``context`` is withheld.
+
+    ``legacy_row`` marks a row whose ``tenant_id`` is NULL: an unbound caller
+    sealed it, so it opens with the empty tenant binding (as a SQLite world
+    opens from any context). Visibility stays with the caller's tenant scope."""
     from ..world_model import _dec_field
+    if legacy_row:
+        from ..crypto_at_rest import unbound_row_scope
+        with unbound_row_scope():
+            return _dec_field(text, context=context)
     return _dec_field(text, context=context)
 
 
@@ -3773,8 +3781,8 @@ class PostgresWorldModel:
         precedence, precedence_params = _tenant_precedence()
         precedence_order = f"{precedence}, " if precedence else ""
         sql = (
-            "SELECT key, value FROM ("
-            "SELECT key, value, write_seq, "
+            "SELECT key, value, tenant_id FROM ("
+            "SELECT key, value, tenant_id, write_seq, "
             "ROW_NUMBER() OVER (PARTITION BY key ORDER BY "
             f"{precedence_order}write_seq DESC) AS fact_rank FROM facts"
         )
@@ -3784,7 +3792,7 @@ class PostgresWorldModel:
         with self._tx() as cur:
             cur.execute(sql, tuple(precedence_params + params))
             rows = cur.fetchall()
-        return {r[0]: _unseal(r[1], "facts.value") for r in rows}
+        return {r[0]: _unseal(r[1], "facts.value", legacy_row=r[2] is None) for r in rows}
 
     def get_facts_with_trust(self) -> dict[str, tuple[str, int]]:
         """Return each fact with its Memory-Guard recall-trust tier.
@@ -3804,8 +3812,8 @@ class PostgresWorldModel:
         precedence, precedence_params = _tenant_precedence()
         precedence_order = f"{precedence}, " if precedence else ""
         sql = (
-            "SELECT key, value, trust_tier FROM ("
-            "SELECT key, value, trust_tier, write_seq, "
+            "SELECT key, value, trust_tier, tenant_id FROM ("
+            "SELECT key, value, trust_tier, tenant_id, write_seq, "
             "ROW_NUMBER() OVER (PARTITION BY key ORDER BY "
             f"{precedence_order}write_seq DESC) AS fact_rank FROM facts"
         )
@@ -3815,7 +3823,8 @@ class PostgresWorldModel:
         with self._tx() as cur:
             cur.execute(sql, tuple(precedence_params + params))
             rows = cur.fetchall()
-        return {r[0]: (_unseal(r[1], "facts.value"), int(r[2])) for r in rows}
+        return {r[0]: (_unseal(r[1], "facts.value", legacy_row=r[3] is None), int(r[2]))
+                for r in rows}
 
     def facts_matching(self, token: str) -> dict[str, str]:
         """Facts explicitly scoped to ``token`` by ``user:<token>:`` key prefix.
@@ -3903,7 +3912,8 @@ class PostgresWorldModel:
         out: dict[str, list] = {}
         for r in rows:
             out.setdefault(r[1], []).append(FactVersion(
-                value=_unseal(r[2], "facts.value"), valid_from=r[3], valid_to=r[4],
+                value=_unseal(r[2], "facts.value", legacy_row=r[8] is None),
+                valid_from=r[3], valid_to=r[4],
                 source=r[5] or "", trust_tier=int(r[6]),
                 sensitivity=r[7] or "internal",
             ))
@@ -3924,7 +3934,7 @@ class PostgresWorldModel:
         precedence_order = f"{precedence}, " if precedence else ""
         if as_of is not None:
             sql = (
-                "SELECT value FROM fact_history WHERE key = %s AND valid_from <= %s "
+                "SELECT value, tenant_id FROM fact_history WHERE key = %s AND valid_from <= %s "
                 "AND (valid_to IS NULL OR valid_to > %s)"
             )
             p: list = [key, as_of, as_of]
@@ -3938,8 +3948,8 @@ class PostgresWorldModel:
             with self._tx() as cur:
                 cur.execute(sql, tuple(p))
                 row = cur.fetchone()
-            return _unseal(row[0], "facts.value") if row else None
-        sql = "SELECT value FROM facts WHERE key = %s"
+            return _unseal(row[0], "facts.value", legacy_row=row[1] is None) if row else None
+        sql = "SELECT value, tenant_id FROM facts WHERE key = %s"
         p = [key]
         if frag:
             sql += " AND " + frag
@@ -3949,7 +3959,7 @@ class PostgresWorldModel:
         with self._tx() as cur:
             cur.execute(sql, tuple(p))
             row = cur.fetchone()
-        return _unseal(row[0], "facts.value") if row else None
+        return _unseal(row[0], "facts.value", legacy_row=row[1] is None) if row else None
 
     def fact_history(self, key: str, *, limit: int = 50,
                      owned_only: bool = False) -> list:
@@ -4032,7 +4042,8 @@ class PostgresWorldModel:
         rows.sort(key=lambda row: (row[3], row[0]), reverse=True)
         return [
             FactVersion(
-                value=_unseal(r[2], "facts.value"), valid_from=r[3], valid_to=r[4],
+                value=_unseal(r[2], "facts.value", legacy_row=r[8] is None),
+                valid_from=r[3], valid_to=r[4],
                 source=r[5] or "", trust_tier=int(r[6]),
                 sensitivity=r[7] or "internal",
             )
@@ -4105,7 +4116,7 @@ class PostgresWorldModel:
         if not at_rest_enabled():
             q = "%" + self._like_escape(query) + "%"
             sql = (
-                "SELECT key, value FROM (SELECT key, value, write_seq, "
+                "SELECT key, value, tenant_id FROM (SELECT key, value, tenant_id, write_seq, "
                 "ROW_NUMBER() OVER (PARTITION BY key ORDER BY "
                 f"{precedence_order}write_seq DESC) AS fact_rank FROM facts "
                 "WHERE key LIKE %s ESCAPE '\\'"
@@ -4124,14 +4135,14 @@ class PostgresWorldModel:
             with self._tx() as cur:
                 cur.execute(sql, tuple(p))
                 rows = cur.fetchall()
-            return [(r[0], _unseal(r[1], "facts.value")) for r in rows]
+            return [(r[0], _unseal(r[1], "facts.value", legacy_row=r[2] is None)) for r in rows]
         # Encryption on: `value` is sealed ciphertext, so a SQL LIKE over it can
         # never match the plaintext query (search would silently return nothing)
         # and the returned value would be ciphertext. Keys are plaintext: narrow
         # the scan by prefix in SQL, then decrypt + substring-match in Python.
         # Mirrors the SQLite backend (case-insensitive, like SQLite LIKE).
         sql = (
-            "SELECT key, value FROM (SELECT key, value, write_seq, "
+            "SELECT key, value, tenant_id FROM (SELECT key, value, tenant_id, write_seq, "
             "ROW_NUMBER() OVER (PARTITION BY key ORDER BY "
             f"{precedence_order}write_seq DESC) AS fact_rank FROM facts "
             "WHERE key LIKE %s ESCAPE '\\'"
@@ -4147,7 +4158,7 @@ class PostgresWorldModel:
         needle = query.lower()
         out: list[tuple[str, str]] = []
         for r in rows:
-            val = _unseal(r[1], "facts.value")
+            val = _unseal(r[1], "facts.value", legacy_row=r[2] is None)
             if needle in r[0].lower() or (val is not None and needle in val.lower()):
                 out.append((r[0], val))
                 if len(out) >= limit:

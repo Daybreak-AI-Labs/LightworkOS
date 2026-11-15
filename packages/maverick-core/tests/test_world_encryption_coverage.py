@@ -349,6 +349,33 @@ def test_sqlite_tokens_ignore_the_request_tenant_and_postgres_tokens_bind_it(mon
 
 
 @requires_crypto
+def test_postgres_legacy_null_tenant_row_opens_with_its_own_unbound_binding(monkeypatch):
+    """A legacy row (``tenant_id IS NULL``) was sealed with no tenant bound.
+    A compatibility read under a tenant opens it with that empty binding,
+    as a SQLite world reads it from any context; a token bound to another
+    tenant in such a row still stays withheld."""
+    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
+    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
+    from maverick import paths
+    from maverick.world_model import _UNSEALED_WITHHELD
+    from maverick.world_model_backends import postgres
+
+    legacy = postgres._seal("legacy@example.test", "facts.value")
+    token = paths._TENANT.set("tenant-b")
+    try:
+        foreign = postgres._seal("tenant-b secret", "facts.value")
+    finally:
+        paths._TENANT.reset(token)
+    token = paths._TENANT.set("acme")
+    try:
+        assert postgres._unseal(legacy, "facts.value", legacy_row=True) == "legacy@example.test"
+        assert postgres._unseal(legacy, "facts.value") == _UNSEALED_WITHHELD
+        assert postgres._unseal(foreign, "facts.value", legacy_row=True) == _UNSEALED_WITHHELD
+    finally:
+        paths._TENANT.reset(token)
+
+
+@requires_crypto
 def test_migrated_store_withholds_an_unbound_sealed_value_pasted_into_a_column(
     monkeypatch, tmp_path
 ):

@@ -226,6 +226,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The gRPC server starts again: its generated stubs now import as part of
   the package. Stubs an earlier release generated are rebuilt on next start;
   with runtime generation off, run `maverick gen-stubs` after upgrading.
+- On Postgres with at-rest encryption, facts saved before workspaces were
+  used (no tenant) read correctly again in compatibility mode instead of
+  showing a "withheld" placeholder. Nothing to do.
 
 ### Fixed
 

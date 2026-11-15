@@ -138,6 +138,9 @@ _FORCE_EXTERNAL_FLEET_KEY = ContextVar(
     "maverick_force_external_fleet_at_rest_key",
     default=False,
 )
+# Opening (never sealing) a legacy Postgres row whose tenant column is NULL:
+# it was sealed with no tenant bound, whatever tenant reads it now.
+_OPEN_UNBOUND_ROW = ContextVar("maverick_open_unbound_row", default=False)
 _SHARED_KEY_IDENTITY_LOCK = threading.Lock()
 _SHARED_KEY_IDENTITY_DIGEST: str | None = None
 _SHARED_KEY_BYTES: bytes | None = None
@@ -171,6 +174,21 @@ def external_fleet_key_scope():
         yield
     finally:
         _FORCE_EXTERNAL_FLEET_KEY.reset(token)
+
+
+@contextmanager
+def unbound_row_scope():
+    """Open tenant-bound tokens with the empty (no tenant) binding.
+
+    For a legacy row whose tenant column is NULL: it was written by an unbound
+    caller, so its binding has no tenant. The caller has already decided the
+    row is visible; this only picks the binding it was sealed with. Sealing is
+    unaffected, and a token bound to a named tenant still fails to open."""
+    token = _OPEN_UNBOUND_ROW.set(True)
+    try:
+        yield
+    finally:
+        _OPEN_UNBOUND_ROW.reset(token)
 
 
 class EncryptionUnavailable(RuntimeError):
@@ -1143,7 +1161,7 @@ def unseal_bound(blob: bytes, context: str,
     # the scope and sealed under the tenant's data key. Such a blob still opens
     # only with the current tenant's key and tenant-bound AAD below, so data of
     # another tenant fails authentication here as anywhere else.
-    tenant = None if kind == b"D" else current_tenant_id_strict()
+    tenant = None if kind == b"D" or _OPEN_UNBOUND_ROW.get() else current_tenant_id_strict()
     cache_key = ("bound:" + ("fleet:" if fleet else "") + kind.decode("ascii", "replace") + ":" + (tenant or ""), keyid)
     cipher = key_cache.get(cache_key) if key_cache is not None else None
     if cipher is None:
