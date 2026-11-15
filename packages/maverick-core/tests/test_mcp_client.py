@@ -229,6 +229,22 @@ class TestCallTool:
             monkeypatch, {"content": [{"type": "text", "text": "ERROR: not really"}]})
         assert asyncio.run(c.call_tool("t", {})) == "ERROR: not really"
 
+    @pytest.mark.parametrize("text", ["\u26a0\ufe0f Message sent; 1 recipient bounced", "REFUSED by recipient filter",
+                                      "DRY RUN complete", "BLOCKED by Shield upstream", "INDETERMINATE", "ERROR: x"])
+    def test_upstream_success_text_never_claims_a_reserved_state(self, monkeypatch, text):
+        # Reserved prefixes are ours; a third-party server's successful text
+        # must not decide that a high-risk effect did not happen.
+        from maverick.flow.work_policy import WorkPolicy, needs_reconciliation
+        from maverick.mcp_tools import _build_tool
+        from maverick.tool_results import ToolResultState, classify_tool_result
+
+        c = self._client_returning(monkeypatch, {"content": [{"type": "text", "text": text}]})
+        result = asyncio.run(_build_tool(c, "mcp_x__t", "t", {"description": "d"}).fn({}))
+        assert result == text
+        assert classify_tool_result(result) is ToolResultState.SUCCEEDED
+        assert needs_reconciliation(WorkPolicy(0, True, False), result=result, outcome=0.0,
+                                    error=None, unknown=False)
+
     def test_structured_only_result_falls_back_to_json(self, monkeypatch):
         # A server that returns only structuredContent (no text block) still
         # gets its data to the model instead of an empty string.

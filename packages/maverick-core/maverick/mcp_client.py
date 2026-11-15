@@ -24,6 +24,7 @@ from .mcp_catalog import CatalogLimits, ToolCatalog, check_call_guard
 from .runtime_overrides import RuntimeOverridesSecurityError
 from .safety.remote_scan import scan_remote_content
 from .safety.secret_detector import redact as _redact_secrets
+from .tool_results import confirmed_success_text
 
 log = logging.getLogger(__name__)
 
@@ -131,7 +132,10 @@ def _finalize_tool_result(spec_name: str, tool_name: str, resp: dict) -> str:
     text = _content_to_str(resp.get("content", []))
     if not text and resp.get("structuredContent") is not None:
         return json.dumps(resp["structuredContent"])
-    return text
+    # Success is settled by isError above. Upstream text that happens to start
+    # with a reserved prefix ("REFUSED", "DRY RUN", "\u26a0") must not decide
+    # that a high-risk effect did not happen.
+    return confirmed_success_text(text)
 
 
 def _format_rpc_error(err: object) -> str:

@@ -230,6 +230,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pass as a signed eDiscovery export. `verify_export` also rejects a
   manifest that is not an export manifest. Titles and exports made by
   earlier releases still verify.
+- A successful MCP tool result is always treated as a success, even when
+  its text starts with "REFUSED", "DRY RUN" or a warning sign. A failed
+  high-risk MCP action is held for checking instead of being treated as
+  not done.
 
 ### Fixed
 
