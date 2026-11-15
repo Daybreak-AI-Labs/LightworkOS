@@ -37,9 +37,11 @@ Principles that are not negotiable and are enforced here:
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import re
 import time
+import unicodedata
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field
 from typing import Any
@@ -356,6 +358,23 @@ def recall(
     return res
 
 
+def _provenance(principal: str, label: str) -> str:
+    """Stored knowledge provenance: the verified depositor first, then the
+    caller's own label, JSON-quoted with every control, format, line
+    separator and look-alike quote character escaped, so a label can
+    describe the text but never read as another depositor or as the end of
+    this one's label."""
+    label = (label or "").strip()
+    if not label:
+        return principal
+    quoted = "".join(
+        f"\\u{ord(ch):04x}"
+        if unicodedata.category(ch) in ("Cc", "Cf", "Zl", "Zp", "Pi", "Pf") or ch == "\uff02"
+        else ch
+        for ch in json.dumps(label, ensure_ascii=False))
+    return f"{principal} (label: {quoted})"
+
+
 def deposit(
     text: str,
     *,
@@ -374,8 +393,9 @@ def deposit(
     External callers may only deposit into fleet memory. Returns
     ``(ok, reason)`` and leaves one audit row for every outcome it returns;
     an exception raised by the knowledge base or fleet memory propagates and
-    is not audited here. The legacy ``source`` argument is accepted for API
-    compatibility; knowledge provenance always names the trusted caller."""
+    is not audited here. Knowledge provenance always starts with the
+    verified caller; ``source`` is kept only as that caller's quoted label
+    after it (see :func:`_provenance`)."""
     caller = caller or Caller()
     tenant = _tenant()
 
@@ -400,14 +420,15 @@ def deposit(
         kb = knowledge_admin.open_knowledge_base(tenant=tenant)
         if kb is None:
             return _done(False, "knowledge base unavailable or disabled ([knowledge] enable)")
+        provenance = _provenance(caller.principal, source)
         try:
-            chunks = kb.ingest_text(collection, text, source=caller.principal)
+            chunks = kb.ingest_text(collection, text, source=provenance)
         finally:
             close = getattr(kb, "close", None)
             if callable(close):
                 close()
         return _done(True, "ingested", collection=collection, chunks=int(chunks or 0),
-                     source=caller.principal)
+                     source=provenance)
     if kind == "fleet":
         from . import fleet_memory
         payload = {"agent_id": caller.agent_id, "vendor": caller.vendor,

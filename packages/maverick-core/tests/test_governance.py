@@ -86,6 +86,23 @@ def test_from_config(monkeypatch):
     assert not pol.is_empty()
 
 
+def test_from_config_never_builds_the_tool_registry(monkeypatch):
+    """The authorization path reads the policy only; checking deny-list names
+    against the tool catalog belongs to config-lint and doctor."""
+    from maverick import tools
+
+    def no_registry(**_kwargs):
+        raise AssertionError("Policy.from_config built the tool registry")
+
+    monkeypatch.setattr(tools, "base_tool_names", no_registry)
+    monkeypatch.setattr("maverick.config.config_source_errors", dict)
+    monkeypatch.setattr("maverick.config.load_config", lambda *a, **k: {
+        "governance": {"deny_actions": ["Not_A_Tool_7"], "require_human_actions": ["Other_8"]},
+    })
+    pol = Policy.from_config()
+    assert evaluate("not_a_tool_7", policy=pol).decision is Decision.DENY
+
+
 def test_from_config_empty_is_default_allow(monkeypatch):
     monkeypatch.setattr("maverick.config.config_source_errors", dict)
     monkeypatch.setattr("maverick.config.load_config", lambda *a, **k: {})

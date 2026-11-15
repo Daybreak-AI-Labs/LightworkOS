@@ -24,6 +24,18 @@ from .config import env_flag
 log = logging.getLogger(__name__)
 
 _GENESIS = "0" * 64
+#: Why :meth:`_ChainedLog.verify` fails for evidence that was never anchored.
+#: Why verify fails while only forced rows recorded unverified follow the head.
+_REANCHOR = (
+    "unverified demote/revoke row(s) follow the signed head; the next append "
+    "re-anchors them"
+)
+#: Main-audit-log decision recording a store's first signed head.
+_FIRST_ANCHOR = "evidence_anchored"
+_UNANCHORED = (
+    "signed audit head is missing: the evidence predates anchoring and is "
+    "adopted by its next append"
+)
 _MAX_ROWS = 100_000
 _MAX_TEXT = 300
 
@@ -76,6 +88,45 @@ def _safe_text(value: object, *, max_len: int = _MAX_TEXT) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _first_anchor_recorded(identity: str) -> bool | None:
+    """Whether the main audit log records a first signed head for ``identity``.
+
+    ``None`` when the main log cannot be verified (a broken or unsigned chain,
+    a broken anchor history, an unreadable file): adoption is then refused.
+    When the audit writer does not sign (the operator chose an unsigned log),
+    there is nothing to verify, so a plain read decides; an unreadable
+    day-file still returns ``None``. Only the rare adoption path calls this;
+    it reads every main-log day-file.
+    """
+    from .audit.signing import _segment_text, day_files, verify_anchors, verify_chain
+    from .audit.writer import default_audit_log
+    from .file_lock import cross_process_lock
+
+    try:
+        sink = default_audit_log()
+        main, signed = sink.audit_dir, sink.signing_enabled
+        if signed and verify_anchors(main):
+            return None
+        found = False
+        for path in day_files(main):
+            with cross_process_lock(path, strict=True):
+                segment = _segment_text(path)
+                if signed and verify_chain(path, segment=segment):
+                    return None
+            for line in segment.splitlines():
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                found = found or (
+                    row.get("kind") == "autonomy_graduation"
+                    and row.get("decision") == _FIRST_ANCHOR
+                    and row.get("store_id") == identity)
+        return found
+    except Exception:  # noqa: BLE001 -- unverifiable means no adoption
+        log.debug("earned-autonomy: main audit log not verifiable", exc_info=True)
+        return None
+
+
 class _ChainedLog:
     """Append-only NDJSON rows, each carrying ``prev``/``hash`` sha256 links.
 
@@ -87,10 +138,12 @@ class _ChainedLog:
     writers appended first, so the on-disk chain never forks. ``path=None``
     keeps the chain in memory (tests / ephemeral runs). Appends return False
     on incidental persistence/lock failure; explicit audit refusals propagate.
-    Persisted heads are anchored in a signed audit namespace; legacy evidence
-    without an anchor is unverified and cannot be extended automatically. ``force=True`` lets a
-    safety-critical row (a demotion/revocation) through even at capacity --
-    the bound is a growth guard, never a reason to keep stale authority.
+    Persisted heads are anchored in a signed audit namespace. Evidence written
+    before anchoring existed is adopted once, by the first append, and only
+    while no signed head was ever recorded for it. ``force=True`` lets a
+    safety-critical row (a demotion/revocation) through even at capacity or
+    on unverified evidence (the row then says so) -- the bound is a growth
+    guard, and taking authority away is never refused.
     """
 
     def __init__(self, path: Path | None = None, *, max_rows: int = _MAX_ROWS) -> None:
@@ -99,6 +152,16 @@ class _ChainedLog:
         self._rows: list[dict] = []
         self._size = -1
         self._lock = threading.RLock()
+        #: Row kinds that may be re-anchored when recorded unverified right
+        #: after the signed head (the trust ledger's demote/revoke). Such rows
+        #: only take authority away, so anchoring them hides nothing.
+        self.reanchorable_kinds: frozenset[str] = frozenset()
+        self._warned_unverifiable = False
+        # Fingerprint of the evidence file and its signed namespace at the
+        # last full verification (or our own anchored append after it), and
+        # the row count of the day-file our last signed head went to.
+        self._verified: tuple | None = None
+        self._day_count: tuple[Path, int, str] | None = None
         if self.path is not None:
             with self._lock:
                 self._refresh_unlocked()
@@ -137,8 +200,10 @@ class _ChainedLog:
     def _anchor_location(self) -> tuple[str, Path]:
         from .paths import data_dir
 
+        # realpath: every spelling of one file (a symlinked data directory)
+        # must share one signed namespace, or a new spelling reads as unanchored.
         identity = hashlib.sha256(os.path.normcase(
-            os.path.abspath(self.path),
+            os.path.realpath(self.path),
         ).encode()).hexdigest()
         return identity, data_dir("audit") / "earned-autonomy" / identity
 
@@ -164,53 +229,337 @@ class _ChainedLog:
                             and row.get("store_id") == identity):
                         latest = row
         if latest is None:
-            return "signed audit head is missing" if self._rows else None
+            if not self._rows:
+                return None
+            if not self._never_anchored(directory):
+                return "signed audit head is missing"
+            recorded = _first_anchor_recorded(identity)
+            if recorded is None:
+                if not self._warned_unverifiable:
+                    self._warned_unverifiable = True
+                    log.warning(
+                        "earned-autonomy: earlier evidence in %s was not taken over because "
+                        "the audit log does not verify; `maverick audit verify` shows "
+                        "what is wrong", self.path)
+                return "signed audit head is missing and the main audit log cannot be verified"
+            if recorded:
+                return ("signed audit head is missing: the main audit log shows this "
+                        "evidence was anchored before")
+            return _UNANCHORED
         if latest.get("head") != head or latest.get("row_count") != len(self._rows):
+            if self._only_forced_rows_after(latest):
+                return _REANCHOR
             return "head does not match the signed audit record"
         return None
 
-    def _record_anchor(self, head: str, count: int) -> bool:
-        from .audit import AuditEvent, AuditLog, EventKind
-        from .audit.signing import _append_anchor, _segment_text, verify_chain
-        from .file_lock import cross_process_lock
+    def _only_forced_rows_after(self, latest: dict) -> bool:
+        """The signed head names an exact prefix and only unverified forced rows follow.
+
+        That is what one failed anchor of a forced demote/revoke leaves. A
+        deleted, edited or added row of any other kind never matches.
+        """
+        count = latest.get("row_count")
+        if (not self.reanchorable_kinds or type(count) is not int
+                or not 0 <= count < len(self._rows)):
+            return False
+        prefix = self._rows[count - 1]["hash"] if count else _GENESIS
+        return prefix == latest.get("head") and all(
+            row.get("kind") in self.reanchorable_kinds and "unverified_ledger" in row
+            for row in self._rows[count:])
+
+    @staticmethod
+    def _never_anchored(directory: Path) -> bool:
+        """Whether no signed head was ever recorded for this evidence file.
+
+        The first anchor creates the namespace's anchor ledger, its
+        required-marker, its high-water record and a non-empty day-file, and
+        nothing here removes them. Any one of them, or an entry that cannot be
+        inspected, means "anchored before"; only their complete absence means
+        "never anchored" here. That alone is not enough to adopt: the whole
+        namespace can be deleted, so adoption also requires the main audit
+        log to verify and to hold no first-anchor record for the store
+        (:func:`_first_anchor_recorded`).
+        """
+        from .audit.signing import (
+            ANCHOR_FILENAME,
+            ANCHOR_HIGHWATER_FILENAME,
+            ANCHOR_MARKER_FILENAME,
+            day_files,
+        )
+
+        try:
+            if any((directory / name).exists() for name in (
+                    ANCHOR_FILENAME, ANCHOR_MARKER_FILENAME, ANCHOR_HIGHWATER_FILENAME)):
+                return False
+            return all(path.stat().st_size == 0 for path in day_files(directory))
+        except OSError:
+            return False
+
+    def _record_first_anchor(self, *, adopted: bool) -> bool:
+        """Record in the MAIN audit log that this store now has a signed head.
+
+        Written before the store's first signed head (fresh evidence or an
+        adoption). It lives outside the store's own namespace, so removing
+        that namespace cannot make anchored evidence look never-anchored
+        while the main log still holds this record.
+        """
+        from .audit import AuditEvent, EventKind
+        from .audit.writer import default_audit_log
+
+        sink = default_audit_log()
+        event = AuditEvent(
+            ts=time.time(), kind=EventKind.AUTONOMY_GRADUATION, agent="earned_autonomy",
+            payload={"decision": _FIRST_ANCHOR, "store_id": self._anchor_location()[0],
+                     "adopted_from_unanchored": adopted, "row_count": len(self._rows)},
+        )
+        written = (sink.record_strict_signed(event) if sink.signing_enabled
+                   else sink.record(event))
+        if not written:
+            log.warning("earned-autonomy: first signed head not recorded in the main audit log")
+        return bool(written)
+
+    def _record_anchor(self, head: str, count: int, **extra: object) -> bool:
+        from .audit import AuditEvent, EventKind, signing
 
         identity, directory = self._anchor_location()
-        # This evidence always requires signing, including legacy deployments
-        # whose general-purpose audit sink permits unsigned events. The native
-        # strict writer still enforces custody policy and key authority.
-        sink = AuditLog(audit_dir=directory, sign=True)
-        if not sink.record_strict_signed(AuditEvent(
+        day = signing._today_utc()
+        path = directory / f"{day}.ndjson"
+        # Always signed, with the audit signer itself, so key custody policy
+        # (an off-host key requirement) applies. The namespace was verified
+        # under the evidence lock just before this (fully, or as the unchanged
+        # state of the last full check), so re-walking every signature of the
+        # day here would only make each append cost grow with the history.
+        signer = signing.AuditSigner(path)
+        event = AuditEvent(
             ts=time.time(), kind=EventKind.AUTONOMY_GRADUATION,
             agent="earned_autonomy", payload={
                 "decision": "chain_head", "store_id": identity,
-                "head": head, "row_count": count,
+                "head": head, "row_count": count, **extra,
             },
-        )):
+        ).to_dict()
+        cached, self._day_count = self._day_count, None
+        # The cached count only holds while the day-file still ends at the tip
+        # this object anchored (another writer may have appended since).
+        prior_tip = signer._last_hash
+        if not signer.write(event):
             return False
-        path = sink._current_path
-        if path is None:
-            return False
+        tip = signer._last_hash
+        if cached is not None and cached[0] == path and cached[2] == prior_tip:
+            rows = cached[1] + 1
+        else:
+            file_tip, rows = signing._file_tip_and_count(path)
+            if file_tip != tip:
+                return False
         # Seal the current signed tip immediately, including the first day.
         # Otherwise the first verification after midnight requires a day-ledger
-        # that AuditLog only creates on its next write, which verification then
-        # prevents. Verify exact bytes before extending the signed anchor; never
-        # manufacture a baseline during a read or repair an unverified history.
-        with cross_process_lock(path, strict=True):
-            segment = _segment_text(path)
-            if verify_chain(path, segment=segment):
-                return False
-            rows = [json.loads(line) for line in segment.splitlines() if line.strip()]
-            if not rows or rows[-1].get("head") != head or rows[-1].get("row_count") != count:
-                return False
-            return _append_anchor(directory, path.stem, rows[-1]["hash"], len(rows))
+        # that would only be created on the next write, which verification then
+        # prevents.
+        if not signing._append_anchor(directory, day, tip, rows):
+            return False
+        self._day_count = (path, rows, tip)
+        return True
+
+    def _fingerprint_unlocked(self) -> tuple | None:
+        """Cheap identity of the evidence file and its signed namespace.
+
+        Stats only, no reads. ``st_ctime_ns`` changes on every content or
+        timestamp change and, unlike mtime, cannot be set back by a writer.
+        ``None`` (never equal to a cached value) when anything is unreadable.
+        """
+        _identity, directory = self._anchor_location()
+        try:
+            names = sorted(name for name in os.listdir(directory)
+                           if name.endswith(".ndjson") or name.startswith(".anchors"))
+        except FileNotFoundError:
+            names = []
+        except OSError:
+            return None
+        stamps = []
+        for path in (self.path, *(directory / name for name in names)):
+            try:
+                st = os.stat(path)
+            except FileNotFoundError:
+                stamps.append(None)
+                continue
+            except OSError:
+                return None
+            stamps.append((st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns))
+        return (tuple(names), tuple(stamps))
+
+    def _writable_status_unlocked(self) -> str:
+        """``verify()``, skipped while nothing changed since it last passed.
+
+        Keeps an append's cost independent of the history's length: the full
+        check of every link, signed head and anchor runs again only after the
+        evidence file or its signed namespace changed outside this object
+        (another writer, an edit, a deletion). ``verify()`` itself always runs
+        the full check.
+        """
+        fingerprint = self._fingerprint_unlocked()
+        if fingerprint is not None and fingerprint == self._verified:
+            return f"VALID: {len(self._rows)} link(s) (unchanged since verified)"
+        self._day_count = None
+        return self.verify()
+
+    def _adopt_unlocked(self) -> bool:
+        """Anchor never-anchored legacy evidence at its current, intact head.
+
+        The signed head row says it was adopted, and the adoption is also
+        recorded in the main audit log, so it stays visible after the fact.
+        """
+        head, count = self._rows[-1]["hash"], len(self._rows)
+        if not self._record_first_anchor(adopted=True):
+            return False
+        if not self._record_anchor(head, count, adopted_from_unanchored=True):
+            return False
+        log.warning("earned-autonomy: adopted %d row(s) of unanchored legacy evidence", count)
+        from .audit.writer import default_audit_log
+
+        if not default_audit_log().signing_enabled:
+            log.warning("earned-autonomy: evidence was adopted without a verifiable audit "
+                        "log (audit signing is off)")
+        return True
+
+    def _repair_status_unlocked(self, status: str) -> str:
+        """Adopt never-anchored evidence, or re-anchor trailing forced rows."""
+        try:
+            if status == f"BROKEN: {_UNANCHORED}":
+                return ("VALID: adopted" if self._adopt_unlocked()
+                        else "BROKEN: legacy evidence could not be anchored")
+            if status == f"BROKEN: {_REANCHOR}":
+                return ("VALID: re-anchored" if self._record_anchor(
+                    self._rows[-1]["hash"], len(self._rows), reanchored_forced_rows=True)
+                    else "BROKEN: forced rows could not be re-anchored")
+        except AuditRefused:
+            raise
+        except Exception:
+            log.debug("earned-autonomy anchor repair failed", exc_info=True)
+            return "BROKEN: signed audit head could not be recorded"
+        return status
 
     def _append_unlocked(self, fields: dict, *, force: bool) -> bool:
-        if self.path is not None and not self.verify().startswith("VALID:"):
-            log.warning("earned-autonomy append refused: prior evidence is not verified")
+        if self.path is None:
+            return self._write_row_unlocked(fields, force=force) is not None
+        try:
+            status = self._repair_status_unlocked(self._writable_status_unlocked())
+        except AuditRefused:
+            if not force:
+                raise
+            status = "BROKEN: signed audit head is unavailable"
+        if not status.startswith("VALID:"):
+            if not force:
+                log.warning("earned-autonomy append refused: prior evidence is not verified")
+                return False
+            return self._append_unverified_unlocked(fields, status)
+        if not self._rows and self._never_anchored(self._anchor_location()[1]):
+            try:
+                first = self._record_first_anchor(adopted=False)
+            except AuditRefused:
+                if not force:
+                    raise
+                first = False
+            if not first:
+                if not force:
+                    return False
+                return self._append_unverified_unlocked(
+                    fields, "BROKEN: first signed head could not be recorded")
+        try:
+            size = self.path.stat().st_size
+        except FileNotFoundError:
+            size = 0
+        row = self._write_row_unlocked(fields, force=force)
+        if row is None:
             return False
+        try:
+            anchored = self._record_anchor(row["hash"], len(self._rows))
+        except AuditRefused:
+            if not force:
+                self._withdraw_unlocked(size)
+                raise
+            anchored = False
+        except Exception:
+            log.debug("earned-autonomy anchor failed", exc_info=True)
+            anchored = False
+        if anchored:
+            self._verified = self._fingerprint_unlocked()
+            return True
+        # A row whose signed head was not recorded never stays behind as
+        # evidence: one failed audit write must neither wedge the ledger
+        # (head one row ahead of its anchor) nor count a refused row.
+        if not self._withdraw_unlocked(size):
+            return force
+        if force:
+            return self._append_unverified_unlocked(
+                fields, "BROKEN: signed audit head was not recorded")
+        log.warning("earned-autonomy append refused: signed head was not recorded")
+        return False
+
+    def _withdraw_unlocked(self, size: int) -> bool:
+        """Remove the row just written because its signed head was not recorded.
+
+        Truncating back to the verified, anchored length is used instead of
+        accepting a ledger one row ahead of its anchor: that tolerance would
+        let anyone append one unanchored row, but it could never re-admit a
+        deleted one. A failure after the signed head itself landed would leave
+        that head one row ahead, so the restored head is re-recorded (best
+        effort: the audit sink has just failed once).
+        """
+        try:
+            os.truncate(self.path, size)
+        except OSError:
+            log.exception("earned-autonomy: could not withdraw an unanchored row")
+            self._verified = None
+            return False
+        self._verified = None
+        self._rows.pop()
+        self._size = size
+        head = self._rows[-1]["hash"] if self._rows else _GENESIS
+        try:
+            self._record_anchor(head, len(self._rows), withdrawn=True)
+        except Exception:
+            log.debug("earned-autonomy: restored head not re-recorded", exc_info=True)
+        return True
+
+    def _append_unverified_unlocked(self, fields: dict, status: str) -> bool:
+        """Record a forced (authority-shedding) row on evidence that does not verify.
+
+        The row names the failed check and is not anchored: anchoring it
+        would make a tampered history verify again. The evidence keeps
+        reading as BROKEN, but the demotion/revocation counts.
+        """
+        log.warning("earned-autonomy: recording a forced row on unverified evidence (%s)", status)
+        try:
+            with open(self.path, "rb") as fh:
+                fh.seek(0, os.SEEK_END)
+                if fh.tell():
+                    fh.seek(-1, os.SEEK_END)
+                    if fh.read(1) != b"\n":
+                        # Never let a torn last line swallow this row.
+                        with open(self.path, "a", encoding="utf-8") as out:
+                            out.write("\n")
+        except FileNotFoundError:
+            pass
+        except OSError:
+            log.debug("earned-autonomy tail check failed", exc_info=True)
+        self._size = -1
+        self._verified = None
+        row = self._write_row_unlocked(
+            {**fields, "unverified_ledger": _safe_text(status, max_len=200)}, force=True)
+        if row is None:
+            return False
+        from .audit import EventKind
+
+        _default_audit_fn(
+            EventKind.AUTONOMY_GRADUATION, decision="unverified_evidence_recorded",
+            store_id=self._anchor_location()[0], reason=_safe_text(status, max_len=200),
+            row_kind=str(fields.get("kind", "")), action=str(fields.get("action", "")),
+        )
+        return True
+
+    def _write_row_unlocked(self, fields: dict, *, force: bool) -> dict | None:
         if len(self._rows) >= self.max_rows and not force:
             log.warning("earned-autonomy log at capacity; row dropped")
-            return False
+            return None
         prev = self._rows[-1]["hash"] if self._rows else _GENESIS
         row = dict(fields)
         row["prev"] = prev
@@ -226,17 +575,13 @@ class _ChainedLog:
                     fh.write(line)
                     fh.flush()
                     os.fsync(fh.fileno())
-                if not self._record_anchor(row["hash"], len(self._rows) + 1):
-                    log.warning("earned-autonomy append refused: signed head was not recorded")
-                    return False
-            except AuditRefused:
-                raise
             except Exception:  # pragma: no cover -- best-effort persistence
                 log.debug("earned-autonomy append failed", exc_info=True)
-                return False
-            self._size += len(line.encode("utf-8"))
+                return None
+            if self._size >= 0:
+                self._size += len(line.encode("utf-8"))
         self._rows.append(row)
-        return True
+        return row
 
     def append(self, fields: dict, *, force: bool = False) -> bool:
         with self._lock:
@@ -268,6 +613,8 @@ class _ChainedLog:
         with self._lock:
             if self.path is None:
                 return self._verify_rows_unlocked()
+            self._verified = None
+            self._day_count = None
             try:
                 # Match append's lock order and verify exact fresh bytes, even
                 # after a same-size rewrite. Unreadable/torn rows fail closed.
@@ -283,7 +630,10 @@ class _ChainedLog:
                         return "BROKEN: malformed evidence rows"
                     self._rows = rows
                     self._size = len(text.encode("utf-8"))
-                    return self._verify_rows_unlocked()
+                    status = self._verify_rows_unlocked()
+                    self._verified = (self._fingerprint_unlocked()
+                                      if status.startswith("VALID:") else None)
+                    return status
             except AuditRefused:
                 raise
             except Exception:
@@ -427,6 +777,7 @@ class TrustLedger:
     def __post_init__(self) -> None:
         if self._log is None:
             self._log = _ChainedLog(self.path, max_rows=self.max_rows)
+        self._log.reanchorable_kinds = frozenset(_FORCED_KINDS)
 
     def record_event(self, kind: str, action: str, *, principal: str = "",
                      card_id: str = "", predicted: float | None = None,

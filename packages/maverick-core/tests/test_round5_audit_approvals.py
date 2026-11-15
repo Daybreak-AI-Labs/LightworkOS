@@ -74,6 +74,19 @@ def test_anchor_tip_waits_for_inflight_day_append(isolated, monkeypatch):
     assert signing.verify_anchors(audit_dir) == []
 
 
+def test_anchor_lock_failure_skips_only_that_day(isolated):
+    from maverick.audit import signing
+
+    audit_dir = isolated / "audit"
+    for day in ("2000-01-01", "2000-01-02"):
+        assert signing.AuditSigner(audit_dir / f"{day}.ndjson").write({"kind": day})
+    unsafe = audit_dir / "2000-01-01.ndjson.lock"
+    unsafe.unlink(missing_ok=True)
+    unsafe.symlink_to(isolated / "elsewhere")
+    assert signing.ensure_anchors(audit_dir) == 1
+    assert signing._anchored_days(audit_dir) == {"2000-01-02"}
+
+
 def test_checkpoint_publication_recovers_only_its_stale_stage_link(isolated):
     from maverick.audit import checkpoints, signing
 
@@ -98,6 +111,40 @@ def test_checkpoint_publication_recovers_only_its_stale_stage_link(isolated):
     assert alias.is_symlink()
     assert checkpoints.latest_checkpoint_sequence(checkpoint_dir) == 2
     assert checkpoints.verify_checkpoints(audit_dir, checkpoint_dir) == []
+
+
+def test_checkpoint_stage_recovery_lists_directory_once_per_chain_load(isolated, monkeypatch):
+    from pathlib import Path
+
+    from maverick.audit import checkpoints, signing
+
+    audit_dir = isolated / "audit"
+    checkpoint_dir = isolated / "checkpoints"
+    signer = signing.AuditSigner(audit_dir / f"{datetime.now(timezone.utc):%Y-%m-%d}.ndjson")
+    listings = []
+    original_glob, original_iterdir = Path.glob, Path.iterdir
+
+    def counted_glob(self, *args, **kwargs):
+        if self == checkpoint_dir:
+            listings.append("glob")
+        return original_glob(self, *args, **kwargs)
+
+    def counted_iterdir(self):
+        if self == checkpoint_dir:
+            listings.append("iterdir")
+        return original_iterdir(self)
+
+    monkeypatch.setattr(Path, "glob", counted_glob)
+    monkeypatch.setattr(Path, "iterdir", counted_iterdir)
+    per_publish = []
+    for index in range(6):
+        assert signer.write({"kind": "row", "index": index})
+        listings.clear()
+        checkpoints.publish_checkpoint(audit_dir, checkpoint_dir)
+        per_publish.append(len(listings))
+    # The listing count must not grow with the number of checkpoints.
+    assert per_publish[1:] == [per_publish[1]] * 5
+    assert checkpoints.latest_checkpoint_sequence(checkpoint_dir) == 6
 
 
 def test_approval_undo_window_starts_when_last_audit_vote_is_delivered(isolated):
@@ -206,6 +253,18 @@ def test_channel_authorization_precedes_any_approval_probe(isolated):
     with pytest.raises(PermissionError, match="unavailable"):
         decide_from_channel(world, 123, "approved", principal="user:other",
                             channel="slack", authorize=forbidden)
+
+
+def test_channel_undo_authorization_precedes_any_approval_probe(isolated):
+    from maverick.channel_approvals import undo_decision
+
+    def forbidden(*args):
+        raise PermissionError("unavailable")
+
+    world = SimpleNamespace(get_approval=lambda *args: pytest.fail("approval probed"))
+    with pytest.raises(PermissionError, match="unavailable"):
+        undo_decision(world, 123, undone_by="user:other", channel="slack",
+                      authorize=forbidden)
 
 
 def test_announcement_owns_world_even_after_callers_world_closes(isolated, monkeypatch):

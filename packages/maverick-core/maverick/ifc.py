@@ -169,14 +169,22 @@ def destination(args: object, tool: str = "") -> str:
     return _canonical(args) if args else ""
 
 
+def _json_text(value: str) -> bool:
+    """Is ``value`` a JSON object or array (a REST body passed as text)?"""
+    if not value.lstrip().startswith(("{", "[")):
+        return False
+    try:
+        json.loads(value)
+    except ValueError:
+        return False  # ordinary text that happens to start with a bracket
+    return True
+
+
 def _shown_parts(value: object, prefix: str, depth: int, out: list[str]) -> bool:
     if depth > 6 or len(out) > 64:
         return False
-    if isinstance(value, str) and value.lstrip().startswith(("{", "[")) and depth:
-        try:
-            value = json.loads(value)  # REST connectors pass the body as JSON text
-        except ValueError:
-            return False
+    if isinstance(value, str) and depth and _json_text(value):
+        value = json.loads(value)  # REST connectors pass the body as JSON text
     complete = True
     if isinstance(value, dict):
         for key in sorted(value, key=str):
@@ -189,7 +197,7 @@ def _shown_parts(value: object, prefix: str, depth: int, out: list[str]) -> bool
                     # Query strings and fragments of a URL are where data rides.
                     text = re.sub(r"(https?://[^\s\"?#]*)[?#][^\s\"]*", r"\1?…", text)
                 out.append(f"{path}={text}")
-            elif k in _CONTENT_KEYS and isinstance(v, str) and not v.lstrip().startswith(("{", "[")):
+            elif k in _CONTENT_KEYS and isinstance(v, str) and not _json_text(v):
                 continue
             else:
                 complete = _shown_parts(v, path, depth + 1, out) and complete

@@ -423,6 +423,15 @@ def test_backup_withholds_the_consent_ledger_key_of_the_root_and_each_workspace(
     assert (home / "tenants" / "acme" / "consent.ledger.key").read_bytes() == b"\x09" * 32
 
 
+def test_an_archive_with_only_the_consent_key_does_not_claim_the_at_rest_keys():
+    """An older archive that bundled ``consent.ledger.key`` carries the
+    ``"consent"`` scope only, so the live at-rest key stays out of the restore's
+    replacement targets."""
+    include_keys = backup._archive_includes_keys({"consent.ledger.key": "x"})
+    assert include_keys == frozenset({("consent",)})
+    assert backup._excluded_from_snapshot(Path("keys/at_rest.key"), include_keys=include_keys)
+
+
 def test_leftover_rollback_journal_is_not_snapshotted_so_the_backup_restores():
     from maverick.paths import data_dir
     root = data_dir()

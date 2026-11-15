@@ -627,3 +627,48 @@ def test_remote_jwks_stops_streaming_at_response_bound(monkeypatch):
     assert external_identity._remote_jwks_client(None, "https://idp.example/jwks") is None
     assert len(consumed) <= 17
     assert closed == [True]
+
+
+def test_remote_jwks_fetch_blocks_only_its_own_endpoint(monkeypatch):
+    """A slow identity provider holds only its own endpoint's lock: a cache
+    hit or a fetch for a healthy provider never waits behind it, and the
+    per-endpoint lock table stays bounded."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from maverick import enterprise
+
+    down, healthy = "https://down.example/jwks", "https://healthy.example/jwks"
+    cached = "https://cached.example/jwks"
+    started, release = threading.Event(), threading.Event()
+    fetched = []
+
+    def fetch(url):
+        fetched.append(url)
+        if url == down:
+            started.set()
+            release.wait(10)
+            return None
+        return [{"kid": "fixture"}]
+
+    monkeypatch.setattr(enterprise, "enterprise_egress_denial", lambda *args, **kwargs: None)
+    monkeypatch.setattr(external_identity, "_fetch_remote_jwks", fetch)
+    monkeypatch.setattr(external_identity, "_JWKS_CACHE", {
+        cached: (time.monotonic() + 300, [{"kid": "cached"}]),
+        down: (0.0, [{"kid": "expired"}])})
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        blocked = pool.submit(external_identity._remote_jwks_client, None, down)
+        assert started.wait(5)
+        try:
+            begun = time.monotonic()
+            assert external_identity._remote_jwks_client(None, cached) is not None
+            assert external_identity._remote_jwks_client(None, healthy) is not None
+            assert time.monotonic() - begun < 2
+            assert not blocked.done()
+        finally:
+            release.set()
+        assert blocked.result(5) is None
+    assert fetched == [down, healthy]
+    for n in range(external_identity._JWKS_MAX_URL_LOCKS * 2):
+        external_identity._remote_jwks_client(None, f"https://idp{n}.example/jwks")
+    assert len(external_identity._JWKS_URL_LOCKS) <= external_identity._JWKS_MAX_URL_LOCKS

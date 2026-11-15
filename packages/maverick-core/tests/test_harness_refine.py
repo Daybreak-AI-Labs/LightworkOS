@@ -447,3 +447,22 @@ def test_list_proposals_filters_by_status():
     assert [p["id"] for p in hr.list_proposals(status="applied")] == [applied["id"]]
     assert [p["id"] for p in hr.list_proposals(status="pending")] == [pending["id"]]
     assert hr.list_proposals(status="reverted") == []
+
+
+def test_junk_consumed_entry_is_skipped_and_spends_stay_spent(monkeypatch):
+    from maverick.world_model import open_world
+    _configure()
+    monkeypatch.setattr(hr, "_MAX_CONSUMED_APPROVALS", 1)
+    records = [hr.propose(_observation(name=f"junk-{i}")) for i in range(3)]
+    for record in records:
+        open_world().decide_approval(record["approval_id"], "approved", decided_by="operator")
+    store = hr._load_store()
+    store["consumed_approvals"] = ["not-an-id", None]
+    for record in records[:2]:
+        hr._consume_approval(store, record, record["approval_id"], applied_by="local:operator")
+        store["proposals"][record["id"]]["status"] = "applied"
+    for record in records[:2]:
+        with pytest.raises(hr.RefineError, match="already applied"):
+            hr._consume_approval(store, record, record["approval_id"], applied_by="local:operator")
+    last = records[2]
+    assert hr._consume_approval(store, last, last["approval_id"], applied_by="local:operator") == last["approval_id"]

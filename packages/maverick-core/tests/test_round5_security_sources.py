@@ -94,12 +94,15 @@ remove_value = true
     assert snapshot == config.load_global_config()
 
 
-def test_governance_names_match_case_and_warn_on_unregistered(monkeypatch, caplog):
-    from maverick import governance, tools
+def test_governance_names_match_case_and_warn_on_unregistered(monkeypatch):
+    from maverick import config_lint, governance, tools
 
     monkeypatch.setattr(tools, "base_tool_names", lambda **kwargs: {"shell"})
     names = governance._policy_names({"deny_actions": [" SHELL ", "shel"]}, "deny_actions")
-    assert "shel" in caplog.text
+    monkeypatch.setattr(config_lint, "_builtin_tool_catalog", lambda: {"shell"})
+    findings = config_lint.governance_tool_name_notices({"governance": {"deny_actions": [" SHELL ", "shel"]}})
+    assert [f.message for f in findings] == [
+        'governance.deny_actions name "shel" is not a built-in tool; check its spelling or its plugin registration']
     policy = governance.Policy(deny_actions=names)
     assert governance.evaluate("ShElL", policy=policy).decision is governance.Decision.DENY
     assert governance.evaluate("read_file", policy=policy).decision is governance.Decision.ALLOW
@@ -175,7 +178,8 @@ def test_airgap_audits_tenant_roles_mcp_and_federation(monkeypatch, tmp_path):
              "egress": {"deny": ["*"]}, "enterprise": {"mode": True}, "sandbox": {"backend": "docker"}}
     assert air_gap.audit(config=local)["clean"]
     roles.write_text('[orchestrator]\nmodel = "openai:remote-test"\n')
-    assert not air_gap.audit(config=local)["clean"]
+    monkeypatch.setattr("maverick.config.load_config", lambda: local)
+    assert not air_gap.audit()["clean"]           # the live audit reads roles.toml
     roles.unlink()
     for extra in ({"mcp_servers": {"remote": {"url": "https://public.example/mcp"}}},
                   {"federation": {"peers": [{"name": "remote", "target": "public.example:50051"}]}}):

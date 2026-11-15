@@ -118,6 +118,209 @@ def test_states_skips_type_corrupt_rows(tmp_path):
     assert fresh.state("deploy").hits == 1  # bad row skipped, no crash
 
 
+def _event(kind, ts, card_id=""):
+    return {"kind": kind, "action": "deploy", "principal": "", "card_id": card_id,
+            "ts": ts, "reason": ""}
+
+
+def _legacy_ledger(path, events):
+    """Write evidence the way the release before signed heads did: chained
+    rows, sorted-key JSON lines, and no signed audit head anywhere."""
+    prev, lines = ea._GENESIS, []
+    for fields in events:
+        row = {**fields, "prev": prev, "hash": ea._ChainedLog._row_hash(fields, prev)}
+        lines.append(json.dumps(row, sort_keys=True) + "\n")
+        prev = row["hash"]
+    path.write_text("".join(lines))
+
+
+def _signed_heads(ledger):
+    from maverick.audit.signing import _segment_text, day_files
+
+    directory = ledger._log._anchor_location()[1]
+    return [json.loads(line) for day in day_files(directory)
+            for line in _segment_text(day).splitlines() if line.strip()]
+
+
+def test_legacy_ledger_is_adopted_and_accepts_evidence_and_revoke(tmp_path, monkeypatch):
+    monkeypatch.setenv("MAVERICK_AUDIT_SIGN", "1")  # a signed main audit log
+    path = tmp_path / "trust.ndjson"
+    _legacy_ledger(path, [_event("hit", 1.0, "a"), _event("graduate", 2.0)])
+    ledger = ea.TrustLedger(path=path)
+    assert ledger.state("deploy").graduated
+    assert ledger.record_event("hit", "deploy", card_id="b", ts=3.0)
+    assert ledger.verify().startswith("VALID: 3")
+    assert ledger.record_event("revoke", "deploy", reason="operator", ts=4.0)
+    assert ledger.state("deploy").graduated is False
+    assert ledger.verify().startswith("VALID: 4")
+    heads = _signed_heads(ledger)
+    # The adoption is itself a signed record, anchored at the legacy head.
+    assert heads[0]["adopted_from_unanchored"] is True
+    assert heads[0]["row_count"] == 2
+    assert [h.get("adopted_from_unanchored") for h in heads[1:]] == [None, None]
+    assert not any("unverified_ledger" in row for row in ledger._log.rows())
+
+
+def test_removed_signed_heads_never_allow_a_second_adoption(tmp_path, monkeypatch):
+    import shutil
+
+    monkeypatch.setenv("MAVERICK_AUDIT_SIGN", "1")  # a signed main audit log
+    path = tmp_path / "trust.ndjson"
+    _legacy_ledger(path, [_event("hit", 1.0, "a"), _event("graduate", 2.0)])
+    ledger = ea.TrustLedger(path=path)
+    assert ledger.record_event("miss", "deploy", card_id="b", ts=3.0)
+    assert ledger.record_event("demote", "deploy", ts=4.0)
+    assert ledger.state("deploy").graduated is False
+    lines = path.read_text().splitlines(keepends=True)
+    # Deleting the latest miss/demote rows of an anchored ledger is detected.
+    path.write_text("".join(lines[:2]))
+    assert ledger.verify().startswith("BROKEN: head does not match")
+    assert not ledger.record_event("hit", "deploy", card_id="c", ts=5.0)
+    # Removing the whole signed namespace does not make it look never-anchored:
+    # the main audit log still records that this store was anchored.
+    shutil.rmtree(ledger._log._anchor_location()[1])
+    status = ledger.verify()
+    assert status.startswith("BROKEN") and "anchored before" in status
+    assert not ledger.record_event("hit", "deploy", card_id="d", ts=6.0)
+    assert path.read_text() == "".join(lines[:2])
+    assert ledger.state("deploy").hits == 1
+
+
+def test_unsigned_audit_log_install_adopts_legacy_evidence_once(tmp_path, monkeypatch):
+    import shutil
+
+    monkeypatch.setenv("MAVERICK_AUDIT_SIGN", "0")  # operator chose an unsigned log
+    path = tmp_path / "trust.ndjson"
+    _legacy_ledger(path, [_event("hit", 1.0, "a"), _event("graduate", 2.0)])
+    ledger = ea.TrustLedger(path=path)
+    assert ledger.record_event("hit", "deploy", card_id="b", ts=3.0)
+    assert ledger.verify().startswith("VALID: 3")
+    shutil.rmtree(ledger._log._anchor_location()[1])
+    assert "anchored before" in ledger.verify()
+    assert not ledger.record_event("hit", "deploy", card_id="c", ts=4.0)
+
+
+def test_fabricated_ledger_at_an_anchored_path_is_not_adopted(tmp_path, monkeypatch):
+    import shutil
+
+    monkeypatch.setenv("MAVERICK_AUDIT_SIGN", "1")
+    path = tmp_path / "trust.ndjson"
+    ledger = ea.TrustLedger(path=path)
+    assert ledger.record_event("miss", "deploy", card_id="a", ts=1.0)
+    shutil.rmtree(ledger._log._anchor_location()[1])
+    _legacy_ledger(path, [_event("hit", float(i), f"h{i}") for i in range(3)]
+                   + [_event("graduate", 4.0)])
+    forged = ea.TrustLedger(path=path)
+    assert "anchored before" in forged.verify()
+    assert not forged.record_event("hit", "deploy", card_id="z", ts=5.0)
+
+
+def test_forced_revoke_lands_on_unverified_evidence_without_laundering_it(tmp_path):
+    path = tmp_path / "trust.ndjson"
+    ledger = ea.TrustLedger(path=path)
+    for kind, ts in (("hit", 1.0), ("graduate", 2.0), ("miss", 3.0), ("demote", 4.0)):
+        assert ledger.record_event(kind, "deploy", card_id=f"c{ts:.0f}", ts=ts)
+    lines = path.read_text().splitlines(keepends=True)
+    path.write_text("".join(lines[:2]))  # drop the miss + demote
+    assert ledger.state("deploy").graduated
+    assert ledger.record_event("revoke", "deploy", reason="operator", ts=5.0)
+    assert ledger.state("deploy").graduated is False
+    row = ledger._log.rows()[-1]
+    assert row["kind"] == "revoke"
+    assert row["unverified_ledger"].startswith("BROKEN: head does not match")
+    # The truncation stays visible and ordinary evidence is still refused.
+    assert ledger.verify().startswith("BROKEN")
+    assert not ledger.record_event("hit", "deploy", card_id="c6", ts=6.0)
+
+
+def test_failed_signed_head_withdraws_the_row_and_keeps_the_ledger_usable(tmp_path, monkeypatch):
+    from maverick.audit import signing
+
+    ledger = ea.TrustLedger(path=tmp_path / "trust.ndjson")
+    assert ledger.record_event("hit", "deploy", card_id="a", ts=1.0)
+    real_anchor = ledger._log._record_anchor
+    monkeypatch.setattr(ledger._log, "_record_anchor", lambda *a, **k: False)
+    assert not ledger.record_event("hit", "deploy", card_id="b", ts=2.0)
+    assert ledger.state("deploy").hits == 1 and "b" not in ledger.scored_ids()
+    monkeypatch.setattr(ledger._log, "_record_anchor", real_anchor)
+    assert ledger.verify().startswith("VALID: 1")
+    # Fail after the signed head landed (the anchor-ledger write): the row is
+    # withdrawn and the restored head re-recorded, so nothing stays wedged.
+    calls = []
+    real_append = signing._append_anchor
+
+    def flaky(*args):
+        calls.append(args)
+        return False if len(calls) == 1 else real_append(*args)
+
+    monkeypatch.setattr(signing, "_append_anchor", flaky)
+    assert not ledger.record_event("hit", "deploy", card_id="c", ts=3.0)
+    assert ledger.state("deploy").hits == 1 and "c" not in ledger.scored_ids()
+    assert ledger.verify().startswith("VALID: 1")
+    assert ledger.record_event("hit", "deploy", card_id="d", ts=4.0)
+    assert ledger.record_event("demote", "deploy", ts=5.0)
+    assert ledger.verify().startswith("VALID: 3")
+
+
+def test_forced_rows_after_one_anchor_failure_are_re_anchored_by_the_next_append(
+        tmp_path, monkeypatch):
+    path = tmp_path / "trust.ndjson"
+    ledger = ea.TrustLedger(path=path)
+    assert ledger.record_event("hit", "deploy", card_id="a", ts=1.0)
+    real_anchor = ledger._log._record_anchor
+    monkeypatch.setattr(ledger._log, "_record_anchor", lambda *a, **k: False)
+    assert ledger.record_event("demote", "deploy", ts=2.0)  # lands unverified
+    monkeypatch.setattr(ledger._log, "_record_anchor", real_anchor)
+    assert ledger.verify().startswith("BROKEN")
+    assert ledger.record_event("hit", "deploy", card_id="b", ts=3.0)
+    assert ledger.verify().startswith("VALID: 3")
+    # Only unverified demote/revoke rows are ever tolerated past the head.
+    lines = path.read_text().splitlines(keepends=True)
+    row = {**_event("graduate", 4.0), "unverified_ledger": "BROKEN: forged"}
+    prev = json.loads(lines[-1])["hash"]
+    row = {**row, "prev": prev, "hash": ea._ChainedLog._row_hash(row, prev)}
+    path.write_text("".join(lines) + json.dumps(row, sort_keys=True) + "\n")
+    assert not ledger.record_event("hit", "deploy", card_id="c", ts=5.0)
+    assert ledger.verify().startswith("BROKEN: head does not match")
+
+
+def test_two_ledger_objects_keep_the_signed_day_count_in_step(tmp_path):
+    path = tmp_path / "trust.ndjson"
+    a, b = ea.TrustLedger(path=path), ea.TrustLedger(path=path)
+    assert a.record_event("hit", "deploy", card_id="a1", ts=1.0)
+    assert b.record_event("hit", "deploy", card_id="b1", ts=2.0)
+    assert a.verify().startswith("VALID: 2")
+    assert a.record_event("hit", "deploy", card_id="a2", ts=3.0)
+    assert ea.TrustLedger(path=path).verify().startswith("VALID: 3")
+    assert b.record_event("hit", "deploy", card_id="b2", ts=4.0)
+
+
+def test_append_does_not_reverify_earlier_signed_heads(tmp_path, monkeypatch):
+    from maverick.audit import signing
+
+    path = tmp_path / "trust.ndjson"
+    ledger = ea.TrustLedger(path=path)
+    for i in range(3):
+        assert ledger.record_event("hit", "deploy", card_id=f"a{i}", ts=float(i))
+    calls = []
+    for name in ("verify_chain", "verify_anchors", "_segment_text"):
+        real = getattr(signing, name)
+        monkeypatch.setattr(signing, name, lambda *a, _real=real, _name=name, **k: (
+            calls.append(_name), _real(*a, **k))[1])
+    for i in range(5):
+        assert ledger.record_event("hit", "deploy", card_id=f"b{i}", ts=10.0 + i)
+    assert calls == []
+    # An explicit verify() still runs the full check.
+    assert ledger.verify().startswith("VALID: 8")
+    assert "verify_anchors" in calls and "verify_chain" in calls
+    # A change made outside this object brings the full check back to append.
+    lines = path.read_text().splitlines(keepends=True)
+    path.write_text("".join(lines[:-1]))
+    calls.clear()
+    assert not ledger.record_event("hit", "deploy", card_id="c", ts=20.0)
+    assert "verify_anchors" in calls
+
+
 # -- the enable gate -------------------------------------------------------
 
 

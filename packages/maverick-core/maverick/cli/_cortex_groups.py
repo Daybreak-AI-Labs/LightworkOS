@@ -199,8 +199,9 @@ def cortex_recall_cmd(ctx, query: str, sources: tuple[str, ...], domain: str | N
 @click.option("--collection", default="cortex", show_default=True,
               help="Knowledge collection to ingest into.")
 @click.option("--source", default="",
-              help="Provenance recorded on the chunk (default: the --file path, "
-                   "else the caller).")
+              help="Label recorded on the chunk after the depositor, which is "
+                   "always recorded first (default: the --file path, else no "
+                   "label).")
 @click.option("--domain", default=None, help="Department/domain the deposit belongs to.")
 @click.option("--file", "path", default=None,
               type=click.Path(exists=True, dir_okay=False, path_type=Path),

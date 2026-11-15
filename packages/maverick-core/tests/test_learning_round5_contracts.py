@@ -152,10 +152,14 @@ def test_persistent_chain_rejects_truncated_or_rebuilt_history(tmp_path, monkeyp
     def refuse(*args):
         raise AuditRefused("signing custody unavailable")
 
+    real_anchor = ledger._log._record_anchor
     monkeypatch.setattr(ledger._log, "_record_anchor", refuse)
     with pytest.raises(AuditRefused, match="custody"):
         ledger.record_event("hit", "deploy", card_id="refused")
-    assert ledger.verify().startswith("BROKEN")
+    # The refused row is withdrawn rather than left unanchored on disk.
+    assert "refused" not in ledger.scored_ids()
+    monkeypatch.setattr(ledger._log, "_record_anchor", real_anchor)
+    assert ledger.verify().startswith("VALID: 2")
 
 
 def test_nonfinite_returns_are_not_recorded():
