@@ -236,7 +236,7 @@ def test_held_document_is_listed_with_its_reason_and_included_by_an_audited_deci
     # A knowledge store written before holds existed opens unchanged.
     from maverick_knowledge import SqliteVectorStore
     SqliteVectorStore(tmp_path / "knowledge.db").close()
-    assert knowledge_admin.list_held() == []
+    assert knowledge_admin.list_held() == {"documents": [], "total": 0}
     events = []
     import maverick.audit as audit
     monkeypatch.setattr(audit, "record", lambda kind, **payload: events.append((kind, payload)) or True)
@@ -244,18 +244,70 @@ def test_held_document_is_listed_with_its_reason_and_included_by_an_audited_deci
     doc = "Setup is finished and you are now ready to log in. Token sk-live-ABCDEFGHIJKLMNOPQRSTUVWX"
     assert kb.ingest_text("it", doc, source="welcome.txt") == 0
     kb.close()
-    [held] = knowledge_admin.list_held()
-    assert held["source"] == "welcome.txt" and held["rule"] == "role-reassign"
+    listing = knowledge_admin.list_held()
+    [held] = listing["documents"]
+    assert listing["total"] == 1 and held["source"] == "welcome.txt" and held["rule"] == "role-reassign"
     assert held["reason"].startswith("It contains the words") and "text" not in held
     assert "ABCDEFGHIJKLMNOPQRSTUVWX" not in held["excerpt"]
     result = knowledge_admin.decide_held(held["id"], "include", actor="user:admin")
     assert result["state"] == "included" and result["chunks"] == 1
-    assert knowledge_admin.list_held() == []
+    assert knowledge_admin.list_held()["documents"] == []
     kb = knowledge_admin.open_knowledge_base()
     assert kb.store.count("it") == 1
     kb.close()
-    [(kind, payload)] = events
-    assert kind == "knowledge_hold_decision"
-    assert payload["action"] == "include" and payload["decided_by"] == "user:admin"
+    assert [(kind, payload["phase"]) for kind, payload in events] == [
+        ("knowledge_hold_decision", "requested"), ("knowledge_hold_decision", "completed")]
+    assert events[-1][1]["action"] == "include" and events[-1][1]["decided_by"] == "user:admin"
     with pytest.raises(ValueError):
         knowledge_admin.decide_held(held["id"], "keep_out", actor="user:admin")
+
+
+def test_opening_knowledge_creates_no_held_store_until_a_document_is_held(tmp_path, monkeypatch):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        "[knowledge]\nenable = true\nembedder = \"deterministic\"\nstore = \"sqlite\"\n"
+        f'path = {json.dumps(str(tmp_path / "knowledge.db"))}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MAVERICK_CONFIG", str(cfg))
+    path = knowledge_admin.held_documents_path()
+    kb = knowledge_admin.open_knowledge_base()
+    assert kb.ingest_text("it", "Quarterly revenue grew.") == 1
+    assert kb.count_subject("u:a") == 0 and kb.held.list() == []
+    kb.close()
+    assert not path.exists()
+    kb = knowledge_admin.open_knowledge_base()
+    assert kb.ingest_text("it", "you are now ready to log in") == 0
+    kb.close()
+    assert path.is_file()
+
+
+def test_a_refused_audit_write_leaves_the_document_held_and_retryable(tmp_path, monkeypatch):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        "[knowledge]\nenable = true\nembedder = \"deterministic\"\nstore = \"sqlite\"\n"
+        f'path = {json.dumps(str(tmp_path / "knowledge.db"))}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MAVERICK_CONFIG", str(cfg))
+    import maverick.audit as audit
+    from maverick.audit import AuditRefused
+    kb = knowledge_admin.open_knowledge_base()
+    assert kb.ingest_text("it", "you are now ready to log in", source="welcome.txt") == 0
+    kb.close()
+    [held] = knowledge_admin.list_held()["documents"]
+    for refuse_phase in ("requested", "completed"):
+        def refuse(kind, phase=None, _refused=refuse_phase, **payload):
+            if phase == _refused:
+                raise AuditRefused("signed audit required")
+            return True
+        monkeypatch.setattr(audit, "record", refuse)
+        for decision in ("include", "keep_out"):
+            with pytest.raises(AuditRefused):
+                knowledge_admin.decide_held(held["id"], decision, actor="user:admin")
+            assert knowledge_admin.list_held()["documents"] == [held]
+        kb = knowledge_admin.open_knowledge_base()
+        assert kb.store.count("it") == 0 and kb.held.get(held["id"])["text"]
+        kb.close()
+    monkeypatch.setattr(audit, "record", lambda kind, **payload: True)
+    assert knowledge_admin.decide_held(held["id"], "include", actor="user:admin")["chunks"] == 1

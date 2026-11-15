@@ -382,7 +382,8 @@ class EventKind:
     # An administrator decided on a document the knowledge ingest screen held
     # back (maverick.knowledge_admin.decide_held). payload: action:str
     # (include|keep_out), hold_id:str, collection:str, source:str, rule:str,
-    # decided_by:str, chunks:int (stored on include).
+    # decided_by:str, phase:str (requested|completed), chunks:int (stored on
+    # include). A refused write leaves the document held.
     KNOWLEDGE_HOLD_DECISION = "knowledge_hold_decision"
     # Human-oversight decision on a parked approval (approve/deny). Anchors the
     # who-decided-what in the signed chain so the integrity of the decision does

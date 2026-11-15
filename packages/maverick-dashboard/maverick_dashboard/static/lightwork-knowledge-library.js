@@ -152,7 +152,7 @@
     var include = decision === "include";
     var ok = await confirmed(include
       ? "Include “" + item.source + "” in " + human(item.collection) + "? Assistants will read it only as quoted material, never as instructions."
-      : "Keep “" + item.source + "” out of Knowledge? The held copy of its text is deleted. You can upload it again later.",
+      : "Keep “" + item.source + "” out of Knowledge? The held copy of its text is deleted. If it is uploaded again, it is held for a new review.",
       include ? "Include" : "Keep out");
     if (!ok) return;
     await call("POST", "/held/" + encodeURIComponent(item.id), { context: context, decision: decision, confirmed: true },
@@ -172,7 +172,12 @@
     }
     heldBody.textContent = "";
     var documents = Array.isArray(body.documents) ? body.documents : [];
-    if (!keepStatus) heldStatus.textContent = documents.length ? "" : "No documents are held right now.";
+    var total = typeof body.total === "number" ? body.total : documents.length;
+    if (!keepStatus) {
+      heldStatus.textContent = !total ? "No documents are held right now."
+        : total > documents.length ? total + " documents are waiting. The newest " + documents.length + " are shown; decide on these to see the rest."
+        : total + (total === 1 ? " document is waiting." : " documents are waiting.");
+    }
     documents.forEach(function (item) {
       var tr = el("tr");
       var th = el("th", null, item.source); th.scope = "row"; tr.appendChild(th);

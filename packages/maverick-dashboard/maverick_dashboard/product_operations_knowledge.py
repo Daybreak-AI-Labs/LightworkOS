@@ -255,7 +255,7 @@ class HeldInput(StrictInput):
 
 
 _HELD_AFTER = {"include": "Included. Assistants read it only as quoted material, never as instructions.",
-               "keep_out": "Kept out of Knowledge. The held copy of its text is deleted."}
+               "keep_out": "Kept out of Knowledge. The held copy of its text is deleted. A new upload is held for a new review."}
 
 
 def held_snapshot(request, _selection):

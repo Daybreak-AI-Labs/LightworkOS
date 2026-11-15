@@ -64,6 +64,9 @@ class IntakeSpec:
     industry: str = ""
     goals: list[str] = field(default_factory=list)
     doc_paths: list[str] = field(default_factory=list)
+    # Optional display names for doc_paths (an upload's original file name
+    # when the path is a temporary copy). Used as the document's source.
+    doc_names: dict[str, str] = field(default_factory=dict)
 
 
 def _slug(name: str) -> str:
@@ -346,7 +349,8 @@ def ingest_docs(spec: IntakeSpec, kb, collection: str | None = None,
     docs = 0
     for path in spec.doc_paths:
         try:
-            n = kb.ingest_path(collection, path, ingested_by=ingested_by)
+            n = kb.ingest_path(collection, path, ingested_by=ingested_by,
+                               source=spec.doc_names.get(path) or None)
             total += n
             if n:
                 docs += 1
@@ -525,9 +529,19 @@ def attach_docs_to_profile(spec: IntakeSpec, profile: DomainProfile, kb) -> int:
         return 0
     collection = _pending_collection(profile.name)
     total = ingest_docs(spec, kb, collection=collection)
-    if total:
+    # A held document is included into this collection later, so the profile
+    # is bound to it even when every document is waiting for review.
+    if total or held_in(kb, collection):
         profile.knowledge_sources = [collection]
     return total
+
+
+def held_in(kb, collection: str) -> int:
+    """Documents in ``collection`` waiting for an administrator's review."""
+    held = getattr(kb, "held", None)
+    if held is None:
+        return 0
+    return sum(1 for row in held.list(limit=10_000) if row["collection"] == collection)
 
 
 def onboarding_knowledge_base():

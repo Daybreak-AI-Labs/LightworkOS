@@ -5,14 +5,17 @@ stored in the vector store. It used to be dropped without a trace; it is now
 kept here with the rule that matched and a short excerpt, so a person can see
 why it is missing and include it or keep it out. Nothing in this store is
 searchable: retrieval reads only the vector store.
+
+The SQLite file is created only when a first document is held; reading a
+store that does not exist yet returns nothing.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import sqlite3
 import threading
 import time
+import uuid
 from pathlib import Path
 
 HELD = "held"
@@ -23,26 +26,50 @@ _COLUMNS = ("id", "collection", "doc_sha256", "source", "subject", "rule", "exce
             "text", "args", "state", "held_at", "decided_by", "decided_at")
 
 
-def hold_id(collection: str, doc_sha256: str) -> str:
-    """One hold per document per collection, so a repeat upload is not a new hold."""
-    return hashlib.sha256(f"lightwork:knowledge-hold:v1\0{collection}\0{doc_sha256}".encode()).hexdigest()[:32]
-
-
 class HeldDocuments:
     """A small SQLite table of held documents (``:memory:`` by default)."""
 
     def __init__(self, path: str | Path = ":memory:"):
-        if str(path) != ":memory:":
-            Path(path).parent.mkdir(parents=True, exist_ok=True)
-        self._db = sqlite3.connect(str(path), check_same_thread=False)
+        self._path = str(path)
         self._lock = threading.Lock()
-        with self._lock, self._db:
-            self._db.execute(
-                "CREATE TABLE IF NOT EXISTS held_documents ("
-                "id TEXT PRIMARY KEY, collection TEXT, doc_sha256 TEXT, source TEXT, "
-                "subject TEXT, rule TEXT, excerpt TEXT, text TEXT, args TEXT, state TEXT, "
-                "held_at REAL, decided_by TEXT, decided_at REAL)"
-            )
+        self._db: sqlite3.Connection | None = None
+        if self._path == ":memory:":
+            self._connect()
+
+    def _connect(self) -> sqlite3.Connection:
+        """Open (and on first use create) the store. Caller holds no lock."""
+        if self._db is None:
+            if self._path != ":memory:":
+                Path(self._path).parent.mkdir(parents=True, exist_ok=True)
+            db = sqlite3.connect(self._path, check_same_thread=False)
+            with db:
+                db.execute(
+                    "CREATE TABLE IF NOT EXISTS held_documents ("
+                    "id TEXT PRIMARY KEY, collection TEXT, doc_sha256 TEXT, source TEXT, "
+                    "subject TEXT, rule TEXT, excerpt TEXT, text TEXT, args TEXT, state TEXT, "
+                    "held_at REAL, decided_by TEXT, decided_at REAL)"
+                )
+                db.execute("CREATE INDEX IF NOT EXISTS held_documents_doc "
+                           "ON held_documents(collection, doc_sha256, held_at)")
+            self._db = db
+        return self._db
+
+    def _existing(self) -> sqlite3.Connection | None:
+        """The store if it exists (another process may have created it since)."""
+        if self._db is None and self._path != ":memory:" and Path(self._path).is_file():
+            self._connect()
+        return self._db
+
+    def _rows(self, sql: str, params) -> list[tuple]:
+        with self._lock:
+            db = self._existing()
+            return [] if db is None else db.execute(sql, params).fetchall()
+
+    def _write(self, sql: str, params) -> int:
+        with self._lock:
+            db = self._connect()
+            with db:
+                return db.execute(sql, params).rowcount
 
     @staticmethod
     def _row(row) -> dict:
@@ -50,66 +77,69 @@ class HeldDocuments:
         record["args"] = json.loads(record["args"] or "{}")
         return record
 
+    def latest(self, collection: str, doc_sha256: str) -> dict | None:
+        """The newest record for this document in this collection."""
+        rows = self._rows(
+            f"SELECT {', '.join(_COLUMNS)} FROM held_documents WHERE collection = ? "
+            "AND doc_sha256 = ? ORDER BY held_at DESC, rowid DESC LIMIT 1", (collection, doc_sha256),
+        )
+        return self._row(rows[0]) if rows else None
+
+    def state(self, collection: str, doc_sha256: str) -> str | None:
+        record = self.latest(collection, doc_sha256)
+        return record["state"] if record else None
+
     def hold(self, *, collection: str, doc_sha256: str, source: str, subject: str,
              rule: str, excerpt: str, text: str, args: dict) -> dict:
-        """Record a held document. A document already on record keeps its state."""
-        identifier = hold_id(collection, doc_sha256)
-        with self._lock, self._db:
-            self._db.execute(
-                "INSERT OR IGNORE INTO held_documents VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (identifier, collection, doc_sha256, source, subject, rule, excerpt, text,
-                 json.dumps(args, sort_keys=True), HELD, time.time(), "", None),
-            )
+        """Hold a document. One that is already waiting is not held twice; one
+        an administrator kept out earlier is held again as a new upload."""
+        current = self.latest(collection, doc_sha256)
+        if current is not None and current["state"] == HELD:
+            return current
+        identifier = uuid.uuid4().hex
+        # Metadata that JSON cannot store is kept as text; a hold never fails on it.
+        self._write(
+            "INSERT INTO held_documents VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (identifier, collection, doc_sha256, source, subject, rule, excerpt, text,
+             json.dumps(args, sort_keys=True, default=str), HELD, time.time(), "", None),
+        )
         record = self.get(identifier)
         if record is None:
             raise RuntimeError("held document was not recorded")
         return record
 
     def get(self, identifier: str) -> dict | None:
-        with self._lock:
-            row = self._db.execute(
-                f"SELECT {', '.join(_COLUMNS)} FROM held_documents WHERE id = ?", (identifier,),
-            ).fetchone()
-        return self._row(row) if row else None
-
-    def state(self, collection: str, doc_sha256: str) -> str | None:
-        record = self.get(hold_id(collection, doc_sha256))
-        return record["state"] if record else None
+        rows = self._rows(f"SELECT {', '.join(_COLUMNS)} FROM held_documents WHERE id = ?", (identifier,))
+        return self._row(rows[0]) if rows else None
 
     def list(self, state: str = HELD, *, limit: int = 200) -> list[dict]:
-        with self._lock:
-            rows = self._db.execute(
-                f"SELECT {', '.join(_COLUMNS)} FROM held_documents WHERE state = ? "
-                "ORDER BY held_at DESC LIMIT ?", (state, max(1, int(limit))),
-            ).fetchall()
+        rows = self._rows(
+            f"SELECT {', '.join(_COLUMNS)} FROM held_documents WHERE state = ? "
+            "ORDER BY held_at DESC LIMIT ?", (state, max(1, int(limit))),
+        )
         return [self._row(row) for row in rows]
 
+    def count(self, state: str = HELD) -> int:
+        rows = self._rows("SELECT COUNT(*) FROM held_documents WHERE state = ?", (state,))
+        return int(rows[0][0]) if rows else 0
+
     def decide(self, identifier: str, decision: str, *, decided_by: str) -> dict:
-        """Move a held document to ``included`` or ``kept_out``. Either way its
-        held copy of the text is discarded: an included document lives in the
-        vector store, and a kept-out one is not kept. The decision record stays."""
+        """Record ``included`` or ``kept_out`` for a held document. Either way
+        its held copy of the text is discarded: an included document is already
+        in the vector store, and a kept-out one is not kept. Call this last."""
         if decision not in _DECISIONS:
             raise ValueError("unknown held-document decision")
-        with self._lock, self._db:
-            changed = self._db.execute(
-                "UPDATE held_documents SET state = ?, decided_by = ?, decided_at = ?, text = '' "
-                "WHERE id = ? AND state = ?",
-                (decision, decided_by, time.time(), identifier, HELD),
-            ).rowcount
+        changed = self._write(
+            "UPDATE held_documents SET state = ?, decided_by = ?, decided_at = ?, text = '' "
+            "WHERE id = ? AND state = ?",
+            (decision, decided_by, time.time(), identifier, HELD),
+        )
         record = self.get(identifier)
         if record is None:
             raise LookupError("held document not found")
         if not changed:
             raise ValueError("this document was already decided")
         return record
-
-    def reopen(self, identifier: str, text: str) -> None:
-        """Undo an inclusion whose storage failed, so the document stays held."""
-        with self._lock, self._db:
-            self._db.execute(
-                "UPDATE held_documents SET state = ?, decided_by = '', decided_at = NULL, text = ? "
-                "WHERE id = ? AND state = ?", (HELD, text, identifier, INCLUDED),
-            )
 
     @staticmethod
     def _where(key: str, value: str, collections) -> tuple[str, list]:
@@ -125,16 +155,20 @@ class HeldDocuments:
     def delete_where(self, key: str, value: str, collections=None) -> int:
         """Erase held records by ``subject`` or ``source`` (erasure covers them too)."""
         clause, params = self._where(key, value, collections)
-        with self._lock, self._db:
-            return self._db.execute(f"DELETE FROM held_documents WHERE {clause}", params).rowcount
+        with self._lock:
+            db = self._existing()
+            if db is None:
+                return 0
+            with db:
+                return db.execute(f"DELETE FROM held_documents WHERE {clause}", params).rowcount
 
     def count_where(self, key: str, value: str, collections=None) -> int:
         clause, params = self._where(key, value, collections)
-        with self._lock:
-            return int(self._db.execute(
-                f"SELECT COUNT(*) FROM held_documents WHERE {clause}", params,
-            ).fetchone()[0])
+        rows = self._rows(f"SELECT COUNT(*) FROM held_documents WHERE {clause}", params)
+        return int(rows[0][0]) if rows else 0
 
     def close(self) -> None:
         with self._lock:
-            self._db.close()
+            if self._db is not None:
+                self._db.close()
+                self._db = None

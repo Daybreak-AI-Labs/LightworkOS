@@ -126,6 +126,7 @@ def _approve(profile, plan, docs: list[tuple[str, bytes]], actor: str, principal
     from maverick.intake import (
         IntakeSpec,
         attach_docs_to_profile,
+        held_in,
         onboarding_knowledge_base,
         save_profile,
     )
@@ -159,12 +160,13 @@ def _approve(profile, plan, docs: list[tuple[str, bytes]], actor: str, principal
         return {"saved": False, "message": "This agent could not be confirmed. Nothing was added."}
     loaded, note = 0, ""
     with tempfile.TemporaryDirectory(prefix="lw-onboard-") as folder:
-        paths = []
+        paths, names = [], {}
         for index, (name, data) in enumerate(docs):
             safe = "".join(c for c in Path(name).name if c.isalnum() or c in "._- ")[:100] or f"document-{index}"
             target = Path(folder) / f"{index:02d}-{safe}"
             target.write_bytes(data)
             paths.append(str(target))
+            names[str(target)] = safe
         if paths:
             kb, problem = onboarding_knowledge_base()
             if kb is None:
@@ -172,8 +174,12 @@ def _approve(profile, plan, docs: list[tuple[str, bytes]], actor: str, principal
                         "them on in settings." if problem == "disabled"
                         else "The documents couldn't be loaded right now, so the agent has no document memory yet.")
             else:
-                spec = IntakeSpec(name=profile.name, doc_paths=paths)
+                spec = IntakeSpec(name=profile.name, doc_paths=paths, doc_names=names)
                 loaded = attach_docs_to_profile(spec, profile, kb)
+                held = held_in(kb, profile.knowledge_sources[0]) if profile.knowledge_sources else 0
+                if held:
+                    note = (f"{held} document(s) were held because part of the text reads like instructions to an assistant. "
+                            "An administrator can review them under Held documents in the Knowledge library.")
     added = ""
     if plan is not None and not plan.is_empty():
         try:

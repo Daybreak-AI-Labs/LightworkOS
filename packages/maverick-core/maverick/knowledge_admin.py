@@ -110,51 +110,68 @@ def _public_hold(record: dict) -> dict:
     }
 
 
-def list_held(*, tenant: str | None = None, limit: int = 200) -> list[dict]:
-    """Documents waiting for an administrator, newest first (no full text)."""
+def list_held(*, tenant: str | None = None, limit: int = 200) -> dict:
+    """Documents waiting for an administrator, newest first (no full text),
+    with ``total`` so a page can say when more wait than it shows."""
     path = held_documents_path(tenant)
     if not path.is_file():
-        return []
+        return {"documents": [], "total": 0}
     store = held_store(tenant)
     try:
-        return [_public_hold(row) for row in store.list(limit=limit)]
+        return {"documents": [_public_hold(row) for row in store.list(limit=limit)],
+                "total": store.count()}
     finally:
         store.close()
+
+
+def _held_base(decision: str, tenant: str | None) -> Any:
+    if decision == "keep_out":
+        from maverick_knowledge import KnowledgeBase
+        from maverick_knowledge.store import SqliteVectorStore
+        # Keeping out touches only the held store; no index or embedder is needed.
+        return KnowledgeBase(store=SqliteVectorStore(), held=held_store(tenant))
+    kb = open_knowledge_base(tenant=tenant)
+    if kb is None:
+        raise KnowledgeUnavailable("knowledge is turned off")
+    return kb
 
 
 def decide_held(hold_id: str, decision: str, *, actor: str,
                 tenant: str | None = None) -> dict:
     """Include a held document in Knowledge or keep it out, and audit it.
 
-    Raises ``LookupError`` for an unknown document, ``ValueError`` for one
-    already decided, and :class:`KnowledgeUnavailable` when including needs a
+    The decision is audited before it takes effect, and again once the
+    document is stored; a refused audit write (``AuditRefused``) leaves the
+    document held with its text, so the action can be retried. Raises
+    ``LookupError`` for an unknown document, ``ValueError`` for one already
+    decided, and :class:`KnowledgeUnavailable` when including needs a
     knowledge base that is turned off or cannot open. The caller checks that
     ``actor`` is an administrator."""
     if decision not in _HOLD_DECISIONS:
         raise ValueError("choose include or keep_out")
     if not isinstance(actor, str) or not actor.strip():
         raise PermissionError("a named administrator is required")
-    if decision == "include":
-        kb = open_knowledge_base(tenant=tenant)
-        if kb is None:
-            raise KnowledgeUnavailable("knowledge is turned off")
-        try:
-            record = kb.include_held(hold_id, decided_by=actor)
-        finally:
-            _close(kb)
-    else:
-        store = held_store(tenant)
-        try:
-            record = store.decide(hold_id, "kept_out", decided_by=actor)
-        finally:
-            store.close()
-    from .audit import audit_event
+    from .audit import AuditRefused, audit_event
     from .audit.events import EventKind
-    audit_event(EventKind.KNOWLEDGE_HOLD_DECISION, agent="knowledge", action=decision,
-                hold_id=record["id"], collection=record["collection"],
-                source=str(record.get("source") or ""), rule=str(record.get("rule") or ""),
-                decided_by=actor, chunks=int(record.get("chunks") or 0))
-    return {**_public_hold(record), "chunks": int(record.get("chunks") or 0)}
+    kb = _held_base(decision, tenant)
+    try:
+        record = kb.held_record(hold_id)
+        fields = {"agent": "knowledge", "action": decision, "hold_id": record["id"],
+                  "collection": record["collection"], "source": str(record.get("source") or ""),
+                  "rule": str(record.get("rule") or ""), "decided_by": actor}
+        audit_event(EventKind.KNOWLEDGE_HOLD_DECISION, phase="requested", chunks=0, **fields)
+        chunks = kb.store_held(hold_id) if decision == "include" else 0
+        try:
+            audit_event(EventKind.KNOWLEDGE_HOLD_DECISION, phase="completed", chunks=chunks, **fields)
+        except AuditRefused:
+            if decision == "include":
+                kb.unstore_held(hold_id)
+            raise
+        final = kb.held.decide(hold_id, "included" if decision == "include" else "kept_out",
+                               decided_by=actor)
+    finally:
+        _close(kb)
+    return {**_public_hold(final), "chunks": chunks}
 
 
 def _store_config(kcfg: dict, tenant: str | None, *, confine: bool = True) -> tuple[dict, Path]:

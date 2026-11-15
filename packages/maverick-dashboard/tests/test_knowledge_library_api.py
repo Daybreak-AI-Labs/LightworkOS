@@ -83,7 +83,7 @@ def test_held_documents_are_listed_and_decided_by_an_administrator(client, monke
             "reason": "It contains the words \"you are now\".", "excerpt": "you are now ready to log in",
             "state": "held", "held_at": 1.0, "decided_by": "", "decided_at": None}
     decisions = []
-    monkeypatch.setattr(admin, "list_held", lambda: [held])
+    monkeypatch.setattr(admin, "list_held", lambda: {"documents": [held], "total": 1})
 
     def decide(hold_id, decision, *, actor):
         if hold_id != held["id"]:
@@ -93,7 +93,7 @@ def test_held_documents_are_listed_and_decided_by_an_administrator(client, monke
 
     monkeypatch.setattr(admin, "decide_held", decide)
     body = test_client.get("/api/v1/knowledge/library/held").json()
-    assert body == {"context": "a" * 64, "documents": [held]}
+    assert body == {"context": "a" * 64, "documents": [held], "total": 1}
     url = "/api/v1/knowledge/library/held/" + "d" * 32
     unconfirmed = {"context": "a" * 64, "decision": "include", "confirmed": False}
     assert test_client.post(url, json=unconfirmed).status_code == 400 and decisions == []

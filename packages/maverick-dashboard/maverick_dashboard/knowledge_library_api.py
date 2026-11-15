@@ -201,14 +201,15 @@ def held_documents(request):
     from maverick.knowledge_admin import list_held
     context = _reindex_authority(request)
     try:
-        documents = list_held()
+        held = list_held()
     except Exception as exc:  # noqa: BLE001 - never disclose store internals
         raise HTTPException(503, "Held documents could not be read. Try again.") from exc
-    return {"context": context, "documents": documents}
+    return {"context": context, **held}
 
 
 def decide_held_document(request, hold_id: str, body: HeldDecisionIn):
     """Include a held document or keep it out (administrator, audited)."""
+    from maverick.audit import AuditRefused
     from maverick.knowledge_admin import KnowledgeUnavailable, decide_held
 
     from .auth import caller_principal
@@ -218,6 +219,8 @@ def decide_held_document(request, hold_id: str, body: HeldDecisionIn):
     actor = caller_principal(request) or "dashboard-administrator"
     try:
         document = decide_held(hold_id, body.decision, actor=actor)
+    except AuditRefused as exc:
+        raise HTTPException(503, "The activity log could not record this decision, so nothing changed. Try again.") from exc
     except LookupError as exc:
         raise HTTPException(404, "This held document is no longer here. Refresh the list.") from exc
     except KnowledgeUnavailable as exc:
