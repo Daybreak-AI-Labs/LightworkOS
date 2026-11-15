@@ -390,13 +390,13 @@ class CorrelationStore(ConsequenceStore):
 
     def link(self, key: str, goal_id: int, episode_id: int, *,
              ts: float | None = None, override: bool = False,
-             same_task: frozenset[int] = frozenset()) -> bool:
+             same_task=None) -> bool:
         """Save a link; an uncertain durable write must never invite replay.
 
         Raises :class:`OutcomeKeyOwned` when another run holds ``key`` and
-        ``override`` (an operator's decision) is not set. ``same_task`` names
-        the caller's ancestor goals (a chat follow-up or rewind fork of the
-        task that holds the key), which may take it over."""
+        ``override`` (an operator's decision) is not set. ``same_task(holder)``
+        says whether the holding goal is in the caller's chat thread or task
+        tree (same root and owner), which may take the key over."""
         k = str(key).strip()
         try:
             stamp = time.time() if ts is None else float(ts)
@@ -408,7 +408,7 @@ class CorrelationStore(ConsequenceStore):
                "goal_id": int(goal_id), "episode_id": int(episode_id)}
         with self._lock:
             if self.path is None:
-                self._check_owner(k, {int(goal_id), *same_task}, override)
+                self._check_owner(k, int(goal_id), same_task, override)
                 self._accept(row)
                 return True
             try:
@@ -424,7 +424,7 @@ class CorrelationStore(ConsequenceStore):
                             self._loaded_stamp = stamp
                     else:
                         self._latest.clear()
-                    self._check_owner(k, {int(goal_id), *same_task}, override)
+                    self._check_owner(k, int(goal_id), same_task, override)
                     if not _append(p, row):
                         return False
                     self._loaded_stamp = ()
@@ -436,12 +436,14 @@ class CorrelationStore(ConsequenceStore):
                 log.debug("outcome-link record failed", exc_info=True)
                 return False
 
-    def _check_owner(self, key: str, goals: set[int], override: bool) -> None:
+    def _check_owner(self, key: str, goal_id: int, same_task, override: bool) -> None:
         held = self._latest.get(key)
-        if held is not None and held[1] not in goals and not override:
-            raise OutcomeKeyOwned(
-                "This key is linked to another task. Only that task or an "
-                "administrator can link it to different work.")
+        if (held is None or held[1] == goal_id or override
+                or (same_task is not None and same_task(held[1]))):
+            return
+        raise OutcomeKeyOwned(
+            "This key is linked to another task. Only that task or an "
+            "administrator can link it to different work.")
 
     def resolve(self, key: str) -> tuple[int, int] | None:
         """The (goal_id, episode_id) most recently linked to ``key``, or None."""
@@ -492,7 +494,7 @@ def shared_correlation() -> CorrelationStore:
 def link_outcome_key(key: str, goal_id: int, episode_id: int, *,
                      store: CorrelationStore | None = None,
                      operator: bool = False,
-                     same_task: frozenset[int] = frozenset()) -> bool:
+                     same_task=None) -> bool:
     """Record that ``key`` (an external business id) was acted on by this episode,
     so a later outcome reported against ``key`` can be grounded. A key another
     run holds raises :class:`OutcomeKeyOwned` unless ``operator`` is set (the

@@ -36,14 +36,34 @@ _SCHEMA: dict[str, Any] = {
 }
 
 
-def ancestors(world, goal_id: int) -> frozenset[int]:
-    """The goals this one continues (chat follow-ups, rewind forks), bounded."""
-    seen: set[int] = set()
-    current = getattr(world.get_goal(goal_id), "parent_id", None) if hasattr(world, "get_goal") else None
-    while current is not None and current not in seen and len(seen) < 100:
-        seen.add(int(current))
-        current = getattr(world.get_goal(int(current)), "parent_id", None)
-    return frozenset(seen)
+def _thread(world, goal_id: int) -> tuple[int, str] | None:
+    """(thread root, owner) of a goal, following ``parent_id`` at most 100
+    steps. ``None`` when the goal or an ancestor cannot be read."""
+    goal = world.get_goal(int(goal_id))
+    if goal is None:
+        return None
+    owner, root, seen = getattr(goal, "owner", ""), int(goal_id), set()
+    while getattr(goal, "parent_id", None) is not None:
+        if root in seen or len(seen) >= 100:
+            return None
+        seen.add(root)
+        root = int(goal.parent_id)
+        goal = world.get_goal(root)
+        if goal is None:
+            return None
+    return root, owner
+
+
+def same_thread(world, goal_id: int):
+    """A check that a key's holder is in this goal's chat thread or task
+    tree (same root goal, same owner): follow-up turns, sub-goals and
+    rewind forks. Goals the world cannot read (another tenant) never match."""
+    if not hasattr(world, "get_goal"):
+        return None
+    mine = _thread(world, goal_id)
+    if mine is None:
+        return None
+    return lambda holder: _thread(world, holder) == mine
 
 
 def _run_factory(world, goal_id: int | None):
@@ -60,7 +80,7 @@ def _run_factory(world, goal_id: int | None):
                 return "ERROR: no episode to link (the run hasn't started acting yet)"
             from ..consequence import OutcomeKeyOwned, link_outcome_key
             try:
-                related = ancestors(world, goal_id)
+                related = same_thread(world, goal_id)
                 linked = link_outcome_key(k[:256], goal_id, episodes[0].id,
                                           **({"same_task": related} if related else {}))
             except OutcomeKeyOwned as exc:
