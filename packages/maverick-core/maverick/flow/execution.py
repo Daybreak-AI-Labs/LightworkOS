@@ -42,7 +42,7 @@ from .execution_trace import ExecutionTrace
 from .ir import Flow, FlowNode
 from .lifecycle import serialize_runs
 from .pause_snapshot import ApprovalPauseContext, build_human_pause
-from .resume_admission import prepare_saved_resume
+from .resume_admission import RETRY_APPROVAL_NOTE, prepare_saved_resume
 from .run_events import FlowBudgetExceeded
 from .run_state import (
     STATUS_BUDGET_LIMITED as STATUS_BUDGET_LIMITED,
@@ -383,6 +383,12 @@ def execute(flow: Flow, *, agent_runner: AgentRunner, action_runner: ActionRunne
             run_id=rid,
         ))
 
+    if approval_resume and prior is not None and prior.retry_cursor \
+            and (resume or {}).get("node_id") == prior.retry_cursor:
+        # The approved gate is not re-entered (the failed step is); record it.
+        gate_node = flow.node(prior.cursor) if prior.cursor else None
+        if gate_node is not None:
+            node_trace.on_node(gate_node, "approved", 1.0)
     res = run_flow(
         flow,
         run_id=rid,
@@ -408,6 +414,11 @@ def execute(flow: Flow, *, agent_runner: AgentRunner, action_runner: ActionRunne
             cohort=evidence_cohort,
         )
 
+    retry_pause = bool(reapproval_gate and prior is not None
+                       and res.status == STATUS_PAUSED_APPROVAL and res.cursor == reapproval_gate)
+    if retry_pause:
+        # Every approval channel shows the prompt; say this repeats a failed step.
+        res.prompt = f"{RETRY_APPROVAL_NOTE} {res.prompt}".strip()
     human = build_human_pause(ApprovalPauseContext(
         flow=flow, result=res, owner=owner,
         execution_user_id=execution_user_id, execution_channel=execution_channel,
@@ -450,8 +461,7 @@ def execute(flow: Flow, *, agent_runner: AgentRunner, action_runner: ActionRunne
         execution_user_id=execution_user_id,
         allowed_suites=allowed_suites,
     )
-    if reapproval_gate and prior is not None and res.status == STATUS_PAUSED_APPROVAL \
-            and res.cursor == reapproval_gate:
+    if retry_pause and prior is not None:
         # Keep the failed step and its saved work for after the new approval.
         run.retry_cursor = str(prior.cursor or "")
         run.continuation = dict(prior.continuation or {})

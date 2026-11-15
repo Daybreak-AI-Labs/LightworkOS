@@ -37,6 +37,9 @@ RETRY_NEEDS_APPROVAL = (
 )
 
 
+RETRY_APPROVAL_NOTE = "This step failed before. Approving runs it again."
+
+
 def retry_approval_gate(flow: Flow, prior: store.FlowRun) -> str:
     """The approval that guards the failed step, so a retry can ask it again.
 

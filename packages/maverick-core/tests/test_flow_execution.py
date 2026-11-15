@@ -311,6 +311,9 @@ class TestExecution:
                                  approve_fn=lambda node, data: "approved")
         assert (held.status, held.cursor, held.retry_cursor) == ("paused_approval", "gate", "loop")
         assert held.human["approval_card"] and sent == ["1"]
+        # Approvers on any channel can tell this is a repeat of a failed step.
+        assert held.prompt.startswith("This step failed before. Approving runs it again.")
+        assert "failed before" in held.human["approval_card"]["summary"]
         broken["send"] = None
         retried = execution.execute(
             f, agent_runner=lambda b, d: ("", 1.0), action_runner=act,
@@ -319,6 +322,7 @@ class TestExecution:
             approval_decision_attestation=_approval_attestation(held))
         assert retried.status == "completed" and sent == ["1", "2", "3"]
         assert not retried.retry_cursor
+        assert retried.nodes["gate"] == {"status": "approved", "outcome": 1.0}
 
     def test_approval_card_and_run_share_rendered_pause_values(self, tmp_path, monkeypatch):
         _patch_home(tmp_path, monkeypatch)
