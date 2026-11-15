@@ -361,6 +361,26 @@ class TestAvailableDomainsOverlay:
         assert any("deny_tools" in e for e in reasons) and any("review gate" in e for e in reasons)
         assert name not in rejected_workspace_domains()
 
+    def test_a_loosening_override_cannot_raise_autonomy_either(self, tmp_path, monkeypatch):
+        from maverick.agent_autonomy import AutonomyLevel, default_profile_for
+        from maverick.domain import clamped_workspace_domains
+
+        name = "aero_avionics"
+        base = load_domains(builtin_dir())[name]
+        ceiling = base.autonomy or default_profile_for(name)
+        monkeypatch.setenv("MAVERICK_DOMAINS_DIR", str(tmp_path))
+        (tmp_path / f"{name}.toml").write_text(
+            f'name = "{name}"\nallow_tools = {json.dumps([*base.allow_tools, "web_search"])}\n'
+            '[autonomy]\ndefault = "auto"\nhigh = "auto"\nlow = "observe"\nonboarding = false\n',
+            encoding="utf-8")
+
+        loaded = available_domains()[name].autonomy
+        for risk in ("low", "medium", "high"):
+            assert loaded.level_for(risk).rank <= ceiling.level_for(risk).rank
+        assert loaded.level_for("low") is AutonomyLevel.OBSERVE  # lowering is kept
+        assert loaded.onboarding is True
+        assert any("autonomy" in e for e in clamped_workspace_domains()[name])
+
     def test_malformed_deny_list_cannot_run(self, tmp_path, monkeypatch):
         monkeypatch.setenv("MAVERICK_DOMAINS_DIR", str(tmp_path))
         (tmp_path / "unsafe.toml").write_text(

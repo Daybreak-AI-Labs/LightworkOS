@@ -444,7 +444,46 @@ def _clamp_overlay(base: DomainProfile, merged: DomainProfile) -> tuple[DomainPr
     if merged.compartment != base.compartment:
         reasons.append("compartment cannot differ from the built-in pack")
         changes["compartment"] = base.compartment
+    # The agent editor raises independence on purpose (graduation, promoted
+    # trials) and writes it to this same file, with no mark that tells it from
+    # a hand edit. An override that tries to loosen anything else is not one
+    # the editor wrote, so its autonomy is held to the base as well.
+    autonomy = _clamp_autonomy(base, merged) if reasons else None
+    if autonomy is not None:
+        reasons.append("autonomy cannot give the agent more independence than the built-in pack")
+        changes["autonomy"] = autonomy
     return (replace(merged, **changes) if changes else merged), reasons
+
+
+_RUNGS = ("observe", "suggest", "request", "auto")
+
+
+def _clamp_autonomy(base: DomainProfile, merged: DomainProfile):
+    """The override's ``[autonomy]`` lowered rung by rung to the base pack's
+    (its own block or its suite default), or ``None`` when nothing was higher.
+    Onboarding is a protection an override cannot turn off."""
+    if merged.autonomy is None or merged.autonomy is base.autonomy:
+        return None
+    from dataclasses import replace
+
+    from .agent_autonomy import AutonomyLevel, default_profile_for
+    from .policy_tighten import tighten
+
+    ceiling = base.autonomy or default_profile_for(base.name)
+    loosened = False
+
+    def rung(upper, lower):
+        nonlocal loosened
+        value, looser = tighten("rank", upper.value, lower.value, order=_RUNGS)
+        loosened = loosened or looser
+        return AutonomyLevel(value)
+
+    own = merged.autonomy
+    onboarding, looser = tighten("protection", ceiling.onboarding, own.onboarding)
+    clamped = replace(
+        own, default=rung(ceiling.default, own.default), onboarding=onboarding,
+        **{risk: rung(ceiling.level_for(risk), own.level_for(risk)) for risk in ("low", "medium", "high")})
+    return clamped if loosened or looser else None
 
 
 def _envelope_errors(base: DomainProfile | None, merged: DomainProfile) -> list[str]:
