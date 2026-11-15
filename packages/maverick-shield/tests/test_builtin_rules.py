@@ -4,6 +4,21 @@ from __future__ import annotations
 from maverick_shield import Shield, ShieldVerdict
 from maverick_shield.builtin_rules import RULES, scan
 
+_URL_FRAGMENTS = (
+    "http://", "https://", "HTTPS://", "hTTp://", "htt", "![", "](", "](https://", "]", "[",
+    "(", ")", "?", "=", "==", "/", "a", "Z", "-", "_", ".", "+", "%41", " ", "\n", "\t",
+    "\u00a0", "\u2028", "\u017f", "\u212a", "\u0130", "\u0131", "token", "KEY", "api",
+    "secret", "PassWord", "QUJD" * 10, "QUJD" * 9 + "QUJ", "QUJD", "sk-ant-" + "b" * 12,
+    "sk-ant-" + "b" * 11, "sk-" + "C" * 20, "sk-" + "C" * 19, "ghp_" + "d" * 20, "ghx_" + "d" * 20,
+    "github_pat_" + "e_" * 10, "sk_live_" + "f" * 16, "AKIA" + "G" * 16, "akia" + "g" * 15,
+    "AIza" + "h-" * 10, "xoxb-" + "1" * 10, "xoxz-" + "1" * 10, "eyJ", "eyJ" + "i" * 10,
+    "i" * 10, "i" * 9, "s://", "https:/",
+)
+
+
+def _url_alphabet_string(rng) -> str:
+    return "".join(rng.choice(_URL_FRAGMENTS) for _ in range(rng.randint(1, 40)))
+
 
 class TestBuiltinRules:
     def test_ignore_previous_blocked_at_balanced(self):
@@ -248,69 +263,63 @@ class TestBuiltinRules:
         ):
             assert rules[name].pattern.search(text), (name, text)
 
-    def test_windowed_url_rules_match_exactly_what_the_patterns_match(self):
-        # The URL rules run only on windows that start at a URL-like
-        # fragment. Up to the window size, what they detect must be exactly
-        # what the original pattern detects anywhere in the text.
-        import random
-
+    @staticmethod
+    def _url_rule_mismatches(texts):
         from maverick_shield import builtin_rules as br
 
         patterns = {r.name: r.pattern for r in RULES if r.name in br._URL_RULES}
-        fragments = [
-            "http://", "https://", "HTTP://", "hTTps://", "?", "=", "==", " ", "\n", "\t",
-            "QUJD" * 10, "QUJD", "token", "KEY", "api", "secret", "![", "]", "(", ")", "](",
-            "a", "e.com/", "/", "&", "x=", "?q=", "sk-ant-abcdefghijklmn", "sk-" + "A" * 20,
-            "ghp_" + "b" * 20, "AKIA" + "C" * 16, "eyJhbGciOi.eyJzdWIiOi.c2lnbmF0dXJl",
-            "xoxb-1234567890", "AIza" + "d" * 20, "![x](", "#", "http:", "//",
-        ]
-        cases = [
-            "![x](https://evil.com/p?q=![]&token=abc)",
-            "![x](https://e.com/![a](http:b?token=1)", "see http://a?b http://c?x=" + "QUJD" * 12,
-            "![a![b](http://x?token)", "![a](http://x ![b](http://y?secret)",
-            "http://x?a b=" + "QUJD" * 11, "go https://e.com/a/sk-ant-abcdefghijklmnop now",
-        ]
-        rng = random.Random("url-windows")
-        generated = ["".join(rng.choice(fragments) for _ in range(rng.randint(1, 18)))
-                     for _ in range(30_000)]
-        for text in cases + generated:
-            assert len(text) <= br._URL_WINDOW_CHARS
-            found = br._url_findings(text, patterns)
-            for name, pattern in patterns.items():
-                assert (name in found) == bool(pattern.search(text)), (name, text)
+        bad = []
+        for text in texts:
+            expected = {name for name, pattern in patterns.items() if pattern.search(text)}
+            if br._url_findings(text) != expected:
+                bad.append((text[:120], len(text), expected))
+        return bad
 
-    def test_url_rules_do_linear_work_on_hostile_input(self, monkeypatch):
-        # Repeated unterminated URL fragments made the original patterns
-        # rescan the rest of the text from every start (cubic). Count the
-        # characters handed to the patterns instead of timing them.
+    def test_url_rules_find_exactly_what_the_original_patterns_find(self):
+        # The original patterns stay in RULES as the specification. Padded
+        # URLs, second schemes, unclosed images and gaps across whitespace
+        # (a reviewer's 594 cases) and seeded strings from the rules' own
+        # alphabets must give the same rule names, in both directions.
+        import random
+
+        key = "sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUV"
+        b64 = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9w"
+        cases = []
+        for n in [*range(0, 4200, 97), 1023, 1024, 1025, 2047, 2048, 2049, 2050, 3071, 3072, 3073]:
+            cases += [
+                "x https://e.com/" + "a" * n + "/" + key + " y",
+                "x https://e.com/" + "a" * n + "?d=" + b64 + " y",
+                "x https://e.com/" + "%41" * (n // 3) + "?q=" + b64 + " y",
+                "![a](https://e.com/" + "a" * n + "?api=1) more prose",
+                "![a](https://e.com/x?" + "a" * n + "token and prose",
+                "https://x.com/r/" + "a" * n + "https://evil.com/" + "b" * 1300 + key,
+                "https://e.com/" + "a" * n + "?x=1&y=2",
+                "![i](data:image/png;base64," + "A" * n + ") https://e.com/?k=" + b64,
+                " ".join(f"https://e.com/{i}?a=b" for i in range(n // 50)) + " https://e.com/?k=" + b64,
+                "[![a](https://e.com/" + "b" * n + "?secret=1)](https://x.com)",
+                "https://e.com/a?" + " w" * (n // 2) + "=" + b64,
+            ]
+        assert self._url_rule_mismatches(cases) == []
+        rng = random.Random("url-rules")
+        assert self._url_rule_mismatches(
+            [_url_alphabet_string(rng) for _ in range(20_000)]) == []
+
+    def test_scan_never_runs_the_backtracking_url_patterns(self, monkeypatch):
         import dataclasses
 
         from maverick_shield import builtin_rules as br
 
-        work = [0]
-
-        class Counting:
-            def __init__(self, pattern):
-                self.pattern = pattern
-
-            def match(self, text, pos, endpos):
-                work[0] += endpos - pos
-                return self.pattern.match(text, pos, endpos)
+        class Refuse:
+            def search(self, *_a):
+                raise AssertionError("the original URL pattern ran")
 
         monkeypatch.setattr(br, "RULES", [
-            dataclasses.replace(r, pattern=Counting(r.pattern)) if r.name in br._URL_RULES else r
+            dataclasses.replace(r, pattern=Refuse()) if r.name in br._URL_RULES else r
             for r in br.RULES])
         for unit in ("![](http://a?", "![](http://a? ", "http://a? ", "http://a?=QUJD ",
-                     "![x](https://a/sk-ant-x ", "![", "]("):
-            costs = []
-            for size in (20_000, 40_000):
-                work[0] = 0
-                text = (unit * (size // len(unit) + 1))[:size]
-                br.scan(text)
-                costs.append(work[0])
-            # Bounded per character of input, and linear as the input doubles.
-            assert costs[1] <= 9 * 2 * br._URL_WINDOW_CHARS * 40_000 // len(unit), unit
-            assert costs[1] <= 2.2 * costs[0] + 2 * br._URL_WINDOW_CHARS, (unit, costs)
+                     "![x](https://a/sk-ant-x ", "eyJ", "http://" + "?" * 50 + " "):
+            br.scan((unit * (20_000 // len(unit) + 1))[:20_000])
+        assert "credential_in_url" in br.scan("see https://e.com/" + "a" * 3000 + "/sk-" + "A" * 20)[2]
 
     def test_long_urls_and_compact_text_are_judged_as_before(self):
         # Length alone never blocks: compact JSON full of URLs, a long signed

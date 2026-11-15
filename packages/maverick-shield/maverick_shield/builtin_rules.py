@@ -22,6 +22,7 @@ users via the "agent-shield not installed" warning.
 from __future__ import annotations
 
 import base64
+import bisect
 import html
 import os
 import re
@@ -394,7 +395,8 @@ RULES: list[Rule] = [
     # patterns on 30,000+ generated strings per rule -- but no start rescans
     # another start's run, so the scan is linear instead of quadratic. The
     # markdown-image, base64-URL and credential-URL rules are the original
-    # patterns: no rewrite found kept both their matches and linear time.
+    # patterns, kept as the specification: scan() decides them with the exact
+    # linear equivalents in _url_findings.
     Rule("disk_overwrite", "critical",
          _compile(
              r"\b(dd\s+(?:(?!\bdd\s)[^\n])*?\bof=\/dev\/(sd[a-z]|nvme\d|disk\d|hd[a-z])"
@@ -539,88 +541,135 @@ RULES: list[Rule] = [
 SEVERITY_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 
 
-# The three URL rules keep their original patterns, which backtrack on hostile
-# text. They run only on bounded windows that start at a URL-like fragment, so
-# the work is linear in the input. Length alone is never a finding.
-_URL_WINDOW_CHARS = 2048
-_URL_STRIDE = _URL_WINDOW_CHARS // 2
-# A markdown image target longer than the window (often unclosed) is tried in
-# shorter overlapping windows: the pattern tries every "?" to the window end.
-_MD_LONG_WINDOW = 512
+# The three URL rules' patterns backtrack on hostile text (cubic for the
+# markdown rule). They stay in RULES as the specification; scan() decides them
+# with the exact linear equivalents below. Each has the shape ANCHOR, GAP run,
+# TAIL, and a match exists exactly when some TAIL is reached from an ANCHOR
+# through GAP-class characters only. Every character test uses a regex with
+# the original flags, so case folding and \s mean what they meant before.
+# test_builtin_rules compares these with the original patterns.
 _URL_RULES = ("markdown_image_exfil", "base64_url_exfil", "credential_in_url")
-_URL_START = re.compile(r"https?://", re.IGNORECASE)
-_MD_START = re.compile(r"!\[")
-_MD_TARGET = re.compile(r"\]\(https?://", re.IGNORECASE)
-_SPACE = re.compile(r"\s")
+_I = re.IGNORECASE
+_SCHEME = re.compile(r"https?:\/\/", _I)
+_WHITESPACE = re.compile(r"\s")
+# credential_in_url TAILs: each alternative at its minimum length.
+_CRED_TAIL = re.compile(
+    r"(?=sk-ant-[A-Za-z0-9_-]{12}|sk-[A-Za-z0-9]{20}|gh[posru]_[A-Za-z0-9]{20}"
+    r"|github_pat_[A-Za-z0-9_]{20}|sk_live_[A-Za-z0-9]{16}|AKIA[0-9A-Z]{16}"
+    r"|AIza[A-Za-z0-9_-]{20}|xox[baprs]-[A-Za-z0-9-]{10})", _I)
+_JWT_HEAD = re.compile(r"(?=eyJ[A-Za-z0-9_-]{10})", _I)
+_JWT_CHARS = re.compile(r"[A-Za-z0-9_-]+", _I)
+_B64_VALUE = re.compile(r"[A-Za-z0-9+\/]{40}", _I)
+_MD_START = re.compile(r"!\[", _I)
+_MD_TARGET = re.compile(r"\]\(https?:\/\/", _I)
+_MD_WORD = re.compile(r"(?=token|key|password|secret|api)", _I)
 
 
-def _url_starts(text: str):
-    """URL schemes to try the base64 and credential rules from.
+def _positions(text: str, char: str) -> list[int]:
+    found, at = [], text.find(char)
+    while at >= 0:
+        found.append(at)
+        at = text.find(char, at + 1)
+    return found
 
-    A match from a later scheme in the same whitespace-free run is also a
-    match from an earlier one that ends at the same place, so within a run a
-    scheme is tried only once every ``_URL_STRIDE`` characters."""
-    run_end = tried = -1
-    for found in _URL_START.finditer(text):
-        start = found.start()
-        if start < run_end and start < tried + _URL_STRIDE:
+
+def _starts(pattern: re.Pattern, text: str) -> list[int]:
+    return [m.start() for m in pattern.finditer(text)]
+
+
+def _run_ends(pattern: re.Pattern, text: str) -> list[int]:
+    """``ends[i]``: end of the maximal ``pattern`` run starting at or covering
+    ``i`` (``i`` itself when ``text[i]`` is outside the class)."""
+    ends = list(range(len(text) + 1))
+    for run in pattern.finditer(text):
+        ends[run.start():run.end()] = [run.end()] * (run.end() - run.start())
+    return ends
+
+
+def _next(positions: list[int], at: int, n: int) -> int:
+    """First position >= ``at`` in sorted ``positions``, else ``n``."""
+    i = bisect.bisect_left(positions, at)
+    return positions[i] if i < len(positions) else n
+
+
+def _reachable(anchor_ends: list[int], gap_breaks: list[int], tail: int, *, min_gap: int = 0) -> bool:
+    """Is there an ANCHOR ending at e <= tail - min_gap with no gap-breaking
+    character in [e, tail)? The latest such anchor end is the best one."""
+    i = bisect.bisect_right(anchor_ends, tail - min_gap)
+    if i == 0:
+        return False
+    j = bisect.bisect_left(gap_breaks, tail)
+    return j == 0 or gap_breaks[j - 1] < anchor_ends[i - 1]
+
+
+def _credential_in_url(text: str, schemes: list[int], spaces: list[int]) -> bool:
+    # https?:// \S* TAIL
+    tails = _starts(_CRED_TAIL, text)
+    heads = _starts(_JWT_HEAD, text)
+    if heads:
+        ends, n = _run_ends(_JWT_CHARS, text), len(text)
+
+        def jwt(t: int) -> bool:  # eyJ J{10,} . J{10,} . J{10,}
+            first = ends[t + 3]
+            if first - t - 3 < 10 or first >= n or text[first] != ".":
+                return False
+            second = ends[first + 1] if first + 1 < n else first + 1
+            if second - first - 1 < 10 or second >= n or text[second] != ".":
+                return False
+            return second + 1 < n and ends[second + 1] - second - 1 >= 10
+        tails = sorted({*tails, *(t for t in heads if jwt(t))})
+    return any(_reachable(schemes, spaces, t) for t in tails)
+
+
+def _base64_url_exfil(text: str, schemes: list[int], spaces: list[int]) -> bool:
+    # https?:// [^\s]+ \? [^=]* = B64{40,}
+    n = len(text)
+    equals = _positions(text, "=")
+    if not equals:
+        return False
+    checked: set[int] = set()
+    for q in _positions(text, "?"):
+        eq = _next(equals, q + 1, n)
+        if eq in checked or not _reachable(schemes, spaces, q, min_gap=1):
             continue
-        if start >= run_end:
-            space = _SPACE.search(text, start)
-            run_end = space.start() if space else len(text)
-        tried = start
-        yield start
+        checked.add(eq)  # the first "=" after the "?" decides; check it once
+        if _B64_VALUE.match(text, eq + 1):
+            return True
+    return False
 
 
-def _markdown_starts(text: str):
-    """(start, window_end) of the markdown images to try, skipping images
-    whose match would also be a match of an earlier one in its window."""
-    pos = 0
-    while (found := _MD_START.search(text, pos)) is not None:
-        start = found.start()
-        close = text.find("]", start + 2)  # the alt text cannot contain "]"
-        if close < 0:
-            return
-        if not _MD_TARGET.match(text, close):
-            pos = close + 1
+def _markdown_image_exfil(text: str) -> bool:
+    # ![ [^\]]* ]( https?:// [^)]+ \? [^)]* WORD
+    n = len(text)
+    closes, parens, questions = (_positions(text, c) for c in "])?")
+    words = _starts(_MD_WORD, text)
+    for close in sorted({_next(closes, a + 2, n) for a in _starts(_MD_START, text)}):
+        target = _MD_TARGET.match(text, close) if close < n else None
+        if target is None:
             continue
-        paren = text.find(")", close + 2)  # the target cannot contain ")"
-        target_end = paren if paren >= 0 else len(text)
-        if target_end - close > _URL_WINDOW_CHARS:
-            yield start, close + _MD_LONG_WINDOW
-            pos = close + _MD_LONG_WINDOW // 2
-            continue
-        yield start, target_end
-        # An image that starts inside this target and closes its alt text
-        # before target_end matches only if this one does.
-        last = text.rfind("]", close + 1, target_end)
-        pos = (last if last >= 0 else close) + 1
+        paren = _next(parens, target.end(), n)
+        question = _next(questions, target.end() + 1, n)
+        if question < paren and _next(words, question + 1, n) < paren:
+            return True
+    return False
 
 
-def _url_findings(text: str, patterns: dict) -> set[str]:
-    """Names of the URL rules that match ``text``.
+def _url_findings(text: str) -> set[str]:
+    """Names of the URL rules whose ORIGINAL pattern matches ``text``.
 
-    Every match no longer than ``_URL_WINDOW_CHARS`` (the markdown rule: whose
-    target part is no longer) is found exactly as the original pattern finds
-    it, and anything found is a match of the original pattern. Longer matches
-    can be missed. In a markdown target longer than the window, only matches
-    whose target part fits in ``_MD_LONG_WINDOW // 2`` are certain. And
-    base64_url_exfil, whose ``[^=]*`` may cross whitespace, is not found when
-    the "?" and the "=" are more than a window apart (the original pattern
-    finds it, in time quadratic or worse)."""
+    Exact for every input: the same answer as ``pattern.search(text)`` for
+    markdown_image_exfil, base64_url_exfil and credential_in_url, in time
+    O(n log n) instead of the patterns' quadratic or cubic backtracking."""
     found: set[str] = set()
-    n, window = len(text), _URL_WINDOW_CHARS
-    for start, end in _markdown_starts(text):
-        if patterns["markdown_image_exfil"].match(text, start, end):
-            found.add("markdown_image_exfil")
-            break
-    for start in _url_starts(text):
-        end = min(n, start + window)
-        for name in ("base64_url_exfil", "credential_in_url"):
-            if name not in found and patterns[name].match(text, start, end):
-                found.add(name)
-        if {"base64_url_exfil", "credential_in_url"} <= found:
-            break
+    schemes = [m.end() for m in _SCHEME.finditer(text)]
+    if "](" in text and "![" in text and _markdown_image_exfil(text):
+        found.add("markdown_image_exfil")
+    if schemes:
+        spaces = _starts(_WHITESPACE, text)
+        if _base64_url_exfil(text, schemes, spaces):
+            found.add("base64_url_exfil")
+        if _credential_in_url(text, schemes, spaces):
+            found.add("credential_in_url")
     return found
 
 
@@ -653,8 +702,7 @@ def scan(
     # Scan the original text AND its de-obfuscated / base64-decoded variants,
     # so an encoded or quoted payload still trips the rule it was hiding from.
     candidates = _candidates(text)
-    url_patterns = {r.name: r.pattern for r in RULES if r.name in _URL_RULES}
-    url_found = set().union(*(_url_findings(c, url_patterns) for c in candidates))
+    url_found = set().union(*(_url_findings(c) for c in candidates))
     matched: list[str] = []
     max_idx = -1
     max_sev = "none"
