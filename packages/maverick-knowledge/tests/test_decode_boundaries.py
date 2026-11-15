@@ -123,3 +123,48 @@ def test_qdrant_workspace_collection_name_uses_supported_characters(monkeypatch)
         assert kb.erase_source("withdrawn") == {"general": 1}
         assert records[owned._cname("general")] == []
     assert len(records[other._cname("general")]) == 2
+
+
+def test_ocr_calls_run_concurrently_outside_the_pixel_cap_lock(tmp_path, monkeypatch):
+    from maverick_knowledge.image import build_ocr_describer
+
+    class FakeImage:
+        size = (10, 10)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def verify(self):
+            return None
+
+    image_module = SimpleNamespace(
+        MAX_IMAGE_PIXELS=90,
+        DecompressionBombWarning=UserWarning,
+        open=lambda _path, **_kw: FakeImage(),
+    )
+    both_inside = threading.Barrier(2, timeout=5)
+    caps_during_ocr = []
+
+    def image_to_string(_image, **_kwargs):
+        caps_during_ocr.append(image_module.MAX_IMAGE_PIXELS)
+        both_inside.wait()  # raises BrokenBarrierError unless both OCR calls overlap
+        return "text"
+
+    monkeypatch.setitem(sys.modules, "PIL", SimpleNamespace(Image=image_module))
+    monkeypatch.setitem(sys.modules, "pytesseract", SimpleNamespace(image_to_string=image_to_string))
+    describe = build_ocr_describer(max_image_pixels=1_000)
+    paths = []
+    for name in ("a.png", "b.png"):
+        path = tmp_path / name
+        path.write_bytes(b"fake-image")
+        paths.append(str(path))
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(describe, paths))
+
+    assert all(result.endswith("text") for result in results)
+    assert caps_during_ocr == [90, 90]
+    assert image_module.MAX_IMAGE_PIXELS == 90
