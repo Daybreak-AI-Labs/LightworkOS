@@ -241,6 +241,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   keep them.
 - `maverick start --domain D --coding-mode --best-of-n N` now applies the
   department's profile and gates to every attempt; the domain was dropped.
+- `maverick share` now refuses `--db` and a run number that is not in the
+  workspace's world, instead of uploading run-log events from another run
+  with the same number. Share such runs from their own workspace.
 
 ### Fixed
 
