@@ -96,6 +96,23 @@ def test_signed_record_verifies_and_detects_tampering(world):
     assert not o.verify_record(rec, pub)
 
 
+
+def test_only_an_oversight_record_verifies_as_one(world):
+    # The audit key also signs other documents in the same detached form
+    # (a pre-upgrade title seal); none of them is an oversight record.
+    import hashlib
+
+    from maverick.audit.signing import sign_detached_digest, trusted_audit_public_keys
+    from maverick.immune import _ledger
+    rec = o.oversight_record(approver="alice", subject="approval:7", decision="approved",
+                             cruxes=[], stats=None)
+    pub = trusted_audit_public_keys()[rec["signature"]["key_id"]]
+    seal = {"schema": "lightwork.discovery-title.v1", "approver": "alice", "subject": "x",
+            "decision": "approved", "cruxes": [], "measured": None, "at": 1.0}
+    for body in (seal, {**rec["body"], "extra": 1}):
+        digest = hashlib.sha256(_ledger.canonical(body)).hexdigest()
+        assert not o.verify_record({"body": body, "signature": sign_detached_digest(digest)}, pub)
+
 def _card(action, summary, *, after="Paid.", effects=("Moves money.",)):
     import time
 

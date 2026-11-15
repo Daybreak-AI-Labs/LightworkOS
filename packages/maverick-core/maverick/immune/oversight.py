@@ -345,12 +345,17 @@ def find_cruxes(claims: Iterable[str], decide: Callable[[frozenset[str]], bool])
     return [c for c in claims if decide(frozenset({c})) != baseline]
 
 
+_RECORD_SCHEMA = "lightwork.oversight-record.v1"
+_RECORD_KEYS = frozenset({"schema", "approver", "subject", "decision", "cruxes", "measured", "at"})
+_SIGNATURE_KEYS = frozenset({"algorithm", "digest", "key_id", "message_version", "signature"})
+
+
 def oversight_record(*, approver: str, subject: str, decision: str,
                      cruxes: list[str], stats: Stats | None) -> dict:
     """Signed evidence that a named human decided on stated cruxes, with the
     reliability measured for them at that moment."""
     from ..audit.signing import sign_detached_digest
-    body = {"schema": "lightwork.oversight-record.v1", "approver": approver,
+    body = {"schema": _RECORD_SCHEMA, "approver": approver,
             "subject": subject, "decision": decision, "cruxes": sorted(cruxes),
             "measured": None if stats is None else
             {"caught": stats.caught, "missed": stats.missed, "assured": round(stats.assured, 4)},
@@ -361,7 +366,13 @@ def oversight_record(*, approver: str, subject: str, decision: str,
 
 def verify_record(record: dict, pubkey_hex: str) -> bool:
     """Offline check: the body is unaltered and signed by ``pubkey_hex``."""
-    from ..audit.signing import verify_detached_digest
-    digest = hashlib.sha256(_ledger.canonical(record["body"])).hexdigest()
-    sig = record["signature"]
+    from ..audit.signing import DETACHED_DIGEST_MESSAGE_VERSION, verify_detached_digest
+    body, sig = record["body"], record["signature"]
+    # The audit key signs other documents in this form too; only an exact
+    # oversight record body counts as one.
+    if (not isinstance(body, dict) or body.get("schema") != _RECORD_SCHEMA or set(body) != _RECORD_KEYS
+            or not isinstance(sig, dict) or set(sig) != _SIGNATURE_KEYS
+            or sig["message_version"] != DETACHED_DIGEST_MESSAGE_VERSION):
+        return False
+    digest = hashlib.sha256(_ledger.canonical(body)).hexdigest()
     return sig["digest"] == digest and verify_detached_digest(pubkey_hex, digest, sig["signature"])
