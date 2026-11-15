@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import heapq
 import math
 import re
 from collections.abc import Callable, Iterator
@@ -278,15 +279,13 @@ _BASE64_RUN = re.compile(r"[A-Za-z0-9+/_-]+=*")
 _MIN_BASE64_CHARS = 5
 _MAX_BASE64_CHARS = 8192
 _MAX_DECODED_BYTES = 6144
+# Ordinary words are base64 runs too, so a long input yields one candidate per
+# word. The largest count in the repository's test and benchmark inputs is 354.
+_MAX_BASE64_CANDIDATES = 1024
 
 
-def _decoded_base64(text: str) -> Iterator[str]:
-    """Yield bounded UTF-8 candidates, ignoring binary and oversized runs.
-
-    Matching a complete run before checking its offsets avoids copying large
-    image payloads or decoding arbitrary windows from them. Each input character
-    is scanned once; only one bounded decoded candidate is retained at a time.
-    """
+def _base64_runs(text: str) -> Iterator[re.Match[str]]:
+    """Yield runs whose length and padding make them decodable candidates."""
     for match in _BASE64_RUN.finditer(text):
         length = match.end() - match.start()
         if not _MIN_BASE64_CHARS <= length <= _MAX_BASE64_CHARS:
@@ -295,8 +294,28 @@ def _decoded_base64(text: str) -> Iterator[str]:
         padding = length - len(token.rstrip("="))
         if padding > 2 or (padding and length % 4):
             continue
+        yield match
+
+
+def _decoded_base64(text: str) -> Iterator[str]:
+    """Yield bounded UTF-8 candidates, ignoring binary and oversized runs.
+
+    Matching a complete run before checking its offsets avoids copying large
+    image payloads or decoding arbitrary windows from them. Each input character
+    is scanned once; only one bounded decoded candidate is retained at a time.
+
+    At most ``_MAX_BASE64_CANDIDATES`` runs are decoded per call: the longest,
+    with earlier runs winning ties, decoded in text order. Shorter decoys cannot
+    displace a payload, so pushing one out takes that many runs at least as long
+    as it placed before it (about 45 KB for a 44-character instruction). That
+    remains possible; it bounds the work, it does not stop a large input.
+    """
+    runs = heapq.nlargest(_MAX_BASE64_CANDIDATES, _base64_runs(text),
+                          key=lambda m: m.end() - m.start())
+    for match in sorted(runs, key=lambda m: m.start()):
+        token = match.group()
         try:
-            decoded = base64.b64decode(token + "=" * (-length % 4), altchars=b"-_", validate=True)
+            decoded = base64.b64decode(token + "=" * (-len(token) % 4), altchars=b"-_", validate=True)
             if len(decoded) <= _MAX_DECODED_BYTES:
                 yield decoded.decode("utf-8")
         except (binascii.Error, UnicodeDecodeError):
