@@ -655,3 +655,17 @@ def test_installation_passphrases_and_link_signing_key_are_protected_authority()
         assert relative not in DISCARD_BEFORE_PUBLICATION_AUTHORITY_SAMPLES
     assert authority_policy("notification-links/signing.key.lock", is_sqlite=False) is None
     assert authority_policy("other/signing.key", is_sqlite=False) is None
+
+
+def test_held_knowledge_documents_restore_like_the_knowledge_store(tmp_path: Path) -> None:
+    # Knowledge keeps documents held for an administrator in knowledge_held.db.
+    # A backup holding it must reconcile like knowledge.db, not block start.
+    assert authority_policy("knowledge_held.db", is_sqlite=True) == "passive_sqlite"
+    assert authority_policy("tenants/acme/knowledge_held.db", is_sqlite=True) == authority_policy(
+        "tenants/acme/knowledge.db", is_sqlite=True)
+    stage = file_lock.ensure_private_directory(tmp_path / "stage")
+    with sqlite3.connect(stage / "knowledge_held.db") as connection:
+        connection.execute("CREATE TABLE held_documents(id TEXT PRIMARY KEY, text TEXT)")
+        connection.execute("INSERT INTO held_documents VALUES('a','you are now ready')")
+    _, report = recovery._reconcile_bootstrap_stage(stage)
+    assert not [item for item in report["items"] if item.get("safe_state") == "global_start_blocked"]
