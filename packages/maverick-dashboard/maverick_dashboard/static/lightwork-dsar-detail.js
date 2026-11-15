@@ -370,11 +370,19 @@
 
   // Erasure: pick the matching person (by their identifier) and erase. With no
   // conversation, the same erase still scrubs what is kept about the person.
-  function eraseFor(person, ch, label) {
-    return ask('Permanently erase everything Lightwork holds about ' + person +
-      ' on ' + label + '? This cannot be undone.', 'Erase').then(function (ok) {
+  function eraseFor(person, ch, label, onlyThisChannel) {
+    var scope = onlyThisChannel
+      ? 'only what Lightwork keeps under ' + label + ', the channel this request came in on'
+      : 'everything Lightwork holds about ' + person + ' on ' + label;
+    return ask('Permanently erase ' + scope + '? Data kept under other channels is not touched. ' +
+      'This cannot be undone.', 'Erase').then(function (ok) {
       if (!ok) return null;
       return call('POST', '/api/v1/compliance/people/erase', { channel: ch, user: subject }).then(function (res) {
+        if (res.nothing_found) {
+          say((res.message || 'Nothing was found for this person.') +
+            ' Close the request once other systems are done.');
+          return;
+        }
         if (res.clean !== false) lastErasure = 'Lightwork: ' + (res.message || 'erased') + ' (' + localDay() + ')';
         say((res.message || 'Erased.') + (res.clean === false
           ? ' Keep this request open until the erasure is certified.'
@@ -390,7 +398,12 @@
       var people = (body.people || []).filter(function (p) { return p.user === subject; });
       people.sort(function (a, b) { return (b.channel === channel) - (a.channel === channel); });
       if (!people.length) {
-        return eraseFor(subject, channel, 'the channel this request came from');
+        if (!channel) {
+          say('Lightwork holds no conversations for ' + subject + '. This request does not record the channel ' +
+            'it came in on, so other stored data cannot be checked here. Ask your administrator to erase it by channel.');
+          return null;
+        }
+        return eraseFor(subject, channel, channel, true);
       }
       var options = people.map(function (p, i) {
         return { value: String(i), label: p.person + ' (' + p.channel_label + ')' };
@@ -400,7 +413,7 @@
       ], 'Next').then(function (values) {
         if (!values) return null;
         var chosen = people[parseInt(values.who || '0', 10)];
-        return eraseFor(chosen.person, chosen.channel, chosen.channel_label);
+        return eraseFor(chosen.person, chosen.channel, chosen.channel_label, false);
       });
     }).catch(function (f) { fail(f, 'erase their data'); });
   });

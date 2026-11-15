@@ -89,9 +89,33 @@ test("with no conversation, erasure still runs and reports what it found", async
   t.after(() => ui.window.close());
   ui.doc.getElementById("dsar-erase").click(); await ui.settle();
   assert.equal(ui.confirms.length, 1);
+  assert.match(ui.confirms[0], /only what Lightwork keeps under email/);
   const erase = ui.calls.find((c) => c.url.endsWith("/people/erase"));
   assert.deepEqual(JSON.parse(erase.body), { channel: "email", user: "a@example.com" });
   assert.match(ui.doc.getElementById("dsar-status").textContent, /2 other stored item/);
+});
+
+test("with nothing found, the page says so instead of waiting for a certificate", async (t) => {
+  const ui = await fixture({
+    formValues: [],
+    reply: (url) => url.endsWith("/people")
+      ? json({ people: [] })
+      : json({ erased: false, clean: false, nothing_found: true, conversations: 0, message: "Nothing was found for this person." }),
+  });
+  t.after(() => ui.window.close());
+  ui.doc.getElementById("dsar-erase").click(); await ui.settle();
+  const status = ui.doc.getElementById("dsar-status").textContent;
+  assert.match(status, /Nothing was found/);
+  assert.doesNotMatch(status, /certified/);
+});
+
+test("a request with no channel explains what to do instead of erasing", async (t) => {
+  const markup = html.replace('data-channel="email"', 'data-channel=""');
+  const ui = await fixture({ formValues: [], reply: (url) => json({ people: [] }), markup });
+  t.after(() => ui.window.close());
+  ui.doc.getElementById("dsar-erase").click(); await ui.settle();
+  assert.equal(ui.calls.filter((c) => c.url.endsWith("/people/erase")).length, 0);
+  assert.match(ui.doc.getElementById("dsar-status").textContent, /does not record the channel/);
 });
 
 test("closing asks what happened before anything is sent, and errors stay plain", async (t) => {

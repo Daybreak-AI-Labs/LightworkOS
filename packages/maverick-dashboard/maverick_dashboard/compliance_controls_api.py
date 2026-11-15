@@ -668,7 +668,7 @@ def _run_subject_residue_erase(world, channel: str, user: str, actor: str) -> di
     if refused and "the note that this erasure happened" not in unfinished:
         unfinished.append("the note that this erasure happened")
     if not removed and not unfinished:
-        return {"erased": False, "conversations": 0, "clean": False,
+        return {"erased": False, "conversations": 0, "clean": False, "nothing_found": True,
                 "message": "Nothing was found for this person."}
     if removed:
         try:  # who erased, never whose data

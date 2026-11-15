@@ -274,6 +274,7 @@ def test_erase_without_a_conversation_still_scrubs_what_is_kept_about_the_person
     again = client.post("/api/v1/compliance/people/erase",
                         json={"channel": "slack", "user": "U123"}).json()
     assert again["erased"] is False and "Nothing was found" in again["message"]
+    assert again["nothing_found"] is True
 
 
 def test_erase_does_not_claim_everything_when_a_clean_up_step_failed(monkeypatch):
