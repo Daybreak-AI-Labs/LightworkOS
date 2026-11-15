@@ -667,3 +667,15 @@ class TestLowCacheWarning:
         cache_warnings = [r for r in caplog.records if "prompt cache" in r.message]
         assert len(cache_warnings) == 1
         ap._LOW_CACHE_WARNING_EMITTED.clear()
+
+
+@pytest.mark.parametrize("system", ["", "  \n"])
+def test_empty_system_prompt_sends_no_system_block(monkeypatch, system):
+    # The API rejects an empty text block, cache_control or not.
+    from maverick.providers.anthropic_provider import AnthropicClient
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
+    kwargs = AnthropicClient()._build_request(
+        system=system, messages=[{"role": "user", "content": "hi"}], tools=None,
+        max_tokens=128, thinking_budget=None, model="claude-sonnet-4-6",
+    )
+    assert "system" not in kwargs
