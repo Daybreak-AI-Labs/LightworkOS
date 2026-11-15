@@ -241,6 +241,13 @@ class EventKind:
     # old/new names, and complete member-set deltas or bounded commitments.
     ACCESS_GRANT_CHANGED = "access_grant_changed"
     FEDERATION_DELEGATE = "federation_delegate"
+    # An operator raised a federation peer's admission limit or restarted its
+    # count. payload: peer:str, actor:str, old_limit:int, new_limit:int,
+    # reset:bool. Starting over after an unreadable limits file records
+    # peer:"*", actor, start_over:true, set_aside:str (the kept file's name).
+    # A storage-limit change records peer:"*" and storage:true.
+    # Retained admissions are never deleted by any of these changes.
+    FEDERATION_ADMISSION_LIMIT_CHANGED = "federation_admission_limit_changed"
     # A bounded learned pure operator selected a value or the original agent.
     # Payload contains only node/work/artifact digests, candidate count, status
     # and reason. Agreement is not a grounded success label; examples and raw

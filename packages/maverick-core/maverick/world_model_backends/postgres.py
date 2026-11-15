@@ -767,6 +767,12 @@ MIGRATIONS.append((52, [
     "CHECK (scope = CASE WHEN tenant_id IS NULL THEN 'n:' ELSE 't:' || tenant_id END))",
 ]))
 
+# v53: an external agent's run report key binds one goal (mirrors SQLite v53).
+MIGRATIONS.append((53, [
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_pg_goal_origins_external_run "
+    "ON goal_origins(ref) WHERE kind = 'external_run'",
+]))
+
 _PG_SCHEMA_VERSION = MIGRATIONS[-1][0]
 
 _MIGRATIONS_TABLE = (

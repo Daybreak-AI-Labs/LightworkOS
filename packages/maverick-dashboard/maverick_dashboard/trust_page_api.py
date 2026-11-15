@@ -10,6 +10,15 @@
   while keeping its connection tokens, expiry and block state (re-registering
   would drop them).
 
+* ``POST /api/v1/trust/federation/{peer}/limit`` -- raise a federation
+  peer's request limit or start its count again, installation administrators
+  only, in the installation's own tenant where the federation server admits
+  requests (``maverick trust admission-limit``).
+* ``POST /api/v1/trust/federation/limits/storage`` -- raise how many partner
+  requests the workspace keeps before refusing every peer (``--storage``).
+* ``POST /api/v1/trust/federation/limits/start-over`` -- set an unreadable
+  limits file aside so the default limits apply (``--start-over``).
+
 Restoring a blocked agent (``maverick trust unrevoke``) already has an API.
 """
 from __future__ import annotations
@@ -21,7 +30,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 
-from .auth import require_global_permission, require_permission
+from .auth import caller_principal, require_global_permission, require_permission
 
 router = APIRouter(prefix="/api/v1/trust", tags=["agent-trust-page"])
 
@@ -54,6 +63,17 @@ class AgentLimitsIn(BaseModel):
     max_dollars: float | None = Field(default=None, ge=0)
     max_wall_seconds: float | None = Field(default=None, ge=0)
     data_scopes: list[str] = Field(default_factory=list, max_length=256)
+
+
+class PeerLimitIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    limit: int | None = Field(default=None, ge=1, le=2_000_000)
+    reset: bool = False
+
+
+class StorageLimitIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    limit: int = Field(ge=1, le=2_000_000)
 
 
 _REASONS = {
@@ -208,3 +228,100 @@ async def update_agent(request: Request, agent_id: str, body: AgentLimitsIn) -> 
     except agent_trust.AgentTrustError as exc:
         raise HTTPException(status_code=503, detail="The list of outside agents could not be saved.") from exc
     return {"ok": True, "id": agent_id}
+
+
+def _in_federation_scope(fn):
+    """Run ``fn`` in the installation's own tenant: the inbound federation
+    server admits requests there, not in the workspace a page has open."""
+    from maverick.paths import implicit_tenant_id, reset_tenant, set_tenant
+
+    token = set_tenant(implicit_tenant_id())
+    try:
+        return fn()
+    finally:
+        reset_tenant(token)
+
+
+def federation_limits() -> dict | None:
+    """Each federation peer's request use against its limit, for the page:
+    ``{"peers": [...], "unreadable": bool}``. ``None`` when the counts could
+    not be read for another reason."""
+    from maverick import federation
+    from maverick import federation_admission as admission
+    from maverick.world_model import open_world
+
+    peers = [p.name for p in federation.load_peers()]
+    if not peers:
+        return {"peers": [], "unreadable": False}
+
+    def read() -> list[dict]:
+        with open_world() as world:
+            return [admission.admission_usage(world, name) for name in peers]
+
+    try:
+        return {"peers": _in_federation_scope(read), "unreadable": False}
+    except admission.LimitsUnreadable:
+        return {"peers": [], "unreadable": True}
+    except Exception:
+        return None
+
+
+@router.post("/federation/limits/start-over")
+async def start_over_peer_limits(request: Request) -> dict:
+    require_global_permission(request, "admin")
+    from maverick import federation_admission as admission
+    from maverick.audit import AuditRefused
+
+    actor = str(caller_principal(request) or "authorized-local-operator")
+    try:
+        aside = await run_in_threadpool(
+            lambda: _in_federation_scope(lambda: admission.start_over_limits(actor=actor)))
+    except (AuditRefused, RuntimeError) as exc:
+        raise HTTPException(status_code=503, detail="The change could not be recorded, so it was not made.") from exc
+    return {"started_over": aside is not None}
+
+
+@router.post("/federation/limits/storage")
+async def set_storage_limit(request: Request, body: StorageLimitIn) -> dict:
+    require_global_permission(request, "admin")
+    from maverick import federation_admission as admission
+    from maverick.audit import AuditRefused
+
+    actor = str(caller_principal(request) or "authorized-local-operator")
+    try:
+        limit = await run_in_threadpool(
+            lambda: _in_federation_scope(lambda: admission.set_storage_limit(body.limit, actor=actor)))
+    except admission.LimitsUnreadable as exc:
+        raise HTTPException(status_code=409, detail="The saved limits could not be read, so nothing was changed. Start over to use the default limits.") from exc
+    except (AuditRefused, RuntimeError) as exc:
+        raise HTTPException(status_code=503, detail="The change could not be recorded, so it was not made.") from exc
+    return {"storage_limit": limit}
+
+
+@router.post("/federation/{peer}/limit")
+async def set_peer_limit(request: Request, peer: str, body: PeerLimitIn) -> dict:
+    require_global_permission(request, "admin")
+    from maverick import federation
+    from maverick import federation_admission as admission
+    from maverick.audit import AuditRefused
+    from maverick.world_model import open_world
+
+    if peer not in {p.name for p in federation.load_peers()}:
+        raise HTTPException(status_code=404, detail="That partner is not set up on this installation.")
+    if body.limit is None and not body.reset:
+        raise HTTPException(status_code=422, detail="Choose a new limit or start the count again.")
+    actor = caller_principal(request) or "authorized-local-operator"
+
+    def write() -> dict:
+        admission.set_admission_limit(peer, limit=body.limit, reset=body.reset, actor=str(actor))
+        with open_world() as world:
+            return admission.admission_usage(world, peer)
+
+    try:
+        return await run_in_threadpool(_in_federation_scope, write)
+    except admission.LimitsUnreadable as exc:
+        raise HTTPException(status_code=409, detail="The saved limits could not be read, so nothing was changed. Start over to use the default limits.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="That limit is not allowed. Choose a whole number from 1 to 2,000,000.") from exc
+    except (AuditRefused, RuntimeError) as exc:
+        raise HTTPException(status_code=503, detail="The change could not be recorded, so it was not made.") from exc

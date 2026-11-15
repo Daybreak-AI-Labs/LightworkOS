@@ -32,6 +32,10 @@ class ConsequenceWriteUncertain(RuntimeError):
     """The attempted report may be present; do not automatically submit it again."""
 
 
+class OutcomeKeyOwned(RuntimeError):
+    """The key is linked to another run; only that run or an operator may move it."""
+
+
 def _discard_torn_tail(fd, end):
     """Drop an unterminated final row left by an interrupted append.
 
@@ -376,15 +380,23 @@ _MAX_LINKS = 100_000
 class CorrelationStore(ConsequenceStore):
     """Append-only map ``external key -> (goal_id, episode_id)`` that acted on it.
 
-    The latest link for a key wins (the most recent run to touch the entity owns
-    the outcome). Atomic-append, 0600, bounded -- the ``ConsequenceStore`` shape.
+    The latest link for a key wins, but only the run (goal) that holds the key
+    may move it to another of its episodes; a different run needs an operator
+    (``override``). Links saved before this rule keep resolving as written.
+    Atomic-append, 0600, bounded -- the ``ConsequenceStore`` shape.
     """
 
     max_rows: int = _MAX_LINKS
 
     def link(self, key: str, goal_id: int, episode_id: int, *,
-             ts: float | None = None) -> bool:
-        """Save a link; an uncertain durable write must never invite replay."""
+             ts: float | None = None, override: bool = False,
+             same_task=None) -> bool:
+        """Save a link; an uncertain durable write must never invite replay.
+
+        Raises :class:`OutcomeKeyOwned` when another run holds ``key`` and
+        ``override`` (an operator's decision) is not set. ``same_task(holder)``
+        says whether the holding goal is in the caller's chat thread or task
+        tree (same root and owner), which may take the key over."""
         k = str(key).strip()
         try:
             stamp = time.time() if ts is None else float(ts)
@@ -396,6 +408,7 @@ class CorrelationStore(ConsequenceStore):
                "goal_id": int(goal_id), "episode_id": int(episode_id)}
         with self._lock:
             if self.path is None:
+                self._check_owner(k, int(goal_id), same_task, override)
                 self._accept(row)
                 return True
             try:
@@ -403,16 +416,34 @@ class CorrelationStore(ConsequenceStore):
 
                 p = Path(self.path)
                 with cross_process_lock(p, strict=True):
+                    if p.exists():
+                        info = p.stat()
+                        stamp = (info.st_ino, info.st_size, info.st_mtime_ns)
+                        if stamp != self._loaded_stamp:
+                            self._load()
+                            self._loaded_stamp = stamp
+                    else:
+                        self._latest.clear()
+                    self._check_owner(k, int(goal_id), same_task, override)
                     if not _append(p, row):
                         return False
                     self._loaded_stamp = ()
                 return True
-            except ConsequenceWriteUncertain:
+            except (ConsequenceWriteUncertain, OutcomeKeyOwned):
                 self._loaded_stamp = ()
                 raise
             except Exception:  # pragma: no cover -- best-effort
                 log.debug("outcome-link record failed", exc_info=True)
                 return False
+
+    def _check_owner(self, key: str, goal_id: int, same_task, override: bool) -> None:
+        held = self._latest.get(key)
+        if (held is None or held[1] == goal_id or override
+                or (same_task is not None and same_task(held[1]))):
+            return
+        raise OutcomeKeyOwned(
+            "This key is linked to another task. Only that task or an "
+            "administrator can link it to different work.")
 
     def resolve(self, key: str) -> tuple[int, int] | None:
         """The (goal_id, episode_id) most recently linked to ``key``, or None."""
@@ -461,13 +492,18 @@ def shared_correlation() -> CorrelationStore:
 
 
 def link_outcome_key(key: str, goal_id: int, episode_id: int, *,
-                     store: CorrelationStore | None = None) -> bool:
+                     store: CorrelationStore | None = None,
+                     operator: bool = False,
+                     same_task=None) -> bool:
     """Record that ``key`` (an external business id) was acted on by this episode,
-    so a later outcome reported against ``key`` can be grounded. Always harmless."""
+    so a later outcome reported against ``key`` can be grounded. A key another
+    run holds raises :class:`OutcomeKeyOwned` unless ``operator`` is set (the
+    caller has checked operator authority)."""
     from .learning_guard import learning_write_allowed
     if not learning_write_allowed("consequence", "link_outcome_key"):
         return False
-    return (store or shared_correlation()).link(key, goal_id, episode_id)
+    return (store or shared_correlation()).link(key, goal_id, episode_id, override=operator,
+                                                same_task=same_task)
 
 
 def record_outcome_for_key(key: str, value: float, *, kind: str = "",
@@ -492,7 +528,7 @@ def record_outcome_for_key(key: str, value: float, *, kind: str = "",
 
 
 __all__ = [
-    "ConsequenceStore", "ConsequenceWriteUncertain", "enabled", "shared", "reset_shared",
+    "ConsequenceStore", "ConsequenceWriteUncertain", "OutcomeKeyOwned", "enabled", "shared", "reset_shared",
     "record_outcome", "resolve", "grounded_outcome", "count",
     "record_self_outcome",
     "CorrelationStore", "shared_correlation", "link_outcome_key",

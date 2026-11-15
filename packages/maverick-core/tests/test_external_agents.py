@@ -397,6 +397,28 @@ def test_screen_parks_an_approval_at_the_floor():
         xa.approval_status("sf-quotebot", 999999)
 
 
+def test_screen_treats_an_undeclared_unrated_risk_as_high():
+    _enroll(max_risk="high", allow_tools=[*_RATED_TOOLS, "mystery_tool"])
+    verdict = xa.screen("sf-quotebot", "mystery_tool", detail="do a thing")
+    assert verdict["allowed"] is False and verdict["requires_approval"] is True
+    status = xa.approval_status(
+        "sf-quotebot", verdict["approval_id"],
+        expected_binding_sha256=verdict["approval_binding_sha256"])
+    assert status["risk"] == "high"
+    # Waiting for a person is not a denial: nothing counts toward containment.
+    assert not xa._load_sidecar()["sf-quotebot"].get("denials")
+    # The operator's enrollment rating still stands in for a declaration.
+    assert xa.screen("sf-quotebot", "research")["rule"] == "allow"
+
+
+def test_screen_uses_lightworks_own_rating_when_the_risk_is_undeclared():
+    _enroll(allow_tools=[*_RATED_TOOLS, "web_search"])  # default ceiling: medium
+    for _ in range(6):
+        verdict = xa.screen("sf-quotebot", "web_search", detail="look it up")
+        assert verdict["allowed"] is True and verdict["rule"] == "allow"
+    assert not xa._load_sidecar()["sf-quotebot"].get("contained")
+
+
 def test_screen_backlog_is_bounded_before_approval_and_notification(monkeypatch):
     from maverick.world_model import WorldModel
 
@@ -685,6 +707,84 @@ def test_idempotent_run_ingest_never_double_counts():
     # A different key is a different run.
     other = xa.record_run("sf-quotebot", dict(run, idempotency_key="run-002"))
     assert other["goal_id"] != first["goal_id"]
+
+
+def test_concurrent_run_reports_with_one_key_create_one_goal(monkeypatch):
+    _enroll()
+    gate = threading.Barrier(2, timeout=10)
+    clean = xa._clean_text
+
+    def _both_past_the_lookup(text, **kw):
+        if text == "Quote A":
+            gate.wait()
+        return clean(text, **kw)
+
+    monkeypatch.setattr(xa, "_clean_text", _both_past_the_lookup)
+    run = {"title": "Quote A", "outcome": "success", "summary": "s",
+           "cost_dollars": 1.0, "idempotency_key": "race-1"}
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: xa.record_run("sf-quotebot", dict(run)),
+                                range(2)))
+    assert results[0]["goal_id"] == results[1]["goal_id"]
+    assert sorted(bool(r.get("duplicate")) for r in results) == [False, True]
+    row = xa.roster()[0]
+    assert row["runs"] == 1 and row["spent_dollars"] == pytest.approx(1.0)
+    from maverick.world_model import WorldModel
+    assert [g.title for g in WorldModel().list_goals()].count("Quote A") == 1
+
+
+def test_a_retry_completes_a_run_whose_ingest_failed_and_counts_it_once(monkeypatch):
+    _enroll()
+    from maverick.world_model import WorldModel
+    real, calls = WorldModel.end_episode, []
+
+    def fail_once(self, *a, **kw):
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("disk hiccup")
+        return real(self, *a, **kw)
+
+    monkeypatch.setattr(WorldModel, "end_episode", fail_once)
+    run = {"title": "Quote B", "outcome": "success", "summary": "s",
+           "cost_dollars": 2.0, "idempotency_key": "retry-1"}
+    with pytest.raises(RuntimeError):
+        xa.record_run("sf-quotebot", dict(run))
+    done = xa.record_run("sf-quotebot", dict(run))
+    again = xa.record_run("sf-quotebot", dict(run))
+    assert done["goal_id"] == again["goal_id"] and again["duplicate"] is True
+    row = xa.roster()[0]
+    assert row["runs"] == 1 and row["spent_dollars"] == pytest.approx(2.0)
+    assert WorldModel().get_goal(done["goal_id"]).status == "done"
+
+
+@pytest.mark.parametrize("step", ["end_episode", "save_sidecar", "set_goal_status"])
+def test_a_retry_after_any_failed_ingest_step_finishes_the_run_once(monkeypatch, step):
+    _enroll()
+    from maverick.world_model import WorldModel
+    target, name = {"end_episode": (WorldModel, "end_episode"),
+                    "save_sidecar": (xa, "_save_sidecar"),
+                    "set_goal_status": (WorldModel, "set_goal_status")}[step]
+    real, failed = getattr(target, name), []
+
+    def fail_once(*a, **kw):
+        if not failed:
+            failed.append(1)
+            raise RuntimeError("disk hiccup")
+        return real(*a, **kw)
+
+    monkeypatch.setattr(target, name, fail_once)
+    run = {"title": "Quote C", "outcome": "success", "summary": "s",
+           "cost_dollars": 2.0, "idempotency_key": f"step-{step}"}
+    with pytest.raises(RuntimeError):
+        xa.record_run("sf-quotebot", dict(run))
+    gid = xa.record_run("sf-quotebot", dict(run))["goal_id"]
+    assert xa.record_run("sf-quotebot", dict(run))["duplicate"] is True
+    world = WorldModel()
+    episodes = world.list_episodes(goal_id=gid)
+    assert [e.cost_dollars for e in episodes] == [pytest.approx(2.0)]
+    row = xa.roster()[0]
+    assert row["runs"] == 1 and row["spent_dollars"] == pytest.approx(2.0)
+    assert world.get_goal(gid).status == "done"
 
 
 def test_operator_tool_risk_floors_the_declared_risk():

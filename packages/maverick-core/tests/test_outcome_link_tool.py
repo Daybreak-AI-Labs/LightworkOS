@@ -105,3 +105,40 @@ def test_tool_registered_only_when_consequence_on(tmp_path, monkeypatch):
     monkeypatch.setenv("MAVERICK_CONSEQUENCE", "1")
     reg2 = base_registry(w, sb, goal_id=1)
     assert "remember_outcome_key" in {t.name for t in reg2.all()}
+
+
+def test_only_the_owning_run_or_an_operator_can_relink_a_key(tmp_path, monkeypatch):
+    monkeypatch.setattr("maverick.paths.data_dir", lambda *p, **k: tmp_path.joinpath(*p))
+    consequence.reset_shared()
+    assert "Linked" in remember_outcome_key(_World([_Ep(55)]), goal_id=7).fn({"key": "invoice:INV-9"})
+    # Another run cannot take the key (and its reward).
+    taken = remember_outcome_key(_World([_Ep(80)]), goal_id=8).fn({"key": "invoice:INV-9"})
+    assert taken.startswith("ERROR:") and "another task" in taken
+    assert consequence.shared_correlation().resolve("invoice:INV-9") == (7, 55)
+    # The owning run may move it to its later episode; an operator may reassign it.
+    assert "Linked" in remember_outcome_key(_World([_Ep(56)]), goal_id=7).fn({"key": "invoice:INV-9"})
+    assert consequence.shared_correlation().resolve("invoice:INV-9") == (7, 56)
+    assert consequence.link_outcome_key("invoice:INV-9", 8, 80, operator=True) is True
+    assert consequence.shared_correlation().resolve("invoice:INV-9") == (8, 80)
+
+
+def test_a_follow_up_in_the_same_thread_may_relink_the_key(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    # Chat turns are children of the thread root (7): turns 8 and 9 are
+    # siblings; 20 belongs to someone else under the same root id shape.
+    tree = {7: (None, "ana"), 8: (7, "ana"), 9: (7, "ana"), 20: (7, "bo")}
+
+    class _Tree(_World):
+        def get_goal(self, goal_id):
+            parent, owner = tree[goal_id]
+            return SimpleNamespace(id=goal_id, parent_id=parent, owner=owner)
+
+    monkeypatch.setattr("maverick.paths.data_dir", lambda *p, **k: tmp_path.joinpath(*p))
+    consequence.reset_shared()
+    assert "Linked" in remember_outcome_key(_Tree([_Ep(80)]), goal_id=8).fn({"key": "deal:D-1"})
+    assert "Linked" in remember_outcome_key(_Tree([_Ep(90)]), goal_id=9).fn({"key": "deal:D-1"})
+    assert "Linked" in remember_outcome_key(_Tree([_Ep(70)]), goal_id=7).fn({"key": "deal:D-1"})
+    assert consequence.shared_correlation().resolve("deal:D-1") == (7, 70)
+    other = remember_outcome_key(_Tree([_Ep(99)]), goal_id=20).fn({"key": "deal:D-1"})
+    assert other.startswith("ERROR:") and "another task" in other

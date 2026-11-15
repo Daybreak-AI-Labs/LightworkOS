@@ -7790,7 +7790,7 @@ def _trust_context(request: Request) -> dict:
     """Agent Trust: which outside agents may work with Lightwork, and what
     each may do, see and spend (/trust, and Outside agents' Access tab)."""
     from .control_plane import _discover_tools, trust_overview
-    from .trust_page_api import managed_ids
+    from .trust_page_api import federation_limits, managed_ids
     from .ui_choices_api import work_area_choices
 
     context = trust_overview()
@@ -7805,6 +7805,8 @@ def _trust_context(request: Request) -> dict:
         "area_choices": work_area_choices(
             _world(), [s for a in context.get("agents", []) for s in a["data_scopes"]]),
         "can_admin": has_permission(request, "admin"),
+        "federation_limits": federation_limits(),
+        "can_admin_federation": has_global_permission(request, "admin"),
     })
     return context
 

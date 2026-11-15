@@ -230,6 +230,32 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   kept-out document uploaded again is held for a new review.
   Documents dropped before this change were never stored and cannot be
   recovered; upload them again to have them held for review.
+- An outside agent that screens an action without a risk level now gets
+  Lightwork's own rating of that tool. A tool nothing rates is still refused,
+  as before, for an agent whose highest allowed risk is low or medium. For an
+  agent allowed high risk, it now waits for a person's approval instead of
+  running. Rate the tool at enrollment to avoid either.
+- Two outside-agent run reports with the same idempotency key now record one
+  task, even when they arrive together. The world database moves to schema
+  53 on first open.
+- A federation peer that the trust registry refuses (missing, revoked or
+  expired) can no longer fetch this node's agent card or poll a task's
+  status with its shared token. Register the peer in `[agent_trust]`.
+- A federation peer that reaches its request limit is still refused, and the
+  log now says how to continue. An administrator can raise the limit or start
+  the count again from Agent trust > Partner request limits, or with
+  `maverick trust admission-limit PEER --limit N` or `--reset`. Earlier
+  requests stay on record, and each change is audited. A reset does not free
+  the workspace's 250,000-request storage limit; once that is full every
+  partner is refused, and an installation administrator can raise it there
+  or with `--storage N` (more disk space, slightly slower checks). If the
+  saved limits can't be read, new partner requests are refused until an
+  installation administrator starts over (`--start-over`); the unreadable
+  file is kept.
+- Only the task that linked an outcome key, a later turn of the same chat
+  or task by the same person, or an administrator can link that key to
+  different work. Other runs get an error and the link stays. Links saved
+  earlier keep working.
 
 ### Fixed
 

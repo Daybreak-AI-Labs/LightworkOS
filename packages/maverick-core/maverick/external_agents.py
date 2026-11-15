@@ -908,7 +908,7 @@ def record_run(agent_id: str, run: dict, *, shield: Any | None = None) -> dict:
     idem = str(run.get("idempotency_key") or "").strip()[:128]
     if idem:
         prior_gid = (sidecar[agent_id].get("run_keys") or {}).get(idem)
-        if prior_gid is not None:
+        if prior_gid is not None and _run_goal_finished(prior_gid):
             return {"goal_id": prior_gid, "over_budget":
                     bool(sidecar[agent_id].get("over_budget")),
                     "duplicate": True}
@@ -932,40 +932,114 @@ def record_run(agent_id: str, run: dict, *, shield: Any | None = None) -> dict:
     principal = f"agent:{agent_id}"
     from .world_model import open_world
     w = open_world()
-    gid = w.create_goal(
-        title, description=summary or "",
-        owner=principal,
+    gid, _ = _create_run_goal(
+        w, agent_id, idem, title, summary or "", owner=principal,
         domain=str(run.get("department") or meta.get("department") or ""))
-    for step in steps:
-        w.append_event(gid, principal, "status", step)
-    eid = w.start_episode(gid)
-    w.end_episode(
-        eid, summary or title,
-        "success" if outcome == "success" else "failure",
-        cost_dollars=cost,
-        input_tokens=max(0, int(run.get("input_tokens") or 0)),
-        output_tokens=max(0, int(run.get("output_tokens") or 0)),
-        tool_calls=max(0, int(run.get("tool_calls") or 0)),
-    )
-    w.set_goal_status(
-        gid, "done" if outcome == "success" else "blocked",
-        result=summary or title)
     # Wall-clock ceiling: a reported duration above the enrollment's
     # max_wall_seconds is ingested (spend must never go uncounted) but
     # flagged and counted — repeat offenders are visible on the roster.
     duration = max(0.0, float(run.get("duration_seconds") or 0.0))
     wall_cap = decision.agent.max_wall_seconds if decision.agent else None
     over_wall = bool(wall_cap is not None and duration > wall_cap)
-    over_budget = _settle_spend(
-        agent_id, gid, cost=cost, idem=idem, over_wall=over_wall,
-        cap=decision.agent.max_dollars if decision.agent else None)
+    cap = decision.agent.max_dollars if decision.agent else None
+    # Completion runs under the sidecar lock, which also holds the spend
+    # meter. A keyed run is complete once its key is in ``run_keys`` or its
+    # goal has left ``pending``; a report whose earlier ingest stopped part
+    # way finishes it here, and a concurrent report waits and sees it done.
+    with _sidecar_locked():
+        sidecar = _load_sidecar()
+        meta = sidecar.setdefault(agent_id, {})
+        goal = w.get_goal(gid) if idem else None
+        if idem and (idem in (meta.get("run_keys") or {})
+                     or (goal is not None and goal.status != "pending")):
+            if goal is not None and goal.status == "pending":
+                w.set_goal_status(gid, "done" if outcome == "success"
+                                  else "blocked", result=summary or title)
+            return {"goal_id": gid, "over_budget": bool(meta.get("over_budget")),
+                    "duplicate": True}
+        # A retry reuses the episode an interrupted ingest already wrote, so
+        # the goal never carries the run's cost twice.
+        earlier = w.list_episodes(goal_id=gid, limit=1) if idem else []
+        if not earlier:
+            for step in steps:
+                w.append_event(gid, principal, "status", step)
+        eid = earlier[0].id if earlier else w.start_episode(gid)
+        if not earlier or earlier[0].ended_at is None:
+            w.end_episode(
+                eid, summary or title,
+                "success" if outcome == "success" else "failure",
+                cost_dollars=cost,
+                input_tokens=max(0, int(run.get("input_tokens") or 0)),
+                output_tokens=max(0, int(run.get("output_tokens") or 0)),
+                tool_calls=max(0, int(run.get("tool_calls") or 0)),
+            )
+        over_budget = _meter_spend(meta, gid, cost=cost, idem=idem,
+                                   over_wall=over_wall, cap=cap)
+        _save_sidecar(sidecar)
+        w.set_goal_status(
+            gid, "done" if outcome == "success" else "blocked",
+            result=summary or title)
     from .audit import EventKind, audit_event
     audit_event(EventKind.EXTERNAL_RUN_INGESTED, agent="external_agents",
                 goal_id=gid, external_agent=agent_id, outcome=outcome,
                 cost_dollars=cost, steps=len(steps), over_budget=over_budget,
                 over_wall=over_wall)
-    return {"goal_id": gid, "over_budget": over_budget,
-            "over_wall": over_wall}
+    return {"goal_id": gid, "over_budget": over_budget, "over_wall": over_wall}
+
+
+_RUN_ORIGIN = "external_run"
+
+
+def _run_goal_finished(gid: Any) -> bool:
+    """Whether a remembered run's goal has left ``pending`` (or is gone). An
+    unfinished one goes on to the locked completion path."""
+    from .world_model import open_world
+    try:
+        goal = open_world().get_goal(int(gid))
+    except (TypeError, ValueError):
+        return True
+    return goal is None or goal.status != "pending"
+
+
+def _create_run_goal(w: Any, agent_id: str, idem: str, title: str,
+                     summary: str, *, owner: str, domain: str) -> tuple[int, bool]:
+    """Create a reported run's goal, binding its idempotency key in the same
+    transaction. A unique index on the key makes a concurrent report with the
+    same key reuse the first goal. Returns ``(goal_id, duplicate)``."""
+    if not idem:
+        return w.create_goal(title, description=summary, owner=owner,
+                             domain=domain), False
+    import hashlib
+
+    from .event_admission import _transaction
+    from .paths import current_tenant_id_strict
+    ref = hashlib.sha256(json.dumps(
+        ["external-run/1", current_tenant_id_strict(), agent_id, idem],
+        ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+    with _transaction(w, f"{_RUN_ORIGIN}:{ref}") as (db, mark, _, _, postgres):
+        found = db.execute(
+            f"SELECT goal_id FROM goal_origins WHERE kind={mark} AND ref={mark}",
+            (_RUN_ORIGIN, ref))
+        row = (db if postgres else found).fetchone()
+        if row is not None:
+            return int(row[0]), True
+        now = time.time()
+        if postgres:
+            from .world_model_backends.postgres import _active_tenant, _seal
+            db.execute(
+                "INSERT INTO goals(title,description,status,created_at,updated_at,"
+                "owner,domain,tenant_id) VALUES(%s,%s,'pending',%s,%s,%s,%s,%s) "
+                "RETURNING id",
+                (_seal(title, "goals.title"), _seal(summary, "goals.description"),
+                 now, now, owner, domain, _active_tenant()))
+            gid = int(db.fetchone()[0])
+        else:
+            gid = w.create_goal(title, description=summary, owner=owner,
+                                domain=domain)
+        db.execute(
+            f"INSERT INTO goal_origins(goal_id,kind,ref,created_at) "
+            f"VALUES({mark},{mark},{mark},{mark})", (gid, _RUN_ORIGIN, ref, now))
+    return gid, False
 
 
 def _settle_spend(agent_id: str, gid: int, *, cost: float, idem: str,
@@ -975,29 +1049,38 @@ def _settle_spend(agent_id: str, gid: int, *, cost: float, idem: str,
     after-the-fact ingest and the live finish path."""
     with _sidecar_locked():
         sidecar = _load_sidecar()
-        meta = sidecar.setdefault(agent_id, {})
-        meta["spent_dollars"] = float(meta.get("spent_dollars") or 0.0) + cost
-        if meta.get("period") == "monthly":
-            month = _month_key()
-            if meta.get("period_key") != month:
-                meta["period_key"] = month
-                meta["period_spent"] = 0.0
-            meta["period_spent"] = float(meta.get("period_spent") or 0.0) + cost
-        meta["runs"] = int(meta.get("runs") or 0) + 1
-        meta["last_run_at"] = time.time()
-        if over_wall:
-            meta["wall_violations"] = int(meta.get("wall_violations") or 0) + 1
-        if idem:
-            keys = dict(meta.get("run_keys") or {})
-            keys[idem] = gid
-            if len(keys) > _MAX_RUN_KEYS:
-                for stale in sorted(keys, key=keys.get)[:len(keys)
-                                                        - _MAX_RUN_KEYS]:
-                    keys.pop(stale, None)
-            meta["run_keys"] = keys
-        over_budget = bool(cap is not None and _period_spent(meta) > cap)
-        meta["over_budget"] = over_budget
+        over_budget = _meter_spend(sidecar.setdefault(agent_id, {}), gid,
+                                   cost=cost, idem=idem, over_wall=over_wall,
+                                   cap=cap)
         _save_sidecar(sidecar)
+    return over_budget
+
+
+def _meter_spend(meta: dict, gid: int, *, cost: float, idem: str,
+                 over_wall: bool, cap: float | None) -> bool:
+    """The body of :func:`_settle_spend`; the caller holds the sidecar lock
+    and saves the sidecar."""
+    meta["spent_dollars"] = float(meta.get("spent_dollars") or 0.0) + cost
+    if meta.get("period") == "monthly":
+        month = _month_key()
+        if meta.get("period_key") != month:
+            meta["period_key"] = month
+            meta["period_spent"] = 0.0
+        meta["period_spent"] = float(meta.get("period_spent") or 0.0) + cost
+    meta["runs"] = int(meta.get("runs") or 0) + 1
+    meta["last_run_at"] = time.time()
+    if over_wall:
+        meta["wall_violations"] = int(meta.get("wall_violations") or 0) + 1
+    if idem:
+        keys = dict(meta.get("run_keys") or {})
+        keys[idem] = gid
+        if len(keys) > _MAX_RUN_KEYS:
+            for stale in sorted(keys, key=keys.get)[:len(keys)
+                                                    - _MAX_RUN_KEYS]:
+                keys.pop(stale, None)
+        meta["run_keys"] = keys
+    over_budget = bool(cap is not None and _period_spent(meta) > cap)
+    meta["over_budget"] = over_budget
     return over_budget
 
 
@@ -1441,6 +1524,13 @@ def _screen_admission(
                       correlation_id=correlation)
         return (_deny_and_count(agent_id, tool, decision.rule,
                                 decision.reason), meta, decision, req_risk)
+    # No declaration and no operator rating: use Lightwork's own rating of
+    # the tool, else treat it as high for the approval floor only (it waits
+    # for a person). The ceiling above saw only what was actually claimed.
+    if not req_risk:
+        from .safety.tool_risk import tool_risk, tool_risk_is_unrated
+        req_risk = ("high" if not tool or tool_risk_is_unrated(tool)
+                    else tool_risk(tool))
     if meta is None:
         return (_screen_verdict(agent_id, tool, False, "not_enrolled",
                                 "agent has a trust entry but no enrollment"),

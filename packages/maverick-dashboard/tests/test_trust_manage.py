@@ -256,3 +256,61 @@ def test_turning_blocking_off_needs_confirmation_and_is_recorded(tmp_path, monke
     (row,) = audit_rows
     assert row["kind"] == EventKind.SETTING_CHANGED and row["actor"] == "user:ada"
     assert (row["old"], row["new"], row["confirmed"]) == (True, False, True)
+
+
+def test_partner_request_limit_is_shown_and_raised_by_an_administrator(tmp_path, monkeypatch):
+    from fastapi import HTTPException
+    from maverick import audit, config, federation, world_model
+    from maverick import federation_admission as admission
+    from maverick_dashboard import trust_page_api
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('[federation]\npeers = [{name = "edge", target = "edge:1", token = "t"}]\n')
+    monkeypatch.setenv("MAVERICK_CONFIG", str(cfg))
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    monkeypatch.setattr(federation, "_CORRELATION_PER_PEER_MAX", 1)
+    rows = []
+    monkeypatch.setattr(audit, "record", lambda kind, **kw: rows.append((kind, kw)) or True)
+    config.reset_config_cache()
+    with world_model.WorldModel(world_model.DEFAULT_DB) as world:
+        admission.reserve(world, peer="edge", correlation="c1", digest="a" * 64, title="t",
+                          description="", capability=None, max_dollars=1, max_wall_seconds=1)
+
+    page = client.get("/trust").text
+    assert "Partner request limits" in page and "Limit reached" in page
+    assert "data-tr-limit" in page and "Kept requests: 1 of 250,000" in page
+
+    monkeypatch.setattr(federation, "_CORRELATION_CACHE_MAX", 1)
+    full = client.get("/trust").text
+    assert "Storage for partner requests is full" in full and "Turned away: storage full" in full
+    r = client.post("/api/v1/trust/federation/limits/storage", json={"limit": 300_000})
+    assert r.status_code == 200 and r.json() == {"storage_limit": 300_000}
+    assert "Kept requests: 1 of 300,000" in client.get("/trust").text
+
+    nobody = client.post("/api/v1/trust/federation/nobody/limit", json={"reset": True})
+    assert nobody.status_code == 404, nobody.text
+    r = client.post("/api/v1/trust/federation/edge/limit", json={"limit": 5})
+    assert r.status_code == 200 and r.json()["limit"] == 5 and r.json()["reached"] is False
+    assert [kw["new_limit"] for kind, kw in rows if kind == "federation_admission_limit_changed"] == [300_000, 5]
+
+    def deny(request, permission):
+        raise HTTPException(status_code=403, detail="forbidden")
+
+    admission._limits_path().write_text("{broken", encoding="utf-8")
+    assert "can't be read" in client.get("/trust").text
+    unreadable = client.post("/api/v1/trust/federation/edge/limit", json={"limit": 6})
+    assert unreadable.status_code == 409 and "could not be read" in unreadable.json()["detail"]
+    assert client.post("/api/v1/trust/federation/limits/start-over", json={}).json() == {"started_over": True}
+    assert "Partner request limits" in client.get("/trust").text
+
+    # A page with another workspace open still edits the limits the inbound
+    # federation server reads: the installation's own tenant.
+    from maverick.paths import tenant_scope
+    with tenant_scope(tenant="other-workspace"):
+        assert trust_page_api._in_federation_scope(admission._limits_path) == tmp_path / admission._LIMITS_FILE
+
+    monkeypatch.setattr(trust_page_api, "require_global_permission", deny)
+    assert client.post("/api/v1/trust/federation/edge/limit", json={"reset": True}).status_code == 403
+    assert client.post("/api/v1/trust/federation/limits/start-over", json={}).status_code == 403
+    assert client.post("/api/v1/trust/federation/limits/storage", json={"limit": 5}).status_code == 403
+    config.reset_config_cache()
