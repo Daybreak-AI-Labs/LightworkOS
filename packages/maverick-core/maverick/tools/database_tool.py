@@ -330,11 +330,23 @@ def _query_connection(conn, sql, limit, needs_confirm, response_format, executio
     try:
         _prepare_query_driver(conn, execution)
         execution.started()
-        if (not needs_confirm and _leading_keyword(sql) == "select" and execution.transactional
-                and execution.cancellation_support == "postgres_statement_timeout_and_cancel_safe"):
-            # Qualified psycopg SELECTs use a server cursor so the driver does
-            # not first buffer an unbounded result before our sentinel fetch.
+        if (not needs_confirm and _leading_keyword(sql) == "select"
+                and getattr(getattr(conn, "dialect", None), "supports_server_side_cursors", False)):
+            # Use the dialect's server cursor (including MySQL and non-psycopg
+            # PostgreSQL drivers), before execute can buffer the result. SQLite
+            # and Oracle's synchronous cursors already fetch incrementally.
+            # Keep non-SELECT statements out: named PostgreSQL cursors cannot
+            # execute DML/RETURNING, and authorization must not be inferred here.
             conn = conn.execution_options(yield_per=limit + 1)
+        elif (not needs_confirm and _leading_keyword(sql) == "select"
+              and getattr(getattr(conn, "dialect", None), "name", None) in {"mysql", "mariadb"}):
+            # mysqlconnector deliberately buffers results in SQLAlchemy and
+            # cannot stream. Bound the outer result before the driver sees it.
+            # A query that cannot be a derived table fails without dispatching
+            # a replacement, unbounded query. The newline preserves a final
+            # line comment's scope; an ordinary final terminator is optional.
+            inner = sql.rstrip().removesuffix(";")
+            sql = f"SELECT * FROM ({inner}\n) AS maverick_bounded_result LIMIT {limit + 1}"
         result = conn.execute(text(sql))
         if result.returns_rows:
             cols = list(result.keys())

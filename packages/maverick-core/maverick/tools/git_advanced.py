@@ -280,6 +280,16 @@ def _mutation_error(op: str, args: dict[str, Any]) -> str | None:
     return _reject_option_like(*(str(args.get(key) or "") for key in keys))
 
 
+def _repository_version(sandbox, workdir: Path) -> dict[str, Any]:
+    code, output, _error = _run_git(sandbox, workdir, ["rev-parse", "--verify", "HEAD"])
+    commit = output.strip()
+    if code != 0 or len(commit) not in (40, 64) or any(c not in "0123456789abcdef" for c in commit):
+        raise OSError("cannot verify the repository commit; no mutation is authorized")
+    metadata = workdir / ".git"
+    return {"resolved_commit": commit,
+            "head": file_version(metadata / "HEAD" if metadata.is_dir() else metadata)}
+
+
 def _make_run(sandbox):
     def _run(args: dict[str, Any]) -> str:
         op = args.get("op")
@@ -313,8 +323,7 @@ def _make_run(sandbox):
                     review_items=[f"Operation: {op}", f"Repository: {workdir}",
                                   f"Arguments (truncated, redacted): {preview}"],
                     timeout=30,
-                    input_versions_provider=lambda: file_version(workdir / ".git" / "HEAD")
-                    if (workdir / ".git").is_dir() else file_version(workdir / ".git"),
+                    input_versions_provider=lambda: _repository_version(sandbox, workdir),
                 )
             except ConsentDenied:
                 return "ERROR: Git change was not approved; no Git operation was run"

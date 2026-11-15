@@ -25,7 +25,10 @@ import math
 import os
 import threading
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import numpy as np
 
 from . import Tool
 
@@ -42,9 +45,8 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-# Cap raw audio bytes before materializing a Python float-per-sample waveform:
-# a ~2 GB WAV expands to many GB of Python objects (in-process OOM DoS), and the
-# decode runs unconditionally before any CLAP model load. 64 MiB default (a few
+# Cap raw audio bytes before allocating the decoded waveform. The decode runs
+# unconditionally before any CLAP model load. 64 MiB default (a few
 # minutes of 16-bit PCM); tunable for legitimately larger clips.
 MAX_AUDIO_BYTES = _env_int("MAVERICK_AUDIO_MAX_BYTES", 64 * 1024 * 1024)
 
@@ -95,13 +97,13 @@ def rank_labels(
     return scored
 
 
-# ---------- WAV decoding (stdlib only) ----------
+# ---------- WAV decoding (compact NumPy waveform from PCM) ----------
 
-def decode_wav(data: bytes) -> tuple[list[float], int]:
+def decode_wav(data: bytes) -> tuple[np.ndarray, int]:
     """Decode 16-bit PCM WAV bytes to (mono waveform in [-1, 1], sample rate).
 
-    Stdlib ``wave`` only — the real CLAP adapter feeds this to the processor,
-    so no librosa/soundfile dependency is needed for the common case.
+    Stdlib ``wave`` reads PCM; NumPy (provided by the CLAP extra) converts it
+    without Python objects per sample. No librosa/soundfile decoder is needed.
     """
     import array
     import wave
@@ -120,7 +122,7 @@ def decode_wav(data: bytes) -> tuple[list[float], int]:
             n_ch = w.getnchannels()
             width = w.getsampwidth()
             # Bound the PCM payload before readframes materializes it and the
-            # per-sample float list below; getnframes/getnchannels are header
+            # compact waveform below; getnframes/getnchannels are header
             # values, so reject a lying/huge header without allocating.
             if w.getnframes() * max(1, n_ch) * max(1, width) > limit:
                 raise ValueError(
@@ -139,13 +141,19 @@ def decode_wav(data: bytes) -> tuple[list[float], int]:
         samples.frombytes(frames)
     except ValueError as e:
         raise ValueError(f"truncated WAV PCM data: {e}") from e
-    if n_ch > 1:  # average interleaved channels to mono
-        mono = [
-            sum(samples[i:i + n_ch]) / n_ch for i in range(0, len(samples), n_ch)
-        ]
-    else:
-        mono = list(samples)
-    return [s / 32768.0 for s in mono], rate
+    import sys
+
+    import numpy as np
+
+    if sys.byteorder != "little":
+        samples.byteswap()  # WAV PCM is little endian, array('h') is native endian.
+    if len(samples) % n_ch:
+        raise ValueError("truncated WAV PCM channel frame")
+    waveform = np.asarray(samples, dtype=np.float32)
+    if n_ch > 1:
+        waveform = waveform.reshape(-1, n_ch).mean(axis=1, dtype=np.float32)
+    waveform /= 32768.0
+    return waveform, rate
 
 
 # ---------- real CLAP adapters (lazy; [clap] extra) ----------
@@ -178,7 +186,7 @@ def clap_model_name() -> str:
         or DEFAULT_CLAP_MODEL
 
 
-def embed_waveform(waveform: list[float], rate: int) -> list[float]:
+def embed_waveform(waveform: np.ndarray, rate: int) -> list[float]:
     """CLAP-embed a decoded waveform."""
     model, processor = _load_clap()
     import torch
