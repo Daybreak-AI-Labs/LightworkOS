@@ -141,15 +141,36 @@ def _get(issue_id: str) -> str:
     )
 
 
+def _next_cursor(connection: dict, seen: set[str]) -> str | None:
+    page = connection.get("pageInfo") or {}
+    if not page.get("hasNextPage"):
+        return None
+    cursor = page.get("endCursor")
+    if not isinstance(cursor, str) or not cursor or cursor in seen:
+        raise RuntimeError("Linear pagination did not advance; lookup is incomplete")
+    seen.add(cursor)
+    return cursor
+
+
 def _resolve_team_id(team_key: str) -> str:
     q = """
-    query Teams { teams(first: 50) { nodes { id key } } }
+    query Teams($after: String) {
+      teams(first: 50, after: $after) {
+        nodes { id key } pageInfo { hasNextPage endCursor }
+      }
+    }
     """
-    data = _post(q)
-    for t in (data.get("teams") or {}).get("nodes") or []:
-        if t.get("key") == team_key:
-            return t.get("id", "")
-    raise RuntimeError(f"team {team_key!r} not found")
+    after = None
+    seen: set[str] = set()
+    for _ in range(100):
+        connection = _post(q, {"after": after}).get("teams") or {}
+        for team in connection.get("nodes") or []:
+            if team.get("key") == team_key:
+                return team.get("id", "")
+        after = _next_cursor(connection, seen)
+        if after is None:
+            raise RuntimeError(f"team {team_key!r} not found")
+    raise RuntimeError("Linear team lookup exceeded 100 pages; lookup is incomplete")
 
 
 def _create(title: str, description: str, team_key: str) -> str:
@@ -188,20 +209,39 @@ def _comment(issue_id: str, body: str) -> str:
 def _update_status(issue_id: str, state_name: str) -> str:
     # Resolve state id by name for the team that owns this issue.
     q1 = """
-    query IssueState($id: String!) {
-      issue(id: $id) { team { id states(first: 50) { nodes { id name } } } }
+    query IssueState($id: String!, $after: String) {
+      issue(id: $id) { team {
+        id states(first: 50, after: $after) {
+          nodes { id name } pageInfo { hasNextPage endCursor }
+        }
+      } }
     }
     """
-    data = _post(q1, {"id": issue_id})
-    issue = data.get("issue") or {}
-    states = ((issue.get("team") or {}).get("states") or {}).get("nodes") or []
-    target = next(
-        (s for s in states if s.get("name", "").lower() == state_name.lower()),
-        None,
-    )
+    after = None
+    seen: set[str] = set()
+    names: list[str] = []
+    target = None
+    team_id = None
+    for _ in range(100):
+        issue = _post(q1, {"id": issue_id, "after": after}).get("issue") or {}
+        team = issue.get("team") or {}
+        if team_id is not None and team.get("id") != team_id:
+            return "ERROR: issue changed teams during state lookup; retry after reviewing the issue"
+        team_id = team.get("id")
+        connection = team.get("states") or {}
+        states = connection.get("nodes") or []
+        names.extend(state.get("name", "?") for state in states)
+        target = next((state for state in states
+                       if state.get("name", "").lower() == state_name.lower()), None)
+        if target:
+            break
+        after = _next_cursor(connection, seen)
+        if after is None:
+            break
+    else:
+        return "ERROR: Linear state lookup exceeded 100 pages; lookup is incomplete"
     if not target:
-        names = ", ".join(s.get("name", "?") for s in states)
-        return f"ERROR: state {state_name!r} not found. Available: {names}"
+        return f"ERROR: state {state_name!r} not found. Available: {', '.join(names)}"
     q2 = """
     mutation Update($id: String!, $sid: String!) {
       issueUpdate(id: $id, input: {stateId: $sid}) { success }
