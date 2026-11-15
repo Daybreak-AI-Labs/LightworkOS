@@ -14,12 +14,61 @@ import inspect
 import json
 
 
+def _matches(pattern, text):
+    """``re.search`` for a plugin-chosen pattern, under the regex guard."""
+    from jsonschema import ValidationError
+    try:
+        from maverick.tools._regex_guard import RegexGuardError, guarded_search
+    except ImportError:  # only inside a container image without the host package
+        import re
+        return re.search(pattern, text) is not None
+    try:
+        return guarded_search(pattern, text)
+    except RegexGuardError as exc:
+        raise ValidationError(f"pattern {pattern!r} could not be checked safely: {exc}") from exc
+
+
+def _guarded_validator_class():
+    """Draft 2020-12 with every plugin regex evaluated by :func:`_matches`."""
+    from jsonschema import Draft202012Validator, ValidationError, validators
+
+    def pattern(validator, patrn, instance, schema):
+        if validator.is_type(instance, "string") and not _matches(patrn, instance):
+            yield ValidationError(f"{instance!r} does not match {patrn!r}")
+
+    def pattern_properties(validator, patterns, instance, schema):
+        if validator.is_type(instance, "object"):
+            for patrn, subschema in patterns.items():
+                for key, value in instance.items():
+                    if _matches(patrn, key):
+                        yield from validator.descend(value, subschema, path=key, schema_path=patrn)
+
+    def additional_properties(validator, extra_schema, instance, schema):
+        if not validator.is_type(instance, "object"):
+            return
+        known, patterns = schema.get("properties", {}), list(schema.get("patternProperties", {}))
+        extras = [key for key in instance
+                  if key not in known and not any(_matches(p, key) for p in patterns)]
+        if validator.is_type(extra_schema, "object"):
+            for key in extras:
+                yield from validator.descend(instance[key], extra_schema, path=key)
+        elif not extra_schema and extras:
+            names = ", ".join(repr(key) for key in sorted(extras))
+            yield ValidationError(f"Additional properties are not allowed ({names} unexpected)")
+
+    return validators.extend(Draft202012Validator, {
+        "pattern": pattern, "patternProperties": pattern_properties,
+        "additionalProperties": additional_properties,
+    })
+
+
 def validator(schema):
     from jsonschema import Draft202012Validator, FormatChecker
 
     if not isinstance(schema, dict) or schema.get("type") != "object":
         raise ValueError("input schema must declare an object")
     Draft202012Validator.check_schema(schema)
+    seen = set()
     def refs(value):
         if isinstance(value, dict):
             # Every reference keyword resolves through the default registry,
@@ -27,13 +76,18 @@ def validator(schema):
             for key in ("$ref", "$dynamicRef", "$recursiveRef"):
                 if key in value and not str(value[key]).startswith("#"):
                     raise ValueError("external schema references are unsupported")
+            seen.update(key for key in ("patternProperties", "unevaluatedProperties") if key in value)
             for child in value.values():
                 refs(child)
         elif isinstance(value, list):
             for child in value:
                 refs(child)
     refs(schema)
-    return Draft202012Validator(schema, format_checker=FormatChecker())
+    if seen == {"patternProperties", "unevaluatedProperties"}:
+        # jsonschema matches patternProperties for unevaluatedProperties with
+        # plain re.search, outside the regex guard.
+        raise ValueError("patternProperties with unevaluatedProperties is unsupported")
+    return _guarded_validator_class()(schema, format_checker=FormatChecker())
 
 
 def validate(schema, sample):

@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from ..paths import data_dir
-from .local import ExecResult, scrub_env
+from .local import ExecResult, cap_output, run_capped, scrub_env
 
 log = logging.getLogger(__name__)
 
@@ -227,17 +227,16 @@ class FirecrackerBackend:
             # Scrub secrets from the host firectl invocation, matching every
             # other backend's host-CLI calls (docker/podman/k8s/ssh) -- the
             # CLI shouldn't inherit ANTHROPIC_API_KEY et al.
-            proc = subprocess.run(
-                args, capture_output=True, text=True, errors="replace",
-                timeout=self.timeout if timeout is None else timeout,
+            proc = run_capped(
+                args, timeout=self.timeout if timeout is None else timeout,
                 env=scrub_env(),
             )
         except subprocess.TimeoutExpired:
             return ExecResult(exit_code=124, stdout="", stderr="firecracker timeout")
         return ExecResult(
             exit_code=proc.returncode,
-            stdout=proc.stdout,
-            stderr=proc.stderr,
+            stdout=cap_output(proc.stdout),
+            stderr=cap_output(proc.stderr, 2000),
         )
 
     def _docker_fallback(self, cmd: str, timeout: float | None = None) -> ExecResult:
@@ -262,17 +261,16 @@ class FirecrackerBackend:
             "sh", "-c", cmd,
         ]
         try:
-            proc = subprocess.run(
-                args, capture_output=True, text=True, errors="replace",
-                timeout=self.timeout if timeout is None else timeout,
+            proc = run_capped(
+                args, timeout=self.timeout if timeout is None else timeout,
                 env=scrub_env(),
             )
         except subprocess.TimeoutExpired:
             return ExecResult(exit_code=124, stdout="", stderr="docker timeout")
         return ExecResult(
             exit_code=proc.returncode,
-            stdout=proc.stdout,
-            stderr=proc.stderr,
+            stdout=cap_output(proc.stdout),
+            stderr=cap_output(proc.stderr, 2000),
         )
 
     def _e2b_headers(self) -> dict:

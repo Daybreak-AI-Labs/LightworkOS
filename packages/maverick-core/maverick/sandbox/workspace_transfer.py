@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import shutil
 import stat
 import subprocess
 import tarfile
 import threading
+import time
 import uuid
 from pathlib import Path, PurePosixPath
 
@@ -21,6 +23,8 @@ from .. import file_lock
 from .. import task_file_recovery as paths
 from ..paths import data_dir
 from .local import scrub_env
+
+log = logging.getLogger(__name__)
 
 MAX_FILES = 20_000
 MAX_FILE_BYTES = 64 * 1024 * 1024
@@ -79,8 +83,30 @@ def capture_archive(args: list[str], archive: Path, timeout: float) -> int:
         return process.returncode
 
 
+# Failed-transfer recovery folders are kept this long, then removed when the
+# next transfer starts (docs/sandbox-kubernetes-recovery.md).
+RECOVERY_RETENTION_SECONDS = 7 * 86400
+
+
+def _prune_recovery(parent: Path) -> None:
+    cutoff = time.time() - RECOVERY_RETENTION_SECONDS
+    for entry in parent.iterdir():
+        try:
+            if not entry.name.startswith("k8s-") or entry.is_symlink() or not entry.is_dir():
+                continue
+            newest = max([entry.stat().st_mtime, *(child.lstat().st_mtime for child in entry.iterdir())])
+            if newest >= cutoff:
+                continue
+            cleanup(entry)
+            log.warning("removed Kubernetes recovery folder %s: it was older than %d days",
+                        entry, RECOVERY_RETENTION_SECONDS // 86400)
+        except (OSError, WorkspaceTransferError, paths.RecoveryConflict) as exc:
+            log.warning("could not remove old Kubernetes recovery folder %s: %s", entry, exc)
+
+
 def recovery_directory() -> Path:
     parent = file_lock.ensure_private_directory(data_dir("sandbox-recovery"))
+    _prune_recovery(parent)
     return file_lock.ensure_private_directory(parent / ("k8s-" + uuid.uuid4().hex))
 
 

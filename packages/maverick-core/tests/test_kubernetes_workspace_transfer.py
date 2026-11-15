@@ -200,3 +200,17 @@ def test_interrupted_publication_retains_originals_and_export(tmp_path, monkeypa
     assert (tmp_path / "backup" / "b").read_text() == "original b"
     assert (exported / "a").read_text() == "new a"
     assert (local / "b").read_text() == "original b"
+
+
+def test_recovery_folders_are_pruned_after_the_retention_period(caplog):
+    import os
+    import time
+    old = transfer.recovery_directory()
+    (old / "transfer.json").write_text("{}")
+    past = time.time() - transfer.RECOVERY_RETENTION_SECONDS - 60
+    for path in (old / "transfer.json", old):
+        os.utime(path, (past, past))
+    recent = transfer.recovery_directory()
+    fresh = transfer.recovery_directory()
+    assert not old.exists() and recent.is_dir() and fresh.is_dir()
+    assert old.name in caplog.text

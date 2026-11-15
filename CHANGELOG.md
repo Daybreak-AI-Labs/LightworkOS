@@ -226,6 +226,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Approvals for protected settings now hold a file lock, so several dashboard
   workers cannot lose each other's approvals. An unreadable approval ledger is
   kept as `config_proposals.json.corrupt-<number>` and a warning names it.
+- The standing-consent ledger now refuses a new grant while the space left is
+  needed to revoke existing grants, so a revocation always succeeds.
+- Sandbox commands now keep only the end of their output while they run. Long
+  output starts with "[output truncated: showing the last 8,000 characters]".
+- The local sandbox now also stops processes a command started in a new
+  session (`setsid`). A process that clears its environment is not found.
+- Plugin input schemas with `pattern` or `patternProperties` are now checked
+  under the regex time limit; a schema that combines `patternProperties` with
+  `unevaluatedProperties` is refused.
+- Kubernetes recovery folders under `sandbox-recovery/` are removed seven days
+  after a failed transfer. Copy out anything you need before then.
 
 ### Fixed
 

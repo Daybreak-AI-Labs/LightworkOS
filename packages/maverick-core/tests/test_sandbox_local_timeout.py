@@ -127,6 +127,29 @@ def test_exec_success_and_failure_paths_unchanged(tmp_path):
     assert bad.stderr.strip() == "oops"
 
 
+@_POSIX_ONLY
+def test_large_output_is_capped_with_a_visible_note(tmp_path):
+    res = LocalBackend(workdir=tmp_path).exec("head -c 20000000 /dev/zero | tr '\\0' a; echo; echo END")
+    assert res.ok
+    assert res.stdout.startswith("[output truncated: showing the last 8,000 characters]\n")
+    assert res.stdout.endswith("END\n") and len(res.stdout) < 8100
+
+
+@_POSIX_ONLY
+@pytest.mark.skipif(not os.path.isdir("/proc/self"), reason="needs /proc")
+def test_a_child_that_leaves_the_process_group_is_reaped(tmp_path):
+    pidfile = tmp_path / "escaped.pid"
+    res = LocalBackend(workdir=tmp_path).exec(
+        f"setsid sh -c 'echo $$ > {pidfile}; exec sleep 300' >/dev/null 2>&1 & "
+        f"while [ ! -s {pidfile} ]; do sleep 0.05; done; echo started")
+    assert res.ok and "started" in res.stdout
+    pid = int(pidfile.read_text().strip())
+    deadline = time.time() + 5.0
+    while not _gone(pid) and time.time() < deadline:
+        time.sleep(0.05)
+    assert _gone(pid), "a child that called setsid survived exec()"
+
+
 # ---- sandbox.exec accepts a per-call timeout kwarg ----
 
 class TestSandboxExecTimeout:

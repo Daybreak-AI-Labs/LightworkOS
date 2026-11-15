@@ -173,6 +173,11 @@ _ledger_lock = threading.RLock()
 _LEDGER_VERSION = 2
 _MAX_LEDGER_BYTES = 4 * 1024 * 1024
 _MAX_LEDGER_RECORDS = 10_000
+# Grants stop early so every active grant can always be revoked: each grant
+# reserves room for its own revocation, plus headroom for tombstones.
+_REVOCATION_HEADROOM_RECORDS = 64
+_REVOCATION_HEADROOM_BYTES = 64 * 1024
+_REVOCATION_SLACK_BYTES = 32  # a revoke row may be a little longer than its grant
 _MAX_ACTION_CHARS = 256
 _MAX_SCOPE_CHARS = 4096
 
@@ -538,6 +543,8 @@ def _append_record_unlocked(
     current_size = path.stat().st_size if path.exists() else 0
     if current_size + len(encoded) > _MAX_LEDGER_BYTES:
         raise ConsentLedgerError("consent ledger exceeds its bounded size")
+    if op == "grant":
+        _require_revocation_room(records, current_size, len(encoded))
     fd = open_private_append(path, require_private_parent=True)
     try:
         with os.fdopen(fd, "ab") as stream:
@@ -550,6 +557,28 @@ def _append_record_unlocked(
     finally:
         if fd >= 0:
             os.close(fd)
+
+
+def _require_revocation_room(records: list[dict], size: int, grant_bytes: int) -> None:
+    """Refuse a grant unless every active grant, this one included, could
+    still be revoked within the ledger's caps (across all bindings)."""
+    active: dict[tuple, int] = {}
+    for record in records:
+        binding = tuple(record[name] for name in ("tenant", "principal", "policy", "action", "scope"))
+        if record["op"] == "grant":
+            active[binding] = len(_canonical_record(record)) + 1
+        else:
+            active.pop(binding, None)
+    revocations = len(active) + 1
+    reserved = sum(active.values()) + grant_bytes + revocations * _REVOCATION_SLACK_BYTES
+    if (
+        len(records) + 1 + revocations + _REVOCATION_HEADROOM_RECORDS > _MAX_LEDGER_RECORDS
+        or size + grant_bytes + reserved + _REVOCATION_HEADROOM_BYTES > _MAX_LEDGER_BYTES
+    ):
+        raise ConsentLedgerError(
+            "consent ledger is full: the remaining space is kept free so "
+            "existing standing grants can always be revoked"
+        )
 
 
 def _check_ledger(action: str, scope: str | None, path: Path | None = None) -> bool:

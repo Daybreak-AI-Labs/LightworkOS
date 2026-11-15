@@ -61,7 +61,7 @@ from pathlib import Path
 from ..file_lock import cross_process_lock, ensure_private_directory
 from ..paths import maverick_home
 from . import workspace_transfer
-from .local import ExecResult, scrub_env
+from .local import ExecResult, cap_output, run_capped, scrub_env
 
 log = logging.getLogger(__name__)
 
@@ -385,13 +385,10 @@ class KubernetesBackend:
         args = [*self._kubectl_prefix(), "exec", pod_name, "--", "sh", "-c", wrapped,
                 "workspace-command", scratch, _POD_WORKDIR, cmd]
         try:
-            result = subprocess.run(
-                args, capture_output=True, text=True, errors="replace", timeout=effective,
-                env=scrub_env(),
-            )
+            result = run_capped(args, timeout=effective, env=scrub_env())
             return ExecResult(
-                stdout=result.stdout[-8000:],
-                stderr=result.stderr[-2000:],
+                stdout=cap_output(result.stdout),
+                stderr=cap_output(result.stderr, 2000),
                 exit_code=result.returncode,
             )
         except subprocess.TimeoutExpired as e:
@@ -399,7 +396,7 @@ class KubernetesBackend:
             if isinstance(stdout, bytes):
                 stdout = stdout.decode("utf-8", errors="replace")
             return ExecResult(
-                stdout=stdout[-8000:],
+                stdout=cap_output(stdout),
                 stderr=f"TIMEOUT after {effective}s",
                 exit_code=124,
             )

@@ -60,6 +60,29 @@ def test_schema_ref_and_invalid_sample_refuse_before_dispatch():
     assert called == []
 
 
+def test_plugin_patterns_run_under_the_regex_guard(monkeypatch):
+    # A plugin-chosen pattern is matched on the host against the operator's
+    # practice text; a backtracking pattern must not stall the process.
+    pytest.importorskip("jsonschema")
+    from jsonschema import ValidationError
+    from maverick.tools import _regex_guard
+
+    seen = []
+    real = _regex_guard.guarded_search
+    monkeypatch.setattr(_regex_guard, "guarded_search",
+                        lambda pattern, text, **kw: seen.append((pattern, text)) or real(pattern, text, **kw))
+    schema = {"type": "object", "properties": {"text": {"type": "string", "pattern": "^(\\w+\\s?)+$"}},
+              "patternProperties": {"^x-(a+)+$": {"type": "string"}}, "additionalProperties": False}
+    with pytest.raises(ValidationError, match="could not be checked"):
+        contracts.validate(schema, {"text": "a" * 30 + "!"})
+    contracts.validate(schema, {"text": "plain words", "x-aaa": "ok"})
+    with pytest.raises(ValidationError, match="not allowed"):
+        contracts.validate(schema, {"text": "plain", "other": "x"})
+    assert ("^x-(a+)+$", "x-aaa") in seen and ("^x-(a+)+$", "other") in seen
+    with pytest.raises(ValueError, match="unevaluatedProperties"):
+        contracts.validator({"type": "object", "patternProperties": {"a": {}}, "unevaluatedProperties": False})
+
+
 def test_dynamic_reference_to_a_url_is_refused():
     # The host validates practice input against a schema the container
     # reported; $dynamicRef resolves through a registry that fetches URLs.

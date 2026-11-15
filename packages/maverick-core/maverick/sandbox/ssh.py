@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import ClassVar
 
-from .local import ExecResult, scrub_env
+from .local import ExecResult, cap_output, run_capped, scrub_env
 
 
 def _ssh_env() -> dict:
@@ -162,13 +162,10 @@ class SSHBackend:
         # ssh feature that reads it (e.g. SSH_ASKPASS-style helpers).
         args = ["ssh", *self._ssh_opts(), *self.ssh_args, self.host, remote]
         try:
-            result = subprocess.run(
-                args, capture_output=True, text=True, errors="replace", timeout=effective,
-                env=_ssh_env(),
-            )
+            result = run_capped(args, timeout=effective, env=_ssh_env())
             return ExecResult(
-                stdout=result.stdout[-8000:],
-                stderr=result.stderr[-2000:],
+                stdout=cap_output(result.stdout),
+                stderr=cap_output(result.stderr, 2000),
                 exit_code=result.returncode,
             )
         except subprocess.TimeoutExpired as e:
@@ -178,7 +175,7 @@ class SSHBackend:
             if isinstance(stdout, bytes):
                 stdout = stdout.decode("utf-8", errors="replace")
             return ExecResult(
-                stdout=stdout[-8000:],
+                stdout=cap_output(stdout),
                 stderr=f"TIMEOUT after {effective}s",
                 exit_code=124,
             )

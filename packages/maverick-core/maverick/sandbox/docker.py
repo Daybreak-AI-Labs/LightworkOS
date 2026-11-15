@@ -27,7 +27,7 @@ from pathlib import Path
 
 from .container_cleanup import CLEANUP_SECONDS, ContainerCleanup, cleanup_container
 from .lease import BackendLease, operation_lease
-from .local import ExecResult, container_user_args, scrub_env
+from .local import ExecResult, cap_output, container_user_args, run_capped, scrub_env
 
 log = logging.getLogger(__name__)
 
@@ -269,17 +269,10 @@ class DockerBackend:
                      f"{max(effective, 0.001):.6f}s", "sh", "-c", cmd])
 
         try:
-            result = subprocess.run(
-                args,
-                capture_output=True,
-                text=True,
-                errors="replace",
-                timeout=effective,
-                env=scrub_env(),
-            )
+            result = run_capped(args, timeout=effective, env=scrub_env())
             return ExecResult(
-                stdout=result.stdout[-8000:],
-                stderr=result.stderr[-2000:],
+                stdout=cap_output(result.stdout),
+                stderr=cap_output(result.stderr, 2000),
                 exit_code=result.returncode,
             )
         except subprocess.TimeoutExpired as e:
@@ -293,7 +286,7 @@ class DockerBackend:
             if isinstance(stdout, bytes):
                 stdout = stdout.decode("utf-8", errors="replace")
             return ExecResult(
-                stdout=stdout[-8000:],
+                stdout=cap_output(stdout),
                 stderr=f"TIMEOUT after {effective}s{cleanup_note}",
                 exit_code=124,
             )
@@ -333,11 +326,10 @@ class DockerBackend:
         args = ["docker", "exec", self._warm_name, "sh", "-c",
                 self._warm_command(cmd)]
         try:
-            result = subprocess.run(args, capture_output=True, text=True, errors="replace",
-                                    timeout=effective, env=scrub_env())
+            result = run_capped(args, timeout=effective, env=scrub_env())
             return ExecResult(
-                stdout=result.stdout[-8000:],
-                stderr=result.stderr[-2000:],
+                stdout=cap_output(result.stdout),
+                stderr=cap_output(result.stderr, 2000),
                 exit_code=result.returncode,
             )
         except subprocess.TimeoutExpired as e:
@@ -349,7 +341,7 @@ class DockerBackend:
             stdout = e.stdout or ""
             if isinstance(stdout, bytes):
                 stdout = stdout.decode("utf-8", errors="replace")
-            return ExecResult(stdout=stdout[-8000:],
+            return ExecResult(stdout=cap_output(stdout),
                               stderr=f"TIMEOUT after {effective}s{cleanup.note}", exit_code=124)
 
     def _warm_command(self, cmd: str) -> str:

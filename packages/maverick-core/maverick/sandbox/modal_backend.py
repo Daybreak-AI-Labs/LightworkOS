@@ -66,7 +66,7 @@ class ModalBackend:
     def exec(self, cmd: str, timeout: float | None = None):
         """Run ``cmd`` in a fresh Modal sandbox; return an ExecResult-shaped
         object (stdout / stderr / exit_code)."""
-        from .local import ExecResult
+        from .local import ExecResult, cap_output
         effective = self.timeout if timeout is None else float(timeout)
         if not self.allow_network:
             return ExecResult(
@@ -103,7 +103,7 @@ class ModalBackend:
                     sb.terminate()
                 except Exception:  # pragma: no cover -- already finished
                     pass
-            return ExecResult(stdout=stdout[-8000:], stderr=stderr[-2000:],
+            return ExecResult(stdout=cap_output(stdout), stderr=cap_output(stderr, 2000),
                               exit_code=int(code))
         except Exception as e:
             # Surfaced as a failed command, mirroring how other backends report

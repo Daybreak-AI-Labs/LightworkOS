@@ -419,3 +419,21 @@ def test_docker_timeout_cleanup_is_guarded(monkeypatch):
     res = b.exec("sleep 100")
     assert res.exit_code == 124
     assert "TIMEOUT" in res.stderr
+
+
+def test_container_output_is_bounded_while_it_streams(monkeypatch, tmp_path):
+    # The real client pipe path, with a local process standing in for docker.
+    import sys
+
+    from maverick.sandbox import local
+    monkeypatch.setattr(DockerBackend, "_verify_docker", lambda self: None)
+    real_run = subprocess.run
+    peak = []
+    feed = local._Tail.feed
+    monkeypatch.setattr(local._Tail, "feed", lambda self, chunk: feed(self, chunk) or peak.append(len(self.data)))
+    monkeypatch.setattr(subprocess, "run", lambda args, **k: real_run(
+        [sys.executable, "-c", "import sys; sys.stdout.write('x' * 5_000_000 + 'END')"], **k))
+    res = DockerBackend(workdir=tmp_path).exec("yes")
+    assert res.ok and res.stdout.endswith("END")
+    assert res.stdout.startswith("[output truncated: showing the last 8,000 characters]")
+    assert max(peak) <= local._KEEP_BYTES
