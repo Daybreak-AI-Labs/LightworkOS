@@ -906,6 +906,15 @@ AMBIENT_CRED_TOOL_NAMES = frozenset({
     "s3", "ses", "sns",
 })
 
+
+def opt_in_tool_hint(name: str) -> str:
+    """For a tool that registers only behind a setting, the setting to turn on."""
+    if name in AMBIENT_CRED_TOOL_NAMES:
+        return ("; it uses this server's own sign-ins and is offered only when "
+                "[tools] credential_connectors is on (MAVERICK_ENABLE_CRED_TOOLS)")
+    return ""
+
+
 # Hand-written connectors that still read operator-global environment
 # credentials directly. They are safe for the anonymous/local operator path,
 # but cannot enforce per-principal grants. Authenticated enterprise execution

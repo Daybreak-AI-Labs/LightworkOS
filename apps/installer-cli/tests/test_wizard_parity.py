@@ -714,6 +714,20 @@ def test_write_config_tools_block_coexists(tmp_path: Path, monkeypatch):
     assert parsed["tools"]["hardware_sensors"] is True
 
 
+def test_wizard_asks_for_and_writes_the_credential_connectors_switch(tmp_path: Path, monkeypatch):
+    # s3, ses, sns, lambda, dynamodb (and more) register only with
+    # [tools] credential_connectors, so the wizard must reach it (rule 6).
+    import inspect
+
+    from maverick_installer.wizard import advanced as advanced_step
+
+    assert '"credential_connectors": _q_confirm(' in inspect.getsource(advanced_step)
+    parsed = _write_full_config(tmp_path, monkeypatch, advanced={"credential_connectors": True})
+    assert parsed["tools"]["credential_connectors"] is True
+    parsed = _write_full_config(tmp_path, monkeypatch, advanced={"credential_connectors": False})
+    assert "credential_connectors" not in parsed.get("tools", {})
+
+
 def test_write_config_emits_full_tool_exposure_only_when_chosen(tmp_path: Path, monkeypatch):
     # [tools] exposure defaults to "core" in the kernel; the wizard writes the
     # key only when the operator picked "show every tool".

@@ -233,7 +233,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `[limits] file_write_quota_mb`, as `write_file` writes already did.
 - The `s3`, `ses` and `sns` tools appear only with
   `[tools] credential_connectors` on (`MAVERICK_ENABLE_CRED_TOOLS`), like
-  `lambda` and `dynamodb`. Turn it on to keep using them.
+  `lambda` and `dynamodb`. Turn it on (the wizard now asks) to keep using
+  them; a saved flow that names one says which setting to turn on.
 - `vertex generate` has no built-in model: name one, and it must be on
   `[access] allowed_models` (as `vertex:<model id>`) when that list is set.
   Each Vertex call leaves a spend receipt with an unknown cost; it is not

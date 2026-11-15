@@ -1775,6 +1775,13 @@ def _pick_runtime_toggles() -> dict[str, Any]:
             "default because it exposes host telemetry to tool calls.",
             default=False,
         ),
+        "credential_connectors": _q_confirm(
+            "Offer connectors that use this server's own sign-ins? Lets agents "
+            "use AWS (S3, SES, SNS, Lambda, DynamoDB), Google Drive, Airtable, "
+            "Asana, ClickUp and Vercel with credentials already on this server. "
+            "Off by default.",
+            default=False,
+        ),
         "local_first": _q_confirm(
             "Local-first models? When a configured local model's server is "
             "reachable, prefer it over a remote provider (privacy + cost). Only "
@@ -3552,6 +3559,8 @@ def _cfg_advanced_runtime_and_tools(advanced: dict[str, Any], providers: list[st
         tool_lines.append("output_cache = true")
     if advanced.get("hardware_sensors"):
         tool_lines.append("hardware_sensors = true")
+    if advanced.get("credential_connectors"):
+        tool_lines.append("credential_connectors = true")
     if tool_lines:
         lines.append("")
         lines.append("[tools]")
