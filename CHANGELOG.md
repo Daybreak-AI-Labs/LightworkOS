@@ -243,6 +243,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `maverick confidential-compute` no longer counts `/sys/firmware/tdx` as
   proof of a TDX guest; that folder appears on TDX hosts. Guests are still
   detected by `/dev/tdx_guest` or the `tdx_guest` CPU flag.
+- The calendar tool checks every CalDAV request, redirects included, against
+  the egress policy (`[enterprise] allowed_hosts`, tenant egress). Add your
+  CalDAV server's host to the allow-list in enterprise mode.
 
 ### Fixed
 
