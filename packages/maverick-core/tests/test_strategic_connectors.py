@@ -259,6 +259,9 @@ def test_vertex_generate_obeys_the_model_allow_list_and_has_no_built_in_model(mo
     assert out.startswith("ERROR") and "allowed_models" in out
     assert post.call_count == 0
     assert vertex_tool().fn({"op": "generate", "model": "approved-model", "prompt": "hi"}) == "ok"
+    # Product text names no model either; it says how the allow-list spells one.
+    description = vertex_tool().input_schema["properties"]["model"]["description"]
+    assert "gemini" not in description.lower() and "vertex:<model id>" in description
 
 
 def test_vertex_calls_are_metered_against_provider_spend(monkeypatch):

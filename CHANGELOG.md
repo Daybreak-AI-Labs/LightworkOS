@@ -235,9 +235,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `[tools] credential_connectors` on (`MAVERICK_ENABLE_CRED_TOOLS`), like
   `lambda` and `dynamodb`. Turn it on to keep using them.
 - `vertex generate` has no built-in model: name one, and it must be on
-  `[access] allowed_models` when that list is set. Each Vertex call leaves a
-  spend receipt with an unknown cost; it is not charged to the run budget.
-  With `[budget.provider_caps] vertex` set, the tool refuses every call.
+  `[access] allowed_models` (as `vertex:<model id>`) when that list is set.
+  Each Vertex call leaves a spend receipt with an unknown cost; it is not
+  charged to the run budget. With `[budget.provider_caps] vertex` set, the
+  tool refuses every call.
 - `oracle` asks for `confirm` when a read hides a second statement in
   Oracle `q'...'` quoting, or after a `show`/`desc` line, a `/` line, a `.`
   line or a blank line. Remove blank lines inside a query to run it as a read.

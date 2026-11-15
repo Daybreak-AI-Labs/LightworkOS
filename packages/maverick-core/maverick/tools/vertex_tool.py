@@ -41,7 +41,9 @@ _SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "op": {"type": "string", "enum": ["generate", "predict"]},
-        "model": {"type": "string", "description": "e.g. gemini-2.5-pro (generate)."},
+        "model": {"type": "string", "description": (
+            "Vertex model id to call (generate). Required; when [access] "
+            "allowed_models is set it must list vertex:<model id>.")},
         "prompt": {"type": "string"},
         "endpoint_id": {"type": "string", "description": "deployed endpoint id (predict)."},
         "instances": {"type": "array", "description": "predict instances."},
