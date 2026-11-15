@@ -120,3 +120,44 @@ def test_dns_lookup_refuses_names_that_are_not_plain_hostnames(monkeypatch, dnsp
     assert out.startswith("ERROR") and "hostname" in out
     out = dns_lookup().fn({"op": "reverse", "ip": name})
     assert out.startswith("ERROR")
+
+
+@pytest.mark.parametrize("dnspython", [True, False])
+@pytest.mark.parametrize(("typed", "sent", "checked"), [
+    ("example.com.", "example.com.", "example.com"),
+    ("bücher.example", "xn--bcher-kva.example", "xn--bcher-kva.example"),
+])
+def test_dns_lookup_keeps_fqdn_and_unicode_names_on_one_host(monkeypatch, dnspython, typed, sent, checked):
+    # A trailing dot and a Unicode name are valid DNS names: the policy sees the
+    # same host the resolver is asked about (ASCII form, no trailing dot).
+    import sys
+    import types
+
+    import maverick.tenant.egress as egress
+    seen, asked = [], []
+    monkeypatch.setattr(egress, "egress_allowed", lambda tool, host: seen.append(host) or True)
+
+    def _resolve(host, rtype, lifetime=None):
+        asked.append(host)
+
+        class _Rec:
+            def to_text(self):
+                return "93.184.216.34"
+        return [_Rec()]
+
+    resolver = types.ModuleType("dns.resolver")
+    resolver.resolve = _resolve
+    for name in ("NXDOMAIN", "NoAnswer", "NoNameservers"):
+        setattr(resolver, name, type(name, (Exception,), {}))
+    package = types.ModuleType("dns")
+    package.resolver = resolver
+    monkeypatch.setitem(sys.modules, "dns", package)
+    monkeypatch.setitem(sys.modules, "dns.resolver", resolver)
+    monkeypatch.setattr("maverick.tools.dns_lookup._have_dnspython", lambda: dnspython)
+    monkeypatch.setattr("socket.getaddrinfo",
+                        lambda host, *a, **k: asked.append(host) or [(0, 0, 0, "", ("93.184.216.34", 0))])
+    from maverick.tools.dns_lookup import dns_lookup
+    out = dns_lookup().fn({"op": "resolve", "host": typed, "type": "A"})
+    assert "93.184.216.34" in out
+    assert seen == [checked] and asked == [sent]
+    assert dns_lookup().fn({"op": "resolve", "host": "example.com#x.attacker.test"}).startswith("ERROR")

@@ -138,18 +138,37 @@ def _egress_denial(name: str) -> str | None:
     """
     from ._sdk_egress import sdk_egress_denial
 
-    target = f"[{name}]" if ":" in name else name
+    # The policy judges the host without a root dot (``example.com.`` and
+    # ``example.com`` are one host, and allow-lists are written without it).
+    bare = name.rstrip(".")
+    target = f"[{bare}]" if ":" in bare else bare
     url = f"https://{target}/"
     from urllib.parse import urlsplit
-    if (urlsplit(url).hostname or "") != name.lower().rstrip("."):
+    if (urlsplit(url).hostname or "").rstrip(".") != bare.lower():
         return f"ERROR: {name[:80]!r} is not a plain hostname"
     denial = sdk_egress_denial("dns_lookup", url)
     return f"ERROR: {denial}" if denial else None
 
 
+def _ascii_name(host: str) -> str | None:
+    """``host`` in its ASCII (``xn--``) form, or None when it has none."""
+    if host.isascii():
+        return host
+    try:
+        return host.encode("idna").decode("ascii")
+    except UnicodeError:
+        return None
+
+
 def _op_resolve(host: str, rtype: str) -> str:
     if not host:
         return "ERROR: resolve requires host"
+    # Check and resolve the same ASCII name, never a Unicode spelling that a
+    # resolver would convert on its own.
+    ascii_host = _ascii_name(host)
+    if ascii_host is None:
+        return f"ERROR: {host[:80]!r} has no ASCII (xn--) form; give the name in that form"
+    host = ascii_host
     rtype = rtype.upper()
     if rtype not in _RTYPES:
         # The schema enum is advisory; dnspython would resolve any type it knows.
