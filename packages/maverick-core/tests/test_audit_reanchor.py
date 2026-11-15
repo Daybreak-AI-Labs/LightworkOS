@@ -304,3 +304,33 @@ def test_a_retired_key_without_its_public_key_names_the_key_to_restore(
     (blocker,) = erase_blockers("telegram", "alice", audit_dir=ad)
     assert "public key is not available" in blocker and "MAVERICK_AUDIT_TRUSTED_PUBLIC_KEYS" in blocker
     assert "backup restore" not in blocker
+
+
+def test_erase_checks_the_chosen_checkpoint_folder_too(_isolate_keys, tmp_path):
+    """Today's open day is never anchored, so a checkpoint in the folder an
+    administrator chose is what catches a removed row: erase refuses it."""
+    import json
+
+    from maverick.audit.checkpoint_location import settings_path
+    from maverick.audit.checkpoints import publish_checkpoint
+    from maverick.audit.erase import erase_blockers, scrub_user
+
+    _log, ad, path = _signed_log(tmp_path)
+    chosen = tmp_path / "worm"
+    chosen.mkdir()
+    settings_path().parent.mkdir(parents=True, exist_ok=True)
+    settings_path().write_text(json.dumps({"folder": str(chosen), "keys": []}), encoding="utf-8")
+    publish_checkpoint(ad, chosen, day=path.stem)
+    path.write_text("".join(path.read_text(encoding="utf-8").splitlines(keepends=True)[:-1]),
+                    encoding="utf-8")
+    before = path.read_bytes()
+
+    (blocker,) = erase_blockers("telegram", "alice", audit_dir=ad)
+    assert "published checkpoint" in blocker
+    with pytest.raises(RuntimeError):
+        scrub_user("telegram", "alice", audit_dir=ad, strict=True)
+    assert path.read_bytes() == before
+
+    chosen.rename(tmp_path / "gone")
+    (blocker,) = erase_blockers("telegram", "alice", audit_dir=ad)
+    assert str(chosen) in blocker

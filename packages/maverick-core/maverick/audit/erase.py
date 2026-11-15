@@ -33,6 +33,7 @@ import hashlib
 import io
 import json
 import logging
+import os
 from pathlib import Path
 
 from ..file_lock import (
@@ -187,21 +188,54 @@ def _anchor_problem(path: Path, *, reanchors: bool) -> str | None:
     return None
 
 
+def _checkpoint_stores(path: Path) -> tuple[list[Path], list[str] | None, str | None]:
+    """Every checkpoint store that may commit to ``path``'s day.
+
+    The default store and the custody store beside the audit folder, and the
+    folder an administrator chose. Returns ``(stores, pinned_keys, problem)``;
+    a chosen folder that cannot be read is a problem, not a skip.
+    """
+    from .checkpoint_location import checkpoint_dir, load, settings_path
+
+    stores = [path.parent.parent / "audit-checkpoints",
+              path.parent.parent / "unified-audit" / "checkpoints"]
+    try:
+        settings = load()
+    except RuntimeError:
+        return [], None, (f"the checkpoint settings file {settings_path()} cannot be read; "
+                          "fix or restore it")
+    if settings["folder"]:
+        chosen = Path(settings["folder"])
+        if not chosen.is_dir() or not os.access(chosen, os.R_OK | os.X_OK):
+            return [], None, (f"the chosen checkpoint folder {chosen} cannot be read; reconnect "
+                              "it, or choose another folder in the audit checkpoint settings")
+        stores.append(checkpoint_dir())
+    return list(dict.fromkeys(stores)), (settings["keys"] or None), None
+
+
 def _checkpoint_problem(path: Path) -> str | None:
-    """A published checkpoint (default store) that requires more rows than the day has."""
-    store = path.parent.parent / "audit-checkpoints"
-    if not store.is_dir():
-        return None
+    """A published checkpoint that requires more rows than the day has.
+
+    Today's open day is never anchored, so its checkpoints are the only
+    evidence of a removed row; an erase marker would otherwise bring the
+    count back and turn that evidence into a routine prefix change.
+    """
     from .checkpoints import verify_checkpoints
 
-    try:
-        breaks = verify_checkpoints(path.parent, store)
-    # failure-policy: fail_closed
-    except Exception as e:  # pragma: no cover - defensive
-        return f"published checkpoints could not be checked ({type(e).__name__}); run erase again"
-    if any(b.reason == "audit_tail_truncated" and f"{path.name} " in b.detail for b in breaks):
-        return (f"{path.name} has fewer rows than its published checkpoint (see "
-                f"`maverick audit checkpoint verify`). {_RESTORE_DAY}")
+    stores, keys, problem = _checkpoint_stores(path)
+    if problem:
+        return problem
+    for store in stores:
+        if not store.is_dir():
+            continue
+        try:
+            breaks = verify_checkpoints(path.parent, store, trusted_pubkeys=keys)
+        # failure-policy: fail_closed
+        except Exception as e:  # pragma: no cover - defensive
+            return f"checkpoints in {store} could not be checked ({type(e).__name__}); run erase again"
+        if any(b.reason == "audit_tail_truncated" and f"{path.name} " in b.detail for b in breaks):
+            return (f"{path.name} has fewer rows than its published checkpoint in {store} (see "
+                    f"`maverick audit checkpoint verify`). {_RESTORE_DAY}")
     return None
 
 

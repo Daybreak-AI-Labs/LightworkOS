@@ -241,7 +241,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `maverick erase` also refuses a day whose tip anchor, tip ledger or
   published checkpoint already reports a break, so an erase never hides a
   truncated or edited day. Each refusal names the step to take, such as
-  restoring the day or a retired key's public key.
+  restoring the day or a retired key's public key. The checkpoint check
+  covers the default store, the custody store and the folder chosen in the
+  audit checkpoint settings; a chosen folder that cannot be read refuses.
 - A rerun of `maverick erase` that finds no conversation now also clears the
   AI reply cache and retries attachment files an earlier run could not
   remove, so it finishes the job or names again what remains. The list of
