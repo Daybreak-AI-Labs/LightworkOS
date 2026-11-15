@@ -287,6 +287,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   CalDAV server's host to the allow-list in enterprise mode.
 - The setup wizard re-asks for trusted insight and tax publisher keys until
   each is 64 hexadecimal characters, and saves them in lower case.
+- `dns_lookup` now obeys the network policy and egress lists: a name the
+  policy blocks is not looked up. Add the host to the allow list if needed.
+- `embedded_device` refuses `i2c_write` until `[embedded] allow_flash = true`,
+  the same opt-in as flash and reset. Turn it on to keep writing registers.
+- Hosted `image_edit` edits and every `huggingface` call need a human
+  approval when governed connectors are on, like `replicate run`.
+- `str_replace_editor` and `spreadsheet` writes count against
+  `[limits] file_write_quota_mb`, as `write_file` writes already did.
+- The `s3`, `ses` and `sns` tools appear only with
+  `[tools] credential_connectors` on (`MAVERICK_ENABLE_CRED_TOOLS`), like
+  `lambda` and `dynamodb`. Turn it on (the wizard now asks) to keep using
+  them; a saved flow that names one says which setting to turn on.
+- `vertex generate` has no built-in model: name one, and it must be on
+  `[access] allowed_models` (as `vertex:<model id>`) when that list is set.
+  Each Vertex call leaves a spend receipt with an unknown cost; it is not
+  charged to the run budget. With `[budget.provider_caps] vertex` set, the
+  tool refuses every call.
+- `oracle` asks for `confirm` when a read hides a second statement in
+  Oracle `q'...'` quoting, or after a `show`/`desc` line, a `/` line, a `.`
+  line or a blank line. Remove blank lines inside a query to run it as a read.
+- `notebook_exec` keeps `%` and `!` lines that sit inside a string, a bracket
+  or a continued line; only lines that start a statement are dropped.
+- Every built-in tool now has an explicit risk rating. Discovery and
+  read-only tools such as `find_tools` are low, so a low or medium
+  `max_risk` keeps them. Unrated plugin and MCP tools still count as high.
 
 ### Fixed
 

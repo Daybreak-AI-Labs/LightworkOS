@@ -121,3 +121,57 @@ def test_audited_abstract_adapters_are_rated_medium_not_unknown():
     assert tool_risk("ledger_read", overrides={"ledger_read": "high"}) == "high"
     assert tool_risk("customer_ledger_read", overrides={}) == "high"
     assert not tool_risk_is_classified("customer_ledger_read", overrides={})
+
+
+def test_every_built_in_tool_has_an_explicit_rating(tmp_path, monkeypatch):
+    # "Unrated means high" is the safety net for plugin, MCP and generated
+    # tools. A tool Lightwork ships must be rated on purpose, so a new one
+    # cannot arrive unrated and silently prompt as high (or vanish under a
+    # risk ceiling). Every optional switch is on so opt-in tools are checked.
+    import maverick.commerce
+    import maverick.consequence
+    import maverick.governed_repl
+    import maverick.tools as tools
+    from maverick.safety.tool_risk import tool_risk_is_classified
+    from maverick.sandbox.local import LocalBackend
+    from maverick.tools.commerce_tools import commerce_tools
+
+    monkeypatch.setenv("MAVERICK_ENABLE_CRED_TOOLS", "1")
+    monkeypatch.setenv("MAVERICK_ENABLE_HARDWARE_SENSORS", "1")
+    monkeypatch.setattr(maverick.governed_repl, "enabled", lambda: True)
+    monkeypatch.setattr(maverick.consequence, "enabled", lambda: True)
+    monkeypatch.setattr(maverick.commerce, "enabled", lambda: True)
+
+    class _World:
+        def open_questions(self, goal_id):
+            return []
+
+        def ask(self, question, goal_id=None):
+            return 1
+
+        def list_attachments(self, goal_id):
+            return []
+
+    reg = tools.base_registry(
+        _World(), LocalBackend(workdir=tmp_path), goal_id=1,
+        enable_web_search=True, enable_mobile_tools=True, enable_ros=True,
+        enable_browser=True, _include_generated_tools=False,
+        _skip_tool_acl=True, _include_plugins=False,
+    )
+    names = {tool.name for tool in reg.all()}
+    names |= {tool.name for tool in commerce_tools()}
+    # Registered by the agent itself, after base_registry (agent._build_tools).
+    names |= {
+        "send_to_agent", "recv_from_agent", "delegate_to_agent", "spawn_subagent",
+        "spawn_swarm", "spawn_specialist", "list_specialists", "knowledge_search",
+        "learn_capability", "code_exec", "find_tools",
+    }
+    unrated = sorted(n for n in names if not tool_risk_is_classified(n, overrides={}))
+    assert unrated == [], f"rate these in safety/tool_risk.py: {unrated}"
+
+
+def test_recv_from_agent_is_rated_by_its_effects():
+    # Receiving consumes the message and can install a delegated grant on the
+    # agent, so it is not a read-only lookup.
+    from maverick.safety.tool_risk import tool_risk
+    assert tool_risk("recv_from_agent", overrides={}) == "high"

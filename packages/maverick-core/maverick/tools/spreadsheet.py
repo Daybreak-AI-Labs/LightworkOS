@@ -452,7 +452,21 @@ def _is_single_cell(cell: str) -> bool:
     return column <= 16384 and int(match.group(2)) <= 1048576
 
 
-def _set_cell_operation(path, args, sheet):
+def _charge_quota(rows: list[list], goal_id) -> None:
+    """Charge a write to the goal's file-write quota (the one ``write_file`` uses).
+
+    The size is the rows as CSV text, an estimate for xlsx. Raises
+    ``RuntimeError`` (reported as ``ERROR: ...``) when the write would cross it.
+    """
+    from ..file_quota import check_and_add
+    buffer = io.StringIO()
+    _csv.writer(buffer).writerows(rows)
+    ok, msg = check_and_add(len(buffer.getvalue().encode("utf-8", "replace")), goal_id=goal_id)
+    if not ok:
+        raise RuntimeError(msg)
+
+
+def _set_cell_operation(path, args, sheet, goal_id="default"):
     if not _is_xlsx(path):
         return "ERROR: set_cell is xlsx-only; use write for csv"
     cell = str(args.get("cell") or "").strip()
@@ -460,6 +474,7 @@ def _set_cell_operation(path, args, sheet):
         return "ERROR: set_cell requires cell (e.g. 'B2')"
     if not _is_single_cell(cell):
         return f"ERROR: set_cell needs a single A1 cell such as 'B2', not {cell[:40]!r}"
+    _charge_quota([[cell, args.get("value")]], goal_id)
     from ..file_lock import cross_process_lock
     with cross_process_lock(path, strict=True):
         if path.exists():
@@ -497,7 +512,7 @@ def _workspace_gate(sandbox, raw_path: str, path: Path, op) -> None:
         raise ValueError(f"refusing to write under .git/: {rel}")
 
 
-def _run(args: dict[str, Any], sandbox=None) -> str:
+def _run(args: dict[str, Any], sandbox=None, goal_id="default") -> str:
     op = args.get("op")
     raw_path = str(args.get("path") or "")
     if not op:
@@ -539,6 +554,7 @@ def _run(args: dict[str, Any], sandbox=None) -> str:
             if not isinstance(rows, list) or any(not isinstance(row, list) for row in rows):
                 return "ERROR: write requires rows (list of lists)"
             norm = [list(r) for r in rows]
+            _charge_quota(norm, goal_id)
             from ..file_lock import cross_process_lock
             with cross_process_lock(path, strict=True):
                 if _is_xlsx(path):
@@ -547,7 +563,7 @@ def _run(args: dict[str, Any], sandbox=None) -> str:
                     _csv_write(path, norm)
             return f"wrote {len(rows)} row(s) to {path}"
         if op == "set_cell":
-            return _set_cell_operation(path, args, sheet)
+            return _set_cell_operation(path, args, sheet, goal_id)
     except RuntimeError as e:
         return f"ERROR: {e}"
     except Exception as e:  # noqa: BLE001
@@ -555,7 +571,8 @@ def _run(args: dict[str, Any], sandbox=None) -> str:
     return f"ERROR: unknown op {op!r}"
 
 
-def spreadsheet(sandbox=None) -> Tool:
+def spreadsheet(sandbox=None, goal_id: str | int | None = "default") -> Tool:
+    quota_goal_id = "default" if goal_id is None else goal_id
     return Tool(
         name="spreadsheet",
         description=(
@@ -566,7 +583,7 @@ def spreadsheet(sandbox=None) -> Tool:
             "not proof of fresh calculation. Enabled .xlsm cell edits preserve VBA without executing it."
         ),
         input_schema=_SPREADSHEET_SCHEMA,
-        fn=lambda args: _run(args, sandbox),
+        fn=lambda args: _run(args, sandbox, quota_goal_id),
     )
 
 

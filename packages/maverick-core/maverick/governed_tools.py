@@ -93,6 +93,11 @@ _BESPOKE_WRITE_OPS: dict[str, frozenset[str]] = {
     "gitlab_issues": frozenset({"create"}),
     "home_assistant": frozenset({"call_service"}),
     "hubspot": frozenset({"contact_create", "contact_update"}),
+    # Every op sends the caller's input to a third-party inference API.
+    "huggingface": frozenset({"image_classify", "infer", "summarize"}),
+    # The hosted edits create the same paid prediction as ``replicate run``
+    # and upload a workspace image; crop/resize/rotate stay local.
+    "image_edit": frozenset({"inpaint", "upscale", "variation"}),
     "jira": frozenset({"comment", "create", "transition"}),
     "lambda": frozenset({"invoke"}),
     "linear": frozenset({"comment", "create", "update_status"}),

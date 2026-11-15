@@ -94,3 +94,32 @@ def test_write_file_tool_unaffected_when_off(monkeypatch, tmp_path):
     monkeypatch.setattr(file_quota, "_limit_bytes", lambda: 0)
     tool = write_file(build_sandbox(workdir=str(tmp_path)))
     assert tool.fn({"path": "big.txt", "content": "z" * 100000}).startswith("wrote")
+
+
+def test_editor_and_spreadsheet_writes_count_against_the_goal_quota(monkeypatch, tmp_path):
+    # Every workspace write tool charges the same per-goal quota as write_file,
+    # so switching tools cannot step around the cap.
+    from maverick.sandbox import build_sandbox
+    from maverick.tools import base_registry
+
+    class DummyWorld:
+        def ask(self, question, goal_id=None):
+            return 1
+
+        def list_attachments(self, goal_id):
+            return []
+
+    file_quota.reset("303")
+    monkeypatch.setattr(file_quota, "_limit_bytes", lambda: 100)
+    reg = base_registry(DummyWorld(), build_sandbox(workdir=str(tmp_path)), goal_id=303)
+    editor, sheet = reg.get("str_replace_editor"), reg.get("spreadsheet")
+
+    assert editor.fn({"command": "create", "path": "a.txt", "file_text": "x" * 40}).startswith("created")
+    blocked = editor.fn({"command": "str_replace", "path": "a.txt",
+                         "old_str": "x" * 40, "new_str": "y" * 70})
+    assert blocked.startswith("ERROR") and "quota exceeded" in blocked
+    assert (tmp_path / "a.txt").read_text() == "x" * 40
+    blocked = sheet.fn({"op": "write", "path": "b.csv", "rows": [["z" * 70]]})
+    assert blocked.startswith("ERROR") and "quota exceeded" in blocked
+    assert not (tmp_path / "b.csv").exists()
+    file_quota.reset("303")

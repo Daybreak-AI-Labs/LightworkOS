@@ -247,7 +247,17 @@ def test_i2c_read_no_register(no_config):
     assert bus.calls == [(0x40, b"", 1)]
 
 
-def test_i2c_write_builds_transaction(no_config):
+def test_i2c_write_needs_allow_flash(no_config):
+    """A register write can rewrite an EEPROM or a regulator, so it is a
+    destructive op behind the same opt-in as reset and flash."""
+    bus = FakeBus()
+    t = embedded_device(bus=bus)
+    out = t.fn({"op": "i2c_write", "addr": "0x68", "register": "0x6b", "data": "0a ff"})
+    assert out.startswith("ERROR") and "allow_flash" in out
+    assert bus.calls == []
+
+
+def test_i2c_write_builds_transaction(flash_enabled):
     bus = FakeBus()
     t = embedded_device(bus=bus)
     out = t.fn({"op": "i2c_write", "addr": "0x68", "register": "0x6b", "data": "0a ff"})
@@ -255,7 +265,7 @@ def test_i2c_write_builds_transaction(no_config):
     assert out == "wrote 3 byte(s) to 0x68"
 
 
-def test_i2c_write_rejects_bad_hex(no_config):
+def test_i2c_write_rejects_bad_hex(flash_enabled):
     bus = FakeBus()
     t = embedded_device(bus=bus)
     out = t.fn({"op": "i2c_write", "addr": "0x68", "data": "zz"})
@@ -341,3 +351,14 @@ def test_never_raises(no_config, have_openocd):
     ):
         out = t.fn(args)
         assert isinstance(out, str) and out.startswith("ERROR"), args
+
+
+def test_allow_flash_written_as_the_string_false_keeps_the_gate_shut(monkeypatch, tmp_path):
+    # bool("false") is True; the opt-in must read text the way config does.
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('[embedded]\nallow_flash = "false"\n')
+    monkeypatch.setenv("MAVERICK_CONFIG", str(cfg))
+    bus = FakeBus()
+    out = embedded_device(bus=bus).fn({"op": "i2c_write", "addr": "0x68", "data": "01"})
+    assert out.startswith("ERROR") and "allow_flash" in out
+    assert bus.calls == []

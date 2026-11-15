@@ -176,7 +176,7 @@ def test_ops_crm_and_cloud_tools_register(tmp_path):
     reg = base_registry(_W(), LocalBackend(workdir=tmp_path))
     names = {t.name for t in reg.all()}
     for n in ("pagerduty", "salesforce", "cloudflare", "datadog",
-              "hubspot", "twilio", "s3", "elasticsearch", "github_actions"):
+              "hubspot", "twilio", "elasticsearch", "github_actions"):
         assert n in names, f"{n} not registered"
 
 
@@ -191,7 +191,7 @@ def test_credentialed_tools_not_registered_by_default(tmp_path):
     reg = base_registry(_W(), LocalBackend(workdir=tmp_path))
     names = {t.name for t in reg.all()}
     for n in ("airtable", "asana", "clickup", "lambda",
-              "dynamodb", "vercel", "gdrive"):
+              "dynamodb", "vercel", "gdrive", "s3", "ses", "sns"):
         assert n not in names, f"{n} should be opt-in"
 
 
@@ -207,7 +207,7 @@ def test_credentialed_tools_register_when_enabled(tmp_path, monkeypatch):
     reg = base_registry(_W(), LocalBackend(workdir=tmp_path))
     names = {t.name for t in reg.all()}
     for n in ("airtable", "asana", "clickup", "lambda",
-              "dynamodb", "vercel", "gdrive"):
+              "dynamodb", "vercel", "gdrive", "s3", "ses", "sns"):
         assert n in names, f"{n} not registered"
 
 
@@ -223,7 +223,7 @@ def test_saas_and_media_tools_register(tmp_path):
     names = {t.name for t in reg.all()}
     expected = (
         "plausible", "mixpanel", "calendly", "zoom", "spotify",
-        "home_assistant", "reddit", "bitbucket", "ses", "sns",
+        "home_assistant", "reddit", "bitbucket",
         "ffmpeg", "pandoc", "imagemagick", "ga4", "plaid",
     )
     missing = [n for n in expected if n not in names]

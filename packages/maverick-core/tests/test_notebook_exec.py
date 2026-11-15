@@ -57,6 +57,20 @@ def test_extract_skips_markdown_and_magics():
     assert "# title" not in code
 
 
+def test_extract_keeps_percent_and_bang_lines_inside_open_python():
+    # Only a line at a statement boundary is a magic. Inside a triple-quoted
+    # string, an open bracket or a backslash continuation it is Python, and
+    # dropping it would run (and approve) code the notebook does not hold.
+    src = ("s = \'\'\'\n%d items\n\'\'\' % 3\n"
+           "t = (1\n  != 2)\n"
+           "u = 1 + \\\n%2\n"
+           "%time\n"
+           "print(s)\n")
+    code = _extract_code(_nb(src))
+    assert "%d items" in code and "  != 2)" in code and "%2" in code
+    assert "%time" not in code and "print(s)" in code
+
+
 def test_extract_empty_when_no_code():
     assert _extract_code({"cells": [{"cell_type": "markdown", "source": ["x"]}]}) == ""
 

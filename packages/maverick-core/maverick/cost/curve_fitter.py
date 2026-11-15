@@ -71,10 +71,17 @@ def fit_curve(samples: list[tuple[float, float, float]]) -> CostCurve:
                      len(rows), basis)
 
 
-def gather(world, *, limit: int = 500) -> dict[str, list[tuple[float, float, float]]]:
-    """Build ``{provider: [(in_tok, out_tok, cost), ...]}`` from priced episodes."""
+def gather(world, *, limit: int = 500,
+           owner: str | None = None) -> dict[str, list[tuple[float, float, float]]]:
+    """Build ``{provider: [(in_tok, out_tok, cost), ...]}`` from priced episodes.
+
+    ``owner`` limits the rows to one principal's episodes; ``None`` reads
+    every principal's (the admin view).
+    """
     out: dict[str, list[tuple[float, float, float]]] = {}
-    for ep in world.list_episodes(limit=limit):
+    episodes = (world.list_episodes(limit=limit) if owner is None
+                else world.list_episodes(limit=limit, owner=owner))
+    for ep in episodes:
         cost = getattr(ep, "cost_dollars", 0) or 0
         if cost <= 0:
             continue
@@ -90,9 +97,10 @@ def gather(world, *, limit: int = 500) -> dict[str, list[tuple[float, float, flo
     return out
 
 
-def fit_all(world, *, limit: int = 500) -> dict[str, CostCurve]:
+def fit_all(world, *, limit: int = 500, owner: str | None = None) -> dict[str, CostCurve]:
     """Fit one curve per provider from a world model."""
-    return {prov: fit_curve(rows) for prov, rows in gather(world, limit=limit).items()}
+    return {prov: fit_curve(rows)
+            for prov, rows in gather(world, limit=limit, owner=owner).items()}
 
 
 # --- tool surface ----------------------------------------------------------
@@ -111,7 +119,14 @@ _SCHEMA = {
 def _run(args: dict, world) -> str:
     import json as _json
     op = args.get("op") or "fit"
-    curves = fit_all(world)
+    # Scope to the running goal's owner, as spend_report does: owner=None is
+    # the admin view of every principal's episodes, which a tool must not get.
+    from ..memory_ownership import current_owner
+    try:
+        owner = current_owner(world=world)
+    except Exception:
+        return "ERROR: cannot tell whose runs to read, so no cost curve was fitted"
+    curves = fit_all(world, owner=owner)
     if not curves:
         return "No priced run history yet — can't fit a cost curve."
     if op == "fit":
@@ -135,7 +150,7 @@ def cost_curve_tool(world):
         name="cost_curve",
         description=(
             "Fit / query a per-provider cost model (cost ~ a*in_tok + b*out_tok) "
-            "from past priced runs. ops: fit (coefficients + R2 per provider), "
+            "from your own past priced runs. ops: fit (coefficients + R2 per provider), "
             "predict (provider, in_tokens, out_tokens -> estimated cost). Episodes "
             "without a provider are grouped under the provider name '(all)'."
         ),

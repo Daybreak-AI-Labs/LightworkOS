@@ -577,6 +577,20 @@ class TestEnterpriseBoundary:
         for op in ("list_ports", "read"):
             assert _is_governed_write(serial, {"op": op}) is False, op
 
+    def test_hosted_image_and_inference_calls_are_governed(self):
+        # Hosted image edits create the same paid Replicate prediction as
+        # ``replicate run`` and upload a workspace image; Hugging Face calls
+        # send the input to a third-party inference API. Local edits stay local.
+        from maverick.tools.huggingface import huggingface
+        from maverick.tools.image_edit import image_edit
+
+        edit, hf = image_edit(), huggingface()
+        for tool, op in ((edit, "inpaint"), (edit, "variation"), (edit, "upscale"),
+                         (hf, "infer"), (hf, "image_classify"), (hf, "summarize")):
+            assert _is_governable_op_tool(tool) and _is_governed_write(tool, {"op": op}), op
+        for op in ("crop", "resize", "rotate"):
+            assert _is_governed_write(edit, {"op": op}) is False, op
+
     def test_confirm_schema_unknown_operation_fails_closed(self, monkeypatch):
         monkeypatch.delenv("MAVERICK_GOVERNED_APPROVER", raising=False)
         import maverick.config as cfg

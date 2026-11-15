@@ -654,8 +654,8 @@ def _safety(S, C) -> tuple:
           warning="Outside messages will be let through unchecked if the safety checks "
                   "are missing."),
         S("embedded", "allow_flash", "Let agents reprogram connected devices",
-          "Agents may write new software onto, or reset, circuit boards connected to this "
-          "server.", "toggle", "Safety", False, "maverick.tools.embedded_device",
+          "Agents may write new software onto, reset, or change settings chips on circuit "
+          "boards connected to this server.", "toggle", "Safety", False, "maverick.tools.embedded_device",
           subgroup="Destructive actions", weaker=True,
           warning="Agents will be able to overwrite the software on connected devices."),
         S("capabilities", "enforce", "Give each agent only what it was granted",

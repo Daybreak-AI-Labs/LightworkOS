@@ -36,6 +36,30 @@ _SCHEMA: dict[str, Any] = {
 }
 
 _READ_PREFIXES = ("select", "with", "show", "describe", "desc", "explain")
+# SQL*Plus commands end at their line, not at a semicolon.
+_LINE_COMMANDS = ("show", "describe", "desc")
+
+
+# Lines that end a SQL statement in a SQL*Plus script: "/" runs it, and with
+# SQLBLANKLINES OFF (the default) a blank line or a lone "." ends it.
+_TERMINATOR_LINES = ("/", "", ".")
+
+
+def _script_boundary(statement: str) -> str | None:
+    """Why ORDS could run a second statement with no semicolon, or None.
+
+    ``/_/sql`` runs a script: a SQL*Plus command (``show``, ``desc``) ends at
+    its newline, and a line holding only ``/``, only ``.`` or nothing ends a
+    SQL statement. Any of these lets another statement follow.
+    """
+    lines = [line.strip() for line in statement.strip().splitlines()]
+    if len(lines) > 1 and lines[0].lower().startswith(_LINE_COMMANDS):
+        return "a show/desc command ends at its line"
+    for i, line in enumerate(lines):
+        if line in _TERMINATOR_LINES and any(lines[i + 1:]):
+            shown = "a blank line" if not line else f"a line holding only {line!r}"
+            return f"{shown} ends a statement in an Oracle script"
+    return None
 
 
 def _config() -> tuple[str, str]:
@@ -50,6 +74,10 @@ def _op_sql(statement: str, limit: int, confirm: bool) -> str:
     if not statement:
         return "ERROR: sql requires statement"
     is_read = statement.strip().lstrip("(").lower().startswith(_READ_PREFIXES)
+    boundary = _script_boundary(statement)
+    if boundary and not confirm:
+        return (f"DRY RUN: {boundary}, so more text after it may run as another "
+                "statement. Remove it, or re-run with confirm=true.")
     needs_confirm = not is_read or has_unconfirmed_statement_separator(statement)
     if needs_confirm and not confirm:
         return "DRY RUN: non-read SQL. Re-run with confirm=true."
