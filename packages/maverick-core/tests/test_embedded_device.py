@@ -351,3 +351,14 @@ def test_never_raises(no_config, have_openocd):
     ):
         out = t.fn(args)
         assert isinstance(out, str) and out.startswith("ERROR"), args
+
+
+def test_allow_flash_written_as_the_string_false_keeps_the_gate_shut(monkeypatch, tmp_path):
+    # bool("false") is True; the opt-in must read text the way config does.
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('[embedded]\nallow_flash = "false"\n')
+    monkeypatch.setenv("MAVERICK_CONFIG", str(cfg))
+    bus = FakeBus()
+    out = embedded_device(bus=bus).fn({"op": "i2c_write", "addr": "0x68", "data": "01"})
+    assert out.startswith("ERROR") and "allow_flash" in out
+    assert bus.calls == []

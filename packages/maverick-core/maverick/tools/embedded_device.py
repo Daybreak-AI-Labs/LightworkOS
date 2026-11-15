@@ -102,8 +102,11 @@ _SCHEMA: dict[str, Any] = {
 
 
 def _flash_allowed() -> bool:
+    from .._envparse import coerce_bool
     from ..config import load_config
-    return bool((load_config() or {}).get("embedded", {}).get("allow_flash", False))
+    section = (load_config() or {}).get("embedded")
+    value = section.get("allow_flash") if isinstance(section, dict) else None
+    return coerce_bool(value, default=False)
 
 
 def _safe_path(sandbox, user_path: str) -> str:
