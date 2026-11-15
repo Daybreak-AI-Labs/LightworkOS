@@ -463,3 +463,24 @@ def test_opt_out_withholds_and_deletes_the_queued_outbox_at_export(tmp_path, mon
     assert list(load_donations(outbox)) == []
     assert list_pending(outbox) == []
     assert list(load_donations(fleet)) == [record]
+
+
+def test_any_tenants_outbox_is_gated_by_that_tenants_own_consent(monkeypatch):
+    """Export from a shell with no tenant still honours the opt-out of the
+    tenant whose outbox it reads."""
+    import maverick.config as cfg
+    from maverick.paths import current_tenant_id, data_dir
+    from maverick.training.ingest import load_donations
+
+    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
+    monkeypatch.setattr(cfg, "config_source_errors", lambda **_: {})
+    monkeypatch.setattr(donation, "_donations_enabled", lambda: current_tenant_id() != "acme")
+    record = {"source_ownership": "unowned", "goal_id": None}
+    acme, shared = data_dir("outbox", tenant="acme"), data_dir("outbox", tenant=None)
+    for d in (acme, shared):
+        d.mkdir(parents=True)
+        (d / "r.json").write_text(json.dumps(record), encoding="utf-8")
+
+    assert list(load_donations(acme)) == []
+    assert list_pending(acme) == []
+    assert list(load_donations(shared)) == [record]
