@@ -518,16 +518,26 @@ def build_llm_proposer(llm, *, model: str | None = None, budget=None):
     return propose
 
 
-def attach_docs_to_profile(spec: IntakeSpec, profile: DomainProfile, kb) -> int:
+def bind_pending_collection(profile: DomainProfile) -> str:
+    """Bind ``profile`` to a new isolated collection for its uploads, so a
+    caller can save the profile before loading the documents into it."""
+    collection = _pending_collection(profile.name)
+    profile.knowledge_sources = [collection]
+    return collection
+
+
+def attach_docs_to_profile(spec: IntakeSpec, profile: DomainProfile, kb, *,
+                           collection: str | None = None) -> int:
     """Ingest approved intake documents and bind the profile to their collection.
 
     The collection is isolated and non-predictable so newly onboarded documents
     do not collide with or poison existing domain collections. Call this only
-    after the user has approved activation.
+    after the user has approved activation. Pass ``collection`` from
+    :func:`bind_pending_collection` when the profile was saved already bound.
     """
     if not spec.doc_paths:
         return 0
-    collection = _pending_collection(profile.name)
+    collection = collection or _pending_collection(profile.name)
     total = ingest_docs(spec, kb, collection=collection)
     # A held document is included into this collection later, so the profile
     # is bound to it even when every document is waiting for review.

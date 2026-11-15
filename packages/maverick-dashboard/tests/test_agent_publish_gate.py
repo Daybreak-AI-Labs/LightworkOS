@@ -617,3 +617,33 @@ def test_a_chat_decision_on_a_bypass_follows_the_page_rules(client, monkeypatch,
     logged = [row for row in audit_rows if row.get("verb") == "agent_published_without_passing_tests"]
     assert logged[-1]["requested_by"] == "user:requester" and logged[-1]["approved_by"] == "user:reviewer"
     assert logged[-1]["approval"] == aid and logged[-1]["reason"] == reason
+
+
+def test_dashboard_onboarding_saves_the_agent_bound_to_its_documents(client, audit_rows):
+    # The profile used to be saved before its documents were loaded, so the
+    # saved agent never referenced the collection its documents went into.
+    app, tmp = client
+    from maverick import config, knowledge_admin
+    from maverick.domain import DomainProfile, load_domain
+    from maverick_dashboard import business_agent_ops_api
+
+    (tmp / "config.toml").write_text("[models]\ncapability_tests = true\n"
+                                    "[knowledge]\nenable = true\nembedder = \"deterministic\"\n", encoding="utf-8")
+    config.reset_config_cache()
+    profile = DomainProfile(name="acme_bakery_helper", persona="You help the bakery.", allow_tools=["read_file"], max_risk="low")
+    docs = [("hours.txt", b"Bakery hours are nine to five."),
+            ("welcome.txt", b"Welcome. You are now ready to log in to the bakery portal.")]
+    result = business_agent_ops_api._approve(profile, None, docs, "user:admin", "user:admin")
+    assert result["saved"] is True and "held" in result["message"]
+    saved = load_domain(tmp / "domains" / "acme_bakery_helper.toml")
+    [collection] = saved.knowledge_sources
+    assert collection.startswith("intake_pending_acme_bakery_helper_")
+    kb = knowledge_admin.open_knowledge_base()
+    assert "nine to five" in kb.search_formatted(saved.knowledge_sources, "bakery hours")
+    kb.close()
+    [held] = knowledge_admin.list_held()["documents"]
+    assert held["collection"] == collection and held["source"] == "welcome.txt"
+    knowledge_admin.decide_held(held["id"], "include", actor="user:admin")
+    kb = knowledge_admin.open_knowledge_base()
+    assert "bakery portal" in kb.search_formatted(saved.knowledge_sources, "log in to the bakery portal", k=5)
+    kb.close()
