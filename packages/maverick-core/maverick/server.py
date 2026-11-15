@@ -432,154 +432,159 @@ class Server:
         if proof_reply is not None:
             return proof_reply
 
-        # Per-tenant "tasks at once" plan limit. The runner holds the slot for
-        # the whole run, shared by every process; this early look only lets
-        # the reply explain the refusal before a task is created.
+        # Per-tenant concurrency ceiling (noisy-neighbor protection). Derived
+        # from the tenant's plan entitlement; no-op when tenant is None or the
+        # plan is unlimited. Held across the whole goal run and released in the
+        # finally below so a crash never leaks a slot.
         from .tenant import concurrency as tenant_concurrency
         try:
-            room = tenant_concurrency.has_room(tenant, world)
+            acquired = tenant_concurrency.acquire(tenant)
         except Exception:
             log.exception("tenant concurrency policy failed; refusing")
             return "⚠ Workspace policy is unavailable. Try again later."
-        if not room:
+        if not acquired:
             log.warning("message refused: tenant %s at concurrency ceiling", tenant)
             return ("⚠ This workspace is at its concurrent-task limit. "
                     "Try again once a running task finishes.")
 
-        # Multi-turn: a single (channel, user_id) gets one conversation
-        # row. Every inbound message becomes a 'user' turn; the
-        # orchestrator's final answer is appended as an 'assistant' turn
-        # inside the dispatched run so future messages have history.
+        try:
+            # Multi-turn: a single (channel, user_id) gets one conversation
+            # row. Every inbound message becomes a 'user' turn; the
+            # orchestrator's final answer is appended as an 'assistant' turn
+            # inside the dispatched run so future messages have history.
 
-        # EU AI Act Article 50: disclose AI to new channel users on
-        # first turn. `first_turn_disclosure` checks the conversation
-        # row (creates if needed) and returns None on follow-up turns.
-        from .compliance import first_turn_disclosure
-        disclosure = first_turn_disclosure(
-            world,
-            channel=msg.channel or "unknown",
-            user_id=_channel_conversation_user(msg, principal_id, memory_user_id),
-        )
+            # EU AI Act Article 50: disclose AI to new channel users on
+            # first turn. `first_turn_disclosure` checks the conversation
+            # row (creates if needed) and returns None on follow-up turns.
+            from .compliance import first_turn_disclosure
+            disclosure = first_turn_disclosure(
+                world,
+                channel=msg.channel or "unknown",
+                user_id=_channel_conversation_user(msg, principal_id, memory_user_id),
+            )
 
-        conversation = world.get_or_create_conversation(
-            channel=msg.channel or "unknown",
-            user_id=_channel_conversation_user(msg, principal_id, memory_user_id),
-        )
+            conversation = world.get_or_create_conversation(
+                channel=msg.channel or "unknown",
+                user_id=_channel_conversation_user(msg, principal_id, memory_user_id),
+            )
 
-        from .deployment import require_enterprise_or_die
-        require_enterprise_or_die()
+            from .deployment import require_enterprise_or_die
+            require_enterprise_or_die()
 
-        # Persist the exact principal the runner will execute under.  The
-        # identity is opaque and stays in the database; tenant path code
-        # independently percent-encodes it before any filesystem use.
-        execution_user_id = f"{msg.channel or 'unknown'}:{principal_id}"
-        owner = f"user:{msg.channel or 'unknown'}:{memory_user_id}"
-        execution_principal = f"user:{execution_user_id}"
-        answer = self._channel_answer(
-            world, msg, conversation.id, owner, execution_principal,
-        )
-        if answer is not None:
-            goal_id, answered_question, early_reply = answer
-            if early_reply is not None:
-                return self._channel_output(early_reply, disclosure)
-        else:
-            answered_question = None
-            goal_id = self._new_channel_goal(
+            # Persist the exact principal the runner will execute under.  The
+            # identity is opaque and stays in the database; tenant path code
+            # independently percent-encodes it before any filesystem use.
+            execution_user_id = f"{msg.channel or 'unknown'}:{principal_id}"
+            owner = f"user:{msg.channel or 'unknown'}:{memory_user_id}"
+            execution_principal = f"user:{execution_user_id}"
+            answer = self._channel_answer(
                 world, msg, conversation.id, owner, execution_principal,
             )
-
-        # Inbound channel attachments (Slack files, email/Telegram
-        # attachments) become goal attachments, exactly like a dashboard
-        # upload: store() enforces the size/mime/magic-byte rules, then
-        # text companions (transcripts, extracted doc text) generate so
-        # the agent's first message can carry them. Best-effort — a
-        # rejected or broken file never blocks the message.
-        if getattr(msg, "attachments", None):
-            stored_any = self._store_inbound_attachments(
-                world, goal_id, msg.attachments)
-            if stored_any:
-                import asyncio as _asyncio
-
-                from .attachments import generate_companions
-                try:
-                    await _asyncio.to_thread(
-                        generate_companions, world, goal_id)
-                except Exception:  # pragma: no cover -- never blocks
-                    log.warning("companion generation failed",
-                                exc_info=True)
-
-        try:
-            # The caller's tenant scope covers queue-envelope creation and
-            # local execution. asyncio.to_thread preserves this context for
-            # the synchronous dispatcher without blocking a channel event
-            # loop on broker or gRPC I/O.
-            from .runner import run_goal_in_background_async
-            dispatch_status = await run_goal_in_background_async(
-                goal_id, max_depth=self.max_depth,
-                channel=msg.channel or "unknown",
-                user_id=execution_user_id,
-                conversation_id=conversation.id,
-                **({"db_path": self._db_path} if self._db_path is not None else {}),
-            )
-        except Exception:
-            log.exception("goal #%s dispatch failed", goal_id)
-            # A transport failure may follow remote acceptance. Do not
-            # repaint a pending goal or suggest blind replay.
-            return (f"⚠ Task #{goal_id} may still be running. Check its status "
-                    "before trying again.")
-
-        if dispatch_status == "queued":
-            # The worker may ask later. The durable channel receipt keeps
-            # this binding so the adapter can deliver that question after
-            # the initial queued acknowledgement has been sent.
-            msg._channel_question_watch = {
-                "goal_id": goal_id, "conversation_id": conversation.id,
-                "tenant": tenant, "owner": owner,
-                "execution_principal": execution_principal,
-            }
-            # QueueDispatcher returns after authenticated enqueue. It cannot
-            # supply a final channel reply yet, so be explicit rather than
-            # pretending the goal completed (or holding this event loop open
-            # while a worker may run for many minutes).
-            result = (
-                f"Goal #{goal_id} was queued for background processing. "
-                "Check its status in Lightwork."
-            )
-        elif dispatch_status in {None, "error"}:
-            # The dispatcher could not establish whether a remote owner
-            # accepted the task. Never advise an automatic replay.
-            return (f"Task #{goal_id} may still be running. Check its status "
-                    "before trying again.")
-        else:
-            # LocalThreadDispatcher and gRPC wait for a terminal status. Read
-            # the result from the authoritative world rather than treating the
-            # status string itself as an answer. A remote worker must share the
-            # same world backend for this to succeed.
-            completed = world.get_goal(goal_id)
-            questions = (world.open_questions(goal_id)
-                         if completed is not None and completed.status == "blocked" else [])
-            if questions:
-                result = _question_reply(goal_id, questions,
-                                         require_id=_question_id_required(msg))
-            elif completed is not None and completed.result is not None:
-                result = _completed_reply(completed, goal_id, getattr(msg, "channel", ""))
+            if answer is not None:
+                goal_id, answered_question, early_reply = answer
+                if early_reply is not None:
+                    return self._channel_output(early_reply, disclosure)
             else:
-                known_status = (
-                    dispatch_status
-                    if dispatch_status in {"done", "blocked", "failed", "cancelled"}
-                    else "unknown"
+                answered_question = None
+                goal_id = self._new_channel_goal(
+                    world, msg, conversation.id, owner, execution_principal,
                 )
+
+            # Inbound channel attachments (Slack files, email/Telegram
+            # attachments) become goal attachments, exactly like a dashboard
+            # upload: store() enforces the size/mime/magic-byte rules, then
+            # text companions (transcripts, extracted doc text) generate so
+            # the agent's first message can carry them. Best-effort — a
+            # rejected or broken file never blocks the message.
+            if getattr(msg, "attachments", None):
+                stored_any = self._store_inbound_attachments(
+                    world, goal_id, msg.attachments)
+                if stored_any:
+                    import asyncio as _asyncio
+
+                    from .attachments import generate_companions
+                    try:
+                        await _asyncio.to_thread(
+                            generate_companions, world, goal_id)
+                    except Exception:  # pragma: no cover -- never blocks
+                        log.warning("companion generation failed",
+                                    exc_info=True)
+
+            try:
+                # The caller's tenant scope covers queue-envelope creation and
+                # local execution. asyncio.to_thread preserves this context for
+                # the synchronous dispatcher without blocking a channel event
+                # loop on broker or gRPC I/O.
+                from .runner import run_goal_in_background_async
+                dispatch_status = await run_goal_in_background_async(
+                    goal_id, max_depth=self.max_depth,
+                    channel=msg.channel or "unknown",
+                    user_id=execution_user_id,
+                    conversation_id=conversation.id,
+                    **({"db_path": self._db_path} if self._db_path is not None else {}),
+                )
+            except Exception:
+                log.exception("goal #%s dispatch failed", goal_id)
+                # A transport failure may follow remote acceptance. Do not
+                # repaint a pending goal or suggest blind replay.
+                return (f"⚠ Task #{goal_id} may still be running. Check its status "
+                        "before trying again.")
+
+            if dispatch_status == "queued":
+                # The worker may ask later. The durable channel receipt keeps
+                # this binding so the adapter can deliver that question after
+                # the initial queued acknowledgement has been sent.
+                msg._channel_question_watch = {
+                    "goal_id": goal_id, "conversation_id": conversation.id,
+                    "tenant": tenant, "owner": owner,
+                    "execution_principal": execution_principal,
+                }
+                # QueueDispatcher returns after authenticated enqueue. It cannot
+                # supply a final channel reply yet, so be explicit rather than
+                # pretending the goal completed (or holding this event loop open
+                # while a worker may run for many minutes).
                 result = (
-                    f"Goal #{goal_id} finished with status {known_status}, "
-                    "but its result is not available in this process."
+                    f"Goal #{goal_id} was queued for background processing. "
+                    "Check its status in Lightwork."
                 )
+            elif dispatch_status in {None, "error"}:
+                # The dispatcher could not establish whether a remote owner
+                # accepted the task. Never advise an automatic replay.
+                return (f"Task #{goal_id} may still be running. Check its status "
+                        "before trying again.")
+            else:
+                # LocalThreadDispatcher and gRPC wait for a terminal status. Read
+                # the result from the authoritative world rather than treating the
+                # status string itself as an answer. A remote worker must share the
+                # same world backend for this to succeed.
+                completed = world.get_goal(goal_id)
+                questions = (world.open_questions(goal_id)
+                             if completed is not None and completed.status == "blocked" else [])
+                if questions:
+                    result = _question_reply(goal_id, questions,
+                                             require_id=_question_id_required(msg))
+                elif completed is not None and completed.result is not None:
+                    result = _completed_reply(completed, goal_id, getattr(msg, "channel", ""))
+                else:
+                    known_status = (
+                        dispatch_status
+                        if dispatch_status in {"done", "blocked", "failed", "cancelled"}
+                        else "unknown"
+                    )
+                    result = (
+                        f"Goal #{goal_id} finished with status {known_status}, "
+                        "but its result is not available in this process."
+                    )
 
-        if answered_question is not None:
-            result = (f"I saved your answer to Question #{answered_question.id} "
-                      f"and continued task #{goal_id}.\n\n{result}")
+            if answered_question is not None:
+                result = (f"I saved your answer to Question #{answered_question.id} "
+                          f"and continued task #{goal_id}.\n\n{result}")
 
-        return self._saved_channel_output(world, msg, goal_id, result, disclosure,
-            owner=owner, execution_principal=execution_principal, principal=principal_id)
+            return self._saved_channel_output(world, msg, goal_id, result, disclosure,
+                owner=owner, execution_principal=execution_principal, principal=principal_id)
+        finally:
+            # Always free the tenant's concurrency slot, on every exit path.
+            tenant_concurrency.release(tenant)
 
     @staticmethod
     def _new_channel_goal(world, msg, conversation_id, owner, execution_principal):

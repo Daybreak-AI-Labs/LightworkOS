@@ -1,79 +1,60 @@
-"""Per-tenant "tasks at once" plan limit, shared by every process.
+"""Per-tenant concurrency ceiling: noisy-neighbor protection.
 
 A tenant's plan ``max_concurrent_goals`` bounds how many of its goals run at
-once. Each run holds one numbered slot lease, so other processes count it
-and a process that dies gives its slot back. Fail-open: no tenant, or an
-unlimited plan, enforces nothing.
+once, so one tenant cannot fill every global runner slot and starve the rest.
+Fail-open: no tenant, or an unlimited plan, enforces nothing.
 """
 from __future__ import annotations
-
-import os
-import subprocess
-import sys
-import time
-from types import SimpleNamespace
 
 import pytest
 from maverick.tenant import concurrency as tc
 
 
 @pytest.fixture(autouse=True)
-def _home(tmp_path, monkeypatch):
-    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+def _clear():
+    tc._inflight.clear()
+    tc._uncounted.clear()
+    yield
+    tc._inflight.clear()
+    tc._uncounted.clear()
 
 
-def test_none_tenant_and_unlimited_plan_are_never_limited(monkeypatch):
-    with tc.slot(None):
-        pass
+def test_none_tenant_is_never_limited():
+    # Single-tenant path: acquire always granted, release is a no-op.
+    assert tc.acquire(None) is True
+    tc.release(None)
+    assert tc._inflight == {}
+
+
+def test_unlimited_plan_grants_every_slot(monkeypatch):
     monkeypatch.setattr(tc, "_limit_for", lambda t: 0)  # 0 == unlimited
-    with tc.slot("acme"), tc.slot("acme"), tc.slot("acme"):
-        assert tc.has_room("acme")
+    for _ in range(50):
+        assert tc.acquire("acme") is True
+    # Unlimited plans don't even track in-flight (nothing to bound).
+    assert tc.in_flight("acme") == 0
 
 
-def test_ceiling_refuses_when_full_and_frees_on_exit(monkeypatch):
+def test_ceiling_refuses_when_full_and_frees_on_release(monkeypatch):
     monkeypatch.setattr(tc, "_limit_for", lambda t: 2)
-    with tc.slot("acme"):
-        with tc.slot("acme"):
-            assert not tc.has_room("acme")
-            with pytest.raises(tc.TenantAtCapacity):
-                with tc.slot("acme"):
-                    pass
-        assert tc.has_room("acme")
-        # A different tenant is unaffected by acme being full.
-        with tc.slot("acme"), tc.slot("globex"):
-            assert not tc.has_room("acme")
+    assert tc.acquire("acme") is True
+    assert tc.acquire("acme") is True
+    assert tc.in_flight("acme") == 2
+    # Third concurrent goal is refused.
+    assert tc.acquire("acme") is False
+    # Finishing one frees exactly one slot.
+    tc.release("acme")
+    assert tc.in_flight("acme") == 1
+    assert tc.acquire("acme") is True
+    assert tc.acquire("acme") is False
 
 
-_HOLDER = """
-import sys, time
-from types import SimpleNamespace
-from maverick.tenant import concurrency as tc
-tc._limit_for = lambda t: 1
-world = SimpleNamespace(_dsn=sys.argv[1], path=None) if sys.argv[1] else None
-with tc.slot("acme", world):
-    print("held", flush=True)
-    time.sleep(120)
-"""
-
-
-@pytest.mark.parametrize("backend", ["files", "postgres"])
-def test_a_slot_held_by_another_process_counts_and_comes_back_when_it_dies(monkeypatch, backend):
-    dsn = os.environ.get("MAVERICK_PG_DSN", "") if backend == "postgres" else ""
-    if backend == "postgres" and not dsn:
-        pytest.skip("MAVERICK_PG_DSN not set (no Postgres service)")
-    world = SimpleNamespace(_dsn=dsn, path=None) if dsn else None
+def test_tenants_have_independent_ceilings(monkeypatch):
     monkeypatch.setattr(tc, "_limit_for", lambda t: 1)
-    child = subprocess.Popen([sys.executable, "-c", _HOLDER, dsn], stdout=subprocess.PIPE, text=True)
-    try:
-        assert child.stdout.readline().strip() == "held"
-        assert not tc.has_room("acme", world)
-    finally:
-        child.kill()
-        child.wait(timeout=30)
-    deadline = time.monotonic() + 30
-    while not tc.has_room("acme", world) and time.monotonic() < deadline:
-        time.sleep(0.2)
-    assert tc.has_room("acme", world)
+    assert tc.acquire("acme") is True
+    # A different tenant is unaffected by acme being full.
+    assert tc.acquire("globex") is True
+    assert tc.acquire("acme") is False
+    assert tc.acquire("globex") is False
 
 
 def test_limit_derives_from_plan_entitlement(monkeypatch):
@@ -90,7 +71,20 @@ def test_lookup_error_fails_open(monkeypatch):
     monkeypatch.setattr("maverick.tenant.registry.get_tenant", boom)
     # A resolution error must never block a run -> treated as unlimited.
     assert tc._limit_for("acme") == 0
-    assert tc.has_room("acme") is True
+    assert tc.acquire("acme") is True
+
+
+def test_release_of_an_uncounted_grant_does_not_free_a_counted_slot(monkeypatch):
+    # A run admitted while the plan was unlimited, then a plan change to a
+    # ceiling of 1: the old run's release must not let a second goal in.
+    limit = {"n": 0}
+    monkeypatch.setattr(tc, "_limit_for", lambda t: limit["n"])
+    assert tc.acquire("acme") is True          # uncounted
+    limit["n"] = 1
+    assert tc.acquire("acme") is True          # counted, at the ceiling
+    tc.release("acme")                         # the first run finishes
+    assert tc.in_flight("acme") == 1
+    assert tc.acquire("acme") is False
 
 
 def test_limit_uses_the_served_plan_when_payment_lapsed(monkeypatch):

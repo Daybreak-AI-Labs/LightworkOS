@@ -136,25 +136,3 @@ def test_run_goal_in_thread_acquire_timeout_override(monkeypatch):
 
     assert result is None
     assert elapsed < 5.0
-
-
-def test_runner_admits_a_run_only_into_a_free_tenant_plan_slot(monkeypatch, tmp_path):
-    from maverick.paths import reset_tenant, set_tenant
-    from maverick.tenant import concurrency as tc
-
-    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "home"))
-    gate = threading.Event()
-    gate.set()
-    started: dict = {}
-    _stub_run(monkeypatch, tmp_path, gate=gate, started=started)
-    monkeypatch.setattr(tc, "_limit_for", lambda t: 1)
-    token = set_tenant("acme")
-    try:
-        with tc.slot("acme"):  # held by another run, possibly in another process
-            refused = runner.run_goal_in_thread(1, user_id="alice", detailed_outcome=True)
-        assert refused == runner.GoalRunUnavailable("concurrency_slot")
-        assert started == {}
-        assert runner.run_goal_in_thread(1, user_id="alice") == "done"
-        assert tc.has_room("acme")  # the finished run gave its slot back
-    finally:
-        reset_tenant(token)
