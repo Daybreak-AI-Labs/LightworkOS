@@ -89,7 +89,7 @@ HOLD_REASONS = {
     "role-reassign": "It contains the words \"you are now\", which can give an assistant a new role.",
     "new-instructions": "It mentions new instructions or rules for an assistant.",
     "fake-role-tag": "It contains a tag that looks like a system or assistant message.",
-    "reveal-secrets": "It asks to show a password, key or other secret.",
+    "reveal-secrets": "It asks to show a password, key or other secret.",  # pragma: allowlist secret
     "override-safety": "It asks to override a safety setting.",
     "safety-scanner": "The safety scanner flagged it.",
 }
