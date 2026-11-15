@@ -239,9 +239,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `patternProperties` with `unevaluatedProperties` is refused.
 - Kubernetes recovery folders under `sandbox-recovery/` are removed seven days
   after a failed transfer. Copy out anything you need before then.
-- The built-in Shield now reports a URL longer than 2,048 characters as the
-  high-severity finding `overlong_url`, so the balanced profile blocks it.
-  Shorten such links, or use the permissive profile where they are expected.
 
 ### Fixed
 

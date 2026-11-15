@@ -276,7 +276,6 @@ class TestBuiltinRules:
         for text in cases + generated:
             assert len(text) <= br._URL_WINDOW_CHARS
             found = br._url_findings(text, patterns)
-            assert "overlong_url" not in found, text
             for name, pattern in patterns.items():
                 assert (name in found) == bool(pattern.search(text)), (name, text)
 
@@ -313,15 +312,35 @@ class TestBuiltinRules:
             assert costs[1] <= 9 * 2 * br._URL_WINDOW_CHARS * 40_000 // len(unit), unit
             assert costs[1] <= 2.2 * costs[0] + 2 * br._URL_WINDOW_CHARS, (unit, costs)
 
-    def test_an_overlong_url_is_a_finding_of_its_own(self):
+    def test_long_urls_and_compact_text_are_judged_as_before(self):
+        # Length alone never blocks: compact JSON full of URLs, a long signed
+        # link, an unclosed markdown image and a large inline data image get
+        # the verdict the original patterns give.
+        import json
+
         from maverick_shield import builtin_rules as br
 
-        url = "https://example.com/" + "a" * br._URL_WINDOW_CHARS
-        blocked, severity, names = scan(f"see {url} for details", block_threshold="high")
-        assert blocked and severity == "high" and names == ["overlong_url"]
-        blocked, _, names = scan("![x](https://e.com/" + "a b " * 600 + "?token=1)")
-        assert "overlong_url" in names
-        assert scan("see https://example.com/" + "a" * 2000)[2] == []
+        def original(text):
+            names = [r.name for r in RULES
+                     if any(r.pattern.search(c) for c in br._candidates(text))]
+            return bool(names) and max(br.SEVERITY_ORDER[r.severity] for r in RULES
+                                       if r.name in names) >= br.SEVERITY_ORDER["high"], names
+
+        repos = json.dumps([{"id": i, "name": f"repo-{i}", "html_url": f"https://github.com/acme/repo-{i}",
+                             "description": "A small tool", "stargazers_count": i * 7}
+                            for i in range(30)], separators=(",", ":"))
+        signed = ("https://bucket.s3.amazonaws.com/reports/q3.pdf?X-Amz-Algorithm=AWS4-HMAC-SHA256"
+                  "&X-Amz-Credential=ASIAEXAMPLE%2F20261115%2Fus-east-1%2Fs3%2Faws4_request"
+                  "&X-Amz-Date=20261115T000000Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host"
+                  "&X-Amz-Security-Token=" + "IQoJb3JpZ2luX2VjEXAMPLE" * 90 + "&X-Amz-Signature=" + "ab12" * 16)
+        unclosed = "![chart](https://example.com/chart.png " + "The totals rose in every region. " * 100
+        page = ("# Report\n\n![logo](data:image/png;base64," + "iVBORw0KGgo" * 4546 + ")\n\n"
+                "See https://example.com/docs for details.")
+        assert len(signed) > 2300 and len(page) > 50_000
+        for text in (repos, signed, unclosed, page):
+            blocked, _, names = scan(text, block_threshold="high")
+            assert (blocked, names) == original(text)
+            assert not blocked, names
 
     def test_all_rules_have_required_fields(self):
         for r in RULES:

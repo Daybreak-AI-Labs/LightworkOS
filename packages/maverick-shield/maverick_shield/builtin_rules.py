@@ -540,10 +540,13 @@ SEVERITY_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 
 
 # The three URL rules keep their original patterns, which backtrack on hostile
-# text. They run only on bounded windows that start at a URL-like fragment: a
-# match no longer than the window is found exactly as before, and a URL longer
-# than the window is a finding of its own (``overlong_url``).
+# text. They run only on bounded windows that start at a URL-like fragment, so
+# the work is linear in the input. Length alone is never a finding.
 _URL_WINDOW_CHARS = 2048
+_URL_STRIDE = _URL_WINDOW_CHARS // 2
+# A markdown image target longer than the window (often unclosed) is tried in
+# shorter overlapping windows: the pattern tries every "?" to the window end.
+_MD_LONG_WINDOW = 512
 _URL_RULES = ("markdown_image_exfil", "base64_url_exfil", "credential_in_url")
 _URL_START = re.compile(r"https?://", re.IGNORECASE)
 _MD_START = re.compile(r"!\[")
@@ -551,24 +554,27 @@ _MD_TARGET = re.compile(r"\]\(https?://", re.IGNORECASE)
 _SPACE = re.compile(r"\s")
 
 
-def _url_runs(text: str):
-    """(start, end) of each whitespace-free run, from its first URL scheme.
+def _url_starts(text: str):
+    """URL schemes to try the base64 and credential rules from.
 
-    A match of the base64 or credential rule from a later scheme in the same
-    run is also a match from the first one, so only the first is tried."""
-    end = 0
+    A match from a later scheme in the same whitespace-free run is also a
+    match from an earlier one that ends at the same place, so within a run a
+    scheme is tried only once every ``_URL_STRIDE`` characters."""
+    run_end = tried = -1
     for found in _URL_START.finditer(text):
         start = found.start()
-        if start < end:
+        if start < run_end and start < tried + _URL_STRIDE:
             continue
-        space = _SPACE.search(text, start)
-        end = space.start() if space else len(text)
-        yield start, end
+        if start >= run_end:
+            space = _SPACE.search(text, start)
+            run_end = space.start() if space else len(text)
+        tried = start
+        yield start
 
 
-def _markdown_targets(text: str):
-    """(start, target_end, too_long) for each markdown image that links to a
-    URL, skipping images whose match would be a match of an earlier one."""
+def _markdown_starts(text: str):
+    """(start, window_end) of the markdown images to try, skipping images
+    whose match would also be a match of an earlier one in its window."""
     pos = 0
     while (found := _MD_START.search(text, pos)) is not None:
         start = found.start()
@@ -580,7 +586,11 @@ def _markdown_targets(text: str):
             continue
         paren = text.find(")", close + 2)  # the target cannot contain ")"
         target_end = paren if paren >= 0 else len(text)
-        yield start, target_end, target_end - close > _URL_WINDOW_CHARS
+        if target_end - close > _URL_WINDOW_CHARS:
+            yield start, close + _MD_LONG_WINDOW
+            pos = close + _MD_LONG_WINDOW // 2
+            continue
+        yield start, target_end
         # An image that starts inside this target and closes its alt text
         # before target_end matches only if this one does.
         last = text.rfind("]", close + 1, target_end)
@@ -588,31 +598,30 @@ def _markdown_targets(text: str):
 
 
 def _url_findings(text: str, patterns: dict) -> set[str]:
-    """Names of the URL rules that match ``text``, plus ``overlong_url``."""
+    """Names of the URL rules that match ``text``.
+
+    Every match no longer than ``_URL_WINDOW_CHARS`` (the markdown rule: whose
+    target part is no longer) is found exactly as the original pattern finds
+    it, and anything found is a match of the original pattern. Longer matches
+    can be missed. In a markdown target longer than the window, only matches
+    whose target part fits in ``_MD_LONG_WINDOW // 2`` are certain. And
+    base64_url_exfil, whose ``[^=]*`` may cross whitespace, is not found when
+    the "?" and the "=" are more than a window apart (the original pattern
+    finds it, in time quadratic or worse)."""
     found: set[str] = set()
-    window = _URL_WINDOW_CHARS
-    for start, target_end, too_long in _markdown_targets(text):
-        if too_long:
-            found.add("overlong_url")
-        elif "markdown_image_exfil" not in found and patterns["markdown_image_exfil"].match(
-                text, start, target_end):
+    n, window = len(text), _URL_WINDOW_CHARS
+    for start, end in _markdown_starts(text):
+        if patterns["markdown_image_exfil"].match(text, start, end):
             found.add("markdown_image_exfil")
-    for start, end in _url_runs(text):
-        if end - start > window:
-            found.add("overlong_url")
-            continue
-        if "base64_url_exfil" not in found and patterns["base64_url_exfil"].match(
-                text, start, min(len(text), end + window)):
-            found.add("base64_url_exfil")
-        if "credential_in_url" not in found and patterns["credential_in_url"].match(
-                text, start, end):
-            found.add("credential_in_url")
+            break
+    for start in _url_starts(text):
+        end = min(n, start + window)
+        for name in ("base64_url_exfil", "credential_in_url"):
+            if name not in found and patterns[name].match(text, start, end):
+                found.add(name)
+        if {"base64_url_exfil", "credential_in_url"} <= found:
+            break
     return found
-
-
-# Not in RULES: it is reported by _url_findings, not by its pattern.
-_OVERLONG_URL = Rule("overlong_url", "high", re.compile(r"(?!)"),
-                     f"URL longer than {_URL_WINDOW_CHARS} characters (too long to check)")
 
 
 def _threshold_to_min_severity(threshold: str) -> int:
@@ -649,8 +658,8 @@ def scan(
     matched: list[str] = []
     max_idx = -1
     max_sev = "none"
-    for r in [*RULES, _OVERLONG_URL]:
-        hit = (r.name in url_found if r.name in (*_URL_RULES, _OVERLONG_URL.name)
+    for r in RULES:
+        hit = (r.name in url_found if r.name in _URL_RULES
                else any(r.pattern.search(c) for c in candidates))
         if hit:
             matched.append(r.name)
