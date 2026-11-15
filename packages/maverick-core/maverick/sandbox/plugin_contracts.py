@@ -14,10 +14,14 @@ import hashlib
 import inspect
 import json
 
-# Time for ONE guarded child to check every pattern/answer pair of a
+# Time for ONE guarded child to check the pattern/answer pairs of a
 # validation, with room for interpreter start-up on a loaded machine.
 _PATTERN_BUDGET_S = 5.0
-_TABLE: contextvars.ContextVar = contextvars.ContextVar("plugin_pattern_table", default=None)
+# Recording passes before the real one: a pair first reached only because an
+# earlier pattern failed (if/then/else, anyOf) needs one more guarded check.
+_MAX_PATTERN_ROUNDS = 3
+# None outside validate(); else (known results, pairs still unknown or None).
+_STATE: contextvars.ContextVar = contextvars.ContextVar("plugin_pattern_state", default=None)
 
 
 class PatternCheckUnavailable(ValueError):
@@ -28,62 +32,36 @@ class PatternCheckUnavailable(ValueError):
                          "plugin's rules. Nothing was run. Try again, or shorten the answers.")
 
 
-def _walk(value, visit):
-    visit(value)
-    if isinstance(value, dict):
-        for child in value.values():
-            _walk(child, visit)
-    elif isinstance(value, list):
-        for child in value:
-            _walk(child, visit)
-
-
-def _pattern_table(schema, instance, *, budget_s=_PATTERN_BUDGET_S) -> dict:
-    """``{(pattern, text): matched}`` for every schema pattern and every string
-    or key in ``instance``, computed in one guarded child."""
-    patterns, texts = set(), set()
-
-    def schema_node(node):
-        if isinstance(node, dict):
-            if isinstance(node.get("pattern"), str):
-                patterns.add(node["pattern"])
-            if isinstance(node.get("patternProperties"), dict):
-                patterns.update(k for k in node["patternProperties"] if isinstance(k, str))
-
-    def instance_node(node):
-        if isinstance(node, str):
-            texts.add(node)
-        elif isinstance(node, dict):
-            texts.update(k for k in node if isinstance(k, str))
-
-    _walk(schema, schema_node)
-    if not patterns:
-        return {}
-    _walk(instance, instance_node)
+def _check_pairs(pairs, *, budget_s=_PATTERN_BUDGET_S) -> dict:
+    """``{(pattern, text): matched}`` for ``pairs``, in one guarded child."""
+    ordered = sorted(pairs)
     try:
-        from maverick.tools._regex_guard import RegexGuardError, guarded_search_table, pattern_error
+        from maverick.tools._regex_guard import RegexGuardError, guarded_search_pairs
     except ImportError:  # only inside a container image without the host package
         import re
-        return {(p, t): re.search(p, t) is not None for p in patterns for t in texts}
-    # A malformed "pattern" found in data (enum, default) is never matched.
-    usable, ordered = [p for p in sorted(patterns) if not pattern_error(p)], sorted(texts)
+        return {(p, t): re.search(p, t) is not None for p, t in ordered}
     try:
-        rows = guarded_search_table(usable, ordered, timeout_s=budget_s)
+        results = guarded_search_pairs(ordered, timeout_s=budget_s)
     except RegexGuardError as exc:
         raise PatternCheckUnavailable from exc
-    return {(p, t): hit for p, row in zip(usable, rows, strict=True)
-            for t, hit in zip(ordered, row, strict=True)}
+    return dict(zip(ordered, results, strict=True))
 
 
 def _matches(pattern, text):
-    """``re.search`` for a plugin-chosen pattern, from the guarded table."""
-    table = _TABLE.get()
-    if table is None:  # validator(schema).validate(...) without validate()
-        table = _pattern_table({"pattern": pattern}, text)
-    try:
-        return table[(pattern, text)]
-    except KeyError:
-        raise PatternCheckUnavailable from None
+    """``re.search`` for a plugin-chosen pattern, under the regex guard.
+
+    In a recording pass an unknown pair is noted and answered "matches"; the
+    real pass answers only from pairs already checked."""
+    state = _STATE.get()
+    if state is None:  # validator(schema).validate(...) without validate()
+        return _check_pairs({(pattern, text)})[(pattern, text)]
+    known, unknown = state
+    if (pattern, text) in known:
+        return known[(pattern, text)]
+    if unknown is None:
+        raise PatternCheckUnavailable
+    unknown.add((pattern, text))
+    return True
 
 
 def _guarded_validator_class():
@@ -149,12 +127,27 @@ def validator(schema):
 
 
 def validate(schema, sample):
+    """Validate ``sample``; plugin patterns are checked only against the
+    strings jsonschema actually tests them on, in one guarded child per
+    recording round (normally one)."""
     checked = validator(schema)
-    token = _TABLE.set(_pattern_table(schema, sample))
+    known: dict = {}
+    for _ in range(_MAX_PATTERN_ROUNDS):
+        unknown: set = set()
+        token = _STATE.set((known, unknown))
+        try:
+            for _error in checked.iter_errors(sample):
+                pass
+        finally:
+            _STATE.reset(token)
+        if not unknown:
+            break
+        known.update(_check_pairs(unknown))
+    token = _STATE.set((known, None))
     try:
         checked.validate(sample)
     finally:
-        _TABLE.reset(token)
+        _STATE.reset(token)
 
 
 def reviewed_schema(schema, expected):
