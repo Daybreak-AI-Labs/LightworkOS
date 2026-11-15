@@ -271,6 +271,11 @@ def _score_plain(text: str) -> tuple[float, list[str]]:
 # Equals signs can pad a token or separate a preceding assignment/query name
 # from its value. Consume all trailing padding, but never swallow the next run.
 _BASE64_RUN = re.compile(r"[A-Za-z0-9+/_-]+=*")
+# A run of four characters or fewer decodes to at most three bytes, and the only
+# such plaintext any rule matches is "dan" (``dan_persona``), so short tokens
+# such as "SKU: REFO" would be flagged. Five characters never decode, so the
+# shortest decoded instruction is four bytes, e.g. "DAN!" as "REFOIQ".
+_MIN_BASE64_CHARS = 5
 _MAX_BASE64_CHARS = 8192
 _MAX_DECODED_BYTES = 6144
 
@@ -284,7 +289,7 @@ def _decoded_base64(text: str) -> Iterator[str]:
     """
     for match in _BASE64_RUN.finditer(text):
         length = match.end() - match.start()
-        if not 4 <= length <= _MAX_BASE64_CHARS:
+        if not _MIN_BASE64_CHARS <= length <= _MAX_BASE64_CHARS:
             continue
         token = match.group()
         padding = length - len(token.rstrip("="))
