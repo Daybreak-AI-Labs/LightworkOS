@@ -17,10 +17,14 @@ import json
 # Time for ONE guarded child to check the pattern/answer pairs of a
 # validation, with room for interpreter start-up on a loaded machine.
 _PATTERN_BUDGET_S = 5.0
-# Recording passes before the real one: a pair first reached only because an
-# earlier pattern failed (if/then/else, anyOf) needs one more guarded check.
-_MAX_PATTERN_ROUNDS = 3
-# None outside validate(); else (known results, pairs still unknown or None).
+# Recording rounds before the real pass, each ONE guarded child. A round
+# records twice, assuming unknown pairs match and then that they do not, so
+# every anyOf/oneOf alternative and both if branches are reached at once;
+# a later round is needed only for a branch chosen by an earlier real result
+# (nested if/then). The worst case is this many guarded children.
+_MAX_PATTERN_ROUNDS = 16
+# None outside validate(); else (known results, pairs still unknown or None,
+# the answer assumed for an unknown pair while recording).
 _STATE: contextvars.ContextVar = contextvars.ContextVar("plugin_pattern_state", default=None)
 
 
@@ -55,13 +59,13 @@ def _matches(pattern, text):
     state = _STATE.get()
     if state is None:  # validator(schema).validate(...) without validate()
         return _check_pairs({(pattern, text)})[(pattern, text)]
-    known, unknown = state
+    known, unknown, assumed = state
     if (pattern, text) in known:
         return known[(pattern, text)]
-    if unknown is None:
+    if unknown is None:  # the real pass never uses an assumed answer
         raise PatternCheckUnavailable
     unknown.add((pattern, text))
-    return True
+    return assumed
 
 
 def _guarded_validator_class():
@@ -129,21 +133,22 @@ def validator(schema):
 def validate(schema, sample):
     """Validate ``sample``; plugin patterns are checked only against the
     strings jsonschema actually tests them on, in one guarded child per
-    recording round (normally one)."""
+    recording round (normally one, at most _MAX_PATTERN_ROUNDS)."""
     checked = validator(schema)
     known: dict = {}
     for _ in range(_MAX_PATTERN_ROUNDS):
         unknown: set = set()
-        token = _STATE.set((known, unknown))
-        try:
-            for _error in checked.iter_errors(sample):
-                pass
-        finally:
-            _STATE.reset(token)
+        for assumed in (True, False):
+            token = _STATE.set((known, unknown, assumed))
+            try:
+                for _error in checked.iter_errors(sample):
+                    pass
+            finally:
+                _STATE.reset(token)
         if not unknown:
             break
         known.update(_check_pairs(unknown))
-    token = _STATE.set((known, None))
+    token = _STATE.set((known, None, False))
     try:
         checked.validate(sample)
     finally:

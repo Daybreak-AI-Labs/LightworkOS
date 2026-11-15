@@ -105,6 +105,31 @@ def test_plugin_patterns_are_checked_only_against_their_own_fields(monkeypatch):
         contracts.validator({"type": "object", "patternProperties": {"a": {}}, "unevaluatedProperties": False})
 
 
+def test_plugin_pattern_alternatives_are_all_checked_before_answering(monkeypatch):
+    pytest.importorskip("jsonschema")
+    from jsonschema import ValidationError
+    from maverick.tools import _regex_guard
+
+    spawned = []
+    real = _regex_guard._run_child
+    monkeypatch.setattr(_regex_guard, "_run_child", lambda *a, **k: spawned.append(1) or real(*a, **k))
+    units = {"type": "object", "properties": {"unit": {"anyOf": [
+        {"pattern": "^kg+$"}, {"pattern": "^lb+$"}, {"pattern": "^g+$"}, {"pattern": "^oz+$"}]}}}
+    contracts.validate(units, {"unit": "oz"})
+    assert spawned == [1]
+    with pytest.raises(ValidationError):
+        contracts.validate(units, {"unit": "stone"})
+    chain = {"pattern": "^z+$"}
+    for letter in "fedcba":  # six nested if/else levels
+        chain = {"if": {"pattern": f"^{letter}+$"}, "then": {"pattern": f"^{letter}{{2}}$"}, "else": chain}
+    deep = {"type": "object", "properties": {"code": chain}}
+    for answer in ("aa", "ee", "zzz"):
+        contracts.validate(deep, {"code": answer})
+    for answer in ("aaa", "eee", "q"):
+        with pytest.raises(ValidationError):
+            contracts.validate(deep, {"code": answer})
+
+
 def test_dynamic_reference_to_a_url_is_refused():
     # The host validates practice input against a schema the container
     # reported; $dynamicRef resolves through a registry that fetches URLs.
