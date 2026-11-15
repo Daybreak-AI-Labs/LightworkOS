@@ -1644,6 +1644,21 @@ def _same_transaction_intent(left: PromotionTransaction,
     )
 
 
+def _refuse_unjournaled_projection(journaled: Mapping[str, PromotionRecord],
+                                   projected: Mapping[str, PromotionRecord]) -> None:
+    """Refuse when the projection holds promotions or rollbacks the journal lacks.
+
+    The journal is authoritative, but a projection is only ever written after
+    its journal events commit. A projection record (or rollback) missing from
+    the journal therefore means the journal is incomplete, and overwriting the
+    projection would destroy the only remaining copy.
+    """
+    for record_id, record in projected.items():
+        current = journaled.get(record_id)
+        if current is None or (record.rolled_back and not current.rolled_back):
+            raise PromotionLedgerError("promotion ledger journal is incomplete")
+
+
 def _records_match(left: Mapping[str, PromotionRecord],
                    right: Mapping[str, PromotionRecord]) -> bool:
     return {key: value.to_dict() for key, value in left.items()} == {
@@ -2376,7 +2391,7 @@ class PromotionLedger:
         _assert_regular_file(projection, label="promotion ledger projection")
         _assert_regular_file(journal, label="promotion ledger journal")
         if journal.exists():
-            records, transactions, head = self._read_journal_state_locked()
+            records, transactions, head = self._read_journal_state_locked(repair_tail=True)
             repair_reason = ""
             try:
                 if not projection.exists():
@@ -2387,6 +2402,9 @@ class PromotionLedger:
                         repair_reason = "disagrees with authoritative journal"
             except PromotionLedgerError:
                 repair_reason = "malformed"
+            else:
+                if repair_reason == "disagrees with authoritative journal":
+                    _refuse_unjournaled_projection(records, projected)
             if repair_reason:
                 log.warning("repairing %s promotion ledger projection from journal", repair_reason)
                 self._sync_projection_after_journal_locked(records)
@@ -2417,15 +2435,69 @@ class PromotionLedger:
         records, _transactions, head = self._read_journal_state_locked()
         return records, head
 
-    def _read_journal_state_locked(self) -> tuple[
+    def _read_journal_state_locked(self, *, repair_tail: bool = False) -> tuple[
         dict[str, PromotionRecord], dict[str, PromotionTransaction], str,
     ]:
         journal = self._journal_path
         try:
-            text = journal.read_text(encoding="utf-8")
+            raw = journal.read_bytes()
+            if repair_tail and raw and not raw.endswith(b"\n"):
+                return self._repair_journal_tail_locked(raw)
+            text = raw.decode("utf-8")
         except (OSError, UnicodeError) as exc:
             raise PromotionLedgerError("cannot read promotion ledger journal") from exc
         return self._replay_journal_text(text)
+
+    def _repair_journal_tail_locked(self, raw: bytes) -> tuple[
+        dict[str, PromotionRecord], dict[str, PromotionTransaction], str,
+    ]:
+        """Repair a torn final write only after verification and durable audit.
+
+        A complete final JSON value must pass the full replay checks; it cannot
+        be discarded as a partial write. If only its delimiter was lost, keep
+        the event. With no verified prefix, a partial first event stays refused.
+        """
+        prefix, separator, tail = raw.rpartition(b"\n")
+        try:
+            json.loads(tail)
+        except (ValueError, UnicodeError):
+            repaired = prefix + separator
+            repair = "truncate_partial_event"
+        else:
+            repaired = raw + b"\n"
+            repair = "restore_event_delimiter"
+        state = self._replay_journal_text(repaired.decode("utf-8"))
+        try:
+            projected = self._read_projection_locked() if Path(self.path).exists() else {}
+        except PromotionLedgerError:
+            projected = {}
+        # A torn multi-event write (such as an old non-atomic legacy migration)
+        # must not be "repaired" into a journal that drops records whose only
+        # other copy is the projection.
+        _refuse_unjournaled_projection(state[0], projected)
+        try:
+            audited = _default_audit_fn(
+                action="promotion_journal_tail_repair", status="prepared",
+                repair=repair, verified_head_sha256=state[2],
+                before_sha256=hashlib.sha256(raw).hexdigest(),
+                after_sha256=hashlib.sha256(repaired).hexdigest(),
+                removed_bytes=max(0, len(raw) - len(repaired)),
+            )
+        except Exception as exc:
+            raise PromotionLedgerError("cannot audit promotion journal tail repair") from exc
+        if audited is not True:
+            raise PromotionLedgerError("cannot audit promotion journal tail repair")
+        from .file_lock import atomic_write_text
+
+        # Publish exactly the verified/audited bytes, including legacy CRLF
+        # delimiters; platform newline translation would change their digest.
+        atomic_write_text(
+            self._journal_path, repaired.decode("utf-8"), mode=0o600, newline="\n",
+        )
+        _sync_file(self._journal_path)
+        _sync_directory(self._journal_path.parent)
+        log.warning("repaired promotion ledger journal tail (%s)", repair)
+        return state
 
     def _replay_journal_text(self, text: str) -> tuple[
         dict[str, PromotionRecord], dict[str, PromotionTransaction], str,
@@ -2653,7 +2725,25 @@ class PromotionLedger:
                                     rolled_back_at=rec.rolled_back_at)
                 events.append(event)
                 previous = event["sha256"]
-        return self._append_events_locked(events)
+        # All events or none: a torn append here would leave a journal prefix
+        # that is authoritative while the projection is the only other copy.
+        journal = self._journal_path
+        if journal.exists():
+            _assert_regular_file(journal, label="promotion ledger journal")
+            if journal.stat().st_size:
+                raise PromotionLedgerError("promotion ledger journal already exists")
+        try:
+            from .file_lock import atomic_write_text
+
+            atomic_write_text(
+                journal, "".join(_canonical_json(event) + "\n" for event in events),
+                mode=0o600, newline="\n",
+            )
+            _sync_file(journal)
+            _sync_directory(journal.parent)
+        except (OSError, UnicodeError, TypeError, ValueError) as exc:
+            raise PromotionLedgerError("cannot migrate promotion ledger journal") from exc
+        return str(events[-1]["sha256"])
 
     def _ensure_journal_locked(self) -> None:
         journal = self._journal_path

@@ -544,7 +544,7 @@ def run(  # noqa: C901 -- orchestration keeps each privileged refusal visible
                 require_tracked_source=stock_requires_tracked_source,
                 expected_source_manifest=stock_snapshot,
             )
-        except EvalSandboxError as exc:
+        except (EvalSandboxError, ValueError) as exc:
             return RunSummary(
                 False,
                 reason=f"stock self-modification evaluator blocked: {exc}",

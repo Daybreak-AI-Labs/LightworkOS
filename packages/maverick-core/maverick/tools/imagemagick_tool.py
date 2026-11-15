@@ -125,6 +125,28 @@ def _safe_output_path(sandbox, user_path: str) -> str:
     return target
 
 
+_RASTER_CODERS = {
+    ".png": "png", ".jpg": "jpeg", ".jpeg": "jpeg", ".gif": "gif",
+    ".webp": "webp", ".bmp": "bmp", ".tif": "tiff", ".tiff": "tiff",
+    ".ppm": "ppm", ".pgm": "pgm", ".pbm": "pbm", ".pnm": "pnm",
+}
+# Write-only formats: ImageMagick's own encoders produce these without an
+# external delegate. Their decoders (PDF needs Ghostscript) are never used,
+# so they stay refused as inputs.
+_OUTPUT_ONLY_CODERS = {".ico": "ico", ".pdf": "pdf"}
+_RESOURCE_LIMITS = ["-limit", "memory", "128MiB", "-limit", "map", "256MiB",
+                    "-limit", "disk", "512MiB", "-limit", "thread", "2",
+                    "-limit", "time", "60"]
+
+
+def _raster_path(path: str, *, output: bool = False) -> str:
+    suffix = Path(path).suffix.lower()
+    coder = _RASTER_CODERS.get(suffix) or (_OUTPUT_ONLY_CODERS.get(suffix) if output else None)
+    if coder is None:
+        raise ValueError("image paths must use a supported raster format")
+    return f"{coder}:{path}"
+
+
 def _op_resize(args: dict, sandbox) -> str:
     b = _magick_or_convert()
     if not b:
@@ -148,7 +170,7 @@ def _op_resize(args: dict, sandbox) -> str:
     if geom == "x":
         geom = "100%"
     cmd = [b] if b != "magick" else ["magick", "convert"]
-    code, _o, stderr = _run_cmd(sandbox, cmd + [src, "-resize", geom, dst])
+    code, _o, stderr = _run_cmd(sandbox, cmd + _RESOURCE_LIMITS + [_raster_path(src), "-resize", geom, _raster_path(dst, output=True)])
     if code != 0:
         return f"ERROR: resize ({code}): {stderr.strip()[-300:]}"
     return f"wrote {dst} ({geom})"
@@ -169,7 +191,7 @@ def _op_convert(args: dict, sandbox) -> str:
         return f"ERROR: {e}"
     cmd = [b] if b != "magick" else ["magick", "convert"]
     extra = _safe_convert_args(args.get("args"))
-    code, _o, stderr = _run_cmd(sandbox, cmd + [src, *extra, dst])
+    code, _o, stderr = _run_cmd(sandbox, cmd + _RESOURCE_LIMITS + [_raster_path(src), *extra, _raster_path(dst, output=True)])
     if code != 0:
         return f"ERROR: convert ({code}): {stderr.strip()[-300:]}"
     return f"wrote {dst}"
@@ -188,7 +210,7 @@ def _op_identify(args: dict, sandbox) -> str:
         return f"ERROR: {e}"
     cmd = [b] if b != "magick" else ["magick", "identify"]
     code, out, stderr = _run_cmd(
-        sandbox, cmd + ["-format", "%w %h %m %b %f\n", src],
+        sandbox, cmd + _RESOURCE_LIMITS + ["-format", "%w %h %m %b %f\n", _raster_path(src)],
     )
     if code != 0:
         return f"ERROR: identify ({code}): {stderr.strip()[-300:]}"
@@ -225,7 +247,7 @@ def _op_composite(args: dict, sandbox) -> str:
         return "ERROR: invalid composite geometry"
     cmd = ["magick", "composite"] if magick else [composite_bin]
     code, _o, stderr = _run_cmd(
-        sandbox, cmd + ["-geometry", geom, overlay, base, dst],
+        sandbox, cmd + _RESOURCE_LIMITS + ["-geometry", geom, _raster_path(overlay), _raster_path(base), _raster_path(dst, output=True)],
     )
     if code != 0:
         return f"ERROR: composite ({code}): {stderr.strip()[-300:]}"

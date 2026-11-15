@@ -270,6 +270,22 @@ def _validated_learned(
     )
 
 
+def _learned_tail(path: Path, byte_limit: int) -> str:
+    """Read only the newest whole rows within the byte budget, under the lock."""
+    if not path.exists() or byte_limit <= 0:
+        return ""
+    with path.open("rb") as stream:
+        size = stream.seek(0, 2)
+        start = max(0, size - byte_limit)
+        # Include the preceding byte to distinguish a row boundary from a
+        # partial row (including one split in the middle of a UTF-8 character).
+        stream.seek(max(0, start - 1))
+        raw = stream.read(byte_limit + 1)
+    if start:
+        raw = raw.partition(b"\n")[2]
+    return raw.decode("utf-8")
+
+
 def _record_impl(
     need: str, kind: str, name: str, *,
     source: str = "", outcome: str = "acquired",
@@ -289,22 +305,27 @@ def _record_impl(
     with _lock:
         try:
             ensure_private_directory(path.parent)
-            with cross_process_lock(path):
+            with cross_process_lock(path, strict=True):
                 if path.exists():
                     ensure_private_file(path, 0o600)
-                    if path.stat().st_size > _MAX_LEARNED_LEDGER_BYTES:
-                        raise ValueError("learned ledger exceeds the size limit")
-                previous = atomic_read_text(path) if path.exists() else ""
+                line = json.dumps(entry.to_dict(), sort_keys=True) + "\n"
+                remaining = _MAX_LEARNED_LEDGER_BYTES - len(line.encode("utf-8"))
+                if remaining < 0:
+                    raise ValueError("learned entry exceeds the size limit")
+                previous = _learned_tail(path, remaining)
                 if previous and not previous.endswith("\n"):
                     previous += "\n"
+                    if len(previous.encode("utf-8")) > remaining:
+                        previous = previous.partition("\n")[2]
                 if not allowed(content):
                     return False
                 if before_write is not None:
                     before_write()
                 atomic_write_text(
                     path,
-                    previous + json.dumps(entry.to_dict(), sort_keys=True) + "\n",
+                    previous + line,
                     mode=0o600,
+                    newline="\n",  # Keep physical bytes equal to the bounded UTF-8 payload.
                 )
             return True
         except (OSError, RuntimeError, ValueError) as e:
@@ -348,7 +369,7 @@ def _record_committed(
 
 
 def history(*, limit: int = 50, path: Path | None = None, owner: str | None = None) -> list[Learned]:
-    """Current-owner learned capabilities, filtered before limiting results."""
+    """Current-owner capabilities from the bounded newest history window."""
     from .learning_content import allowed
     path = path if path is not None else learned_path()
     if not path.exists():
@@ -356,11 +377,9 @@ def history(*, limit: int = 50, path: Path | None = None, owner: str | None = No
     out: list[tuple[int, Learned]] = []
     try:
         ensure_private_directory(path.parent)
-        with cross_process_lock(path):
+        with cross_process_lock(path, strict=True):
             ensure_private_file(path, 0o600)
-            if path.stat().st_size > _MAX_LEARNED_LEDGER_BYTES:
-                return []
-            rows = atomic_read_text(path).splitlines()
+            rows = _learned_tail(path, _MAX_LEARNED_LEDGER_BYTES).splitlines()
         for append_index, raw in enumerate(rows):
             try:
                 def _object(pairs: list[tuple[str, object]]) -> dict[str, object]:

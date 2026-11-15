@@ -193,9 +193,9 @@ def sandbox_run(
     through ``sandbox.exec()`` instead.
 
     Through a sandbox, the argv is shell-quoted with ``shlex.join`` and handed
-    to ``exec()`` (which runs ``sh -c``); ``stdin`` is fed via a base64 pipe so
-    arbitrary text reaches the process without shell-quoting hazards. Windows
-    LocalBackend runs the argv directly with a bounded stdin pipe. When no
+    to ``exec()`` (which runs ``sh -c``); small ``stdin`` is fed via a base64
+    pipe without shell-quoting hazards. Large input requires an admitted stdin
+    channel: LocalBackend runs the argv directly with a bounded pipe. When no
     sandbox is wired in, falls back to a scrubbed-env ``subprocess.run`` of the
     raw argv list (no shell interpolation -- the chokepoint guard forbids that
     outside the sandbox backends), passing ``stdin`` directly.
@@ -206,18 +206,34 @@ def sandbox_run(
         from ..sandbox.sdk import execution_callable
 
         execute = execution_callable(sandbox)
-        if os.name == "nt":
-            from ..sandbox.local import LocalBackend
+        from ..sandbox.local import LocalBackend
 
-            if type(sandbox) is LocalBackend:
-                # cmd.exe has no printf/base64 -d pipeline and an 8191-char
-                # command limit. Direct argv avoids shell interpolation; the
-                # bounded stdin pipe keeps notebook contents off the command line.
+        if type(sandbox) is LocalBackend:
+            # Direct argv and stdin avoid both Windows' command limit and
+            # POSIX's per-argument limit. Never retry an effect on TypeError.
+            try:
                 res = execute(argv, timeout=timeout, stdin=stdin)
-                return res.exit_code, res.stdout, res.stderr
+            except OSError as e:
+                # Keep the `sh -c` contract callers rely on: 127 when the
+                # program is missing, 126 when it cannot be executed. Other
+                # failures (a missing workdir) still raise.
+                if not argv or e.filename != argv[0]:
+                    raise
+                if isinstance(e, FileNotFoundError):
+                    return 127, "", f"sh: {argv[0]}: not found"
+                if isinstance(e, PermissionError):
+                    return 126, "", f"sh: {argv[0]}: Permission denied"
+                raise
+            return res.exit_code, res.stdout, res.stderr
         import shlex
         cmd = shlex.join(argv)
         if stdin is not None:
+            if len(stdin.encode("utf-8")) > 64 * 1024:
+                # The SDK has no stdin contract for these backends. Do not
+                # stage host-written input in an agent-writable workspace:
+                # directory swaps can redirect writes or replace cleanup
+                # targets. Refuse before execution until a channel is declared.
+                return 1, "", "this sandbox cannot safely accept stdin larger than 64 KiB"
             import base64
             b64 = base64.b64encode(stdin.encode("utf-8")).decode("ascii")
             cmd = f"printf %s {shlex.quote(b64)} | base64 -d | {cmd}"
@@ -1405,8 +1421,8 @@ def base_registry(
     reg.register(diagnose())
     reg.register(differential_privacy())
     if enable_mobile_tools:
-        reg.register(android(sandbox))
-        reg.register(ios_sim(sandbox))
+        _register_local_workspace_tool(reg, sandbox, android, has_local_workdir)
+        _register_local_workspace_tool(reg, sandbox, ios_sim, has_local_workdir)
     reg.register(spend_report())
     reg.register(budget_status(budget=budget))
     reg.register(test_impact(sandbox))
@@ -2040,6 +2056,12 @@ def _apply_rate_limits(reg: ToolRegistry, *, fail_silently: bool = False) -> Non
         _logging.getLogger(__name__).warning("rate_limiter: %s", e)
 
 
+def _plugin_name_reserved(reg: ToolRegistry, name: str) -> bool:
+    from ..safety.tool_risk import _DEFAULT_RISK
+
+    return name in reg._tools or name in _DEFAULT_RISK or name in CORE_TOOL_NAMES
+
+
 def _apply_python_plugins(reg: ToolRegistry) -> None:
     # Plugin tools registered via the `maverick.tools` entry point. Each
     # factory is called with no args and must return a Tool. A broken
@@ -2052,10 +2074,10 @@ def _apply_python_plugins(reg: ToolRegistry) -> None:
                 # Never let a plugin shadow a built-in (or an MCP) tool: an
                 # allowlisted plugin returning Tool(name="shell") would silently
                 # replace the real shell and run attacker code under that name.
-                if t.name in reg._tools:
+                if _plugin_name_reserved(reg, t.name):
                     import logging
                     logging.getLogger(__name__).warning(
-                        "plugin tool %r conflicts with an existing tool; skipping",
+                        "plugin tool %r conflicts with a reserved tool name; skipping",
                         t.name,
                     )
                     continue
@@ -2077,10 +2099,10 @@ def _apply_ts_plugins(reg: ToolRegistry) -> None:
     try:
         from ..ts_plugin_host import load_configured_ts_plugins
         for t in load_configured_ts_plugins():
-            if t.name in reg._tools:
+            if _plugin_name_reserved(reg, t.name):
                 import logging
                 logging.getLogger(__name__).warning(
-                    "ts plugin tool %r conflicts with an existing tool; skipping",
+                    "ts plugin tool %r conflicts with a reserved tool name; skipping",
                     t.name,
                 )
                 continue
@@ -2095,10 +2117,10 @@ def _apply_grpc_plugins(reg: ToolRegistry) -> None:
     try:
         from ..grpc_plugin_host import load_configured_grpc_plugins
         for t in load_configured_grpc_plugins():
-            if t.name in reg._tools:
+            if _plugin_name_reserved(reg, t.name):
                 import logging
                 logging.getLogger(__name__).warning(
-                    "grpc plugin tool %r conflicts with an existing tool; skipping",
+                    "grpc plugin tool %r conflicts with a reserved tool name; skipping",
                     t.name,
                 )
                 continue

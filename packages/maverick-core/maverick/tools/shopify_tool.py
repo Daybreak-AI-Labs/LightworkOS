@@ -274,6 +274,25 @@ def _op_inventory(limit: int) -> str:
     )
 
 
+def _refund_parent(client, url: str, currency: str) -> dict:
+    response = client.get(url)
+    if response.status_code >= 400:
+        raise RuntimeError(f"refund parent lookup failed ({response.status_code}); no refund was created")
+    data = response.json()
+    rows = data.get("transactions") if isinstance(data, dict) else None
+    if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+        raise RuntimeError("refund parent lookup returned invalid transactions; no refund was created")
+    candidates = [row for row in rows
+                  if row.get("kind") in ("sale", "capture") and row.get("status") == "success"
+                  and row.get("currency") == currency]
+    if len(candidates) != 1:
+        raise RuntimeError("refund requires exactly one successful sale or capture in the requested currency; review the order in Shopify")
+    parent = candidates[0]
+    if type(parent.get("id")) is not int or parent["id"] <= 0 or not isinstance(parent.get("gateway"), str) or not parent["gateway"]:
+        raise RuntimeError("refund parent identity or gateway is unavailable; no refund was created")
+    return parent
+
+
 def _op_refund_create(order_id: int, amount_cents: int, currency: str,
                       confirm: bool) -> str:
     if not order_id:
@@ -290,11 +309,17 @@ def _op_refund_create(order_id: int, amount_cents: int, currency: str,
             "Re-run with confirm=true."
         )
     store, c = _client()
-    body: dict = {"refund": {"notify": True, "transactions": [{
-        "amount": amount, "kind": "refund",
-        "currency": (currency or "USD").upper(),
-    }]}}
     with c:
+        currency = (currency or "USD").upper()
+        try:
+            parent = _refund_parent(c,
+                f"https://{store}/admin/api/{_API_VERSION}/orders/{order_id}/transactions.json", currency)
+        except (RuntimeError, ValueError) as exc:
+            return f"ERROR: {exc}"
+        body: dict = {"refund": {"notify": True, "transactions": [{
+            "parent_id": parent["id"], "gateway": parent["gateway"],
+            "amount": amount, "kind": "refund", "currency": currency,
+        }]}}
         r = c.post(
             f"https://{store}/admin/api/{_API_VERSION}/orders/{order_id}/refunds.json",
             json=body,

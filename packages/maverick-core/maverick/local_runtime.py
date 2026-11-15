@@ -374,10 +374,19 @@ class Launcher:
         """The (argv, extra-env) this launcher WOULD run for ``replica``.
 
         Pure — works (and is printable via ``maverick local-runtime plan``)
-        even while the runtime is disabled.
+        even while the runtime is disabled. Replica 0's llama.cpp prompt cache
+        keeps the ``llamacpp.promptcache`` name; later replicas add their
+        listening port (``llamacpp-<port>.promptcache``).
         """
         cfg = {**self.cfg, "port": _port(self.cfg, replica)}
-        return build_argv(cfg["engine"], cfg), build_env(cfg["engine"], cfg)
+        argv = build_argv(cfg["engine"], cfg)
+        if replica and cfg["engine"] == "llamacpp" and cfg["kv_offload_dir"]:
+            # Replica 0 keeps the single-process cache name, so an existing
+            # cache survives an upgrade. Further replicas have distinct ports
+            # and must never write one another's persistent prompt cache.
+            argv[argv.index("--prompt-cache") + 1] = os.path.join(
+                cfg["kv_offload_dir"], f"llamacpp-{cfg['port']}.promptcache")
+        return argv, build_env(cfg["engine"], cfg)
 
     def start(self, replica: int = 0) -> str:
         """Start replica N and return its endpoint URL (idempotent while alive)."""

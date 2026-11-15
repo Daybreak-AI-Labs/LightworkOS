@@ -327,14 +327,31 @@ def _query_connection(conn, sql, limit, needs_confirm, response_format, executio
     from sqlalchemy import text
 
     result = None
+    restore_select_limit = None
     try:
         _prepare_query_driver(conn, execution)
         execution.started()
-        if (not needs_confirm and _leading_keyword(sql) == "select" and execution.transactional
-                and execution.cancellation_support == "postgres_statement_timeout_and_cancel_safe"):
-            # Qualified psycopg SELECTs use a server cursor so the driver does
-            # not first buffer an unbounded result before our sentinel fetch.
+        dialect = getattr(conn, "dialect", None)
+        if (not needs_confirm and _leading_keyword(sql) == "select"
+                and getattr(dialect, "supports_server_side_cursors", False)
+                and (execution.transactional
+                     or getattr(dialect, "name", None) in {"mysql", "mariadb"})):
+            # Use the dialect's server cursor (including MySQL and non-psycopg
+            # PostgreSQL drivers), before execute can buffer the result. SQLite
+            # and Oracle's synchronous cursors already fetch incrementally.
+            # Keep non-SELECT statements out: named PostgreSQL cursors cannot
+            # execute DML/RETURNING, and authorization must not be inferred here.
+            # Outside MySQL a named cursor needs a known open transaction:
+            # PostgreSQL rejects DECLARE in autocommit mode, and an unbound
+            # driver's autocommit state is unknown.
             conn = conn.execution_options(yield_per=limit + 1)
+        elif (not needs_confirm and _leading_keyword(sql) == "select"
+              and getattr(dialect, "name", None) in {"mysql", "mariadb"}):
+            # mysqlconnector and pyodbc buffer results in SQLAlchemy and cannot
+            # stream. Bound the result on the server without rewriting the
+            # statement: the session's sql_select_limit caps the rows a
+            # top-level SELECT returns, and is restored afterwards.
+            restore_select_limit = _limit_mysql_select(conn, limit + 1)
         result = conn.execute(text(sql))
         if result.returns_rows:
             cols = list(result.keys())
@@ -371,9 +388,27 @@ def _query_connection(conn, sql, limit, needs_confirm, response_format, executio
         return execution.failure(exc)
     finally:
         execution.stop_monitor()  # Join cancellation before releasing this connection.
+        if restore_select_limit is not None:
+            _restore_mysql_select_limit(conn, restore_select_limit)
         if execution.state == "unknown":
             with contextlib.suppress(Exception):
                 conn.invalidate()
+
+
+def _limit_mysql_select(conn, rows: int) -> int:
+    """Cap the session's top-level SELECT rows; return the value to restore."""
+    previous = int(conn.exec_driver_sql("SELECT @@SESSION.sql_select_limit").scalar())
+    conn.exec_driver_sql(f"SET SESSION sql_select_limit = {int(rows):d}").close()
+    return previous
+
+
+def _restore_mysql_select_limit(conn, previous: int) -> None:
+    try:
+        conn.exec_driver_sql(f"SET SESSION sql_select_limit = {previous:d}").close()
+    except Exception:
+        # Never release a connection that still carries the tool's cap.
+        with contextlib.suppress(Exception):
+            conn.invalidate()
 
 
 def _execute_query(sql, url, limit, needs_confirm, response_format):

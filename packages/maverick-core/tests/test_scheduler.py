@@ -166,3 +166,24 @@ def test_scheduler_schedule_cron_enqueues(tmp_path):
     assert q.claim(now=base) is None
     # Claimable at/after run_at.
     assert q.claim(now=run_at + 1) is not None
+
+
+def test_full_range_day_field_counts_as_unrestricted():
+    # A day field spelled out over its whole range matches every day, so it
+    # must not turn on the "either day field fires" rule: these stored
+    # schedules keep firing on the 15th, or weekly, not every day.
+    start = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc).timestamp()
+    every_dom = ",".join(str(d) for d in range(1, 32))
+    cases = {
+        "0 0 15 * 0-6": ["2026-01-15", "2026-02-15", "2026-03-15"],
+        "0 0 15 * 0-7": ["2026-01-15", "2026-02-15", "2026-03-15"],
+        "0 0 1-31 * 1": ["2026-01-05", "2026-01-12", "2026-01-19"],
+        "0 0 1-31/1 * 2": ["2026-01-06", "2026-01-13", "2026-01-20"],
+        f"0 0 {every_dom} * 1": ["2026-01-05", "2026-01-12", "2026-01-19"],
+    }
+    for expr, expected in cases.items():
+        fired, t = [], start
+        for _ in range(3):
+            t = next_run(expr, after=t)
+            fired.append(dt.datetime.fromtimestamp(t, dt.timezone.utc).date().isoformat())
+        assert fired == expected, expr

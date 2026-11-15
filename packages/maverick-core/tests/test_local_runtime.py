@@ -259,6 +259,16 @@ def test_launcher_plan_is_dry():
     assert runner.spawned == []
 
 
+def test_launcher_first_replica_keeps_existing_prompt_cache_file(tmp_path):
+    # Replica 0 reuses the cache file a single-replica install already has
+    # (no cold start after upgrade); later replicas still get their own file.
+    launcher = lr.Launcher({"model": "m.gguf", "engine": "llamacpp",
+                            "kv_offload_dir": str(tmp_path)})
+    caches = [_val(launcher.plan(n)[0], "--prompt-cache") for n in range(3)]
+    assert caches[0] == os.path.join(str(tmp_path), "llamacpp.promptcache")
+    assert len(set(caches)) == 3
+
+
 # ----------------------------------------------------------------- autoscaler
 
 class FakeClock:

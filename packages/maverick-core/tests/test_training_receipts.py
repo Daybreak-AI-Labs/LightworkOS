@@ -896,3 +896,52 @@ def test_public_commitment_is_verified_and_disclosure_minimal():
                 trusted_receipt_pubkeys=trust["receipt"],
                 trusted_approver_pubkeys=trust["approval"],
             )
+
+
+@pytest.mark.parametrize("failure", ["self_check", "fsync"])
+def test_receipt_self_check_failure_removes_only_its_new_row(monkeypatch, failure):
+    import os
+
+    with tenant_scope(tenant="alpha"):
+        first, trust = _issue()
+        path = tr.receipts_path()
+        before = path.read_bytes()
+        with monkeypatch.context() as patcher:
+            if failure == "self_check":
+                patcher.setattr(tr, "verify_training_receipt", lambda *a, **kw: False)
+                message = "self-check"
+            else:
+                original_fsync = os.fsync
+                failed = []
+
+                def fail_once(fd):
+                    if not failed and os.fstat(fd).st_ino == path.stat().st_ino:
+                        failed.append(True)
+                        raise OSError("receipt fsync failed")
+                    return original_fsync(fd)
+
+                patcher.setattr(os, "fsync", fail_once)
+                message = "signer refused"
+            with pytest.raises(tr.TrainingReceiptError, match=message):
+                _issue()
+        assert path.read_bytes() == before
+        assert tr.read_verified_training_receipt(
+            first.receipt["receipt_id"], trusted_receipt_pubkeys=trust["receipt"],
+            trusted_approver_pubkeys=trust["approval"],
+        ) == first.receipt
+
+
+@pytest.mark.parametrize("boundary", ["rows", "bytes", "pending_bytes"])
+def test_receipt_issuance_refuses_to_exceed_read_limits(monkeypatch, boundary):
+    with tenant_scope(tenant="alpha"):
+        _issue()
+        path = tr.receipts_path()
+        before = path.read_bytes()
+        if boundary == "rows":
+            monkeypatch.setattr(tr, "MAX_RECEIPT_ROWS", 1)
+        else:
+            monkeypatch.setattr(tr, "MAX_RECEIPT_STORE_BYTES",
+                                len(before) + (64 if boundary == "pending_bytes" else 0))
+        with pytest.raises(tr.TrainingReceiptError, match="storage boundary"):
+            _issue()
+        assert path.read_bytes() == before

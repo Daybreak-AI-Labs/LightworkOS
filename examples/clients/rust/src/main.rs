@@ -58,21 +58,30 @@ async fn run() -> Result<()> {
             let _ = stderr_sender.send(error);
         }
     });
-    let mut client = tokio::select! {
+    // A failed initialization drops the transport, whose guard kills the
+    // child; the stderr wait below still runs before the runtime is torn down.
+    let initialized = tokio::select! {
         result = tokio::time::timeout(Duration::from_secs(30), ().serve(transport)) =>
-            result.context("MCP initialization exceeded 30 seconds")??,
-        error = wait_stderr_failure(&mut stderr_failure) => return Err(error),
-    };
-
-    let mut result = tokio::select! {
-        result = tokio::time::timeout(Duration::from_secs(30), check_client(&client)) =>
-            result.context("MCP tool checks exceeded 30 seconds").and_then(|result| result),
+            result.context("MCP initialization exceeded 30 seconds")
+                .and_then(|result| result.map_err(anyhow::Error::from)),
         error = wait_stderr_failure(&mut stderr_failure) => Err(error),
     };
-    // Await cleanup on refusals too, before the Tokio runtime is torn down.
-    // A nonreading server can hold the SDK writer mutex during close. Bound
-    // that wait; kill_on_drop still applies when runtime teardown drops it.
-    let cleanup = client.close_with_timeout(Duration::from_secs(2)).await;
+
+    let (mut result, cleanup) = match initialized {
+        Ok(mut client) => {
+            let result = tokio::select! {
+                result = tokio::time::timeout(Duration::from_secs(30), check_client(&client)) =>
+                    result.context("MCP tool checks exceeded 30 seconds").and_then(|result| result),
+                error = wait_stderr_failure(&mut stderr_failure) => Err(error),
+            };
+            // Await cleanup on refusals too, before the Tokio runtime is torn down.
+            // A nonreading server can hold the SDK writer mutex during close. Bound
+            // that wait; kill_on_drop still applies when runtime teardown drops it.
+            let cleanup = client.close_with_timeout(Duration::from_secs(2)).await;
+            (result, Some(cleanup))
+        }
+        Err(error) => (Err(error), None),
+    };
     let stderr_cleanup = tokio::time::timeout(Duration::from_secs(2), &mut stderr_task).await;
     if stderr_cleanup.is_err() {
         stderr_task.abort();
@@ -85,7 +94,9 @@ async fn run() -> Result<()> {
         }
     }
     result?;
-    cleanup?.context("MCP cleanup exceeded 2 seconds")?;
+    if let Some(cleanup) = cleanup {
+        cleanup?.context("MCP cleanup exceeded 2 seconds")?;
+    }
     stderr_cleanup.context("MCP stderr did not close during cleanup")??;
     println!("OK: Rust client drove Lightwork over MCP end-to-end");
     Ok(())

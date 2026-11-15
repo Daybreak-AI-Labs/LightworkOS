@@ -708,3 +708,70 @@ def test_a_projection_without_an_authority_projects_no_item_under_the_filter(ser
     result = native.exact_source_snapshot(TENANT, identifier, version, knowledge_base=kb)
     assert result["visible_items"] == [] and result["withheld_for_permissions"] == 2
     assert len(result["items"]) == 2  # the commitment still covers every item
+
+
+def test_published_remote_analysis_revalidates_original_analyze_authority(service, monkeypatch, tmp_path, request):
+    from dataclasses import asdict
+
+    from maverick import knowledge_task_context as context
+    from maverick.knowledge_access import KnowledgeAccessService, KnowledgeActorAuthority
+    from maverick.knowledge_content_projection import ExistingKnowledgeContentProjector
+    from maverick.research_registry import (
+        DataUseAuthority,
+        RegistryReviewAuthority,
+        ResearchRegistry,
+    )
+
+    kb = _real_knowledge_base(tmp_path)
+    request.addfinalizer(kb.close)
+    identifier, version = _retained_real_snapshot(service, kb, ["Restricted payroll record", "Shared handbook"])
+    _grant_items(service, identifier, version, {"item-0": _grant(emails=["bob@contoso.com"]),
+                                               "item-1": _grant(emails=["alice@contoso.com"])})
+    _set_limits(monkeypatch, {})
+    source_ref = native.source_ref(identifier, version)
+    inspected = inspect_existing_source(TENANT, source_ref, knowledge_base=kb)
+    registry = ResearchRegistry(
+        data_use_resolver=lambda tenant, decision_id, decision_sha256: DataUseAuthority(
+            tenant, decision_id, decision_sha256, identifier, "analyze", ("support",), 4_102_444_800.0, SHA),
+        review_authority_resolver=lambda tenant, actor: RegistryReviewAuthority(tenant, actor, SHA))
+    reference = registry.register_dataset(TENANT, OWNER, dataset_id=identifier, version=version,
+        source_ref=source_ref, content_sha256=inspected["content_sha256"], license_id="customer-authorized",
+        license_evidence_sha256=SHA, allowed_purposes=("support",), usage_constraints=("analyze_only",),
+        data_use_action="analyze", data_use_decision_id="source-use", data_use_decision_sha256=SHA)
+    reference = registry.approve(TENANT, "user:reviewer", reference, expected_revision=1)
+    allowed = {"read": True, "analyze": True}
+    def actor_authority(tenant, actor, action, purpose):
+        if not allowed[action]:
+            raise PermissionError("Current actor permission was withdrawn")
+        return KnowledgeActorAuthority(tenant, actor, action, purpose, SHA, verified_email="alice@contoso.com")
+    access = KnowledgeAccessService(registry=registry,
+        content_resolver=ExistingKnowledgeContentProjector(knowledge_base=kb),
+        actor_authority_resolver=actor_authority)
+    goal = SimpleNamespace(id=1, title="Analysis", description="Compare evidence", created_at=1,
+                           owner=OWNER, status="done")
+    context._write(goal.id, {"tenant": TENANT, "owner": OWNER, "brief_sha": context._brief(goal),
+        "references": [asdict(reference)], "purpose": "support", "phase": "published", "result": "Approved derivative"})
+    monkeypatch.setattr(context, "enabled", lambda: True)
+    monkeypatch.setattr(context, "service", lambda: access)
+    world = SimpleNamespace(get_goal=lambda goal_id: goal)
+    assert context.read_analysis(world, goal.id, OWNER)["result"] == "Approved derivative"
+    # The exact snapshot commitment stays unchanged while current item access narrows.
+    _set_limits(monkeypatch, {"permission_filter": "by_email"})
+    narrowed = access.materialize_at_job_start(TENANT, OWNER, [reference], purpose="support",
+                                              action="analyze", job_id="check-analysis")
+    assert narrowed["items"][0]["permissions_withheld"] == 1
+    with pytest.raises(context.SourceContextUnavailable):
+        context.read_analysis(world, goal.id, OWNER)
+    _set_limits(monkeypatch, {})
+    # The reader needs current read access; analysis is what the source's admission authorised.
+    allowed["read"] = False
+    with pytest.raises(context.SourceContextUnavailable):
+        context.read_analysis(world, goal.id, OWNER)
+    allowed["read"], allowed["analyze"] = True, False
+    assert context.read_analysis(world, goal.id, OWNER)["result"] == "Approved derivative"
+    allowed["analyze"] = True
+    row = service.sources.get(identifier)
+    service.sources.update(identifier, lambda current: current.update(projection_allowed=False),
+        expected_revision=row["revision"], action="test.withdraw", actor=OWNER)
+    with pytest.raises(context.SourceContextUnavailable):
+        context.read_analysis(world, goal.id, OWNER)

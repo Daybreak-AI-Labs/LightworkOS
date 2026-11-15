@@ -11,6 +11,7 @@ import java.time.Instant;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -69,13 +70,18 @@ public final class TaggedMcpLauncher {
         }
 
         AtomicReference<Process> serverRef = new AtomicReference<>();
+        // Descendants seen while the server ran. Once it exits they are
+        // re-parented and no longer reachable through its handle.
+        Set<ProcessHandle> recorded = ConcurrentHashMap.newKeySet();
         Thread shutdown = Thread.ofPlatform()
                 .name("maverick-mcp-launcher-shutdown")
-                .unstarted(() -> terminate(serverRef.get()));
+                .unstarted(() -> terminate(serverRef.get(), recorded));
         Runtime.getRuntime().addShutdownHook(shutdown);
 
         Process server = serverBuilder.start();
         serverRef.set(server);
+        Thread tracker = Thread.ofPlatform().daemon(true).name("maverick-mcp-descendants")
+                .start(() -> recordDescendants(server, recorded));
         try {
             if (controlledPause) {
                 awaitControlFile(ready, server, Duration.ofSeconds(15));
@@ -84,7 +90,7 @@ public final class TaggedMcpLauncher {
             McpProcessOwnership.registerActive(
                     registry, token, launcher, server.toHandle());
         } catch (Exception failure) {
-            terminate(server);
+            terminate(server, recorded);
             throw failure;
         }
 
@@ -96,13 +102,16 @@ public final class TaggedMcpLauncher {
                         forwardLines(server.getErrorStream(), System.err, 64 * 1024, "stderr");
                     } catch (IOException failure) {
                         stderrFailure.set(failure);
-                        terminate(server);
+                        terminate(server, recorded);
                     }
                 });
         int exitCode;
         try {
             forwardLines(server.getInputStream(), System.out, 16 * 1024 * 1024, "stdout");
             exitCode = server.waitFor();
+            // A descendant left behind can hold stderr open; stop the ones
+            // recorded before the server exited, then wait for the stream.
+            terminate(server, recorded);
             stderr.join(2000);
             if (stderr.isAlive()) {
                 throw new IOException("MCP stderr did not close after the server exited");
@@ -111,7 +120,8 @@ public final class TaggedMcpLauncher {
                 throw stderrFailure.get();
             }
         } finally {
-            terminate(server);
+            terminate(server, recorded);
+            tracker.interrupt();
             server.getInputStream().close();
             server.getErrorStream().close();
             stderr.interrupt();
@@ -174,8 +184,21 @@ public final class TaggedMcpLauncher {
         }
     }
 
-    private static void terminate(Process server) {
-        if (server == null || !server.isAlive()) {
+    private static void recordDescendants(Process server, Set<ProcessHandle> recorded) {
+        try {
+            while (server.isAlive()) {
+                try (var descendants = server.toHandle().descendants()) {
+                    descendants.forEach(recorded::add);
+                }
+                Thread.sleep(50);
+            }
+        } catch (InterruptedException stopped) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private static void terminate(Process server, Set<ProcessHandle> recorded) {
+        if (server == null) {
             return;
         }
         // Capture before terminating the root: otherwise its children can be
@@ -183,7 +206,11 @@ public final class TaggedMcpLauncher {
         long deadline = System.nanoTime() + Duration.ofMillis(1500).toNanos();
         Set<ProcessHandle> owned = new LinkedHashSet<>();
         owned.add(server.toHandle());
+        owned.addAll(recorded);
         collectDescendants(owned);
+        if (owned.stream().noneMatch(ProcessHandle::isAlive)) {
+            return;
+        }
         for (ProcessHandle process : owned) {
             if (process.isAlive()) process.destroy();
         }

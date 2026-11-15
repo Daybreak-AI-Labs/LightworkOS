@@ -30,9 +30,11 @@ from __future__ import annotations
 
 import base64
 import copy
+import importlib
 import io
 import logging
 import os
+import sys
 import tempfile
 import time
 from typing import Any
@@ -551,13 +553,55 @@ def _resolve_target(args: dict[str, Any]) -> str | None:
     return None
 
 
+def _trusted_xlib() -> tuple[Any, Any]:
+    """Import python-xlib excluding the workspace: this runs before consent."""
+    from .hardware_sensors import _path_in_cwd, _safe_import_path
+
+    cached = sys.modules.get("Xlib")
+    if cached is None:
+        original_path = list(sys.path)
+        try:
+            sys.path = [entry for entry in original_path if _safe_import_path(entry)]
+            importlib.import_module("Xlib")
+            importlib.import_module("Xlib.X")
+            importlib.import_module("Xlib.display")
+        finally:
+            sys.path = original_path
+    xlib = sys.modules["Xlib"]
+    if _path_in_cwd(getattr(xlib, "__file__", None)):
+        raise ImportError("Xlib resolves inside the workspace")
+    return xlib.X, xlib.display
+
+
 def _foreground_window_identity() -> dict[str, Any]:
-    """Observe the current Windows input target; callers persist only its hash."""
+    """Observe the input target when supported; callers persist only its hash."""
     if os.name != "nt":
-        return {
+        identity: dict[str, Any] = {
             "platform": os.name,
-            "display": os.environ.get("DISPLAY") or "local-primary",
+            "display": os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY") or "local-primary",
+            "window_binding": "unavailable",
         }
+        # Xwayland cannot identify native Wayland foreground windows. Do not
+        # present an X11 id as a binding for the whole Wayland input seat.
+        if os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+            connection = None
+            try:
+                X, display = _trusted_xlib()
+                connection = display.Display(os.environ["DISPLAY"])
+                atom = connection.intern_atom("_NET_ACTIVE_WINDOW", only_if_exists=True)
+                prop = connection.screen().root.get_full_property(atom, X.AnyPropertyType) if atom else None
+                window = int(prop.value[0]) if prop is not None and len(prop.value) == 1 else 0
+                if window > 0:
+                    identity.update(window=window, window_binding="x11")
+            except Exception:
+                pass  # The approval must disclose the missing binding below.
+            finally:
+                if connection is not None:
+                    try:
+                        connection.close()
+                    except Exception:
+                        pass
+        return identity
     import ctypes
     from ctypes import wintypes
 
@@ -607,6 +651,8 @@ def _computer_approval_context(args: dict[str, Any] | None = None) -> dict[str, 
         or identity.get("platform")
         or "active computer target"
     )
+    if identity.get("window_binding") == "unavailable":
+        raw_summary = "No active-window binding is available; input goes to the current foreground window. " + raw_summary
     target_summary = _redact_computer_text(" ".join(raw_summary.split())[:400])
     return {
         "seat_sha256": digest(material),

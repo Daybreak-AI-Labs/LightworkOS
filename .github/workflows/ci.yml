@@ -747,15 +747,11 @@ jobs:
           python -m pip install --upgrade \
             'pip==26.3' 'setuptools==84.2.1' 'wheel==0.48.0' 'packaging==26.3'
           python -m pip install \
-            arq azure-identity azure-keyvault-keys boto3 duckdb fastembed \
+            arq azure-identity azure-keyvault-keys boto3 duckdb \
             grpcio grpcio-tools langchain-core langsmith latex2mathml matrix-nio \
             opentelemetry-sdk opentelemetry-exporter-otlp-proto-http \
-            pandas pyarrow playwright prometheus-client pysaml2 pyXMLSecurity python-docx \
+            pandas pyarrow prometheus-client pysaml2 pyXMLSecurity python-docx \
             python-telegram-bot qdrant-client slack-sdk sympy websockets
-          # Keep the public build auditable at its exact version; tests use CPU tensors.
-          python -m pip install --no-cache-dir torch
-          # Install the headless executable, too, so the local egress test runs.
-          python -m playwright install --with-deps --only-shell chromium
           python -m pip check
           python scripts/verify_constraint_closure.py
       - uses: ./.github/actions/test-shard
@@ -809,15 +805,11 @@ jobs:
           python -m pip install --upgrade \
             'pip==26.3' 'setuptools==84.2.1' 'wheel==0.48.0' 'packaging==26.3'
           python -m pip install \
-            arq azure-identity azure-keyvault-keys boto3 duckdb fastembed \
+            arq azure-identity azure-keyvault-keys boto3 duckdb \
             grpcio grpcio-tools langchain-core langsmith latex2mathml matrix-nio \
             opentelemetry-sdk opentelemetry-exporter-otlp-proto-http \
-            pandas pyarrow playwright prometheus-client pysaml2 pyXMLSecurity python-docx \
+            pandas pyarrow prometheus-client pysaml2 pyXMLSecurity python-docx \
             python-telegram-bot qdrant-client slack-sdk sympy websockets
-          # Keep the public build auditable at its exact version; tests use CPU tensors.
-          python -m pip install --no-cache-dir torch
-          # Install the headless executable, too, so the local egress test runs.
-          python -m playwright install --with-deps --only-shell chromium
           python -m pip check
           python scripts/verify_constraint_closure.py
       - uses: ./.github/actions/test-shard
@@ -981,15 +973,11 @@ jobs:
           python -m pip install --upgrade \
             'pip==26.3' 'setuptools==84.2.1' 'wheel==0.48.0' 'packaging==26.3'
           python -m pip install \
-            arq azure-identity azure-keyvault-keys boto3 duckdb fastembed \
+            arq azure-identity azure-keyvault-keys boto3 duckdb \
             grpcio grpcio-tools langchain-core langsmith latex2mathml matrix-nio \
             opentelemetry-sdk opentelemetry-exporter-otlp-proto-http \
-            pandas pyarrow playwright prometheus-client pysaml2 pyXMLSecurity python-docx \
+            pandas pyarrow prometheus-client pysaml2 pyXMLSecurity python-docx \
             python-telegram-bot qdrant-client slack-sdk sympy websockets
-          # Keep the public build auditable at its exact version; tests use CPU tensors.
-          python -m pip install --no-cache-dir torch
-          # Install the headless executable, too, so the local egress test runs.
-          python -m playwright install --with-deps --only-shell chromium
           python -m pip check
           python scripts/verify_constraint_closure.py
       - name: Test and gate the production security posture

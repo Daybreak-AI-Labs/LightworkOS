@@ -806,7 +806,7 @@ def _planning_access(request, *, write=False, context=None):
 
 def _plan_result(operation):
     from maverick.work_discovery_planning import PlanConflict
-    from maverick.work_discovery_store import WorkDiscoveryStoreError
+    from maverick.work_discovery_store import EnrollmentRequired, WorkDiscoveryStoreError
 
     try:
         return operation()
@@ -814,6 +814,8 @@ def _plan_result(operation):
         raise HTTPException(409, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+    except EnrollmentRequired as exc:
+        raise HTTPException(409, "Your enrollment for this device has ended. Enroll it again to continue.") from exc
     except WorkDiscoveryStoreError as exc:
         raise HTTPException(503, "Saved opportunities could not be verified. Your current notes are kept; try again later.") from exc
 

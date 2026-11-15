@@ -11,7 +11,7 @@ from __future__ import annotations
 from . import Tool
 
 
-def intake_tools(session, *, llm=None, kb=None) -> list[Tool]:
+def intake_tools(session, *, llm=None, kb=None, sandbox=None) -> list[Tool]:
     async def _record(args: dict) -> str:
         if args.get("name"):
             session.name = str(args["name"]).strip()
@@ -33,6 +33,15 @@ def intake_tools(session, *, llm=None, kb=None) -> list[Tool]:
         path = str(args.get("path", "")).strip()
         if not path:
             return "ERROR: 'path' is required."
+        if sandbox is not None:
+            from .fs import _safe_resolve
+            try:
+                target = _safe_resolve(sandbox, path)
+                if not target.is_file():
+                    return "ERROR: choose an uploaded document in the workspace."
+                path = str(target)
+            except (OSError, ValueError):
+                return "ERROR: document path must stay inside the upload workspace."
         session.doc_paths.append(path)
         return (f"Attached {path}. {len(session.doc_paths)} document(s) queued; "
                 "they are ingested only after human approval.")

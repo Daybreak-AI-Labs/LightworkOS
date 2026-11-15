@@ -109,9 +109,10 @@ def min_recall_trust() -> int:
 # role tags, "ignore previous instructions", instruction-override, secret
 # exfiltration, and destructive-shell snippets. This is a deliberately small,
 # high-signal list -- a heuristic that flags low-trust writes for quarantine,
-# NOT a complete classifier. (label, pattern); matched case-insensitively.
+# NOT a complete classifier. (label, pattern); matched case-insensitively
+# across line breaks so splitting an instruction does not evade the tripwire.
 _INJECTION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    (label, re.compile(rx, re.IGNORECASE))
+    (label, re.compile(rx, re.IGNORECASE | re.DOTALL))
     for label, rx in [
         ("ignore-previous",
          r"\b(ignore|disregard|forget)\b.{0,30}\b(previous|prior|above|earlier|"
@@ -155,16 +156,18 @@ def injection_markers(text: str) -> list[str]:
     return [label for label, rx in _INJECTION_PATTERNS if rx.search(text)]
 
 
-def screen_write(text: str, prov: Provenance, *, shield=None) -> WriteDecision:
+def screen_write(text: str, prov: Provenance, *, shield=None,
+                 deny_on_shield_error: bool = False) -> WriteDecision:
     """Decide whether ``text`` (authored per ``prov``) may enter memory.
 
     Trusted authors (operator/config = FIRST_PARTY, and the deterministic
     learning loops = LEARNED) are never quarantined -- an operator may
     legitimately store a note that trips a heuristic. Only low-trust writes
     (TOOL/EXTERNAL) are screened: if they carry injection markers, or the Shield
-    flags them, they are quarantined. The Shield call is fail-open (kernel rule:
-    a Shield error must never block the agent) -- a scan failure degrades to
-    "allow", it never crashes the write path.
+    flags them or reports an incomplete scan, they are quarantined. Raised
+    Shield exceptions retain the legacy fail-open default; write boundaries
+    such as kv_memory pass ``deny_on_shield_error=True`` to refuse a write
+    whose safety scan could not finish. Neither path crashes the caller.
 
     When the guard is disabled this always allows (callers can screen
     unconditionally)."""
@@ -181,10 +184,14 @@ def screen_write(text: str, prov: Provenance, *, shield=None) -> WriteDecision:
     if shield is not None:
         try:
             verdict = shield.scan_input(text)
+            if getattr(verdict, "scan_error", False):
+                return WriteDecision(False, "safety shield could not finish checking this memory", ["shield"])
             if not getattr(verdict, "allowed", True):
                 return WriteDecision(False, "shield-flagged low-trust memory",
                                      ["shield"])
-        except Exception:  # pragma: no cover -- Shield must never block a write
+        except Exception:
+            if deny_on_shield_error:
+                return WriteDecision(False, "safety shield could not check this memory", ["shield"])
             log.warning("memory_guard: shield scan failed; allowing write")
     return WriteDecision(True, "clean")
 

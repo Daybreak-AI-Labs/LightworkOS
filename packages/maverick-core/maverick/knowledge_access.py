@@ -18,7 +18,7 @@ import re
 import threading
 from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 
 from .constant_time import text_equals
 from .governed_records import GovernedRecordCapacityError, GovernedRecordStore
@@ -539,6 +539,7 @@ class KnowledgeAccessService:
         *,
         actor_authority: KnowledgeActorAuthority,
         use_cache: bool,
+        projection_action: str | None = None,
     ) -> tuple[KnowledgeDocument, bool]:
         key = self._cache_key(tenant, reference)
         cached: KnowledgeDocument | None = None
@@ -558,10 +559,15 @@ class KnowledgeAccessService:
         # registry commitment itself has not yet been corrected.
         try:
             contextual = getattr(self.content_resolver, "resolve_for_context", None)
+            context_authority = (
+                actor_authority
+                if projection_action is None
+                else replace(actor_authority, action=projection_action)
+            )
             resolved = (
                 None
                 if self.content_resolver is None
-                else contextual(tenant, reference, admission, actor_authority)
+                else contextual(tenant, reference, admission, context_authority)
                 if callable(contextual)
                 else self.content_resolver(tenant, reference, admission)
             )
@@ -748,6 +754,7 @@ class KnowledgeAccessService:
         actor_authority: KnowledgeActorAuthority,
         use_cache: bool,
         include_retrieval_chunks: bool = False,
+        projection_action: str | None = None,
     ) -> dict:
         admission = self._admission(
             tenant,
@@ -761,6 +768,7 @@ class KnowledgeAccessService:
             admission,
             actor_authority=actor_authority,
             use_cache=use_cache,
+            projection_action=projection_action,
         )
         # The projector may cross a process or storage boundary. Re-read both
         # authorities after it returns so a revocation or role change during
@@ -1189,12 +1197,19 @@ class KnowledgeAccessService:
         action: str,
         job_id: str,
         retrieval_query: str | None = None,
+        derivative_read: bool = False,
     ) -> dict:
         """Revalidate and materialize an exact catalogue inside a queued worker.
 
         Call this after a job is claimed, immediately before the worker may use
         source material.  The method returns no partial catalogue if any source
         changed while the job waited.
+
+        A published derivative is opened with the reader's own read authority
+        and every read constraint. Analysis must be what each source's current
+        admission authorises, and every item must be visible to the reader:
+        the stored result has no per-item manifest, so a filtered view of a
+        source cannot authorise its analysis.
         """
 
         canonical = canonical_tenant_id(tenant)
@@ -1204,13 +1219,19 @@ class KnowledgeAccessService:
             retrieval_query = _text(retrieval_query, "knowledge query", 512, required=False)
         if action not in _ACTIONS:
             raise ValueError("knowledge job action is unsupported")
+        if derivative_read and action != "read":
+            raise ValueError("a derivative display requires the read action")
         with tenant_scope(tenant=canonical), self.registry.effect_fence():
+            source_admissions = tuple(
+                self._admission(canonical, reference, purpose=purpose, action="analyze")
+                for reference in exact
+            ) if derivative_read else ()
             authority = self._actor_authority(
                 canonical,
                 actor,
                 action=action,
                 purpose=purpose,
-                human_display=False,
+                human_display=derivative_read,
             )
             items = [
                 self._item(
@@ -1221,10 +1242,24 @@ class KnowledgeAccessService:
                     actor_authority=authority,
                     use_cache=True,
                     include_retrieval_chunks=retrieval_query is not None,
+                    # The projector sees the analysis use the source admitted;
+                    # the reader is still checked under their read authority.
+                    projection_action="analyze" if derivative_read else None,
                 )
                 for reference in exact
             ]
             with self.registry.effect_fence():
+                if derivative_read:
+                    if any(item["permissions_withheld"] != 0 for item in items):
+                        raise KnowledgeAccessDenied(
+                            "current item permissions do not cover the saved analysis"
+                        )
+                    current_admissions = tuple(
+                        self._admission(canonical, reference, purpose=purpose, action="analyze")
+                        for reference in exact
+                    )
+                    if current_admissions != source_admissions:
+                        raise KnowledgeAccessDenied("source analysis authority changed during knowledge access")
                 self._revalidate_return_set(
                     canonical,
                     authority,
@@ -2643,6 +2678,8 @@ class KnowledgeAccessService:
                     raise KnowledgeRequestConflict(
                         "source retirement outcome is uncertain; inspect the exact registry version"
                     )
+                if self.after_source_revoked is not None:
+                    self.after_source_revoked(dict(current))
                 return self._finish_approved_request(canonical, current)
             if status != "submitted":
                 raise KnowledgeRequestConflict("knowledge request cannot be reviewed in this state")

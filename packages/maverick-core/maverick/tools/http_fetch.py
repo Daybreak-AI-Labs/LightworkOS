@@ -28,7 +28,7 @@ import socket
 import time
 import urllib.request
 from typing import Any
-from urllib.parse import unquote_plus, urljoin, urlparse, urlsplit, urlunsplit
+from urllib.parse import quote, unquote, unquote_plus, urljoin, urlparse, urlsplit, urlunsplit
 
 from ..env_setting import env_or_config as _env_or_config
 from . import Tool
@@ -448,27 +448,54 @@ def _check_robots(url: str, user_agent: str = "Maverick") -> bool:
             return True
     except Exception:
         return True
-    # Very small parser: handles 'User-agent: *' + 'Disallow:' rules. We
-    # don't implement the full spec; for that, use the browser tool with
-    # a real Playwright context.
-    body = resp.text
-    in_section = False
-    allowed = True
+    path = parsed.path or "/"
+    if parsed.query:
+        path += "?" + parsed.query
+    return _robots_allows(resp.text, path, user_agent)
+
+
+def _robots_groups(body: str) -> list[tuple[list[str], list[tuple[bool, str]]]]:
+    """Group robots.txt rules under every User-agent line that precedes them."""
+    groups: list[tuple[list[str], list[tuple[bool, str]]]] = []
+    agents: list[str] | None = None
+    rules: list[tuple[bool, str]] = []
     for raw in body.splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
+        key, sep, value = raw.split("#", 1)[0].partition(":")
+        if not sep:
             continue
-        if ":" not in line:
-            continue
-        key, _, value = line.partition(":")
-        key = key.strip().lower()
-        value = value.strip()
+        key, value = key.strip().lower(), value.strip()
         if key == "user-agent":
-            in_section = value == "*" or value.lower() == user_agent.lower()
-        elif key == "disallow" and in_section:
-            if value and parsed.path.startswith(value):
-                allowed = False
-    return allowed
+            if agents is None or rules:
+                agents, rules = [], []
+                groups.append((agents, rules))
+            agents.append(value.split("/", 1)[0].strip().lower())
+        elif key in {"allow", "disallow"} and agents is not None and value:
+            rules.append((key == "allow", value))
+    return groups
+
+
+def _robots_normalize(value: str) -> str:
+    return quote(unquote(value), safe="/*$?&=;:@,+!~'()")
+
+
+def _robots_allows(body: str, path: str, user_agent: str) -> bool:
+    """RFC 9309: the longest matching rule wins; on a tie, Allow wins."""
+    groups = _robots_groups(body)
+    agent = user_agent.lower()
+    if not any(agent in agents for agents, _ in groups):
+        agent = "*"
+    path = _robots_normalize(path)
+    best: tuple[int, bool] | None = None
+    for agents, rules in groups:
+        if agent not in agents:
+            continue
+        for allow, pattern in rules:
+            pattern = _robots_normalize(pattern)
+            anchored = pattern.endswith("$")
+            regex = "".join(".*" if ch == "*" else re.escape(ch) for ch in pattern.removesuffix("$"))
+            if re.match(regex + (r"\Z" if anchored else ""), path):
+                best = max(best or (len(pattern), allow), (len(pattern), allow))
+    return best is None or best[1]
 
 
 def _preflight_fetch(url: str, parsed: Any) -> str | None:

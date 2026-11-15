@@ -10,8 +10,9 @@ callable, so the model/dependency choice stays with the operator.
 from __future__ import annotations
 
 import warnings
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
+from threading import RLock
 
 DEFAULT_MAX_IMAGE_PIXELS = 20_000_000
 DEFAULT_MAX_IMAGE_BYTES = 20 * 1024 * 1024
@@ -20,6 +21,7 @@ DEFAULT_OCR_TIMEOUT_SECONDS = 15
 # file's content, not its name, so without this a ``.png`` holding EPS would be
 # handed to Ghostscript. Only these plugins may identify the file.
 OCR_IMAGE_FORMATS = ("PNG", "JPEG", "GIF", "WEBP", "BMP", "TIFF")
+_PIXEL_CAP_LOCK = RLock()
 
 
 def _open_allowed(Image, path):
@@ -37,14 +39,26 @@ def _pixel_cap(Image, max_image_pixels: int):
     """Enforce Lightwork's pixel cap and turn decompression-bomb warnings into
     errors for the duration of a decode. Pillow's global MAX_IMAGE_PIXELS is
     restored afterwards."""
-    previous_max_pixels = Image.MAX_IMAGE_PIXELS
-    Image.MAX_IMAGE_PIXELS = max_image_pixels
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", Image.DecompressionBombWarning)
-            yield
-    finally:
-        Image.MAX_IMAGE_PIXELS = previous_max_pixels
+    with _PIXEL_CAP_LOCK:
+        previous_max_pixels = Image.MAX_IMAGE_PIXELS
+        Image.MAX_IMAGE_PIXELS = max_image_pixels
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", Image.DecompressionBombWarning)
+                yield
+        finally:
+            Image.MAX_IMAGE_PIXELS = previous_max_pixels
+
+
+def _check_pixels(img, max_image_pixels: int):
+    width, height = img.size
+    if width <= 0 or height <= 0:
+        raise ValueError("image has invalid dimensions")
+    pixels = width * height
+    if pixels > max_image_pixels:
+        raise ValueError(
+            f"image has too many pixels for OCR ({pixels} > {max_image_pixels})"
+        )
 
 
 def _validate_image(path: str, Image, max_image_pixels: int, max_image_bytes: int):
@@ -59,14 +73,7 @@ def _validate_image(path: str, Image, max_image_pixels: int, max_image_bytes: in
     # enforce Lightwork's own pixel cap before any full decode/OCR work occurs.
     with _pixel_cap(Image, max_image_pixels):
         with _open_allowed(Image, image_path) as img:
-            width, height = img.size
-            if width <= 0 or height <= 0:
-                raise ValueError("image has invalid dimensions")
-            pixels = width * height
-            if pixels > max_image_pixels:
-                raise ValueError(
-                    f"image has too many pixels for OCR ({pixels} > {max_image_pixels})"
-                )
+            _check_pixels(img, max_image_pixels)
             img.verify()
 
 
@@ -103,14 +110,18 @@ def build_ocr_describer(
 
     def describe(path: str) -> str:
         _validate_image(path, Image, max_image_pixels, max_image_bytes)
-        # Re-open under the same pixel cap: the OCR decode is the expensive step,
-        # so the bomb guard must still be in force here (not just at validation),
-        # which also bounds the decode if the file was swapped after validation.
-        with _pixel_cap(Image, max_image_pixels):
-            with _open_allowed(Image, path) as img:
-                text = (
-                    pytesseract.image_to_string(img, timeout=ocr_timeout_seconds) or ""
-                ).strip()
+        # Re-open under the pixel cap and re-check the size: Pillow's bomb check
+        # runs when the header is read, and the explicit check also covers a
+        # file swapped after validation. The decode can only produce those
+        # checked dimensions, so the slow OCR runs after the process-wide cap is
+        # restored and its lock released; concurrent ingests are not serialized.
+        with ExitStack() as stack:
+            with _pixel_cap(Image, max_image_pixels):
+                img = stack.enter_context(_open_allowed(Image, path))
+                _check_pixels(img, max_image_pixels)
+            text = (
+                pytesseract.image_to_string(img, timeout=ocr_timeout_seconds) or ""
+            ).strip()
         return f"[diagram/image OCR: {path}]\n{text}" if text else ""
 
     return describe

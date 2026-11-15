@@ -21,6 +21,8 @@ Opt-in and offline-testable. Requires the ``cryptography`` extra (AES-GCM).
 from __future__ import annotations
 
 import hashlib
+import logging
+import math
 import os
 import secrets
 import threading
@@ -38,6 +40,8 @@ from ..file_lock import (
     ensure_private_file,
 )
 from ..paths import data_dir
+
+log = logging.getLogger(__name__)
 
 # Monotonic clock for cache expiry (immune to wall-clock jumps).
 _now = time.monotonic
@@ -280,23 +284,35 @@ _dek_lock = threading.Lock()
 _dek_tenant_locks: dict[str, threading.Lock] = {}
 
 
-def _dek_cache_ttl() -> float:
+def _dek_cache_ttl(tenant_id: str | None = None) -> float | None:
     """Seconds a tenant DEK stays cached before it must be re-unwrapped by the
     KMS. ``0`` (default) = cache for the process lifetime, unchanged behavior. A
     positive TTL bounds how long a *revoked* cloud-KMS key keeps opening data:
     after it lapses the next access re-hits the KMS, which then fails closed.
-    ``MAVERICK_KMS_DEK_CACHE_TTL`` env wins over ``[kms] dek_cache_ttl``."""
+    ``MAVERICK_KMS_DEK_CACHE_TTL`` env wins over ``[kms] dek_cache_ttl``.
+
+    ``None`` means the lifetime could not be determined (an unreadable config
+    source or an invalid value): the cache is not trusted and the DEK is
+    unwrapped again now. It never refuses the data on its own."""
     raw = os.environ.get("MAVERICK_KMS_DEK_CACHE_TTL")
     if raw is None or raw.strip() == "":
         try:
-            from ..config import load_config
-            raw = (load_config() or {}).get("kms", {}).get("dek_cache_ttl")
-        except Exception:  # pragma: no cover -- config never blocks key setup
-            raw = None
+            raw = _kms_config_for(tenant_id).get("dek_cache_ttl")
+            unreadable = _kms_config_unreadable(tenant_id)
+        except Exception as exc:  # config never blocks key access
+            log.warning("cannot read the tenant data-key cache policy (%s); unwrapping again", exc)
+            return None
+        if unreadable:
+            log.warning("cannot read the tenant data-key cache policy; unwrapping again")
+            return None
     try:
-        return max(0.0, float(raw)) if raw is not None else 0.0
+        ttl = float(raw) if raw is not None else 0.0
     except (TypeError, ValueError):
-        return 0.0
+        ttl = math.nan
+    if not math.isfinite(ttl) or ttl < 0:
+        log.warning("tenant data-key cache lifetime must be a finite nonnegative number; unwrapping again")
+        return None
+    return ttl
 
 
 def tenant_dek(tenant_id: str | None, *, kms: KMS | None = None) -> bytes:
@@ -304,13 +320,13 @@ def tenant_dek(tenant_id: str | None, *, kms: KMS | None = None) -> bytes:
     generates + wraps + persists one on first use. Cached per tenant id (bounded
     by ``[kms] dek_cache_ttl`` so a revoked KMS key takes effect)."""
     cache_key = tenant_id or "__default__"
-    dek = _cached_dek(cache_key)
+    dek = _cached_dek(cache_key, tenant_id)
     if dek is not None:
         return dek
     with _dek_lock:
         tenant_lock = _dek_tenant_locks.setdefault(cache_key, threading.Lock())
     with tenant_lock:
-        dek = _cached_dek(cache_key)  # another thread may have just loaded it
+        dek = _cached_dek(cache_key, tenant_id)  # another thread may have just loaded it
         if dek is not None:
             return dek
         # Per-tenant BYOK: resolve THIS tenant's KMS unless one was injected.
@@ -337,7 +353,7 @@ def tenant_dek(tenant_id: str | None, *, kms: KMS | None = None) -> bytes:
         return dek
 
 
-def _cached_dek(cache_key: str) -> bytes | None:
+def _cached_dek(cache_key: str, tenant_id: str | None) -> bytes | None:
     """The cached DEK, or None when absent or lapsed (a lapsed entry is dropped)."""
     # TTL is evaluated against the CURRENT setting on every read, not frozen at
     # write -- so raising the TTL (or revoking a cloud KEK) bounds even a
@@ -347,8 +363,8 @@ def _cached_dek(cache_key: str) -> bytes | None:
     if cached is None:
         return None
     dek, cached_at = cached
-    ttl = _dek_cache_ttl()  # reads config: outside the lock
-    if ttl <= 0 or cached_at + ttl > _now():
+    ttl = _dek_cache_ttl(tenant_id)  # reads config: outside the lock
+    if ttl is not None and (ttl <= 0 or cached_at + ttl > _now()):
         return dek
     with _dek_lock:
         if _dek_cache.get(cache_key) == cached:

@@ -123,52 +123,70 @@ _repo_cache: OrderedDict[str, tuple[str, str]] = OrderedDict()
 _repo_lock = threading.RLock()
 
 
-# Directories we never descend into for the repo-map signature: VCS,
-# vendored deps, caches, virtualenvs, build output. Walking them is slow and
-# they aren't part of the repo map anyway.
+# Directories the repo map omits (its ``_IGNORE_DIRS``); the signature never
+# descends into them. Other hidden directories (.hg, .svn, .gradle,
+# .ruff_cache, ...) are shown by the map, so they stay visible to invalidation.
 _SIG_SKIP_DIRS = frozenset({
-    ".git", ".hg", ".svn", "node_modules", "__pycache__", ".venv", "venv",
-    ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox", "dist", "build",
-    ".idea", ".gradle", "target",
+    ".git", "node_modules", ".venv", "venv", "__pycache__", "dist", "build",
+    "target", ".pytest_cache", ".mypy_cache", ".tox", ".idea", ".vscode",
+    "coverage",
 })
+
+#: The repo map renders the top level and the children of top-level
+#: directories; hidden entries below that depth never reach the map.
+_SIG_HIDDEN_DEPTH = 2
+
+
+def _sig_entry(entries: list, workdir: Path, path: Path, kind: str, with_mtime: bool) -> None:
+    try:
+        st = path.lstat()
+    except OSError:
+        return
+    rel = os.path.relpath(path, workdir).replace(os.sep, "/")
+    size = st.st_size if kind == "f" else 0
+    entries.append((kind, rel, size, st.st_mtime if with_mtime else 0.0))
 
 
 def _workdir_signature(workdir: Path) -> str:
     """Content-aware signature of ``workdir`` for repo-map cache invalidation.
 
-    Recursively walks visible files and directories (skipping VCS / vendor /
-    cache dirs and dot-entries) and digests each relative path plus cheap
+    Recursively walks visible files and directories (skipping the directories
+    the repo map omits) and digests each relative path plus cheap
     metadata. File entries include size+mtime as a proxy for content -- a full
     content hash would be more robust but too slow for a per-call probe; the
     vendor-dir skips keep the walk bounded. Directory entries include mtime so
     directory-only changes that affect the repo map also invalidate the cache.
+
+    Hidden entries are tracked only as deep as the map renders them: a
+    top-level hidden directory is listed but its subdirectories are not
+    walked, and a deeper hidden directory is recorded by name only. Build
+    caches (.gradle, .next, .yarn, ...) therefore cost one listing, not a walk.
     """
     try:
         entries: list[tuple[str, str, int, float]] = []
         for dirpath, dirnames, filenames in os.walk(workdir):
-            # Prune in place so os.walk never descends into skipped/hidden dirs.
-            dirnames[:] = [
-                d for d in dirnames
-                if not d.startswith(".") and d not in _SIG_SKIP_DIRS
-            ]
+            rel_dir = Path(os.path.relpath(dirpath, workdir))
+            # Depth of the entries listed here (1 = top level).
+            depth = 1 if str(rel_dir) == "." else len(rel_dir.parts) + 1
+            in_hidden = any(p.startswith(".") for p in rel_dir.parts)
+            walk: list[str] = []
             for name in dirnames:
-                dp = Path(dirpath) / name
-                try:
-                    st = dp.stat()
-                except OSError:
+                if name in _SIG_SKIP_DIRS:
                     continue
-                rel = os.path.relpath(dp, workdir).replace(os.sep, "/")
-                entries.append(("d", rel, 0, st.st_mtime))
+                hidden = in_hidden or name.startswith(".")
+                if hidden and depth > _SIG_HIDDEN_DEPTH:
+                    continue
+                # A hidden directory the map shows only by name is recorded
+                # without mtime and not walked: its mtime moves with entries
+                # the map never renders.
+                descend = not hidden or depth < _SIG_HIDDEN_DEPTH
+                _sig_entry(entries, workdir, Path(dirpath) / name, "d", descend)
+                if descend:
+                    walk.append(name)
+            dirnames[:] = walk
             for name in filenames:
-                if name.startswith("."):
-                    continue
-                fp = Path(dirpath) / name
-                try:
-                    st = fp.stat()
-                except OSError:
-                    continue
-                rel = os.path.relpath(fp, workdir).replace(os.sep, "/")
-                entries.append(("f", rel, st.st_size, st.st_mtime))
+                if depth <= _SIG_HIDDEN_DEPTH or not (in_hidden or name.startswith(".")):
+                    _sig_entry(entries, workdir, Path(dirpath) / name, "f", True)
         entries.sort()
     except OSError:
         return ""

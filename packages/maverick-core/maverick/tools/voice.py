@@ -26,6 +26,7 @@ import os
 import shutil
 import tempfile
 import threading
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -86,6 +87,19 @@ _TTS_SCHEMA: dict[str, Any] = {
 }
 
 
+# Workspace context follows synchronous backend helpers without changing their
+# public two-argument call contract. ContextVar keeps concurrent callers apart.
+_TRANSCRIBE_CONTEXT: ContextVar[tuple[Any, Path] | None] = ContextVar("voice_transcribe_context", default=None)
+
+
+def _open_audio(audio_path: Path):
+    from .fs import _open_contained
+
+    context = _TRANSCRIBE_CONTEXT.get()
+    root = context[1] if context is not None else audio_path.parent.resolve()
+    return os.fdopen(_open_contained(root, audio_path, os.O_RDONLY), "rb")
+
+
 # ---------- STT ----------
 
 def _hosted_model(environment: str, default: str, config_key: str = "") -> str:
@@ -116,14 +130,14 @@ def _whisper_openai(audio_path: Path, language: str | None) -> str | None:
         # One attempt per hosted backend: ``auto`` falls through to the next
         # provider/local engine, so SDK retries would multiply that policy.
         client = OpenAI(api_key=key, max_retries=0)
-        with open(audio_path, "rb") as f:
+        with _open_audio(audio_path) as f:
             kwargs: dict[str, Any] = {
                 "model": _hosted_model(
                     "MAVERICK_WHISPER_OPENAI_MODEL",
                     "whisper-1",
                     "stt_openai_model",
                 ),
-                "file": f,
+                "file": (audio_path.name, f),
             }
             if language:
                 kwargs["language"] = language
@@ -149,14 +163,14 @@ def _whisper_groq(audio_path: Path, language: str | None) -> str | None:
             base_url="https://api.groq.com/openai/v1",
             max_retries=0,
         )
-        with open(audio_path, "rb") as f:
+        with _open_audio(audio_path) as f:
             kwargs: dict[str, Any] = {
                 "model": _hosted_model(
                     "MAVERICK_WHISPER_GROQ_MODEL",
                     "whisper-large-v3-turbo",
                     "stt_groq_model",
                 ),
-                "file": f,
+                "file": (audio_path.name, f),
             }
             if language:
                 kwargs["language"] = language
@@ -303,29 +317,47 @@ def _to_wav16k(audio_path: Path) -> Path | None:
     impossible.
     """
     from . import sandbox_run
-    if not shutil.which("ffmpeg"):
+    context = _TRANSCRIBE_CONTEXT.get()
+    sandbox = context[0] if context is not None else None
+    if sandbox is None and not shutil.which("ffmpeg"):
         if audio_path.suffix.lower() == ".wav":
             return audio_path
         log.warning("whisper.cpp needs ffmpeg to decode %s input",
                     audio_path.suffix or "raw")
         return None
-    tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+    tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False,
+                                      dir=context[1] if sandbox is not None else None)
     tmp.close()
-    # Host-run on purpose (sandbox=None): the input is a confined/internal
-    # temp path and the output is our own temp file, mirroring how the
-    # faster-whisper backend already runs on the host.
-    code, _out, err = sandbox_run(
-        None,
-        ["ffmpeg", "-y", "-i", str(audio_path),
-         "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", tmp.name],
-        timeout=300.0,
-    )
-    if code != 0:
-        log.warning("ffmpeg convert for whisper.cpp failed: %s",
-                    err.strip()[-300:])
-        Path(tmp.name).unlink(missing_ok=True)
-        return None
-    return Path(tmp.name)
+    converted = False
+    try:
+        # Model-selected audio stays in its configured sandbox. Trusted internal
+        # callers retain the host conversion path for their private attachments.
+        source, target = str(audio_path), tmp.name
+        if sandbox is not None:
+            source = "./" + str(audio_path.relative_to(context[1]))
+            target = "./" + str(Path(tmp.name).relative_to(context[1]))
+        try:
+            code, _out, err = sandbox_run(
+                sandbox,
+                ["ffmpeg", "-y", "-i", source,
+                 "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", target],
+                timeout=300.0,
+            )
+        except (FileNotFoundError, PermissionError) as e:
+            code, err = 127, str(e)
+        if code in (126, 127) and audio_path.suffix.lower() == ".wav":
+            # ffmpeg cannot run where the audio lives; a WAV input is passed
+            # through as-is (best effort), as without a sandbox.
+            return audio_path
+        if code != 0:
+            log.warning("ffmpeg convert for whisper.cpp failed: %s",
+                        err.strip()[-300:])
+            return None
+        converted = True
+        return Path(tmp.name)
+    finally:
+        if not converted:
+            Path(tmp.name).unlink(missing_ok=True)
 
 
 def _whisper_cpp(audio_path: Path, language: str | None) -> str | None:
@@ -458,6 +490,16 @@ def _run_transcribe_internal(args: dict[str, Any]) -> str:
 
 def _run_transcribe(args: dict[str, Any], sandbox: Any = None, *,
                     operator_backend: bool = False) -> str:
+    root = Path(getattr(sandbox, "workdir", Path.cwd())).resolve()
+    token = _TRANSCRIBE_CONTEXT.set((None if operator_backend else sandbox, root))
+    try:
+        return _run_transcribe_scoped(args, sandbox, operator_backend=operator_backend)
+    finally:
+        _TRANSCRIBE_CONTEXT.reset(token)
+
+
+def _run_transcribe_scoped(args: dict[str, Any], sandbox: Any = None, *,
+                           operator_backend: bool = False) -> str:
     from ..tool_results import confirmed_success_text
 
     src = (args.get("source") or "").strip()

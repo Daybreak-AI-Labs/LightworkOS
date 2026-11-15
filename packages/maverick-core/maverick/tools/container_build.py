@@ -91,14 +91,16 @@ def _build(sandbox: Any, args: dict[str, Any]) -> str:
     if not df.is_file():
         return f"ERROR: Dockerfile not found: {dockerfile_raw}"
 
-    argv = ["docker", "build", "-t", tag, "-f", str(df)]
+    # Sandbox backends mount the workspace at their own root, not its host path.
+    # Prefix relative names so a workspace entry beginning with '-' is not an option.
+    argv = ["docker", "build", "-t", tag, "-f", "./" + df.relative_to(workdir).as_posix()]
     bargs = args.get("build_args") or {}
     if isinstance(bargs, dict):
         for k, v in bargs.items():
             if not _ARG_KEY.match(str(k)):
                 return f"ERROR: invalid build-arg key {k!r}"
             argv += ["--build-arg", f"{k}={v}"]
-    argv.append(str(context))
+    argv.append("./" + context.relative_to(workdir).as_posix())
 
     try:
         timeout = float(args.get("timeout", 600))

@@ -78,6 +78,13 @@ def _ifc() -> dict:
     from . import _ledger
     rows = _ledger.read(ifc.ledger_path())[-1000:]
     return {"available": True, "mode": get_ifc()["mode"], "events": len(rows),
+            "label_descriptions": {
+                ifc.UNREADABLE_LABELS: (
+                    "Earlier information-flow labels for this task could not be read. "
+                    "Ask an administrator to repair the task's label file or restore it from a "
+                    "backup, then retry. Deleting it removes the restrictions it records."
+                ),
+            },
             "by_outcome": dict(Counter(r["outcome"] for r in rows)),
             "by_tool": dict(Counter(r["tool"] for r in rows).most_common(10)),
             "by_label": dict(Counter(lab for r in rows for lab in r["labels"]).most_common(10)),

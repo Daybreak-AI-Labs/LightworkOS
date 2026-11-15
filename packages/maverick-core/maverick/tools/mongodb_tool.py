@@ -2,7 +2,8 @@
 
 Connect to a MongoDB cluster and run common CRUD operations from
 inside an agent task. Auth + connection string from ``MONGODB_URI``;
-optionally ``MONGODB_DB`` for the default database.
+and ``MONGODB_DB`` (else the database in the URI path) for the only
+database this tool may use.
 
 ops:
   - find(collection, filter, limit, sort)
@@ -26,6 +27,7 @@ import logging
 import os
 import threading
 from typing import Any
+from urllib.parse import unquote
 
 from ..fastjson import dumps_compact
 from . import Tool, as_bool
@@ -45,7 +47,7 @@ _MONGO_SCHEMA: dict[str, Any] = {
             "enum": ["find", "find_one", "insert", "update",
                      "delete", "count", "collections"],
         },
-        "db": {"type": "string", "description": "Database name (default: MONGODB_DB)."},
+        "db": {"type": "string", "description": "Must match the configured database (MONGODB_DB, else the MONGODB_URI path) if supplied."},
         "collection": {"type": "string"},
         "filter": {"type": "object", "description": "Mongo query filter."},
         "set_": {"type": "object", "description": "$set fields (update)."},
@@ -111,12 +113,22 @@ def _client():
                        socketTimeoutMS=_SOCKET_TIMEOUT_MS)
 
 
+def _uri_database(uri: str) -> str:
+    """The default database named in a MongoDB URI's path, if any."""
+    rest = uri.split("://", 1)[-1].split("?", 1)[0]
+    return unquote(rest.partition("/")[2]).strip()
+
+
 def _db_for(args: dict[str, Any]):
-    _uri, default_db = _config()
-    name = (args.get("db") or "").strip() or default_db
-    if not name:
-        return None, "ERROR: db not provided and MONGODB_DB unset"
-    return _client()[name], None
+    uri, default_db = _config()
+    default_db = default_db or _uri_database(uri)
+    if not default_db:
+        return None, ("ERROR: no database configured; the operator must set MONGODB_DB "
+                      "or name the database in the MONGODB_URI path")
+    name = (args.get("db") or "").strip()
+    if name and name != default_db:
+        return None, "ERROR: db must match the configured database (MONGODB_DB or the MONGODB_URI path)"
+    return _client()[default_db], None
 
 
 def _serialize(obj: Any, _depth: int = 0) -> Any:
@@ -158,6 +170,24 @@ def _op_collections(args: dict[str, Any]) -> str:
     return "\n".join(f"  {n}" for n in names) if names else "(no collections)"
 
 
+def _dump_cursor(cursor, max_chars: int = 3000) -> str:
+    parts = ["["]
+    used = 1
+    try:
+        for doc in cursor:
+            text = ("," if len(parts) > 1 else "") + dumps_compact(_serialize(doc))
+            if used + len(text) + 1 > max_chars:
+                parts.append(text[:max_chars - used])
+                return "".join(parts) + "\n... (truncated)"
+            parts.append(text)
+            used += len(text)
+        return "".join(parts) + "]" if len(parts) > 1 else "no docs"
+    finally:
+        close = getattr(cursor, "close", None)
+        if callable(close):
+            close()
+
+
 def _op_find(args: dict[str, Any]) -> str:
     db, err = _db_for(args)
     if err:
@@ -169,6 +199,12 @@ def _op_find(args: dict[str, Any]) -> str:
     limit = max(1, min(int(args.get("limit") or 25), 1000))
     sort_pairs = args.get("sort") or []
     cursor = db[col].find(flt)
+    # PyMongo decodes a complete batch before yielding its first document.
+    # Bound each batch so early output truncation leaves most unused
+    # documents on the server, without a round trip per document.
+    batch_size = getattr(cursor, "batch_size", None)
+    if callable(batch_size):
+        cursor = batch_size(min(limit, 100))
     if sort_pairs:
         try:
             cursor = cursor.sort([(s[0], int(s[1])) for s in sort_pairs])
@@ -180,10 +216,7 @@ def _op_find(args: dict[str, Any]) -> str:
                 "ERROR: sort must be a list of [field, direction] pairs "
                 f"with direction 1 or -1 (got {sort_pairs!r})"
             )
-    docs = list(cursor.limit(limit))
-    if not docs:
-        return "no docs"
-    return _dump(docs)
+    return _dump_cursor(cursor.limit(limit))
 
 
 def _op_find_one(args: dict[str, Any]) -> str:
@@ -237,6 +270,8 @@ def _op_update(args: dict[str, Any]) -> str:
     set_ = args.get("set_") if isinstance(args.get("set_"), dict) else None
     if not col or flt is None or set_ is None:
         return "ERROR: update requires collection, filter, set_"
+    if not flt:
+        return "ERROR: update requires a nonempty filter"
     result = db[col].update_many(flt, {"$set": set_},
                                   upsert=as_bool(args.get("upsert")))
     return (
@@ -255,6 +290,8 @@ def _op_delete(args: dict[str, Any]) -> str:
     flt = args.get("filter") if isinstance(args.get("filter"), dict) else None
     if not col or flt is None:
         return "ERROR: delete requires collection and filter"
+    if not flt:
+        return "ERROR: delete requires a nonempty filter"
     result = db[col].delete_many(flt)
     return f"deleted_count={result.deleted_count}"
 
@@ -351,7 +388,7 @@ def mongodb_tool() -> Tool:
             "MongoDB CRUD. ops: collections, find (filter + sort + "
             "limit), find_one, count, insert, update (with $set + "
             "upsert), delete. Mutations gated by confirm=true. "
-            "Auth: MONGODB_URI (+ MONGODB_DB)."
+            "Auth: MONGODB_URI (+ MONGODB_DB, else the URI's database)."
         ),
         input_schema=_MONGO_SCHEMA,
         fn=_run,
