@@ -231,6 +231,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the check before a conversation alternative is created) now joins that
   transaction. It no longer commits it early or, with `pool_size = 1`,
   waits for a second connection until the pool times out.
+- On Postgres in tenant compatibility mode, erasing a conversation no
+  longer fails when a child task was later claimed by another workspace;
+  that child is kept and only its link to the erased task is removed.
 
 ### Fixed
 

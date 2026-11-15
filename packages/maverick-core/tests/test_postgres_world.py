@@ -2557,3 +2557,37 @@ def test_nested_tx_joins_the_outer_transaction(monkeypatch, pool_size):
         assert w.query("SELECT COUNT(*) FROM goals WHERE title=?", (title,))[0][0] == 0
     finally:
         w.close()
+
+
+def test_erasure_unlinks_a_child_another_tenant_claimed(world, monkeypatch):
+    """Compatibility mode: running a legacy child under tenant B stamps B on
+    the child only. Erasing the legacy parent's conversation then failed the
+    whole erasure on the child's parent_id reference."""
+    from maverick.world_model_backends import postgres as pg
+
+    tenant = "claim-" + uuid.uuid4().hex
+    monkeypatch.setattr(pg, "_strict_tenant_isolation", lambda: False)
+    active = [None]
+    monkeypatch.setattr(pg, "_active_tenant", lambda: active[0])
+    conv = world.get_or_create_conversation("erase-claimed", uuid.uuid4().hex).id
+    parent = world.create_goal("legacy parent")
+    child = world.create_goal("legacy child", parent_id=parent)
+    world.append_turn(conv, "user", "private text", goal_id=parent)
+    active[0] = tenant
+    try:
+        assert world.bind_goal_execution_principal(child, "user:b")
+        with world._tx() as cur:
+            cur.execute("SELECT tenant_id FROM goals WHERE id=%s", (child,))
+            assert cur.fetchone()[0] == tenant
+        active[0] = None
+        goals, _paths, _turns = world.erase_conversations([conv])
+        assert parent in goals and child not in goals
+        with world._tx() as cur:
+            cur.execute("SELECT parent_id, tenant_id FROM goals WHERE id=%s", (child,))
+            assert cur.fetchone() == (None, tenant)  # the other tenant's row is kept
+    finally:
+        with world._tx() as cur:
+            cur.execute("DELETE FROM turns WHERE conversation_id=%s", (conv,))
+            cur.execute("DELETE FROM conversations WHERE id=%s", (conv,))
+            cur.execute("UPDATE goals SET parent_id=NULL WHERE id=%s", (child,))
+            cur.execute("DELETE FROM goals WHERE id IN (%s,%s)", (parent, child))

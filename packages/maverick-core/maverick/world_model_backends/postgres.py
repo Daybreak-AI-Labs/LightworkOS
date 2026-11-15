@@ -5697,16 +5697,14 @@ class PostgresWorldModel:
                 # default, unlike the SQLite path that defers FK checks for the
                 # transaction. Break edges inside the soon-to-be-deleted tree so
                 # a single goal DELETE cannot fail on parent_id references.
-                gfrag, gfparams = _erasure_tenant_scope("tenant_id")
-                edge_sql = (
-                    "UPDATE goals SET parent_id = NULL "
-                    "WHERE parent_id = ANY(%s)"
+                # Not tenant-scoped: in compatibility mode a legacy child that
+                # ran under another tenant was stamped with that tenant while
+                # its parent was not. Its link to a goal deleted here must go
+                # too (as ON DELETE SET NULL would); nothing else in it changes.
+                cur.execute(
+                    "UPDATE goals SET parent_id = NULL WHERE parent_id = ANY(%s)",
+                    (gids,),
                 )
-                edge_params: list = [gids]
-                if gfrag:
-                    edge_sql += " AND " + gfrag
-                    edge_params += gfparams
-                cur.execute(edge_sql, tuple(edge_params))
                 cur.execute(
                     "UPDATE event_goal_admissions SET sealed_contract=NULL, "
                     "delivery_state='federation_retired' WHERE admission_key LIKE 'federation:%%' "
