@@ -5600,7 +5600,10 @@ def _refuse_silent_local_fallback() -> None:
             'Use "sqlite" for the local database or "postgres" for the shared one.'
         )
     if env:
-        return  # an explicit choice (postgres was handled by the caller)
+        # An explicit choice (postgres was handled by the caller). Remember a
+        # deliberate move to the local database so later starts need no flag.
+        _record_world_backend("sqlite")
+        return
     from .config import config_path, config_source_errors, load_config
 
     errors = config_source_errors(include_tenant=True)

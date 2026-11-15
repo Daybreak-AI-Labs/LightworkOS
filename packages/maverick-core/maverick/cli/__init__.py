@@ -459,7 +459,21 @@ def _configure_cli_text_streams() -> None:
             continue
 
 
-@click.group(epilog=(
+class _LightworkGroup(click.Group):
+    """Show a refusal to open the records database as a plain message."""
+
+    def invoke(self, ctx: click.Context):
+        try:
+            return super().invoke(ctx)
+        except RuntimeError as exc:
+            from ..world_model import WorldBackendUnreadable
+
+            if isinstance(exc, WorldBackendUnreadable):
+                raise click.ClickException(str(exc)) from exc
+            raise
+
+
+@click.group(cls=_LightworkGroup, epilog=(
     "New here? Start with these four:\n"
     "\n"
     "\b\n"

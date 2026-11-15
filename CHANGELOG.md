@@ -245,8 +245,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Only `sqlite` and `postgres` are accepted for `MAVERICK_WORLD_BACKEND` and
   `[world_model] backend`; any other value now stops start-up with a plain
   message. Once Postgres was used, settings that no longer name a database
-  are refused too. Set `backend = "sqlite"` (or the environment variable) to
-  move to the local database on purpose.
+  are refused too. A deployment that switched from Postgres back to the
+  local database must name `sqlite` explicitly once
+  (`[world_model] backend = "sqlite"` or `MAVERICK_WORLD_BACKEND=sqlite`);
+  the choice is remembered. The Helm chart now always sets the variable from
+  `worldModel.backend`. The CLI and dashboard show the refusal as a plain
+  message instead of an error trace.
 - When the independence-levels setting cannot be read (an unreadable
   settings file, or `[workforce] levels` or `MAVERICK_WORKFORCE_LEVELS` that
   is not true or false), every agent can only watch: consequential actions

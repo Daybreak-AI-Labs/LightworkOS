@@ -195,16 +195,25 @@ def test_unreadable_config_after_postgres_refuses_local_fallback(tmp_path, monke
     with pytest.raises(WorldBackendUnreadable) as unknown:
         open_world()
     assert "postgresql" in str(unknown.value) and str(config) in str(unknown.value)
+    config.write_text('[world_model]\nbackend = "sqlite3"\n', encoding="utf-8")
+    with pytest.raises(WorldBackendUnreadable) as old_spelling:
+        open_world()
+    for part in ("sqlite3", "[world_model] backend", str(config), '"sqlite"', '"postgres"'):
+        assert part in str(old_spelling.value)
     monkeypatch.setenv("MAVERICK_WORLD_BACKEND", "postgresql")
     with pytest.raises(WorldBackendUnreadable) as typo:
         open_world()
     assert "MAVERICK_WORLD_BACKEND" in str(typo.value) and '"sqlite"' in str(typo.value)
 
-    # A deliberate choice still works: the environment names the backend...
+    # A deliberate choice still works: the environment names the backend,
+    # and that choice is remembered for later starts without the variable.
     monkeypatch.setenv("MAVERICK_WORLD_BACKEND", "sqlite")
     assert isinstance(open_world(), WorldModel)
-    # ...or readable settings choose the local database.
     monkeypatch.delenv("MAVERICK_WORLD_BACKEND")
+    config.write_text('[budget]\nmax_dollars = 1\n', encoding="utf-8")
+    assert isinstance(open_world(), WorldModel)
+    # ...or readable settings choose the local database.
+    wm._record_world_backend("postgres")
     config.write_text('[world_model]\nbackend = "sqlite"\n', encoding="utf-8")
     assert isinstance(open_world(), WorldModel)
     config.write_text('[budget]\nmax_dollars = 1\n', encoding="utf-8")
@@ -212,3 +221,17 @@ def test_unreadable_config_after_postgres_refuses_local_fallback(tmp_path, monke
     client.reset_client_cache()
     for world in wm._tenant_worlds.values():
         world.close()
+
+
+def test_cli_shows_the_backend_refusal_as_a_plain_message(tmp_path, monkeypatch):
+    """DR 4: `maverick status` prints the refusal and exits non-zero, no traceback."""
+    from click.testing import CliRunner
+    from maverick.cli import main
+    from maverick.world_model import _record_world_backend
+
+    monkeypatch.delenv("MAVERICK_WORLD_BACKEND", raising=False)
+    _record_world_backend("postgres")
+    result = CliRunner().invoke(main, ["status"])
+    assert result.exit_code != 0
+    assert "last used its Postgres database" in result.output
+    assert "Traceback" not in result.output and not isinstance(result.exception, RuntimeError)

@@ -46,9 +46,11 @@ spec:
             - name: MAVERICK_WORKDIR
               value: {{ printf "%s/workspace" (.Values.persistence.mountPath | trimSuffix "/") | quote }}
             {{- end }}
-            {{- if eq .Values.worldModel.backend "postgres" }}
+            # Always name the backend: Lightwork refuses to move away from
+            # Postgres to the local database unless the choice is explicit.
             - name: MAVERICK_WORLD_BACKEND
-              value: "postgres"
+              value: {{ .Values.worldModel.backend | quote }}
+            {{- if eq .Values.worldModel.backend "postgres" }}
             {{- if .Values.worldModel.postgres.rls }}
             - name: MAVERICK_PG_RLS
               value: "1"

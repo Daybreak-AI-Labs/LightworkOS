@@ -125,7 +125,7 @@ explicit limits, retry behavior and unknown provider charges.
 | `MAVERICK_QDRANT_URL` | unset | Qdrant server URL (remote mode). |
 | `MAVERICK_QDRANT_PATH` | default path | Qdrant local on-disk path (embedded mode). |
 | `MAVERICK_QDRANT_API_KEY` | unset | API key for a remote Qdrant server. |
-| `MAVERICK_WORLD_BACKEND` | config-driven | Set `postgres` to use the Postgres world-model backend. |
+| `MAVERICK_WORLD_BACKEND` | config-driven | `postgres` or `sqlite`. Set `sqlite` once when moving a Postgres deployment back to the local database; it is remembered. |
 | `MAVERICK_PG_DSN` | unset | Postgres DSN for the Postgres world model (e.g. `postgres://user@host:5432/maverick`; prefer `PGSERVICE`, `~/.pgpass`, peer auth, or a secret manager over embedding passwords). |
 | `MAVERICK_PG_CONNECT_TIMEOUT_SECONDS` | `10` | Maximum connection wait per host for the Postgres world model (including reconnects and pool workers) and the SQLAlchemy `database` tool's libpq drivers. Integer from `2` to `300`; invalid values use `10`. A shorter positive DSN `connect_timeout` or `PGCONNECT_TIMEOUT` is retained, with a two-second minimum. Omitted, invalid or nonpositive driver timeouts use this finite cap. This does not set a SQL statement deadline or change other database drivers. |
 | `MAVERICK_ORPHAN_RECLAIM_SECONDS` | code default | Seconds before orphaned world-model goal locks are reclaimed. |
