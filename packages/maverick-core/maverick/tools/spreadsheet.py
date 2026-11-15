@@ -455,13 +455,15 @@ def _is_single_cell(cell: str) -> bool:
 def _charge_quota(rows: list[list], goal_id) -> None:
     """Charge a write to the goal's file-write quota (the one ``write_file`` uses).
 
-    The size is the rows as CSV text, an estimate for xlsx. Raises
-    ``RuntimeError`` (reported as ``ERROR: ...``) when the write would cross it.
+    The size is each cell's text plus a separator, an estimate of the CSV
+    (and of xlsx). It is computed without the CSV writer, so sizing never
+    touches the write path. Raises ``RuntimeError`` (reported as
+    ``ERROR: ...``) when the write would cross it.
     """
     from ..file_quota import check_and_add
-    buffer = io.StringIO()
-    _csv.writer(buffer).writerows(rows)
-    ok, msg = check_and_add(len(buffer.getvalue().encode("utf-8", "replace")), goal_id=goal_id)
+    size = sum(len(str(cell).encode("utf-8", "replace")) + 1 for row in rows for cell in row)
+    size += sum(1 for row in rows if not row)
+    ok, msg = check_and_add(size, goal_id=goal_id)
     if not ok:
         raise RuntimeError(msg)
 
