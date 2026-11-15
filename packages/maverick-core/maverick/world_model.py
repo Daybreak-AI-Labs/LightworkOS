@@ -2433,8 +2433,10 @@ class WorldModel:
                 "WHEN status = 'done' THEN completed_at "
                 "ELSE MAX(updated_at + 0.000001, ?) END, "
                 "status = ?, updated_at = MAX(updated_at + 0.000001, ?), "
-                "result = COALESCE(?, result) WHERE id = ?",
-                (status, now, status, now, _enc_field(result, "goals.result"), goal_id),
+                "result = COALESCE(?, result) WHERE id = ? "
+                # A finished task stays finished: a late cancel changes nothing.
+                "AND NOT (status = 'done' AND ? = 'cancelled')",
+                (status, now, status, now, _enc_field(result, "goals.result"), goal_id, status),
                 )
                 self._goal_changed(goal_id)
             # A sign-off is authority over one immutable terminal payload, not

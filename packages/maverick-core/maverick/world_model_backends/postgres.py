@@ -1873,9 +1873,11 @@ class PostgresWorldModel:
             "WHEN status='done' THEN completed_at "
             "ELSE GREATEST(updated_at + 0.000001, %s) END, "
             "status=%s, result=COALESCE(%s, result), "
-            "updated_at=GREATEST(updated_at + 0.000001, %s) WHERE id=%s"
+            "updated_at=GREATEST(updated_at + 0.000001, %s) WHERE id=%s "
+            # A finished task stays finished: a late cancel changes nothing.
+            "AND NOT (status='done' AND %s='cancelled')"
         )
-        params: list = [status, now, status, _seal(result, "goals.result"), now, goal_id]
+        params: list = [status, now, status, _seal(result, "goals.result"), now, goal_id, status]
         if frag:
             sql += " AND " + frag
             params += fparams

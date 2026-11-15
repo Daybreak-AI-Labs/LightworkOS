@@ -299,6 +299,10 @@ class Supervisor:
             return f"Resumed goal {goal.id} ('{goal.title}') — set to pending."
         if intent == "cancel":
             self.world.set_goal_status(goal.id, "cancelled")
+            current = self.world.get_goal(goal.id)
+            if current is not None and current.status == "done":
+                # The world model never lets a cancel replace a recorded success.
+                return f"Goal {goal.id} ('{goal.title}') had already finished. Nothing changed."
             self.world.append_event(goal.id, "supervisor", "supervision", "cancelled by operator")
             return f"Cancelled goal {goal.id} ('{goal.title}')."
         if intent == "prioritize":
