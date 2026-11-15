@@ -239,6 +239,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Copies already kept in `sandbox-recovery` with such names are left out of
   backups with a warning instead of stopping every backup; rename them to
   keep them.
+- `maverick start --domain D --coding-mode --best-of-n N` now applies the
+  department's profile and gates to every attempt; the domain was dropped.
 
 ### Fixed
 

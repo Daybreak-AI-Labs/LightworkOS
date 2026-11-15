@@ -3373,6 +3373,7 @@ async def run_goal_best_of_n(
     max_depth: int = 3,
     conversation_id: int | None = None,
     n: int = 4,
+    domain: str | None = None,
 ) -> str:
     """Coding-mode best-of-N: run N independent attempts, pick the one
     whose patch (a) applies and (b) passes the most FAIL_TO_PASS /
@@ -3409,7 +3410,7 @@ async def run_goal_best_of_n(
         return await run_goal(
             llm, world, budget, goal_id,
             sandbox=sandbox, max_depth=max_depth,
-            conversation_id=conversation_id,
+            conversation_id=conversation_id, domain=domain,
         )
 
     # Per-attempt budget is RECOMPUTED each
@@ -3513,6 +3514,7 @@ async def run_goal_best_of_n(
                     sandbox=sandbox, max_depth=max_depth,
                     conversation_id=None,
                     orchestrator_model_override=per_model or None,
+                    domain=domain,
                 )
             except Exception as e:
                 # A budget cap or killswitch raised here is a STOP signal, not

@@ -4161,6 +4161,7 @@ def start(
                     result = _asyncio.run(run_goal_best_of_n(
                         llm, world, bud, goal_id,
                         sandbox=sandbox, max_depth=max_depth, n=best_of_n,
+                        domain=domain,
                     ))
                 else:
                     result = k.run_goal_sync(
