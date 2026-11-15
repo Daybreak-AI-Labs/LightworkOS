@@ -238,7 +238,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `[access] allowed_models` when that list is set. Each Vertex call counts
   against `[budget.provider_caps] vertex`.
 - `oracle` asks for `confirm` when a read hides a second statement in
-  Oracle `q'...'` quoting, after a `show`/`desc` line or after a `/` line.
+  Oracle `q'...'` quoting, or after a `show`/`desc` line, a `/` line, a `.`
+  line or a blank line. Remove blank lines inside a query to run it as a read.
 - `notebook_exec` keeps `%` and `!` lines that sit inside a string, a bracket
   or a continued line; only lines that start a statement are dropped.
 - Every built-in tool now has an explicit risk rating. Discovery and

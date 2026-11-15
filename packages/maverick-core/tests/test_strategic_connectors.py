@@ -371,6 +371,11 @@ def test_oracle_multistatement_read_needs_confirm(monkeypatch):
     # line ends a SQL statement, so no semicolon is needed for a second one.
     "show user\ndelete from t",
     "select 1 from dual\n/\ndelete from t",
+    # SQL*Plus (SQLBLANKLINES OFF, the default) also ends a statement at a
+    # blank line or at a line holding only ".".
+    "select 1 from dual\n\ndelete from t;",
+    "select 1 from dual\n.\ndelete from t",
+    "select 1 from dual\n   \ndelete from t",
 ])
 def test_oracle_script_tricks_cannot_pass_as_a_read(monkeypatch, statement):
     monkeypatch.setenv("ORACLE_ORDS_URL", "https://h/ords/me")
@@ -381,6 +386,9 @@ def test_oracle_script_tricks_cannot_pass_as_a_read(monkeypatch, statement):
     out = oracle_tool().fn({"op": "sql", "statement": statement})
     assert "DRY RUN" in out
     post.assert_not_called()
+    if "delete" in statement and "q'" not in statement and "show" not in statement:
+        # A read with a blank line inside is legitimate SQL elsewhere, so say why.
+        assert "ends a statement" in out
 
 
 def test_oracle_backslash_quote_multistatement_read_needs_confirm(monkeypatch):
