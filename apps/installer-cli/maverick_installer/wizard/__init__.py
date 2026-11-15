@@ -1050,7 +1050,7 @@ def pick_self_hosted(prov: str) -> dict[str, Any]:
     if _is_private_endpoint(url):
         return {"base_url": url}
     console.print(
-        "[dim]This server is not on this machine or a private network, so it may "
+        "[dim]Lightwork cannot tell that this server is private, so it may "
         "charge for use. Without a price, Lightwork charges a high safety "
         "ceiling to keep your spending limit.[/dim]"
     )

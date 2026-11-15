@@ -111,6 +111,10 @@ def _strict_usage_count(v: object, field: str, *, missing_ok: bool = False) -> i
     return n
 
 
+# Providers already warned that they omit usage (one warning per process).
+_ESTIMATE_WARNED: set[str] = set()
+
+
 def _estimated_tokens(text: str) -> int:
     """About four characters per token, rounded up: a planning estimate."""
     return math.ceil(len(text) / 4)
@@ -519,6 +523,7 @@ class OpenAIClient:
                 raise UsageAccountingError(
                     "OpenAI response missing token usage; cannot enforce budget"
                 )
+            estimated = not usage
             if not usage:
                 # Self-hosted server omitted usage (see USAGE_REQUIRED). Charge
                 # an estimate from the text length instead of a zero-token call:
@@ -528,11 +533,14 @@ class OpenAIClient:
                     prompt_tokens=max(int(estimated_input_tokens), 0),
                     completion_tokens=_estimated_reply_tokens(resp),
                 )
-                log.warning(
+                source = price_model_prefix.rstrip(":") or "provider"
+                log_once = log.warning if source not in _ESTIMATE_WARNED else log.debug
+                _ESTIMATE_WARNED.add(source)
+                log_once(
                     "%s omitted token usage; charging an estimated %d input and "
-                    "%d output tokens from the text length",
-                    price_model_prefix.rstrip(":") or "provider",
-                    usage.prompt_tokens, usage.completion_tokens,
+                    "%d output tokens from the text length (the cost line marks "
+                    "these calls estimated)",
+                    source, usage.prompt_tokens, usage.completion_tokens,
                 )
             # Extract cached-token counts where the provider reports
             # them. Vendors expose this on the usage object under
@@ -580,6 +588,8 @@ class OpenAIClient:
                 cache_read_tok=cache_read_tok,
                 cache_read_mult=cls.CACHE_READ_MULT,
             )
+            if estimated:
+                budget.mark_usage_estimated()
         if no_choices:
             # Some OpenAI-compatible gateways (and OpenAI/Azure content-filter)
             # return an empty ``choices`` list on an upstream/filter error. An

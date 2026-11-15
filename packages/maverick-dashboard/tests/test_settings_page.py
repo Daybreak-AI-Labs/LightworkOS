@@ -78,6 +78,35 @@ def test_admin_can_price_private_model_and_read_back_effective_route(monkeypatch
     assert "anthropic:claude-sonnet-4-6" not in model_rate_overrides()
 
 
+def test_admin_can_mark_a_self_hosted_server_free(monkeypatch, tmp_path):
+    """DR 8: the Prices page can mark an Ollama, vLLM or TGI server free; the
+    change is audited like other price changes and other providers refuse."""
+    _prep(monkeypatch, tmp_path)
+    from maverick.budget import _lookup_price_quote
+    from maverick.config import config_path
+
+    config_path().parent.mkdir(parents=True, exist_ok=True)
+    config_path().write_text('[providers.ollama]\nbase_url = "https://gpu.example.org"\n',
+                             encoding="utf-8")
+    c = _client()
+    headers = {"origin": "http://127.0.0.1"}
+    assert _lookup_price_quote("ollama:llama3").rates != (0.0, 0.0)
+    assert "Mark a self-hosted server free" in c.get("/settings").text
+    saved = c.post("/settings/models/self-hosted-free",
+                   data={"provider": "ollama", "free": "on", "confirm": "on"},
+                   headers=headers, follow_redirects=False)
+    assert saved.status_code == 303
+    assert _lookup_price_quote("ollama:llama3").rates == (0.0, 0.0)
+    assert c.post("/settings/models/self-hosted-free",
+                  data={"provider": "openai", "free": "on", "confirm": "on"},
+                  headers=headers, follow_redirects=False).status_code == 400
+    cleared = c.post("/settings/models/self-hosted-free",
+                     data={"provider": "ollama", "free": "off", "confirm": "on"},
+                     headers=headers, follow_redirects=False)
+    assert cleared.status_code == 303
+    assert _lookup_price_quote("ollama:llama3").rates != (0.0, 0.0)
+
+
 def test_settings_has_bounded_sections_keyboard_tabs_and_search(monkeypatch, tmp_path):
     _prep(monkeypatch, tmp_path)
     text = _client().get("/settings").text

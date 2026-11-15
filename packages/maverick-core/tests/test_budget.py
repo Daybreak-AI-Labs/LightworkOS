@@ -170,6 +170,11 @@ _CEILING = budget_mod._SELF_HOSTED_PUBLIC_CEILING
     ({}, {}, (0.0, 0.0)),  # default localhost
     ({"base_url": "http://10.0.0.5:11434"}, {}, (0.0, 0.0)),
     ({"base_url": "http://ollama:11434"}, {}, (0.0, 0.0)),  # compose service name
+    ({"base_url": "http://100.101.1.2:11434"}, {}, (0.0, 0.0)),  # Tailscale / CGNAT
+    ({"base_url": "http://gpu.tail1234.ts.net:11434"}, {}, (0.0, 0.0)),  # MagicDNS
+    ({"base_url": "http://gpu.home:11434"}, {}, (0.0, 0.0)),
+    ({"base_url": "http://gpu.corp:11434"}, {}, (0.0, 0.0)),
+    ({"base_url": "http://gpu.example.org:11434"}, {}, _CEILING),  # not known private
     ({}, {"VLLM_BASE_URL": "https://api.openai.com"}, _CEILING),
     ({"base_url": "https://api.openai.com"}, {}, _CEILING),
     ({"base_url": "https://gpu.example.com", "price_per_mtok": [0.5, 1.5]}, {}, (0.5, 1.5)),
@@ -194,6 +199,21 @@ def test_self_hosted_route_is_free_only_on_a_private_address(monkeypatch, caplog
     assert ("public address" in caplog.text) is (expected == _CEILING)
 
 
+def test_ceiling_charge_is_named_in_the_cap_error_and_cost_line(monkeypatch):
+    """A cap tripped by the safety ceiling says so and names the fix."""
+    monkeypatch.setattr("maverick.config.get_provider_config",
+                        lambda provider: {"base_url": "https://gpu.example.org"})
+    budget = Budget(max_dollars=1.0)
+    with pytest.raises(budget_mod.BudgetExceeded) as exceeded:
+        for _ in range(3):
+            budget.record_tokens(0, 10_000, model="ollama:llama3")
+    for text in (str(exceeded.value), budget.summary()):
+        assert "safety ceiling" in text and "ollama:llama3" in text
+        assert "mark it free" in text
+    budget.mark_usage_estimated()
+    assert "estimated" in budget.summary()
+
+
 def test_doctor_names_a_public_self_hosted_server_without_a_price(monkeypatch, capsys):
     import maverick.health as health
 
@@ -207,6 +227,7 @@ def test_doctor_names_a_public_self_hosted_server_without_a_price(monkeypatch, c
     health._check_self_hosted_prices()
     out = capsys.readouterr().out
     assert "ollama price" in out and "gpu.example.com" in out and "price_per_mtok" in out
+    assert "cannot tell" in out and "not on this machine" not in out
     assert "vllm" not in out and "tgi" not in out
     assert health._FAILURES == []  # advisory, not a failure
 

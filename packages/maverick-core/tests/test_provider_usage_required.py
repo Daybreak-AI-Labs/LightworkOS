@@ -82,6 +82,8 @@ def test_self_hosted_missing_usage_is_charged_an_estimate(monkeypatch, caplog):
     assert OllamaClient.USAGE_REQUIRED is False
     monkeypatch.setattr("maverick.config.get_provider_config",
                         lambda provider: {"base_url": "https://gpu.example.com"})
+    from maverick.providers import openai_provider
+    monkeypatch.setattr(openai_provider, "_ESTIMATE_WARNED", set())
     budget = Budget(max_dollars=10.0)
     with caplog.at_level(logging.WARNING, logger="maverick.providers.openai_provider"):
         r = OpenAIClient._from_response(_Resp(_Msg("local answer " * 10)), budget,
@@ -93,6 +95,13 @@ def test_self_hosted_missing_usage_is_charged_an_estimate(monkeypatch, caplog):
     assert (budget.input_tokens, budget.output_tokens) == (400, 33)  # 130 chars / 4
     assert budget.dollars > 0.0  # public address, no price: safety ceiling
     assert "estimated" in caplog.text
+    assert budget.estimated_usage_calls == 1 and "estimated" in budget.summary()
+    # Warned once per process per provider; later calls log quietly.
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="maverick.providers.openai_provider"):
+        OpenAIClient._from_response(_Resp(_Msg("again")), budget, model="llama3.3:70b",
+                                    price_model_prefix="ollama:", usage_required=False)
+    assert "omitted token usage" not in caplog.text
 
 
 def test_openrouter_free_model_response_records_the_provider_qualified_price(monkeypatch):

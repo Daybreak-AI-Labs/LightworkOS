@@ -414,6 +414,36 @@ async def settings_set_model_rate(request: Request) -> RedirectResponse:
     return RedirectResponse("/settings?saved=model_rate#settings-model-prices", status_code=303)
 
 
+@router.post("/settings/models/self-hosted-free")
+async def settings_self_hosted_free(request: Request) -> RedirectResponse:
+    """Mark an Ollama, vLLM or TGI server free, or charge it again."""
+    _app()._require_same_origin(request)
+    auth.require_global_permission(request, "admin")
+    from . import settings_store
+
+    form = await request.form()
+    name = str(form.get("provider", ""))
+    free = form.get("free") == "on"
+    if name not in settings_store.SELF_HOSTED_PROVIDERS or form.get("confirm") != "on":
+        raise HTTPException(status_code=400, detail=(
+            "Choose Ollama, vLLM or TGI and confirm that the server charges nothing."
+        ))
+
+    def audit_value(data: dict) -> dict[str, object]:
+        table = (data.get("providers") or {}).get(name) or {}
+        return {"free": isinstance(table, dict) and table.get("price_per_mtok") == "free"}
+
+    try:
+        with _setting_write(request, "providers", name, audit_value):
+            await run_in_threadpool(settings_store.set_self_hosted_free, name, free)
+    except (OSError, settings_store.SettingsNotStorable) as exc:
+        raise HTTPException(status_code=503, detail=(
+            "The change could not be confirmed. Refresh Settings and Activity before retrying."
+        )) from exc
+    _admin_audit(request, "settings_self_hosted_free", provider=name, free=free)
+    return RedirectResponse("/settings?saved=model_rate#settings-model-prices", status_code=303)
+
+
 @router.post("/settings/models/rate/remove")
 async def settings_remove_model_rate(request: Request, model: str = Form("")) -> RedirectResponse:
     _app()._require_same_origin(request)

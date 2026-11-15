@@ -229,6 +229,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `[providers.<name>] price_per_mtok` to its price or `"free"`; setup asks,
   and `maverick doctor` names unpriced servers. A reply with no token counts
   is charged an estimate from its text length.
+- Tailscale addresses (100.64.0.0/10) and names ending in `.ts.net`, `.home`
+  or `.corp` count as private, so their self-hosted models stay free. When
+  the safety ceiling priced any spend, the spending-limit message and the
+  cost line say so and name the fix. An administrator can mark an Ollama,
+  vLLM or TGI server free under Settings > Prices. The cost line counts
+  calls whose token counts were estimated.
 - Lightwork now remembers which database it last used (`world_backend` in
   the data folder). If that was Postgres and a settings file cannot be read,
   it refuses to start and names the file and line instead of opening a local

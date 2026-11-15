@@ -11,6 +11,7 @@ Cost correctness:
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import logging
 import math
@@ -764,8 +765,11 @@ _SELF_HOSTED_DEFAULT_URLS = {
     "tgi": "http://localhost:8080",
 }
 # Names that only resolve on a local network: a single-label name (a Docker
-# Compose service such as ``ollama``) or a reserved private-use suffix.
-_LOCAL_NAME_SUFFIXES = (".local", ".internal", ".lan", ".home.arpa")
+# Compose service such as ``ollama``), a reserved private-use suffix, a
+# Tailscale MagicDNS name, or a common home or company suffix. No DNS lookup.
+_LOCAL_NAME_SUFFIXES = (".local", ".internal", ".lan", ".home.arpa", ".home", ".corp", ".ts.net")
+# Carrier-grade NAT space, used by Tailscale for its private addresses.
+_CGNAT = ipaddress.ip_network("100.64.0.0/10")
 
 
 def _self_hosted_endpoint(provider: str) -> tuple[str | None, object]:
@@ -805,8 +809,12 @@ def _is_private_endpoint(url: str | None) -> bool:
         host = (urlparse(url or "").hostname or "").rstrip(".").lower()
     except ValueError:
         return False
-    if not host or host.replace(".", "").isdigit() or ":" in host:
-        return False  # a public IP literal; private ones passed above
+    try:
+        return ipaddress.ip_address(host) in _CGNAT
+    except ValueError:
+        pass
+    if not host or ":" in host:
+        return False
     return "." not in host or host.endswith(_LOCAL_NAME_SUFFIXES)
 
 
@@ -969,6 +977,9 @@ class Budget:
         init=False,
         repr=False,
     )
+    # Calls whose token counts the provider did not report and were
+    # estimated from text length (see OpenAIClient._from_response).
+    estimated_usage_calls: int = field(default=0, init=False, repr=False)
 
     # Legacy defaults; only used when ``model`` isn't passed.
     price_in_per_mtok: float = _FALLBACK_PRICE_IN
@@ -1200,6 +1211,7 @@ class Budget:
             self.dollars += other.dollars
             self.tool_calls += other.tool_calls
             self.pricing_evidence.update(other.pricing_evidence)
+            self.estimated_usage_calls += other.estimated_usage_calls
             self.check()
 
     def elapsed(self) -> float:
@@ -1315,7 +1327,9 @@ class Budget:
         if self.max_dollars is not None and self.dollars > self.max_dollars and not math.isclose(
             self.dollars, self.max_dollars, rel_tol=1e-15, abs_tol=0.0,
         ):
-            raise BudgetExceeded(f"${self.dollars:.2f} > ${self.max_dollars:.2f}")
+            raise BudgetExceeded(
+                f"${self.dollars:.2f} > ${self.max_dollars:.2f}{self._ceiling_note()}"
+            )
         if self.max_tool_calls is not None and self.tool_calls > self.max_tool_calls:
             raise BudgetExceeded(f"tool calls {self.tool_calls} > {self.max_tool_calls}")
         elapsed = _nonnegative_finite(self.elapsed(), "elapsed wall time")
@@ -1347,6 +1361,7 @@ class Budget:
                 raise BudgetExceeded(
                     f"projected ${projected:.2f} > ${self.max_dollars:.2f} "
                     f"(spent ${self.dollars:.2f} + est ${est:.2f} for this call)"
+                    f"{self._ceiling_note()}"
                 )
 
     def reserve(self, est_cost: float) -> float:
@@ -1371,7 +1386,7 @@ class Budget:
                 raise BudgetExceeded(
                     f"projected ${projected:.2f} > ${self.max_dollars:.2f} "
                     f"(spent ${self.dollars:.2f} + in-flight ${held:.2f} "
-                    f"+ est ${est:.2f} for this call)"
+                    f"+ est ${est:.2f} for this call){self._ceiling_note()}"
                 )
             self._reserved = held + est
             return est
@@ -1413,12 +1428,35 @@ class Budget:
                 for model_id, evidence in self.pricing_evidence.items()
             }
 
-    def summary(self) -> str:
+    def _ceiling_note(self) -> str:
+        """Plain words when a self-hosted safety ceiling priced any spend."""
+        models = sorted(
+            model for model, evidence in dict(self.pricing_evidence).items()
+            if evidence.get("rate_card_version") == "self-hosted-public-ceiling-v1"
+        )
+        if not models:
+            return ""
         return (
+            f". Spend for {', '.join(models)} used the safety ceiling because "
+            "Lightwork cannot tell that its server is private. Set its price or "
+            "mark it free (price_per_mtok in its [providers] table)"
+        )
+
+    def mark_usage_estimated(self) -> None:
+        """Record that one call's token counts were estimated, not reported."""
+        with self._lock:
+            self.estimated_usage_calls += 1
+
+    def summary(self) -> str:
+        line = (
             f"tokens in={self.input_tokens} out={self.output_tokens} "
             f"cache_read={self.cache_read_tokens} hit_rate={self.cache_hit_rate():.0%} "
             f"$={self.dollars:.3f} tools={self.tool_calls} wall={self.elapsed():.0f}s"
         )
+        if self.estimated_usage_calls:
+            line += (f"; token counts estimated from text length for "
+                     f"{self.estimated_usage_calls} call(s)")
+        return line + self._ceiling_note()
 
 
 _BUDGET_KEY_TYPES = {

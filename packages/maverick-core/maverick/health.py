@@ -707,8 +707,8 @@ def _check_self_hosted_prices() -> None:
         return
     for provider, address in gaps:
         _row(YELLOW, f"{provider} price",
-             f"{address} is not on this machine or a private network and has no "
-             f"price, so each call is charged ${_SELF_HOSTED_PUBLIC_CEILING[0]:g}/"
+             f"Lightwork cannot tell that {address} is private and it has no price, "
+             f"so each call is charged ${_SELF_HOSTED_PUBLIC_CEILING[0]:g}/"
              f"${_SELF_HOSTED_PUBLIC_CEILING[1]:g} per million tokens",
              fix=f'set [providers.{provider}] price_per_mtok = [input, output] '
                  'or "free", or run: maverick init')
