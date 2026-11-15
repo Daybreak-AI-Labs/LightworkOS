@@ -202,6 +202,9 @@ _RUN_MARKER_ENV = "MAVERICK_SANDBOX_RUN"
 def _reap_marked(marker: str) -> None:
     """Kill processes that still carry this run's marker (Linux ``/proc``).
 
+    Used only when a command timed out or was cancelled; after a normal exit,
+    deliberately detached processes (a server the person started) are kept.
+
     Best effort: a child that also clears its environment is not found."""
     needle = f"{_RUN_MARKER_ENV}={marker}".encode()
     for _ in range(3):  # a survivor may fork while it is being reaped
@@ -413,8 +416,8 @@ def run_capped(args, *, timeout: float, env=None, cwd=None) -> subprocess.Comple
                 os.close(w)
             except OSError:
                 pass
+        _join_readers(readers, deadline=time.monotonic() + _DRAIN_GRACE_S)
         for (r, _w), reader in zip(pipes, readers, strict=True):
-            reader.join(timeout=5)
             if not reader.is_alive():  # else a survivor still holds the pipe
                 os.close(r)
 
@@ -458,9 +461,15 @@ def _feed_stdin(proc: subprocess.Popen, text: str) -> None:
         pass
 
 
-def _join_readers(readers: list[threading.Thread], *, timeout: float) -> None:
+# After the command ends (or is killed), all output readers together get at
+# most this long to finish; the old communicate() drain had the same bound.
+_DRAIN_GRACE_S = 5.0
+
+
+def _join_readers(readers: list[threading.Thread], *, deadline: float) -> None:
+    """Join every reader against ONE shared monotonic deadline."""
     for reader in readers:
-        reader.join(timeout=timeout)
+        reader.join(timeout=max(0.0, deadline - time.monotonic()))
 
 
 class LocalBackend:
@@ -538,14 +547,16 @@ class LocalBackend:
             # job that still writes to them is waited for within the timeout.
             deadline = time.monotonic() + effective
             proc.wait(timeout=effective)
-            _join_readers(readers, timeout=max(0.0, deadline - time.monotonic()))
+            _join_readers(readers, deadline=deadline)
             if any(reader.is_alive() for reader in readers):
                 raise subprocess.TimeoutExpired(cmd, effective)
             if os.name == "nt":
                 _close_windows_kill_job(windows_job)
                 windows_job = None
             else:
-                _reap_process_group(proc, marker)
+                # A normal exit leaves deliberately detached (setsid) processes
+                # alone, as before; only the command's own group is reaped.
+                _reap_process_group(proc)
             return ExecResult(
                 stdout=cap_output(tails[0].text()),
                 stderr=cap_output(tails[1].text(), STDERR_LIMIT),
@@ -566,18 +577,25 @@ class LocalBackend:
                     proc.kill()
             except OSError:
                 proc.kill()
+            grace = time.monotonic() + _DRAIN_GRACE_S
             try:
-                proc.wait(timeout=5)
+                proc.wait(timeout=_DRAIN_GRACE_S)
             except subprocess.TimeoutExpired:
                 pass
             # Keep what the (now dead) tree wrote before the kill. Bounded in
             # case the group kill failed and a survivor holds the pipes open.
-            _join_readers(readers, timeout=5)
+            _join_readers(readers, deadline=grace)
             return ExecResult(
                 stdout=cap_output(tails[0].text()),
                 stderr=f"TIMEOUT after {effective}s",
                 exit_code=124,
             )
+        except BaseException:  # failure-policy: fail_closed -- reap the run, then re-raise
+            # Cancelled mid-run (KeyboardInterrupt, a cancelled worker): the
+            # command did not finish, so its detached children go with it.
+            if os.name != "nt":
+                _reap_process_group(proc, marker)
+            raise
         finally:
             if windows_job is not None:
                 _close_windows_kill_job(windows_job)

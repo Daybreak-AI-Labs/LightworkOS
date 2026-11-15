@@ -230,8 +230,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   needed to revoke existing grants, so a revocation always succeeds.
 - Sandbox commands now keep only the end of their output while they run. Long
   output starts with "[output truncated: showing the last 8,000 characters]".
-- The local sandbox now also stops processes a command started in a new
-  session (`setsid`). A process that clears its environment is not found.
+- When a local sandbox command times out or is cancelled, processes it
+  started in a new session (`setsid`) are now stopped too. After a normal
+  exit they keep running, as before.
 - Plugin input schemas with `pattern` or `patternProperties` are now checked
   under the regex time limit; a schema that combines `patternProperties` with
   `unevaluatedProperties` is refused.
