@@ -20,8 +20,10 @@ a hardened evaluator, not "never eval" — keep the AST guards intact.
 from __future__ import annotations
 
 import ast
+import json
 import logging
 import re
+import sys
 from typing import Any
 
 from . import Tool
@@ -276,6 +278,44 @@ def _run_integrate(args: dict[str, Any]) -> str:
         return f"ERROR: cannot integrate: {type(e).__name__}: {e}"
 
 
+# SymPy cannot be interrupted inside a thread, so every SymPy operation runs
+# in a child process that is killed at this limit.
+_SYMBOLIC_TIMEOUT = 10.0
+
+
+def _isolated_symbolic(data: bytes) -> str:
+    """Child-side entry (``parser_isolation`` whitelist): one SymPy op."""
+    request = json.loads(data)
+    # The child runs isolated (-I); find SymPy where the parent found it.
+    path = request.pop("sympy_path", None)
+    if isinstance(path, str) and path not in sys.path:
+        sys.path.append(path)
+    return _run_sympy(request["op"], request)
+
+
+def _run_isolated(op: str, args: dict[str, Any]) -> str:
+    if getattr(sys, "frozen", False):
+        # A frozen build has no interpreter to start; keep the old path.
+        return _run_sympy(op, args)
+    from pathlib import Path
+
+    import sympy
+
+    from ..parser_isolation import parse_isolated
+
+    request = {key: args.get(key) for key in ("expr", "equation", "var")}
+    request.update(op=op, sympy_path=str(Path(sympy.__file__).resolve().parents[1]))
+    try:
+        result = parse_isolated("compute_symbolic", json.dumps(request, default=str).encode("utf-8"),
+                                timeout=_SYMBOLIC_TIMEOUT)
+    except RuntimeError as exc:
+        if "timed out" in str(exc):
+            return (f"ERROR: {op} did not finish within {_SYMBOLIC_TIMEOUT:g} seconds. "
+                    "Try a simpler expression or split the problem.")
+        return f"ERROR: {op} failed: {exc}"
+    return str(result)
+
+
 def _run(args: dict[str, Any]) -> str:
     op = args.get("op")
     if not op:
@@ -283,7 +323,7 @@ def _run(args: dict[str, Any]) -> str:
     if not isinstance(op, str) or op not in _VALID_OPS:
         return f"ERROR: unknown op {op!r}"
 
-    if op == "evaluate":
+    if op == "evaluate" and not _have_sympy():
         return _run_evaluate(args)
 
     # All remaining ops require sympy.
@@ -292,7 +332,12 @@ def _run(args: dict[str, Any]) -> str:
             f"ERROR: '{op}' requires sympy. "
             "Run: python -m pip install -e './packages/maverick-core[math]'"
         )
+    return _run_isolated(op, args)
 
+
+def _run_sympy(op: str, args: dict[str, Any]) -> str:
+    if op == "evaluate":
+        return _run_evaluate(args)
     if op == "simplify":
         return _run_simplify(args)
     if op == "solve":

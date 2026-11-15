@@ -237,6 +237,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `office_convert` no longer runs LibreOffice on the host (Local backend). A
   document's linked images could make the host fetch any address. Configure a
   Docker, Podman or Kubernetes document worker to keep converting.
+- The `compute` tool runs each SymPy operation in a separate process and
+  stops it after 10 seconds with a plain error. Each SymPy call now takes
+  about a second longer while the process starts.
 
 ### Fixed
 
