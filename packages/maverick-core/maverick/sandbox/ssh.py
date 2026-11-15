@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import math
 import os
+import secrets
 import shlex
 import subprocess
 from dataclasses import dataclass, field
@@ -51,6 +52,26 @@ _BASE_SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
 # yet); operators can set ``host_key_checking = "yes"`` for that, or "no" to
 # restore the old blind-accept behaviour.
 _VALID_HOST_KEY_POLICIES = {"accept-new", "yes", "no"}
+
+# ssh exits 255 when the connection fails, and also passes through a remote
+# command's own 255. The remote wrapper prints a per-call marker line when the
+# command itself exited 255, so a 255 without it is a connection failure. The
+# marker is random, so the command cannot print it, and it may be followed by
+# output from a background child.
+def _new_marker() -> str:
+    return "lightwork-ssh-exit-255-" + secrets.token_hex(8)
+
+
+def _marking_255(remote: str, marker: str) -> str:
+    return "sh -c " + shlex.quote(
+        f"{remote}; rc=$?; [ $rc -ne 255 ] || echo {marker} >&2; exit $rc")
+
+
+def _remote_255(stderr: str, marker: str) -> tuple[bool, str]:
+    """Whether the remote command itself exited 255, and stderr without the mark."""
+    lines = stderr.splitlines(keepends=True)
+    kept = [line for line in lines if line.strip() != marker]
+    return len(kept) != len(lines), "".join(kept)
 
 
 @dataclass
@@ -105,13 +126,17 @@ class SSHBackend:
                 "Check your SSH config / keys."
             )
         # Probe with the form exec() runs, so the check matches what is used.
+        marker = _new_marker()
         check = subprocess.run(
-            ["ssh", *self._ssh_opts(), *self.ssh_args, self.host, "timeout --signal=KILL 1.000000s true"],
+            ["ssh", *self._ssh_opts(), *self.ssh_args, self.host,
+             _marking_255("timeout --signal=KILL 1.000000s true", marker)],
             capture_output=True, timeout=15, env=_ssh_env(),
         )
         if check.returncode != 0:
-            stderr = check.stderr.decode("utf-8", errors="replace").strip() or "no error output"
-            if check.returncode == 255:  # ssh's own exit status: the connection failed
+            remote_255, stderr = _remote_255(
+                check.stderr.decode("utf-8", errors="replace"), marker)
+            stderr = stderr.strip() or "no error output"
+            if check.returncode == 255 and not remote_255:  # ssh's own: the connection failed
                 raise RuntimeError(
                     f"ssh to {self.host} could not check GNU timeout: the ssh connection "
                     f"failed: {stderr}. Retry, or check your SSH config / keys."
@@ -154,7 +179,10 @@ class SSHBackend:
         # a deadline remotely, even after the connection disappears. Requiring
         # it fails closed on hosts where it is unavailable. Processes that
         # deliberately create a new session still need remote OS isolation.
-        remote = f"timeout --signal=KILL {max(effective, 0.001):.6f}s sh -c {shlex.quote(inner)}"
+        marker = _new_marker()
+        remote = _marking_255(
+            f"timeout --signal=KILL {max(effective, 0.001):.6f}s sh -c {shlex.quote(inner)}",
+            marker)
         # Env hygiene: ssh forwards local env to the remote shell only via
         # SendEnv/SetEnv, neither of which we set -- so the remote never
         # inherits host secrets. We additionally scrub the LOCAL ssh client's
@@ -166,9 +194,15 @@ class SSHBackend:
                 args, capture_output=True, text=True, errors="replace", timeout=effective,
                 env=_ssh_env(),
             )
+            stderr = result.stderr
+            if result.returncode == 255:
+                remote_255, stderr = _remote_255(stderr, marker)
+                if not remote_255:
+                    stderr = ("The ssh connection failed (exit 255): "
+                              f"{stderr.strip() or 'no error output'}")
             return ExecResult(
                 stdout=result.stdout[-8000:],
-                stderr=result.stderr[-2000:],
+                stderr=stderr[-2000:],
                 exit_code=result.returncode,
             )
         except subprocess.TimeoutExpired as e:

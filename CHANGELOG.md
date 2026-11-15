@@ -313,6 +313,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Every built-in tool now has an explicit risk rating. Discovery and
   read-only tools such as `find_tools` are low, so a low or medium
   `max_risk` keeps them. Unrated plugin and MCP tools still count as high.
+- The gRPC server starts again: its generated stubs now import as part of
+  the package. Stubs an earlier release generated are rebuilt on next start;
+  with runtime generation off, run `maverick gen-stubs` after upgrading.
+- On Postgres with at-rest encryption, records saved before workspaces were
+  used (no tenant) read correctly again in compatibility mode: facts, goals,
+  goal events, artifacts, questions, episodes, sign-offs, approvals, projects
+  and chat turns no longer show a "withheld" placeholder. Nothing to do.
+- The database tool on MySQL Connector/Python now reads at most one row
+  past the row limit, even when the query has its own larger LIMIT.
+- The database query timeout now also applies on MySQL Connector/Python and
+  MariaDB Connector/Python: the server stops the statement at the deadline
+  and a timed-out query is cancelled. Before, only PyMySQL was bounded.
+- Image OCR runs Tesseract with one OpenMP thread unless OMP_THREAD_LIMIT is
+  set, so a busy host no longer pushes small images past the OCR timeout.
+- The SSH sandbox now says "The ssh connection failed" when ssh itself
+  exits 255, and no longer reports a remote command's own exit 255 as a
+  connection failure.
 
 ### Fixed
 
