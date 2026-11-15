@@ -36,6 +36,21 @@ _SCHEMA: dict[str, Any] = {
 }
 
 _READ_PREFIXES = ("select", "with", "show", "describe", "desc", "explain")
+# SQL*Plus commands end at their line, not at a semicolon.
+_LINE_COMMANDS = ("show", "describe", "desc")
+
+
+def _script_has_second_statement(statement: str) -> bool:
+    """Whether ORDS would run more than one statement without a semicolon.
+
+    ``/_/sql`` runs a script: a SQL*Plus command (``show``, ``desc``) ends at
+    its newline, and a line holding only ``/`` ends a SQL statement. Either
+    lets a second statement follow with no separator to find.
+    """
+    lines = [line.strip() for line in statement.strip().splitlines()]
+    if len(lines) > 1 and lines[0].lower().startswith(_LINE_COMMANDS):
+        return True
+    return any(line == "/" and any(lines[i + 1:]) for i, line in enumerate(lines))
 
 
 def _config() -> tuple[str, str]:
@@ -50,7 +65,8 @@ def _op_sql(statement: str, limit: int, confirm: bool) -> str:
     if not statement:
         return "ERROR: sql requires statement"
     is_read = statement.strip().lstrip("(").lower().startswith(_READ_PREFIXES)
-    needs_confirm = not is_read or has_unconfirmed_statement_separator(statement)
+    needs_confirm = (not is_read or has_unconfirmed_statement_separator(statement)
+                     or _script_has_second_statement(statement))
     if needs_confirm and not confirm:
         return "DRY RUN: non-read SQL. Re-run with confirm=true."
     url, tok = _config()

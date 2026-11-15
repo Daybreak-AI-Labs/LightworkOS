@@ -364,6 +364,25 @@ def test_oracle_multistatement_read_needs_confirm(monkeypatch):
     post.assert_not_called()
 
 
+@pytest.mark.parametrize("statement", [
+    # Oracle q-quoting hides the semicolon from a plain quote scanner.
+    "select q'[a'b]' from dual; delete from t",
+    # ORDS runs a script: a SQL*Plus command ends at its line, and a lone "/"
+    # line ends a SQL statement, so no semicolon is needed for a second one.
+    "show user\ndelete from t",
+    "select 1 from dual\n/\ndelete from t",
+])
+def test_oracle_script_tricks_cannot_pass_as_a_read(monkeypatch, statement):
+    monkeypatch.setenv("ORACLE_ORDS_URL", "https://h/ords/me")
+    monkeypatch.setenv("ORACLE_ORDS_TOKEN", "t")
+    post = MagicMock()
+    _fake_httpx(monkeypatch, post=post)
+    from maverick.tools.oracle_tool import oracle_tool
+    out = oracle_tool().fn({"op": "sql", "statement": statement})
+    assert "DRY RUN" in out
+    post.assert_not_called()
+
+
 def test_oracle_backslash_quote_multistatement_read_needs_confirm(monkeypatch):
     monkeypatch.setenv("ORACLE_ORDS_URL", "https://h/ords/me")
     monkeypatch.setenv("ORACLE_ORDS_TOKEN", "t")
