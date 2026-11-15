@@ -288,6 +288,20 @@ def test_partner_request_limit_is_shown_and_raised_by_an_administrator(tmp_path,
     def deny(request, permission):
         raise HTTPException(status_code=403, detail="forbidden")
 
-    monkeypatch.setattr(trust_page_api, "require_permission", deny)
+    admission._limits_path().write_text("{broken", encoding="utf-8")
+    assert "can't be read" in client.get("/trust").text
+    unreadable = client.post("/api/v1/trust/federation/edge/limit", json={"limit": 6})
+    assert unreadable.status_code == 409 and "could not be read" in unreadable.json()["detail"]
+    assert client.post("/api/v1/trust/federation/limits/start-over", json={}).json() == {"started_over": True}
+    assert "Partner request limits" in client.get("/trust").text
+
+    # A page with another workspace open still edits the limits the inbound
+    # federation server reads: the installation's own tenant.
+    from maverick.paths import tenant_scope
+    with tenant_scope(tenant="other-workspace"):
+        assert trust_page_api._in_federation_scope(admission._limits_path) == tmp_path / admission._LIMITS_FILE
+
+    monkeypatch.setattr(trust_page_api, "require_global_permission", deny)
     assert client.post("/api/v1/trust/federation/edge/limit", json={"reset": True}).status_code == 403
+    assert client.post("/api/v1/trust/federation/limits/start-over", json={}).status_code == 403
     config.reset_config_cache()

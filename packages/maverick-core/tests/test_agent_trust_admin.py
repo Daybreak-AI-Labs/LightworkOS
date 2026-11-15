@@ -295,4 +295,11 @@ def test_cli_admission_limit_shows_raises_and_resets(monkeypatch, tmp_path):
     assert r.exit_code == 0 and "counting again" in r.output
     r = _run("trust", "admission-limit", "nobody", "--reset")
     assert r.exit_code != 0 and "not a federation peer" in r.output
+    from maverick import federation_admission as admission
+    admission._limits_path().write_text("{broken", encoding="utf-8")
+    r = _run("trust", "admission-limit", "edge")
+    assert r.exit_code != 0 and "can't be read" in r.output and "--start-over" in r.output
+    r = _run("trust", "admission-limit", "--start-over")
+    assert r.exit_code == 0 and "unusable-" in r.output
+    assert "0 of 50,000" in _run("trust", "admission-limit", "edge").output
     config.reset_config_cache()

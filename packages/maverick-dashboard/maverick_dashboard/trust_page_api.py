@@ -11,8 +11,11 @@
   would drop them).
 
 * ``POST /api/v1/trust/federation/{peer}/limit`` -- raise a federation
-  peer's request limit or start its count again, administrators only
-  (``maverick trust admission-limit``).
+  peer's request limit or start its count again, installation administrators
+  only, in the installation's own tenant where the federation server admits
+  requests (``maverick trust admission-limit``).
+* ``POST /api/v1/trust/federation/limits/start-over`` -- set an unreadable
+  limits file aside so the default limits apply (``--start-over``).
 
 Restoring a blocked agent (``maverick trust unrevoke``) already has an API.
 """
@@ -220,26 +223,60 @@ async def update_agent(request: Request, agent_id: str, body: AgentLimitsIn) -> 
     return {"ok": True, "id": agent_id}
 
 
-def federation_limits() -> list[dict] | None:
-    """Each federation peer's request use against its limit, for the page.
-    ``None`` when the counts could not be read."""
+def _in_federation_scope(fn):
+    """Run ``fn`` in the installation's own tenant: the inbound federation
+    server admits requests there, not in the workspace a page has open."""
+    from maverick.paths import implicit_tenant_id, reset_tenant, set_tenant
+
+    token = set_tenant(implicit_tenant_id())
+    try:
+        return fn()
+    finally:
+        reset_tenant(token)
+
+
+def federation_limits() -> dict | None:
+    """Each federation peer's request use against its limit, for the page:
+    ``{"peers": [...], "unreadable": bool}``. ``None`` when the counts could
+    not be read for another reason."""
     from maverick import federation
     from maverick import federation_admission as admission
     from maverick.world_model import open_world
 
     peers = [p.name for p in federation.load_peers()]
     if not peers:
-        return []
-    try:
+        return {"peers": [], "unreadable": False}
+
+    def read() -> list[dict]:
         with open_world() as world:
             return [admission.admission_usage(world, name) for name in peers]
+
+    try:
+        return {"peers": _in_federation_scope(read), "unreadable": False}
+    except admission.LimitsUnreadable:
+        return {"peers": [], "unreadable": True}
     except Exception:
         return None
 
 
+@router.post("/federation/limits/start-over")
+async def start_over_peer_limits(request: Request) -> dict:
+    require_global_permission(request, "admin")
+    from maverick import federation_admission as admission
+    from maverick.audit import AuditRefused
+
+    actor = str(caller_principal(request) or "authorized-local-operator")
+    try:
+        aside = await run_in_threadpool(
+            lambda: _in_federation_scope(lambda: admission.start_over_limits(actor=actor)))
+    except (AuditRefused, RuntimeError) as exc:
+        raise HTTPException(status_code=503, detail="The change could not be recorded, so it was not made.") from exc
+    return {"started_over": aside is not None}
+
+
 @router.post("/federation/{peer}/limit")
 async def set_peer_limit(request: Request, peer: str, body: PeerLimitIn) -> dict:
-    require_permission(request, "admin")
+    require_global_permission(request, "admin")
     from maverick import federation
     from maverick import federation_admission as admission
     from maverick.audit import AuditRefused
@@ -257,8 +294,10 @@ async def set_peer_limit(request: Request, peer: str, body: PeerLimitIn) -> dict
             return admission.admission_usage(world, peer)
 
     try:
-        return await run_in_threadpool(write)
+        return await run_in_threadpool(_in_federation_scope, write)
+    except admission.LimitsUnreadable as exc:
+        raise HTTPException(status_code=409, detail="The saved limits could not be read, so nothing was changed. Start over to use the default limits.") from exc
     except ValueError as exc:
-        raise HTTPException(status_code=409, detail="The saved limits could not be read, so nothing was changed.") from exc
+        raise HTTPException(status_code=422, detail="That limit is not allowed. Choose a whole number from 1 to 250,000.") from exc
     except (AuditRefused, RuntimeError) as exc:
         raise HTTPException(status_code=503, detail="The change could not be recorded, so it was not made.") from exc

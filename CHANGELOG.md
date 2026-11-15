@@ -238,7 +238,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   log now says how to continue. An administrator can raise the limit or start
   the count again from Agent trust > Partner request limits, or with
   `maverick trust admission-limit PEER --limit N` or `--reset`. Earlier
-  requests stay on record, and each change is audited.
+  requests stay on record, and each change is audited. A reset does not free
+  the workspace's 250,000-request storage limit. If the saved limits can't be
+  read, new partner requests are refused until an installation administrator
+  starts over (`--start-over`); the unreadable file is kept.
 - Only the task that linked an outcome key, or an administrator, can link that
   key to different work. Other runs get an error and the link stays. Links
   saved earlier keep working.

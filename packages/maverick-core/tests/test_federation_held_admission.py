@@ -225,3 +225,55 @@ def test_operator_can_raise_or_reset_a_full_peer_admission_limit(tmp_path, monke
     changed = [kw for kind, kw in events if kind == "federation_admission_limit_changed"]
     assert [(c["peer"], c["actor"], c["new_limit"], c["reset"]) for c in changed] == [
         ("sender", "ops@corp.test", 2, False), ("sender", "ops@corp.test", 2, True)]
+
+
+def _limits_harness(tmp_path, monkeypatch):
+    from maverick import audit
+    from maverick import federation_admission as admission
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    events = []
+    monkeypatch.setattr(audit, "record", lambda kind, **kw: events.append((kind, kw)) or True)
+
+    def reserve(world, correlation, peer="sender"):
+        return admission.reserve(world, peer=peer, correlation=correlation,
+                                 digest=correlation * 64, title="Read report", description="",
+                                 capability=None, max_dollars=2, max_wall_seconds=10)
+    return admission, reserve, events
+
+
+def test_unreadable_limits_refuse_new_requests_until_an_administrator_starts_over(
+        tmp_path, monkeypatch, caplog):
+    admission, reserve, events = _limits_harness(tmp_path, monkeypatch)
+    with WorldModel(tmp_path / "world.db") as world:
+        first = reserve(world, "a")
+        admission.set_admission_limit("sender", limit=3, actor="ops")
+        path = admission._limits_path()
+        path.write_text("{not json", encoding="utf-8")
+        with pytest.raises(admission.FederationAdmissionRejected, match="limits could not be read"):
+            reserve(world, "b")
+        assert "maverick trust admission-limit --start-over" in caplog.text
+        assert reserve(world, "a").goal_id == first.goal_id  # admitted requests still answer
+        with pytest.raises(admission.LimitsUnreadable):
+            admission.admission_usage(world, "sender")
+        with pytest.raises(admission.LimitsUnreadable):
+            admission.set_admission_limit("sender", limit=10, actor="ops")
+
+        admission.start_over_limits(actor="ops")
+        assert not path.exists()
+        assert [p.name for p in path.parent.glob(path.name + ".unusable-*")]
+        assert reserve(world, "b").goal_id
+    assert events[-1][1]["start_over"] is True
+
+
+def test_a_peer_reset_does_not_free_workspace_storage(tmp_path, monkeypatch):
+    from maverick import federation
+
+    admission, reserve, _ = _limits_harness(tmp_path, monkeypatch)
+    monkeypatch.setattr(federation, "_CORRELATION_CACHE_MAX", 2)
+    with WorldModel(tmp_path / "world.db") as world:
+        reserve(world, "a")
+        reserve(world, "b")
+        admission.set_admission_limit("sender", reset=True, actor="ops")
+        with pytest.raises(admission.FederationAdmissionRejected, match="capacity is full$"):
+            reserve(world, "c")

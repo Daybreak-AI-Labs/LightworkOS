@@ -285,12 +285,15 @@ def trust_verify_cmd(agent_id, tools, risk, direction) -> None:
 
 
 @trust_group.command("admission-limit")
-@click.argument("peer")
+@click.argument("peer", required=False)
 @click.option("--limit", type=click.IntRange(min=1), default=None,
               help="New limit of accepted requests for this peer.")
 @click.option("--reset", is_flag=True,
               help="Start counting this peer's requests again from now.")
-def trust_admission_limit_cmd(peer: str, limit: int | None, reset: bool) -> None:
+@click.option("--start-over", is_flag=True,
+              help="Set an unreadable limits file aside and use the default limits.")
+def trust_admission_limit_cmd(peer: str | None, limit: int | None, reset: bool,
+                              start_over: bool) -> None:
     """Show, raise or reset how many requests federation PEER may send.
 
     Earlier requests are always kept, so a repeated request is still
@@ -299,17 +302,33 @@ def trust_admission_limit_cmd(peer: str, limit: int | None, reset: bool) -> None
     from .. import federation
     from .. import federation_admission as admission
     from ._agent_control_plane_groups import _actor
+    unreadable = ("The saved partner request limits can't be read, so new partner "
+                  "requests are refused. Run `maverick trust admission-limit "
+                  "--start-over` to set the file aside and use the default limits.")
+    if start_over:
+        try:
+            aside = admission.start_over_limits(actor=_actor())
+        except RuntimeError as exc:
+            raise click.ClickException(str(exc)) from exc
+        click.echo(f"Set the unreadable limits aside as {aside}; default limits apply."
+                   if aside else "The saved limits are readable; nothing was changed.")
+        if peer is None:
+            return
+    if peer is None:
+        raise click.ClickException("name a federation peer, or use --start-over")
     if peer not in {p.name for p in federation.load_peers()}:
         raise click.ClickException(f"{peer!r} is not a federation peer in [federation] peers")
-    if limit is not None or reset:
-        try:
+    try:
+        if limit is not None or reset:
             admission.set_admission_limit(peer, limit=limit, reset=reset, actor=_actor())
-        except (ValueError, RuntimeError) as exc:
-            raise click.ClickException(str(exc)) from exc
-        if reset:
-            click.echo(f"{peer}: counting again from now")
-    with open_world() as world:
-        usage = admission.admission_usage(world, peer)
+            if reset:
+                click.echo(f"{peer}: counting again from now")
+        with open_world() as world:
+            usage = admission.admission_usage(world, peer)
+    except admission.LimitsUnreadable as exc:
+        raise click.ClickException(unreadable) from exc
+    except (ValueError, RuntimeError) as exc:
+        raise click.ClickException(str(exc)) from exc
     note = "  (limit reached: new requests are refused)" if usage["reached"] else ""
     click.echo(f"{peer}: {usage['used']:,} of {usage['limit']:,} requests used{note}")
 

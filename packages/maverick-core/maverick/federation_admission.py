@@ -13,7 +13,10 @@ No code removes admission rows, so the bounds are lifetime caps. An operator
 can raise one peer's limit or start its count again (``set_admission_limit``,
 ``maverick trust admission-limit`` and the dashboard Agent trust page). A reset
 only moves where counting starts: every retained row still answers a repeated
-correlation, so no reset or raise reopens a replay.
+correlation, so no reset or raise reopens a replay. The workspace storage
+bound always counts every retained row; no peer change frees it. An
+unreadable limits file refuses new requests until an administrator starts
+over (``start_over_limits``).
 """
 from __future__ import annotations
 
@@ -46,6 +49,10 @@ class FederationAdmissionRequired(RuntimeError):
 
 class FederationAdmissionRejected(ValueError):
     """A proven pre-admission validation refusal; no new work was committed."""
+
+
+class LimitsUnreadable(ValueError):
+    """The saved partner request limits cannot be read; new requests wait."""
 
 
 @dataclass(frozen=True)
@@ -118,9 +125,25 @@ def reserve(world, *, peer: str, correlation: str, digest: str, title: str,
             return Reservation(key, int(row[0]), str(row[1]), contract)
         from .federation import _CORRELATION_CACHE_MAX
         peer_key = _peer_key(peer)
-        limits = _read_limits(strict=False)
+        try:
+            limits = _read_limits()
+        except LimitsUnreadable as exc:
+            log.warning(
+                "federation: refused a new request from peer %r because the saved partner "
+                "request limits in %s cannot be read. An administrator can start over with "
+                "`maverick trust admission-limit --start-over` or from Agent trust > Partner "
+                "request limits; the unreadable file is kept beside it.", peer, _limits_path())
+            raise FederationAdmissionRejected(
+                "partner request limits could not be read; the receiving operator must "
+                "repair them before new requests are accepted") from exc
         total, per_peer = _counts(db, mark, scope[0] if postgres else None, peer, limits)
         if total >= _CORRELATION_CACHE_MAX:
+            log.warning(
+                "federation: this workspace holds %d accepted partner requests, its storage "
+                "limit, so new requests from every peer are refused. Raising or resetting a "
+                "peer's limit does not free this space. Earlier requests are kept so repeats "
+                "are recognised; deleting them would let an old request run again.",
+                _CORRELATION_CACHE_MAX)
             raise FederationAdmissionRejected("correlation replay ledger capacity is full")
         if per_peer >= _peer_limit(peer, limits):
             log.warning(
@@ -178,10 +201,11 @@ def _limits_path():
     return data_dir(_LIMITS_FILE)
 
 
-def _read_limits(*, strict: bool) -> dict:
+def _read_limits() -> dict:
     """Operator limits per peer: ``{peer: {"limit": int|None, "counted_from":
-    float|None}}``. An unreadable file means the defaults apply (the stricter
-    reading); ``strict`` raises instead, so an edit never overwrites it."""
+    float|None}}``. A missing file means no operator limits. An unreadable one
+    raises :class:`LimitsUnreadable`: it may hold a lowered limit, so nothing
+    falls back to the looser defaults until an administrator starts over."""
     path = _limits_path()
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -191,10 +215,7 @@ def _read_limits(*, strict: bool) -> dict:
     except FileNotFoundError:
         return {}
     except (OSError, ValueError) as exc:
-        if strict:
-            raise ValueError("the saved partner request limits could not be read") from exc
-        log.warning("federation: %s is unreadable; default admission limits apply", path)
-        return {}
+        raise LimitsUnreadable("the saved partner request limits could not be read") from exc
 
 
 def _peer_limit(peer: str, limits: dict) -> int:
@@ -210,8 +231,8 @@ def _counted_from(entry: dict | None) -> float | None:
 
 
 def _counts(db, mark: str, tenant_id, peer: str, limits: dict) -> tuple[int, int]:
-    """(workspace total, this peer's count) of retained admissions, each peer
-    counted from its last operator reset."""
+    """(workspace total, this peer's count since its last operator reset) of
+    retained admissions."""
     postgres = tenant_id is not None
     tenant = f"tenant_id={mark} AND " if postgres else ""
     lead = (tenant_id,) if postgres else ()
@@ -220,11 +241,8 @@ def _counts(db, mark: str, tenant_id, peer: str, limits: dict) -> tuple[int, int
         result = db.execute(f"SELECT COUNT(*) FROM event_goal_admissions WHERE {tenant}{where}", (*lead, *args))
         return int((db if postgres else result).fetchone()[0])
 
+    # Storage counts every retained row; a peer reset only moves its own count.
     total = count(f"admission_key LIKE {mark}", (PREFIX + "%",))
-    for name, entry in limits.items():
-        since = _counted_from(entry)
-        if since is not None:
-            total -= count(f"trigger_key={mark} AND created_at<={mark}", (_peer_key(name), since))
     since = _counted_from(limits.get(peer))
     if since is None:
         per_peer = count(f"trigger_key={mark}", (_peer_key(peer),))
@@ -235,7 +253,7 @@ def _counts(db, mark: str, tenant_id, peer: str, limits: dict) -> tuple[int, int
 
 def admission_usage(world, peer: str) -> dict:
     """How many requests ``peer`` has used of its limit in this workspace."""
-    limits = _read_limits(strict=False)
+    limits = _read_limits()
     with _transaction(world, "federation-capacity") as (db, mark, _, scope, postgres):
         _, used = _counts(db, mark, scope[0] if postgres else None, peer, limits)
     limit = _peer_limit(peer, limits)
@@ -260,7 +278,7 @@ def set_admission_limit(peer: str, *, limit: int | None = None, reset: bool = Fa
     path = _limits_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     with cross_process_lock(path):
-        limits = _read_limits(strict=True)
+        limits = _read_limits()
         old_limit = _peer_limit(peer, limits)
         entry = dict(limits.get(peer) or {})
         if limit is not None:
@@ -275,6 +293,29 @@ def set_admission_limit(peer: str, *, limit: int | None = None, reset: bool = Fa
         limits[peer] = entry
         atomic_write_text(path, json.dumps(limits, sort_keys=True))
     return {"peer": peer, "limit": new_limit, "counted_from": _counted_from(entry)}
+
+
+def start_over_limits(*, actor: str) -> str | None:
+    """Set an unreadable limits file aside as ``<name>.unusable-<n>`` (never
+    deleted) so every peer is back on the default limit. The audit row is
+    written first. Returns the new name, or ``None`` when the file was
+    readable or missing (nothing to start over)."""
+    from .audit import EventKind, audit_event
+    from .file_lock import cross_process_lock
+    path = _limits_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with cross_process_lock(path):
+        try:
+            _read_limits()
+            return None
+        except LimitsUnreadable:
+            pass
+        aside = path.with_name(f"{path.name}.unusable-{time.time_ns()}")
+        if not audit_event(EventKind.FEDERATION_ADMISSION_LIMIT_CHANGED, agent="federation",
+                           peer="*", actor=actor, start_over=True, set_aside=aside.name):
+            raise RuntimeError("the change could not be recorded in the audit log, so it was not made")
+        path.replace(aside)
+    return aside.name
 
 
 def current_ceiling_allows(reservation: Reservation, *, capability, max_dollars, max_wall_seconds) -> bool:

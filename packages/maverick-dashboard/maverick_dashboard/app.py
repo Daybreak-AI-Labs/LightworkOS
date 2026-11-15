@@ -7806,6 +7806,7 @@ def _trust_context(request: Request) -> dict:
             _world(), [s for a in context.get("agents", []) for s in a["data_scopes"]]),
         "can_admin": has_permission(request, "admin"),
         "federation_limits": federation_limits(),
+        "can_admin_federation": has_global_permission(request, "admin"),
     })
     return context
 

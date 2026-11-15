@@ -142,18 +142,22 @@
   <p id="tr-check-result" role="status" aria-live="polite"></p>
 </div>
 
-{% if federation_limits is none or federation_limits %}
+{% if federation_limits is none or federation_limits.peers or federation_limits.unreadable %}
 <div class="section-head"><h2 id="tr-limits-title">Partner request limits</h2></div>
 <div class="panel" aria-labelledby="tr-limits-title">
   <p>Each partner installation may send a set number of requests. Every request is kept, so a repeated one is always recognised.</p>
   {% if federation_limits is none %}
   <p role="alert">Couldn't load the partner request counts. <button type="button" class="btn btn--ghost" id="tr-limits-retry">Try again</button></p>
+  {% elif federation_limits.unreadable %}
+  <p role="alert">The saved request limits can't be read, so new partner requests are turned away. Requests already accepted still work.</p>
+  {% if can_admin_federation %}<p>Starting over keeps the unreadable copy and puts every partner back on the standard limit. <button type="button" class="btn" id="tr-limits-start-over">Start over</button></p>
+  {% else %}<p>Ask an administrator to start over.</p>{% endif %}
   {% else %}
   <div style="overflow-x:auto">
   <table>
-    <thead><tr><th scope="col">Partner</th><th scope="col">Requests used</th><th scope="col">Status</th>{% if can_admin %}<th scope="col">Actions</th>{% endif %}</tr></thead>
+    <thead><tr><th scope="col">Partner</th><th scope="col">Requests used</th><th scope="col">Status</th>{% if can_admin_federation %}<th scope="col">Actions</th>{% endif %}</tr></thead>
     <tbody>
-      {% for p in federation_limits %}
+      {% for p in federation_limits.peers %}
       {% set label = p.peer | humanize %}
       <tr>
         <td><strong>{{ label }}</strong></td>
@@ -163,7 +167,7 @@
           <div class="muted" style="font-size:var(--text-xs)">New requests from this partner are turned away. Raise the limit or start the count again to let it continue.</div>
           {% else %}<span class="badge active">Within limit</span>{% endif %}
         </td>
-        {% if can_admin %}
+        {% if can_admin_federation %}
         <td><div class="tr-actions">
           <button type="button" class="btn btn--ghost" data-tr-limit="{{ p.peer }}" data-limit="{{ p.limit }}" data-name="{{ label }}" aria-label="Raise the limit for {{ label }}">Raise limit</button>
           <button type="button" class="btn btn--ghost" data-tr-limit-reset="{{ p.peer }}" data-name="{{ label }}" aria-label="Start the count again for {{ label }}">Start count again</button>
@@ -365,6 +369,11 @@
 
   var limitsRetry = document.getElementById("tr-limits-retry");
   if (limitsRetry) limitsRetry.addEventListener("click", function () { window.location.reload(); });
+  var limitsStartOver = document.getElementById("tr-limits-start-over");
+  if (limitsStartOver) limitsStartOver.addEventListener("click", async function () {
+    if (!(await window.mvConfirm("Start over with the standard limit for every partner? The unreadable copy is kept.", { okText: "Start over" }))) return;
+    send("/api/v1/trust/federation/limits/start-over", { method: "POST", body: "{}" }, "Standard limits restored.", "start over");
+  });
   document.querySelectorAll("[data-tr-limit]").forEach(function (b) {
     b.addEventListener("click", async function () {
       var current = Number(b.getAttribute("data-limit"));
