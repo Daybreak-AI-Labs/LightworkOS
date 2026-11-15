@@ -385,3 +385,36 @@ def test_socket_mode_uses_an_injected_authorizer(monkeypatch, tmp_path):
     assert seen == [("user:alice", aid)]
     assert ch._world.get_approval(aid).status == "pending"
     assert replies[-1]["text"] == "Not for you."
+
+
+def test_shared_files_that_are_not_fetched_are_reported_to_the_person(monkeypatch, tmp_path):
+    # From the raw Slack event: admission must keep the remote-file markers,
+    # and a file the host check refuses must not vanish without a word.
+    import sys
+    from types import SimpleNamespace
+
+    gets = []
+
+    class Session:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            pass
+        def get(self, url, **kwargs):
+            gets.append(url)
+            raise AssertionError("no file here may be fetched")
+
+    monkeypatch.setitem(sys.modules, "aiohttp", SimpleNamespace(ClientSession=lambda **kw: Session()))
+    ch = _channel(monkeypatch, tmp_path)
+    shared = {"team_id": "T1", "event": {
+        "type": "message", "subtype": "file_share", "user": "U123", "channel": "D5",
+        "channel_type": "im", "text": "", "ts": "4.1", "files": [
+            {"id": "F1", "name": "doc", "size": 3, "mode": "external", "is_external": True,
+             "filetype": "remote", "url_private": "https://files.slack.com/x"},
+            {"id": "F2", "name": "b.txt", "size": 3, "url_private_download": "https://evil.example/b"},
+        ]}}
+    asyncio.run(ch._on_request(_client(), _req("events_api", shared)))
+    assert gets == [] and ch.handler.call_args.args[0].attachments == []
+    texts = [c.kwargs.get("text", "") for c in ch._web.chat_postMessage.call_args_list]
+    assert any("outside Slack" in t for t in texts)
+    assert any("could not fetch" in t for t in texts)

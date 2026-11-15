@@ -791,3 +791,24 @@ def test_every_matter_ledger_connection_closes_when_its_call_returns(tmp_path, m
     for connection in opened:
         with pytest.raises(sqlite3.ProgrammingError):
             connection.execute("SELECT 1")
+
+
+def test_a_sealed_title_is_never_a_valid_export(tmp_path):
+    # A title seal signs a dossier an admin writes; shaped like a manifest it
+    # must not vouch for fabricated records.
+    from maverick.audit.signing import sign_detached_digest, trusted_audit_public_keys
+    from maverick.immune import title
+
+    records = b'{"record_type":"goal","id":"forged"}\n'
+    files = [{"path": "goals.jsonl", "record_kind": "goals", "records": 1, "bytes": len(records),
+              "sha256": hashlib.sha256(records).hexdigest()}]
+    sealed = title.seal({"claims": [], "gates": [], "files": files})
+    # The previous release signed seals without a purpose; cover that shape too.
+    legacy = {**sealed["dossier"], "signature": sign_detached_digest(sealed["signature"]["digest"])}
+    for manifest in ({**sealed["dossier"], "signature": sealed["signature"]}, legacy):
+        forged = tmp_path / "forged.zip"
+        with zipfile.ZipFile(forged, "w") as archive:
+            archive.writestr("goals.jsonl", records)
+            archive.writestr("manifest.json", json.dumps(manifest))
+        verdict = ediscovery_export.verify_export(forged, trusted_keys=trusted_audit_public_keys())
+        assert verdict["valid"] is False and "manifest" in verdict["problems"]

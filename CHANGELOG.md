@@ -256,6 +256,37 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   or task by the same person, or an administrator can link that key to
   different work. Other runs get an error and the link stays. Links saved
   earlier keep working.
+- Slack sends its bot token only to `https://files.slack.com` and follows
+  no redirects for shared files. Files stored outside Slack are not opened,
+  and the person is told when a shared file was not opened or fetched.
+- A sealed discovery title is now signed for that purpose only and cannot
+  pass as a signed eDiscovery export. `verify_export` also rejects a
+  manifest that is not an export manifest. Titles and exports made by
+  earlier releases still verify.
+- A successful MCP tool result (no `isError`) is always treated as a
+  success, even when its text starts with "REFUSED", "DRY RUN" or a warning
+  sign. Such text no longer marks a high-risk action as not done, which had
+  let a rerun repeat it.
+- On the Local backend, `office_convert` now runs LibreOffice without network
+  access (`unshare -rn`), so a document's links cannot make the host fetch
+  any address. It uses the first Python that can load LibreOffice's bridge
+  (`uno`), so a pip or venv install whose own Python cannot load it now
+  converts; before, every such call failed. Where no such launch works
+  (macOS, Windows, restricted user namespaces, most containers, no bridge),
+  conversion is refused with the reason and not offered; use a Docker,
+  Podman or Kubernetes sandbox backend there.
+- The `compute` tool runs each SymPy operation in a separate process and
+  stops it after 10 seconds with a plain error. With SymPy installed this
+  includes plain `evaluate` (even `2+3*4`); each such call takes one to two
+  seconds longer while the process starts.
+- `maverick confidential-compute` no longer counts `/sys/firmware/tdx` as
+  proof of a TDX guest; that folder appears on TDX hosts. Guests are still
+  detected by `/dev/tdx_guest` or the `tdx_guest` CPU flag.
+- The calendar tool checks every CalDAV request, redirects included, against
+  the egress policy (`[enterprise] allowed_hosts`, tenant egress). Add your
+  CalDAV server's host to the allow-list in enterprise mode.
+- The setup wizard re-asks for trusted insight and tax publisher keys until
+  each is 64 hexadecimal characters, and saves them in lower case.
 
 ### Fixed
 

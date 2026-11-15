@@ -107,6 +107,19 @@ def _run(args: dict[str, Any], sandbox) -> str:
 
 
 def office_convert(sandbox=None) -> Tool:
+    from .document_processing import conversion_unavailable
+
+    reason = conversion_unavailable(sandbox)
+    if reason:
+        # Offer only what will work: conversion would be refused here.
+        schema = {**_OFFICE_SCHEMA, "properties": {
+            **_OFFICE_SCHEMA["properties"], "op": {"type": "string", "enum": ["formats"]}}}
+        return Tool(
+            name="office_convert",
+            description="Lists LibreOffice formats only. " + reason,
+            input_schema=schema,
+            fn=lambda args: _run(args, sandbox),
+        )
     return Tool(
         name="office_convert",
         description=(

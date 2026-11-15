@@ -343,3 +343,35 @@ class TestCalendarAllDayEvent:
         out = calendar_tool._find_slot({"duration_minutes": 30, "search_days": 1})
         assert isinstance(out, str)
         assert not out.startswith("ERROR")
+
+
+def test_caldav_requests_pass_the_egress_policy_on_every_hop(monkeypatch):
+    # caldav sends through niquests, which the process-wide guard does not patch.
+    from maverick import egress_guard
+    from maverick.enterprise import EgressBlocked
+    from maverick.tools import calendar_tool as module
+
+    monkeypatch.setattr(egress_guard, "_denied", lambda url: "blocked" if "evil" in url else None)
+    monkeypatch.setenv("CALDAV_USER", "me@test")
+    monkeypatch.setenv("CALDAV_PASSWORD", "pw")
+    sent = []
+
+    class Client:
+        def __init__(self, url, **kwargs):
+            self.session = types.SimpleNamespace(send=lambda request, **kw: sent.append(request.url))
+
+        def principal(self):
+            self.session.send(types.SimpleNamespace(url="https://cal.test/principal"))
+            self.session.send(types.SimpleNamespace(url="https://evil.example/home"))
+
+    fake_caldav = types.ModuleType("caldav")
+    fake_caldav.DAVClient = MagicMock(side_effect=Client)
+    monkeypatch.setitem(sys.modules, "caldav", fake_caldav)
+    monkeypatch.setenv("CALDAV_URL", "https://evil.example/dav")
+    with pytest.raises(EgressBlocked):
+        module._get_caldav_calendar()
+    fake_caldav.DAVClient.assert_not_called()
+    monkeypatch.setenv("CALDAV_URL", "https://cal.test/dav")
+    with pytest.raises(EgressBlocked):
+        module._get_caldav_calendar()
+    assert sent == ["https://cal.test/principal"]
