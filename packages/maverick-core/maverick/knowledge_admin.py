@@ -126,9 +126,13 @@ def list_held(*, tenant: str | None = None, limit: int = 200) -> dict:
 
 def _held_base(decision: str, tenant: str | None) -> Any:
     if decision == "keep_out":
+        # Keeping out opens the real store (even with knowledge turned off) so
+        # it can remove chunks an unfinished include left behind.
+        kb = _open_for_subject_admin(tenant)
+        if kb is not None:
+            return kb
         from maverick_knowledge import KnowledgeBase
         from maverick_knowledge.store import SqliteVectorStore
-        # Keeping out touches only the held store; no index or embedder is needed.
         return KnowledgeBase(store=SqliteVectorStore(), held=held_store(tenant))
     kb = open_knowledge_base(tenant=tenant)
     if kb is None:
@@ -167,8 +171,8 @@ def decide_held(hold_id: str, decision: str, *, actor: str,
             if decision == "include":
                 kb.unstore_held(hold_id)
             raise
-        final = kb.held.decide(hold_id, "included" if decision == "include" else "kept_out",
-                               decided_by=actor)
+        final = kb.record_held_decision(hold_id, "included" if decision == "include" else "kept_out",
+                                        decided_by=actor)
     finally:
         _close(kb)
     return {**_public_hold(final), "chunks": chunks}

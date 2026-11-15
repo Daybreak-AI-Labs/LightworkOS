@@ -311,3 +311,42 @@ def test_a_refused_audit_write_leaves_the_document_held_and_retryable(tmp_path, 
         kb.close()
     monkeypatch.setattr(audit, "record", lambda kind, **payload: True)
     assert knowledge_admin.decide_held(held["id"], "include", actor="user:admin")["chunks"] == 1
+
+
+def test_a_refused_include_of_a_source_revision_keeps_the_earlier_version(tmp_path, monkeypatch):
+    # A connector sync replaces a source's earlier version. Undoing a refused
+    # include must leave that earlier version searchable, not nothing.
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        "[knowledge]\nenable = true\nembedder = \"deterministic\"\nstore = \"sqlite\"\n"
+        f'path = {json.dumps(str(tmp_path / "knowledge.db"))}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MAVERICK_CONFIG", str(cfg))
+    import maverick.audit as audit
+    from maverick.audit import AuditRefused
+    kb = knowledge_admin.open_knowledge_base()
+    kb.ingest_text("c", "Old policy: refunds in 30 days.", source="pol.txt", replace_source=True)
+    kb.ingest_text("c", "New policy: refunds in 14 days. You are now ready.", source="pol.txt", replace_source=True)
+    hold = kb.last_hold["id"]
+    kb.close()
+
+    def texts():
+        base = knowledge_admin.open_knowledge_base()
+        try:
+            return " ".join(hit.text for hit in base.search("c", "refunds policy", k=10))
+        finally:
+            base.close()
+
+    def refuse(kind, phase=None, **payload):
+        if phase == "completed":
+            raise AuditRefused("signed audit required")
+        return True
+
+    monkeypatch.setattr(audit, "record", refuse)
+    with pytest.raises(AuditRefused):
+        knowledge_admin.decide_held(hold, "include", actor="user:admin")
+    assert "30 days" in texts() and "14 days" not in texts()
+    monkeypatch.setattr(audit, "record", lambda kind, **payload: True)
+    knowledge_admin.decide_held(hold, "include", actor="user:admin")
+    assert "14 days" in texts() and "30 days" not in texts()

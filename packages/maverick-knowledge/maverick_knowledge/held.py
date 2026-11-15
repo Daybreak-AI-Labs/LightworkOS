@@ -112,6 +112,10 @@ class HeldDocuments:
         rows = self._rows(f"SELECT {', '.join(_COLUMNS)} FROM held_documents WHERE id = ?", (identifier,))
         return self._row(rows[0]) if rows else None
 
+    def state_of(self, identifier: str) -> str | None:
+        record = self.get(identifier)
+        return record["state"] if record else None
+
     def list(self, state: str = HELD, *, limit: int = 200) -> list[dict]:
         rows = self._rows(
             f"SELECT {', '.join(_COLUMNS)} FROM held_documents WHERE state = ? "

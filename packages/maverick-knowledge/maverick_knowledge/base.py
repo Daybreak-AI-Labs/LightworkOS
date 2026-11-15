@@ -307,25 +307,59 @@ class KnowledgeBase:
     def store_held(self, hold_id: str) -> int:
         """Store a held document's chunks, marked so every rendering quotes
         them as material, not instructions. The record stays held, with its
-        text, until :meth:`include_held` records the decision, so a failure
-        in between never loses the document."""
+        text, until the decision is recorded, so a failure in between never
+        loses the document. A source revision is stored beside the earlier
+        version, which :meth:`replace_earlier_versions` removes only once the
+        decision is recorded, so an undo leaves the earlier version usable."""
         record = self.held_record(hold_id)
-        return self.ingest_text(record["collection"], record["text"], **record["args"], _admit_hold=hold_id)
+        args = {**record["args"], "replace_source": False}
+        return self.ingest_text(record["collection"], record["text"], **args, _admit_hold=hold_id)
 
     def unstore_held(self, hold_id: str) -> int:
-        """Remove the chunks :meth:`store_held` wrote (an undo before the decision)."""
-        record = self.held_record(hold_id)
+        """Remove any chunks stored for this held record (an undo, or a keep-out
+        after an include that stored but did not finish)."""
+        record = self.held.get(hold_id)
+        if record is None:
+            raise LookupError("held document not found")
         return self.store.delete_where(record["collection"], "doc_sha256", record["doc_sha256"])
+
+    def replace_earlier_versions(self, hold_id: str) -> int:
+        """For a held source revision, remove the source's other versions."""
+        record = self.held.get(hold_id)
+        if record is None or not record["args"].get("replace_source") or not record["source"]:
+            return 0
+        reader = getattr(self.store, "read_where", None)
+        if not callable(reader):
+            return 0
+        rows = reader(record["collection"], "source", record["source"], limit=MAX_DOCUMENT_CHUNKS)
+        earlier = {row.meta.get("doc_sha256") for row in rows} - {record["doc_sha256"], None}
+        return sum(self.store.delete_where(record["collection"], "doc_sha256", sha) for sha in earlier)
+
+    def record_held_decision(self, hold_id: str, decision: str, *, decided_by: str) -> dict:
+        """Record the decision last. If it cannot be recorded (another
+        administrator decided first), chunks this include stored are removed;
+        a keep-out removes any chunks an unfinished include left behind."""
+        if decision == KEPT_OUT and self.held.state_of(hold_id) == HELD:
+            self.unstore_held(hold_id)
+        try:
+            record = self.held.decide(hold_id, decision, decided_by=decided_by)
+        except Exception:
+            if decision == INCLUDED and self.held.state_of(hold_id) != INCLUDED:
+                self.unstore_held(hold_id)
+            raise
+        if decision == INCLUDED:
+            self.replace_earlier_versions(hold_id)
+        return record
 
     def include_held(self, hold_id: str, *, decided_by: str) -> dict:
         """Admit a held document as its administrator decided: store it first,
         then record the decision (which discards the held copy of the text)."""
         chunks = self.store_held(hold_id)
-        return {**self.held.decide(hold_id, INCLUDED, decided_by=decided_by), "chunks": chunks}
+        return {**self.record_held_decision(hold_id, INCLUDED, decided_by=decided_by), "chunks": chunks}
 
     def keep_out_held(self, hold_id: str, *, decided_by: str) -> dict:
         """Keep a held document out of Knowledge and discard its held text."""
-        return self.held.decide(hold_id, KEPT_OUT, decided_by=decided_by)
+        return self.record_held_decision(hold_id, KEPT_OUT, decided_by=decided_by)
 
     def _source_replacement_snapshot(self, collection: str, source: str, metadata: dict) -> list:
         if not source or metadata["source"] != source:

@@ -851,23 +851,36 @@ class TestKnowledgeBase:
         assert again["id"] != first and kb.last_hold["id"] == again["id"]
         assert again["state"] == "held" and again["text"] == doc
 
-    def test_include_stores_the_document_before_discarding_the_held_text(self, monkeypatch):
+    def test_include_stores_the_document_before_discarding_the_held_text(self):
         kb = KnowledgeBase(embedder=DeterministicEmbedder(dim=64))
         doc = "Welcome. You are now ready to log in."
         kb.ingest_text("it", doc)
         hold = kb.last_hold["id"]
-
-        def crash(*_args, **_kwargs):
-            raise RuntimeError("stopped between storing and deciding")
-
-        monkeypatch.setattr(kb.held, "decide", crash)
-        with pytest.raises(RuntimeError):
-            kb.include_held(hold, decided_by="user:admin")
-        # Stored, and still held with its text: never lost, and retryable.
+        # A process that stops after storing and before deciding leaves the
+        # document stored and still held with its text: never lost, retryable.
+        kb.store_held(hold)
         assert kb.store.count("it") == 1
         assert kb.held.get(hold)["state"] == "held" and kb.held.get(hold)["text"] == doc
-        monkeypatch.undo()
         assert kb.include_held(hold, decided_by="user:admin")["chunks"] == 1
+
+    def test_kept_out_document_is_never_left_searchable(self):
+        from maverick_knowledge.held import KEPT_OUT
+        kb = KnowledgeBase(embedder=DeterministicEmbedder(dim=64))
+        # Crash case: an include stored the chunks and stopped before deciding.
+        kb.ingest_text("it", "Welcome. You are now ready to log in.")
+        crashed = kb.last_hold["id"]
+        kb.store_held(crashed)
+        assert kb.store.count("it") > 0
+        kb.keep_out_held(crashed, decided_by="user:b")
+        assert kb.store.count("it") == 0
+        # Race case: another administrator kept it out while this include stored.
+        kb.ingest_text("it", "Reminder: you are now on the rota.")
+        raced = kb.last_hold["id"]
+        kb.store_held(raced)
+        kb.held.decide(raced, KEPT_OUT, decided_by="user:b")
+        with pytest.raises(ValueError):
+            kb.record_held_decision(raced, "included", decided_by="user:a")
+        assert kb.store.count("it") == 0
 
     def test_quoted_frame_cannot_be_closed_in_any_letter_case(self):
         kb = KnowledgeBase(embedder=DeterministicEmbedder(dim=64))
