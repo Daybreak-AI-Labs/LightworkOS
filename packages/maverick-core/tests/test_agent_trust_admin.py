@@ -190,16 +190,16 @@ def test_cli_add_list_show_verify_revoke_rm():
     r = _run("trust", "show", "vega")
     assert r.exit_code == 0 and "read_file" in r.output
 
-    # verify replays the decision
+    # verify replays the decision; a DENY exits non-zero so scripts see it
     r = _run("trust", "verify", "vega", "--tools", "read_file")
     assert r.exit_code == 0 and "ALLOW" in r.output
     r = _run("trust", "verify", "vega", "--tools", "shell")
-    assert r.exit_code == 0 and "DENY" in r.output
+    assert r.exit_code == 1 and "DENY" in r.output
 
     r = _run("trust", "revoke", "vega")
     assert r.exit_code == 0 and "revoked" in r.output
     r = _run("trust", "verify", "vega")
-    assert "DENY" in r.output and "revoked" in r.output
+    assert r.exit_code == 1 and "DENY" in r.output and "revoked" in r.output
 
     r = _run("trust", "rm", "vega")
     assert r.exit_code == 0 and "removed" in r.output

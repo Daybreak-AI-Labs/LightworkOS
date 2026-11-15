@@ -227,6 +227,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   waiting in the outbox and says how many. Training ingest and export also
   re-check the setting and export nothing from this installation's outbox
   while it is off or the configuration cannot be read.
+- `maverick trust verify` exits 1 when the decision is DENY (it exited 0).
+  Scripts that read its exit code now see the refusal.
 
 ### Fixed
 
