@@ -62,8 +62,6 @@ def _who(request: Request, world, approval) -> tuple[str, int]:
 @router.get("/api/v1/goals/{goal_id}/approval-wait")
 def goal_approval_wait(request: Request, goal_id: int) -> dict:
     """The requests on the Approvals page this task is waiting on."""
-    from maverick.attachment_submissions import SubmissionStore
-
     from ._shared import _world
     from .auth import assert_goal_access, require_permission
 
@@ -73,12 +71,10 @@ def goal_approval_wait(request: Request, goal_id: int) -> dict:
     if goal is None:
         raise HTTPException(status_code=404, detail="This task is unavailable.")
     assert_goal_access(request, goal)
-    store = SubmissionStore(world)
-    scope, values = ("1=1", ()) if store.sqlite else store.scope("tenant_id")
-    rows = world.query(
+    rows = world.tenant_query(
         "SELECT id FROM approvals WHERE status='pending' AND goal_id=? "
-        f"AND {scope} ORDER BY id LIMIT {_LIMIT}",
-        (int(goal_id), *values),
+        f"AND {{tenant_exact:tenant_id}} ORDER BY id LIMIT {_LIMIT}",
+        (int(goal_id),),
     )
     waiting = []
     for row in rows:

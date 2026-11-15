@@ -176,13 +176,13 @@ def conversations(request: Request, response: Response, q: str = Query("", max_l
     if terms:
         cs, cv = threads._scope("c")
         cursor = " AND t.id < ?" if before_id else ""
-        found = world.query("SELECT t.id,t.goal_id,t.content,c.id FROM turns t JOIN goals g ON g.id=t.goal_id "
+        found = world.tenant_query("SELECT t.id,t.goal_id,t.content,c.id FROM turns t JOIN goals g ON g.id=t.goal_id "
                             "JOIN conversations c ON c.id=t.conversation_id WHERE g.owner=? AND c.channel='web' "
                             f"AND t.role IN ('user','assistant') AND {gs} AND {cs}{cursor} ORDER BY t.id DESC LIMIT 501",
                             (owner, *gv, *cv, *((before_id,) if before_id else ())))
     else:
         cursor = " AND g.id < ?" if before_id else ""
-        found = world.query("SELECT g.id,g.id,g.title FROM goals g WHERE g.owner=? AND g.parent_id IS NULL "
+        found = world.tenant_query("SELECT g.id,g.id,g.title FROM goals g WHERE g.owner=? AND g.parent_id IS NULL "
                             f"AND {gs}{cursor} ORDER BY g.id DESC LIMIT 501", (owner, *gv, *((before_id,) if before_id else ())))
     items, seen = [], set()
     scanned, next_before = 0, before_id

@@ -83,7 +83,7 @@ def _permitted(request, row, cache):
 
 
 def _rows(world, sql, values):
-    rows = world.query(sql + " LIMIT ?", (*values, _LIMIT + 1))
+    rows = world.tenant_query(sql + " LIMIT ?", (*values, _LIMIT + 1))
     if len(rows) > _LIMIT:
         raise HTTPException(503, "This board is too large to read safely right now. Your permitted tasks remain available in Chat.")
     return rows
@@ -169,7 +169,7 @@ def _spend(request, world, owner, days, goals=None):
         marks = ",".join("?" for _ in batch)
         rows.extend(_rows(world, "SELECT e.id,e.goal_id,e.started_at,e.ended_at,e.outcome,e.cost_dollars,"
                           "e.input_tokens,e.output_tokens,e.tool_calls,g.domain,g.owner "
-                          "FROM episodes e JOIN goals g ON e.goal_id=g.id WHERE g.owner=? "
+                          "FROM episodes e JOIN goals g ON e.goal_id=g.id WHERE {tenant_exact:g.tenant_id} AND g.owner=? "
                           f"AND g.id IN ({marks}) ORDER BY e.id", (owner, *batch)))
         if len(rows) > _LIMIT:
             raise HTTPException(503, "This board is too large to read safely right now. Your permitted tasks remain available in Chat.")
@@ -299,7 +299,7 @@ def _savings(request, world, owner, goals, prices):
         batch = identifiers[start:start + 400]
         marks = ",".join("?" for _ in batch)
         rows = _rows(world, "SELECT s.goal_id,s.decision,s.decided_by FROM signoffs s "
-                     "JOIN goals g ON s.goal_id=g.id WHERE g.owner=? "
+                     "JOIN goals g ON s.goal_id=g.id WHERE {tenant_exact:g.tenant_id} AND g.owner=? "
                      f"AND g.id IN ({marks})", (owner, *batch))
         count += len(rows)
         if count > _LIMIT:
@@ -387,7 +387,7 @@ def _oversight(request, world, owner, goals):
         batch = identifiers[start:start + 400]
         marks = ",".join("?" for _ in batch)
         stop_rows.extend(_rows(world, "SELECT r.goal_id,r.created_at FROM goal_mutation_receipts r "
-                               "JOIN goals g ON r.goal_id=g.id WHERE r.kind='stop' AND r.actor=? "
+                               "JOIN goals g ON r.goal_id=g.id WHERE {tenant_exact:g.tenant_id} AND r.kind='stop' AND r.actor=? "
                                f"AND g.owner=? AND g.id IN ({marks}) ORDER BY r.created_at DESC", (owner, owner, *batch)))
         if len(stop_rows) > _LIMIT:
             raise HTTPException(503, "This board is too large to read safely right now. Your permitted tasks remain available in Chat.")

@@ -12709,7 +12709,6 @@ def _revise_approval(request: Request, approval_id: int, rationale: str) -> Resp
 @router.get("/approvals/history")
 def requested_approval_history(request: Request, before_id: int | None = None) -> dict:
     """Requester-scoped decision records, independent from global audit access."""
-    from maverick.attachment_submissions import SubmissionStore
     from maverick.safety.secret_detector import redact
 
     from .app import _approval_queue_context
@@ -12721,12 +12720,10 @@ def requested_approval_history(request: Request, before_id: int | None = None) -
         raise HTTPException(status_code=422, detail="before_id must be a positive signed 64-bit approval ID")
     world = _world()
     who = _supervisor(request)
-    store = SubmissionStore(world)
-    scope, values = ("1=1", ()) if store.sqlite else store.scope("tenant_id")
     cursor = " AND id < ?" if before_id is not None else ""
     cursor_values = (before_id,) if before_id is not None else ()
-    rows = world.query(f"SELECT id FROM approvals WHERE requested_by=? AND {scope}{cursor} ORDER BY id DESC LIMIT 51",
-                       (who, *values, *cursor_values))
+    rows = world.tenant_query("SELECT id FROM approvals WHERE requested_by=? AND {tenant_exact:tenant_id}"
+                              f"{cursor} ORDER BY id DESC LIMIT 51", (who, *cursor_values))
     result = []
     for row in rows[:50]:
         approval = world.get_approval(int(row[0]))

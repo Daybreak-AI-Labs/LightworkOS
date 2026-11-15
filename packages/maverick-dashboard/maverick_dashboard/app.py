@@ -13820,11 +13820,11 @@ def _build_plan_tree(world, goal_id: int, depth_cap: int = 6) -> dict:
         return {}
 
     per_parent_cap = 50
-    rows = world.query(
+    rows = world.tenant_query(
         """
         WITH RECURSIVE descendants(id, parent_id, title, status, depth, created_at) AS (
           SELECT id, parent_id, title, status, 0, created_at
-            FROM goals WHERE id = ?
+            FROM goals WHERE id = ? AND {tenant:tenant_id}
           UNION ALL
           SELECT child.id, child.parent_id, child.title, child.status, d.depth + 1, child.created_at
             FROM descendants d
@@ -13832,7 +13832,7 @@ def _build_plan_tree(world, goal_id: int, depth_cap: int = 6) -> dict:
               ON child.id IN (
                 SELECT g.id
                   FROM goals g
-                 WHERE g.parent_id = d.id
+                 WHERE g.parent_id = d.id AND {tenant:g.tenant_id}
                  ORDER BY g.created_at ASC, g.id ASC
                  LIMIT ?
               )

@@ -223,6 +223,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the refusal names the storage boundary.
 - An automation opportunity is not proposed while any completed run has no
   recorded cost, and the reason shown says so.
+- On shared Postgres, raw world-model reads (`query`) are refused while
+  tenancy is on; the boards, chat history, handoffs and reports now read
+  through `tenant_query`, which adds the tenant boundary. Code that calls
+  `query` directly must move to `tenant_query` or pass `system=True`.
 
 ### Fixed
 

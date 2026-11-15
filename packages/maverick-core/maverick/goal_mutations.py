@@ -110,8 +110,8 @@ def assert_move_boundary(world, goal_id: int, parent_id: int | None, *, execute=
     """A map edit cannot remove or replace an inherited handoff budget ceiling."""
     def read(sql, params):
         if execute is not None:
-            return execute(sql, params).fetchone()
-        rows = world.query(sql, params)
+            return execute(*world.tenant_sql(sql, params)).fetchone()
+        rows = world.tenant_query(sql, params)
         return rows[0] if rows else None
 
     def anchor(current):
@@ -120,9 +120,10 @@ def assert_move_boundary(world, goal_id: int, parent_id: int | None, *, execute=
             if current in seen or len(seen) >= 100:
                 raise GoalMutationConflict("Task ancestry is unavailable. Refresh the task map.")
             seen.add(current)
-            if read("SELECT 1 FROM goal_mutation_receipts WHERE goal_id=? AND kind='handoff_lineage' LIMIT 1", (current,)):
+            if read("SELECT 1 FROM goal_mutation_receipts WHERE goal_id=? AND {tenant_goal:goal_id} "
+                    "AND kind='handoff_lineage' LIMIT 1", (current,)):
                 return current
-            row = read("SELECT parent_id FROM goals WHERE id=?", (current,))
+            row = read("SELECT parent_id FROM goals WHERE id=? AND {tenant:tenant_id}", (current,))
             if row is None:
                 raise GoalMutationConflict("The parent task is no longer available.")
             current = row[0]

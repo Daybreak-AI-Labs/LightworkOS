@@ -70,11 +70,12 @@ def _goal_rows(world):
     # partial handoffs, final completion and business acceptance. In particular,
     # three stages must not become three repeated requests in Ekko.
     goals = [goal for goal in goals if not (goal.execution_principal or "").startswith("agent:starter-team.")]
-    origins = {int(row[0]): (str(row[1]), str(row[2])) for row in world.query(
-        "SELECT goal_id,kind,ref FROM goal_origins")}
-    turns = _bounded(world.query(
+    origins = {int(row[0]): (str(row[1]), str(row[2])) for row in world.tenant_query(
+        "SELECT goal_id,kind,ref FROM goal_origins WHERE {tenant_goal:goal_id}")}
+    turns = _bounded(world.tenant_query(
         "SELECT t.id,t.goal_id,t.conversation_id,t.ts,c.channel FROM turns t "
-        "JOIN conversations c ON c.id=t.conversation_id WHERE t.role='user' ORDER BY t.id LIMIT ?",
+        "JOIN conversations c ON c.id=t.conversation_id WHERE t.role='user' AND {tenant:c.tenant_id} "
+        "ORDER BY t.id LIMIT ?",
         (MAX_RECORDS + 1,)), "Conversation history")
     memberships = {int(row[1]): str(row[2]) for row in turns if row[1] is not None}
     return goals, origins, turns, memberships
@@ -275,7 +276,8 @@ def collect(world) -> list[dict]:
             continue
         key = f"conversation:{row[2]}"
         if key not in output:
-            raw = world.query("SELECT content FROM turns WHERE id=?", (row[0],))
+            raw = world.tenant_query("SELECT t.content FROM turns t JOIN conversations c ON c.id=t.conversation_id "
+                                     "WHERE t.id=? AND {tenant:c.tenant_id}", (row[0],))
             output[key] = _observation(key, "unattributed-channel", row[3], classify(_dec_field(raw[0][0], context="turns.content")))
         output[key]["sources"].append({"kind": "turn", "id": str(row[0]), "at": row[3]})
     for item in output.values():

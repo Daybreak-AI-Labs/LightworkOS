@@ -2529,3 +2529,34 @@ def test_results_page_and_monthly_spend_match_the_sqlite_backend(world):
                       cost_dollars=3.0, input_tokens=1, output_tokens=1)
     assert world.total_spend(owner=owner, since=before - 1)["dollars"] == 3.0
     assert world.total_spend(owner=owner, since=time.time() + 60)["dollars"] == 0
+
+
+def test_raw_reads_need_a_tenant_boundary_while_tenancy_is_on(world):
+    """An unscoped raw read is refused for a bound tenant; the tenant-scoped
+    accessor sees only that tenant's root and child rows."""
+    from maverick.paths import tenant_scope
+    from maverick.tenant_sql import TenantScopeRequired
+
+    mine = "rawq-" + uuid.uuid4().hex
+    other = mine + "-other"
+    try:
+        with tenant_scope(tenant=other):
+            theirs = world.create_goal("theirs")
+            world.start_episode(theirs)
+        with tenant_scope(tenant=mine):
+            own = world.create_goal("mine")
+            world.start_episode(own)
+            with pytest.raises(TenantScopeRequired):
+                world.query("SELECT id FROM goals WHERE id IN (?, ?)", (own, theirs))
+            assert [r[0] for r in world.tenant_query(
+                "SELECT id FROM goals WHERE id IN (?, ?) AND {tenant:tenant_id}", (own, theirs))] == [own]
+            assert [r[0] for r in world.tenant_query(
+                "SELECT goal_id FROM episodes WHERE {tenant_goal:goal_id} AND goal_id IN (?, ?)",
+                (own, theirs))] == [own]
+            assert world.query("SELECT COUNT(*) FROM goals WHERE id IN (?, ?)", (own, theirs),
+                               system=True)[0][0] == 2
+    finally:
+        with world._tx() as cursor:
+            cursor.execute("DELETE FROM episodes WHERE goal_id IN "
+                           "(SELECT id FROM goals WHERE tenant_id IN (%s, %s))", (mine, other))
+            cursor.execute("DELETE FROM goals WHERE tenant_id IN (%s, %s)", (mine, other))
