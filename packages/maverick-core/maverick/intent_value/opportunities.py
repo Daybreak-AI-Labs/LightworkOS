@@ -42,7 +42,11 @@ def evaluate(records, *, owner, capabilities, persist=True):
         estimate = _forecast(rows, executed)
         plausible = estimate["incremental_net_per_run"] is not None and estimate["incremental_net_per_run"] > 0
         ready = repeatable and supported and plausible
-        if not ready and candidate is None:
+        uncosted = any(not row["source"]["costs"] or any(cost["amount"] is None for cost in row["source"]["costs"])
+                       for row in executed)
+        if not ready and candidate is None and repeatable and supported and uncosted:
+            reason = "Some completed runs have no recorded cost, so the saving after costs cannot be worked out yet. Automation is proposed once every completed run has a recorded cost."
+        elif not ready and candidate is None:
             # An observed opportunity remains actionable through Chat and
             # correction even before a reusable automation is justified.
             reason = "Gather distinct work items, audit-backed results and a plausible incremental benefit after costs before proposing automation."

@@ -702,3 +702,15 @@ def test_refresh_reads_recorded_work_in_one_batch(world, monkeypatch):
     service.refresh(world)
     assert len(reads) == 1  # Only the newly observed source needs a direct read; the recorded one comes from the batch.
     assert len(service.WORKS.list(limit=10)) == 2
+
+
+def test_withheld_draft_says_completed_runs_have_no_recorded_cost(world):
+    for _ in range(2):
+        goal(world)
+    goal(world, cost=None)
+    proposal = opportunities.evaluate(service.refresh(world), owner="alice", capabilities=[])[0]
+    assert proposal["executed_count"] == 3
+    assert proposal["forecast"]["incremental_net_per_run"] is None
+    assert proposal["kind"] == "assist" and not proposal["draft_supported"]
+    assert "no recorded cost" in proposal["reason"]
+    assert "cannot be worked out yet" in proposal["reason"]
