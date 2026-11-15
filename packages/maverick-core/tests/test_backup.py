@@ -1293,6 +1293,62 @@ def test_commit_journal_failure_rolls_back(monkeypatch):
     assert not (root / backup._RESTORE_TX_ROOT).exists()
 
 
+def test_startup_recovers_interrupted_restore_or_refuses_with_plain_message(monkeypatch):
+    from maverick.paths import data_dir
+
+    root = data_dir()
+    _seed(root)
+    archive = backup.create_backup()
+    (root / "agent_trust.json").write_text('[{"id":"live-new"}]')
+    real_publish = backup._publish_staged_file
+    real_rollback = backup._rollback
+
+    def _crash(*_args):
+        raise OSError("power lost")
+
+    def _crash_mid_apply(source, destination):
+        if destination.suffix == ".db":
+            _crash()
+        return real_publish(source, destination)
+
+    # The process dies after replacing some files and before undoing them.
+    monkeypatch.setattr(backup, "_publish_staged_file", _crash_mid_apply)
+    monkeypatch.setattr(backup, "_rollback", _crash)
+    with pytest.raises(backup.BackupError, match="power lost"):
+        backup.restore_backup(archive)
+    monkeypatch.setattr(backup, "_publish_staged_file", real_publish)
+    monkeypatch.setattr(backup, "_rollback", real_rollback)
+    tx_root = root / backup._RESTORE_TX_ROOT
+    assert tx_root.exists()
+
+    monkeypatch.setenv("MAVERICK_BACKUP_SIGNING_KEY", bytes(range(1, 33)).hex())
+    with pytest.raises(backup.RestoreRecoveryRefused) as refused:
+        backup.recover_interrupted_restore()
+    assert "MAVERICK_BACKUP_SIGNING_KEY" in str(refused.value)
+    assert "Traceback" not in str(refused.value)
+    assert tx_root.exists()
+
+    monkeypatch.setenv("MAVERICK_BACKUP_SIGNING_KEY", bytes(range(32)).hex())
+    assert backup.recover_interrupted_restore() is True
+    assert (root / "agent_trust.json").read_text() == '[{"id":"live-new"}]'
+    assert not tx_root.exists()
+    assert backup.recover_interrupted_restore() is False
+
+
+def test_cli_refuses_to_start_on_unrecoverable_restore_with_the_message(monkeypatch):
+    from click.testing import CliRunner
+    from maverick.cli import main
+
+    def refuse():
+        raise backup.RestoreRecoveryRefused("An earlier restore stopped part-way.")
+
+    monkeypatch.setattr(backup, "recover_interrupted_restore", refuse)
+    result = CliRunner().invoke(main, ["backup", "info", "missing.tar.gz"])
+    assert result.exit_code == 1
+    assert "An earlier restore stopped part-way." in result.output
+    assert "Traceback" not in result.output
+
+
 def test_next_restore_recovers_retained_applying_journal(monkeypatch):
     from maverick.paths import data_dir
 

@@ -1208,10 +1208,23 @@ async def _lifespan(app: FastAPI):
         previous.assert_restart_allowed()
     supervisor = ShutdownSupervisor(shutdown_seconds())
     app.state.lifecycle_supervisor = supervisor
+    app.state.restore_refusal = None
     register_main_components(app, supervisor)
     try:
         supervisor.release_control_plane = current() is None
         _acquire_control_plane(role="dashboard")
+        # A restore that stopped part-way is undone before anything reads the
+        # data folder. If it cannot be undone, only /livez answers normally;
+        # every other request gets the operator's recovery message.
+        from maverick.backup import RestoreRecoveryRefused, recover_interrupted_restore
+
+        try:
+            await run_in_threadpool(recover_interrupted_restore)
+        except RestoreRecoveryRefused as exc:
+            log.error("%s", exc)
+            app.state.restore_refusal = str(exc)
+            yield
+            return
         _assert_dashboard_auth_configured()
         open_postgres_pools()
         open_goal_admission()
@@ -1492,6 +1505,9 @@ from .ai_governance_loop_composition import (  # noqa: E402
 
 @app.middleware("http")
 async def _shutdown_admission(request: Request, call_next):
+    refusal = getattr(request.app.state, "restore_refusal", None)
+    if refusal and route_path(request) != "/livez":
+        return JSONResponse({"detail": refusal}, status_code=503)
     supervisor = getattr(request.app.state, "lifecycle_supervisor", None)
     if (supervisor is not None and supervisor.phase in {"stopping", "draining", "degraded"}
             and route_path(request) != "/livez"):

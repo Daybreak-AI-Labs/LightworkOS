@@ -490,6 +490,13 @@ def main(ctx: click.Context, db: str | None, model: str | None) -> None:
             assert_normal_start_allowed()
         except MaintenanceError as exc:
             raise click.ClickException(str(exc)) from exc
+        from ..backup import RestoreRecoveryRefused, recover_interrupted_restore
+        try:
+            if recover_interrupted_restore():
+                click.echo("Lightwork undid a restore that stopped part-way. "
+                           "Your data is as it was before that restore.", err=True)
+        except RestoreRecoveryRefused as exc:
+            raise click.ClickException(str(exc)) from exc
     if ctx.invoked_subcommand == "mcp":
         from .._mcp_parent_guard import ParentGuardError, arm_from_environment
 

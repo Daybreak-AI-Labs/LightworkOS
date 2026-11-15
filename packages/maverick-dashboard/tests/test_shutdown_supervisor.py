@@ -266,6 +266,26 @@ def test_shutdown_refuses_new_http_work_and_readiness_but_keeps_liveness(monkeyp
     assert client.get("/livez").status_code == 200
 
 
+def test_unrecoverable_interrupted_restore_keeps_liveness_and_explains(monkeypatch):
+    from fastapi.testclient import TestClient
+    from maverick import backup
+    from maverick_dashboard.app import app
+
+    message = "An earlier restore stopped part-way, so Lightwork did not start."
+
+    def refuse():
+        raise backup.RestoreRecoveryRefused(message)
+
+    monkeypatch.setattr(backup, "recover_interrupted_restore", refuse)
+    with TestClient(app, base_url="http://127.0.0.1", headers={"Origin": "http://127.0.0.1"}) as client:
+        assert client.get("/livez").status_code == 200
+        assert client.get("/readyz").status_code == 503
+        refused = client.get("/api/v1/facts")
+        assert refused.status_code == 503 and refused.json()["detail"] == message
+        assert "consent_scan" not in app.state.lifecycle_supervisor.components
+    patch_state(monkeypatch, app.state, "restore_refusal", None, raising=False)
+
+
 def test_actual_composed_dashboard_registers_all_default_components():
     from fastapi.testclient import TestClient
     from maverick_dashboard.app import app

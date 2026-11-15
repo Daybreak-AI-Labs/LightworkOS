@@ -1748,6 +1748,55 @@ def restore_backup(
     return root
 
 
+class RestoreRecoveryRefused(BackupError):
+    """An interrupted restore was found at start-up and could not be undone.
+
+    The message is written for the operator: what happened and what to do."""
+
+
+def recover_interrupted_restore() -> bool:
+    """Undo a restore that stopped part-way, before normal start-up.
+
+    A crash during :func:`restore_backup` leaves its journal behind and the
+    data folder half old, half new. Start-up rolls it back under the same
+    lock a restore holds, so it never runs beside another process's restore
+    (it waits for that restore to finish instead). Returns True when it
+    rolled one back. Raises :class:`RestoreRecoveryRefused` when the journal
+    cannot be checked or undone; the caller must not start normal work.
+    """
+    root = _client_root()
+    tx_root = _transaction_root(root)
+    if not os.path.lexists(tx_root):
+        return False
+    try:
+        with file_lock.cross_process_lock(root / _RESTORE_LOCK_TARGET, strict=True):
+            if not os.path.lexists(tx_root):
+                return False
+            _recover_transactions(root, allow_unsigned=False)
+    except (BackupError, OSError, RuntimeError) as exc:
+        try:
+            key = _operator_key(required=False)
+        except BackupError:
+            key = None
+        if key is None:
+            hint = (
+                f"Set {_SIGNING_KEY_ENV} to the backup key used for that restore, "
+                "then start Lightwork again to undo it."
+            )
+        else:
+            hint = (
+                f"If {_SIGNING_KEY_ENV} changed since that restore, set it back "
+                "and start Lightwork again to undo it. Otherwise move the folder "
+                f"{tx_root} out of the data folder and restore a backup."
+            )
+        raise RestoreRecoveryRefused(
+            "An earlier restore stopped part-way, so Lightwork did not start. "
+            f"{hint} (Detail: {exc})"
+        ) from exc
+    log.warning("rolled back a restore that stopped part-way in %s", root)
+    return True
+
+
 def verify_backup(tarball: str | Path) -> dict[str, Any]:
     """Authenticate and verify every payload byte without touching live state."""
     with _verified_archive(tarball) as stream:

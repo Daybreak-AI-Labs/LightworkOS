@@ -223,6 +223,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the refusal names the storage boundary.
 - An automation opportunity is not proposed while any completed run has no
   recorded cost, and the reason shown says so.
+- A restore that stopped part-way is now undone when the dashboard or a
+  CLI command starts. If its record cannot be checked (for example the
+  backup signing key changed), start-up stops with a message saying what to
+  do; the dashboard still answers `/livez` and returns that message elsewhere.
 
 ### Fixed
 
