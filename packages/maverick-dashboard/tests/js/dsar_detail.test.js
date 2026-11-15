@@ -79,6 +79,21 @@ test("an uncertified erasure keeps the request open", async (t) => {
   assert.doesNotMatch(status, /You can now close/);
 });
 
+test("with no conversation, erasure still runs and reports what it found", async (t) => {
+  const ui = await fixture({
+    formValues: [],
+    reply: (url) => url.endsWith("/people")
+      ? json({ people: [] })
+      : json({ erased: true, clean: true, conversations: 0, message: "No conversations were found. 2 other stored item(s) about this person were erased." }),
+  });
+  t.after(() => ui.window.close());
+  ui.doc.getElementById("dsar-erase").click(); await ui.settle();
+  assert.equal(ui.confirms.length, 1);
+  const erase = ui.calls.find((c) => c.url.endsWith("/people/erase"));
+  assert.deepEqual(JSON.parse(erase.body), { channel: "email", user: "a@example.com" });
+  assert.match(ui.doc.getElementById("dsar-status").textContent, /2 other stored item/);
+});
+
 test("closing asks what happened before anything is sent, and errors stay plain", async (t) => {
   const ui = await fixture({ formValues: [{ kind: "no_response" }, {}], reply: () => new Response("x", { status: 500 }) });
   t.after(() => ui.window.close());

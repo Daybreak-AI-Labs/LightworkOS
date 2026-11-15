@@ -368,7 +368,20 @@
   on('dsar-handle', function () { closeRequest(false); });
   if (location.hash === '#close' && $('dsar-close') && page.getAttribute('data-status') !== 'closed') closeRequest(false);
 
-  // Erasure: pick the matching person (by their identifier) and erase.
+  // Erasure: pick the matching person (by their identifier) and erase. With no
+  // conversation, the same erase still scrubs what is kept about the person.
+  function eraseFor(person, ch, label) {
+    return ask('Permanently erase everything Lightwork holds about ' + person +
+      ' on ' + label + '? This cannot be undone.', 'Erase').then(function (ok) {
+      if (!ok) return null;
+      return call('POST', '/api/v1/compliance/people/erase', { channel: ch, user: subject }).then(function (res) {
+        if (res.clean !== false) lastErasure = 'Lightwork: ' + (res.message || 'erased') + ' (' + localDay() + ')';
+        say((res.message || 'Erased.') + (res.clean === false
+          ? ' Keep this request open until the erasure is certified.'
+          : ' You can now close the request.'));
+      });
+    });
+  }
   on('dsar-erase', function () {
     call('GET', '/api/v1/compliance/people').then(function (body) {
       // The request's own channel is where it arrived (often email), not
@@ -377,8 +390,7 @@
       var people = (body.people || []).filter(function (p) { return p.user === subject; });
       people.sort(function (a, b) { return (b.channel === channel) - (a.channel === channel); });
       if (!people.length) {
-        say('Lightwork holds no conversations for ' + subject + '. There is nothing to erase here; close the request once other systems are done.');
-        return null;
+        return eraseFor(subject, channel, 'the channel this request came from');
       }
       var options = people.map(function (p, i) {
         return { value: String(i), label: p.person + ' (' + p.channel_label + ')' };
@@ -388,16 +400,7 @@
       ], 'Next').then(function (values) {
         if (!values) return null;
         var chosen = people[parseInt(values.who || '0', 10)];
-        return ask('Permanently erase everything Lightwork holds about ' + chosen.person +
-          ' on ' + chosen.channel_label + '? This cannot be undone.', 'Erase').then(function (ok) {
-          if (!ok) return null;
-          return call('POST', '/api/v1/compliance/people/erase', { channel: chosen.channel, user: chosen.user }).then(function (res) {
-            if (res.clean !== false) lastErasure = 'Lightwork: ' + (res.message || 'erased') + ' (' + localDay() + ')';
-            say((res.message || 'Erased.') + (res.clean === false
-              ? ' Keep this request open until the erasure is certified.'
-              : ' You can now close the request.'));
-          });
-        });
+        return eraseFor(chosen.person, chosen.channel, chosen.channel_label);
       });
     }).catch(function (f) { fail(f, 'erase their data'); });
   });
