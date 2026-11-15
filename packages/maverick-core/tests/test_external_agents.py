@@ -757,6 +757,36 @@ def test_a_retry_completes_a_run_whose_ingest_failed_and_counts_it_once(monkeypa
     assert WorldModel().get_goal(done["goal_id"]).status == "done"
 
 
+@pytest.mark.parametrize("step", ["end_episode", "save_sidecar", "set_goal_status"])
+def test_a_retry_after_any_failed_ingest_step_finishes_the_run_once(monkeypatch, step):
+    _enroll()
+    from maverick.world_model import WorldModel
+    target, name = {"end_episode": (WorldModel, "end_episode"),
+                    "save_sidecar": (xa, "_save_sidecar"),
+                    "set_goal_status": (WorldModel, "set_goal_status")}[step]
+    real, failed = getattr(target, name), []
+
+    def fail_once(*a, **kw):
+        if not failed:
+            failed.append(1)
+            raise RuntimeError("disk hiccup")
+        return real(*a, **kw)
+
+    monkeypatch.setattr(target, name, fail_once)
+    run = {"title": "Quote C", "outcome": "success", "summary": "s",
+           "cost_dollars": 2.0, "idempotency_key": f"step-{step}"}
+    with pytest.raises(RuntimeError):
+        xa.record_run("sf-quotebot", dict(run))
+    gid = xa.record_run("sf-quotebot", dict(run))["goal_id"]
+    assert xa.record_run("sf-quotebot", dict(run))["duplicate"] is True
+    world = WorldModel()
+    episodes = world.list_episodes(goal_id=gid)
+    assert [e.cost_dollars for e in episodes] == [pytest.approx(2.0)]
+    row = xa.roster()[0]
+    assert row["runs"] == 1 and row["spent_dollars"] == pytest.approx(2.0)
+    assert world.get_goal(gid).status == "done"
+
+
 def test_operator_tool_risk_floors_the_declared_risk():
     _enroll(max_risk="high",
             allow_tools=["crm_update:low", "send_contract:high", "research"])

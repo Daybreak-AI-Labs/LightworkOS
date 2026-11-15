@@ -908,7 +908,7 @@ def record_run(agent_id: str, run: dict, *, shield: Any | None = None) -> dict:
     idem = str(run.get("idempotency_key") or "").strip()[:128]
     if idem:
         prior_gid = (sidecar[agent_id].get("run_keys") or {}).get(idem)
-        if prior_gid is not None:
+        if prior_gid is not None and _run_goal_finished(prior_gid):
             return {"goal_id": prior_gid, "over_budget":
                     bool(sidecar[agent_id].get("over_budget")),
                     "duplicate": True}
@@ -957,17 +957,22 @@ def record_run(agent_id: str, run: dict, *, shield: Any | None = None) -> dict:
                                   else "blocked", result=summary or title)
             return {"goal_id": gid, "over_budget": bool(meta.get("over_budget")),
                     "duplicate": True}
-        for step in steps:
-            w.append_event(gid, principal, "status", step)
-        eid = w.start_episode(gid)
-        w.end_episode(
-            eid, summary or title,
-            "success" if outcome == "success" else "failure",
-            cost_dollars=cost,
-            input_tokens=max(0, int(run.get("input_tokens") or 0)),
-            output_tokens=max(0, int(run.get("output_tokens") or 0)),
-            tool_calls=max(0, int(run.get("tool_calls") or 0)),
-        )
+        # A retry reuses the episode an interrupted ingest already wrote, so
+        # the goal never carries the run's cost twice.
+        earlier = w.list_episodes(goal_id=gid, limit=1) if idem else []
+        if not earlier:
+            for step in steps:
+                w.append_event(gid, principal, "status", step)
+        eid = earlier[0].id if earlier else w.start_episode(gid)
+        if not earlier or earlier[0].ended_at is None:
+            w.end_episode(
+                eid, summary or title,
+                "success" if outcome == "success" else "failure",
+                cost_dollars=cost,
+                input_tokens=max(0, int(run.get("input_tokens") or 0)),
+                output_tokens=max(0, int(run.get("output_tokens") or 0)),
+                tool_calls=max(0, int(run.get("tool_calls") or 0)),
+            )
         over_budget = _meter_spend(meta, gid, cost=cost, idem=idem,
                                    over_wall=over_wall, cap=cap)
         _save_sidecar(sidecar)
@@ -983,6 +988,17 @@ def record_run(agent_id: str, run: dict, *, shield: Any | None = None) -> dict:
 
 
 _RUN_ORIGIN = "external_run"
+
+
+def _run_goal_finished(gid: Any) -> bool:
+    """Whether a remembered run's goal has left ``pending`` (or is gone). An
+    unfinished one goes on to the locked completion path."""
+    from .world_model import open_world
+    try:
+        goal = open_world().get_goal(int(gid))
+    except (TypeError, ValueError):
+        return True
+    return goal is None or goal.status != "pending"
 
 
 def _create_run_goal(w: Any, agent_id: str, idem: str, title: str,
