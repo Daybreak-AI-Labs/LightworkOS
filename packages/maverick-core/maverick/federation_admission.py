@@ -209,13 +209,27 @@ def _read_limits() -> dict:
     path = _limits_path()
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(raw, dict):
-            raise ValueError("limits file is not an object")
-        return {str(k): v for k, v in raw.items() if isinstance(v, dict)}
+        if not isinstance(raw, dict) or not all(_usable_entry(v) for v in raw.values()):
+            raise ValueError("limits file holds an entry that is not usable")
+        return {str(k): v for k, v in raw.items()}
     except FileNotFoundError:
         return {}
     except (OSError, ValueError) as exc:
         raise LimitsUnreadable("the saved partner request limits could not be read") from exc
+
+
+def _usable_entry(entry) -> bool:
+    """An entry this module wrote: only ``limit`` (a positive whole number)
+    and ``counted_from`` (a finite time). Anything else, such as a quoted
+    number from a hand edit, makes the whole file unreadable."""
+    if not isinstance(entry, dict) or not set(entry) <= {"limit", "counted_from"}:
+        return False
+    limit = entry.get("limit")
+    if limit is not None and (isinstance(limit, bool) or not isinstance(limit, int) or limit < 1):
+        return False
+    since = entry.get("counted_from")
+    return since is None or (isinstance(since, (int, float)) and not isinstance(since, bool)
+                             and math.isfinite(since) and since >= 0)
 
 
 def _peer_limit(peer: str, limits: dict) -> int:

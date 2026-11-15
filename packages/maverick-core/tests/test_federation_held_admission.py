@@ -277,3 +277,15 @@ def test_a_peer_reset_does_not_free_workspace_storage(tmp_path, monkeypatch):
         admission.set_admission_limit("sender", reset=True, actor="ops")
         with pytest.raises(admission.FederationAdmissionRejected, match="capacity is full$"):
             reserve(world, "c")
+
+
+@pytest.mark.parametrize("saved", ['{"sender": {"limit": "1"}}', '{"sender": 1}',
+                                   '{"sender": {"limit": true}}', '{"sender": {"counted_from": "x"}}'])
+def test_hand_edited_limits_that_are_not_usable_count_as_unreadable(tmp_path, monkeypatch, saved):
+    admission, reserve, _ = _limits_harness(tmp_path, monkeypatch)
+    path = admission._limits_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(saved, encoding="utf-8")
+    with WorldModel(tmp_path / "world.db") as world:
+        with pytest.raises(admission.FederationAdmissionRejected, match="limits could not be read"):
+            reserve(world, "a")
