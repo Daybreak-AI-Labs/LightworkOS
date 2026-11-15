@@ -38,6 +38,7 @@ def test_slack_download_waits_for_eof_and_checks_advertised_size(monkeypatch, de
 
         class Response:
             content = stream
+            status = 200
             def raise_for_status(self):
                 pass
             async def __aenter__(self):
@@ -52,7 +53,7 @@ def test_slack_download_waits_for_eof_and_checks_advertised_size(monkeypatch, de
                 return self
             async def __aexit__(self, *args):
                 pass
-            def get(self, url):
+            def get(self, url, **kwargs):
                 return Response()
 
         monkeypatch.setattr(aiohttp, "ClientSession", Session)
@@ -172,3 +173,63 @@ def test_matrix_legacy_whole_reply_keeps_its_saved_transaction(monkeypatch, prio
     assert len(calls) == {"retryable": 2, "delivery_unknown": 3, "delivered": 1}[prior_state]
     assert all(call == calls[0] for call in calls)
     assert calls[0]["content"]["body"] == text
+
+
+def test_slack_download_sends_the_bot_token_only_to_slack_file_hosts(monkeypatch):
+    # Slack: a remote file's url_private is app-chosen and may point anywhere.
+    import sys
+    calls, sessions = [], []
+
+    class Response:
+        status = 200
+        def raise_for_status(self):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            pass
+
+    class Content:
+        def __init__(self):
+            self.left = b"data"
+        async def read(self, n):
+            block, self.left = self.left[:n], self.left[n:]
+            return block
+
+    class Session:
+        def __init__(self, **kwargs):
+            sessions.append(kwargs)
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            pass
+        def get(self, url, **kwargs):
+            calls.append((url, kwargs))
+            response = Response()
+            response.content = Content()
+            return response
+
+    def item(**fields):
+        return {"size": 4, "name": "f.txt", "mimetype": "text/plain", **fields}
+
+    files = [
+        item(url_private="https://attacker.example/x", mode="external", is_external=True, filetype="remote"),
+        item(url_private="https://files.slack.com/x", is_external=True),
+        item(url_private_download="https://files.slack.com.example.com/x"),
+        item(url_private_download="http://files.slack.com/x"),
+        item(url_private_download="https://user@files.slack.com/x"),
+        item(url_private_download="https://files.slack.com/files-pri/T1-F1/f.txt"),
+    ]
+    channel = slack.SlackChannel.__new__(slack.SlackChannel)
+    channel.bot_token = "xoxb-synthetic"  # pragma: allowlist secret
+    channel._web = SimpleNamespace(chat_postMessage=AsyncMock(return_value={"ok": True, "ts": "1.2"}))
+    monkeypatch.setitem(sys.modules, "aiohttp", SimpleNamespace(ClientSession=Session))
+    msg = SimpleNamespace(user_id="D1", attachments=None)
+    asyncio.run(channel._prepare(msg, {"files": files, "reply_to": "9.9"}))
+    assert sessions == [{}]
+    assert calls == [("https://files.slack.com/files-pri/T1-F1/f.txt",
+                      {"headers": {"Authorization": "Bearer xoxb-synthetic"}, "allow_redirects": False})]
+    assert [a["data"] for a in msg.attachments] == [b"data"]
+    note = channel._web.chat_postMessage.await_args.kwargs
+    assert note["channel"] == "D1" and note["thread_ts"] == "9.9"
+    assert "outside Slack" in note["text"]
