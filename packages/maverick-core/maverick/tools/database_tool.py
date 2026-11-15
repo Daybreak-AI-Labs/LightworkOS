@@ -328,6 +328,7 @@ def _query_connection(conn, sql, limit, needs_confirm, response_format, executio
 
     result = None
     restore_select_limit = None
+    unbuffered = None
     try:
         _prepare_query_driver(conn, execution)
         execution.started()
@@ -352,23 +353,24 @@ def _query_connection(conn, sql, limit, needs_confirm, response_format, executio
             # statement: the session's sql_select_limit caps the rows a
             # top-level SELECT returns, and is restored afterwards.
             restore_select_limit = _limit_mysql_select(conn, limit + 1)
+            # A statement's own LIMIT overrides sql_select_limit, so read
+            # mysql-connector through an unbuffered cursor instead.
+            raw = sqlalchemy_driver(conn)
+            unbuffered = raw if _is_mysql_connector(raw) else None
+        if unbuffered is not None:
+            cols, rows, dropped = _fetch_unbuffered(conn, unbuffered, sql, limit + 1)
+            if dropped:
+                restore_select_limit = None  # the connection is gone
+            return _render_rows(conn, cols, rows, limit, needs_confirm,
+                                response_format, execution)
         result = conn.execute(text(sql))
         if result.returns_rows:
             cols = list(result.keys())
             rows = result.fetchmany(limit + 1)
             result.close()
             result = None
-            execution.check()
-            if needs_confirm:
-                execution.commit(conn)
-            else:
-                conn.rollback()
-                execution.state = "read_only"
-            data = QueryResult.from_rows(cols, rows, row_limit=limit,
-                                         transaction_status=execution.state,
-                                         cancellation_support=execution.cancellation_support)
-            execution.check()
-            return data.render(response_format=response_format)
+            return _render_rows(conn, cols, rows, limit, needs_confirm,
+                                response_format, execution)
         affected = result.rowcount
         result.close()
         result = None
@@ -393,6 +395,49 @@ def _query_connection(conn, sql, limit, needs_confirm, response_format, executio
         if execution.state == "unknown":
             with contextlib.suppress(Exception):
                 conn.invalidate()
+
+
+def _render_rows(conn, cols, rows, limit, needs_confirm, response_format, execution):
+    execution.check()
+    if needs_confirm:
+        execution.commit(conn)
+    else:
+        conn.rollback()
+        execution.state = "read_only"
+    data = QueryResult.from_rows(cols, rows, row_limit=limit,
+                                 transaction_status=execution.state,
+                                 cancellation_support=execution.cancellation_support)
+    execution.check()
+    return data.render(response_format=response_format)
+
+
+def _is_mysql_connector(raw) -> bool:
+    try:
+        from mysql.connector.abstracts import MySQLConnectionAbstract
+    except ImportError:
+        return False
+    return isinstance(raw, MySQLConnectionAbstract)
+
+
+def _fetch_unbuffered(conn, raw, sql, rows: int):
+    """Read at most ``rows`` rows of ``sql`` from an unbuffered mysql-connector
+    cursor; return ``(columns, rows, dropped)``.
+
+    When ``rows`` rows arrived, more may still be on the wire. Reading them,
+    even to discard, is the transfer this bound exists to avoid, so the
+    connection is dropped instead (this engine is per call)."""
+    cursor = raw.cursor(buffered=False)
+    cursor.execute(sql)
+    if cursor.description is None:
+        cursor.close()
+        return [], [], False
+    cols = [d[0] for d in cursor.description]
+    fetched = cursor.fetchmany(rows)
+    if len(fetched) < rows:
+        cursor.close()
+        return cols, fetched, False
+    conn.invalidate()
+    return cols, fetched, True
 
 
 def _limit_mysql_select(conn, rows: int) -> int:

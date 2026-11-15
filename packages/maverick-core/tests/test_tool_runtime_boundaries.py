@@ -118,6 +118,53 @@ def test_database_buffered_mysql_read_is_sent_unmodified_and_bounded(monkeypatch
                     sql, "SET SESSION sql_select_limit = 18446744073709551615"]
 
 
+def test_database_mysql_connector_read_fetches_at_most_cap_rows_despite_own_limit(monkeypatch):
+    """A statement's own LIMIT overrides sql_select_limit, so mysql-connector
+    reads from an unbuffered cursor, stops after limit + 1 rows and drops the
+    connection rather than buffer or drain the rest."""
+    from maverick.tools import database_tool as module
+    sql = "SELECT n FROM nums ORDER BY n LIMIT 150 -- note"
+    fetched, sent, events = [], [], []
+    class Cursor:
+        description = (("n",),)
+        def __init__(self):
+            self._rows = iter([(n,) for n in range(1, 151)])
+        def execute(self, statement):
+            sent.append(statement)
+        def fetchmany(self, n):
+            out = [row for _, row in zip(range(n), self._rows, strict=False)]
+            fetched.extend(out)
+            return out
+        def close(self):
+            events.append("cursor.close")
+    class Raw:
+        def cursor(self, **kwargs):
+            events.append(("cursor", kwargs))
+            return Cursor()
+    class Connection:
+        dialect = types.SimpleNamespace(supports_server_side_cursors=False, name="mysql")
+        connection = types.SimpleNamespace(driver_connection=Raw())
+        def exec_driver_sql(self, statement):
+            sent.append(statement)
+            return types.SimpleNamespace(scalar=lambda: 18446744073709551615, close=lambda: None)
+        def execute(self, statement):
+            raise AssertionError("buffered SQLAlchemy execute used")
+        def invalidate(self):
+            events.append("invalidate")
+        def rollback(self):
+            events.append("rollback")
+    execution = types.SimpleNamespace(started=lambda: None, transactional=True,
+        cancellation_support="unsupported", rollback=lambda conn: None, check=lambda: None,
+        failure=lambda exc: f"ERROR {exc!r}", stop_monitor=lambda: None, state="running")
+    monkeypatch.setattr(module, "_prepare_query_driver", lambda *a: None)
+    monkeypatch.setattr(module, "_is_mysql_connector", lambda raw: isinstance(raw, Raw))
+    out = module._query_connection(Connection(), sql, 5, False, "json", execution)
+    assert '"rows_returned": 5' in out and '"has_more": true' in out
+    assert len(fetched) == 6
+    assert ("cursor", {"buffered": False}) in events and "invalidate" in events
+    assert sent[:3] == ["SELECT @@SESSION.sql_select_limit", "SET SESSION sql_select_limit = 6", sql]
+
+
 @pytest.mark.parametrize("reply", [False, True])
 def test_discord_disables_mentions_and_discloses_truncation(monkeypatch, reply):
     from maverick.tools import discord_bot as module

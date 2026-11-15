@@ -229,6 +229,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - On Postgres with at-rest encryption, facts saved before workspaces were
   used (no tenant) read correctly again in compatibility mode instead of
   showing a "withheld" placeholder. Nothing to do.
+- The database tool on MySQL Connector/Python now reads at most one row
+  past the row limit, even when the query has its own larger LIMIT.
 
 ### Fixed
 
