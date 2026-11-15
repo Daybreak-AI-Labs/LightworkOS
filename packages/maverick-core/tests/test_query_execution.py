@@ -366,6 +366,12 @@ def test_deadline_during_insert_select_rolls_back_all_sqlite_changes(tmp_path, m
         assert connection.execute("SELECT count(*) FROM items").fetchone()[0] == 0
 
 
+# A long read the tool accepts without confirm: pg_sleep counts as a side
+# effect (the database tool gates it like advisory locks), so it is refused
+# as a dry run before reaching PostgreSQL.
+_SLOW_PG_READ = "SELECT count(*) FROM generate_series(1, 10000000000)"
+
+
 def _configure_postgres(request, monkeypatch):
     # Resolve the private fixture dynamically so failure reporting doesn't put
     # a credential-bearing DSN in pytest's displayed test parameter list.
@@ -384,10 +390,16 @@ def _configure_postgres(request, monkeypatch):
 
 def test_native_postgres_statement_deadline_and_fresh_next_query(request, monkeypatch):
     _configure_postgres(request, monkeypatch)
+    # Warm the first-call work (kill-switch and config reads, dialect setup)
+    # outside the short deadline, as the MySQL deadline test does: on a busy
+    # host it alone can outlast 0.15 s before the statement is sent.
+    warm = json.loads(database_tool().fn({"op": "query", "sql": "SELECT 1 AS value",
+                                         "response_format": "json"}))
+    assert warm["rows"] == [[1]] and warm["complete"]
     monkeypatch.setattr(query_execution, "query_timeout_seconds", lambda: 0.15)
     executions = capture_execution(monkeypatch, database_module)
     began = time.monotonic()
-    result = database_tool().fn({"op": "query", "sql": "SELECT pg_sleep(5)"})
+    result = database_tool().fn({"op": "query", "sql": _SLOW_PG_READ})
     assert time.monotonic() - began < 2.5
     assert result.startswith("ERROR:") and executions[0].finished
     assert executions[0].cancellation_support == "postgres_statement_timeout_and_cancel_safe"
@@ -405,10 +417,10 @@ def test_native_postgres_cancellation_releases_actual_driver_and_owns_connection
 
     def active():
         with psycopg.connect(dsn) as connection:
-            return connection.execute("SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND state = 'active' AND pid <> pg_backend_pid() AND (query = 'SELECT pg_sleep(10)' OR query LIKE 'FETCH %%FROM %%')").fetchone()[0] == 1
+            return connection.execute("SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND state = 'active' AND pid <> pg_backend_pid() AND (query = %s OR query LIKE 'FETCH %%FROM %%')", (_SLOW_PG_READ,)).fetchone()[0] == 1
 
     async def run():
-        task = asyncio.create_task(registry.run("database", {"op": "query", "sql": "SELECT pg_sleep(10)"}))
+        task = asyncio.create_task(registry.run("database", {"op": "query", "sql": _SLOW_PG_READ}))
         for _ in range(100):
             if await asyncio.to_thread(active):
                 break
@@ -494,11 +506,11 @@ def test_psycopg2_statement_deadline_and_fresh_next_query(request, monkeypatch):
     sqlalchemy.event.listen(sqlalchemy.engine.Engine, "before_cursor_execute", capture_statement)
     began = time.monotonic()
     try:
-        result = database_tool().fn({"op": "query", "sql": "SELECT pg_sleep(5)"})
+        result = database_tool().fn({"op": "query", "sql": _SLOW_PG_READ})
     finally:
         sqlalchemy.event.remove(sqlalchemy.engine.Engine, "before_cursor_execute", capture_statement)
     assert time.monotonic() - began < 2.5
-    assert "SELECT pg_sleep(5)" in statements
+    assert _SLOW_PG_READ in statements
     assert result.startswith("ERROR:") and executions[0].finished
     assert executions[0].cancellation_support == "postgres_statement_timeout_and_cancel"
     monkeypatch.setattr(query_execution, "query_timeout_seconds", lambda: 3)
@@ -560,9 +572,33 @@ def _configure_mysql(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", url)
 
 
-def _mysql_read_is_stopped(monkeypatch):
+def _server_saw(statement):
+    """Poll the server's process list from a second connection: proof the
+    statement reached the server whatever driver or cursor sent it."""
     import sqlalchemy
 
+    seen, stop = threading.Event(), threading.Event()
+
+    def watch():
+        engine = sqlalchemy.create_engine(os.environ["DATABASE_URL"])
+        try:
+            with engine.connect() as conn:
+                while not (stop.is_set() or seen.is_set()):
+                    rows = conn.exec_driver_sql(
+                        "SELECT info FROM information_schema.processlist").fetchall()
+                    conn.rollback()
+                    if any(row[0] and statement in str(row[0]) for row in rows):
+                        seen.set()
+                    time.sleep(0.01)
+        finally:
+            engine.dispose()
+
+    watcher = threading.Thread(target=watch, daemon=True)
+    watcher.start()
+    return seen, stop, watcher
+
+
+def _mysql_read_is_stopped(monkeypatch):
     # Initialize the real dialect before measuring a statement's deadline.
     # The measured tool call still opens and owns a fresh native connection.
     warmup = json.loads(database_tool().fn({"op": "query", "sql": "SELECT 1 AS value",
@@ -570,19 +606,15 @@ def _mysql_read_is_stopped(monkeypatch):
     assert warmup["rows"] == [[1]] and warmup["complete"]
     monkeypatch.setattr(query_execution, "query_timeout_seconds", lambda: 0.3)
     executions = capture_execution(monkeypatch, database_module)
-    statements = []
-
-    def capture_statement(_connection, _cursor, statement, _parameters, _context, _many):
-        statements.append(statement)
-
-    sqlalchemy.event.listen(sqlalchemy.engine.Engine, "before_cursor_execute", capture_statement)
+    seen, stop, watcher = _server_saw(_SLOW_MYSQL_READ)
     began = time.monotonic()
     try:
         result = database_tool().fn({"op": "query", "sql": _SLOW_MYSQL_READ})
     finally:
-        sqlalchemy.event.remove(sqlalchemy.engine.Engine, "before_cursor_execute", capture_statement)
+        stop.set()
+        watcher.join(5)
     assert time.monotonic() - began < 5
-    assert _SLOW_MYSQL_READ in statements
+    assert seen.is_set()
     assert result.startswith("ERROR:") and executions[0].finished
     assert executions[0].cancellation_support == "mysql_statement_timeout_and_kill_query"
     monkeypatch.setattr(query_execution, "query_timeout_seconds", lambda: 5)
