@@ -778,6 +778,15 @@ def main(argv: list[str] | None = None) -> int:
         help=f"bearer token required from clients (or set {_TOKEN_ENV})",
     )
     args = ap.parse_args(argv)
+    # The same start-up gate `maverick` runs: unfinished recovery, or a
+    # restore that stopped part-way, stops the server with the next step.
+    from ..installation_recovery import MaintenanceError, require_normal_start
+
+    try:
+        require_normal_start()
+    except MaintenanceError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     # The two expected startup errors are operator-config, not crashes: a
     # missing bearer token (fail-closed auth default) and a missing grpcio
     # extra. Both already carry a one-line, actionable message -- print it and

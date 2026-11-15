@@ -53,7 +53,14 @@ def _job_timeout_seconds() -> float:
 
 
 async def _preflight(_ctx: dict[str, Any]) -> None:
-    """Refuse to poll jobs unless fleet authentication and replay state exist."""
+    """Refuse to poll jobs unless fleet authentication and replay state exist,
+    and the workspace passes the start-up gate `maverick` runs first."""
+    from .installation_recovery import MaintenanceError, require_normal_start
+
+    try:
+        require_normal_start()
+    except MaintenanceError as exc:
+        raise SystemExit(f"The Lightwork queue worker did not start. {exc}") from exc
     _require_network_signing_key()
     _require_network_claim_store_configured()
     _configured_worker_ceilings()
