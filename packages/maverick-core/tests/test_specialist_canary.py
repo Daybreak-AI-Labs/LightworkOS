@@ -46,6 +46,9 @@ class FakeWorld:
     def query(self, sql, params=()):
         return []
 
+    def tenant_query(self, sql, params=()):
+        return self.query(sql, params)
+
 
 def _start(canary, percent=50, *, name=PACK, profile=None):
     return canary.start(name, patch={"persona": "changed"}, profile=profile or {"name": name, "persona": "changed"},
