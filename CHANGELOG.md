@@ -231,6 +231,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   showing a "withheld" placeholder. Nothing to do.
 - The database tool on MySQL Connector/Python now reads at most one row
   past the row limit, even when the query has its own larger LIMIT.
+- The database query timeout now also applies on MySQL Connector/Python and
+  MariaDB Connector/Python: the server stops the statement at the deadline
+  and a timed-out query is cancelled. Before, only PyMySQL was bounded.
 
 ### Fixed
 

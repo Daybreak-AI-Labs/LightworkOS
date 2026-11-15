@@ -506,6 +506,47 @@ def test_psycopg2_statement_deadline_and_fresh_next_query(request, monkeypatch):
     assert subsequent["rows"] == [[7]] and subsequent["complete"]
 
 
+@pytest.mark.parametrize("module,cls", [("mysql.connector.abstracts", "MySQLConnectionAbstract"),
+                                        ("mariadb.connections", "Connection")])
+def test_mysql_connector_and_mariadb_get_a_deadline_and_a_kill_query_cancel(monkeypatch, module, cls):
+    """Before, only pymysql was bound: on mysql-connector a 2 s deadline ran
+    for 123 s with no server limit and no cancel."""
+    import sys
+    import types
+
+    driver_class = type(cls, (), {})
+    monkeypatch.setitem(sys.modules, module, types.SimpleNamespace(**{cls: driver_class}))
+    sent, closed = [], []
+
+    class Cursor:
+        def execute(self, sql):
+            sent.append(sql)
+
+        def close(self):
+            closed.append("cursor")
+
+    other = SimpleNamespace(cursor=Cursor, close=lambda: closed.append("connection"))
+    connection = driver_class()
+    connection.autocommit, connection.connection_id = False, 42
+    connection.server_info = "10.11.14-MariaDB-0ubuntu0.24.04.1"
+    connection.get_server_info = lambda: "8.4.3"
+    if module.startswith("mariadb"):
+        del connection.get_server_info  # MariaDB Connector/Python: a property only
+    execution = QueryExecution(mutation=False)
+    try:
+        assert not execution.bind_mysql(connection)  # no way to open a cancel connection
+        assert execution.bind_mysql(connection, connect=lambda: other)
+        assert execution.cancellation_support == "mysql_statement_timeout_and_kill_query"
+        assert execution.transactional
+        statement = execution.mysql_timeout_statement(connection)
+        assert statement.startswith("SET SESSION max_statement_time = " if module.startswith("mariadb")
+                                    else "SET SESSION max_execution_time = ")
+        execution._cancel()
+    finally:
+        execution.stop_monitor()
+    assert sent == ["KILL QUERY 42"] and closed == ["cursor", "connection"]
+
+
 _SLOW_MYSQL_READ = ("SELECT COUNT(*) FROM information_schema.columns a, "
                     "information_schema.columns b, information_schema.columns c")
 
@@ -571,8 +612,8 @@ def test_mysql_server_limit_alone_stops_a_read(monkeypatch):
     def unreachable():
         raise OSError("cancel connection refused")
 
-    def bind_without_cancel(self, connection):
-        bound = bind(self, connection)
+    def bind_without_cancel(self, connection, connect=None):
+        bound = bind(self, connection, connect)
         self._cancel = unreachable
         return bound
 

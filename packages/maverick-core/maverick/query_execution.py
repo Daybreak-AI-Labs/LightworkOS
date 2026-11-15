@@ -5,6 +5,7 @@ import asyncio
 import contextlib
 import math
 import sqlite3
+import sys
 import threading
 import time
 
@@ -175,37 +176,37 @@ class QueryExecution:
         self._start_watcher()
         return True
 
-    def bind_mysql(self, connection):
-        """pymysql (MySQL or MariaDB): a server-side statement limit plus a real
-        cancel, which is ``KILL QUERY`` sent over a second, short-lived
-        connection with the same credentials (the driver has no cancel)."""
-        try:
-            import pymysql.connections
-        except ImportError:
-            return False
-        if not isinstance(connection, pymysql.connections.Connection):
+    def bind_mysql(self, connection, connect=None):
+        """MySQL or MariaDB: a server-side statement limit plus a real cancel,
+        ``KILL QUERY`` sent over a second, short-lived connection with the same
+        credentials (no driver can cancel its own blocked connection).
+
+        pymysql opens that connection from its own attributes. mysql-connector
+        and MariaDB Connector/Python keep their credentials private, so their
+        cancel uses ``connect``: a zero-argument opener with the statement
+        connection's arguments. Without one they are not bound."""
+        kind = _mysql_driver(connection)
+        if kind is None or (kind != "pymysql" and connect is None):
             return False
         self.check()
         self.cancellation_support = "mysql_statement_timeout_and_kill_query"
-        self.transactional = not connection.get_autocommit()
-        thread_id = int(connection.thread_id())
-        # Mirror the statement connection: SSL only when it required SSL (a
-        # default pymysql connection merely prefers it, and passing its context
-        # would make SSL mandatory for the cancel connection).
-        ssl_required = getattr(connection, "_ssl_required", connection.ssl)
+        if kind == "pymysql":
+            self.transactional = not connection.get_autocommit()
+            thread_id = int(connection.thread_id())
+            connect = _pymysql_opener(connection)
+        else:
+            # Both document ``autocommit`` and ``connection_id`` properties.
+            self.transactional = not connection.autocommit
+            thread_id = int(connection.connection_id)
 
         def kill_query():
-            import pymysql
-
-            other = pymysql.connect(
-                host=connection.host, port=connection.port, user=connection.user,
-                password=connection.password, unix_socket=connection.unix_socket,
-                ssl=connection.ctx if ssl_required else None,
-                bind_address=connection.bind_address, connect_timeout=2,
-                read_timeout=5, write_timeout=5)
+            other = connect()
             try:
-                with other.cursor() as cursor:
+                cursor = other.cursor()
+                try:
                     cursor.execute(f"KILL QUERY {thread_id:d}")
+                finally:
+                    cursor.close()
             finally:
                 other.close()
 
@@ -217,7 +218,10 @@ class QueryExecution:
         """The session statement limit for the remaining time (MariaDB takes
         seconds for any statement; MySQL takes milliseconds, for reads)."""
         milliseconds = max(1, math.ceil(self.remaining() * 1000))
-        if "mariadb" in str(connection.get_server_info()).lower():
+        info = getattr(connection, "get_server_info", None)
+        # MariaDB Connector/Python has a ``server_info`` property instead.
+        server = info() if callable(info) else connection.server_info
+        if "mariadb" in str(server).lower():
             return f"SET SESSION max_statement_time = {milliseconds / 1000:.3f}"
         return f"SET SESSION max_execution_time = {milliseconds}"
 
@@ -296,6 +300,38 @@ class QueryExecution:
         """Acknowledge completion only after the caller released its driver."""
         self.stop_monitor()
         self.finished = True
+
+
+def _mysql_driver(connection) -> str | None:
+    """Which supported MySQL driver owns ``connection``, if any."""
+    candidates = (("pymysql", "pymysql.connections", "Connection"),
+                  ("mysql-connector", "mysql.connector.abstracts", "MySQLConnectionAbstract"),
+                  ("mariadb", "mariadb.connections", "Connection"))
+    for kind, module, name in candidates:
+        # A connection of a driver means its module is loaded; never import
+        # a driver just to test a connection of some other one.
+        cls = getattr(sys.modules.get(module), name, None)
+        if isinstance(cls, type) and isinstance(connection, cls):
+            return kind
+    return None
+
+
+def _pymysql_opener(connection):
+    # Mirror the statement connection: SSL only when it required SSL (a
+    # default pymysql connection merely prefers it, and passing its context
+    # would make SSL mandatory for the cancel connection).
+    ssl_required = getattr(connection, "_ssl_required", connection.ssl)
+
+    def connect():
+        import pymysql
+
+        return pymysql.connect(
+            host=connection.host, port=connection.port, user=connection.user,
+            password=connection.password, unix_socket=connection.unix_socket,
+            ssl=connection.ctx if ssl_required else None,
+            bind_address=connection.bind_address, connect_timeout=2,
+            read_timeout=5, write_timeout=5)
+    return connect
 
 
 def sqlalchemy_driver(connection):

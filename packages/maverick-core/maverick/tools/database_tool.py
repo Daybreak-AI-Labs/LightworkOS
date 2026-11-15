@@ -319,8 +319,17 @@ def _prepare_query_driver(conn, execution):
         milliseconds = max(1, math.ceil(execution.remaining() * 1000))
         local = "LOCAL " if execution.transactional else ""
         conn.exec_driver_sql(f"SET {local}statement_timeout = {milliseconds}").close()
-    elif execution.bind_mysql(raw):
+    elif execution.bind_mysql(raw, connect=lambda: _open_like(conn)):
         conn.exec_driver_sql(execution.mysql_timeout_statement(raw)).close()
+
+
+def _open_like(conn):
+    """A second DBAPI connection with the statement connection's own arguments,
+    for a MySQL ``KILL QUERY``; its timeouts keep the cancel from hanging."""
+    engine = conn.engine
+    cargs, cparams = engine.dialect.create_connect_args(engine.url)
+    params = {**cparams, "connect_timeout": 2, "read_timeout": 5, "write_timeout": 5}
+    return engine.dialect.loaded_dbapi.connect(*cargs, **params)
 
 
 def _query_connection(conn, sql, limit, needs_confirm, response_format, execution):
