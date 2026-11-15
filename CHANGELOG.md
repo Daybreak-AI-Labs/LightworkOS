@@ -244,7 +244,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   or with `--storage N` (more disk space, slightly slower checks). If the
   saved limits can't be read, new partner requests are refused until an
   installation administrator starts over (`--start-over`); the unreadable
-  file is kept.
+  file is kept. Installation administrators can also show and change these
+  limits through the dashboard Copilot (the Connections action family).
 - Only the task that linked an outcome key, a later turn of the same chat
   or task by the same person, or an administrator can link that key to
   different work. Other runs get an error and the link stays. Links saved

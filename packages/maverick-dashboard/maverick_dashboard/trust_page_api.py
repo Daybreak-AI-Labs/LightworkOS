@@ -266,40 +266,51 @@ def federation_limits() -> dict | None:
         return None
 
 
-@router.post("/federation/limits/start-over")
-async def start_over_peer_limits(request: Request) -> dict:
+_UNREADABLE = ("The saved limits could not be read, so nothing was changed. "
+               "Start over to use the default limits.")
+_UNRECORDED = "The change could not be recorded, so it was not made."
+
+
+def _actor(request: Request) -> str:
+    return str(caller_principal(request) or "authorized-local-operator")
+
+
+def start_over_limits(request: Request) -> bool:
+    """Set unreadable partner limits aside. Shared by the page and Copilot:
+    installation administrators only, in the installation's own tenant; the
+    kernel writes the audit row first. The actor is the signed-in person."""
     require_global_permission(request, "admin")
     from maverick import federation_admission as admission
     from maverick.audit import AuditRefused
 
-    actor = str(caller_principal(request) or "authorized-local-operator")
+    actor = _actor(request)
     try:
-        aside = await run_in_threadpool(
-            lambda: _in_federation_scope(lambda: admission.start_over_limits(actor=actor)))
+        aside = _in_federation_scope(lambda: admission.start_over_limits(actor=actor))
     except (AuditRefused, RuntimeError) as exc:
-        raise HTTPException(status_code=503, detail="The change could not be recorded, so it was not made.") from exc
-    return {"started_over": aside is not None}
+        raise HTTPException(status_code=503, detail=_UNRECORDED) from exc
+    return aside is not None
 
 
-@router.post("/federation/limits/storage")
-async def set_storage_limit(request: Request, body: StorageLimitIn) -> dict:
+def apply_storage_limit(request: Request, limit: int) -> int:
+    """Set the workspace storage limit (same checks as :func:`start_over_limits`)."""
     require_global_permission(request, "admin")
     from maverick import federation_admission as admission
     from maverick.audit import AuditRefused
 
-    actor = str(caller_principal(request) or "authorized-local-operator")
+    actor = _actor(request)
     try:
-        limit = await run_in_threadpool(
-            lambda: _in_federation_scope(lambda: admission.set_storage_limit(body.limit, actor=actor)))
+        return _in_federation_scope(lambda: admission.set_storage_limit(limit, actor=actor))
     except admission.LimitsUnreadable as exc:
-        raise HTTPException(status_code=409, detail="The saved limits could not be read, so nothing was changed. Start over to use the default limits.") from exc
+        raise HTTPException(status_code=409, detail=_UNREADABLE) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="That limit is not allowed. Choose a whole number from 1 to 2,000,000.") from exc
     except (AuditRefused, RuntimeError) as exc:
-        raise HTTPException(status_code=503, detail="The change could not be recorded, so it was not made.") from exc
-    return {"storage_limit": limit}
+        raise HTTPException(status_code=503, detail=_UNRECORDED) from exc
 
 
-@router.post("/federation/{peer}/limit")
-async def set_peer_limit(request: Request, peer: str, body: PeerLimitIn) -> dict:
+def apply_peer_limit(request: Request, peer: str, *, limit: int | None, reset: bool) -> dict:
+    """Raise a partner's limit and/or restart its count (same checks as
+    :func:`start_over_limits`). Returns the partner's current use."""
     require_global_permission(request, "admin")
     from maverick import federation
     from maverick import federation_admission as admission
@@ -308,20 +319,36 @@ async def set_peer_limit(request: Request, peer: str, body: PeerLimitIn) -> dict
 
     if peer not in {p.name for p in federation.load_peers()}:
         raise HTTPException(status_code=404, detail="That partner is not set up on this installation.")
-    if body.limit is None and not body.reset:
+    if limit is None and not reset:
         raise HTTPException(status_code=422, detail="Choose a new limit or start the count again.")
-    actor = caller_principal(request) or "authorized-local-operator"
+    actor = _actor(request)
 
     def write() -> dict:
-        admission.set_admission_limit(peer, limit=body.limit, reset=body.reset, actor=str(actor))
+        admission.set_admission_limit(peer, limit=limit, reset=reset, actor=actor)
         with open_world() as world:
             return admission.admission_usage(world, peer)
 
     try:
-        return await run_in_threadpool(_in_federation_scope, write)
+        return _in_federation_scope(write)
     except admission.LimitsUnreadable as exc:
-        raise HTTPException(status_code=409, detail="The saved limits could not be read, so nothing was changed. Start over to use the default limits.") from exc
+        raise HTTPException(status_code=409, detail=_UNREADABLE) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail="That limit is not allowed. Choose a whole number from 1 to 2,000,000.") from exc
     except (AuditRefused, RuntimeError) as exc:
-        raise HTTPException(status_code=503, detail="The change could not be recorded, so it was not made.") from exc
+        raise HTTPException(status_code=503, detail=_UNRECORDED) from exc
+
+
+@router.post("/federation/limits/start-over")
+async def start_over_peer_limits(request: Request) -> dict:
+    return {"started_over": await run_in_threadpool(start_over_limits, request)}
+
+
+@router.post("/federation/limits/storage")
+async def set_storage_limit(request: Request, body: StorageLimitIn) -> dict:
+    return {"storage_limit": await run_in_threadpool(apply_storage_limit, request, body.limit)}
+
+
+@router.post("/federation/{peer}/limit")
+async def set_peer_limit(request: Request, peer: str, body: PeerLimitIn) -> dict:
+    return await run_in_threadpool(
+        lambda: apply_peer_limit(request, peer, limit=body.limit, reset=body.reset))
