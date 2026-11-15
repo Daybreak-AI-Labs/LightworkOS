@@ -16,6 +16,7 @@ import sqlite3
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 HELD = "held"
@@ -26,50 +27,73 @@ _COLUMNS = ("id", "collection", "doc_sha256", "source", "subject", "rule", "exce
             "text", "args", "state", "held_at", "decided_by", "decided_at")
 
 
+class ClosingConnection(sqlite3.Connection):
+    """A connection whose ``with`` block commits or rolls back, then closes.
+
+    The same contract as ``maverick.sqlite_closing.ClosingConnection``; this
+    package does not depend on the kernel, so it carries its own copy. A file
+    that stays open cannot be deleted or replaced on Windows, which would
+    block erasure, restore and workspace deletion."""
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
+
+
+_SCHEMA = (
+    "CREATE TABLE IF NOT EXISTS held_documents ("
+    "id TEXT PRIMARY KEY, collection TEXT, doc_sha256 TEXT, source TEXT, "
+    "subject TEXT, rule TEXT, excerpt TEXT, text TEXT, args TEXT, state TEXT, "
+    "held_at REAL, decided_by TEXT, decided_at REAL)",
+    "CREATE INDEX IF NOT EXISTS held_documents_doc ON held_documents(collection, doc_sha256, held_at)",
+)
+
+
 class HeldDocuments:
-    """A small SQLite table of held documents (``:memory:`` by default)."""
+    """A small SQLite table of held documents (``:memory:`` by default).
+
+    A file-backed store opens one connection per operation and closes it at
+    once; only the in-memory store keeps its single connection."""
 
     def __init__(self, path: str | Path = ":memory:"):
         self._path = str(path)
         self._lock = threading.Lock()
-        self._db: sqlite3.Connection | None = None
+        self._memory: sqlite3.Connection | None = None
         if self._path == ":memory:":
-            self._connect()
+            self._memory = sqlite3.connect(":memory:", check_same_thread=False)
+            with self._memory:
+                for statement in _SCHEMA:
+                    self._memory.execute(statement)
 
-    def _connect(self) -> sqlite3.Connection:
-        """Open (and on first use create) the store. Caller holds no lock."""
-        if self._db is None:
-            if self._path != ":memory:":
-                Path(self._path).parent.mkdir(parents=True, exist_ok=True)
-            db = sqlite3.connect(self._path, check_same_thread=False)
-            with db:
-                db.execute(
-                    "CREATE TABLE IF NOT EXISTS held_documents ("
-                    "id TEXT PRIMARY KEY, collection TEXT, doc_sha256 TEXT, source TEXT, "
-                    "subject TEXT, rule TEXT, excerpt TEXT, text TEXT, args TEXT, state TEXT, "
-                    "held_at REAL, decided_by TEXT, decided_at REAL)"
-                )
-                db.execute("CREATE INDEX IF NOT EXISTS held_documents_doc "
-                           "ON held_documents(collection, doc_sha256, held_at)")
-            self._db = db
-        return self._db
-
-    def _existing(self) -> sqlite3.Connection | None:
-        """The store if it exists (another process may have created it since)."""
-        if self._db is None and self._path != ":memory:" and Path(self._path).is_file():
-            self._connect()
-        return self._db
+    @contextmanager
+    def _transaction(self, *, create: bool):
+        """One transaction on the store, or ``None`` when the file does not
+        exist and ``create`` is false (the file appears on the first hold)."""
+        with self._lock:
+            if self._memory is not None:
+                with self._memory:
+                    yield self._memory
+                return
+            if self._path == ":memory:":
+                raise sqlite3.ProgrammingError("the held-document store is closed")
+            if not create and not Path(self._path).is_file():
+                yield None
+                return
+            Path(self._path).parent.mkdir(parents=True, exist_ok=True)
+            with sqlite3.connect(self._path, factory=ClosingConnection) as db:
+                for statement in _SCHEMA:
+                    db.execute(statement)
+                yield db
 
     def _rows(self, sql: str, params) -> list[tuple]:
-        with self._lock:
-            db = self._existing()
+        with self._transaction(create=False) as db:
             return [] if db is None else db.execute(sql, params).fetchall()
 
     def _write(self, sql: str, params) -> int:
-        with self._lock:
-            db = self._connect()
-            with db:
-                return db.execute(sql, params).rowcount
+        with self._transaction(create=True) as db:
+            return db.execute(sql, params).rowcount
 
     @staticmethod
     def _row(row) -> dict:
@@ -159,12 +183,8 @@ class HeldDocuments:
     def delete_where(self, key: str, value: str, collections=None) -> int:
         """Erase held records by ``subject`` or ``source`` (erasure covers them too)."""
         clause, params = self._where(key, value, collections)
-        with self._lock:
-            db = self._existing()
-            if db is None:
-                return 0
-            with db:
-                return db.execute(f"DELETE FROM held_documents WHERE {clause}", params).rowcount
+        with self._transaction(create=False) as db:
+            return 0 if db is None else db.execute(f"DELETE FROM held_documents WHERE {clause}", params).rowcount
 
     def count_where(self, key: str, value: str, collections=None) -> int:
         clause, params = self._where(key, value, collections)
@@ -173,6 +193,6 @@ class HeldDocuments:
 
     def close(self) -> None:
         with self._lock:
-            if self._db is not None:
-                self._db.close()
-                self._db = None
+            if self._memory is not None:
+                self._memory.close()
+                self._memory = None

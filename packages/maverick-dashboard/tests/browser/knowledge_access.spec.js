@@ -119,9 +119,20 @@ for (const width of [320, 1280]) test(`knowledge access is usable and honest at 
     if (url.pathname.endsWith('/detail')) return route.fulfill({json: {context, ...item()}});
     return route.fulfill({status: 404, json: {detail: 'Synthetic route unavailable'}});
   });
+  // A held document with a long unbroken name and matching text must fit too.
+  await page.route('**/api/v1/knowledge/library/held', route => route.fulfill({json: {
+    context: sha('a'), total: 1, documents: [{id: 'd'.repeat(32), collection: 'it',
+      source: 'welcome-' + 'x'.repeat(80) + '.txt', rule: 'role-reassign',
+      reason: 'It contains the words "you are now", which can give an assistant a new role.',
+      excerpt: 'y'.repeat(197) + '...', state: 'held', held_at: 1, decided_by: '', decided_at: null}]}}));
   await page.goto('/knowledge-access');
   await expect(page.getByRole('heading', {name: 'Knowledge', exact: true, level: 1})).toBeVisible();
   await expect(page.locator('.ka-lede')).toContainText('Find knowledge you can use now');
+  await expect(page.locator('#ka-held-documents')).toContainText('can give an assistant a new role');
+  for (const name of ['Include ', 'Keep ']) {
+    const box = await page.locator('#ka-held-documents').getByRole('button', {name: new RegExp('^' + name)}).boundingBox();
+    expect(box.width >= 44 && box.height >= (width <= 560 ? 44 : 1), name).toBe(true);
+  }
   await expect(page.locator('#ka-requests')).toContainText('retire or retrain the model');
   await expect(page.locator('#ka-requests')).toContainText('does not erase its influence from learned weights');
 
