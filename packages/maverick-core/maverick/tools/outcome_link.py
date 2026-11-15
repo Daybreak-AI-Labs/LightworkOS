@@ -36,6 +36,16 @@ _SCHEMA: dict[str, Any] = {
 }
 
 
+def ancestors(world, goal_id: int) -> frozenset[int]:
+    """The goals this one continues (chat follow-ups, rewind forks), bounded."""
+    seen: set[int] = set()
+    current = getattr(world.get_goal(goal_id), "parent_id", None) if hasattr(world, "get_goal") else None
+    while current is not None and current not in seen and len(seen) < 100:
+        seen.add(int(current))
+        current = getattr(world.get_goal(int(current)), "parent_id", None)
+    return frozenset(seen)
+
+
 def _run_factory(world, goal_id: int | None):
     def run(args: dict[str, Any]) -> str:
         # The registry calls every executor as fn(args) with ONE dict payload.
@@ -50,7 +60,9 @@ def _run_factory(world, goal_id: int | None):
                 return "ERROR: no episode to link (the run hasn't started acting yet)"
             from ..consequence import OutcomeKeyOwned, link_outcome_key
             try:
-                linked = link_outcome_key(k[:256], goal_id, episodes[0].id)
+                related = ancestors(world, goal_id)
+                linked = link_outcome_key(k[:256], goal_id, episodes[0].id,
+                                          **({"same_task": related} if related else {}))
             except OutcomeKeyOwned as exc:
                 return f"ERROR: {exc}"
             if not linked:

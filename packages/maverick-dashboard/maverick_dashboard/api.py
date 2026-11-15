@@ -5549,8 +5549,11 @@ def _link_outcome_reviewed(request, payload):
 
     try:
         # Only the task that holds the key, or an administrator, may move it.
+        from maverick.tools.outcome_link import ancestors
+
         recorded = link_outcome_key(payload.key, goal_id, episode_id,
-                                    operator=has_permission(request, "admin"))
+                                    operator=has_permission(request, "admin"),
+                                    same_task=ancestors(w, goal_id))
     except OutcomeKeyOwned as exc:
         raise HTTPException(409, str(exc)) from exc
     except ConsequenceWriteUncertain as exc:

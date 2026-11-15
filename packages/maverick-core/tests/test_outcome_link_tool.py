@@ -120,3 +120,18 @@ def test_only_the_owning_run_or_an_operator_can_relink_a_key(tmp_path, monkeypat
     assert consequence.shared_correlation().resolve("invoice:INV-9") == (7, 56)
     assert consequence.link_outcome_key("invoice:INV-9", 8, 80, operator=True) is True
     assert consequence.shared_correlation().resolve("invoice:INV-9") == (8, 80)
+
+
+def test_a_follow_up_goal_of_the_same_task_may_relink_its_parents_key(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    class _Tree(_World):
+        def get_goal(self, goal_id):
+            return SimpleNamespace(id=goal_id, parent_id={9: 7}.get(goal_id))
+
+    monkeypatch.setattr("maverick.paths.data_dir", lambda *p, **k: tmp_path.joinpath(*p))
+    consequence.reset_shared()
+    assert "Linked" in remember_outcome_key(_World([_Ep(55)]), goal_id=7).fn({"key": "deal:D-1"})
+    # A chat follow-up or rewind fork is a child goal of the task that holds the key.
+    assert "Linked" in remember_outcome_key(_Tree([_Ep(90)]), goal_id=9).fn({"key": "deal:D-1"})
+    assert consequence.shared_correlation().resolve("deal:D-1") == (9, 90)
