@@ -14,10 +14,13 @@ place that decides it:
 * ``protection`` -- a boolean protection may only go to on.
 * ``permission`` -- a boolean permission may only go to off.
 * ``limit`` -- a numeric limit (or a per-action threshold table, where ``*``
-  applies to every action) may only go down; ``None`` is no limit.
+  applies to every action) may only go down; ``None``, zero or a negative
+  number is no limit.
+* ``minimum`` -- a numeric floor (approvers needed, text scanned) may only go up.
 * ``approval`` -- an approval requirement may only be added: a list grows and
   a switch may only go to on.
-* ``rank`` -- an ordered choice, ``order`` listed from strictest to loosest.
+* ``rank`` -- an ordered choice, ``order`` listed from strictest to loosest;
+  an entry may be a tuple of equally strict spellings.
 """
 from __future__ import annotations
 
@@ -34,12 +37,20 @@ def _number(value: object) -> float:
     return float(value)
 
 
-def _table(value: object) -> dict[str, float] | None:
+def _ceiling(value: object) -> float | None:
+    """A limit's value; ``None`` when it sets no limit (zero or less)."""
     if value is None:
         return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise ValueError("a limit must be a finite number")
+    return float(value) if value > 0 else None
+
+
+def _table(value: object) -> dict[str, float | None] | None:
     if isinstance(value, dict):
-        return {str(k): _number(v) for k, v in value.items()}
-    return {"*": _number(value)}
+        return {str(k): _ceiling(v) for k, v in value.items()}
+    amount = _ceiling(value)
+    return None if amount is None else {"*": amount}
 
 
 def _limit(upper: object, lower: object) -> tuple[Any, bool]:
@@ -48,14 +59,14 @@ def _limit(upper: object, lower: object) -> tuple[Any, bool]:
         return lower, False
     if low is None:
         return upper, True
-    merged = dict(up)
+    merged = dict(upper) if isinstance(upper, dict) else {"*": upper}
     loosened = False
     for key, amount in low.items():
         ceiling = up.get(key, up.get("*"))
-        if ceiling is not None and amount > ceiling:
+        if ceiling is not None and (amount is None or amount > ceiling):
             loosened = True
             continue
-        merged[key] = amount
+        merged[key] = lower[key] if isinstance(lower, dict) else amount
     if not isinstance(upper, dict) and not isinstance(lower, dict):
         return merged["*"], loosened
     return merged, loosened
@@ -109,13 +120,25 @@ def tighten(kind: str, upper: object, lower: object, *,
         return up_on and low_on, low_on and not up_on
     if kind == "limit":
         return _limit(upper, lower)
+    if kind == "minimum":
+        floor, low = _number(lower), (None if upper is None else _number(upper))
+        return (upper, True) if low is not None and floor < low else (lower, False)
     if kind == "rank":
-        if lower not in order:
+        low_rank, up_rank = _rank(order, lower), _rank(order, upper)
+        if low_rank is None:
             raise ValueError("not one of the known choices")
-        if upper not in order:
+        if up_rank is None:
             return upper, True
-        return (upper, True) if order.index(lower) > order.index(upper) else (lower, False)
+        return (upper, True) if low_rank > up_rank else (lower, False)
     raise ValueError(f"unknown policy kind {kind!r}")
+
+
+def _rank(order: Sequence[object], value: object) -> int | None:
+    probe = value.strip().lower() if isinstance(value, str) else value
+    for index, entry in enumerate(order):
+        if probe == entry or (isinstance(entry, tuple) and probe in entry):
+            return index
+    return None
 
 
 def _risk(value: object) -> object:
@@ -131,9 +154,14 @@ def _block_default(section: dict) -> str:
     return {"strict": "medium", "permissive": "critical"}.get(profile, "high")
 
 
+_BACKENDS = (("firecracker",), ("gvisor",), ("kubernetes", "docker", "podman", "devcontainer"), ("local",))
+_NETWORK = (("deny-all", "deny_all", "deny", "blocked", "none-allowed"),
+            ("allowlist", "allow-list", "allow_list"), ("", "open", "allow", "allow-all", "allow_all"))
+_CONSENT = (("auto-deny",), ("ask",), ("dashboard",), ("auto-approve",))
+
 # section -> key -> (kind, default, order). A default may be a callable of the
-# organisation's section. A key not listed here is fixed by the organisation:
-# a lower layer cannot change it at all.
+# organisation's section. A key not listed here has no stricter direction
+# (a path, an image, a key name) and merges as an ordinary setting.
 TENANT_RULES: dict[str, dict[str, tuple]] = {
     "governance": {
         "deny_actions": ("deny_list", [], ()),
@@ -143,6 +171,7 @@ TENANT_RULES: dict[str, dict[str, tuple]] = {
         "deny_above": ("limit", None, ()),
         "require_human_above": ("limit", None, ()),
         "require_fresh_human_approval": ("approval", False, ()),
+        "profile": ("rank", "", (("regulated",), ("standard",), ("essentials", ""))),
     },
     "safety": {
         "profile": ("rank", "balanced", ("strict", "balanced", "permissive")),
@@ -154,26 +183,47 @@ TENANT_RULES: dict[str, dict[str, tuple]] = {
         "compartments": ("protection", False, ()),
         "compartment_unseal": ("rank", "human", ("human", "orchestrator", "both")),
         "require_shield": ("protection", False, ()),
+        "consent_mode": ("rank", "ask", _CONSENT),
+        "review_checkpoint": ("limit", None, ()),
+        "max_scan_chars": ("minimum", None, ()),
+        "supply_chain_pinning": ("protection", False, ()),
+        "quorum_required": ("minimum", 2, ()),
+        "quorum_protected_keys": ("deny_list", [], ()),
+        "quorum_ttl_days": ("limit", None, ()),
+        "goal_risk_floor": ("rank", "low", ("high", "medium", "low")),
+        "goal_risk_require_human": ("rank", "never", ("medium", "high", ("never", ""))),
     },
     "capabilities": {
         **dict.fromkeys(("computer_use", "browser", "web_search", "mobile_tools", "ros", "code_exec"),
                         ("permission", False, ())),
         "enforce": ("protection", False, ()),
+        "per_call_tokens": ("protection", False, ()),
+        "per_call_token_ttl": ("limit", None, ()),
     },
     "sandbox": {
+        "backend": ("rank", "local", _BACKENDS),
+        "network_policy": ("rank", "open", _NETWORK),
+        "host_key_checking": ("rank", "accept-new", ("yes", "accept-new", "no")),
         "require_container": ("protection", False, ()),
-        "allow_network": ("permission", True, ()),
+        "firecracker_strict": ("protection", False, ()),
+        "allow_network": ("permission", False, ()),
         "allow_root": ("permission", False, ()),
+        "reuse_container": ("permission", False, ()),
+        "cross_run_pool": ("permission", False, ()),
+        **dict.fromkeys(("pids_limit", "memory_mb", "cpus", "long_command_timeout"), ("limit", None, ())),
         "timeout": ("limit", 60, ()),
     },
 }
 
 
-def _merge_key(rule: tuple | None, section: dict, key: str, value: object) -> tuple[bool, Any, bool]:
+def _merge_key(rule: tuple | None, section: dict, key: str, value: object,
+               deep_merge=None) -> tuple[bool, Any, bool]:
     """``(changed, value, loosened)`` for one lower-layer key of a tight section."""
     present = key in section
-    if rule is None:
-        return False, None, not (present and section[key] == value)
+    if rule is None:  # no stricter direction: an ordinary setting
+        if deep_merge is not None and isinstance(value, dict) and isinstance(section.get(key), dict):
+            return True, deep_merge(section[key], value), False
+        return True, value, False
     kind, default, order = rule
     upper = section[key] if present else (default(section) if callable(default) else default)
     try:
@@ -189,7 +239,8 @@ def _merge_key(rule: tuple | None, section: dict, key: str, value: object) -> tu
     return True, effective, loosened
 
 
-def merge_tenant_section(name: str, upper: dict, lower: dict) -> tuple[dict, list[str]]:
+def merge_tenant_section(name: str, upper: dict, lower: dict,
+                         deep_merge=None) -> tuple[dict, list[str]]:
     """Apply ``lower`` (a tenant's section) under ``upper`` (the organisation's).
 
     Returns the merged section and the dotted names of the keys whose looser
@@ -199,7 +250,7 @@ def merge_tenant_section(name: str, upper: dict, lower: dict) -> tuple[dict, lis
     merged = dict(upper)
     ignored: list[str] = []
     for key, value in lower.items():
-        changed, effective, loosened = _merge_key(rules.get(key), upper, key, value)
+        changed, effective, loosened = _merge_key(rules.get(key), upper, key, value, deep_merge)
         if changed:
             merged[key] = effective
         if loosened:
@@ -222,6 +273,6 @@ def merge_tenant_overlay(upper: dict, lower: dict, deep_merge) -> tuple[dict, li
         if not isinstance(lower[name], dict) or not isinstance(section, dict):
             ignored.append(name)
             continue
-        merged[name], missed = merge_tenant_section(name, section, lower[name])
+        merged[name], missed = merge_tenant_section(name, section, lower[name], deep_merge)
         ignored.extend(missed)
     return merged, ignored

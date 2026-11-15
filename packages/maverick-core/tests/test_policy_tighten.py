@@ -24,8 +24,24 @@ from maverick.policy_tighten import tighten
     ("approval", False, True, True, False, ()),
     ("rank", "strict", "permissive", "strict", True, ("strict", "balanced", "permissive")),
     ("rank", "balanced", "strict", "strict", False, ("strict", "balanced", "permissive")),
+    ("rank", "docker", "podman", "podman", False, (("gvisor",), ("docker", "podman"), ("local",))),
+    ("rank", "docker", "local", "docker", True, (("gvisor",), ("docker", "podman"), ("local",))),
+    ("limit", 30, 0, 30, True, ()),  # zero or less means no limit, which is looser
+    ("limit", {"dollars": 10}, {"dollars": 0, "tool_calls": 5}, {"dollars": 10, "tool_calls": 5}, True, ()),
+    ("minimum", 2, 1, 2, True, ()),
+    ("minimum", 2, 3, 3, False, ()),
 ])
 def test_a_lower_layer_may_only_tighten(kind, upper, lower, expected, loosened, order):
     assert tighten(kind, upper, lower, order=order) == (expected, loosened)
     with pytest.raises(ValueError):
         tighten(kind if kind != "rank" else "limit", upper, object(), order=order)
+
+
+def test_a_tenant_may_choose_a_stricter_value_and_unranked_keys_merge_as_before():
+    from maverick.policy_tighten import merge_tenant_section
+
+    org = {"backend": "local", "workdir": "/org", "timeout": 30}
+    tenant = {"backend": "docker", "network_policy": "deny-all", "workdir": "/acme", "timeout": 0}
+    merged, ignored = merge_tenant_section("sandbox", org, tenant)
+    assert merged == {"backend": "docker", "network_policy": "deny-all", "workdir": "/acme", "timeout": 30}
+    assert ignored == ["sandbox.timeout"]
