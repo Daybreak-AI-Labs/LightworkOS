@@ -527,3 +527,17 @@ def test_agent_factory_reads_plainly():
         assert developer_terms(html) == [], path
         assert "window.prompt" not in html and "'HTTP '" not in html
         assert "Team (fleet) name" not in html and "/Mtok" not in html
+
+
+def test_ignored_looser_override_fields_are_shown_on_the_agent_page(tmp_path):
+    from maverick.domain import builtin_dir, load_domains
+
+    name = _clean_builtin_name()
+    assert load_domains(builtin_dir())[name].deny_tools
+    (tmp_path / "domains").mkdir(exist_ok=True)
+    (tmp_path / "domains" / f"{name}.toml").write_text(
+        f'name = "{name}"\ndeny_tools = []\n', encoding="utf-8")
+    view = client.get(f"/api/v1/agents/{name}").json()
+    assert view["set_by_organisation"] == ["Tools it may never use"]
+    html = client.get(f"/agents?name={name}").text
+    assert "Set by your organisation" in html and "Tools it may never use" in html

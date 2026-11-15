@@ -230,8 +230,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A workspace's `config.toml` and a workspace agent override can only make
   governance, safety, capabilities and sandbox settings stricter. A looser
   value is ignored, logged, listed by `maverick doctor` and shown in Settings
-  as "Set by your organisation"; the file still loads. Remove the looser
-  values from the file to clear the warning.
+  or on the agent page as "Set by your organisation"; the file still loads.
+  Remove the looser values from the file to clear the warning.
 
 ### Fixed
 
