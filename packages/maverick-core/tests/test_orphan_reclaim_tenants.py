@@ -54,10 +54,12 @@ def _stranded_tenant(tenant: str) -> tuple[int, int]:
     return pending, active
 
 
-def _assert_reclaimed(tenant: str, goal_ids: tuple[int, ...]) -> None:
+def _assert_reclaimed(tenant: str, goal_ids: tuple[int, int]) -> None:
     w = world_for_tenant(tenant)
-    for gid in goal_ids:
-        assert w.get_goal(gid).status == "blocked"
+    pending, active = goal_ids
+    # A queued goal may legitimately wait for a worker; only the run is stuck.
+    assert w.get_goal(pending).status == "pending"
+    assert w.get_goal(active).status == "blocked"
 
 
 # --- tenancy ON: every tenant's world.db is swept -------------------------
@@ -79,7 +81,7 @@ def test_reclaims_orphans_across_all_tenant_worlds(monkeypatch):
 
     reclaimed = server_mod._reclaim_tenant_orphans()
 
-    assert reclaimed == 4  # 2 tenants x (1 pending + 1 active)
+    assert reclaimed == 2  # 2 tenants x 1 active (pending goals stay queued)
     _assert_reclaimed("a", a_goals)
     _assert_reclaimed("b", b_goals)
 
@@ -100,7 +102,7 @@ def test_reclaim_does_not_populate_tenant_world_cache(monkeypatch):
 
     reclaimed = server_mod._reclaim_tenant_orphans()
 
-    assert reclaimed == 6
+    assert reclaimed == 3
     assert wm._tenant_worlds == {}
 
     for tenant, goal_ids in goals.items():
@@ -126,7 +128,7 @@ def test_reclaim_skips_unreadable_tenant_dir_fail_soft(monkeypatch):
 
     reclaimed = server_mod._reclaim_tenant_orphans()
 
-    assert reclaimed == 2  # only the 'good' tenant's two goals
+    assert reclaimed == 1  # only the 'good' tenant's active goal
     _assert_reclaimed("good", good)
 
 

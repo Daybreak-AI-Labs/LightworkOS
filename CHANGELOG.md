@@ -229,6 +229,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A cancel that arrives after a task finished no longer replaces "done".
   The task stays finished, and the chat supervisor and the gRPC cancel say
   that it had already finished.
+- Startup recovery (`maverick serve`, the dashboard on SQLite and
+  `maverick status`) no longer marks queued tasks as stuck. Only running
+  tasks that went quiet are blocked; queued tasks wait for their worker.
 
 ### Fixed
 

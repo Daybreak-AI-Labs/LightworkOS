@@ -5068,7 +5068,7 @@ def status(ctx, cost: bool) -> None:
     """Show recent goals and open questions."""
     world = open_world(ctx.obj["db"])
     # Self-heal: a CLI run killed mid-flight (or pre-fix crash) leaves goals
-    # stranded in 'active'/'pending'. The dashboard reclaims these on startup,
+    # stranded in 'active'. The dashboard reclaims these on startup,
     # but a CLI-only user never triggers that -- so do it here, where the
     # ghosts are seen. Only touches rows older than the reclaim age window.
     try:

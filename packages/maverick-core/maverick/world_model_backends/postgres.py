@@ -3206,7 +3206,7 @@ class PostgresWorldModel:
 
     def reclaim_orphan_goals(
         self, *, max_age_seconds: float = 60.0,
-        statuses: tuple[str, ...] = ("active", "pending"),
+        statuses: tuple[str, ...] = ("active",),
         resolved_window_seconds: float | None = None,
         exact_tenant: bool = False,
     ) -> int:
@@ -3219,8 +3219,8 @@ class PostgresWorldModel:
         A resolved zero window explicitly reclaims every active/pending goal
         in scope, including monotonic review timestamps ahead of the wall clock.
         Positive windows continue to require the full stale interval.
-        The periodic dashboard sweep passes only ``("active",)`` so queued
-        ``pending`` goals are left for their dispatcher. ``exact_tenant``
+        Only ``active`` goals are reclaimed by default so queued ``pending``
+        goals are left for their dispatcher; a caller may ask for both. ``exact_tenant``
         excludes compatibility-mode NULL rows from that background sweep.
         Returns the number of rows reclaimed.
         """

@@ -1702,10 +1702,10 @@ class WorldModel:
 
     def reclaim_orphan_goals(
         self, *, max_age_seconds: float = 60.0,
-        statuses: tuple[str, ...] = ("active", "pending"),
+        statuses: tuple[str, ...] = ("active",),
         resolved_window_seconds: float | None = None,
     ) -> int:
-        """Mark goals stuck in 'active' or 'pending' as 'blocked'.
+        """Mark goals stuck in 'active' (or, when asked, 'pending') as 'blocked'.
 
         Called on startup to recover from SIGKILL / OOM / crash mid-run.
         Without this, a process death between create_goal() and
@@ -1727,8 +1727,10 @@ class WorldModel:
         goal, even when its monotonic review timestamp is ahead of the wall
         clock. Positive windows continue to require the full stale interval.
 
-        A periodic sweep passes only ``("active",)``; queued ``pending`` goals
-        may legitimately wait longer than the stale window.
+        Only ``active`` goals are reclaimed by default: a queued ``pending``
+        goal may legitimately wait longer than the stale window (for a worker,
+        a schedule or a concurrency slot). A caller that knows its pending rows
+        have no other owner passes ``("active", "pending")``.
 
         Returns rows reclaimed.
         """

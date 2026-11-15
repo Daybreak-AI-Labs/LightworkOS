@@ -68,10 +68,11 @@ and burning API credits.
 
 This is now handled automatically: on every `maverick serve` and
 `maverick dashboard` startup, `reclaim_orphan_goals()` flips rows
-from `active`/`pending` to `blocked` with result
-`[process restarted mid-run]` only when their `updated_at` is at least 60 seconds
-old by default. `MAVERICK_ORPHAN_RECLAIM_SECONDS` can change that window; live
-goals refresh their timestamps.
+from `active` to `blocked` with result
+`[process restarted mid-run]` only when neither their `updated_at` nor their
+liveness heartbeat (`heartbeat_at`) has moved for 60 seconds by default.
+`MAVERICK_ORPHAN_RECLAIM_SECONDS` can change that window; live goals keep
+heartbeating. Queued `pending` goals are left for their worker.
 
 If you see active goals that *should* be running, check `/metrics`:
 `maverick_concurrent_goals` should be > 0. If it's 0 but rows remain

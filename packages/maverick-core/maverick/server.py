@@ -735,7 +735,7 @@ class Server:
         """Run all channels concurrently. One channel crashing logs but doesn't kill others."""
         if not self._channels:
             raise ValueError("no channels registered")
-        # Reclaim any goals stuck in 'active'/'pending' from a prior
+        # Reclaim any goals stuck in 'active' from a prior
         # crash. Without this, SIGKILL/OOM mid-run leaves ghosts that
         # show in /goals forever. Sweeps the default world; with per-user
         # tenancy on, _reclaim_tenant_orphans() also sweeps every tenant's
