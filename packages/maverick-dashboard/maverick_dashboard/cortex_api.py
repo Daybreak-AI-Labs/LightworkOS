@@ -65,7 +65,8 @@ class DepositIn(_StrictModel):
     text: DepositText
     kind: DepositKind = "knowledge"
     collection: Collection = "cortex"
-    #: Where the text came from -- the citation later recalls carry.
+    #: The caller's own label. Stored provenance names the verified caller
+    #: first and keeps this label, quoted, after it (``cortex._provenance``).
     source: SourceLabel = ""
     domain: Domain | None = None
 

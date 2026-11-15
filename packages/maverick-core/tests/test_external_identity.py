@@ -559,3 +559,116 @@ def test_jwt_federated_endpoint_failure_fails_closed(monkeypatch, rsa_keys):
     agent, rule = verify_agent_jwt(_mint(priv_pem), registry=reg)
     assert agent is None
     assert rule == "jwks_unavailable"
+
+
+def test_remote_jwks_failure_is_cached_then_recovers(monkeypatch):
+    from contextlib import contextmanager
+
+    import httpx
+    from maverick import enterprise
+    from maverick.tools import _ssrf
+
+    calls = []
+    clock = [100.0]
+    monkeypatch.setattr(external_identity, "_JWKS_CACHE", {})
+    monkeypatch.setattr(external_identity.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(enterprise, "enterprise_egress_denial", lambda *args, **kwargs: None)
+
+    def transport(request):
+        calls.append(request)
+        if len(calls) == 1:
+            raise httpx.ConnectError("fixture outage")
+        return httpx.Response(200, json={"keys": [{"kid": "fixture"}]})
+
+    @contextmanager
+    def client(*args, **kwargs):
+        with httpx.Client(transport=httpx.MockTransport(transport)) as value:
+            yield value
+
+    monkeypatch.setattr(_ssrf, "safe_client", client)
+    url = "https://idp.example/jwks"
+    assert external_identity._remote_jwks_client(None, url) is None
+    assert external_identity._remote_jwks_client(None, url) is None
+    assert len(calls) == 1
+    clock[0] += 31
+    assert external_identity._remote_jwks_client(None, url) is not None
+    assert external_identity._remote_jwks_client(None, url) is not None
+    assert len(calls) == 2
+
+
+def test_remote_jwks_stops_streaming_at_response_bound(monkeypatch):
+    from contextlib import contextmanager
+
+    import httpx
+    from maverick import enterprise
+    from maverick.tools import _ssrf
+
+    consumed = []
+    closed = []
+
+    class Stream(httpx.SyncByteStream):
+        def __iter__(self):
+            for index in range(40):
+                consumed.append(index)
+                yield b" " * 65536
+
+        def close(self):
+            closed.append(True)
+
+    @contextmanager
+    def client(*args, **kwargs):
+        transport = httpx.MockTransport(lambda request: httpx.Response(200, stream=Stream()))
+        with httpx.Client(transport=transport) as value:
+            yield value
+
+    monkeypatch.setattr(external_identity, "_JWKS_CACHE", {})
+    monkeypatch.setattr(enterprise, "enterprise_egress_denial", lambda *args, **kwargs: None)
+    monkeypatch.setattr(_ssrf, "safe_client", client)
+    assert external_identity._remote_jwks_client(None, "https://idp.example/jwks") is None
+    assert len(consumed) <= 17
+    assert closed == [True]
+
+
+def test_remote_jwks_fetch_blocks_only_its_own_endpoint(monkeypatch):
+    """A slow identity provider holds only its own endpoint's lock: a cache
+    hit or a fetch for a healthy provider never waits behind it, and the
+    per-endpoint lock table stays bounded."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from maverick import enterprise
+
+    down, healthy = "https://down.example/jwks", "https://healthy.example/jwks"
+    cached = "https://cached.example/jwks"
+    started, release = threading.Event(), threading.Event()
+    fetched = []
+
+    def fetch(url):
+        fetched.append(url)
+        if url == down:
+            started.set()
+            release.wait(10)
+            return None
+        return [{"kid": "fixture"}]
+
+    monkeypatch.setattr(enterprise, "enterprise_egress_denial", lambda *args, **kwargs: None)
+    monkeypatch.setattr(external_identity, "_fetch_remote_jwks", fetch)
+    monkeypatch.setattr(external_identity, "_JWKS_CACHE", {
+        cached: (time.monotonic() + 300, [{"kid": "cached"}]),
+        down: (0.0, [{"kid": "expired"}])})
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        blocked = pool.submit(external_identity._remote_jwks_client, None, down)
+        assert started.wait(5)
+        try:
+            begun = time.monotonic()
+            assert external_identity._remote_jwks_client(None, cached) is not None
+            assert external_identity._remote_jwks_client(None, healthy) is not None
+            assert time.monotonic() - begun < 2
+            assert not blocked.done()
+        finally:
+            release.set()
+        assert blocked.result(5) is None
+    assert fetched == [down, healthy]
+    for n in range(external_identity._JWKS_MAX_URL_LOCKS * 2):
+        external_identity._remote_jwks_client(None, f"https://idp{n}.example/jwks")
+    assert len(external_identity._JWKS_URL_LOCKS) <= external_identity._JWKS_MAX_URL_LOCKS

@@ -1350,10 +1350,21 @@ class FederationService:
             "agent_card_json": json.dumps(build_agent_card()),
         }
 
-    def delegate_goal(self, payload: dict[str, Any]) -> dict[str, Any]:  # noqa: C901
+    def delegate_goal(
+        self, payload: dict[str, Any], *, peer_address: str = "",
+    ) -> dict[str, Any]:  # noqa: C901
         corr, correlation_error = self._validated_correlation(payload)
         peer = self._authenticate(payload)
         if peer is None:
+            # Only transport-supplied identity may select this bucket. Never
+            # use the claimed peer, token, or correlation id to rate-limit
+            # unauthenticated audit writes. Unknown/local callers share one.
+            from .grpc_api.server import _grpc_peer_caller
+
+            caller = _grpc_peer_caller(peer_address)
+            key = hashlib.sha256(caller.encode("utf-8")).hexdigest()
+            if not _fed_rate_ok(f"unauthenticated:{key}"):
+                return self._refuse("unauthenticated federation rate limit exceeded")
             # Forensic row, deliberately unattributed: a name offered by an
             # unauthenticated caller can't be trusted, and a row without a
             # peer field never pairs in reciprocity checks.
@@ -1744,8 +1755,11 @@ def _servicer(service: FederationService, pb2, pb2_grpc):
             )
 
         def DelegateGoal(self, request, context):
-            del context  # refusals are in-band
-            reply = service.call("DelegateGoal", {
+            try:
+                peer_address = context.peer() or ""
+            except Exception:
+                peer_address = ""
+            reply = service.delegate_goal({
                 "goal_title": request.goal_title,
                 "goal_description": request.goal_description,
                 "correlation_id": request.correlation_id,
@@ -1760,7 +1774,7 @@ def _servicer(service: FederationService, pb2, pb2_grpc):
                 "pubkey": getattr(request, "pubkey", ""),
                 "key_id": getattr(request, "key_id", ""),
                 "created_at": getattr(request, "created_at", 0.0),
-            })
+            }, peer_address=peer_address)
             return pb2.DelegateResult(
                 accepted=bool(reply.get("accepted")),
                 goal_id=_to_int(reply.get("goal_id")),

@@ -2877,20 +2877,145 @@ def _browser_rate_key(request: Request, identifier: str) -> str:
     return hashlib.sha256(f"{identifier}\0{client or 'unknown'}".encode()).hexdigest()
 
 
-def create_consent_public_router(  # noqa: C901 - closure wires one isolated router
-    dependencies: PublicConsentDependencies | None = None,
-) -> APIRouter:
-    """Create the isolated public router with injectable trust dependencies."""
+async def _public_experiment_material_impl(  # noqa: C901 - closed fail-control pipeline
+    request: Request,
+    authority: _Authority,
+    profile: PublicProfileBinding,
+    contract: _Contract,
+    *, experiment_enabled, experiment_authority, experiment_render, deps,
+) -> _PublicExperimentMaterial:
+    from maverick import consent_experiments as experiment_ops
 
-    from .consent_global_opt_out_public_adapter import (
-        GlobalOptOutPublicRouteDependencies,
-        attach_consent_global_opt_out_public_routes,
-        global_opt_out_preflight_contracts,
+    experiment_id = _public_experiment_id(authority.binding, contract)
+    control = _validated_experiment_render(
+        _published_experiment_render(contract),
+        contract,
+    )
+    if control is None:
+        raise HTTPException(status_code=409, detail=_CONTRACT_DETAIL)
+
+    def fallback(reason: str) -> _PublicExperimentMaterial:
+        return _PublicExperimentMaterial(
+            _public_experiment_response(
+                experiment_id=experiment_id,
+                variant_id="published-control",
+                eligible=False,
+                is_control=True,
+                is_holdout=False,
+                reason=reason,
+                render=control,
+            ),
+            None,
+            None,
+            None,
+        )
+
+    if not experiment_enabled():
+        return fallback("experiment_disabled")
+    try:
+        core = experiment_authority(request, authority.binding.tenant_id)
+    except Exception:
+        return fallback("experiment_unavailable")
+    if core is None:
+        return fallback("experiment_unavailable")
+    try:
+        record = await run_in_threadpool(
+            core.get_experiment,
+            authority.binding.tenant_id,
+            experiment_id,
+        )
+    except experiment_ops.ConsentExperimentConfigError:
+        return fallback("experiment_disabled")
+    except experiment_ops.ConsentExperimentNotFound:
+        return fallback("experiment_unavailable")
+    except experiment_ops.ConsentExperimentIntegrityError:
+        return fallback("experiment_integrity_failure")
+    except Exception:
+        return fallback("experiment_unavailable")
+    definition = record.get("definition")
+    if (
+        not isinstance(definition, Mapping)
+        or record.get("approved_by_token") is None
+        or not isinstance(record.get("definition_sha256"), str)
+        or not isinstance(record.get("approved_definition_sha256"), str)
+        or not hmac.compare_digest(
+            record["definition_sha256"],
+            record["approved_definition_sha256"],
+        )
+    ):
+        return fallback("not_active")
+    variants = definition.get("variants")
+    if not isinstance(variants, list) or not variants:
+        return fallback("unsafe_variant_definition")
+    renders: dict[str, dict[str, Any]] = {}
+    for variant in variants:
+        if not isinstance(variant, Mapping) or not isinstance(variant.get("variant_id"), str):
+            return fallback("unsafe_variant_definition")
+        render = await experiment_render(request, authority, contract, variant)
+        if render is None or variant["variant_id"] in renders:
+            return fallback("unsafe_variant_definition")
+        renders[variant["variant_id"]] = render
+    control_id = definition.get("control_variant_id")
+    if not isinstance(control_id, str) or control_id not in renders:
+        return fallback("unsafe_variant_definition")
+    signals = []
+    if request.headers.get("sec-gpc") == "1":
+        signals.append("gpc")
+    if request.headers.get("dnt") == "1":
+        signals.append("dnt")
+    purposes = contract.public_configuration["configuration"]["purposes"]
+    assignment_context = experiment_ops.AssignmentContext(
+        country_code=contract.context.country_code,
+        region_code=contract.context.region_code or None,
+        channel=("web" if authority.binding.client_kind == "browser" else "service"),
+        locale=contract.context.locale,
+        privacy_signals=tuple(signals),
+        required_purpose=any(item.get("required") is True for item in purposes),
+        accessibility_supported=authority.binding.client_kind == "browser",
+        equal_choice_prominence=all(
+            render["template"]["actions"]["accept_all"].strip()
+            and render["template"]["actions"]["reject_all"].strip()
+            for render in renders.values()
+        ),
+    )
+    subject_identity = _public_experiment_subject(authority, profile)
+    try:
+        assignment = await run_in_threadpool(
+            core.assign,
+            authority.binding.tenant_id,
+            experiment_id,
+            subject_identity,
+            assignment_context,
+            at=deps.clock(),
+        )
+    except experiment_ops.ConsentExperimentConfigError:
+        return fallback("experiment_disabled")
+    except experiment_ops.ConsentExperimentIntegrityError:
+        return fallback("experiment_integrity_failure")
+    except Exception:
+        return fallback("experiment_unavailable")
+    render = renders.get(assignment.variant_id)
+    if render is None:
+        return fallback("unsafe_variant_definition")
+    response = _public_experiment_response(
+        experiment_id=experiment_id,
+        variant_id=assignment.variant_id,
+        eligible=assignment.eligible,
+        is_control=assignment.is_control,
+        is_holdout=assignment.is_holdout,
+        reason=assignment.reason,
+        render=render,
+    )
+    return _PublicExperimentMaterial(
+        response,
+        core,
+        subject_identity,
+        assignment_context,
     )
 
-    deps = dependencies or default_public_consent_dependencies()
-    router = APIRouter(prefix="/api/v1/public/consent", tags=["public-consent"])
 
+def _consent_public_browser_sdk_routes(deps, global_opt_out_preflight_contracts, router):
+    """Bind browser sdk and related router operations."""
     @router.get("/sdk.js", include_in_schema=True)
     async def browser_sdk() -> FileResponse:
         """Serve the inert first-party SDK only while the public plane is enabled."""
@@ -3015,6 +3140,9 @@ def create_consent_public_router(  # noqa: C901 - closure wires one isolated rou
         )
         return response
 
+
+def _consent_public_admit_routes(deps, router):
+    """Bind admit and related router operations."""
     async def admit(request: Request, *, session_required: bool) -> _Authority:
         try:
             if not deps.gate():
@@ -3106,7 +3234,11 @@ def create_consent_public_router(  # noqa: C901 - closure wires one isolated rou
             raise HTTPException(status_code=503,
                                 detail="consent session authority unavailable") from exc
         return session_response(response, request, authority.binding, token, expires_at, ttl)
+    return authenticate, authenticate_client, session_response
 
+
+def _consent_public_renew_session_routes(authenticate_client, deps, router, session_response):
+    """Bind renew session and related router operations."""
     @router.post("/sessions/renew", status_code=201)
     async def renew_session(
         request: Request,
@@ -3151,7 +3283,11 @@ def create_consent_public_router(  # noqa: C901 - closure wires one isolated rou
             )
         except Exception as exc:
             raise HTTPException(status_code=401, detail=_AUTH_DETAIL) from exc
+    return profile_authority
 
+
+def _consent_public_active_contract_routes(deps):
+    """Bind active contract and related router operations."""
     async def active_contract(request: Request, authority: _Authority) -> _Contract:
         binding = authority.binding
         try:
@@ -3283,7 +3419,11 @@ def create_consent_public_router(  # noqa: C901 - closure wires one isolated rou
                 ).encode()
             ).hexdigest()
         )
+    return active_contract, core_context, core_idempotency
 
+
+def _consent_public_actor_sha256_routes(deps):
+    """Bind actor sha256 and related router operations."""
     def actor_sha256(
         authority: _Authority,
         profile: PublicProfileBinding,
@@ -3354,139 +3494,15 @@ def create_consent_public_router(  # noqa: C901 - closure wires one isolated rou
             return None
         return render
 
-    async def public_experiment_material(  # noqa: C901 - closed fail-control pipeline
+    async def public_experiment_material(
         request: Request,
         authority: _Authority,
         profile: PublicProfileBinding,
         contract: _Contract,
     ) -> _PublicExperimentMaterial:
-        from maverick import consent_experiments as experiment_ops
-
-        experiment_id = _public_experiment_id(authority.binding, contract)
-        control = _validated_experiment_render(
-            _published_experiment_render(contract),
-            contract,
-        )
-        if control is None:
-            raise HTTPException(status_code=409, detail=_CONTRACT_DETAIL)
-
-        def fallback(reason: str) -> _PublicExperimentMaterial:
-            return _PublicExperimentMaterial(
-                _public_experiment_response(
-                    experiment_id=experiment_id,
-                    variant_id="published-control",
-                    eligible=False,
-                    is_control=True,
-                    is_holdout=False,
-                    reason=reason,
-                    render=control,
-                ),
-                None,
-                None,
-                None,
-            )
-
-        if not experiment_enabled():
-            return fallback("experiment_disabled")
-        try:
-            core = experiment_authority(request, authority.binding.tenant_id)
-        except Exception:
-            return fallback("experiment_unavailable")
-        if core is None:
-            return fallback("experiment_unavailable")
-        try:
-            record = await run_in_threadpool(
-                core.get_experiment,
-                authority.binding.tenant_id,
-                experiment_id,
-            )
-        except experiment_ops.ConsentExperimentConfigError:
-            return fallback("experiment_disabled")
-        except experiment_ops.ConsentExperimentNotFound:
-            return fallback("experiment_unavailable")
-        except experiment_ops.ConsentExperimentIntegrityError:
-            return fallback("experiment_integrity_failure")
-        except Exception:
-            return fallback("experiment_unavailable")
-        definition = record.get("definition")
-        if (
-            not isinstance(definition, Mapping)
-            or record.get("approved_by_token") is None
-            or not isinstance(record.get("definition_sha256"), str)
-            or not isinstance(record.get("approved_definition_sha256"), str)
-            or not hmac.compare_digest(
-                record["definition_sha256"],
-                record["approved_definition_sha256"],
-            )
-        ):
-            return fallback("not_active")
-        variants = definition.get("variants")
-        if not isinstance(variants, list) or not variants:
-            return fallback("unsafe_variant_definition")
-        renders: dict[str, dict[str, Any]] = {}
-        for variant in variants:
-            if not isinstance(variant, Mapping) or not isinstance(variant.get("variant_id"), str):
-                return fallback("unsafe_variant_definition")
-            render = await experiment_render(request, authority, contract, variant)
-            if render is None or variant["variant_id"] in renders:
-                return fallback("unsafe_variant_definition")
-            renders[variant["variant_id"]] = render
-        control_id = definition.get("control_variant_id")
-        if not isinstance(control_id, str) or control_id not in renders:
-            return fallback("unsafe_variant_definition")
-        signals = []
-        if request.headers.get("sec-gpc") == "1":
-            signals.append("gpc")
-        if request.headers.get("dnt") == "1":
-            signals.append("dnt")
-        purposes = contract.public_configuration["configuration"]["purposes"]
-        assignment_context = experiment_ops.AssignmentContext(
-            country_code=contract.context.country_code,
-            region_code=contract.context.region_code or None,
-            channel=("web" if authority.binding.client_kind == "browser" else "service"),
-            locale=contract.context.locale,
-            privacy_signals=tuple(signals),
-            required_purpose=any(item.get("required") is True for item in purposes),
-            accessibility_supported=authority.binding.client_kind == "browser",
-            equal_choice_prominence=all(
-                render["template"]["actions"]["accept_all"].strip()
-                and render["template"]["actions"]["reject_all"].strip()
-                for render in renders.values()
-            ),
-        )
-        subject_identity = _public_experiment_subject(authority, profile)
-        try:
-            assignment = await run_in_threadpool(
-                core.assign,
-                authority.binding.tenant_id,
-                experiment_id,
-                subject_identity,
-                assignment_context,
-                at=deps.clock(),
-            )
-        except experiment_ops.ConsentExperimentConfigError:
-            return fallback("experiment_disabled")
-        except experiment_ops.ConsentExperimentIntegrityError:
-            return fallback("experiment_integrity_failure")
-        except Exception:
-            return fallback("experiment_unavailable")
-        render = renders.get(assignment.variant_id)
-        if render is None:
-            return fallback("unsafe_variant_definition")
-        response = _public_experiment_response(
-            experiment_id=experiment_id,
-            variant_id=assignment.variant_id,
-            eligible=assignment.eligible,
-            is_control=assignment.is_control,
-            is_holdout=assignment.is_holdout,
-            reason=assignment.reason,
-            render=render,
-        )
-        return _PublicExperimentMaterial(
-            response,
-            core,
-            subject_identity,
-            assignment_context,
+        return await _public_experiment_material_impl(
+            request, authority, profile, contract, experiment_enabled=experiment_enabled,
+            experiment_authority=experiment_authority, experiment_render=experiment_render, deps=deps,
         )
 
     def profile_data_enabled() -> bool:
@@ -3507,7 +3523,11 @@ def create_consent_public_router(  # noqa: C901 - closure wires one isolated rou
         if callable(factory):
             return factory(tenant_id=tenant_id, request=request)
         return _default_public_profile_data_store_for(tenant_id)
+    return actor_sha256, profile_data_enabled, profile_data_store, public_experiment_material
 
+
+def _consent_public_profile_assignment_store_routes(deps):
+    """Bind profile assignment store and related router operations."""
     def profile_assignment_store(request: Request, tenant_id: str) -> Any:
         if deps.profile_assignment_store_for is not None:
             return deps.profile_assignment_store_for(tenant_id)
@@ -3592,7 +3612,13 @@ def create_consent_public_router(  # noqa: C901 - closure wires one isolated rou
                     "profile catalog differs from the published configuration"
                 )
         return published
+    return _published_profile_definitions, profile_assignment_store
 
+
+def _consent_public_public_profile_data_material_routes(
+    _published_profile_definitions, profile_data_enabled, profile_data_store,
+):
+    """Bind public profile data material and related router operations."""
     async def public_profile_data_material(
         request: Request,
         authority: _Authority,
@@ -3720,7 +3746,11 @@ def create_consent_public_router(  # noqa: C901 - closure wires one isolated rou
             "evidence_sha256": receipt.integrity_sha256,
             "previous_receipt_sha256": receipt.previous_receipt_sha256,
         }
+    return _public_receipt, _public_value, public_profile_data_material
 
+
+def _consent_public_profile_call_routes(active_contract, authenticate, deps, router):
+    """Bind profile call and related router operations."""
     async def profile_call(
         material: _PublicProfileDataMaterial, function: Any, *args: Any, **kwargs: Any
     ) -> Any:
@@ -3852,7 +3882,14 @@ def create_consent_public_router(  # noqa: C901 - closure wires one isolated rou
                 "policy_sha256": contract.policy["policy_sha256"],
             }
         )
+    return profile_call, trusted_prompt_context
 
+
+def _consent_public_current_preferences_routes(
+    active_contract, actor_sha256, authenticate, core_context, core_idempotency, deps,
+    profile_authority, public_profile_data_material, router,
+):
+    """Bind current preferences and related router operations."""
     @router.get("/preferences")
     async def current_preferences(
         request: Request,
@@ -4057,7 +4094,14 @@ def create_consent_public_router(  # noqa: C901 - closure wires one isolated rou
             )
 
         return reauthenticate
+    return profile_request_material, public_authority_reauthenticator, trust_center_enabled
 
+
+def _consent_public_trust_center_store_routes(
+    active_contract, deps, profile_authority, public_authority_reauthenticator,
+    trust_center_enabled,
+):
+    """Bind trust center store and related router operations."""
     async def trust_center_store(
         request: Request,
         authority: _Authority,
@@ -4200,7 +4244,14 @@ def create_consent_public_router(  # noqa: C901 - closure wires one isolated rou
             }
         )
         return store, package_adapter, reauthentication_sha256, request_context_sha256
+    return rights_consumer_delivery_material, trust_center_store
 
+
+def _consent_public_rights_intake_enabled_routes(
+    _public_receipt, _public_value, active_contract, authenticate, deps, profile_authority,
+    profile_call, profile_request_material, public_authority_reauthenticator, router,
+):
+    """Bind rights intake enabled and related router operations."""
     def rights_intake_enabled(request: Request) -> bool:
         gate = deps.rights_intake_gate or getattr(
             request.app.state,
@@ -4380,7 +4431,14 @@ def create_consent_public_router(  # noqa: C901 - closure wires one isolated rou
         }
         _set_private_response_headers(response, request=request, binding=authority.binding)
         return _bounded_response({**body, "export_sha256": _sha256(body)})
+    return rights_intake_material, rights_intake_response
 
+
+def _consent_public_set_profile_value_routes(
+    _public_value, authenticate, core_idempotency, deps, profile_assignment_store, profile_call,
+    profile_request_material, router, trusted_prompt_context,
+):
+    """Bind set profile value and related router operations."""
     @router.put("/profile-data/preferences/{preference_id}")
     async def set_profile_value(
         preference_id: str,
@@ -4640,6 +4698,9 @@ def create_consent_public_router(  # noqa: C901 - closure wires one isolated rou
         _set_private_response_headers(response, request=request, binding=authority.binding)
         return _bounded_response(dict(result))
 
+
+def _consent_public_trust_center_call_routes():
+    """Bind trust center call and related router operations."""
     async def trust_center_call(call: Callable[[], Any]) -> dict[str, Any]:
         from maverick import consumer_trust_center as trust_ops
 
@@ -4759,7 +4820,15 @@ def create_consent_public_router(  # noqa: C901 - closure wires one isolated rou
             ),
             "host_header_tenant_inference": False,
         }
+    return brand_projection_response, branding_material, trust_center_call
 
+
+def _consent_public_rights_intake_call_routes(
+    active_contract, authenticate, brand_projection_response, branding_material,
+    core_idempotency, rights_intake_material, rights_intake_response, router, trust_center_call,
+    trust_center_store,
+):
+    """Bind rights intake call and related router operations."""
     async def rights_intake_call(
         store: Any,
         call: Callable[[], Any],
@@ -4932,6 +5001,12 @@ def create_consent_public_router(  # noqa: C901 - closure wires one isolated rou
         _set_private_response_headers(response, request=request, binding=authority.binding)
         return _bounded_response(result)
 
+
+def _consent_public_redeem_rights_delivery_routes(
+    active_contract, authenticate, core_idempotency, profile_authority,
+    public_experiment_material, rights_consumer_delivery_material, router,
+):
+    """Bind redeem rights delivery and related router operations."""
     @router.post("/rights-deliveries/redeem")
     async def redeem_rights_delivery(
         body: PublicRightsDeliveryRedeemIn,
@@ -5191,6 +5266,13 @@ def create_consent_public_router(  # noqa: C901 - closure wires one isolated rou
             }
         )
 
+
+def _consent_public_privacy_signal_routes(
+    GlobalOptOutPublicRouteDependencies, active_contract, actor_sha256,
+    attach_consent_global_opt_out_public_routes, authenticate, core_context, core_idempotency,
+    deps, profile_authority, public_authority_reauthenticator, rights_intake_material, router,
+):
+    """Bind privacy signal and related router operations."""
     @router.post("/privacy-signals")
     async def privacy_signal(
         body: PublicSignalIn,
@@ -5284,6 +5366,87 @@ def create_consent_public_router(  # noqa: C901 - closure wires one isolated rou
                 )
             ),
         ),
+    )
+
+
+def create_consent_public_router(
+    dependencies: PublicConsentDependencies | None = None,
+) -> APIRouter:
+    """Create the isolated public router with injectable trust dependencies."""
+
+    from .consent_global_opt_out_public_adapter import (
+        GlobalOptOutPublicRouteDependencies,
+        attach_consent_global_opt_out_public_routes,
+        global_opt_out_preflight_contracts,
+    )
+
+    deps = dependencies or default_public_consent_dependencies()
+    router = APIRouter(prefix="/api/v1/public/consent", tags=["public-consent"])
+
+    _consent_public_browser_sdk_routes(deps, global_opt_out_preflight_contracts, router)
+    authenticate, authenticate_client, session_response = _consent_public_admit_routes(deps, router)
+    profile_authority = _consent_public_renew_session_routes(
+        authenticate_client, deps, router, session_response,
+    )
+    active_contract, core_context, core_idempotency = _consent_public_active_contract_routes(deps)
+    (
+        actor_sha256, profile_data_enabled, profile_data_store, public_experiment_material,
+    ) = _consent_public_actor_sha256_routes(
+        deps,
+    )
+    (
+        _published_profile_definitions, profile_assignment_store,
+    ) = _consent_public_profile_assignment_store_routes(
+        deps,
+    )
+    (
+        _public_receipt, _public_value, public_profile_data_material,
+    ) = _consent_public_public_profile_data_material_routes(
+        _published_profile_definitions, profile_data_enabled, profile_data_store,
+    )
+    (profile_call, trusted_prompt_context) = _consent_public_profile_call_routes(
+        active_contract, authenticate, deps, router,
+    )
+    (
+        profile_request_material, public_authority_reauthenticator, trust_center_enabled,
+    ) = _consent_public_current_preferences_routes(
+        active_contract, actor_sha256, authenticate, core_context, core_idempotency, deps,
+        profile_authority, public_profile_data_material, router,
+    )
+    (
+        rights_consumer_delivery_material, trust_center_store,
+    ) = _consent_public_trust_center_store_routes(
+        active_contract, deps, profile_authority, public_authority_reauthenticator,
+        trust_center_enabled,
+    )
+    (
+        rights_intake_material, rights_intake_response,
+    ) = _consent_public_rights_intake_enabled_routes(
+        _public_receipt, _public_value, active_contract, authenticate, deps, profile_authority,
+        profile_call, profile_request_material, public_authority_reauthenticator, router,
+    )
+    _consent_public_set_profile_value_routes(
+        _public_value, authenticate, core_idempotency, deps, profile_assignment_store,
+        profile_call, profile_request_material, router, trusted_prompt_context,
+    )
+    (
+        brand_projection_response, branding_material, trust_center_call,
+    ) = _consent_public_trust_center_call_routes(
+    )
+    _consent_public_rights_intake_call_routes(
+        active_contract, authenticate, brand_projection_response, branding_material,
+        core_idempotency, rights_intake_material, rights_intake_response, router,
+        trust_center_call, trust_center_store,
+    )
+    _consent_public_redeem_rights_delivery_routes(
+        active_contract, authenticate, core_idempotency, profile_authority,
+        public_experiment_material, rights_consumer_delivery_material, router,
+    )
+    _consent_public_privacy_signal_routes(
+        GlobalOptOutPublicRouteDependencies, active_contract, actor_sha256,
+        attach_consent_global_opt_out_public_routes, authenticate, core_context,
+        core_idempotency, deps, profile_authority, public_authority_reauthenticator,
+        rights_intake_material, router,
     )
     return router
 

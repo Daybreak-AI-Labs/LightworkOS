@@ -148,21 +148,27 @@ def scan_file(path: Path) -> list[dict]:
         return []
     rel = _rel(path)
     out = []
-    # Map each function to whether it calls the gate, so a dispatch guarded a
-    # few lines above is recognised. Scoping to the enclosing function is the
-    # honest granularity: any wider and "somewhere in this module" would count,
-    # which is not a guarantee about this call.
-    gated_spans: list[tuple[int, int]] = []
-    for n in ast.walk(tree):
-        if not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        for c in ast.walk(n):
-            if isinstance(c, ast.Call):
-                nm = (c.func.id if isinstance(c.func, ast.Name)
-                      else getattr(c.func, "attr", ""))
-                if nm == "authorize":
-                    gated_spans.append((n.lineno, n.end_lineno or n.lineno))
-                    break
+    # Keep lexical function ownership separate from source order: ast.walk
+    # includes nested definitions, whose authorize calls do not gate their
+    # parent's dispatch. A later call cannot authorize an earlier effect.
+    owners: dict[ast.AST, ast.AST | None] = {}
+    gates: dict[ast.AST, list[tuple[int, int]]] = {}
+
+    def index(node: ast.AST, owner: ast.AST | None = None) -> None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            owner = node
+        elif isinstance(node, ast.ClassDef):
+            owner = None
+        owners[node] = owner
+        if isinstance(node, ast.Call) and owner is not None:
+            name = node.func.id if isinstance(node.func, ast.Name) else getattr(node.func, "attr", "")
+            if name == "authorize":
+                gates.setdefault(owner, []).append((node.end_lineno or node.lineno,
+                                                   node.end_col_offset or node.col_offset))
+        for child in ast.iter_child_nodes(node):
+            index(child, owner)
+
+    index(tree)
 
     for n in ast.walk(tree):
         if not isinstance(n, ast.Call):
@@ -178,7 +184,7 @@ def scan_file(path: Path) -> list[dict]:
         literal = None
         if n.args and isinstance(n.args[0], ast.Constant):
             literal = n.args[0].value
-        gated = any(lo <= n.lineno <= hi for lo, hi in gated_spans)
+        gated = any(position < (n.lineno, n.col_offset) for position in gates.get(owners[n], ()))
         out.append({"file": rel, "line": n.lineno, "recv": name,
                     "literal": literal, "gated": gated})
     return out

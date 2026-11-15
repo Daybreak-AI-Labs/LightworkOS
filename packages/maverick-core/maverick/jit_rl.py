@@ -120,6 +120,8 @@ class JitStore:
             )
         except (TypeError, ValueError):
             return
+        if not math.isfinite(exp.ret):
+            return
         with self._lock:
             self._items.append(exp)  # deque(maxlen=...) drops the oldest
             self._append(exp)

@@ -1,0 +1,367 @@
+"""Boundary regressions for audit custody and approval/schedule lifecycle."""
+from __future__ import annotations
+
+import os
+import sqlite3
+import threading
+from datetime import datetime, timezone
+from types import SimpleNamespace
+
+import pytest
+
+
+@pytest.fixture
+def isolated(tmp_path, monkeypatch):
+    from maverick import config, world_model
+    from maverick.audit import signing
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    monkeypatch.setenv("MAVERICK_CONFIG", str(tmp_path / "config.toml"))
+    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
+    monkeypatch.setattr(signing, "KEY_DIR", tmp_path / "keys")
+    monkeypatch.setattr(world_model, "DEFAULT_DB", tmp_path / "world.db")
+    config.reset_config_cache()
+    yield tmp_path
+    config.reset_config_cache()
+
+
+def test_anchor_tip_waits_for_inflight_day_append(isolated, monkeypatch):
+    from contextlib import contextmanager
+
+    from maverick.audit import signing
+    from maverick.file_lock import cross_process_lock
+
+    audit_dir = isolated / "audit"
+    path = audit_dir / "2000-01-01.ndjson"
+    signer = signing.AuditSigner(path)
+    assert signer.write({"kind": "before_rollover"})
+    attempted = threading.Event()
+    snapshot = threading.Event()
+    results = []
+    errors = []
+    original_tip = signing._file_tip_and_count
+
+    @contextmanager
+    def observed_lock(target, **kwargs):
+        if target == path:
+            attempted.set()
+        with cross_process_lock(target, **kwargs):
+            yield
+
+    def observed_tip(day_file):
+        snapshot.set()
+        return original_tip(day_file)
+
+    def anchor():
+        try:
+            results.append(signing.ensure_anchors(audit_dir))
+        except BaseException as exc:
+            errors.append(exc)
+
+    monkeypatch.setattr(signing, "cross_process_lock", observed_lock)
+    monkeypatch.setattr(signing, "_file_tip_and_count", observed_tip)
+    with cross_process_lock(path):
+        anchoring = threading.Thread(target=anchor)
+        anchoring.start()
+        assert attempted.wait(5)
+        assert not snapshot.wait(0.1)
+        assert signer.write({"kind": "inflight_append"})
+    anchoring.join(5)
+    assert not anchoring.is_alive()
+    assert errors == [] and results == [1]
+    assert snapshot.is_set()
+    assert len(path.read_text().splitlines()) == 2
+    assert signing.verify_anchors(audit_dir) == []
+
+
+def test_anchor_lock_failure_skips_only_that_day(isolated):
+    from maverick.audit import signing
+
+    audit_dir = isolated / "audit"
+    for day in ("2000-01-01", "2000-01-02"):
+        assert signing.AuditSigner(audit_dir / f"{day}.ndjson").write({"kind": day})
+    unsafe = audit_dir / "2000-01-01.ndjson.lock"
+    unsafe.unlink(missing_ok=True)
+    unsafe.symlink_to(isolated / "elsewhere")
+    assert signing.ensure_anchors(audit_dir) == 1
+    assert signing._anchored_days(audit_dir) == {"2000-01-02"}
+
+
+def test_checkpoint_publication_recovers_only_its_stale_stage_link(isolated):
+    from maverick.audit import checkpoints, signing
+
+    audit_dir = isolated / "audit"
+    checkpoint_dir = isolated / "checkpoints"
+    day_file = audit_dir / f"{datetime.now(timezone.utc):%Y-%m-%d}.ndjson"
+    signer = signing.AuditSigner(day_file)
+    assert signer.write({"kind": "first"})
+    target = checkpoints.publish_checkpoint(audit_dir, checkpoint_dir)
+    stage = target.with_name(f".{target.name}.0123456789abcdef.stage")
+    os.link(target, stage)
+    unrelated = target.with_name(f".{target.name}.fedcba9876543210.stage")
+    unrelated.write_bytes(target.read_bytes())
+    other = target.with_name(f".{target.name}.1111111111111111.stage")
+    other.write_text("unrelated evidence")
+    alias = target.with_name(f".{target.name}.2222222222222222.stage")
+    alias.symlink_to(target)
+    assert signer.write({"kind": "second"})
+    checkpoints.publish_checkpoint(audit_dir, checkpoint_dir)
+    assert not stage.exists()
+    assert unrelated.exists() and other.read_text() == "unrelated evidence"
+    assert alias.is_symlink()
+    assert checkpoints.latest_checkpoint_sequence(checkpoint_dir) == 2
+    assert checkpoints.verify_checkpoints(audit_dir, checkpoint_dir) == []
+
+
+def test_checkpoint_stage_recovery_lists_directory_once_per_chain_load(isolated, monkeypatch):
+    from pathlib import Path
+
+    from maverick.audit import checkpoints, signing
+
+    audit_dir = isolated / "audit"
+    checkpoint_dir = isolated / "checkpoints"
+    signer = signing.AuditSigner(audit_dir / f"{datetime.now(timezone.utc):%Y-%m-%d}.ndjson")
+    listings = []
+    original_glob, original_iterdir = Path.glob, Path.iterdir
+
+    def counted_glob(self, *args, **kwargs):
+        if self == checkpoint_dir:
+            listings.append("glob")
+        return original_glob(self, *args, **kwargs)
+
+    def counted_iterdir(self):
+        if self == checkpoint_dir:
+            listings.append("iterdir")
+        return original_iterdir(self)
+
+    monkeypatch.setattr(Path, "glob", counted_glob)
+    monkeypatch.setattr(Path, "iterdir", counted_iterdir)
+    per_publish = []
+    for index in range(6):
+        assert signer.write({"kind": "row", "index": index})
+        listings.clear()
+        checkpoints.publish_checkpoint(audit_dir, checkpoint_dir)
+        per_publish.append(len(listings))
+    # The listing count must not grow with the number of checkpoints.
+    assert per_publish[1:] == [per_publish[1]] * 5
+    assert checkpoints.latest_checkpoint_sequence(checkpoint_dir) == 6
+
+
+def test_approval_undo_window_starts_when_last_audit_vote_is_delivered(isolated):
+    from maverick.world_model import WorldModel
+
+    world = WorldModel(isolated / "world.db")
+    aid = world.create_approval("wire-funds", risk="high", approvals_required=2, undoable=True)
+    first = world.decide_approval_audited(aid, "approved", decided_by="user:a")
+    final = world.decide_approval_audited(aid, "approved", decided_by="user:b")
+    delivered = final.created_at + 100
+    world.mark_approval_audit_delivered(final.event_id, delivered_at=delivered)
+    assert world.get_approval(aid).status == "pending"
+    world.mark_approval_audit_delivered(first.event_id, delivered_at=delivered + 60)
+    assert world.get_approval(aid).decided_at == delivered + 60
+    world.mark_approval_audit_delivered(first.event_id, delivered_at=delivered + 120)
+    assert world.get_approval(aid).decided_at == delivered + 60
+    world.close()
+
+
+def test_message_dedup_surfaces_foreign_key_failure(isolated):
+    from maverick.world_model import WorldModel
+
+    world = WorldModel(isolated / "world.db")
+    with pytest.raises(sqlite3.IntegrityError):
+        world.mark_message_processed("sms", "unknown-goal", goal_id=99999)
+    assert world.mark_message_processed("sms", "valid") is True
+    assert world.mark_message_processed("sms", "valid") is False
+    world.close()
+
+
+@pytest.mark.parametrize("failure", ["rearm", "suspended"])
+def test_terminal_rearm_failure_pauses_schedule(isolated, monkeypatch, failure):
+    from maverick.job_queue import JobQueue
+    from maverick.schedule_definitions import list_definitions
+    from maverick.worker import Worker
+
+    payload = {"__cron__": "*/5 * * * *"}
+    if failure == "rearm":
+        def unavailable(*args, **kwargs):
+            raise sqlite3.OperationalError("database is locked")
+        monkeypatch.setattr(JobQueue, "_advance_recurrence", unavailable)
+    else:
+        from maverick.tenant.registry import create_tenant, suspend_tenant
+        create_tenant("acme")
+        suspend_tenant("acme")
+        payload["tenant"] = "acme"
+    queue = JobQueue(db_path=isolated / "jobs.db")
+    job_id = queue.enqueue("noop", payload, run_at=1000)
+    worker = Worker(queue=queue, retry_after=0, max_attempts=2)
+    worker.register("noop", lambda job: pytest.fail("unarmed occurrence dispatched"))
+    worker.run_once()
+    assert list_definitions(queue)[0]["state"] == "active"
+    worker.run_once()
+    assert queue.get(job_id).status == "failed"
+    assert list_definitions(queue)[0]["state"] == "paused"
+    assert not queue.list(status="pending")
+
+
+def _checkpointed_world(path, *, status="blocked"):
+    from maverick.budget import Budget
+    from maverick.checkpoint import Checkpointer
+    from maverick.world_model import WorldModel
+
+    world = WorldModel(path)
+    goal_id = world.create_goal("source", owner="user:source")
+    ck = Checkpointer(world)
+    for step in range(2):
+        ck.save(goal_id=goal_id, agent_id="orchestrator-0", episode_id=0,
+                step_seq=step, messages=[], budget=Budget(), meta={"role": "orchestrator"})
+    world.set_goal_status(goal_id, status)
+    return world, goal_id, ck
+
+
+def test_rewind_refuses_active_goal_and_execution_lease(isolated):
+    from maverick.checkpoint import rewind
+    from maverick.task_execution_guard import lease
+
+    world, goal_id, ck = _checkpointed_world(isolated / "world.db", status="active")
+    assert not rewind(world, goal_id, 0).ok
+    assert not rewind(world, goal_id, 0, fork=True).ok
+    assert ck.list_steps(goal_id, "orchestrator-0") == [0, 1]
+    assert world.get_goal(goal_id).status == "active"
+    world.set_goal_status(goal_id, "blocked")
+    with lease(world, goal_id):
+        assert not rewind(world, goal_id, 0).ok
+    world.close()
+
+
+def test_rewind_fork_preserves_source_owner(isolated):
+    from maverick.checkpoint import rewind
+
+    world, goal_id, _ck = _checkpointed_world(isolated / "world.db")
+    result = rewind(world, goal_id, 0, fork=True)
+    assert result.ok
+    assert world.get_goal(result.forked_goal_id).owner == "user:source"
+    world.close()
+
+
+def test_channel_authorization_precedes_any_approval_probe(isolated):
+    from maverick.channel_approvals import decide_from_channel
+
+    def forbidden(*args):
+        raise PermissionError("unavailable")
+
+    world = SimpleNamespace(get_approval=lambda *args: pytest.fail("approval probed"))
+    with pytest.raises(PermissionError, match="unavailable"):
+        decide_from_channel(world, 123, "approved", principal="user:other",
+                            channel="slack", authorize=forbidden)
+
+
+def test_channel_undo_authorization_precedes_any_approval_probe(isolated):
+    from maverick.channel_approvals import undo_decision
+
+    def forbidden(*args):
+        raise PermissionError("unavailable")
+
+    world = SimpleNamespace(get_approval=lambda *args: pytest.fail("approval probed"))
+    with pytest.raises(PermissionError, match="unavailable"):
+        undo_decision(world, 123, undone_by="user:other", channel="slack",
+                      authorize=forbidden)
+
+
+def test_announcement_owns_world_even_after_callers_world_closes(isolated, monkeypatch):
+    from maverick import approval_notify, channel_approvals, world_model
+
+    callbacks = []
+    worlds = []
+    seen = []
+
+    class World:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    def open_world(path=None):
+        assert path == isolated / "selected.db"
+        world = World()
+        worlds.append(world)
+        return world
+
+    def announce(world, approval_id):
+        assert not world.closed
+        seen.append(approval_id)
+
+    monkeypatch.setattr(approval_notify.threading, "Thread", lambda **kw: SimpleNamespace(
+        start=lambda: callbacks.append(kw["target"])))
+    monkeypatch.setattr(approval_notify, "install_announcers", lambda: None)
+    monkeypatch.setattr(approval_notify, "announcements_configured", lambda: True)
+    monkeypatch.setattr(world_model, "WorldModel", open_world)
+    monkeypatch.setattr(channel_approvals, "announce_new_approval", announce)
+    caller = World()
+    caller.path = isolated / "selected.db"
+    approval_notify.approval_created(7, world=caller)
+    caller.close()
+    callbacks[0]()
+    assert seen == [7]
+    assert len(worlds) == 1 and worlds[0].closed
+
+
+@pytest.mark.parametrize("backend", ["sqlite", "postgres"])
+def test_announcement_reopens_exact_source_backend_and_database(isolated, monkeypatch, backend):
+    from maverick import approval_notify, channel_approvals, world_model
+    from maverick.world_model_backends import postgres
+
+    callbacks = []
+    opened = []
+    observed = []
+    closed = []
+    source_path = isolated / "source.db"
+    source_dsn = "postgresql://fixture/source_database"
+    if backend == "sqlite":
+        source = object.__new__(world_model.WorldModel)
+        source.path = source_path
+    else:
+        source = object.__new__(postgres.PostgresWorldModel)
+        source._dsn = source_dsn
+
+    def sqlite_factory(path):
+        assert backend == "sqlite" and path == source_path
+        opened.append("source SQLite")
+        return SimpleNamespace(identity="source SQLite", close=lambda: closed.append(True))
+
+    def postgres_factory(*, dsn):
+        assert backend == "postgres" and dsn == source_dsn
+        opened.append("source Postgres")
+        return SimpleNamespace(identity="source Postgres", close=lambda: closed.append(True))
+
+    monkeypatch.setattr(world_model, "WorldModel", sqlite_factory)
+    monkeypatch.setattr(postgres, "PostgresWorldModel", postgres_factory)
+    monkeypatch.setattr(world_model, "open_world", lambda *args: SimpleNamespace(
+        identity="wrong default database", close=lambda: None))
+    monkeypatch.setattr(approval_notify.threading, "Thread", lambda **kw: SimpleNamespace(
+        start=lambda: callbacks.append(kw["target"])))
+    monkeypatch.setattr(approval_notify, "install_announcers", lambda: None)
+    monkeypatch.setattr(approval_notify, "announcements_configured", lambda: True)
+    monkeypatch.setattr(channel_approvals, "announce_new_approval", lambda world, aid: observed.append(world.identity))
+    approval_notify.approval_created(7, world=source)
+    # Reconfiguration after enqueue must not choose another backend or DSN.
+    monkeypatch.setenv("MAVERICK_WORLD_BACKEND", "postgres" if backend == "sqlite" else "sqlite")
+    monkeypatch.setenv("MAVERICK_PG_DSN", "postgresql://fixture/different_database")
+    callbacks[0]()
+    assert observed == opened == ["source SQLite" if backend == "sqlite" else "source Postgres"]
+    assert closed == [True]
+
+
+def test_announcement_reports_unsupported_memory_source_without_opening_another_world(
+    isolated, monkeypatch, caplog,
+):
+    from maverick import approval_notify, world_model
+
+    source = object.__new__(world_model.WorldModel)
+    source.path = ":memory:"
+    monkeypatch.setattr(approval_notify, "install_announcers", lambda: None)
+    monkeypatch.setattr(approval_notify, "announcements_configured", lambda: True)
+    monkeypatch.setattr(approval_notify.threading, "Thread", lambda **kw: SimpleNamespace(start=kw["target"]))
+    monkeypatch.setattr(world_model, "open_world", lambda *args: pytest.fail("opened another world"))
+    approval_notify.approval_created(7, world=source)
+    assert "in-memory" in caplog.text
+    assert "independent" in caplog.text

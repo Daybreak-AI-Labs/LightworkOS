@@ -41,7 +41,9 @@ import hashlib
 import json
 import logging
 import math
+import threading
 import time
+from collections import OrderedDict
 from pathlib import Path
 
 from .agent_trust import TrustedAgent, load_registry
@@ -215,9 +217,15 @@ class _StaticJWKS:
 #: Fetched JWKS documents per federated endpoint: url -> (expires_at,
 #: keys). Cached with a bounded lifespan so IdP key rotation is picked up
 #: without a per-request fetch.
-_JWKS_CACHE: dict[str, tuple[float, list[dict]]] = {}
+_JWKS_CACHE: dict[str, tuple[float, list[dict] | None]] = {}
+#: One fetch lock per JWKS endpoint, so a slow or unreachable provider holds
+#: up only its own cache misses. Bounded LRU; only idle locks are evicted.
+_JWKS_URL_LOCKS: OrderedDict[str, threading.Lock] = OrderedDict()
+_JWKS_URL_LOCKS_GUARD = threading.Lock()
+_JWKS_MAX_URL_LOCKS = 64
 _JWKS_FETCH_TIMEOUT_SECONDS = 10
 _JWKS_CACHE_LIFESPAN_SECONDS = 300
+_JWKS_FAILURE_LIFESPAN_SECONDS = 30
 _JWKS_MAX_BYTES = 1024 * 1024
 
 
@@ -231,35 +239,70 @@ def _remote_jwks_client(jwt_mod, url: str):
     here. Fetch or parse errors fail closed like an unreadable file."""
     if not url.startswith("https://"):
         return None
-    cached = _JWKS_CACHE.get(url)
-    now = time.monotonic()
-    if cached is not None and cached[0] > now:
-        return _StaticJWKS(jwt_mod, cached[1])
     try:
         from .enterprise import enterprise_egress_denial
-        from .tools._ssrf import BlockedHost, safe_client
 
         if enterprise_egress_denial(url, tool="external_identity"):
             return None
-        try:
-            with safe_client(url, timeout=_JWKS_FETCH_TIMEOUT_SECONDS) as client:
-                response = client.get(url)
-        except BlockedHost:
-            return None
-        if response.status_code != 200:
-            return None
-        text = response.text or ""
-        if len(text.encode("utf-8", "ignore")) > _JWKS_MAX_BYTES:
-            return None
-        document = json.loads(text)
-        keys = document.get("keys") if isinstance(document, dict) else None
-        if not isinstance(keys, list) or not keys:
-            return None
-        keys = [key for key in keys if isinstance(key, dict)]
     except Exception:
         return None
-    _JWKS_CACHE[url] = (now + _JWKS_CACHE_LIFESPAN_SECONDS, keys)
-    return _StaticJWKS(jwt_mod, keys)
+    # A fresh entry (keys or a cached failure) answers without any lock.
+    cached = _JWKS_CACHE.get(url)
+    if cached is not None and cached[0] > time.monotonic():
+        return _StaticJWKS(jwt_mod, cached[1]) if cached[1] is not None else None
+    # Serialize misses per endpoint: concurrent invalid tokens must not each
+    # start a ten-second fetch while that identity provider is unavailable.
+    with _jwks_url_lock(url):
+        cached = _JWKS_CACHE.get(url)
+        if cached is not None and cached[0] > time.monotonic():
+            return _StaticJWKS(jwt_mod, cached[1]) if cached[1] is not None else None
+        keys = _fetch_remote_jwks(url)
+        lifespan = _JWKS_CACHE_LIFESPAN_SECONDS if keys else _JWKS_FAILURE_LIFESPAN_SECONDS
+        _JWKS_CACHE[url] = (time.monotonic() + lifespan, keys)
+        return _StaticJWKS(jwt_mod, keys) if keys is not None else None
+
+
+def _jwks_url_lock(url: str) -> threading.Lock:
+    """The fetch lock for one JWKS endpoint. When the table is full the
+    least recently used idle lock is dropped; if every lock is held, a
+    transient lock is returned (at worst one duplicate fetch, never an
+    unbounded table)."""
+    with _JWKS_URL_LOCKS_GUARD:
+        lock = _JWKS_URL_LOCKS.get(url)
+        if lock is not None:
+            _JWKS_URL_LOCKS.move_to_end(url)
+            return lock
+        if len(_JWKS_URL_LOCKS) >= _JWKS_MAX_URL_LOCKS:
+            idle = next((key for key, held in _JWKS_URL_LOCKS.items()
+                         if not held.locked()), None)
+            if idle is not None:
+                del _JWKS_URL_LOCKS[idle]
+        lock = threading.Lock()
+        if len(_JWKS_URL_LOCKS) < _JWKS_MAX_URL_LOCKS:
+            _JWKS_URL_LOCKS[url] = lock
+        return lock
+
+
+def _fetch_remote_jwks(url: str) -> list[dict] | None:
+    from .tools._ssrf import safe_client
+
+    try:
+        with safe_client(url, timeout=_JWKS_FETCH_TIMEOUT_SECONDS) as client:
+            with client.stream("GET", url) as response:
+                if response.status_code != 200:
+                    return None
+                body = bytearray()
+                for chunk in response.iter_bytes(chunk_size=65536):
+                    if len(body) + len(chunk) > _JWKS_MAX_BYTES:
+                        return None
+                    body.extend(chunk)
+        document = json.loads(body)
+        keys = document.get("keys") if isinstance(document, dict) else None
+        if not isinstance(keys, list):
+            return None
+        return [key for key in keys if isinstance(key, dict)] or None
+    except Exception:
+        return None
 
 
 def _signing_key_for(jwt_mod, entry: TrustedAgent):

@@ -1,4 +1,4 @@
-"""Matrix channel via matrix-nio (federated, end-to-end encryptable).
+"""Matrix channel via matrix-nio (federated; encrypted rooms are not supported).
 
 Set up:
   1. Create an account on a Matrix homeserver (matrix.org, self-hosted, etc.)
@@ -16,20 +16,44 @@ Requires::
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 
 from .base import Channel, IncomingMessage, is_allowed, normalize_allowlist
 from .delivery import (
+    _ACTIVE,
     DeliveryNotSent,
     DeliveryRejected,
     DeliveryUnknown,
+    _digest,
+    _PrefixedAttempt,
     chunk_idempotency_key,
     delivery_active,
     send_chunk,
 )
 
 log = logging.getLogger(__name__)
+
+# Even 4,000 astral code points escaped as JSON surrogate pairs occupy only
+# 48,000 bytes, leaving room for the envelope within Matrix's 64 KiB event bound.
+_MAX_TEXT_CHARS = 4000
+
+
+async def _saved_whole_reply_matches(payload):
+    """Recognize an old text-0 without changing its acceptance state."""
+    attempt, key = _ACTIVE.get(), "text-0"
+    while isinstance(attempt, _PrefixedAttempt):
+        key = attempt.prefix + key
+        attempt = attempt.attempt
+    if attempt is None:
+        return False
+    row = await asyncio.to_thread(attempt.journal.get, attempt.record_id)
+    if row is None:
+        raise DeliveryUnknown("Saved Matrix delivery is unavailable")
+    old = row["chunks"].get(key)
+    return old is not None and old["payload_sha256"] == _digest(payload)
+
 
 try:
     from nio import AsyncClient, MatrixRoom, RoomMessageText
@@ -125,12 +149,27 @@ class MatrixChannel(Channel):
     async def send(self, user_id: str, text: str) -> None:
         payload = {"room_id": user_id, "message_type": "m.room.message",
                    "content": {"msgtype": "m.text", "body": text}}
+        if len(text) > _MAX_TEXT_CHARS and await _saved_whole_reply_matches(payload):
+            # An older transaction may already have delivered this entire body.
+            # Reconcile its exact payload/key before considering any new sends;
+            # even an oversized legacy body retains its shape until resolved.
+            return await self._send_text_chunk("text-0", payload)
+        receipt = None
+        for index, start in enumerate(range(0, max(1, len(text)), _MAX_TEXT_CHARS)):
+            key = "text-" + str(index)
+            payload = {"room_id": user_id, "message_type": "m.room.message",
+                       "content": {"msgtype": "m.text", "body": text[start:start + _MAX_TEXT_CHARS]}}
+            receipt = await self._send_text_chunk(key, payload)
+        return receipt
+
+    async def _send_text_chunk(self, key, payload):
         async def post():
-            result = await self._client.room_send(**payload, tx_id=chunk_idempotency_key("text-0"))
+            result = await self._client.room_send(**payload, tx_id=chunk_idempotency_key(key))
             # matrix-nio returns error response objects instead of raising.
             # Only explicit nonacceptance permits a non-ambiguous retry.
             status = getattr(result, "status_code", None)
-            if status in {"M_FORBIDDEN", "M_BAD_JSON", "M_NOT_JSON", "M_INVALID_PARAM", "M_NOT_FOUND"}:
+            if status in {"M_FORBIDDEN", "M_BAD_JSON", "M_NOT_JSON", "M_INVALID_PARAM", "M_NOT_FOUND",
+                          "M_TOO_LARGE"}:
                 raise DeliveryRejected("Matrix rejected the reply")
             if status in {"M_UNKNOWN_TOKEN", "M_MISSING_TOKEN", "M_LIMIT_EXCEEDED"}:
                 raise DeliveryNotSent("Matrix did not accept the reply; it can be retried")
@@ -138,7 +177,7 @@ class MatrixChannel(Channel):
             if delivery_active() and not isinstance(provider_id, str):
                 raise DeliveryUnknown("Matrix reply acknowledgement has no event id")
             return provider_id
-        return await send_chunk("text-0", payload, post, idempotent=True)
+        return await send_chunk(key, payload, post, idempotent=True)
 
     async def stop(self) -> None:
         await self._client.close()

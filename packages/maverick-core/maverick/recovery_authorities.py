@@ -282,25 +282,7 @@ def _contains(parts: tuple[str, ...], *sequence: str) -> bool:
     return any(parts[index:index + width] == sequence for index in range(len(parts) - width + 1))
 
 
-def authority_policy(relative: str, *, is_sqlite: bool) -> str | None:  # noqa: C901
-    """Return the one recovery policy for ``relative``, or ``None``.
-
-    Paths are archive-style POSIX paths and comparison is case-insensitive so
-    a snapshot created on a case-sensitive host cannot bypass Windows recovery
-    policy with a mixed-case namespace.  Unknown SQLite is deliberately still
-    protected and receives a blocking policy rather than becoming ordinary
-    data.
-    """
-    parts = tuple(part.casefold() for part in PurePosixPath(relative).parts)
-    if not parts:
-        return None
-    name = parts[-1]
-
-    # A file that is itself SQLite remains authority even if its custom name
-    # resembles a lock sidecar.  Ordinary lock files carry no durable state.
-    if not is_sqlite and name.endswith(".lock"):
-        return None
-
+def _credential_authority_policy(parts: tuple[str, ...], name: str) -> str | None:
     if len(parts) > 1 and parts[0] in TENANT_LIFECYCLE_AUTHORITY_POLICIES:
         return TENANT_LIFECYCLE_AUTHORITY_POLICIES[parts[0]]
 
@@ -340,6 +322,10 @@ def authority_policy(relative: str, *, is_sqlite: bool) -> str | None:  # noqa: 
         # unknown, blocking SQLite). Retain it with that database; a missing or
         # rolled-back key must never be silently regenerated over saved data.
         return "privacy_discovery_data_use_key"
+    return None
+
+
+def _configuration_learning_authority_policy(parts: tuple[str, ...], name: str) -> str | None:
     tenant_scoped_root = len(parts) == 1 or (
         len(parts) >= 3 and parts[-3] == "tenants"
     )
@@ -391,6 +377,10 @@ def authority_policy(relative: str, *, is_sqlite: bool) -> str | None:  # noqa: 
         )
     if "event-input" in parts[:-1]:
         return "event_input_authority"
+    return None
+
+
+def _workflow_evidence_authority_policy(parts: tuple[str, ...], name: str) -> str | None:
     if _contains(parts, "assessments", "templates.json"):
         return "assessment_instruction_authority"
     if _contains(parts, "assessments", "register.json"):
@@ -434,7 +424,10 @@ def authority_policy(relative: str, *, is_sqlite: bool) -> str | None:  # noqa: 
         return "evidence_trust_authority"
     if "task-file-recovery" in parts[:-1]:
         return "task_file_recovery"
+    return None
 
+
+def _execution_custody_authority_policy(parts: tuple[str, ...], name: str) -> str | None:
     if _contains(parts, "flows", "runs"):
         return "flow_run"
     if _contains(parts, "flows", "published"):
@@ -484,7 +477,10 @@ def authority_policy(relative: str, *, is_sqlite: bool) -> str | None:  # noqa: 
         "proposals.json", "refinements.json",
     }:
         return "harness_refinement_authority"
+    return None
 
+
+def _named_file_authority_policy(parts: tuple[str, ...], name: str) -> str | None:
     exact_names = {
         "external_agents.json": "external_agents",
         "agent_trust.json": "agent_trust",
@@ -581,7 +577,10 @@ def authority_policy(relative: str, *, is_sqlite: bool) -> str | None:  # noqa: 
         "evolution.ndjson", "node-outcomes.ndjson", "node-tools.ndjson",
     }:
         return "flow_learning_input_authority"
+    return None
 
+
+def _namespace_authority_policy(parts: tuple[str, ...], name: str) -> str | None:
     namespace_policies = {
         **GLOBAL_START_JSON_AUTHORITY_POLICIES,
         **APPLICATION_VALIDATED_JSON_AUTHORITY_POLICIES,
@@ -677,6 +676,39 @@ def authority_policy(relative: str, *, is_sqlite: bool) -> str | None:  # noqa: 
         matched = _PERSONAL_PUSH_NAMESPACE.fullmatch(part)
         if matched:
             return PERSONAL_PUSH_AUTHORITY_POLICIES[matched.group(1)]
+    return None
+
+
+def authority_policy(relative: str, *, is_sqlite: bool) -> str | None:
+    """Return the one recovery policy for ``relative``, or ``None``.
+
+    Paths are archive-style POSIX paths and comparison is case-insensitive so
+    a snapshot created on a case-sensitive host cannot bypass Windows recovery
+    policy with a mixed-case namespace.  Unknown SQLite is deliberately still
+    protected and receives a blocking policy rather than becoming ordinary
+    data.
+    """
+    parts = tuple(part.casefold() for part in PurePosixPath(relative).parts)
+    if not parts:
+        return None
+    name = parts[-1]
+
+    # A file that is itself SQLite remains authority even if its custom name
+    # resembles a lock sidecar.  Ordinary lock files carry no durable state.
+    if not is_sqlite and name.endswith(".lock"):
+        return None
+
+    for resolve in (
+        _credential_authority_policy,
+        _configuration_learning_authority_policy,
+        _workflow_evidence_authority_policy,
+        _execution_custody_authority_policy,
+        _named_file_authority_policy,
+        _namespace_authority_policy,
+    ):
+        policy = resolve(parts, name)
+        if policy is not None:
+            return policy
 
     if is_sqlite:
         if name == "provider_spend.sqlite3":

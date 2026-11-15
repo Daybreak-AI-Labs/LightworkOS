@@ -169,14 +169,23 @@ def destination(args: object, tool: str = "") -> str:
     return _canonical(args) if args else ""
 
 
-def _shown_parts(value: object, prefix: str, depth: int, out: list[str]) -> None:
+def _json_text(value: str) -> bool:
+    """Is ``value`` a JSON object or array (a REST body passed as text)?"""
+    if not value.lstrip().startswith(("{", "[")):
+        return False
+    try:
+        json.loads(value)
+    except ValueError:
+        return False  # ordinary text that happens to start with a bracket
+    return True
+
+
+def _shown_parts(value: object, prefix: str, depth: int, out: list[str]) -> bool:
     if depth > 6 or len(out) > 64:
-        return
-    if isinstance(value, str) and value.lstrip()[:1] in "{[" and depth:
-        try:
-            value = json.loads(value)  # REST connectors pass the body as JSON text
-        except ValueError:
-            return
+        return False
+    if isinstance(value, str) and depth and _json_text(value):
+        value = json.loads(value)  # REST connectors pass the body as JSON text
+    complete = True
     if isinstance(value, dict):
         for key in sorted(value, key=str):
             v = value[key]
@@ -188,11 +197,19 @@ def _shown_parts(value: object, prefix: str, depth: int, out: list[str]) -> None
                     # Query strings and fragments of a URL are where data rides.
                     text = re.sub(r"(https?://[^\s\"?#]*)[?#][^\s\"]*", r"\1?…", text)
                 out.append(f"{path}={text}")
+            elif k in _CONTENT_KEYS and isinstance(v, str) and not _json_text(v):
+                continue
             else:
-                _shown_parts(v, path, depth + 1, out)
+                complete = _shown_parts(v, path, depth + 1, out) and complete
     elif isinstance(value, list):
         for i, v in enumerate(value):
-            _shown_parts(v, f"{prefix}[{i}]", depth + 1, out)
+            complete = _shown_parts(v, f"{prefix}[{i}]", depth + 1, out) and complete
+    elif isinstance(value, str):
+        # Unfamiliar schemas can hide recipients in flat lists (attendees,
+        # subscribers, etc.). Do not retain message content in consent records;
+        # mark the review incomplete when an unseen string may be an address.
+        complete = not bool(re.search(r"[^\s@]+@[^\s@]+|[a-zA-Z][a-zA-Z0-9+.-]*://", value))
+    return complete
 
 
 def shown_destination(args: object) -> tuple[str, bool]:
@@ -201,10 +218,10 @@ def shown_destination(args: object) -> tuple[str, bool]:
     record); a destination that cannot be shown in full is never remembered as
     a grant."""
     out: list[str] = []
-    _shown_parts(args, "", 0, out)
+    complete = _shown_parts(args, "", 0, out)
     text = "&".join(out)
     if len(text) <= _MAX_SHOWN and len(out) <= 64:
-        return text, True
+        return text, complete
     return f"{text[:_MAX_SHOWN]} … (+{max(0, len(text) - _MAX_SHOWN)} more characters)", False
 
 

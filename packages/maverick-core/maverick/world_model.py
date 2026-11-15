@@ -4248,14 +4248,17 @@ class WorldModel:
                 if source is None:
                     raise PermissionError("The original approval task is unavailable")
                 source_guard(source[0], source[1] or "", source[2])
+            delivery_time = (
+                float(event["delivered_at"])
+                if event["delivered_at"] is not None
+                else float(delivered_at) if delivered_at is not None else time.time()
+            )
             if event["delivered_at"] is None:
                 conn.execute(
                     "UPDATE approval_audit_outbox SET delivered_at = ? "
                     "WHERE event_id = ? AND delivered_at IS NULL",
                     (
-                        float(delivered_at)
-                        if delivered_at is not None
-                        else time.time(),
+                        delivery_time,
                         str(event_id),
                     ),
                 )
@@ -4280,7 +4283,7 @@ class WorldModel:
                         "decided_by = ? WHERE id = ? AND status = 'pending'",
                         (
                             final["final_status"],
-                            float(final["created_at"]),
+                            delivery_time,
                             final["decided_by"],
                             approval_id,
                         ),
@@ -5030,7 +5033,12 @@ class WorldModel:
                 )
             return True
         except sqlite3.IntegrityError:
-            return False
+            if self._read_one(
+                "SELECT 1 FROM processed_messages WHERE channel = ? AND external_id = ?",
+                (channel, external_id),
+            ) is not None:
+                return False
+            raise
 
     def release_processed_message(self, channel: str, external_id: str) -> None:
         """Undo a claim made by ``mark_message_processed`` so a retry can

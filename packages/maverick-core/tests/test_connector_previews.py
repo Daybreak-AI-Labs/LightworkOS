@@ -20,6 +20,15 @@ from maverick import connector_previews as cp
 from maverick import earned_autonomy as ea
 from maverick.governed_rest import RestConnector
 
+
+def test_boolean_readback_strings_preserve_distinct_values():
+    for text, value in (("true", True), ("false", False)):
+        assert cp._same_value(text, value)
+        assert cp._same_value(value, text)
+        assert not cp._same_value(text, not value)
+    for readback, written in (("1", True), ("0", False), ("", None), ("true", "True")):
+        assert not cp._same_value(readback, written)
+
 SF_PATH = "/services/data/v60.0/sobjects/Opportunity/006xx0000000001AAA"
 SF_COLLECTION = "/services/data/v60.0/sobjects/Opportunity"
 #: A fabricated 32-hex ServiceNow sys_id -- the shape the Table API uses.

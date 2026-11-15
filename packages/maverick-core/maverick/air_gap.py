@@ -8,8 +8,8 @@ non-deny-all egress policy, or a sandbox allowed network access. ``maverick
 airgap check`` runs it and exits non-zero on any finding, so it can gate a
 deployment.
 
-Pure config inspection — a config dict in, a list of violations out — so it's
-deterministic and tested without touching the network. The runtime *enforcement*
+Config inspection includes the active workspace's role and MCP overrides,
+without touching the network. The runtime *enforcement*
 (the egress chokepoint, local-first routing) ships separately; this verifies the
 deployment is actually configured for them.
 """
@@ -17,7 +17,12 @@ from __future__ import annotations
 
 
 def audit(*, config=None) -> dict:
-    """Audit a config for outbound paths. Returns ``{clean, violations}``."""
+    """Audit a config for outbound paths. Returns ``{clean, violations}``.
+
+    Without ``config`` the live configuration is audited, including the
+    workspace role overrides and the saved MCP servers; a passed ``config`` is
+    audited on its own."""
+    live = config is None
     if config is None:
         try:
             from .config import load_config
@@ -25,7 +30,7 @@ def audit(*, config=None) -> dict:
         except Exception:  # pragma: no cover -- never block the check
             config = {}
     violations: list[str] = []
-    violations += _audit_providers(config)
+    violations += _audit_providers(config, live=live)
     violations += _audit_egress(config)
     violations += _audit_sandbox(config)
     violations += _audit_telemetry(config)
@@ -69,20 +74,86 @@ def _endpoint_is_local(provider: str, config: dict) -> bool:
         return False
 
 
-def _audit_providers(config: dict) -> list[str]:
+def _live_role_models() -> dict[str, str]:
+    from .config import _load_config_file, _source_errors
+    from .role_edit import roles_file
+    path = roles_file()
+    overrides = _load_config_file(path, interpolate=False)
+    if _source_errors([path]):
+        raise ValueError("unreadable role overrides")
+    models: dict[str, str] = {}
+    for role, override in overrides.items():
+        if not isinstance(override, dict):
+            raise ValueError("invalid role override")
+        if override.get("model"):
+            models[role] = str(override["model"])
+    return models
+
+
+def _audit_providers(config: dict, *, live: bool = False) -> list[str]:
     from .llm import ROLE_MODELS
     from .provider_local_first import _provider_of
     models = dict(ROLE_MODELS)
     for role, spec in (config.get("models") or {}).items():
         if isinstance(spec, str) and spec.strip():
             models[role] = spec
+    violations: list[str] = []
+    if live:  # an explicitly passed config has no workspace role overrides
+        try:
+            models.update(_live_role_models())
+        except Exception:
+            violations.append("workspace role overrides cannot be read — repair roles.toml before trusting the air-gap audit")
     remote = sorted({spec for spec in models.values()
                      if not _endpoint_is_local(_provider_of(spec), config)})
     if remote:
-        return [f"remote model(s) in use: {', '.join(remote)} — route every role "
+        violations.append(f"remote model(s) in use: {', '.join(remote)} — route every role "
                 "to a local provider (ollama / vllm / tgi) whose endpoint is "
-                "loopback/private"]
-    return []
+                "loopback/private")
+    return violations + _audit_connected_endpoints(config, live=live)
+
+
+def _audit_mcp_endpoints(config: dict, *, live: bool) -> list[str]:
+    from .enterprise import _is_local_endpoint
+    from .runtime_overrides import mcp_overlay
+
+    violations: list[str] = []
+    try:
+        servers = dict(config.get("mcp_servers") or {})
+        for name, spec in (mcp_overlay() if live else {}).items():
+            servers.setdefault(name, spec)
+        for name, spec in servers.items():
+            if not isinstance(spec, dict):
+                raise ValueError("invalid MCP server")
+            if spec.get("enabled", True) is False:
+                continue
+            # A stdio server (a command, no URL) opens no connection itself.
+            stdio = spec.get("command") and not spec.get("url")
+            if not stdio and not _is_local_endpoint(spec.get("url")):
+                violations.append(f"MCP server {name!r} has an unproven local endpoint — remove it or use a loopback/private HTTP endpoint")
+            oauth = spec.get("oauth") or {}
+            if any(not _is_local_endpoint(value) for key, value in oauth.items()
+                   if key in {"token_url", "authorize_url"} and value):
+                violations.append(f"MCP server {name!r} uses remote authorization endpoints")
+    except Exception:
+        violations.append("MCP endpoints cannot be checked — repair the saved server configuration before trusting the air-gap audit")
+    return violations
+
+
+def _audit_connected_endpoints(config: dict, *, live: bool) -> list[str]:
+    from .enterprise import _is_local_endpoint
+
+    violations = _audit_mcp_endpoints(config, live=live)
+    try:
+        for peer in (config.get("federation") or {}).get("peers") or []:
+            target = peer.get("target") if isinstance(peer, dict) else None
+            if not isinstance(target, str) or not _is_local_endpoint("https://" + target):
+                violations.append("a federation peer has an unproven local endpoint — use only loopback/private targets")
+        for name, channel in (config.get("channels") or {}).items():
+            if isinstance(channel, dict) and channel and channel.get("enabled") is not False:
+                violations.append(f"channel {name!r} is configured — chat transport egress cannot be proven local by this audit")
+    except Exception:
+        violations.append("connected endpoints cannot be checked — repair channel and federation configuration before trusting the air-gap audit")
+    return violations
 
 
 def _audit_egress(config: dict) -> list[str]:
@@ -147,13 +218,9 @@ def _audit_sandbox(config: dict) -> list[str]:
     val = sb.get("allow_network")
     network_policy = str(sb.get("network_policy") or "").strip().lower()
     if backend == "kubernetes":
-        # A transient `kubectl run` pod has full egress by default and the
-        # backend refuses to run with allow_network=false (it cannot self-
-        # enforce no-egress). The only k8s config that actually runs air-gapped
-        # is allow_network=true behind an operator-applied cluster-level
-        # deny-all NetworkPolicy — invisible to static config inspection. So
-        # the audit can only clear k8s when the operator explicitly asserts
-        # that policy; otherwise egress is unprovable.
+        # Cluster policy is outside static config inspection. The runtime
+        # verifies the executor's deny-all NetworkPolicy when network access
+        # is disabled; this audit still requires an explicit policy assertion.
         if _truthy(val) and network_policy in {"deny-all", "deny_all", "deny"}:
             return []
         return ["[sandbox] backend=kubernetes egress cannot be proven by config "

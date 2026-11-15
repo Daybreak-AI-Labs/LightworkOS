@@ -325,15 +325,8 @@ class ThirdPartyLifecycleDependencies:
         self.store_for = store_for
 
 
-def create_third_party_lifecycle_router(  # noqa: C901, PLR0915
-    dependencies: ThirdPartyLifecycleDependencies | None = None,
-) -> APIRouter:
-    deps = dependencies or ThirdPartyLifecycleDependencies()
-    router = APIRouter(
-        prefix="/third-party/lifecycle",
-        tags=["third-party-lifecycle"],
-    )
-
+def _third_party_lifecycle_authority_routes(deps, router):
+    """Bind authority and related router operations."""
     def authority(request: Request):
         ops = _ops()
         tenant = _tenant_id()
@@ -445,7 +438,11 @@ def create_third_party_lifecycle_router(  # noqa: C901, PLR0915
         for item in items:
             item["needs_named_author"] = _unattributed_author(tenant, item["authored_by"])
         return {"items": items}
+    return authority, call
 
+
+def _third_party_lifecycle_list_assessments_routes(authority, call, router):
+    """Bind list assessments and related router operations."""
     @router.get("/assessments")
     async def list_assessments(request: Request) -> dict[str, Any]:
         require_permission(request, "view")
@@ -583,6 +580,9 @@ def create_third_party_lifecycle_router(  # noqa: C901, PLR0915
         ops, tenant, _principal_ref, store = authority(request)
         return _jsonable(await call(ops, store.get_lifecycle, tenant, lifecycle_id))
 
+
+def _third_party_lifecycle_transition_lifecycle_routes(authority, call, router):
+    """Bind transition lifecycle and related router operations."""
     @router.post("/lifecycles/{lifecycle_id}/transition")
     async def transition_lifecycle(
         request: Request, lifecycle_id: ObjectPath, body: LifecycleTransitionIn
@@ -736,6 +736,9 @@ def create_third_party_lifecycle_router(  # noqa: C901, PLR0915
         ops, tenant, _principal_ref, store = authority(request)
         return _jsonable(await call(ops, store.purge_expired, tenant, **body.model_dump()))
 
+
+def _third_party_lifecycle_integrity_routes(authority, call, router):
+    """Bind integrity and related router operations."""
     @router.get("/integrity")
     async def integrity(request: Request):
         require_global_permission(request, "audit")
@@ -743,6 +746,21 @@ def create_third_party_lifecycle_router(  # noqa: C901, PLR0915
         result = _jsonable(await call(ops, store.verify_integrity, tenant))
         result["valid"] = True
         return result
+
+
+def create_third_party_lifecycle_router(
+    dependencies: ThirdPartyLifecycleDependencies | None = None,
+) -> APIRouter:
+    deps = dependencies or ThirdPartyLifecycleDependencies()
+    router = APIRouter(
+        prefix="/third-party/lifecycle",
+        tags=["third-party-lifecycle"],
+    )
+
+    authority, call = _third_party_lifecycle_authority_routes(deps, router)
+    _third_party_lifecycle_list_assessments_routes(authority, call, router)
+    _third_party_lifecycle_transition_lifecycle_routes(authority, call, router)
+    _third_party_lifecycle_integrity_routes(authority, call, router)
 
     return router
 

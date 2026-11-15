@@ -296,15 +296,8 @@ class PrivacyRightsOrchestrationDependencies:
         self.store_for = store_for
 
 
-def create_privacy_rights_orchestration_router(  # noqa: C901, PLR0915
-    dependencies: PrivacyRightsOrchestrationDependencies | None = None,
-) -> APIRouter:
-    deps = dependencies or PrivacyRightsOrchestrationDependencies()
-    router = APIRouter(
-        prefix="/privacy/rights-orchestration",
-        tags=["privacy-rights-orchestration"],
-    )
-
+def _privacy_rights_orchestration_authority_routes(deps, router):
+    """Bind authority and related router operations."""
     def authority(request: Request):
         ops = _ops()
         tenant = _tenant_id()
@@ -444,7 +437,11 @@ def create_privacy_rights_orchestration_router(  # noqa: C901, PLR0915
             "case_open_raw_references_hmac_only": True,
             "claim_is_only_live_lease_token_response": True,
         }
+    return authority, call
 
+
+def _privacy_rights_orchestration_source_worker_routes(authority, call, router):
+    """Bind source worker and related router operations."""
     def source_worker(request: Request, tenant: str, principal: str):
         factory = getattr(
             request.app.state,
@@ -612,7 +609,11 @@ def create_privacy_rights_orchestration_router(  # noqa: C901, PLR0915
         ops, tenant, store = authority(request)
         items = await call(ops, store.claim_callbacks, tenant, **body.model_dump())
         return {"items": _jsonable(items), "count": len(items)}
+    return source_worker
 
+
+def _privacy_rights_orchestration_list_callbacks_routes(authority, call, router, source_worker):
+    """Bind list callbacks and related router operations."""
     @router.get("/callbacks")
     async def list_callbacks(
         request: Request,
@@ -829,6 +830,20 @@ def create_privacy_rights_orchestration_router(  # noqa: C901, PLR0915
         result = _jsonable(await call(ops, store.verify_integrity, tenant))
         result["valid"] = True
         return result
+
+
+def create_privacy_rights_orchestration_router(
+    dependencies: PrivacyRightsOrchestrationDependencies | None = None,
+) -> APIRouter:
+    deps = dependencies or PrivacyRightsOrchestrationDependencies()
+    router = APIRouter(
+        prefix="/privacy/rights-orchestration",
+        tags=["privacy-rights-orchestration"],
+    )
+
+    authority, call = _privacy_rights_orchestration_authority_routes(deps, router)
+    source_worker = _privacy_rights_orchestration_source_worker_routes(authority, call, router)
+    _privacy_rights_orchestration_list_callbacks_routes(authority, call, router, source_worker)
 
     return router
 

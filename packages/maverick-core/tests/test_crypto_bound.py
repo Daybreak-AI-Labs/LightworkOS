@@ -88,3 +88,46 @@ def test_tenant_binding_uses_the_canonical_id_and_separates_unbound():
     unbound = c.seal_bound(b"y", "ctx")
     with tenant_scope(tenant="__default__"), pytest.raises(c.EncryptionUnavailable):
         c.unseal_bound(unbound, "ctx")
+
+
+def _earlier_seal_bound(plaintext: bytes, context: str) -> bytes:
+    """``seal_bound`` as the earlier release wrote it: it ignored the shared
+    key scopes, so per-tenant mode sealed under the tenant's own data key."""
+    import secrets
+
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    from maverick.paths import current_tenant_id
+    tenant = current_tenant_id()
+    if c.per_tenant_at_rest():
+        from maverick.tenant.kms import tenant_dek
+        kind, keyid, key = b"T", bytes(c._KEYID_BYTES), tenant_dek(tenant)
+    else:
+        active = c._active_keyring_key()
+        key, keyid = active if active is not None else (c._load_or_create_key(), None)
+        keyid = keyid or c._key_fingerprint(key)
+        kind = b"K"
+    nonce = secrets.token_bytes(c._NONCE_BYTES)
+    ct = AESGCM(key).encrypt(nonce, plaintext, c._bound_aad(tenant, context))
+    return c._BOUND_MAGIC + kind + keyid + nonce + ct
+
+
+@pytest.mark.parametrize("per_tenant", [True, False])
+def test_bound_data_sealed_by_the_earlier_release_in_a_shared_scope_still_opens(monkeypatch, per_tenant):
+    if per_tenant:
+        monkeypatch.setenv("MAVERICK_ENCRYPT_PER_TENANT", "1")
+        monkeypatch.setenv("MAVERICK_KMS_KEK", "27" * 32)  # synthetic test key
+        from maverick.tenant import kms
+        monkeypatch.setattr(kms, "_dek_cache", {})
+    else:
+        monkeypatch.setenv("MAVERICK_ENCRYPT_PER_TENANT", "0")
+    with tenant_scope(tenant="acme"), c.deployment_key_scope():
+        legacy = _earlier_seal_bound(b"quality report", "row-1")
+        assert legacy[len(c._BOUND_MAGIC):][:1] == (b"T" if per_tenant else b"K")
+        assert c.unseal_bound(legacy, "row-1") == b"quality report"
+        with pytest.raises(c.EncryptionUnavailable):
+            c.unseal_bound(legacy, "row-2")
+        fresh = c.seal_bound(b"new report", "row-1")
+        assert fresh[len(c._BOUND_MAGIC):][:1] == b"K"   # new writes use the shared key
+        assert c.unseal_bound(fresh, "row-1") == b"new report"
+    with tenant_scope(tenant="beta"), c.deployment_key_scope(), pytest.raises(c.EncryptionUnavailable):
+        c.unseal_bound(legacy, "row-1")              # another tenant still cannot open it

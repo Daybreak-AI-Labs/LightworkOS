@@ -519,6 +519,14 @@ def _check_evaluator_anchors() -> None:
               "ground truth")
 
 
+def _approval_number(value: object) -> int | None:
+    """An approval id as an int, or ``None`` for a junk ledger entry."""
+    try:
+        return int(value)  # type: ignore[call-overload]
+    except (TypeError, ValueError):
+        return None
+
+
 def _consume_approval(store: dict, record: dict, approval_id: object, *,
                       applied_by: str) -> int:
     """Validate + spend one refinement approval; returns its id or raises.
@@ -597,13 +605,23 @@ def _consume_approval(store: dict, record: dict, approval_id: object, *,
             "propose and approve a new request"
         )
     consumed.append(aid)
-    keep = consumed[-_MAX_CONSUMED_APPROVALS:]
-    for stale in consumed[:len(consumed) - len(keep)]:
-        try:
-            floor = max(floor, int(stale))
-        except (TypeError, ValueError):  # junk entry; nothing to raise to
-            continue
-    store["consumed_approvals"] = keep
+    # A floor may only pass approvals whose proposals are no longer pending.
+    # Keep exact spends above the oldest outstanding approval, even when that
+    # temporarily exceeds the usual history window. Otherwise an unused old
+    # approval becomes indistinguishable from one that actually applied.
+    # A junk entry (not an approval id) is skipped, as before: it can name
+    # no approval, so dropping it never makes a spent approval usable again.
+    spent = [value for value in map(_approval_number, consumed) if value is not None]
+    pending_ids = [
+        value for proposal in store.get("proposals", {}).values()
+        if proposal.get("status") == "pending"
+        for value in [_approval_number(proposal.get("approval_id"))]
+        if value is not None and value not in spent
+    ]
+    ceiling = min(pending_ids) - 1 if pending_ids else max(spent)
+    stale = spent[:-_MAX_CONSUMED_APPROVALS]
+    floor = max([floor] + [value for value in stale if value <= ceiling])
+    store["consumed_approvals"] = [value for value in spent if value > floor]
     store["approval_floor"] = floor
     return aid
 

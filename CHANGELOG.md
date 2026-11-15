@@ -102,6 +102,58 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - In coding mode, a final patch is not verified when the working directory had
   uncommitted work before the run started; that work is left untouched instead
   of being reset. Start coding runs from a clean working directory.
+- Docker and Podman sandboxes now run each command under a deadline inside the
+  container as well, so a command stops even if Lightwork itself is killed.
+  The image must provide the `timeout` command; an image without it is refused
+  before the command starts.
+- The SSH sandbox checks at setup that the remote host has GNU `timeout` and
+  refuses a host without it.
+- A Slack attachment is accepted only when the bytes received match the size
+  Slack advertised; a file with a missing or wrong size is refused.
+- Matrix replies longer than 4,000 characters are sent as several messages.
+  Encrypted Matrix rooms are not supported.
+- The Python client raises on a success response that is not the documented
+  shape (for example an empty body where an object is expected) instead of
+  returning it.
+- Tool names in governance deny and require-human lists are matched without
+  regard to case, and deny lists from the configuration and the environment
+  for agent-to-agent calls are combined instead of one replacing the other.
+  `maverick doctor` notes a listed name that matches no built-in tool.
+- `maverick airgap` now also checks role models, MCP servers, federation
+  peers and enabled channels in the audited configuration, so a deployment
+  that passed before can now report a finding.
+- Malformed `[safety]` and `[sandbox]` sections are reported instead of being
+  ignored.
+- When a connector has several accounts and none is pinned, the caller's own
+  usable account is chosen before a shared one. Reconnecting a connector under
+  a different provider identity stops its sharing until it is shared again.
+- Knowledge deposited into Cortex records the authenticated depositor as its
+  source; a label supplied by the caller is kept after it, in quotes.
+- An external agent may have at most its configured number of screening
+  approvals waiting; further screening requests are refused until some are
+  decided or expire.
+- Earned-autonomy evidence is now tied to the signed audit log. Evidence from
+  an earlier release is taken over once, on first use, if its own chain is
+  intact and the audit log verifies (or audit signing is switched off). If the
+  audit log does not verify, the evidence is not taken over and no new
+  evidence is recorded until `maverick audit verify` passes. After the
+  takeover, evidence that was shortened or rewritten is reported as broken
+  and no new evidence is accepted on top of it; a demotion or revocation is
+  always recorded.
+- When a governed web request is redirected to a different origin, credentials
+  and custom headers such as `X-Api-Key` are no longer sent on; only a short
+  list of ordinary headers follows the redirect. Each redirect destination is
+  checked under the same private-network setting as the first request.
+- A zero-dollar budget set on a goal dispatched over gRPC is now carried as an
+  explicit zero. Upgrade the dispatcher and its workers together: an older
+  worker ignores the new field.
+- Generating a presigned S3 link is now treated as a write and goes through
+  the same approval rules as other governed writes.
+- The undo window for an approval decision now starts when the decision's
+  audit record has been delivered, not when the decision was entered.
+- Rewinding a goal is refused while that goal is executing.
+- Audit writes from federation peers that have not authenticated are
+  rate-limited per network peer.
 
 ### Fixed
 

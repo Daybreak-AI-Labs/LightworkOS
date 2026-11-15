@@ -104,6 +104,23 @@ class SSHBackend:
                 f"ssh to {self.host} failed: {stderr or 'unknown error'}. "
                 "Check your SSH config / keys."
             )
+        # Probe with the form exec() runs, so the check matches what is used.
+        check = subprocess.run(
+            ["ssh", *self._ssh_opts(), *self.ssh_args, self.host, "timeout --signal=KILL 1.000000s true"],
+            capture_output=True, timeout=15, env=_ssh_env(),
+        )
+        if check.returncode != 0:
+            stderr = check.stderr.decode("utf-8", errors="replace").strip() or "no error output"
+            if check.returncode == 255:  # ssh's own exit status: the connection failed
+                raise RuntimeError(
+                    f"ssh to {self.host} could not check GNU timeout: the ssh connection "
+                    f"failed: {stderr}. Retry, or check your SSH config / keys."
+                )
+            raise RuntimeError(
+                f"SSH host {self.host} requires GNU timeout to enforce command deadlines, and "
+                f"its timeout is missing or does not accept --signal=KILL: {stderr}. "
+                "Install GNU coreutils on the remote host before using this backend."
+            )
 
     def _quote_workdir(self) -> str:
         """Shell-quote the remote workdir, but leave a leading ``~/`` (or bare

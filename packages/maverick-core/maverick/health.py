@@ -105,6 +105,19 @@ def _check_config_lint(cfg: dict) -> None:
              fix="run `maverick config-lint` for the full report" if i == 0 else "")
 
 
+def _check_governance_tool_names(cfg: dict) -> None:
+    """Advisory: governance deny/require-human names that match no built-in
+    tool. Shown here only, never by the strict startup lint, because denying a
+    tool before it is installed is legitimate."""
+    try:
+        from .config_lint import governance_tool_name_notices
+        notices = governance_tool_name_notices(cfg or {})
+    except Exception:  # pragma: no cover -- the doctor must never break
+        return
+    for f in notices[:8]:
+        _row(YELLOW, "governance", f.message)
+
+
 def _sdk_import_failure(
     name: str, exc: ImportError, install_fix: str
 ) -> tuple[str, str]:
@@ -953,6 +966,7 @@ def diagnose() -> int:
     click.echo(click.style("Lightwork health check\n", bold=True))
     cfg = _check_config()
     _check_config_lint(cfg)
+    _check_governance_tool_names(cfg)
     _check_config_perms()
     _check_profile()
     _check_data_residency(cfg)
