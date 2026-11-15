@@ -245,15 +245,24 @@ def _integrity_problem(path: Path, *, any_signed: bool) -> str | None:
     Erase is never a repair: a day whose chain, tip anchor or published
     checkpoint already reports a break is left unchanged.
     """
-    return ((_chain_problem(path) if any_signed else None)
-            or _anchor_problem(path, reanchors=any_signed)
-            or _checkpoint_problem(path))
+    problem = (_chain_problem(path) if any_signed else None) or _checkpoint_problem(path)
+    if problem:
+        return problem
+    if any_signed:
+        _ensure_anchors(path.parent)
+    return _anchor_problem(path, reanchors=any_signed)
 
 
 def _ensure_anchors(audit_dir: Path) -> None:
-    """Anchor completed days first, exactly as a starting audit writer does,
-    so a day the ledger has not yet recorded is checked like every other."""
+    """Anchor completed days first, as a starting audit writer does, before a
+    rewrite that will re-anchor: a new install's first completed day then
+    has its ledger. Only when signing is on, as the writer does; an erase
+    that rewrites nothing never reaches here."""
     try:
+        from .writer import _resolve_signing
+
+        if not _resolve_signing(None):
+            return
         from .signing import ensure_anchors
 
         ensure_anchors(audit_dir)
@@ -468,7 +477,6 @@ def scrub_user(
     total_scanned = 0
     if not audit_dir.exists():
         return 0, 0
-    _ensure_anchors(audit_dir)
     for path in sorted(audit_dir.glob("*.ndjson")):
         m, w = _process_file(
             path,
@@ -535,7 +543,6 @@ def erase_blockers(
         audit_dir = data_dir("audit")
     if not audit_dir.exists():
         return []
-    _ensure_anchors(audit_dir)
     blockers = []
     for path in sorted(audit_dir.glob("*.ndjson")):
         if path.is_dir():
@@ -560,7 +567,6 @@ def delete_user(
     total_scanned = 0
     if not audit_dir.exists():
         return 0, 0
-    _ensure_anchors(audit_dir)
     for path in sorted(audit_dir.glob("*.ndjson")):
         m, w = _process_file(path, channel, user_id, delete=True)
         total_matched += m

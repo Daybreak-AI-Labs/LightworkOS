@@ -334,3 +334,29 @@ def test_erase_checks_the_chosen_checkpoint_folder_too(_isolate_keys, tmp_path):
     chosen.rename(tmp_path / "gone")
     (blocker,) = erase_blockers("telegram", "alice", audit_dir=ad)
     assert str(chosen) in blocker
+
+
+@pytest.mark.parametrize("signing", ["0", "1"])
+def test_an_erase_that_rewrites_nothing_leaves_the_tip_ledger_as_it_was(
+        _isolate_keys, tmp_path, monkeypatch, signing):
+    """A completed signed day with no tip ledger: an erase of someone not in
+    the log, or with signing off, must not create the ledger and so change
+    what ``audit verify`` reports."""
+    from maverick.audit.erase import erase_blockers, scrub_user
+    from maverick.audit.signing import ANCHOR_FILENAME
+    from maverick.audit.writer import reset_signer_after_erase
+
+    _log, ad, path = _signed_log(tmp_path)
+    path.rename(path.with_name("2020-01-01.ndjson"))
+    reset_signer_after_erase(ad)
+    monkeypatch.setenv("MAVERICK_AUDIT_SIGN", signing)
+    before = _state(ad, path.with_name("2020-01-01.ndjson"))
+    assert before[1] == ["anchor_ledger_missing"]
+    subject = "nobody-here" if signing == "1" else "alice"
+    erase_blockers("telegram", subject, audit_dir=ad)
+    try:
+        scrub_user("telegram", subject, audit_dir=ad, strict=True)
+    except RuntimeError:
+        pass
+    assert not (ad / ANCHOR_FILENAME).exists()
+    assert _state(ad, path.with_name("2020-01-01.ndjson"))[1] == ["anchor_ledger_missing"]
