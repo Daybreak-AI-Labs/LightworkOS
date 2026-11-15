@@ -239,6 +239,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the retry was refused. Approve or reject the new request as usual.
 - The `computer` tool no longer asks to approve mouse or keyboard input it
   cannot send. It says input is not supported yet; screenshots still work.
+- When "hold risky tasks for a person" is on, resuming a task whose words
+  were changed to something riskier asks a person again. Tasks that ran
+  before this release are asked once on their next resume.
 
 ### Fixed
 

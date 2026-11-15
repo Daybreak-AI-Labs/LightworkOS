@@ -1706,7 +1706,57 @@ def _goal_already_ran(world: Any, goal_id: int) -> bool:
         return False
 
 
-async def _goal_risk_gate(goal_id: int, goal: Any, *, resuming: bool) -> tuple[dict, str | None]:
+_RISK_ADMISSION = "risk_admission"
+
+
+def _goal_text_sha256(goal: Any) -> str:
+    text = f"{goal.title or ''}\0{getattr(goal, 'description', '') or ''}"
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _record_risk_admission(world: Any, goal_id: int, goal: Any, effective: str) -> None:
+    """Remember the words and tier this start let through, for later resumes."""
+    import json
+    import time
+    import uuid
+
+    from .goal_mutations import _transaction
+
+    text = _goal_text_sha256(goal)
+    try:
+        with _transaction(world, goal_id) as (execute, encode, _decode, _postgres, _tenant):
+            execute("INSERT INTO goal_mutation_receipts "
+                    "(goal_id,kind,operation_id,actor,request_hash,receipt,created_at) "
+                    "VALUES(?,?,?,?,?,?,?)",
+                    (goal_id, _RISK_ADMISSION, uuid.uuid4().hex, "orchestrator", text,
+                     encode(json.dumps({"text_sha256": text, "tier": effective})), time.time()))
+    except Exception:  # a later resume then asks again: the safe direction
+        log.warning("goal #%s: could not record the start check", goal_id, exc_info=True)
+
+
+def _resume_was_let_through(world: Any, goal_id: int, goal: Any, effective: str) -> bool:
+    """Whether a run of exactly these words, or of a tier at least as high,
+    already passed the start check. Unreadable or missing evidence: no."""
+    import json
+
+    from .goal_mutations import _transaction
+    from .safety.tool_risk import RISK_LEVELS, risk_rank
+
+    try:
+        with _transaction(world, goal_id) as (execute, _encode, decode, _postgres, _tenant):
+            row = execute("SELECT receipt FROM goal_mutation_receipts WHERE goal_id=? AND kind=? "
+                          "ORDER BY created_at DESC LIMIT 1", (goal_id, _RISK_ADMISSION)).fetchone()
+        saved = json.loads(decode(row[0])) if row is not None else {}
+    except Exception:
+        return False
+    if saved.get("text_sha256") == _goal_text_sha256(goal):
+        return True
+    tier = saved.get("tier")
+    return tier in RISK_LEVELS and risk_rank(effective) <= risk_rank(tier)
+
+
+async def _goal_risk_gate(goal_id: int, goal: Any, *, resuming: bool,
+                          world: Any = None) -> tuple[dict, str | None]:
     """Classify a task from its words before it starts; hold it for a person
     only when an administrator turned that on (``[safety]
     goal_risk_require_human``, off by default).
@@ -1719,6 +1769,10 @@ async def _goal_risk_gate(goal_id: int, goal: Any, *, resuming: bool) -> tuple[d
         goal.title or "", getattr(goal, "description", "") or "")
     record = {"risk_tier": classified.tier, "risk_effective": effective,
               "risk_signals": list(classified.signals)}
+    # A resume skips the check only for the words (or a tier no higher than
+    # what) a start already let through: a retitled task is checked again.
+    if resuming and world is not None:
+        resuming = _resume_was_let_through(world, goal_id, goal, effective)
     if not needs_person or resuming:
         return record, None
     from .immune import twin
@@ -2700,11 +2754,13 @@ async def _run_goal_impl(  # noqa: C901  -- core goal-execution loop
     # requester from it. A resumed task was already let through once.
     _risk_record, _risk_refusal = await _goal_risk_gate(
         goal_id, goal,
-        resuming=resume_episode_id is not None or (bool(resume) and _goal_already_ran(world, goal_id)))
+        resuming=resume_episode_id is not None or (bool(resume) and _goal_already_ran(world, goal_id)),
+        world=world)
     if _risk_refusal:
         world.set_goal_status(goal_id, "blocked", result=_risk_refusal)
         log.warning("goal #%s not started: %s", goal_id, _risk_refusal)
         return _risk_refusal
+    _record_risk_admission(world, goal_id, goal, _risk_record["risk_effective"])
     _lifecycle.started = True
     try:
         world.set_goal_status(goal_id, "active")

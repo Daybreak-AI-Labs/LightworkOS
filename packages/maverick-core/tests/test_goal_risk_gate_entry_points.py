@@ -115,10 +115,14 @@ def test_a_task_that_already_ran_is_not_asked_about_again_on_resume(
 ):
     # A run of it is on record: a person (or the administrator's setting) let it
     # through once, so a crash-retry or an answered question just carries on.
+    from maverick.orchestrator import _record_risk_admission
+
     fake_llm.scripted = _script(make_llm_response)
     world = _world(tmp_path)
     goal_id = world.create_goal(_RISKY, "")
     world.start_episode(goal_id)
+    # The start check let these exact words through when that run began.
+    _record_risk_admission(world, goal_id, world.get_goal(goal_id), "high")
 
     status = _start_like_the_dashboard(tmp_path, fake_llm, monkeypatch, goal_id)
 
@@ -146,3 +150,25 @@ async def test_resume_of_a_task_that_was_held_and_never_started_asks_again(
     assert "waits for a person to approve it" in out
     assert fake_llm.calls == []
     assert world.get_goal(goal_id).status == "blocked"
+
+
+def test_retitling_a_task_that_ran_to_riskier_words_asks_again_on_resume(
+    tmp_path, fake_llm, make_llm_response, monkeypatch,
+):
+    # A run on record only lets through the words that were checked then.
+    from maverick import goal_mutations
+
+    fake_llm.scripted = _script(make_llm_response)
+    world = _world(tmp_path)
+    goal_id = world.create_goal("Summarize the weekly notes", "")
+    assert _start_like_the_dashboard(tmp_path, fake_llm, monkeypatch, goal_id) == "done"
+    world.set_goal_status(goal_id, "blocked")
+    goal_mutations.edit_structure(world, goal_id, title=_RISKY,
+                                  expected_updated_at=float(world.get_goal(goal_id).updated_at))
+    calls = len(fake_llm.calls)
+
+    status = _start_like_the_dashboard(tmp_path, fake_llm, monkeypatch, goal_id)
+
+    assert status == "blocked"
+    assert "looks high risk" in (_world(tmp_path).get_goal(goal_id).result or "")
+    assert len(fake_llm.calls) == calls, "the retitled task started without anyone approving it"
