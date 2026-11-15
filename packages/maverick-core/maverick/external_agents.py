@@ -932,43 +932,54 @@ def record_run(agent_id: str, run: dict, *, shield: Any | None = None) -> dict:
     principal = f"agent:{agent_id}"
     from .world_model import open_world
     w = open_world()
-    gid, duplicate = _create_run_goal(
+    gid, _ = _create_run_goal(
         w, agent_id, idem, title, summary or "", owner=principal,
         domain=str(run.get("department") or meta.get("department") or ""))
-    if duplicate:
-        return {"goal_id": gid, "over_budget":
-                bool(_load_sidecar().get(agent_id, {}).get("over_budget")),
-                "duplicate": True}
-    for step in steps:
-        w.append_event(gid, principal, "status", step)
-    eid = w.start_episode(gid)
-    w.end_episode(
-        eid, summary or title,
-        "success" if outcome == "success" else "failure",
-        cost_dollars=cost,
-        input_tokens=max(0, int(run.get("input_tokens") or 0)),
-        output_tokens=max(0, int(run.get("output_tokens") or 0)),
-        tool_calls=max(0, int(run.get("tool_calls") or 0)),
-    )
-    w.set_goal_status(
-        gid, "done" if outcome == "success" else "blocked",
-        result=summary or title)
     # Wall-clock ceiling: a reported duration above the enrollment's
     # max_wall_seconds is ingested (spend must never go uncounted) but
     # flagged and counted — repeat offenders are visible on the roster.
     duration = max(0.0, float(run.get("duration_seconds") or 0.0))
     wall_cap = decision.agent.max_wall_seconds if decision.agent else None
     over_wall = bool(wall_cap is not None and duration > wall_cap)
-    over_budget = _settle_spend(
-        agent_id, gid, cost=cost, idem=idem, over_wall=over_wall,
-        cap=decision.agent.max_dollars if decision.agent else None)
+    cap = decision.agent.max_dollars if decision.agent else None
+    # Completion runs under the sidecar lock, which also holds the spend
+    # meter. A keyed run is complete once its key is in ``run_keys`` or its
+    # goal has left ``pending``; a report whose earlier ingest stopped part
+    # way finishes it here, and a concurrent report waits and sees it done.
+    with _sidecar_locked():
+        sidecar = _load_sidecar()
+        meta = sidecar.setdefault(agent_id, {})
+        goal = w.get_goal(gid) if idem else None
+        if idem and (idem in (meta.get("run_keys") or {})
+                     or (goal is not None and goal.status != "pending")):
+            if goal is not None and goal.status == "pending":
+                w.set_goal_status(gid, "done" if outcome == "success"
+                                  else "blocked", result=summary or title)
+            return {"goal_id": gid, "over_budget": bool(meta.get("over_budget")),
+                    "duplicate": True}
+        for step in steps:
+            w.append_event(gid, principal, "status", step)
+        eid = w.start_episode(gid)
+        w.end_episode(
+            eid, summary or title,
+            "success" if outcome == "success" else "failure",
+            cost_dollars=cost,
+            input_tokens=max(0, int(run.get("input_tokens") or 0)),
+            output_tokens=max(0, int(run.get("output_tokens") or 0)),
+            tool_calls=max(0, int(run.get("tool_calls") or 0)),
+        )
+        over_budget = _meter_spend(meta, gid, cost=cost, idem=idem,
+                                   over_wall=over_wall, cap=cap)
+        _save_sidecar(sidecar)
+        w.set_goal_status(
+            gid, "done" if outcome == "success" else "blocked",
+            result=summary or title)
     from .audit import EventKind, audit_event
     audit_event(EventKind.EXTERNAL_RUN_INGESTED, agent="external_agents",
                 goal_id=gid, external_agent=agent_id, outcome=outcome,
                 cost_dollars=cost, steps=len(steps), over_budget=over_budget,
                 over_wall=over_wall)
-    return {"goal_id": gid, "over_budget": over_budget,
-            "over_wall": over_wall}
+    return {"goal_id": gid, "over_budget": over_budget, "over_wall": over_wall}
 
 
 _RUN_ORIGIN = "external_run"
@@ -1022,29 +1033,38 @@ def _settle_spend(agent_id: str, gid: int, *, cost: float, idem: str,
     after-the-fact ingest and the live finish path."""
     with _sidecar_locked():
         sidecar = _load_sidecar()
-        meta = sidecar.setdefault(agent_id, {})
-        meta["spent_dollars"] = float(meta.get("spent_dollars") or 0.0) + cost
-        if meta.get("period") == "monthly":
-            month = _month_key()
-            if meta.get("period_key") != month:
-                meta["period_key"] = month
-                meta["period_spent"] = 0.0
-            meta["period_spent"] = float(meta.get("period_spent") or 0.0) + cost
-        meta["runs"] = int(meta.get("runs") or 0) + 1
-        meta["last_run_at"] = time.time()
-        if over_wall:
-            meta["wall_violations"] = int(meta.get("wall_violations") or 0) + 1
-        if idem:
-            keys = dict(meta.get("run_keys") or {})
-            keys[idem] = gid
-            if len(keys) > _MAX_RUN_KEYS:
-                for stale in sorted(keys, key=keys.get)[:len(keys)
-                                                        - _MAX_RUN_KEYS]:
-                    keys.pop(stale, None)
-            meta["run_keys"] = keys
-        over_budget = bool(cap is not None and _period_spent(meta) > cap)
-        meta["over_budget"] = over_budget
+        over_budget = _meter_spend(sidecar.setdefault(agent_id, {}), gid,
+                                   cost=cost, idem=idem, over_wall=over_wall,
+                                   cap=cap)
         _save_sidecar(sidecar)
+    return over_budget
+
+
+def _meter_spend(meta: dict, gid: int, *, cost: float, idem: str,
+                 over_wall: bool, cap: float | None) -> bool:
+    """The body of :func:`_settle_spend`; the caller holds the sidecar lock
+    and saves the sidecar."""
+    meta["spent_dollars"] = float(meta.get("spent_dollars") or 0.0) + cost
+    if meta.get("period") == "monthly":
+        month = _month_key()
+        if meta.get("period_key") != month:
+            meta["period_key"] = month
+            meta["period_spent"] = 0.0
+        meta["period_spent"] = float(meta.get("period_spent") or 0.0) + cost
+    meta["runs"] = int(meta.get("runs") or 0) + 1
+    meta["last_run_at"] = time.time()
+    if over_wall:
+        meta["wall_violations"] = int(meta.get("wall_violations") or 0) + 1
+    if idem:
+        keys = dict(meta.get("run_keys") or {})
+        keys[idem] = gid
+        if len(keys) > _MAX_RUN_KEYS:
+            for stale in sorted(keys, key=keys.get)[:len(keys)
+                                                    - _MAX_RUN_KEYS]:
+                keys.pop(stale, None)
+        meta["run_keys"] = keys
+    over_budget = bool(cap is not None and _period_spent(meta) > cap)
+    meta["over_budget"] = over_budget
     return over_budget
 
 

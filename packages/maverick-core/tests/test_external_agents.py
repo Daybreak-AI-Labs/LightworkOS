@@ -733,6 +733,30 @@ def test_concurrent_run_reports_with_one_key_create_one_goal(monkeypatch):
     assert [g.title for g in WorldModel().list_goals()].count("Quote A") == 1
 
 
+def test_a_retry_completes_a_run_whose_ingest_failed_and_counts_it_once(monkeypatch):
+    _enroll()
+    from maverick.world_model import WorldModel
+    real, calls = WorldModel.end_episode, []
+
+    def fail_once(self, *a, **kw):
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("disk hiccup")
+        return real(self, *a, **kw)
+
+    monkeypatch.setattr(WorldModel, "end_episode", fail_once)
+    run = {"title": "Quote B", "outcome": "success", "summary": "s",
+           "cost_dollars": 2.0, "idempotency_key": "retry-1"}
+    with pytest.raises(RuntimeError):
+        xa.record_run("sf-quotebot", dict(run))
+    done = xa.record_run("sf-quotebot", dict(run))
+    again = xa.record_run("sf-quotebot", dict(run))
+    assert done["goal_id"] == again["goal_id"] and again["duplicate"] is True
+    row = xa.roster()[0]
+    assert row["runs"] == 1 and row["spent_dollars"] == pytest.approx(2.0)
+    assert WorldModel().get_goal(done["goal_id"]).status == "done"
+
+
 def test_operator_tool_risk_floors_the_declared_risk():
     _enroll(max_risk="high",
             allow_tools=["crm_update:low", "send_contract:high", "research"])
