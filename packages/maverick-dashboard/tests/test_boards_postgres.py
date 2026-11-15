@@ -21,11 +21,31 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.fixture
-def pg(monkeypatch, tmp_path):
+def isolated_dsn():
+    """A disposable database, as ``maverick-core``'s ``postgres_test_dsn``
+    makes: the shared one may carry a newer checkout's schema, which this
+    installation rightly refuses to open."""
+    psycopg = pytest.importorskip("psycopg")
+    from psycopg import sql
+    from psycopg.conninfo import make_conninfo
+
+    database = "mvk_test_" + uuid.uuid4().hex
+    with psycopg.connect(_DSN, autocommit=True) as admin:
+        admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database)))
+    try:
+        yield make_conninfo(_DSN, dbname=database)
+    finally:
+        # Exactly the database created above; never a caller-supplied name.
+        with psycopg.connect(_DSN, autocommit=True) as admin:
+            admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(database)))
+
+
+@pytest.fixture
+def pg(monkeypatch, tmp_path, isolated_dsn):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
     monkeypatch.setenv("MAVERICK_WORLD_BACKEND", "postgres")
-    monkeypatch.setenv("MAVERICK_PG_DSN", _DSN)
+    monkeypatch.setenv("MAVERICK_PG_DSN", isolated_dsn)
     monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "0")
     monkeypatch.delenv("MAVERICK_DASHBOARD_TOKEN", raising=False)
     from maverick_dashboard import _shared
