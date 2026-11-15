@@ -355,5 +355,5 @@ def test_members_are_the_roots_own_children_and_the_owner_index_is_not_scanned(w
     monkeypatch.setattr(Threads, "_rows", spy)
     Threads(world).members(binding)
     sql, values = seen[0]
-    plan = " ".join(str(row[-1]) for row in world.query("EXPLAIN QUERY PLAN " + sql, values))
+    plan = " ".join(str(row[-1]) for row in world.tenant_query("EXPLAIN QUERY PLAN " + sql, values))
     assert "idx_goals_owner" not in plan

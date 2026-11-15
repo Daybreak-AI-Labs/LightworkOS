@@ -1017,12 +1017,65 @@ def load_config(path: Path | None = None) -> dict:
     if tcfg is not None and _present(tcfg):
         shared = _SINGLE_READ.get()
         if shared is None or not shared.open:
-            return _deep_merge_config(cfg, _load_config_file(tcfg, interpolate=False))
+            return _merge_tenant(cfg, _load_config_file(tcfg, interpolate=False), tcfg)
         with _collecting_read_errors() as noted:
             tenant = _load_config_file(tcfg, interpolate=False)
         shared.noted.update(noted)  # reported for the rest of the decision
-        cfg = _deep_merge_config(cfg, tenant)
+        cfg = _merge_tenant(cfg, tenant, tcfg)
     return cfg
+
+
+_LOOSENING_LOGGED: set[tuple[str, tuple[str, ...]]] = set()
+
+
+def _merge_tenant(cfg: dict, tenant: dict, path: Path) -> dict:
+    """A tenant overlay may only tighten governance, safety, capabilities,
+    sandbox and security settings; a looser value is ignored, logged once and listed by
+    ``maverick doctor`` (:func:`tenant_policy_loosenings`)."""
+    from .policy_tighten import merge_tenant_overlay
+    merged, ignored, fixed = merge_tenant_overlay(cfg, tenant, _deep_merge_config)
+    marker = (str(path), tuple(ignored), tuple(fixed))
+    if (ignored or fixed) and marker not in _LOOSENING_LOGGED:
+        _LOOSENING_LOGGED.add(marker)
+        logging.getLogger(__name__).warning(
+            "workspace settings %s cannot loosen your organisation's policy; ignored: %s; "
+            "set by your organisation: %s", path, ", ".join(ignored) or "none", ", ".join(fixed) or "none")
+    return merged
+
+
+def tenant_policy_loosenings() -> dict[str, list[str]]:
+    """Workspace overlays on disk whose looser policy settings are ignored,
+    keyed by workspace folder, compared with the organisation's settings."""
+    from .paths import maverick_home
+    from .policy_tighten import merge_tenant_overlay
+    root = maverick_home() / "tenants"
+    if not root.is_dir():
+        return {}
+    upper = load_global_config()
+    found: dict[str, list[str]] = {}
+    for path in sorted(root.glob("*/config.toml")):
+        try:
+            tenant = _load_config_file(path, interpolate=False)
+        except Exception:  # unreadable files are reported by the config checks
+            continue
+        _, ignored, fixed = merge_tenant_overlay(upper, tenant, _deep_merge_config)
+        if ignored or fixed:
+            found[path.parent.name] = ignored + [f"{key} (set by your organisation)" for key in fixed]
+    return found
+
+
+def tenant_ignored_settings() -> set[str]:
+    """Dotted names the active workspace overlay tried to loosen (ignored)."""
+    tcfg = tenant_config_path()
+    if tcfg is None or not _present(tcfg):
+        return set()
+    from .policy_tighten import merge_tenant_overlay
+    try:
+        tenant = _load_config_file(tcfg, interpolate=False)
+    except Exception:
+        return set()
+    _, ignored, fixed = merge_tenant_overlay(load_global_config(), tenant, _deep_merge_config)
+    return set(ignored) | set(fixed)
 
 
 class AgentStepConfigError(ValueError):

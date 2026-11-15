@@ -470,6 +470,25 @@ def resolved_view(name: str, directory: str | Path | None = None) -> dict | None
         return _resolved_view(name, directory)
 
 
+_IGNORED_LABELS = {
+    "allow_tools": "Tools it may use", "deny_tools": "Tools it may never use",
+    "max_risk": "Highest risk it may take", "allow_paths": "Folders it may use",
+    "allow_hosts": "Websites it may reach", "mcp_servers": "Connected tool servers",
+    "refuse": "Requests it always refuses", "workflow": "Review steps in its playbook",
+    "output": "Review before delivery", "compartment": "Data boundary",
+    "autonomy": "How independently it acts",
+}
+
+
+def _ignored_labels(name: str) -> list[str]:
+    """Plain names of the override fields kept at the organisation's setting."""
+    from .domain import clamped_workspace_domains
+
+    reasons = clamped_workspace_domains().get(name, [])
+    return [label for field, label in _IGNORED_LABELS.items()
+            if any(reason.startswith(field + " ") for reason in reasons)]
+
+
 def _resolved_view(name: str, directory: str | Path | None = None) -> dict | None:
     """The merged pack the agent actually runs, plus provenance and lint -- the
     payload the editor renders. ``None`` if no such pack exists.
@@ -522,6 +541,9 @@ def _resolved_view(name: str, directory: str | Path | None = None) -> dict | Non
         "enforced_gate": enforced_gate(prof),
         "is_override": bool(raw),
         "overridden": sorted(overridden_fields(raw)),
+        # Looser changes in the override file that the organisation's pack
+        # keeps out (the file still loads; see domain.clamped_workspace_domains).
+        "set_by_organisation": _ignored_labels(name),
         "errors": errors,
         "warnings": warnings,
         "readiness": readiness,

@@ -2273,12 +2273,30 @@ class WorldModel:
     # methods are the contract both backends implement: write the SQL in
     # SQLite paramstyle and access rows by index or by column name.
 
-    def query(self, sql: str, params: tuple[Any, ...] | list = ()) -> list:
+    def query(self, sql: str, params: tuple[Any, ...] | list = (), *, system: bool = False) -> list:
         """Run a read-only statement written in SQLite paramstyle (``?``) and
         return every row. Rows support both ``row[0]`` and ``row["col"]`` and
         unpack like tuples. Mirrored on the Postgres backend, which rewrites
-        the paramstyle and wraps its tuple rows the same way."""
+        the paramstyle and wraps its tuple rows the same way.
+
+        Tenant data belongs in :meth:`tenant_query`. On the shared Postgres
+        store this unscoped call is refused while tenancy is on unless
+        ``system=True`` marks a deliberate deployment-wide read. This file is
+        already one tenant's store, so the flag changes nothing here."""
+        del system
         return self._read_all(sql, tuple(params))
+
+    def tenant_sql(self, sql: str, params: tuple[Any, ...] | list = (), *,
+                   require: bool = True) -> tuple[str, tuple]:
+        """Expand the ``{tenant...}`` markers of :mod:`maverick.tenant_sql`.
+        The file is the tenant boundary here, so every marker is ``1=1``."""
+        from .tenant_sql import expand, unscoped
+        return expand(sql, params, unscoped, require=require)
+
+    def tenant_query(self, sql: str, params: tuple[Any, ...] | list = ()) -> list:
+        """:meth:`query` for tenant data: the statement names its boundary with
+        ``{tenant:COL}``, ``{tenant_exact:COL}`` or ``{tenant_goal:COL}``."""
+        return self._read_all(*self.tenant_sql(sql, params))
 
     def sql_day_from_epoch(self, column: str) -> str:
         """SQL expression bucketing an epoch-seconds column into a UTC

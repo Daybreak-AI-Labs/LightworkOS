@@ -11,7 +11,7 @@ from maverick_dashboard import task_diagnostics as diagnostic
 def test_document_excludes_raw_task_and_event_contents(monkeypatch):
     secret = 'PRIVATE-CLIENT-CONTENT-AND-KEY'
     goal = SimpleNamespace(id=7, status='failed', title=secret, description=secret, result=secret)
-    world = SimpleNamespace(query=lambda *args: [(1, secret, 1000)])
+    world = SimpleNamespace(tenant_query=lambda *args: [(1, secret, 1000)])
     monkeypatch.setattr(cost_provenance, 'for_goal', lambda _: {'state':'unavailable', 'receipts':[]})
     document = diagnostic._document(world, goal, 'OTD-reference')
     assert secret not in repr(document)

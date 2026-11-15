@@ -592,6 +592,13 @@
       <style>.specialist-draft-review-row{padding-block:var(--space-3);border-bottom:1px solid var(--border);overflow-wrap:anywhere}.specialist-draft-review-row h3{margin-top:0}.specialist-draft-review-row dl{margin-block:var(--space-2)}.specialist-draft-review-row dt{font-weight:600}.specialist-draft-review-row dd{margin-inline-start:var(--space-3)}#specialist-drafts .input{display:block;width:100%;margin-block:var(--space-2)}#specialist-drafts [data-sd-review]>label{display:block;margin-block:var(--space-3)}#specialist-drafts [data-sd-review]>button{margin:var(--space-1)}</style>
       {% endif %}
 
+      {% if selected and selected.set_by_organisation %}
+      <div class="panel" style="margin-top: 1rem;" id="agent-set-by-organisation">
+        <strong>Set by your organisation</strong>
+        <p class="muted">This agent's saved changes try to loosen these settings, so the built-in limits still apply:</p>
+        <ul>{% for label in selected.set_by_organisation %}<li>{{ label }}</li>{% endfor %}</ul>
+      </div>
+      {% endif %}
       {% if selected and (selected.errors or selected.warnings) %}
       <div class="panel" style="margin-top: 1rem;">
         {% for e in selected.plain_errors %}<div>⛔ {{ e }}</div>{% endfor %}

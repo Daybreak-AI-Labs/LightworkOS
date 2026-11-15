@@ -64,3 +64,23 @@ def test_pg_row_supports_index_key_and_unpacking():
     assert row.keys() == ["status", "n"]
     with pytest.raises(KeyError):
         row["missing"]
+
+
+def test_tenant_markers_expand_in_parameter_order(world):
+    from maverick.tenant_sql import expand
+
+    def resolve(kind, column):
+        return f"{kind}:{column} = ?", (kind,)
+
+    sql, values = expand("SELECT 1 FROM goals g WHERE g.id = ? AND {tenant:g.tenant_id} "
+                         "AND note = '{tenant:x} ?' AND {tenant_goal:g.id} AND {tenant_exact:t} AND x < ?",
+                         (1, 2), resolve)
+    assert sql == ("SELECT 1 FROM goals g WHERE g.id = ? AND (read:g.tenant_id = ?) "
+                   "AND note = '{tenant:x} ?' AND (goal:g.id = ?) AND (exact:t = ?) AND x < ?")
+    assert values == (1, "read", "goal", "exact", 2)
+    with pytest.raises(ValueError):
+        expand("SELECT 1 FROM goals", (), resolve)
+    # The SQLite file is the tenant boundary: markers read as true.
+    gid = world.create_goal("scoped", "")
+    assert world.tenant_query("SELECT id FROM goals WHERE {tenant:tenant_id} AND id = ?", (gid,))[0][0] == gid
+    assert world.query("SELECT id FROM goals WHERE id = ?", (gid,), system=True)[0][0] == gid

@@ -36,8 +36,8 @@ def _board_overview(w, owner, days: int) -> dict:
     own, params = _owner_sql(owner)
     by_status = {
         r[0]: int(r[1])
-        for r in w.query(
-            "SELECT status, COUNT(*) FROM goals WHERE 1=1" + own + " GROUP BY status", params
+        for r in w.tenant_query(
+            "SELECT status, COUNT(*) FROM goals WHERE {tenant:tenant_id}" + own + " GROUP BY status", params
         )
     }
     daily = {d.isoformat(): {"d": d.isoformat(), "started": 0, "delivered": 0} for d in day_list}
@@ -45,9 +45,9 @@ def _board_overview(w, owner, days: int) -> dict:
         ("created_at", "started", ""),
         ("updated_at", "delivered", " AND status = 'done'"),
     ):
-        rows = w.query(
+        rows = w.tenant_query(
             f"SELECT {w.sql_day_from_epoch(col)} AS day, COUNT(*) FROM goals "
-            f"WHERE {col} >= ?" + extra + own + " GROUP BY day",
+            f"WHERE {col} >= ? AND {{tenant:tenant_id}}" + extra + own + " GROUP BY day",
             (since, *params),
         )
         for day, n in rows:
@@ -56,8 +56,8 @@ def _board_overview(w, owner, days: int) -> dict:
 
     def _count(col: str, lo: float, hi: float, extra: str = "") -> int:
         return int(
-            w.query(
-                f"SELECT COUNT(*) FROM goals WHERE {col} >= ? AND {col} < ?" + extra + own,
+            w.tenant_query(
+                f"SELECT COUNT(*) FROM goals WHERE {col} >= ? AND {col} < ? AND {{tenant:tenant_id}}" + extra + own,
                 (lo, hi, *params),
             )[0][0]
         )
@@ -73,9 +73,9 @@ def _board_overview(w, owner, days: int) -> dict:
     from maverick.domain import suite_for
 
     domains: dict[str, dict] = {}
-    for dom, total, done in w.query(
+    for dom, total, done in w.tenant_query(
         "SELECT domain, COUNT(*), SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) FROM goals "
-        "WHERE 1=1" + own + " GROUP BY domain",
+        "WHERE {tenant:tenant_id}" + own + " GROUP BY domain",
         params,
     ):
         suite = suite_for(dom or "") if dom else None
@@ -112,10 +112,10 @@ def _board_spend(w, owner, days: int) -> dict:
         else "FROM episodes e"
     )
     own, params = ("", ()) if owner is None else (" AND g.owner = ?", (owner,))
-    ended = " WHERE e.ended_at IS NOT NULL"
+    ended = " WHERE e.ended_at IS NOT NULL AND {tenant_goal:e.goal_id}"
 
     daily = {d.isoformat(): {"d": d.isoformat(), "cost": 0.0, "runs": 0} for d in day_list}
-    for day, cost, runs in w.query(
+    for day, cost, runs in w.tenant_query(
         "SELECT " + w.sql_day_from_epoch("e.started_at") + " AS day, "
         "SUM(COALESCE(e.cost_dollars, 0)), COUNT(*) "
         + join
@@ -129,7 +129,7 @@ def _board_spend(w, owner, days: int) -> dict:
             daily[day] = {"d": day, "cost": float(cost or 0), "runs": int(runs)}
 
     def _tot(lo: float) -> dict:
-        r = w.query(
+        r = w.tenant_query(
             "SELECT COALESCE(SUM(e.cost_dollars), 0), COUNT(*), "
             "COALESCE(SUM(e.input_tokens), 0), COALESCE(SUM(e.output_tokens), 0), "
             "COALESCE(SUM(e.tool_calls), 0) "
@@ -164,7 +164,7 @@ def _board_spend(w, owner, days: int) -> dict:
         for e in episodes[:60]
     ]
     top_goals = []
-    for gid, cost, runs in w.query(
+    for gid, cost, runs in w.tenant_query(
         "SELECT e.goal_id, SUM(COALESCE(e.cost_dollars, 0)) AS c, COUNT(*) "
         + join
         + ended
@@ -209,10 +209,10 @@ def _external_platform_spend(w, owner, since: float) -> list[dict]:
     if not platform_of:
         return []
     agg: dict[str, dict] = {}
-    for own_id, cost, runs in w.query(
+    for own_id, cost, runs in w.tenant_query(
         "SELECT g.owner, SUM(COALESCE(e.cost_dollars, 0)), COUNT(*) "
         "FROM episodes e JOIN goals g ON e.goal_id = g.id "
-        "WHERE e.ended_at IS NOT NULL AND e.started_at >= ? "
+        "WHERE e.ended_at IS NOT NULL AND e.started_at >= ? AND {tenant:g.tenant_id} "
         "AND g.owner LIKE 'agent:%' GROUP BY g.owner",
         (since,),
     ):
@@ -251,9 +251,9 @@ def _board_workforce(w, owner, days: int) -> dict:
 
     def _delivered(lo: float, hi: float) -> int:
         return int(
-            w.query(
+            w.tenant_query(
                 "SELECT COUNT(*) FROM goals WHERE status = 'done' "
-                "AND updated_at >= ? AND updated_at < ?" + own,
+                "AND updated_at >= ? AND updated_at < ? AND {tenant:tenant_id}" + own,
                 (lo, hi, *params),
             )[0][0]
         )
@@ -289,12 +289,12 @@ def _external_platform_workforce(w, owner) -> list[dict]:
     if not platform_of:
         return []
     agg: dict[str, dict] = {}
-    for own_id, completed, total, spend in w.query(
+    for own_id, completed, total, spend in w.tenant_query(
         "SELECT g.owner, "
         "SUM(CASE WHEN g.status = 'done' THEN 1 ELSE 0 END), COUNT(*), "
         "(SELECT COALESCE(SUM(e.cost_dollars), 0) FROM episodes e "
-        " JOIN goals g2 ON e.goal_id = g2.id WHERE g2.owner = g.owner) "
-        "FROM goals g WHERE g.owner LIKE 'agent:%' GROUP BY g.owner"
+        " JOIN goals g2 ON e.goal_id = g2.id WHERE g2.owner = g.owner AND {tenant:g2.tenant_id}) "
+        "FROM goals g WHERE g.owner LIKE 'agent:%' AND {tenant:g.tenant_id} GROUP BY g.owner"
     ):
         platform = platform_of.get(str(own_id))
         if platform is None:
@@ -319,9 +319,9 @@ def _board_savings(w, owner, days: int) -> dict:
     day_list, since, _prev = _board_day_list(days)
     own, params = _owner_sql(owner)
     daily = {d.isoformat(): {"d": d.isoformat(), "n": 0} for d in day_list}
-    for day, n in w.query(
+    for day, n in w.tenant_query(
         "SELECT " + w.sql_day_from_epoch("updated_at") + " AS day, COUNT(*) FROM goals "
-        "WHERE status = 'done' AND updated_at >= ?" + own + " GROUP BY day",
+        "WHERE status = 'done' AND updated_at >= ? AND {tenant:tenant_id}" + own + " GROUP BY day",
         (since, *params),
     ):
         if day in daily:
@@ -448,13 +448,13 @@ def _board_oversight(w, owner, days: int, request=None, *, visible, is_intervent
         total = None
         sources["audit"]["state"] = "unavailable"
     try:
-        clauses = "a.status = 'pending'"
+        clauses = "a.status = 'pending' AND {tenant:a.tenant_id}"
         values = ()
         if owner is not None:
             clauses += " AND COALESCE(a.requested_by, '') = ?"
             values = (owner,)
         if request is None:
-            pending = int(w.query("SELECT COUNT(*) FROM approvals a WHERE " + clauses, values)[0][0])
+            pending = int(w.tenant_query("SELECT COUNT(*) FROM approvals a WHERE " + clauses, values)[0][0])
         else:
             from .content_access import can_read_approval
             pending = sum(can_read_approval(request, row, world=w) for row in w.pending_approvals())

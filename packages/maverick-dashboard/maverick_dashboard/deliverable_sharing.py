@@ -206,7 +206,8 @@ def source_generation(world):
 
 def _release_record(world, goal, token):
     digest = hashlib.sha256(token.encode()).hexdigest()
-    rows = world.query("SELECT id FROM share_links WHERE goal_id=? AND token_sha256=?", (goal.id, digest))
+    rows = world.tenant_query("SELECT id FROM share_links WHERE goal_id=? AND {tenant_goal:goal_id} AND token_sha256=?",
+                              (goal.id, digest))
     if len(rows) != 1:
         return None
     record = _store().get(_id(goal.id, int(rows[0][0])))

@@ -63,9 +63,9 @@ def _view(request, name):
 
 def _cost(world, goal_id):
     # The native query keeps NULL prices distinct from an actually recorded zero.
-    rows = world.query("SELECT COUNT(*) AS runs, SUM(cost_dollars) AS cost, "
+    rows = world.tenant_query("SELECT COUNT(*) AS runs, SUM(cost_dollars) AS cost, "
                        "SUM(CASE WHEN cost_dollars IS NULL OR ended_at IS NULL THEN 1 ELSE 0 END) AS unknown "
-                       "FROM episodes WHERE goal_id=?", (goal_id,))
+                       "FROM episodes WHERE goal_id=? AND {tenant_goal:goal_id}", (goal_id,))
     row = rows[0]
     value = row["cost"]
     if (not row["runs"] or row["unknown"] or value is None
@@ -85,7 +85,7 @@ def _material(request, world, name, days, now):
         if not auth.can_access_goal(request, goal) or not cutoff <= goal.created_at <= now:
             continue
         # Native sources retain the complete answer. This read emits no answer or question body.
-        waiting = bool(world.query("SELECT id FROM questions WHERE goal_id=? AND answer IS NULL LIMIT 1", (goal.id,))) if goal.status == "blocked" else False
+        waiting = bool(world.tenant_query("SELECT id FROM questions WHERE goal_id=? AND {tenant_goal:goal_id} AND answer IS NULL LIMIT 1", (goal.id,))) if goal.status == "blocked" else False
         stop = None if waiting else stop_payload(goal.status, goal.result)
         status = "Waiting for your answer" if waiting else status_label(goal.status, stop["kind"] if stop else None) or "State unavailable"
         group = ("waiting" if waiting else "finished" if goal.status in {"done", "completed"}

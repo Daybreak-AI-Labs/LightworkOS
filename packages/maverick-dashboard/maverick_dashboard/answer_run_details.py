@@ -6,7 +6,8 @@ from decimal import Decimal
 
 from .auth import assert_goal_access, require_permission
 
-_SQL = "SELECT id,started_at,ended_at,summary,cost_dollars FROM episodes WHERE goal_id=? ORDER BY started_at DESC,id DESC LIMIT 1"
+_SQL = ("SELECT id,started_at,ended_at,summary,cost_dollars FROM episodes WHERE goal_id=? AND {tenant_goal:goal_id} "
+        "ORDER BY started_at DESC,id DESC LIMIT 1")
 
 
 def _episode(world, goal_id):
@@ -23,7 +24,7 @@ def _episode(world, goal_id):
         except ImportError:
             return None
     try:
-        rows = world.query(_SQL, (goal_id,))
+        rows = world.tenant_query(_SQL, (goal_id,))
         if not rows:
             return None
         row = rows[0]

@@ -46,7 +46,8 @@ def _goal(request, identity):
 
 def _document(world, goal, identity):
     from maverick.cost_provenance import for_goal
-    rows = world.query("SELECT id,kind,ts FROM goal_events WHERE goal_id=? ORDER BY id DESC LIMIT 20", (goal.id,))
+    rows = world.tenant_query("SELECT id,kind,ts FROM goal_events WHERE goal_id=? AND {tenant_goal:goal_id} "
+                              "ORDER BY id DESC LIMIT 20", (goal.id,))
     events = [{"id": row[0], "kind": row[1] if row[1] in EVENT_KINDS else "other", "time_utc": datetime.fromtimestamp(row[2], timezone.utc).isoformat()} for row in rows]
     costs = for_goal(goal.id)
     pending = [row for row in costs["receipts"] if row["state"] != "settled"]

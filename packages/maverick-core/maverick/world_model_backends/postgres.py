@@ -1030,6 +1030,18 @@ def _mutation_tenant_scope(column: str = "tenant_id") -> tuple[str, list]:
     return f"{column} = %s", [tenant]
 
 
+def _tenant_marker(kind: str, column: str) -> tuple[str, list]:
+    """Resolve one ``{tenant...}`` marker of ``tenant_query`` (``?`` paramstyle)."""
+    if kind == "goal":
+        frag, params = _tenant_scope("_tg.tenant_id")
+        frag = f"{column} IN (SELECT _tg.id FROM goals _tg WHERE {frag})"
+    elif kind == "exact":
+        frag, params = _mutation_tenant_scope(column)
+    else:
+        frag, params = _tenant_scope(column)
+    return frag.replace("%s", "?"), params
+
+
 def _tenant_precedence(column: str = "tenant_id") -> tuple[str, list]:
     """Ordering expression that prefers an active tenant over legacy NULL."""
     tenant = _active_tenant()
@@ -2606,14 +2618,42 @@ class PostgresWorldModel:
 
     # -- backend-portable raw reads (mirror of WorldModel.query) -------------
 
-    def query(self, sql: str, params: tuple | list = ()) -> list:
+    def query(self, sql: str, params: tuple | list = (), *, system: bool = False) -> list:
         """Run a read-only statement written in SQLite paramstyle (``?``).
 
         The statement is rewritten for psycopg (``%s``, ``%%``), executed inside
         :meth:`_tx` (so it takes the connection lock, sets the tenant GUC and
         rolls back on error instead of poisoning the shared connection), and
         every row comes back as a tuple that also supports ``row["column"]``.
+
+        This statement carries no tenant predicate, so it is refused while
+        tenancy is on (a bound tenant, strict isolation or row-level security)
+        unless ``system=True`` marks a deliberate deployment-wide read. Tenant
+        data goes through :meth:`tenant_query`.
         """
+        if not system and self._tenancy_on():
+            from ..tenant_sql import TenantScopeRequired
+            raise TenantScopeRequired(
+                "This read has no tenant boundary. Use tenant_query, or mark a "
+                "deployment-wide read with system=True.")
+        return self._raw_query(sql, params)
+
+    def _tenancy_on(self) -> bool:
+        return bool(self._rls) or _strict_tenant_isolation() or _active_tenant() is not None
+
+    def tenant_sql(self, sql: str, params: tuple | list = (), *,
+                   require: bool = True) -> tuple[str, tuple]:
+        """Expand the ``{tenant...}`` markers of :mod:`maverick.tenant_sql` into
+        this store's tenant predicates, still in SQLite paramstyle."""
+        from ..tenant_sql import expand
+        return expand(sql, params, _tenant_marker, require=require)
+
+    def tenant_query(self, sql: str, params: tuple | list = ()) -> list:
+        """:meth:`query` for tenant data: the statement names its boundary with
+        ``{tenant:COL}``, ``{tenant_exact:COL}`` or ``{tenant_goal:COL}``."""
+        return self._raw_query(*self.tenant_sql(sql, params))
+
+    def _raw_query(self, sql: str, params: tuple | list = ()) -> list:
         params = tuple(params)
         with self._tx() as cur:
             if params:
