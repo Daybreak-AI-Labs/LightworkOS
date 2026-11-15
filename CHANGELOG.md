@@ -234,6 +234,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   its text starts with "REFUSED", "DRY RUN" or a warning sign. A failed
   high-risk MCP action is held for checking instead of being treated as
   not done.
+- `office_convert` no longer runs LibreOffice on the host (Local backend). A
+  document's linked images could make the host fetch any address. Configure a
+  Docker, Podman or Kubernetes document worker to keep converting.
 
 ### Fixed
 

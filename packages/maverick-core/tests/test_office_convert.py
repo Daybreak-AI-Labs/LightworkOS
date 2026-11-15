@@ -86,3 +86,16 @@ def test_registered():
 
     names = set(getattr(base_registry(world=World(), sandbox=Sandbox()), "_tools", {}).keys())
     assert "office_convert" in names
+
+
+def test_local_backend_refuses_office_conversion(monkeypatch, tmp_path):
+    # LibreOffice fetches linked images and objects; on the host that is
+    # unchecked network access driven by an untrusted document.
+    from maverick.sandbox.local import LocalBackend
+
+    calls = []
+    monkeypatch.setattr(LocalBackend, "exec", lambda self, *a, **k: calls.append(a))
+    (tmp_path / "page.html").write_text('<img src="http://127.0.0.1:9/linked.png">')
+    out = office_convert(LocalBackend(tmp_path)).fn({"op": "to_pdf", "input_path": "page.html"})
+    assert out.startswith("ERROR") and "Docker, Podman or Kubernetes" in out
+    assert calls == [] and not (tmp_path / "page.pdf").exists()

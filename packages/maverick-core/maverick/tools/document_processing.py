@@ -87,6 +87,11 @@ def verify_release_document_runtime() -> None:
 def _worker(sandbox, request, *, allow_local=False):
     cfg = get_document_tools()
     local = allow_local and (sandbox is None or isinstance(sandbox, LocalBackend))
+    if local and request.get("operation") == "convert":
+        # LibreOffice fetches a document's linked images and objects, and the
+        # host has no network boundary, so conversion needs a container.
+        raise RuntimeError("Office conversion needs a Docker, Podman or Kubernetes sandbox, because a document "
+                           "can make this computer fetch web addresses; see docs/document-processing.md")
     if not local and not isinstance(sandbox, (DockerBackend, PodmanBackend, KubernetesBackend)):
         raise RuntimeError("Native document processing needs a Docker, Podman or Kubernetes sandbox; see docs/document-processing.md")
     parent = ensure_private_directory(data_dir("document-processing"))

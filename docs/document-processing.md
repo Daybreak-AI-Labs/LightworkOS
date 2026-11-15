@@ -54,8 +54,11 @@ system packages or silently execute those opt-in parsers on the application host
 ## Office, image OCR, and LaTeX jobs
 
 The existing `office_convert`, image `ocr`, and LaTeX `render` tools also use
-the shared private worker. They retain their existing explicit Local backend
-route; Local runs on the host and does not provide container network isolation.
+the shared private worker. Image `ocr` and LaTeX `render` retain their existing
+explicit Local backend route; Local runs on the host and does not provide
+container network isolation. `office_convert` refuses the Local backend:
+LibreOffice fetches a document's linked images and objects, so an untrusted
+document could make the host reach any address.
 On Docker, Podman and Kubernetes, the selected document worker image receives
 only job files, with network disabled. A missing host binary does not veto a
 capable container. Capability/version checks run inside the selected worker.
