@@ -232,6 +232,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Startup recovery (`maverick serve`, the dashboard on SQLite and
   `maverick status`) no longer marks queued tasks as stuck. Only running
   tasks that went quiet are blocked; queued tasks wait for their worker.
+- Retrying a workflow whose approved high-risk step failed now asks for a
+  new approval at that step's gate, then continues the saved work. Before,
+  the retry was refused. Approve or reject the new request as usual.
 
 ### Fixed
 

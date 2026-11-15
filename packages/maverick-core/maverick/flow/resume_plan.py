@@ -97,7 +97,8 @@ def prepare_resume(
     restored = dict(resume.get("data") or data or {})
     node = flow.node(resume.get("node_id"))
     decision = resume.get("decision")
-    if node is not None and (decision in ("approved", "rejected") or decision in node.choices):
+    if node is not None and node.kind == NODE_APPROVAL and (
+            decision in ("approved", "rejected") or decision in node.choices):
         (on_node or (lambda *_: None))(node, decision, approval_outcome(decision))
     if node is None:
         return ResumePlan(restored, None, result=FlowRunResult(

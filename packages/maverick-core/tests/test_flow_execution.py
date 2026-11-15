@@ -261,7 +261,6 @@ class TestExecution:
     def test_retry_inside_approved_loop_resumes_unless_the_gated_action_failed(
         self, tmp_path, monkeypatch,
     ):
-        import pytest
 
         _patch_home(tmp_path, monkeypatch)
         body = Flow(id="body", name="b", start="look", nodes={
@@ -301,15 +300,25 @@ class TestExecution:
         retried = execution.execute(f, agent_runner=lambda b, d: ("", 1.0), action_runner=act,
                                     resume_run_id=failed.run_id, from_failure=True)
         assert retried.status == "completed" and sent == ["1", "2", "3"]
-        # The gated action itself failed: a retry would re-send it unreviewed.
+        # The gated action itself failed: a retry pauses for a fresh approval
+        # instead of re-sending it unreviewed, then continues the saved work.
         sent.clear()
         broken["send"] = "2"
         failed = approved_run()
         assert failed.status == "failed" and sent == ["1"]
-        with pytest.raises(execution.FlowNotResumable, match="without a new review"):
-            execution.execute(f, agent_runner=lambda b, d: ("", 1.0), action_runner=act,
-                              resume_run_id=failed.run_id, from_failure=True)
-        assert sent == ["1"]
+        held = execution.execute(f, agent_runner=lambda b, d: ("", 1.0), action_runner=act,
+                                 resume_run_id=failed.run_id, from_failure=True,
+                                 approve_fn=lambda node, data: "approved")
+        assert (held.status, held.cursor, held.retry_cursor) == ("paused_approval", "gate", "loop")
+        assert held.human["approval_card"] and sent == ["1"]
+        broken["send"] = None
+        retried = execution.execute(
+            f, agent_runner=lambda b, d: ("", 1.0), action_runner=act,
+            resume_run_id=held.run_id, decision="approved", decided_by="system:direct",
+            approval_binding_sha256=_approval_binding(held),
+            approval_decision_attestation=_approval_attestation(held))
+        assert retried.status == "completed" and sent == ["1", "2", "3"]
+        assert not retried.retry_cursor
 
     def test_approval_card_and_run_share_rendered_pause_values(self, tmp_path, monkeypatch):
         _patch_home(tmp_path, monkeypatch)

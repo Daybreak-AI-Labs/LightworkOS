@@ -62,16 +62,22 @@ def test_retry_from_budget_hold_requires_a_larger_finite_total(monkeypatch):
     assert admission.resume["rerun"] is True
 
 
-def test_retry_from_failure_cannot_reuse_an_approval_for_a_high_risk_action(monkeypatch):
+def test_retry_of_a_failed_high_risk_action_asks_for_a_fresh_approval(monkeypatch):
     gate = FlowNode(id="gate", kind="approval", assignee="cfo", next="pay")
     pay = FlowNode(id="pay", kind="action", tool="slack_bot", params={"text": "x"})
     flow = Flow(id="f", name="Example", start="gate", nodes={"gate": gate, "pay": pay})
     prior = store.FlowRun(run_id="run", flow_id="f", status="failed", cursor="pay",
                           continuation={"node_id": "pay"})
     monkeypatch.setattr(store, "load_run", lambda _run_id: prior)
-    with pytest.raises(FlowNotResumable, match="without a new review"):
-        _prepare(flow, from_failure=True)
+    admission = _prepare(flow, from_failure=True)
+    # The retry re-enters the gate, never the action, and remembers the action.
+    assert admission.reapproval_gate == "gate"
+    assert admission.resume == {"node_id": "gate", "data": {}, "rerun": True}
     assert prior.status == "failed"
+    # Without a gate in front of the action there is nobody to ask: refuse.
+    ungated = Flow(id="f", name="Example", start="pay", nodes={"pay": pay})
+    with pytest.raises(FlowNotResumable, match="without a new review"):
+        _prepare(ungated, from_failure=True)
 
 
 def test_budget_hold_resumes_unless_a_branch_stopped_at_its_gated_action(monkeypatch):
@@ -91,5 +97,4 @@ def test_budget_hold_resumes_unless_a_branch_stopped_at_its_gated_action(monkeyp
     monkeypatch.setattr(store, "load_run", lambda _run_id: prior)
     assert _prepare(flow, from_failure=True, budget_limit_dollars=6.0).resume["rerun"] is True
     frame["children"]["2"] = {"flow_id": "body", "cursor": "pay", "data": {}, "seen": 1}
-    with pytest.raises(FlowNotResumable, match="without a new review"):
-        _prepare(flow, from_failure=True, budget_limit_dollars=6.0)
+    assert _prepare(flow, from_failure=True, budget_limit_dollars=6.0).reapproval_gate == "gate"

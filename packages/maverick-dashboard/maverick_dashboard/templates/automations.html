@@ -1413,8 +1413,10 @@
       try {
         var r = await fetch('/api/v1/flows/runs/' + encodeURIComponent(runId) + '/retry'
           + (fromFailure ? '?from_failure=1' : ''), { method: 'POST' });
+        var body = r.ok ? await r.json().catch(function () { return {}; }) : {};
         flowsMsg.textContent = r.ok
-          ? (fromFailure ? 'Starting again from the step that failed…' : 'Running again with the same answers…')
+          ? (body.approval_required ? 'This step needs a new approval before it runs again.'
+            : fromFailure ? 'Starting again from the step that failed…' : 'Running again with the same answers…')
           : plainError(r, 'run it again');
         setTimeout(loadFlowRuns, 500);
       } catch (e) { flowsMsg.textContent = plainError(e, 'run it again'); }

@@ -195,6 +195,7 @@ def execute(flow: Flow, *, agent_runner: AgentRunner, action_runner: ActionRunne
     approval_check_binding = ""
     approval_check_expired = False
     approval_snapshot = None
+    reapproval_gate = ""
     if budget_limit_dollars is not None and not resume_run_id:
         raise FlowNotResumable("a run allowance change requires a saved budget-held run")
     if resume_run_id:
@@ -211,6 +212,11 @@ def execute(flow: Flow, *, agent_runner: AgentRunner, action_runner: ActionRunne
         approval_actor = admission.approval_actor
         approval_check_binding = admission.approval_binding
         approval_check_expired = admission.approval_expired
+        reapproval_gate = admission.reapproval_gate
+        if reapproval_gate:
+            # A retry of a failed high-risk step only reaches its gate, and a
+            # standing approval callback cannot stand in for the fresh review.
+            approve_fn = None
         if approval_resume:
             approval_submitted_inputs = submitted_inputs
         run_id = prior.run_id
@@ -444,6 +450,11 @@ def execute(flow: Flow, *, agent_runner: AgentRunner, action_runner: ActionRunne
         execution_user_id=execution_user_id,
         allowed_suites=allowed_suites,
     )
+    if reapproval_gate and prior is not None and res.status == STATUS_PAUSED_APPROVAL \
+            and res.cursor == reapproval_gate:
+        # Keep the failed step and its saved work for after the new approval.
+        run.retry_cursor = str(prior.cursor or "")
+        run.continuation = dict(prior.continuation or {})
     store.save_run(run)
     if record_outcomes:
         # Content-free execution receipt. A checkpoint or a saved draft alone
