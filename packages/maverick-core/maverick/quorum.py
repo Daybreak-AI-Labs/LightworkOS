@@ -44,7 +44,8 @@ import logging
 import os
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -52,6 +53,7 @@ from pathlib import Path
 from .file_lock import (
     atomic_read_text,
     atomic_write_text,
+    cross_process_lock,
     ensure_private_directory,
     ensure_private_file,
 )
@@ -84,7 +86,8 @@ APPROVED = "approved"
 EXPIRED = "expired"
 
 # One lock around every load-modify-save: two concurrent approvals must
-# accumulate, not clobber each other (mirrors quotas.UsageLedger).
+# accumulate, not clobber each other (mirrors quotas.UsageLedger). The
+# cross-process lock in ProposalStore._locked covers other workers.
 _STORE_LOCK = threading.Lock()
 
 
@@ -222,24 +225,47 @@ class ProposalStore:
     """The persistent proposal ledger (``data_dir("config_proposals.json")``).
 
     Not a hot path, so every operation reloads from disk and saves atomically
-    (unique temp file + ``os.replace``, 0600) under one process-wide lock —
-    concurrent approvals accumulate instead of last-writer-wins.
+    (unique temp file + ``os.replace``, 0600) under the thread lock and a
+    cross-process file lock, so concurrent approvals from several workers
+    accumulate instead of last-writer-wins. A ledger that cannot be read is
+    moved aside (``<name>.corrupt-<ns>``) before a write starts a fresh one.
     """
 
     path: Path = field(default_factory=_default_path)
     clock: Callable[[], float] = time.time
 
-    def _load(self) -> dict:
+    @contextmanager
+    def _locked(self) -> Iterator[None]:
+        with _STORE_LOCK, cross_process_lock(self.path):
+            yield
+
+    def _load(self, *, keep_unreadable: bool = False) -> dict:
         try:
             ensure_private_directory(self.path.parent)
             ensure_private_file(self.path, 0o600)
             raw = json.loads(atomic_read_text(self.path))
-            return raw if isinstance(raw, dict) else {}
+            if isinstance(raw, dict):
+                return raw
+            error: Exception = ValueError("not a JSON object")
         except FileNotFoundError:
             return {}
         except (OSError, ValueError) as e:
-            log.warning("quorum: cannot read proposal store %s: %s", self.path, e)
+            error = e
+        if not keep_unreadable:
+            log.warning("quorum: cannot read proposal store %s: %s", self.path, error)
             return {}
+        # A write would replace the unreadable ledger: keep it for recovery.
+        kept = self.path.with_name(f"{self.path.name}.corrupt-{time.time_ns()}")
+        try:
+            os.replace(self.path, kept)
+        except OSError as e:
+            raise QuorumError(
+                f"cannot read the approval ledger {self.path} and cannot move it "
+                f"aside ({e}); fix or remove the file, then try again"
+            ) from e
+        log.warning("quorum: cannot read proposal store %s (%s); kept it as %s "
+                    "and started a fresh ledger", self.path, error, kept)
+        return {}
 
     def _save(self, data: dict) -> None:
         ensure_private_directory(self.path.parent)
@@ -271,22 +297,32 @@ class ProposalStore:
         return self._to_proposal(rec) if isinstance(rec, dict) else None
 
     def put(self, proposal: Proposal) -> None:
-        with _STORE_LOCK:
-            data = self._load()
+        with self._locked():
+            data = self._load(keep_unreadable=True)
+            data[proposal.change_id] = self._to_record(proposal)
+            self._save(data)
+
+    def create(self, proposal: Proposal) -> None:
+        """Store a new proposal; refuse an existing ``change_id`` (checked
+        under the same locks as the write)."""
+        with self._locked():
+            data = self._load(keep_unreadable=True)
+            if isinstance(data.get(proposal.change_id), dict):
+                raise QuorumError(f"proposal {proposal.change_id!r} already exists")
             data[proposal.change_id] = self._to_record(proposal)
             self._save(data)
 
     def modify(
         self, change_id: str, mutate: Callable[[Proposal], Proposal],
     ) -> Proposal:
-        """Atomic read-modify-write of one proposal under ``_STORE_LOCK``.
+        """Atomic read-modify-write of one proposal under the store locks.
 
         ``mutate`` receives the freshly-loaded proposal and returns the updated
         one; both the load and the save happen inside the lock so two concurrent
         approvals accumulate instead of last-writer-wins clobbering each other.
         """
-        with _STORE_LOCK:
-            data = self._load()
+        with self._locked():
+            data = self._load(keep_unreadable=True)
             rec = data.get(change_id)
             if not isinstance(rec, dict):
                 raise QuorumError(f"unknown proposal {change_id!r}")
@@ -300,8 +336,8 @@ class ProposalStore:
                 if isinstance(r, dict)]
 
     def delete(self, change_ids) -> None:
-        with _STORE_LOCK:
-            data = self._load()
+        with self._locked():
+            data = self._load(keep_unreadable=True)
             for cid in change_ids:
                 data.pop(cid, None)
             self._save(data)
@@ -332,8 +368,6 @@ def propose(
     proposer = str(proposer or "").strip()
     if not proposer:
         raise QuorumError("a proposal needs a named proposer")
-    if store.get(change_id) is not None:
-        raise QuorumError(f"proposal {change_id!r} already exists")
     proposal = Proposal(
         change_id=str(change_id),
         key=str(key),
@@ -343,7 +377,7 @@ def propose(
         proposed_at=float(store.clock()),
         required=policy.required,
     )
-    store.put(proposal)
+    store.create(proposal)
     return proposal
 
 

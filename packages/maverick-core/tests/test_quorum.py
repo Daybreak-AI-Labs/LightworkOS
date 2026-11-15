@@ -5,6 +5,7 @@ atomic persistence roundtrip. Offline and deterministic.
 from __future__ import annotations
 
 import json
+import multiprocessing
 
 import pytest
 from maverick import quorum
@@ -227,6 +228,53 @@ def test_corrupt_store_fails_soft(tmp_path, clock):
     assert store.get("anything") is None
     _propose(store)                                  # writes a fresh ledger
     assert quorum.status("chg-1", store=store) == quorum.PENDING
+    kept = list(tmp_path.glob("proposals.json.corrupt-*"))
+    assert len(kept) == 1 and kept[0].read_text(encoding="utf-8") == "{ not json"
+
+
+def _process_approve(path, approver, barrier, output):
+    """Child process: approve after a barrier, with a slow save so an
+    unserialized read-modify-write would lose the other process's approval."""
+    import time as _time
+
+    from maverick import quorum as q
+    write = q.atomic_write_text
+
+    def slow_write(*args, **kwargs):
+        _time.sleep(0.5)
+        return write(*args, **kwargs)
+
+    q.atomic_write_text = slow_write
+    store = q.ProposalStore(path=path, clock=lambda: 1_000_000.0)
+    barrier.wait()
+    q.approve("chg-1", approver, store=store, policy=q.QuorumPolicy(required=2))
+    output.put(approver)
+
+
+def test_approvals_from_two_processes_both_count(tmp_path):
+    path = tmp_path / "proposals.json"
+    store = quorum.ProposalStore(path=path, clock=lambda: 1_000_000.0)
+    _propose(store, policy=quorum.QuorumPolicy(required=2))
+    ctx = multiprocessing.get_context("spawn")
+    barrier, output = ctx.Barrier(2), ctx.Queue()
+    processes = [ctx.Process(target=_process_approve, args=(path, who, barrier, output))
+                 for who in ("bob", "carol")]
+    try:
+        for process in processes:
+            process.start()
+        assert sorted(output.get(timeout=60) for _ in processes) == ["bob", "carol"]
+        for process in processes:
+            process.join(timeout=15)
+            assert process.exitcode == 0
+    finally:
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=10)
+        output.close()
+    approvers = sorted(a for a, _ in store.get("chg-1").approvals)
+    assert approvers == ["bob", "carol"]
+    assert quorum.status("chg-1", store=store, policy=quorum.QuorumPolicy(required=2)) == quorum.APPROVED
 
 
 # --- config knobs -----------------------------------------------------------------

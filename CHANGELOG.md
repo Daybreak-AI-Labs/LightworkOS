@@ -223,6 +223,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the refusal names the storage boundary.
 - An automation opportunity is not proposed while any completed run has no
   recorded cost, and the reason shown says so.
+- Approvals for protected settings now hold a file lock, so several dashboard
+  workers cannot lose each other's approvals. An unreadable approval ledger is
+  kept as `config_proposals.json.corrupt-<number>` and a warning names it.
 
 ### Fixed
 
