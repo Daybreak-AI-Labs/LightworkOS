@@ -230,10 +230,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pass as a signed eDiscovery export. `verify_export` also rejects a
   manifest that is not an export manifest. Titles and exports made by
   earlier releases still verify.
-- A successful MCP tool result is always treated as a success, even when
-  its text starts with "REFUSED", "DRY RUN" or a warning sign. A failed
-  high-risk MCP action is held for checking instead of being treated as
-  not done.
+- A successful MCP tool result (no `isError`) is always treated as a
+  success, even when its text starts with "REFUSED", "DRY RUN" or a warning
+  sign. Such text no longer marks a high-risk action as not done, which had
+  let a rerun repeat it.
 - `office_convert` no longer runs LibreOffice on the host (Local backend). A
   document's linked images could make the host fetch any address. Configure a
   Docker, Podman or Kubernetes document worker to keep converting.
