@@ -296,7 +296,7 @@ _DEFAULT_RISK: dict[str, str] = {
     # spends or runs a program.
     "a11y": "high", "aria_navigate": "high", "ask_user": "high", "bench_track": "high",
     "browser_auth_vault": "high", "diagnose": "high", "diagram": "high", "html_to_app": "high",
-    "send_to_agent": "high", "task_graph": "high", "view_video": "high",
+    "recv_from_agent": "high", "send_to_agent": "high", "task_graph": "high", "view_video": "high",
     "workspace_snapshot": "high",
     # medium: reaches the network or reads other people's data, without an
     # effect of its own.
@@ -337,7 +337,7 @@ _DEFAULT_RISK: dict[str, str] = {
     "plugin_lockfile": "low", "polyglot_injection": "low", "privacy_budget": "low",
     "process_introspect": "low", "provenance_chain": "low", "provider_failover_policy": "low",
     "query_plan_regression": "low", "quorum_approval": "low", "rbac_check": "low",
-    "rectification": "low", "recv_from_agent": "low", "redact": "low", "reflect_loop": "low",
+    "rectification": "low", "redact": "low", "reflect_loop": "low",
     "reliability_harness": "low", "retention_check": "low", "right_to_explanation": "low",
     "risk_tier": "low", "risk_tier_classifier": "low", "run_events_firehose": "low",
     "s3_attachments": "low", "saas_trigger": "low", "saas_trigger_registry": "low",

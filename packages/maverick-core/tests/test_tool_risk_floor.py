@@ -168,3 +168,10 @@ def test_every_built_in_tool_has_an_explicit_rating(tmp_path, monkeypatch):
     }
     unrated = sorted(n for n in names if not tool_risk_is_classified(n, overrides={}))
     assert unrated == [], f"rate these in safety/tool_risk.py: {unrated}"
+
+
+def test_recv_from_agent_is_rated_by_its_effects():
+    # Receiving consumes the message and can install a delegated grant on the
+    # agent, so it is not a read-only lookup.
+    from maverick.safety.tool_risk import tool_risk
+    assert tool_risk("recv_from_agent", overrides={}) == "high"
