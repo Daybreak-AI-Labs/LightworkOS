@@ -211,6 +211,8 @@ def test_merge_waits_for_the_approval_then_merges(client, monkeypatch, tmp_path)
     assert "VALUE = 2" in detail["changes"]
     assert "Independent check: turned off for this run." in detail["checks"]["lines"]
     assert "Nobody independently tried to break this change." in detail["checks"]["gaps"]
+    # The review panel lists running on this computer as not checked, too.
+    assert {features.NAMESPACE_GAP, features.HOST_GAP} & set(detail["checks"]["gaps"])
     # The kernel's gate: no merge and no push without an approved approval.
     r = client.post(f"/api/v1/code/proposals/{pid}/merge")
     assert r.status_code == 409 and "waiting for a person to approve" in r.json()["detail"]

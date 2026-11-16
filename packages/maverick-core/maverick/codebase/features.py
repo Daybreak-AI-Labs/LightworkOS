@@ -697,6 +697,7 @@ def evidence(p: dict) -> dict:
     isolation = p.get("isolation")
     if isolation in ("host", "namespace"):
         lines.append(HOST_LINE if isolation == "host" else NAMESPACE_LINE)
+        gaps.append(HOST_GAP if isolation == "host" else NAMESPACE_GAP)
     rounds = p.get("repair_rounds")
     if isinstance(rounds, dict):
         lines.append(f"Repair rounds: {rounds.get('used', 0)} of {rounds.get('allowed', 0)} used.")

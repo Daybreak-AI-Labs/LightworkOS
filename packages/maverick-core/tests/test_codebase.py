@@ -928,7 +928,7 @@ def test_processes_a_test_run_or_a_checker_leave_running_are_stopped(upstream, t
     assert not [f for files in seen for f in files if f.startswith("late_")], seen
     assert not [f for f in p["files"] if f.startswith("late_")]
     facts = features.evidence(p)                                   # the card says so
-    assert features.HOST_LINE in facts["lines"]
+    assert features.HOST_LINE in facts["lines"] and features.HOST_GAP in facts["gaps"]
 
 
 ESCAPES = {
@@ -981,7 +981,7 @@ def test_a_daemon_that_clears_its_environment_dies_with_its_step(upstream, tmp_p
     assert not [f for f in p["files"] if f.startswith("late_")]
     assert p["tests"]["passed"] and p["isolation"] == "namespace"
     facts = features.evidence(p)
-    assert features.NAMESPACE_LINE in facts["lines"]
+    assert features.NAMESPACE_LINE in facts["lines"] and features.NAMESPACE_GAP in facts["gaps"]
     assert features.HOST_LINE not in facts["lines"]
 
 
@@ -1070,3 +1070,26 @@ def test_the_card_says_whether_the_checker_was_off_for_this_run_or_in_settings(
     monkeypatch.setattr(config, "get_codebase", lambda: {"enable": True, "checker": False})
     q = features.propose(world, "pricing", "Off", "", run, checker=None)
     assert "Independent check: turned off in settings." in features.evidence(q)["lines"]
+
+
+def test_running_on_this_computer_is_a_gap_on_every_summary(upstream, tmp_path, monkeypatch):
+    """A change whose tests passed and whose check came back clean is still
+    not called checked when its steps ran on this computer."""
+    from click.testing import CliRunner
+    from maverick import config
+    from maverick.cli import main
+    from maverick.sandbox.local import LocalBackend
+    vault.register("pricing", str(upstream), test_command=f"{sys.executable} -m pytest -q")
+    world = WorldModel(tmp_path / "world.db")
+    run, _ = _rounds(_passing)
+    p = features.propose(world, "pricing", "Clean", "", run, sandbox_factory=LocalBackend,
+                         checker=lambda gid, copy: {"findings": [], "fixed": []})
+    assert p["tests"]["passed"] and p["check"]["state"] == "ran"
+    gap = features.NAMESPACE_GAP if p["isolation"] == "namespace" else features.HOST_GAP
+    assert features.evidence(p)["gaps"] == [gap]
+    assert _card(world, p)["unresolved_assumptions"] == [gap]
+    monkeypatch.setattr(config, "get_codebase", lambda: {"enable": True})
+    import maverick.cli._code_groups as groups
+    monkeypatch.setattr(groups, "open_world", lambda *a, **k: WorldModel(tmp_path / "world.db"))
+    out = CliRunner().invoke(main, ["code", "proposals"])
+    assert out.exit_code == 0 and "1 gap(s)" in out.output and "checked" not in out.output
