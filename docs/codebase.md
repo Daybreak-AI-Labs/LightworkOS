@@ -62,14 +62,23 @@ maverick code export payments ./payments   # plaintext clone for the owner
    or the proposal. The test command must install what it needs: files the
    agent left untracked or ignored are not in that copy.
 4. **Repair rounds.** If the tests fail, the failing output goes back to the
-   author as a follow-up goal (a child of the feature goal) on the same
-   working copy. Its new files are committed and pinned again, and the tests
-   run again on a fresh copy. This repeats up to `[codebase] repair_rounds`
-   times (default 2).
+   author as a follow-up goal (a child of the feature goal). Every author
+   round works in a fresh copy of the pinned head at a new random path,
+   made after the previous step ended and removed once committed, so
+   nothing a test run or a checker wrote carries over (files the author left
+   untracked or ignored do not carry over either). The new files are
+   committed and pinned again, and the tests run again on a fresh copy. This
+   repeats up to `[codebase] repair_rounds` times (default 2). Each author
+   round, test run and checker look is a contained step: on the `local`
+   backend, every process it started is stopped when it ends, detached or
+   not (best effort, Linux `/proc`), before the next copy exists.
 5. **The independent checker** (`[codebase] checker`, on by default). A
    separate goal with a fresh context gets the request and its own throwaway
    copy of the pinned commit, where `git diff <base> HEAD` shows the change.
-   It never sees the author's goal, transcript or reasoning. It runs in the
+   It never sees the author's goal, transcript or reasoning: its run denies
+   the tools that read past goals or shared memory (`recall_past_goals`,
+   `memory`, `kv_memory`, `spend_report`) and recalls no prior goals into its
+   brief. It runs in the
    sandbox under the same `code:<repo>` label and protection mode as the
    author. Its copy has no remote, and nothing in it is read back, so it
    cannot push, merge or change the proposal. It reports findings: severity
@@ -85,8 +94,11 @@ maverick code export payments ./payments   # plaintext clone for the owner
    `[verification] cross_family_model` is set, that model is used instead.
 6. **One budget.** Every author and checker round charges one budget for the
    feature run (`--max-dollars`, else `[budget]` and the per-goal defaults).
-   `budget.check()` runs before each round; when it runs out, the loop stops
-   and the last pinned, tested version is proposed.
+   `budget.check()` runs before and after each round (a governed run returns
+   normally when it hits its cap); when it runs out, the loop stops, a round
+   that overran is not committed, and the last pinned, tested version is
+   proposed. If the first round overran, nothing is proposed. The diff
+   reviewer is charged to the same budget and skipped after a stop.
 7. The independent reviewer reads the diff of that pinned commit. It uses a
    cross-family model where possible.
 8. The sealed proposal (diff, tests, rounds, findings, review, branch bundle)
@@ -95,7 +107,11 @@ maverick code export payments ./payments   # plaintext clone for the owner
    plain words what was and was not checked: whether the tests passed on the
    exact version being approved, how many repair rounds ran, each checker
    finding and its status, and whether a finding rests on a command that was
-   run. Its "unresolved assumptions" list every gap: tests failing or not
+   run. The card gives finding counts by severity and status only; the
+   finding text, which can quote code, is in `maverick code show` and the
+   administrator-only Code page panel. On the `local` backend it also says
+   "These steps ran on this computer without a container, so they were not
+   isolated from each other." Its "unresolved assumptions" list every gap: tests failing or not
    configured, the checker turned off, unable to run or not looking at the
    final version, blockers still open, or the budget running out. It never
    calls a change checked when one of these holds. It also warns when the
@@ -139,7 +155,12 @@ default_protect = "block"  # block | approve | audit for runs over vaulted code
 repair_rounds = 2          # 0-5 more author runs after failing tests or blockers
 checker = true             # the independent checker (one agent run per look)
 check_rounds = 2           # 1-3 looks; a second look confirms blocker fixes
+require_container = false  # true: refuse feature runs on the local backend
 ```
+
+A workspace's own `config.toml` may only tighten these: turn the checker
+and `require_container` on, raise the rounds, or choose a stricter
+`default_protect`.
 
 At the defaults a feature run makes at most five agent runs instead of one:
 the author's first run, two repair rounds and two checker looks. All of them

@@ -635,6 +635,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   limit. The approval card, `maverick code show` and the Code page list what
   was and was not checked. Set `[codebase] repair_rounds`, `checker` and
   `check_rounds` in Settings; each round or look is one more agent run.
+- On the default `local` work area, a code change's tests, checker and
+  agent share this computer. Each round now starts from a fresh copy, and
+  processes a step leaves running are stopped. The approval card says the
+  steps were not isolated. To refuse such runs, turn on `[codebase]
+  require_container` in Settings. A workspace can no longer weaken the
+  `[codebase]` checks in its own config file.
 
 ### Fixed
 
