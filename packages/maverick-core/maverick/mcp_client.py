@@ -173,10 +173,10 @@ class MCPServerSpec:
     url: str | None = None
     headers: dict[str, str] = field(default_factory=dict)
     auth_token: str | None = None
-    # OAuth 2.1 (§B2): a table {token_url, client_id, client_secret?, scope?,
-    # grant_type?, authorize_url?, redirect_uri?}. When set, the HTTP client
-    # fetches + refreshes a short-lived access token (mcp_oauth) instead of
-    # using a static auth_token.
+    # OAuth 2.1 (§B2): a table {token_url, client_id, client_secret?, scope?}
+    # for the client_credentials grant. When set, the HTTP client fetches +
+    # refreshes a short-lived access token (mcp_oauth) instead of using a
+    # static auth_token.
     oauth: dict | None = None
 
     @property
@@ -1066,41 +1066,14 @@ class StreamableHttpMCPClient:
         return OAuthConfig.from_dict(self.spec.oauth)
 
     def _ensure_oauth_provider(self):
-        """Return the grant-appropriate OAuth provider for this server."""
+        """Return the OAuth token provider for this server."""
         cfg = self._oauth_config()
         if cfg is None:
             return None
         if self._oauth_provider is None:
-            from .mcp_oauth import AuthorizationCodeProvider, OAuthTokenProvider
-            provider_cls = (
-                AuthorizationCodeProvider
-                if cfg.grant_type == "authorization_code"
-                else OAuthTokenProvider
-            )
-            self._oauth_provider = provider_cls(cfg)
+            from .mcp_oauth import OAuthTokenProvider
+            self._oauth_provider = OAuthTokenProvider(cfg)
         return self._oauth_provider
-
-    def oauth_authorization_start(self) -> tuple[str, str, str]:
-        """Start an OAuth authorization-code flow for this HTTP server.
-
-        Returns ``(authorization_url, state, code_verifier)``. The caller should
-        open ``authorization_url``, validate that the redirect's state matches
-        ``state``, and pass the returned code plus ``code_verifier`` to
-        :meth:`oauth_authorization_complete` before connecting.
-        """
-        provider = self._ensure_oauth_provider()
-        if provider is None or not hasattr(provider, "start"):
-            raise ValueError("oauth authorization start requires the authorization_code grant")
-        return provider.start()
-
-    def oauth_authorization_complete(
-        self, code: str, code_verifier: str, *, now: float | None = None
-    ) -> str:
-        """Complete an OAuth authorization-code flow and cache the access token."""
-        provider = self._ensure_oauth_provider()
-        if provider is None or not hasattr(provider, "complete"):
-            raise ValueError("oauth authorization complete requires the authorization_code grant")
-        return provider.complete(code, code_verifier, now=now)
 
     def _next_id(self) -> int:
         self._req_id += 1

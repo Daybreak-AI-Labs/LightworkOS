@@ -490,6 +490,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The task health check (`maverick diag health` and the task page) no longer
   scores a queued or running task as a failure (40, grade F). It says the
   task has no score yet; check again when the task ends.
+- `grant_type = "authorization_code"` under `[mcp_servers.<name>.oauth]` (and
+  `[mcp_sidecar.oauth]`) is now refused when the settings are read. Nothing
+  could complete that sign-in, so such a server only ever failed to start.
+  Use `grant_type = "client_credentials"`, or a static `auth_token`.
 
 ### Fixed
 
