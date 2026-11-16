@@ -743,7 +743,8 @@ def test_erasure_supersession_is_reported_until_the_verifier_retains_it(isolated
     assert "again" in found[0].detail and "could not be read" not in found[0].detail
 
 
-def test_a_genuine_erase_does_not_cover_an_earlier_unrecorded_change(isolated_audit):
+@pytest.mark.parametrize("told", [True, False])
+def test_a_genuine_erase_does_not_cover_an_earlier_unrecorded_change(isolated_audit, told):
     # The key holder changes a pinned day and keeps its row count; later a
     # genuine erasure for someone in that day runs. Its erase record must not
     # make the whole change look like that erasure.
@@ -759,29 +760,28 @@ def test_a_genuine_erase_does_not_cover_an_earlier_unrecorded_change(isolated_au
     )
     day_file.write_text(text, encoding="utf-8")
     signing.reanchor_day_after_erase(audit_dir, day_file)
-    changed = day_file.read_bytes()
     erased, store_erase_record, erase_records = _erase_record_store()
-    erase = {"audit_dir": audit_dir, "on_rewrite": store_erase_record,
-             "erase_records": erase_records}
+    pin = {"minimum_sequence": 1, "minimum_digest": _digest(pinned)}
 
-    # Compared with the checkpoint folder, the erase refuses the day outright.
-    with pytest.raises(RuntimeError):
-        scrub_user("slack", "subject", strict=True, checkpoint_dirs=[checkpoint_dir], **erase)
-    assert day_file.read_bytes() == changed and erased == []
-
-    # Kept from seeing that folder, it erases, but its record lists no
-    # checkpoint, so it cannot back replacing the one that was pinned.
-    assert scrub_user("slack", "subject", strict=True, **erase)[0] == 1
+    # The person is erased whether or not the erase is told about the
+    # checkpoint folder. Either way its record lists no checkpoint, so it
+    # cannot back replacing the one that was pinned.
+    assert scrub_user("slack", "subject", strict=True, audit_dir=audit_dir,
+                      on_rewrite=store_erase_record, erase_records=erase_records,
+                      checkpoint_dirs=[checkpoint_dir] if told else [])[0] == 1
     assert erased[0]["checkpoints"] == []
+    request = {
+        "day": day,
+        "supersedes_checkpoint_sha256": pin["minimum_digest"],
+        "lifecycle_reason": "gdpr_reanchor",
+    }
     with pytest.raises(AuditCheckpointError, match="no stored erase record"):
-        publish_checkpoint(
-            audit_dir,
-            checkpoint_dir,
-            day=day,
-            supersedes_checkpoint_sha256=_digest(pinned),
-            lifecycle_reason="gdpr_reanchor",
-            erase_records=erase_records,
-        )
+        publish_checkpoint(audit_dir, checkpoint_dir, erase_records=erase_records, **request)
+    publish_checkpoint(audit_dir, checkpoint_dir, allow_missing_erase_record=True, **request)
+    found = verify_checkpoints(audit_dir, checkpoint_dir, erase_records=erase_records, **pin)
+    assert [(item.sequence, item.reason) for item in found] == [
+        (2, "superseded_without_erase_record")
+    ]
 
 
 def test_an_earlier_erasure_record_does_not_back_a_later_rewrite(isolated_audit):

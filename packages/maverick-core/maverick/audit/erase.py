@@ -244,20 +244,20 @@ def _checkpoint_stores(
 def _checkpoint_problem(
     path: Path, checks: _Checks, compared: list[str] | None = None,
 ) -> str | None:
-    """A published checkpoint the day no longer matches.
+    """A published checkpoint that requires more rows than the day has.
 
     Today's open day is never anchored, so its checkpoints are the only
     evidence of a removed row; an erase marker would otherwise bring the
     count back and turn that evidence into a routine prefix change.
 
-    A day with the same number of rows but different ones is refused too,
-    unless a stored erase record shows an earlier erasure left it this way.
-    Otherwise this erase would give the day an erase record, and a change
-    nobody recorded would then pass as the erasure.
-
-    ``compared`` collects the digest of each checkpoint the day was compared
-    with. The erase record lists them, and only a checkpoint on that list can
-    be replaced on the strength of the record.
+    ``compared`` collects the digest of each checkpoint the day still matches,
+    or that a stored erase record shows an earlier erasure accounts for. The
+    erase record lists them, and only a checkpoint on that list can be
+    replaced on the strength of the record. A day that differs from its
+    checkpoint in some other way is still erased: a person must always be
+    erasable, and a day erased by a version that stored no erase record looks
+    exactly like that. Its checkpoint is left off the list, so this erasure
+    does not vouch for it and replacing it is reported as having no record.
     """
     from .checkpoints import day_checkpoint_state, verify_checkpoints
 
@@ -273,20 +273,19 @@ def _checkpoint_problem(
         except Exception as e:  # pragma: no cover - defensive
             return f"checkpoints in {store} could not be checked ({type(e).__name__}); run erase again"
         mine = {b.reason for b in breaks if f"{path.name} " in b.detail}
-        digest, explained = day_checkpoint_state(
-            path.parent, store, path.stem,
-            erase_records=checks.erase_records, trusted_pubkeys=keys)
         if "audit_tail_truncated" in mine:
             return (f"{path.name} has fewer rows than its published checkpoint in {store} (see "
                     f"`maverick audit checkpoint verify`). {_RESTORE_DAY}")
-        if "audit_prefix_mismatch" in mine and explained is None:
-            return (f"{path.name} no longer matches its published checkpoint in {store}, and no "
-                    "stored erase record explains the change (see `maverick audit checkpoint "
-                    f"verify`). {_RESTORE_DAY}; if an earlier erasure changed it, publish that "
-                    "day's new checkpoint first")
-        if compared is not None and digest:
+        if compared is None:
+            continue
+        digest, explained = day_checkpoint_state(
+            path.parent, store, path.stem,
+            erase_records=checks.erase_records, trusted_pubkeys=keys)
+        if explained is not None:
             # A day an earlier erasure changed carries that erasure's list on.
-            compared.extend([digest, *(explained.get("checkpoints") or () if explained else ())])
+            compared.extend([digest or "", *(explained.get("checkpoints") or ())])
+        elif digest and "audit_prefix_mismatch" not in mine:
+            compared.append(digest)
     return None
 
 
@@ -406,7 +405,8 @@ def _rewrite_summary(
     if not _DAY_RE.fullmatch(path.stem) or not tip:
         return None
     return {"day": path.stem, "rows_before": rows_before, "rows_after": rows_after,
-            "rows_erased": matched, "tip_hash": tip, "checkpoints": sorted(set(compared))}
+            "rows_erased": matched, "tip_hash": tip,
+            "checkpoints": sorted(set(filter(None, compared)))}
 
 
 def _report_rewrites(rewrites: list[dict], on_rewrite) -> None:
@@ -591,11 +591,12 @@ def scrub_user(
     ``on_rewrite`` is called once for each signed day-file that was rewritten,
     with its day, row counts and new tip hash, so the caller can store the
     erase record a later checkpoint of that day must cite. ``erase_records``
-    looks those records up again: a day that no longer matches its published
-    checkpoint is rewritten only when an earlier erasure's record explains it.
-    ``checkpoint_dirs`` names checkpoint folders to compare each day with,
-    besides the ones the installation knows; a checkpoint in a folder the
-    erase never compared cannot later be replaced on its record.
+    looks those records up again: when a day no longer matches its published
+    checkpoint, the new record vouches for that checkpoint only if an earlier
+    erasure's record explains the difference. ``checkpoint_dirs`` names
+    checkpoint folders to compare each day with, besides the ones the
+    installation knows; a checkpoint in a folder the erase never compared
+    cannot later be replaced on its record.
     """
     if audit_dir is None:
         # Resolve the SAME (home + active-tenant) audit dir the writer lands

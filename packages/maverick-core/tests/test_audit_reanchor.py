@@ -428,23 +428,26 @@ def test_erase_after_a_key_rotation_leaves_other_days_and_their_anchors_alone(
     assert verify_chain(held) == [] and verify_chain(other) == []
 
 
-def test_erase_refuses_a_day_changed_since_its_checkpoint_unless_an_erasure_explains_it(
+def test_an_erase_vouches_for_a_checkpoint_only_when_the_day_still_matches_it(
     _isolate_keys, tmp_path,
 ):
     """A genuine erase must not turn an earlier, unrecorded change into a
-    recorded erasure. A same-count edit passes the row-count check, so the
-    day is compared with its published checkpoint; a second erase before the
-    next checkpoint is let through by the first one's erase record."""
+    recorded erasure, and must not refuse the person either: a day erased by
+    a version that stored no erase record looks the same. The erase goes
+    ahead and its record leaves that checkpoint off its list. A second erase
+    before the next checkpoint carries the first one's list on."""
     import json
     from datetime import datetime, timezone
 
     from maverick.audit.checkpoints import publish_checkpoint
     from maverick.audit.erase import erase_blockers, scrub_user
+    from maverick.audit.events import AuditEvent, EventKind
     from maverick.audit.signing import _load_or_create_keypair, resign_rows, verify_chain
+    from maverick.audit.writer import reset_signer_after_erase
 
     log, ad, path = _signed_log(tmp_path)
     store = ad.parent / "audit-checkpoints"
-    publish_checkpoint(ad, store, day=path.stem)
+    checkpoint = publish_checkpoint(ad, store, day=path.stem)
     original = path.read_bytes()
     records: list[dict] = []
 
@@ -454,30 +457,32 @@ def test_erase_refuses_a_day_changed_since_its_checkpoint_unless_an_erasure_expl
     def remember(summary):
         records.append({**summary, "issued_at": datetime.now(timezone.utc).isoformat()})
 
+    def erase(subject):
+        assert erase_blockers("telegram", subject, audit_dir=ad, erase_records=lookup) == []
+        assert scrub_user("telegram", subject, audit_dir=ad, strict=True,
+                          on_rewrite=remember, erase_records=lookup)[0] == 2
+        return records[-1]["checkpoints"]
+
     rows = [json.loads(line) for line in original.decode("utf-8").splitlines()]
     rows[1]["title"] = "edited by whoever holds the key"
     path.write_text(resign_rows([("json", row) for row in rows], _load_or_create_keypair())[0],
                     encoding="utf-8")
-    edited = path.read_bytes()
     assert verify_chain(path) == []
-    (blocker,) = erase_blockers("telegram", "alice", audit_dir=ad, erase_records=lookup)
-    assert "published checkpoint" in blocker and "no stored erase record" in blocker
-    with pytest.raises(RuntimeError):
-        scrub_user("telegram", "alice", audit_dir=ad, strict=True,
-                   on_rewrite=remember, erase_records=lookup)
-    assert path.read_bytes() == edited and records == []
+    assert erase("alice") == []
 
-    # The day as it was checkpointed, grown since: two erasures in a row work.
+    # The day as it was checkpointed, grown since: two erasures in a row.
+    import hashlib
+
+    records.clear()
     path.write_bytes(original)
-    from maverick.audit.events import AuditEvent, EventKind
-    from maverick.audit.writer import reset_signer_after_erase
-
     reset_signer_after_erase(ad)
     assert log.record(AuditEvent(ts=2000.0, kind=EventKind.GOAL_START, payload={"title": "later"}))
-    for subject in ("alice", "bob"):
-        assert erase_blockers("telegram", subject, audit_dir=ad, erase_records=lookup) == []
-        assert scrub_user("telegram", subject, audit_dir=ad, strict=True,
-                          on_rewrite=remember, erase_records=lookup)[0] == 2
-        # The next erasure is let through only by this one's record.
-        assert bool(erase_blockers("telegram", "bob", audit_dir=ad)) is (subject == "alice")
-    assert len(records) == 2
+    listed = [hashlib.sha256(checkpoint.read_bytes()).hexdigest()]
+    assert erase("alice") == listed
+    assert erase("bob") == listed
+    # Without the first erasure's record the second vouches for nothing.
+    records.clear()
+    path.write_bytes(original)
+    reset_signer_after_erase(ad)
+    assert scrub_user("telegram", "alice", audit_dir=ad, strict=True)[0] == 2
+    assert erase("bob") == []

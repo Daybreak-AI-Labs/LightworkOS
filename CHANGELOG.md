@@ -484,24 +484,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   day as changed for good. Nothing to do.
 - Checking audit checkpoints against a kept receipt or `--minimum-sequence`
   now fails for any day whose checkpoint was replaced or retired after it,
-  naming the day and, for a replacement, the erasure behind it. Review it,
+  naming the day and, for a replacement, the erasures behind it. Review it,
   then keep the newest receipt; a scheduled check must do so after each
-  retention purge. Replacing a checkpoint after an erasure needs the erase
-  record that `maverick erase` now stores; for a day erased before this
-  version, publish from the command line with `--without-erase-record`,
-  which is written to the activity log first.
-- `maverick erase` now refuses, before deleting anything, when an audit day
-  holding the person no longer matches its published checkpoint and no
-  earlier erasure's record explains why. A day erased before this version
-  is such a day: publish its new checkpoint first (`--without-erase-record`),
-  or restore the day from a backup, then run erase again. If you keep
-  checkpoints in a folder given only as `--checkpoint-dir`, pass the same
-  option to `maverick erase`: a checkpoint the erase never compared the
-  day with cannot be replaced on its erase record.
+  retention purge, and `maverick audit checkpoint retire` now prints the
+  sequence and digest to keep.
+- Replacing a checkpoint after an erasure needs the erase record that
+  `maverick erase` now stores. A day erased before this version has none:
+  tick "Replace it without an erasure record" on the activity-log page, or
+  publish with `--without-erase-record`. Either is written to the activity
+  log first, and a check against an older receipt reports that day.
+- An erase record vouches only for a checkpoint the day still matched when
+  the erase ran. If you keep checkpoints in a folder given only as
+  `--checkpoint-dir`, pass the same option to `maverick erase`; otherwise
+  replacing them needs the step above. A person is erased either way.
 - `maverick erase` after a signing-key rotation no longer re-signs audit
   days that do not hold the person, or the tip ledger. Before, their
-  anchors and checkpoints stopped matching. Days already affected still
-  report a change: restore them from a backup made before that erase.
+  anchors and checkpoints stopped matching. This does not repair days an
+  earlier erase already re-signed; they still report a change.
 
 ### Fixed
 

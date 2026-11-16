@@ -1069,13 +1069,12 @@ def _require_erase_record(
         ) from exc
     if backing is None:
         raise AuditCheckpointError(
-            f"no stored erase record matches {day}: a new checkpoint after an "
-            "erasure needs the record that `maverick erase` stores for each "
-            "audit day it rewrites, after it has compared the day with the "
-            "checkpoint being replaced (a folder outside the checkpoint settings "
-            "is named with `maverick erase --checkpoint-dir`). A day erased "
-            "before those records existed can be published with "
-            "--without-erase-record"
+            f"no stored erase record backs replacing the checkpoint of {day}. "
+            "If the day has already been erased, publish again with "
+            "--without-erase-record: a later check against an older retained "
+            "sequence will report it. A record backs a checkpoint only when "
+            "the erasure found the day unchanged since that checkpoint, in a "
+            "checkpoint folder it was told about"
         )
 
 

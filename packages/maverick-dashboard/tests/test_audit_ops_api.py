@@ -178,7 +178,7 @@ def test_a_checkpoint_replaced_after_the_kept_receipt_is_reported(client):
     assert client.post(f"{BASE}/verify", json={"receipt": newer}).json()["intact"] is True
 
     # An erasure that left no erasure record cannot replace the checkpoint here,
-    # and a later erasure of that day is refused rather than covering for it.
+    # and a later erasure of that day goes ahead without covering for it.
     assert scrub_user("slack", "unrecorded", audit_dir=day_file.parent, erase_records=lookup)[0] == 1
     refused = client.post(f"{BASE}/publish", json={"day": DAY, "after_erasure": True})
     assert refused.status_code == 409 and "No erasure record" in refused.json()["detail"]
@@ -187,8 +187,39 @@ def test_a_checkpoint_replaced_after_the_kept_receipt_is_reported(client):
     from maverick.audit.signing import reanchor_day_after_erase
     reanchor_day_after_erase(day_file.parent, day_file)
     assert scrub_user("slack", "later", audit_dir=day_file.parent,
-                      on_rewrite=store, erase_records=lookup)[0] == 0
+                      on_rewrite=store, erase_records=lookup)[0] == 1
     assert client.post(f"{BASE}/publish", json={"day": DAY, "after_erasure": True}).status_code == 409
+
+
+def test_a_person_is_erased_from_a_day_an_earlier_version_already_erased(client):
+    # What an upgrade finds: a checkpointed day, erased once by a version that
+    # stored no erasure record, its checkpoint never replaced. The page must
+    # still erase a second person and be able to replace the checkpoint.
+    from maverick.audit.erase import scrub_user
+    from maverick.audit.signing import AuditSigner
+
+    day_file = _write_day()
+    signer = AuditSigner(day_file)
+    for person in ("first", "second"):
+        assert signer.write({"ts": 1_767_225_700.0, "kind": "tool_call", "channel": "slack", "user_id": person})
+    assert client.post(f"{BASE}/publish", json={"day": DAY}).status_code == 200
+    kept = client.get(f"{BASE}/1/receipt").text
+    assert scrub_user("slack", "first", audit_dir=day_file.parent)[0] == 1  # as the base did
+
+    erased = client.post("/api/v1/compliance/people/erase", json={"channel": "slack", "user": "second"})
+    assert erased.status_code == 200 and erased.json()["erased"] is True, erased.text
+    assert "second" not in day_file.read_text(encoding="utf-8")
+
+    refused = client.post(f"{BASE}/publish", json={"day": DAY, "after_erasure": True})
+    assert refused.status_code == 409 and "No erasure record" in refused.json()["detail"]
+    assert "without an erasure record" in refused.json()["detail"]
+    assert not BANNED.search(refused.json()["detail"])
+    replaced = client.post(f"{BASE}/publish", json={
+        "day": DAY, "after_erasure": True, "without_erasure_record": True})
+    assert replaced.status_code == 200 and replaced.json()["sequence"] == 2, replaced.text
+    checked = client.post(f"{BASE}/verify", json={"receipt": kept}).json()
+    assert checked["intact"] is False and "no erasure record" in checked["problems"][0]
+    assert client.post(f"{BASE}/verify", json={}).json()["intact"] is True
 
 
 def test_a_day_retired_after_the_kept_receipt_is_reported(client):

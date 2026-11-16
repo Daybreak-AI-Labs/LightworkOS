@@ -63,11 +63,12 @@ therefore fails for every supersession and retirement published after that
 sequence and names the day:
 
 - `retired_after_pin`: the day-file is gone and its checkpoint was retired.
-  Check that your retention policy was due to delete that day, then retain
-  the newest sequence and digest.
+  Check that this was a retention purge you expected and not a day that
+  should still be there, then retain the newest sequence and digest
+  (`maverick audit checkpoint retire` prints them).
 
 - `superseded_after_pin`: a stored erase record matches the change. The
-  line gives its erasure id and how many rows it says were erased. Match that
+  line gives the erasure id and row count of every erasure behind it. Match that
   id against an erasure request you know about, then retain the newest
   sequence and digest; the check is clean again from there. The record is
   not proof on its own (see "What an erase record proves").
@@ -117,23 +118,26 @@ signed, explicit lifecycle records:
   rewrites, with the day, its row counts and its new tip hash and nothing
   about the person. The day being published must still contain
   that tip, and the record must list the checkpoint being replaced and be
-  newer than it, so one erasure cannot explain a later change. A day erased before these
-  records existed has none; publish it with `--without-erase-record`, and
-  expect `superseded_without_erase_record` from anyone verifying against an
-  older retained sequence. The command writes an activity-log entry naming
-  who ran it, the day and both sequences before it publishes, and publishes
-  nothing if that entry cannot be written.
+  newer than it, so one erasure cannot explain a later change. The override below
+  writes an activity-log entry naming who ran it and the day before it
+  publishes, and publishes nothing if that entry cannot be written.
 - `maverick erase` compares each day it is about to rewrite with the
   checkpoint folders this installation knows (beside the log, the custody
   store, and the folder chosen in the checkpoint settings) and any named
-  with `maverick erase --checkpoint-dir`. A day that no longer matches its
-  checkpoint is refused unless an earlier erasure's record shows it left
-  the day that way. The erase record lists the checkpoints the day was
-  compared with, and only a listed checkpoint can be replaced on that
-  record. So a genuine erasure cannot cover a change nobody recorded, and
-  an erasure that never saw a checkpoint folder cannot replace its
-  checkpoints: name that folder when you erase, or publish with
-  `--without-erase-record` afterwards.
+  with `maverick erase --checkpoint-dir`. The erase record lists the
+  checkpoints the day still matched, or that an earlier erasure's record
+  accounts for, and only a listed checkpoint can be replaced on that
+  record. A day that differs from its checkpoint for any other reason is
+  still erased, since a person must always be erasable, but its checkpoint
+  is left off the list. So a genuine erasure cannot cover a change nobody
+  recorded, and an erasure that never saw a checkpoint folder cannot
+  replace its checkpoints.
+- When no record lists the checkpoint (a day erased before erase records
+  existed, or one of the cases above), replace it with
+  `--without-erase-record`, or on the activity-log page with "Replace it
+  without an erasure record". Anyone verifying against an older retained
+  sequence then sees `superseded_without_erase_record` for that day. Only a
+  day with fewer rows than its checkpoint still stops an erase.
 - After signed retention has removed a day, retire its latest commitment:
 
 ```console
@@ -160,9 +164,8 @@ Postgres alike, and nothing checks that an erasure took place.
 - It does not show that anyone asked for the erasure, that the erased rows
   were the person's, or that nothing else in the day changed. Someone with
   both the key and the database can store one for a change of their own.
-- An honest `maverick erase` narrows the last point: it refuses a day that
-  no longer matches a checkpoint it can see, and its record backs replacing
-  only the checkpoints it compared the day with.
+- An honest `maverick erase` narrows the last point: its record backs
+  replacing only the checkpoints the day still matched when it ran.
 
 The control is the report, not the record: every supersession and retirement
 published after your retained sequence is shown to you, with or without an

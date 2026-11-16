@@ -277,3 +277,53 @@ def test_publishing_without_an_erase_record_is_recorded_first(tmp_path, monkeypa
     assert stale.exit_code == 1, stale.output
     assert "superseded_without_erase_record" in stale.output
     assert "published without" in stale.output
+
+
+def test_a_person_is_erased_from_a_day_an_earlier_version_already_erased(tmp_path, monkeypatch):
+    # What an upgrade finds: a checkpointed day, erased once by a version that
+    # stored no erase record, its checkpoint never replaced. A second person
+    # in that day must still be erasable, and each next step must be named.
+    from maverick.audit.erase import scrub_user
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setattr(signing, "KEY_DIR", signing._LEGACY_KEY_DIR)
+    from maverick.paths import data_dir
+
+    day = "2000-01-01"
+    audit_dir = data_dir("audit")
+    day_file = audit_dir / f"{day}.ndjson"
+    closed = signing.AuditSigner(day_file)
+    for person in ("alice", "bob"):
+        assert closed.write({"kind": "tool_call", "channel": "telegram", "user_id": person})
+    assert closed.write({"kind": "tool_call", "tool": "read"})
+    assert signing.ensure_anchors(audit_dir) == 1
+    checkpoints = data_dir("audit-checkpoints")  # a folder the erase compares with
+    runner = CliRunner()
+    base = ["--checkpoint-dir", str(checkpoints)]
+    assert runner.invoke(main, ["audit", "checkpoint", "publish", "--day", day, *base]).exit_code == 0
+    pinned = hashlib.sha256(next(checkpoints.glob("*.ndjson")).read_bytes()).hexdigest()
+    assert scrub_user("telegram", "alice", audit_dir=audit_dir)[0] == 1  # as the base did
+
+    erased = runner.invoke(main, ["erase", "--channel", "telegram", "--user", "bob", "--yes"])
+    assert erased.exit_code == 0, erased.output
+    assert "1 audit event(s) scrubbed" in erased.output
+    assert "bob" not in day_file.read_text(encoding="utf-8")
+    assert "backup" not in erased.output
+
+    # Neither erasure vouches for that checkpoint, so replacing it is the
+    # override, and the refusal says so before anything else.
+    replace = [
+        "audit", "checkpoint", "publish", "--day", day, *base,
+        "--supersede-digest", pinned, "--lifecycle-reason", "gdpr_reanchor",
+    ]
+    refused = runner.invoke(main, replace)
+    assert refused.exit_code != 0
+    assert "--without-erase-record" in refused.output
+    assert "maverick erase --checkpoint-dir" not in refused.output
+    assert runner.invoke(main, [*replace, "--without-erase-record"]).exit_code == 0
+    stale = runner.invoke(main, [
+        "audit", "checkpoint", "verify", *base,
+        "--minimum-sequence", "1", "--minimum-digest", pinned,
+    ])
+    assert stale.exit_code == 1 and "superseded_without_erase_record" in stale.output

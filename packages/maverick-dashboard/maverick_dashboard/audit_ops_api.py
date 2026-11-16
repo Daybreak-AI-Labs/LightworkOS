@@ -110,6 +110,10 @@ class PublishIn(BaseModel):
     #: The day's log changed because a person's data was erased: start a new
     #: checkpoint era for it. The superseded checkpoint is found on the server.
     after_erasure: bool = False
+    #: With ``after_erasure``: replace the checkpoint although no erasure
+    #: record backs the change (a day erased before those records existed).
+    #: Recorded in the activity log; a later check with an older receipt says so.
+    without_erasure_record: bool = False
 
 
 class VerifyIn(BaseModel):
@@ -236,6 +240,7 @@ def _publish(body: PublishIn, supersede: str | None) -> dict:
         supersedes_checkpoint_sha256=supersede,
         lifecycle_reason="gdpr_reanchor" if supersede else None,
         erase_records=_erase_records(),
+        allow_missing_erase_record=bool(supersede and body.without_erasure_record),
     )
     sequence = int(path.stem.rsplit("-", 1)[-1])
     return {"published": True, "sequence": sequence, "day": body.day}
@@ -244,8 +249,9 @@ def _publish(body: PublishIn, supersede: str | None) -> dict:
 def _publish_problem(exc: Exception) -> str:
     text = str(exc).lower()
     if "no stored erase record" in text:
-        return ("No erasure record is on file for this day, so its checkpoint cannot be replaced here. "
-                "If the erasure was made before this version, an administrator can replace it from the command line.")
+        return ("No erasure record is on file for this change. If this day was already erased, tick "
+                "\u201cReplace it without an erasure record\u201d and publish again. "
+                "A later check with an older receipt will then report this day.")
     if "erase records" in text:
         return "The erasure records could not be read, so nothing was published. Try again."
     if "prefix/count changed" in text:
@@ -367,7 +373,8 @@ async def publish(request: Request, body: PublishIn) -> dict:
             if body.day not in _days():
                 raise HTTPException(status_code=422, detail="Choose a day from the list.")
             supersede = _latest_digest_for_day(body.day) if body.after_erasure else None
-            _record(request, "audit_checkpoint_publish", day=body.day, after_erasure=body.after_erasure)
+            _record(request, "audit_checkpoint_publish", day=body.day, after_erasure=body.after_erasure,
+                    without_erasure_record=bool(body.after_erasure and body.without_erasure_record))
             return _publish(body, supersede)
     return await _run(change)
 
