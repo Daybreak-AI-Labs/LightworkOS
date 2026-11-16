@@ -238,8 +238,12 @@ def test_the_start_checks_never_make_an_unscoped_world_read(setup, monkeypatch):
 
     world, goal, *_ = setup
 
-    def refused(*_args, **_kwargs):
-        raise TenantScopeRequired("This read has no tenant boundary.")
+    raw = world.query
+
+    def refused(sql, params=(), *, system=False):
+        if not system:  # the shared Postgres store's rule for a bound workspace
+            raise TenantScopeRequired("This read has no tenant boundary.")
+        return raw(sql, params, system=True)
 
     monkeypatch.setattr(world, "query", refused)
     child = world.create_goal("Follow-up", owner="user:owner", parent_id=goal)
@@ -255,3 +259,9 @@ def test_the_start_checks_never_make_an_unscoped_world_read(setup, monkeypatch):
     assert closure(world, child, execute=execute) is None
     require_ai_open(world, child, execute=execute)
     assert seen and all("{tenant" not in sql for sql in seen)
+    # A parent that no longer exists ends the walk, as it always has.
+    world.conn.execute("PRAGMA foreign_keys=OFF")
+    world.conn.execute("UPDATE goals SET parent_id=999999 WHERE id=?", (child,))
+    world.conn.commit()
+    assert closure(world, child) is None
+    require_ai_open(world, child)

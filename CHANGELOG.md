@@ -469,6 +469,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   tenancy is on; the boards, chat history, handoffs and reports now read
   through `tenant_query`, which adds the tenant boundary. Code that calls
   `query` directly must move to `tenant_query` or pass `system=True`.
+  A task whose parent task belongs to another workspace, or to no workspace
+  under strict isolation, no longer starts: its parents cannot be checked
+  for a hold or a closed handoff. The message asks you to review the task map.
 - A workspace's `config.toml` and a workspace agent override can only make
   governance, safety, capabilities, sandbox and security settings stricter;
   an unset organisation value counts as the product default. A looser

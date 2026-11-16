@@ -1417,8 +1417,9 @@
           : fromFailure ? 'Starting again from the step that failed…' : 'Running again with the same answers…';
         setTimeout(loadFlowRuns, 500);
       } catch (e) {
-        flowsMsg.textContent = plainError(e, 'run it again');
-        if (e.status) setTimeout(loadFlowRuns, 500);  // a refusal: show the run as it now stands
+        flowsMsg.textContent = e.unreadable ? 'The retry could not be confirmed. Check Recent runs before trying again.'
+          : plainError(e, 'run it again');
+        if (e.status || e.unreadable) setTimeout(loadFlowRuns, 500);  // show the run as it now stands
       }
     }
     async function resumeRun(run, decision) {

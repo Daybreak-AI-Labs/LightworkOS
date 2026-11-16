@@ -362,12 +362,23 @@ def test_an_erase_that_rewrites_nothing_leaves_the_tip_ledger_as_it_was(
     assert _state(ad, path.with_name("2020-01-01.ndjson")) == ([], ["anchor_ledger_missing"])
 
 
-def test_erase_refuses_when_a_tip_ledger_that_existed_is_gone(_isolate_keys, tmp_path):
+@pytest.mark.parametrize("left_behind", ["marker", "highwater"])
+def test_erase_refuses_when_a_tip_ledger_that_existed_is_gone(
+        _isolate_keys, tmp_path, monkeypatch, left_behind):
+    """Either the marker or the signed high-water record shows a ledger
+    existed; deleting the ledger and one of them does not open the erase."""
     from maverick.audit.erase import erase_blockers, scrub_user
-    from maverick.audit.signing import ANCHOR_FILENAME
+    from maverick.audit.signing import (
+        ANCHOR_FILENAME,
+        ANCHOR_HIGHWATER_FILENAME,
+        ANCHOR_MARKER_FILENAME,
+    )
 
     ad, path = _anchored_past_day(tmp_path)
+    monkeypatch.setenv("MAVERICK_AUDIT_SIGN", "0")
     (ad / ANCHOR_FILENAME).unlink()
+    assert (ad / ANCHOR_HIGHWATER_FILENAME).exists() and (ad / ANCHOR_MARKER_FILENAME).exists()
+    (ad / (ANCHOR_HIGHWATER_FILENAME if left_behind == "marker" else ANCHOR_MARKER_FILENAME)).unlink()
     before_bytes = path.read_bytes()
 
     assert "anchors.ndjson" in erase_blockers("telegram", "alice", audit_dir=ad)[0]

@@ -165,7 +165,7 @@ def _anchor_problem(path: Path, *, reanchors: bool) -> str | None:
     the erase would add an anchor (``reanchors``), any break in the ledger
     itself refuses too.
     """
-    from .signing import _ensure_anchor_ledger, verify_anchors
+    from .signing import ANCHOR_HIGHWATER_FILENAME, _ensure_anchor_ledger, verify_anchors
 
     day = path.stem
     try:
@@ -181,11 +181,13 @@ def _anchor_problem(path: Path, *, reanchors: bool) -> str | None:
                 f"erase will not re-anchor it. {_RESTORE_DAY}")
     ledger = [b for b in breaks if b.reason not in _DAY_ANCHOR_BREAKS]
     if (all(b.reason == "anchor_ledger_missing" for b in ledger)
-            and _ensure_anchor_ledger(path.parent)):
+            and _ensure_anchor_ledger(path.parent)
+            and not (path.parent / ANCHOR_HIGHWATER_FILENAME).exists()):
         # No ledger was ever written here (signing was turned off before the
         # first day closed, say): there is nothing to restore. The erase goes
         # ahead and adds no anchor, so `audit verify` reports what it did
-        # before. A ledger that was once required and is now gone refuses.
+        # before. A ledger that was once required and is now gone refuses;
+        # its marker or its high-water record shows that it existed.
         ledger = []
     if reanchors and ledger:
         return ("the audit tip ledger reports a break "

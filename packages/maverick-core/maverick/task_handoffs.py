@@ -47,6 +47,19 @@ def tenant_reader(world, execute=None):
     return lambda sql, args: execute(*world.tenant_sql(sql, args)).fetchall()
 
 
+def hidden_from_tenant(world, goal_id, execute=None):
+    """Whether ``goal_id`` exists but a tenant-scoped read did not return it.
+
+    An ancestry walk that meets such a parent cannot see a hold or a closed
+    handoff recorded on it, so the caller refuses instead of reading "open".
+    A parent that no longer exists at all ends the walk, as it always has.
+    """
+    sql = "SELECT 1 FROM goals WHERE id=?"
+    if execute is not None:
+        return bool(execute(sql, (goal_id,)).fetchall())
+    return bool(world.query(sql, (goal_id,), system=True))
+
+
 def closure(world, goal_id, *, execute=None, decode=None):
     """Return lineage metadata only. Descendants cannot reopen closed work."""
     store = SubmissionStore(world)
@@ -62,6 +75,8 @@ def closure(world, goal_id, *, execute=None, decode=None):
         if rows:
             return json.loads(decode(rows[0][0]))
         rows = query("SELECT parent_id FROM goals WHERE id=? AND {tenant:tenant_id}", (current,))
+        if not rows and current != goal_id and hidden_from_tenant(world, current, execute):
+            raise GoalMutationConflict("Task ancestry is unavailable. Review the task map before starting.")
         current = rows[0][0] if rows else None
     return None
 

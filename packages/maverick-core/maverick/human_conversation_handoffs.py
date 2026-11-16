@@ -45,8 +45,9 @@ def require_ai_open(world, goal_id, *, execute=None, decode=None):
     """Physical admission reads exact original hold pointers, including moved tasks."""
     from .attachment_submissions import SubmissionStore
     store = SubmissionStore(world)
-    from .task_handoffs import tenant_reader
+    from .task_handoffs import hidden_from_tenant, tenant_reader
     query = tenant_reader(world, execute)
+    start = int(goal_id)
     decode = decode or store.open
     current, seen = int(goal_id), set()
     while current is not None:
@@ -54,6 +55,8 @@ def require_ai_open(world, goal_id, *, execute=None, decode=None):
             raise GoalMutationConflict("The conversation's current human handoff could not be checked.")
         seen.add(current)
         identity = query("SELECT id,owner,created_at FROM goals WHERE id=? AND {tenant:tenant_id}", (current,))
+        if not identity and current != start and hidden_from_tenant(world, current, execute):
+            raise GoalMutationConflict("The conversation's current human handoff could not be checked.")
         if identity:
             identifier = "CI-" + digest({"root": identity[0][0], "owner": identity[0][1], "created_at": identity[0][2]})[:32]
             native = inbox.STORE.get(identifier)

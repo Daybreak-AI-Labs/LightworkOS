@@ -2748,6 +2748,39 @@ def test_chat_action_guard_read_keeps_the_submission_lock_and_tenant(monkeypatch
                                  (receipt["goal_id"],)).fetchone() == (tenant,)
     finally:
         w.close()
+def test_a_parent_outside_the_workspace_holds_the_start_checks(world):
+    """The start checks walk a task's parents for a hold or a closed handoff.
+    A parent the workspace boundary hides cannot be checked, so the walk
+    refuses instead of reading "nothing holds this task"."""
+    from maverick.goal_mutations import GoalMutationConflict
+    from maverick.human_conversation_handoffs import require_ai_open
+    from maverick.paths import tenant_scope
+    from maverick.task_handoffs import closure
+
+    mine = "anc-" + uuid.uuid4().hex
+    other = mine + "-other"
+    with tenant_scope(tenant=other):
+        parent = world.create_goal("another workspace's task")
+    with tenant_scope(tenant=mine):
+        own_parent = world.create_goal("this workspace's task")
+        child = world.create_goal("follow-up", parent_id=own_parent)
+    try:
+        with tenant_scope(tenant=mine):
+            assert closure(world, child) is None
+            require_ai_open(world, child)
+        with world._tx() as cur:
+            cur.execute("UPDATE goals SET parent_id=%s WHERE id=%s", (parent, child))
+        with tenant_scope(tenant=mine):
+            with pytest.raises(GoalMutationConflict):
+                closure(world, child)
+            with pytest.raises(GoalMutationConflict):
+                require_ai_open(world, child)
+    finally:
+        with world._tx() as cur:
+            cur.execute("UPDATE goals SET parent_id=NULL WHERE id=%s", (child,))
+            cur.execute("DELETE FROM goals WHERE id IN (%s,%s,%s)", (parent, own_parent, child))
+
+
 def test_raw_reads_need_a_tenant_boundary_while_tenancy_is_on(world):
     """An unscoped raw read is refused for a bound tenant; the tenant-scoped
     accessor sees only that tenant's root and child rows."""
