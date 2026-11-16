@@ -104,8 +104,8 @@ def _open_staged(sandbox, path: Path, limit: int):
 
     The staging folder is inside the workspace, which the agent can write to.
     Neither the folder nor the file may be a link when it is opened, the file
-    must be a regular file of a sane size, and what was opened must still be
-    inside the workspace."""
+    must be a regular file with one name and a sane size, and what was opened
+    must still be inside the workspace."""
     from .fs import _fd_real_path, _open_contained
 
     workdir = Path(sandbox.workdir).resolve()
@@ -127,7 +127,9 @@ def _open_staged(sandbox, path: Path, limit: int):
         return None
     handle = os.fdopen(fd, "rb")
     info = os.fstat(handle.fileno())
-    if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= limit:
+    # One name only: a hard link would be a second name for a file elsewhere.
+    if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+            or not 0 < info.st_size <= limit):
         handle.close()
         return None
     return handle

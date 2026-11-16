@@ -1,6 +1,8 @@
 """Tests for the view_video tool (maverick.tools.view_video)."""
 from __future__ import annotations
 
+import base64
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -255,6 +257,8 @@ def test_view_video_gives_the_sandbox_only_workspace_relative_paths(monkeypatch,
         out = workspace / cmd[-1]
         if out.name == "frame_001.jpg":
             out.symlink_to(secret)  # planted by something else in the workspace
+        elif out.name == "frame_002.jpg":
+            os.link(secret, out)  # a second name for a file outside the workspace
         else:
             out.write_bytes(b"\xff\xd8jpeg")
         return (0, "", "")
@@ -264,13 +268,15 @@ def test_view_video_gives_the_sandbox_only_workspace_relative_paths(monkeypatch,
     from maverick.budget import Budget
 
     out = view_video(SimpleNamespace(workdir=str(workspace)), budget=Budget(max_dollars=1.0)).fn(
-        {"source": "clips/v.mp4", "num_frames": 3})
+        {"source": "clips/v.mp4", "num_frames": 4})
 
     assert out == "a cat plays the piano, then jumps down"
     assert all(cmd[cmd.index("-i") + 1] == "./clips/v.mp4" for cmd in commands[1:])
     assert commands[0][-1] == "./clips/v.mp4"
     images = [b for b in _FakeLLM.last_messages[0]["content"] if b.get("type") == "image"]
-    assert len(images) == 2  # the planted link was not followed
+    assert len(images) == 2  # neither planted link was read
+    assert b"HOST-ONLY" not in b"".join(
+        base64.b64decode(image["source"]["data"]) for image in images)
     assert sorted(p.name for p in workspace.iterdir()) == ["clips"]  # staging folder removed
 
 
