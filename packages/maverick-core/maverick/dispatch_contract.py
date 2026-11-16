@@ -18,8 +18,7 @@ sites fails the build, so the next dispatch site cannot be added ungated by
 accident. It is deliberately a structural check rather than a grep -- a grep for
 ``.run(`` matches hundreds of unrelated calls. A direct ``<tool>.fn(...)`` call
 skips the registry altogether, so it counts as a dispatch too; the reviewed
-ones are listed in ``DIRECT_FN_REVIEWED`` with the number of calls each review
-covered. A handler taken into a variable and called later is not seen, and
+ones are listed in ``DIRECT_FN_REVIEWED`` with the calls each review covered. A handler taken into a variable and called later is not seen, and
 neither is a call written inside source text that runs in a child process (the
 two known ones are on record in the same list).
 
@@ -80,31 +79,32 @@ UNREACHABLE_EXEMPT = {
 
 #: Direct ``<tool>.fn(...)`` calls, reviewed one by one and keyed by file and
 #: enclosing function, so a new direct call elsewhere in the same file still
-#: fails. Each entry is ``(expected, reason)``. ``expected`` is the number of
-#: ``.fn(`` calls the review covered in that function: one more (or one fewer)
+#: fails. Each entry is ``(expected, reason)``. ``expected`` lists the calls
+#: the review covered in that function, each as its receiver expression
+#: (``tool.fn``), in sorted order: one more, one fewer or a different one
 #: fails the gate until it is reviewed. The reason says why the call may skip
 #: ``ToolRegistry.run``.
 #:
 #: Two calls sit inside source text that is run in a child process, where this
 #: scan cannot see them. They are on record under the function name
-#: ``<source text>`` with ``expected`` set to the line itself; the gate fails
-#: if the file no longer contains it, so the entry cannot go stale.
+#: ``<source text>`` with ``expected`` set to the line itself (a string); the
+#: gate fails if the file no longer contains it, so the entry cannot go stale.
 _QUALIFICATION = ("plugin qualification: runs the candidate's handler once with the "
                   "reviewed practice input, inside the reviewed container")
-DIRECT_FN_REVIEWED: dict[tuple[str, str], tuple[int | str, str]] = {
+DIRECT_FN_REVIEWED: dict[tuple[str, str], tuple[tuple[str, ...] | str, str]] = {
     ("packages/maverick-core/maverick/governed_tools.py", "_fn"): (
-        2, "the governed connector wrapper: it is the registered handler and "
+        ("tool.fn", "tool.fn"), "the governed connector wrapper: it is the registered handler and "
            "calls the wrapped handler after its own preview, approval and "
            "receipt steps"),
     ("packages/maverick-core/maverick/tools/_lazy.py", "__call__"): (
-        1, "the lazy tool's own handler: the registry calls it, and it forwards "
+        ("self.resolve().fn",), "the lazy tool's own handler: the registry calls it, and it forwards "
            "to the tool it builds on first use"),
-    ("packages/maverick-core/maverick/sandbox/plugin_contracts.py", "execute"): (1, _QUALIFICATION),
-    ("packages/maverick-core/maverick/sandbox/plugin_contracts.py", "execute_node"): (1, _QUALIFICATION),
-    ("packages/maverick-core/maverick/sandbox/plugin_contracts.py", "execute_grpc"): (1, _QUALIFICATION),
+    ("packages/maverick-core/maverick/sandbox/plugin_contracts.py", "execute"): (("tool.fn",), _QUALIFICATION),
+    ("packages/maverick-core/maverick/sandbox/plugin_contracts.py", "execute_node"): (("tool.fn",), _QUALIFICATION),
+    ("packages/maverick-core/maverick/sandbox/plugin_contracts.py", "execute_grpc"): (("tool.fn",), _QUALIFICATION),
     ("packages/maverick-core/maverick/proof_guarantees.py",
      "claim_fleet_can_read_but_not_write"): (
-        1, "a self-check with fixed arguments: it asks a read-only seat to "
+        ("tools['billdotcom_read'].fn",), "a self-check with fixed arguments: it asks a read-only seat to "
            "write and requires the refusal"),
     # Not gated like a real call. ToolRegistry.speculate_reads applies the
     # access list, the MCP binding and the ambient-credential check, and the
@@ -112,7 +112,7 @@ DIRECT_FN_REVIEWED: dict[tuple[str, str], tuple[int | str, str]] = {
     # stop check, replay check or audit row. Opt-in, side-effect-free reads
     # only. Listed so the gap is on record here, not so it reads as closed.
     ("packages/maverick-core/maverick/speculative_tools.py", "_call_tool"): (
-        1, "KNOWN GAP: opt-in pre-run of repeat reads outside the governed "
+        ("tool.fn",), "KNOWN GAP: opt-in pre-run of repeat reads outside the governed "
            "dispatch; partial checks only (see the comment above)"),
     ("packages/maverick-core/maverick/self_learning.py", "<source text>"): (
         "_result = _tool.fn(_args)",
@@ -242,7 +242,7 @@ def scan_file(path: Path) -> list[dict]:
         owner = owners[n]
         gated = any(position < (n.lineno, n.col_offset) for position in gates.get(owner, ()))
         out.append({"file": rel, "line": n.lineno, "recv": name or "<expression>",
-                    "kind": f.attr,
+                    "kind": f.attr, "call": ast.unparse(f),
                     "function": getattr(owner, "name", "<lambda>") if owner else "<module>",
                     "literal": literal, "gated": gated})
     return out
@@ -275,14 +275,14 @@ def _scan_uncached(roots: tuple[str, ...]) -> tuple[list[dict], int]:
     return hits, inspected
 
 
-def _fn_calls(hits: list[dict]) -> dict[tuple[str, str], int]:
-    """How many direct ``.fn(`` calls each (file, function) holds."""
-    counts: dict[tuple[str, str], int] = {}
+def _fn_calls(hits: list[dict]) -> dict[tuple[str, str], tuple[str, ...]]:
+    """The direct ``.fn(`` calls each (file, function) holds, as sorted
+    receiver expressions."""
+    calls: dict[tuple[str, str], list[str]] = {}
     for h in hits:
         if h.get("kind") == "fn":
-            key = (h["file"], h["function"])
-            counts[key] = counts.get(key, 0) + 1
-    return counts
+            calls.setdefault((h["file"], h["function"]), []).append(h["call"])
+    return {key: tuple(sorted(found)) for key, found in calls.items()}
 
 
 def stale_fn_reviews(hits: list[dict]) -> list[str]:
@@ -309,8 +309,8 @@ def violations(hits: list[dict]) -> list[dict]:
         if h["file"] in SANCTIONED:
             continue
         key = (h["file"], h.get("function"))
-        # A review covers the calls it counted, not every later one in the
-        # same function.
+        # A review covers the calls it lists, not every later or different
+        # one in the same function.
         if h.get("kind") == "fn" and DIRECT_FN_REVIEWED.get(key, (None, ""))[0] == calls.get(key):
             continue
         if (h["file"], h["literal"]) in LITERAL_EXEMPT:
@@ -378,8 +378,8 @@ def main(argv: list[str] | None = None) -> int:
           "path. If the tool name is a fixed literal that cannot be steered, "
           "add it to LITERAL_EXEMPT with the literal. A direct handler call "
           "(.fn) that has been reviewed goes in DIRECT_FN_REVIEWED with its "
-          "reason and the number of such calls in that function; a function "
-          "already listed there is reported again when that number changes.",
+          "reason and the calls it covers in that function; a function "
+          "already listed there is reported again when those calls change.",
           file=sys.stderr)
     return 1 if args.ci else 0
 

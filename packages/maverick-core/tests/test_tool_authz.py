@@ -705,13 +705,18 @@ def test_a_new_direct_call_inside_a_reviewed_function_is_not_hidden(tmp_path, mo
     f = tmp_path / "wrapper.py"
     one = "def go(tool, args):\n    return tool.fn(args)\n"
     f.write_text(one, encoding="utf-8")
-    reviewed = {("wrapper.py", "go"): (1, "the registered wrapper")}
+    reviewed = {("wrapper.py", "go"): (("tool.fn",), "the registered wrapper")}
     monkeypatch.setattr(dispatch_contract, "DIRECT_FN_REVIEWED", reviewed)
     hits = dispatch_contract.scan_file(f)
     assert dispatch_contract.violations(hits) == []
     f.write_text(one + "    tool.fn({})\n", encoding="utf-8")
     hits = dispatch_contract.scan_file(f)
     assert len(dispatch_contract.violations(hits)) == 2
+    # One call swapped for a different one: the same number, not the same calls.
+    f.write_text("def go(tool, args, other):\n    return other.registry['x'].fn(args)\n", encoding="utf-8")
+    hits = dispatch_contract.scan_file(f)
+    assert [h["call"] for h in hits] == ["other.registry['x'].fn"]
+    assert dispatch_contract.violations(hits) == hits
 
     script = tmp_path / "child.py"
     script.write_text('SOURCE = """\nresult = tool.fn(args)\n"""\n', encoding="utf-8")
