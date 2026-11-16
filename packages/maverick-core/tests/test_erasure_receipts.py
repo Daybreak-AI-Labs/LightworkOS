@@ -1085,6 +1085,41 @@ def test_a_rerun_finishes_or_again_names_what_remains(monkeypatch):
     assert purged and not attachment.exists()
 
 
+def test_two_erase_runs_do_not_lose_each_others_pending_attachment(monkeypatch):
+    """Two runs whose unlinks fail at the same time must both be recorded:
+    the files' rows are gone, so a lost entry is never found again."""
+    import json
+    import threading
+
+    from maverick import cli
+    from maverick.paths import data_dir
+
+    _cli_world().close()
+    files = [Path.home() / "one.txt", Path.home() / "two.txt"]
+    for file in files:
+        file.write_text("private", encoding="utf-8")
+    both_unlinking = threading.Barrier(2)
+
+    def failing(paths):
+        # This run has read the list. Without a lock a second run reads it
+        # too and both arrive here; with one, the wait simply times out.
+        try:
+            both_unlinking.wait(timeout=1)
+        except threading.BrokenBarrierError:
+            pass
+        return 0, ["OSError (errno 5)"]
+
+    monkeypatch.setattr(cli, "_unlink_erasure_attachments", failing)
+    runs = [threading.Thread(target=cli._unlink_attachments_with_pending, args=([file],))
+            for file in files]
+    for run in runs:
+        run.start()
+    for run in runs:
+        run.join(timeout=30)
+    pending = data_dir("erasure", "pending_attachment_files.json")
+    assert len(json.loads(pending.read_text(encoding="utf-8"))) == 2
+
+
 def test_an_unusable_pending_list_never_strands_this_runs_attachment_files(monkeypatch):
     """An unusable list is kept aside, this run's files are still removed,
     and the new list records leftovers without their file names."""

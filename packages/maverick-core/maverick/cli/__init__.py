@@ -6220,12 +6220,39 @@ def _unlink_attachments_with_pending(attachment_paths) -> tuple[int, list[str]]:
     a private list (folder and name digest only) that every later erase,
     with or without a conversation, tries again until the files are gone.
     """
-    import json
+    from contextlib import ExitStack
 
-    from ..file_lock import atomic_write_text, ensure_private_directory
+    from ..file_lock import cross_process_lock, ensure_private_directory
     from ..paths import data_dir
 
     pending_file = data_dir(*_PENDING_ATTACHMENTS)
+    with ExitStack() as held:
+        unlocked = None
+        try:
+            ensure_private_directory(pending_file.parent)
+            # Two erase runs must not both read the list and then each write
+            # only its own leftovers: the other run's entry would be lost.
+            held.enter_context(cross_process_lock(pending_file))
+        except OSError as exc:
+            unlocked = f"pending attachment list lock: {_erasure_failure_label(exc)}"
+        removed, errors = _retry_pending_attachments(pending_file, attachment_paths)
+        if unlocked:
+            errors.append(unlocked)
+    for error in errors:
+        click.echo(
+            "warning: could not remove an attachment file "
+            f"({error}); the clean certificate is withheld.",
+            err=True,
+        )
+    return removed, errors
+
+
+def _retry_pending_attachments(pending_file: Path, attachment_paths) -> tuple[int, list[str]]:
+    """Unlink this run's files and the listed leftovers, then rewrite the list."""
+    import json
+
+    from ..file_lock import atomic_write_text, ensure_private_directory
+
     entries, note = _read_pending_attachments(pending_file)
     errors: list[str] = [note] if note else []
     targets = [Path(p) for p in attachment_paths]
@@ -6252,12 +6279,6 @@ def _unlink_attachments_with_pending(attachment_paths) -> tuple[int, list[str]]:
     for aside in sorted(pending_file.parent.glob(f"{pending_file.name}.unusable-*")):
         errors.append(f"{aside.name} may list attachment files still on disk: check the "
                       f"folders it lists and delete those files, then delete {aside.name}")
-    for error in errors:
-        click.echo(
-            "warning: could not remove an attachment file "
-            f"({error}); the clean certificate is withheld.",
-            err=True,
-        )
     return removed, errors
 
 
