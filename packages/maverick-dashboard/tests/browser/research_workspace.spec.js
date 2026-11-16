@@ -82,3 +82,55 @@ for (const width of [360, 1280]) test(`governed research stays usable and honest
   expect(overflow.page, JSON.stringify(overflow)).toBeLessThanOrEqual(overflow.viewport + 1);
   expect(overflow.elements, JSON.stringify(overflow)).toEqual([]);
 });
+
+test('a stuck release request says why and is discarded by keyboard at 360px', async ({page, request}) => {
+  await page.setViewportSize({width:360, height:960});
+  const pageResponse = await request.get('/research');
+  const context = (await pageResponse.text()).match(/id="research-lab" data-context="([a-f0-9]{64})"/)[1];
+  const stuck = {candidate_id:'order-total-release', state:'activation_claimed', stuck:'outcome_unknown',
+    can_discard:true, revision:5, manifest_sha256:digest('1'), policy_sha256:digest('2'),
+    study:{conclusion:'qualified', evaluator_id:'synthetic-evaluator', evaluator_version:'v1'},
+    run:{run_id:'synthetic-browser-run', output_artifact_sha256:digest('3')},
+    target:{target_id:'installed-app', expected_active_sha256:digest('4')},
+    lineage:[], review:null, block:null, deployment:null, events:[]};
+  let current = stuck;
+  const posts = [];
+  await page.route('**/api/v1/research', route => route.fulfill({json:model(context)}));
+  await page.route('**/api/v1/research/promotions**', route => {
+    if (route.request().method() === 'POST') {
+      posts.push({url:route.request().url(), body:route.request().postDataJSON()});
+      current = {...stuck, state:'discarded', stuck:'', can_discard:false, revision:6};
+      return route.fulfill({json:current});
+    }
+    return route.fulfill({json:{context, available:true, can_manage:true, can_propose:false,
+      completed_runs:[], target_presets:[], items:[current], detail:'Synthetic browser fixture.'}});
+  });
+  await page.goto('/research');
+  const list = page.locator('#research-promotions-list');
+  await expect(list.locator('.research-badge')).toHaveText('Stuck');
+  await expect(list).toContainText('The last action stopped before its result was saved');
+  await expect(list.getByRole('button', {name:'Retry: check what happened'})).toBeVisible();
+
+  // Keyboard only: reach the discard control, press it, and confirm in the page dialog.
+  const discard = list.getByRole('button', {name:'Discard this request'});
+  await discard.focus();
+  await expect(discard).toBeFocused();
+  await page.keyboard.press('Enter');
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toContainText('first checks that it is not in use');
+  const confirm = dialog.getByRole('button', {name:'Discard this request'});
+  for (let step = 0; step < 6 && !(await confirm.evaluate(node => node === document.activeElement)); step += 1) {
+    await page.keyboard.press('Tab');
+  }
+  await expect(confirm).toBeFocused();
+  await page.keyboard.press('Enter');
+
+  await expect(list.locator('.research-badge')).toHaveText('Discarded without publishing');
+  expect(posts).toHaveLength(1);
+  expect(new URL(posts[0].url).pathname).toBe('/api/v1/research/promotions/order-total-release/discard');
+  expect(posts[0].body).toEqual({context, confirm:true, expected_revision:5, reason_code:'stuck_request'});
+  await expect(list.getByRole('button', {name:'Discard this request'})).toHaveCount(0);
+  const overflow = await page.evaluate(() => ({viewport:document.documentElement.clientWidth,
+    page:document.documentElement.scrollWidth}));
+  expect(overflow.page, JSON.stringify(overflow)).toBeLessThanOrEqual(overflow.viewport + 1);
+});
