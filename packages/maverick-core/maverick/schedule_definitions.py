@@ -111,6 +111,26 @@ def list_definitions(queue, *, owner=None):
                 if owner is None or json.loads(row["payload"]).get("owner", "") == owner]
 
 
+def imported_definitions(queue, *, owner=""):
+    """The live schedules that imports created for ``owner``, newest first.
+
+    Each carries its stored payload, whose ``imported_from`` is the import's
+    own mark: a re-import finds its schedule by that, never by a title or text
+    another schedule could share. A retired schedule keeps its history and is
+    not reused.
+    """
+    with queue._conn() as connection:
+        rows = connection.execute(
+            "SELECT * FROM schedule_definitions WHERE state!='retired' ORDER BY created_at DESC,id"
+        ).fetchall()
+        found = []
+        for row in rows:
+            payload = json.loads(row["payload"])
+            if payload.get("imported_from") and payload.get("owner", "") == owner:
+                found.append({**public_definition(connection, row), "payload": payload})
+    return found
+
+
 def _record_version(connection, row, *, payload, state, actor, rationale, now):
     revision = row["revision"] + 1
     encoded = json.dumps(payload, sort_keys=True)
@@ -118,6 +138,29 @@ def _record_version(connection, row, *, payload, state, actor, rationale, now):
                        (encoded, state, revision, now, row["id"]))
     connection.execute("INSERT INTO schedule_definition_versions VALUES (?,?,?,?,?,?,?)",
                        (row["id"], revision, encoded, state, actor, rationale, now))
+
+
+def pause_unarmed(connection, job, *, now):
+    """Pause the active schedule of a job row that ends with no next occurrence.
+
+    Without this the schedule stays "active" but nothing is queued for it, so
+    it silently never runs again. A row whose next occurrence is already armed
+    is left alone. Returns whether the schedule was paused.
+    """
+    if not job["recurrence_id"] or job["successor_id"] or json.loads(job["payload"]).get("__rearmed__"):
+        return False
+    definition = connection.execute(
+        "SELECT * FROM schedule_definitions WHERE id=?", (job["recurrence_id"],),
+    ).fetchone()
+    if definition is None or definition["state"] != "active":
+        return False
+    _record_version(
+        connection, definition, payload=json.loads(definition["payload"]),
+        state="paused", actor="system",
+        rationale=f"Job {job['id']} could not arm its next occurrence; review and resume the schedule",
+        now=now,
+    )
+    return True
 
 
 def _future_occurrence(queue, connection, row, payload, now):
@@ -139,7 +182,8 @@ def _future_occurrence(queue, connection, row, payload, now):
 
 
 def change_definition(queue, identity, *, expected_revision, state, actor,
-                      owner=None, cron=None, zone=None, title=None, rationale="Reviewed schedule change"):
+                      owner=None, cron=None, zone=None, title=None, rationale="Reviewed schedule change",
+                      payload_updates=None):
     from .scheduler import next_run, require_zone
     from .task_file_recovery import mutation_gate
 
@@ -165,6 +209,13 @@ def change_definition(queue, identity, *, expected_revision, state, actor,
             payload["__tz__"] = zone
         if title is not None:
             payload["title"] = title
+        # A re-import replaces what future runs do (the task text and its
+        # limits); a value of None removes the key.
+        for key, value in (payload_updates or {}).items():
+            if value is None:
+                payload.pop(key, None)
+            else:
+                payload[key] = value
         next_run(payload["__cron__"], after=now, tz=payload.get("__tz__", ""))
         _record_version(connection, row, payload=payload, state=state, actor=actor, rationale=rationale, now=now)
         # Preserve admitted execution and uncertain retries. Cancel only future,

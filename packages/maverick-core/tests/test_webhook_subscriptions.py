@@ -198,7 +198,7 @@ class _FailingClient:
     def __exit__(self, *exc):
         return False
 
-    def post(self, *args, **kwargs):
+    def stream(self, *args, **kwargs):
         raise self.exc
 
 

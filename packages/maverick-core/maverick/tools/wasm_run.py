@@ -72,8 +72,25 @@ def _safe_path(sandbox, user_path: str) -> str:
     return str(candidate)
 
 
+def _runs_on_host(sandbox) -> bool:
+    """Whether commands run as host processes: no sandbox, or the local backend."""
+    from ..sandbox.local import LocalBackend
+
+    return sandbox is None or type(sandbox) is LocalBackend
+
+
+def _in_sandbox(sandbox, host_path: str) -> str:
+    """``host_path`` as a command inside the sandbox names it. A sandbox backend
+    mounts the workspace at its own root, not at its host path; the prefix
+    keeps a name beginning with '-' from being read as an option."""
+    if sandbox is None:
+        return host_path
+    return "./" + Path(host_path).relative_to(Path(sandbox.workdir).resolve()).as_posix()
+
+
 def _op_run(args: dict, sandbox) -> str:
-    err = _need_wasmtime()
+    # wasmtime must be where the command runs; a sandbox reports its own.
+    err = _need_wasmtime() if _runs_on_host(sandbox) else None
     if err:
         return err
     module = (args.get("module") or "").strip()
@@ -89,7 +106,7 @@ def _op_run(args: dict, sandbox) -> str:
         return f"ERROR: {e}"
     cmd = ["wasmtime", "run"]
     for d in dirs:
-        cmd.extend(["--dir", d])
+        cmd.extend(["--dir", _in_sandbox(sandbox, d)])
     env = args.get("env") or {}
     if not isinstance(env, dict):
         return "ERROR: env must be an object of KEY: value"
@@ -97,7 +114,7 @@ def _op_run(args: dict, sandbox) -> str:
         if not _ENV_KEY.match(str(k)):
             return f"ERROR: invalid env key {k!r}"
         cmd.extend(["--env", f"{k}={v}"])
-    cmd.append(module)
+    cmd.append(_in_sandbox(sandbox, module))
     module_args = [str(a) for a in (args.get("args") or [])]
     if module_args:
         cmd.append("--")
@@ -134,7 +151,7 @@ def _op_run(args: dict, sandbox) -> str:
 
 
 def _op_version(_args: dict, sandbox) -> str:
-    err = _need_wasmtime()
+    err = _need_wasmtime() if _runs_on_host(sandbox) else None
     if err:
         return err
     from . import sandbox_run

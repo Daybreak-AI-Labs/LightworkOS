@@ -218,12 +218,15 @@ test("alert refresh stays on the page and distinguishes unavailable sections fro
   const requests = [];
   const ui = governanceUI({get:async (base,path) => {
     requests.push({base,path});
-    return {attention_count:0,sections:{vendors:{enabled:false,error:"unavailable"}}};
+    return {attention_count:0,complete:false,sections:{vendors:{enabled:false,error:"unavailable"}}};
   }});
   ui.form.elements.limit.value = "17";
   await ui.nodes["gov-refresh-attention"].fire("click");
   assert.equal(requests[0].path, "/alerts");
   assert.equal(ui.nodes["gov-attention-status"].textContent, "Alerts refreshed.");
   assert.equal(ui.form.elements.limit.value, "17");
-  assert.match(ui.nodes["gov-attention-summary"].children[1].textContent, /Suppliers alerts could not be loaded/);
+  const lines = ui.nodes["gov-attention-summary"].children.map(node => node.textContent);
+  assert.doesNotMatch(lines[0], /Nothing needs attention/);
+  assert.match(lines[1], /Some alerts could not be checked/);
+  assert.match(lines[2], /Suppliers alerts could not be loaded/);
 });

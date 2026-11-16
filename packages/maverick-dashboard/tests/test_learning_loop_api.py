@@ -82,6 +82,28 @@ def test_every_change_needs_a_global_admin(client, monkeypatch):
         assert client.post(API + path, json=body).status_code == 403, path
 
 
+def test_only_standing_instructions_are_offered_and_older_kinds_say_they_do_nothing(client):
+    from maverick import harness_refine
+    from maverick_dashboard import app as dash_app
+
+    _configure("[harness_refine]\nenable = true")
+    for target in ("skill", "memory"):
+        assert client.post(API + "/refinements", json={**SUGGESTION, "target": target}).status_code == 422
+    page = (dash_app.TEMPLATES_DIR / "_learning_loop.html").read_text(encoding="utf-8")
+    assert "A named procedure" not in page and "Something it remembers" not in page
+    assert 'name="target" value="prompt"' in page
+
+    # A suggestion saved by an earlier release is shown as it is: it changes nothing.
+    made = client.post(API + "/refinements", json=SUGGESTION).json()["proposal"]
+    with harness_refine._locked():
+        store = harness_refine._load_store()
+        store["proposals"][made["id"]]["target"] = "memory"
+        harness_refine._save_store(store)
+    listed = client.get(API + "/refinements").json()["proposals"][0]
+    assert listed["target"] == "Something it remembers (no longer offered: it changes nothing)"
+    assert listed["can_apply"] is False
+
+
 def test_reads_need_view_and_audit_reads_need_audit(client, monkeypatch):
     _as(monkeypatch, "viewer")
     assert client.get(API + "/refinements").status_code == 200

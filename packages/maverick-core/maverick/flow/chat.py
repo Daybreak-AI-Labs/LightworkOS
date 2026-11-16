@@ -152,7 +152,8 @@ def _structured_run_state(run: dict) -> dict:
         raw_nodes = {}
     for node_id, raw in list(raw_nodes.items())[:100]:
         node_id = str(node_id)
-        if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,100}", node_id):
+        # A nested step is recorded under its container: "loop/send", "fan/1/look".
+        if not re.fullmatch(r"[A-Za-z0-9_.:/-]{1,100}", node_id):
             continue
         if not isinstance(raw, dict):
             continue

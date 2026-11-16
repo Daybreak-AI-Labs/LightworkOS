@@ -478,6 +478,65 @@ def _unseal_config_tree(value: object) -> object:
         _UNSEALING.reset(token)
 
 
+_UNOPENED = object()
+
+# Ends the error recorded for a dashboard overlay that was only partly opened.
+# ``operator_preflight`` (``maverick doctor``, Installation health) repeats it.
+DASHBOARD_ON_HOLD = ("Settings made in the dashboard are on hold until this file can be opened, "
+                     "except stricter safety choices, which stay in force. "
+                     "A sandbox that was set up there may not start until then.")
+
+
+def _open_leaves(value: object) -> object:
+    """``value`` with each sealed string opened on its own.
+
+    A string that cannot be opened is left out of its table; inside a list it
+    takes the whole list with it (``_UNOPENED``), since part of a list is a
+    different setting.
+    """
+    if isinstance(value, str):
+        try:
+            return _unseal_config_tree(value)
+        except Exception:
+            return _UNOPENED
+    if isinstance(value, dict):
+        opened = {key: _open_leaves(child) for key, child in value.items()}
+        return {key: child for key, child in opened.items() if child is not _UNOPENED}
+    if isinstance(value, (list, tuple)):
+        items = [_open_leaves(child) for child in value]
+        return _UNOPENED if any(child is _UNOPENED for child in items) else type(value)(items)
+    return value
+
+
+def _stricter_policy_only(tree: dict) -> dict:
+    """What still applies from a dashboard overlay that cannot be opened whole.
+
+    Nothing outside the policy sections (governance, safety, capabilities,
+    sandbox, security): a raised spending cap or a switched-on feature from a
+    file that cannot be fully read does not apply, as when the whole file was
+    ignored. A policy section loses the values that cannot be opened, and each
+    remaining value applies only where its tenant rule would let it over the
+    settings file underneath: a stricter value such as ``profile = "strict"``
+    stays in force, a permission or a looser limit waits until the file can be
+    read again. A key with no such rule has no stricter direction to show (an
+    image, an address, a working folder), so it waits too; a sandbox that
+    needs it then fails to start, which is the safe side of this state. Reset
+    markers wait as well, so the file underneath is unchanged.
+    """
+    from .policy_tighten import TENANT_RULES, merge_tenant_section
+
+    under = _load_config_file(config_path())
+    held: dict = {}
+    for name in TENANT_RULES:
+        section, base = tree.get(name), under.get(name, {})
+        if not isinstance(section, dict) or not isinstance(base, dict):
+            continue
+        section = _open_leaves({key: value for key, value in section.items() if key in TENANT_RULES[name]})
+        merged, _ignored, _fixed = merge_tenant_section(name, base, section, _deep_merge_config)
+        held[name] = {key: merged[key] for key in section if key in merged}
+    return held
+
+
 def _is_tenant_config_path(path: Path) -> bool:
     from .paths import maverick_home
     try:
@@ -507,24 +566,30 @@ def _load_config_file(path: Path, *, interpolate: bool = True) -> dict:
     if path.name == DASHBOARD_OVERRIDES_BASENAME:
         key = str(path)
         since = _toml_gen.get(key, 0)
+        partial = False
         try:
             unsealed = _unseal_config_tree(loaded)
         except Exception as exc:
             # An undecryptable sealed overlay value (e.g. after a
             # MAVERICK_ENCRYPTION_KEY rotation leaves dashboard-config.toml
             # sealed under the old key) must NOT crash every config read.
-            # Fail soft exactly like a corrupt-TOML source: record the error so
+            # Fail soft like a corrupt-TOML source: record the error so
             # config_source_errors() surfaces it (health goes red and security
-            # callers fail closed), and drop the overlay so callers fall back to
-            # base/env config instead of load_config() raising process-wide.
+            # callers fail closed), and put the overlay on hold instead of
+            # load_config() raising process-wide. Only its stricter policy
+            # values stay in force: dropping those too put every limit the
+            # dashboard had tightened back to the installer's value.
             with _toml_lock:
-                _record_source_error(key, f"{type(exc).__name__}: {exc}", _unseal_errors)
+                _record_source_error(
+                    key, f"{type(exc).__name__}: {exc}. {DASHBOARD_ON_HOLD}", _unseal_errors)
+            unsealed = _stricter_policy_only(loaded)
+            partial = True
             logging.getLogger(__name__).warning(
-                "dashboard overlay %s could not be decrypted; dropping it "
-                "(rotate keys / re-save provider settings to restore): %s",
+                "dashboard overlay %s could not be decrypted; its settings are on "
+                "hold, except stricter safety choices (rotate keys / re-save the "
+                "unreadable settings to restore): %s",
                 path, exc,
             )
-            return {}
         try:
             from .config_resets import _specs
             for _ in _specs(unsealed):
@@ -543,7 +608,7 @@ def _load_config_file(path: Path, *, interpolate: bool = True) -> dict:
         # complete read clears a decryption error (a recursive one returns the
         # tokens unopened), only while the tree it opened is still the cached
         # one, and only if no error was recorded while it was being opened.
-        if not _UNSEALING.get():
+        if not partial and not _UNSEALING.get():
             with _toml_lock:
                 cached = _toml_cache.get(key)
                 if cached is not None and cached[2] is raw and _toml_gen.get(key, 0) == since:

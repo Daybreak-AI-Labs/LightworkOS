@@ -551,3 +551,43 @@ for (const receipt of [null, {}, { flow: {} }, { flow: { nodes: null } }]) {
     assert.equal(ui.messages.at(-1).error, true);
   });
 }
+
+test("a step inside a loop or a parallel path shows its own last-run result", () => {
+  // A run records nested steps under their container ("each/a", "fan/1/a"),
+  // so a nested canvas must not read the top-level step that shares the id.
+  const source = fs.readFileSync(path.resolve(__dirname,
+    "../../maverick_dashboard/templates/flow_designer.js"), "utf8");
+  const body = { nodes: [{ id: "a", kind: "agent" }] };
+  const lanes = [{ nodes: [{ id: "a", kind: "agent" }] }, { nodes: [{ id: "a", kind: "agent" }] }];
+  const context = {
+    FDPresentation: require("../../maverick_dashboard/templates/flow_designer_presentation.js"),
+    BODY_KINDS: { foreach: "Steps repeated for each item" },
+    stack: [], crumbs: ["Main flow"], selected: null, runCursor: "a",
+    runState: { "each/a": { outcome: 1 }, "fan/1/a": { outcome: 0 } },
+    signals: { nodes: { "each/a": { n: 3, mean: 1 } } },
+    flow: { nodes: [{ id: "a", kind: "agent" }, { id: "each", kind: "foreach", body },
+      { id: "fan", kind: "parallel", branches: lanes }] },
+    commitFlowRaw() {}, normalizeFlow() {}, autoLayout() {}, renderCrumbs() {}, render() {}, renderProps() {},
+  };
+  context.window = context;
+  for (const [first, next] of [["traceId", "render"], ["enterSub", "renderCrumbs"]]) {
+    const begin = source.indexOf("  function " + first + "(");
+    const finish = source.indexOf("  function " + next + "(", begin);
+    assert.ok(begin >= 0 && finish > begin, first);
+    vm.runInNewContext(source.slice(begin, finish), context, { filename: "flow_designer.js" });
+  }
+  const root = context.flow;
+  assert.equal(context.runBadge("a"), "⏳");                  // the top-level step is where the run waits
+  context.enterSub(root.nodes[1], "foreach");
+  assert.equal(context.runBadge("a"), "🟢");
+  assert.equal(context.runClass("a"), " run-ok");
+  assert.deepEqual(context.signals.nodes[context.traceId("a")], { n: 3, mean: 1 });
+  context.exitToDepth(0);
+  context.enterSub(root.nodes[2], "parallel", 1);
+  assert.equal(context.runBadge("a"), "🔴");
+  context.exitToDepth(0);
+  context.enterSub(root.nodes[2], "parallel", 0);
+  assert.equal(context.runBadge("a"), "");                    // this path's step did not run
+  context.exitToDepth(0);
+  assert.equal(context.traceId("a"), "a");
+});

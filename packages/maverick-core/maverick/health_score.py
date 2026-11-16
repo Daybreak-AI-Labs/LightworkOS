@@ -72,14 +72,23 @@ def compute_health(
     return Health(score=score, grade=_grade(score), factors=factors)
 
 
+# A goal in one of these states has ended; anything else is still queued,
+# running or waiting, and has no outcome to score. ``blocked`` is a pause (an
+# unanswered question, a pending approval, a limit): the task can go on.
+_ENDED = frozenset({"done", "completed", "failed", "cancelled", "error"})
+
+
 def goal_health(world, goal_id: int):
     """``(goal, Health)`` for a goal from its recorded runs, or ``None`` when
     the goal does not exist. A goal that finished (``done``) scores as a
-    success; tokens come from its most recent 50 runs. Shared by
-    ``maverick diag health`` and the task page."""
+    success, one that ended any other way as a failure, and one that has not
+    ended yet is not scored: ``(goal, None)``. Tokens come from its most
+    recent 50 runs. Shared by ``maverick diag health`` and the task page."""
     goal = world.get_goal(goal_id)
     if goal is None:
         return None
+    if goal.status not in _ENDED:
+        return goal, None
     eps = world.list_episodes(goal_id=goal_id, limit=50)
     in_tok = sum(getattr(e, "input_tokens", 0) for e in eps)
     out_tok = sum(getattr(e, "output_tokens", 0) for e in eps)

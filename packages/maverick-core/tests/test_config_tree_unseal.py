@@ -108,3 +108,174 @@ def test_corrupted_member_refuses_entire_overlay_and_next_read_can_recover(tmp_p
         "first": "authenticated-value", "second": "authenticated-value",
     }
     assert str(overlay) not in config.config_source_errors()
+
+
+def test_unreadable_secret_keeps_the_limits_the_dashboard_tightened(tmp_path):
+    """One credential that cannot be opened used to drop the whole dashboard
+    overlay, which put back every limit the dashboard had tightened. The
+    stricter limits stay; the rest of the file waits until it can be opened."""
+    (tmp_path / "config.toml").write_text(
+        '[capabilities]\ncode_exec = true\n[providers.openai]\napi_key = "installer-key"\n'  # pragma: allowlist secret
+        '[webhooks]\noutbound = ["https://installer.example"]\n',
+        encoding="utf-8")
+    good = _seal("authenticated-value")
+    blob = bytearray(base64.b64decode(good.partition(":")[2]))
+    blob[-1] ^= 1
+    corrupt = "MVKAR1:" + base64.b64encode(blob).decode("ascii")
+    resets = ('[_dashboard_resets.hooks]\npath = ["webhooks", "outbound"]\nkeep = []\n'
+              'entries = false\npreserve_tables = false\nremove_value = true\n'
+              '[_dashboard_resets.caps]\npath = ["capabilities", "browser"]\nkeep = []\n'
+              'entries = false\npreserve_tables = false\nremove_value = true\n')
+    overlay = tmp_path / config.DASHBOARD_OVERRIDES_BASENAME
+    overlay.write_text(
+        '[capabilities]\ncode_exec = false\n[sandbox]\nbackend = "docker"\n'
+        f'[providers.openai]\nbase_url = "https://proxy.example"\napi_key = "{corrupt}"\n'
+        f'[webhooks]\nsecret = "{corrupt}"\n[channels.slack]\nbot_token = "{good}"\n' + resets,
+        encoding="utf-8")
+    config.reset_config_cache()
+
+    loaded = config.load_config()
+    assert config.get_capabilities()["code_exec"] is False  # the dashboard's limit holds
+    assert config.get_sandbox()["backend"] == "docker"
+    # ...so a workspace still cannot loosen it while the overlay is in this state.
+    merged, ignored, _fixed = config._tighten_tenant(
+        config.load_global_config(), {"capabilities": {"code_exec": True}})
+    assert merged["capabilities"]["code_exec"] is False and ignored == ["capabilities.code_exec"]
+    # Everything else in the file is on hold, readable or not, with the reset
+    # markers: the installer's own values stay, and its key is never paired
+    # with the dashboard's address.
+    assert "channels" not in loaded
+    assert loaded["providers"]["openai"] == {"api_key": "installer-key"}  # pragma: allowlist secret
+    assert loaded["webhooks"] == {"outbound": ["https://installer.example"]}
+    assert str(overlay) in config.config_source_errors()  # still reported
+    assert config._UNSEALING.get() is False
+    assert crypto_at_rest._FORCE_DEPLOYMENT_KEY.get() is False
+
+    overlay.write_text(overlay.read_text(encoding="utf-8").replace(corrupt, good), encoding="utf-8")
+    config.reset_config_cache()
+    assert config.load_config()["providers"]["openai"] == {
+        "base_url": "https://proxy.example", "api_key": "authenticated-value"}  # pragma: allowlist secret
+    assert "outbound" not in config.load_config()["webhooks"]
+    assert config.load_config()["channels"]["slack"]["bot_token"] == "authenticated-value"
+    assert str(overlay) not in config.config_source_errors()
+
+
+def test_settings_grants_are_on_hold_while_the_dashboard_file_cannot_be_opened(tmp_path, monkeypatch):
+    """With the at-rest key replaced, the sections that hold a secret were
+    dropped while the permissions in a plain section stayed on. Code execution
+    was then on with the sandbox and safety choices meant to contain it gone."""
+    import secrets
+
+    from maverick.operator_preflight import _config_state
+
+    (tmp_path / "config.toml").write_text("[budget]\nmax_dollars = 50.0\n", encoding="utf-8")
+    sealed = _seal("a-saved-secret")
+    overlay = tmp_path / config.DASHBOARD_OVERRIDES_BASENAME
+    overlay.write_text(
+        "[capabilities]\ncode_exec = true\ncomputer_use = true\nbrowser = true\n"
+        f'[sandbox]\nbackend = "firecracker"\nprovider = "e2b"\napi_key = "{sealed}"\nallow_network = true\n'
+        f'[safety]\nprofile = "strict"\nscan_output = false\nreceipt_key = "{sealed}"\n'
+        '[_dashboard_resets.caps]\npath = ["capabilities", "enforce"]\nkeep = []\n'
+        "entries = false\npreserve_tables = false\nremove_value = true\n",
+        encoding="utf-8")
+    config.reset_config_cache()
+    assert config.get_capabilities()["code_exec"] is True  # readable: everything applies
+    assert config.load_config()["sandbox"]["allow_network"] is True
+
+    monkeypatch.setenv("MAVERICK_ENCRYPTION_KEY", base64.b64encode(secrets.token_bytes(32)).decode())
+    config.reset_config_cache()
+    loaded = config.load_config()
+    granted = {k: v for k, v in config.get_capabilities().items() if k != "deferred_tools"}
+    assert not any(granted.values()), granted  # no permission from Settings applies
+    assert loaded["sandbox"] == {"backend": "firecracker"}  # the stricter choice stays; the rest waits
+    assert loaded["safety"] == {"profile": "strict"}  # the looser scan_output choice is on hold too
+    check, _cfg = _config_state()
+    assert check.status == "blocked" and overlay.name in check.detail
+    assert "on hold" in check.detail and "on hold" in config.config_source_errors()[str(overlay)]
+
+    monkeypatch.delenv("MAVERICK_ENCRYPTION_KEY")
+    config.reset_config_cache()
+    assert config.get_capabilities()["code_exec"] is True
+    assert str(overlay) not in config.config_source_errors()
+
+
+def test_one_damaged_secret_in_safety_keeps_its_stricter_plain_values(tmp_path):
+    """A single damaged ``safety.receipt_key`` used to put ``profile`` back to
+    the installer's looser value."""
+    (tmp_path / "config.toml").write_text(
+        '[safety]\nprofile = "permissive"\n[sandbox]\nbackend = "docker"\n', encoding="utf-8")
+    good = _seal("a-saved-secret")
+    blob = bytearray(base64.b64decode(good.partition(":")[2]))
+    blob[-1] ^= 1
+    damaged = "MVKAR1:" + base64.b64encode(blob).decode("ascii")
+    overlay = tmp_path / config.DASHBOARD_OVERRIDES_BASENAME
+    overlay.write_text(
+        f'[safety]\nprofile = "strict"\nreceipt_key = "{damaged}"\nscreenshot_key = "{good}"\n'
+        '[sandbox]\nbackend = "local"\n[capabilities]\nbrowser = true\n', encoding="utf-8")
+    config.reset_config_cache()
+
+    loaded = config.load_config()
+    assert loaded["safety"] == {"profile": "strict"}  # the readable screenshot_key waits with the rest
+    assert config.get_sandbox()["backend"] == "docker"  # the looser choice from Settings is on hold
+    assert config.get_capabilities()["browser"] is False
+    assert str(overlay) in config.config_source_errors()
+
+
+def test_a_raised_budget_cap_waits_until_the_dashboard_file_can_be_opened(tmp_path):
+    """A spending cap raised in Settings stayed in force from a file that could
+    not be fully read. Outside the policy sections nothing from such a file
+    applies, so the cap is the one in config.toml until the file opens again."""
+    (tmp_path / "config.toml").write_text(
+        '[budget]\nmax_dollars = 50.0\n[features]\nsavings = false\n', encoding="utf-8")
+    good = _seal("a-saved-secret")
+    blob = bytearray(base64.b64decode(good.partition(":")[2]))
+    blob[-1] ^= 1
+    damaged = "MVKAR1:" + base64.b64encode(blob).decode("ascii")
+    overlay = tmp_path / config.DASHBOARD_OVERRIDES_BASENAME
+    overlay.write_text(
+        '[budget]\nmax_dollars = 500.0\n[features]\nsavings = true\n[plugins]\nallow_install = true\n'
+        '[safety]\nprofile = "strict"\n'
+        f'[channels.slack]\nbot_token = "{damaged}"\n', encoding="utf-8")
+    config.reset_config_cache()
+
+    loaded = config.load_config()
+    assert loaded["budget"]["max_dollars"] == 50.0
+    assert loaded["features"] == {"savings": False} and "plugins" not in loaded and "channels" not in loaded
+    assert loaded["safety"] == {"profile": "strict"}  # a stricter safety choice stays in force
+    assert "on hold" in config.config_source_errors()[str(overlay)]
+
+    overlay.write_text(overlay.read_text(encoding="utf-8").replace(damaged, good), encoding="utf-8")
+    config.reset_config_cache()
+    loaded = config.load_config()
+    assert loaded["budget"]["max_dollars"] == 500.0 and loaded["features"] == {"savings": True}
+    assert str(overlay) not in config.config_source_errors()
+
+
+def test_policy_settings_without_a_rule_wait_with_the_rest_of_an_unreadable_file(tmp_path):
+    """In the policy sections a setting with no stricter direction still
+    applied from a partly unreadable file, so self-approval and "run as user
+    0" stayed on while every other permission waited."""
+    (tmp_path / "config.toml").write_text('[sandbox]\nbackend = "docker"\n', encoding="utf-8")
+    good = _seal("a-saved-secret")
+    blob = bytearray(base64.b64decode(good.partition(":")[2]))
+    blob[-1] ^= 1
+    damaged = "MVKAR1:" + base64.b64encode(blob).decode("ascii")
+    overlay = tmp_path / config.DASHBOARD_OVERRIDES_BASENAME
+    overlay.write_text(
+        "[security]\nallow_self_approval = true\nisolate_parsers = true\n"
+        '[sandbox]\nrun_as_user = 0\nimage = "example/image"\nworkdir = "/srv/work"\nrequire_container = true\n'
+        f'provider = "e2b"\napi_key = "{good}"\n'
+        "[capabilities]\ndeferred_tools = false\n"
+        f'[safety]\nprofile = "strict"\nreceipt_key = "{damaged}"\n', encoding="utf-8")
+    config.reset_config_cache()
+
+    loaded = config.load_config()
+    assert loaded["security"] == {"isolate_parsers": True}  # only what a rule shows to be stricter
+    assert loaded["sandbox"] == {"backend": "docker", "require_container": True}
+    assert loaded["safety"] == {"profile": "strict"} and loaded.get("capabilities", {}) == {}
+    assert "sandbox" in config.config_source_errors()[str(overlay)].lower()  # says a sandbox may not start
+
+    overlay.write_text(overlay.read_text(encoding="utf-8").replace(damaged, good), encoding="utf-8")
+    config.reset_config_cache()
+    loaded = config.load_config()
+    assert loaded["security"]["allow_self_approval"] is True and loaded["sandbox"]["image"] == "example/image"

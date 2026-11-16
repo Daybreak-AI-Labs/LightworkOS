@@ -68,3 +68,38 @@ def test_diag_health_cli_reads_the_shared_kernel_score(tmp_path, monkeypatch):
     assert result.output == f"goal #{gid} (done):\n{render(health)}\n"
     missing = CliRunner().invoke(main, ["diag", "health", "999999"])
     assert missing.exit_code == 2 and "no such goal 999999" in missing.output
+
+
+def test_an_unfinished_task_has_no_score_until_it_ends(tmp_path, monkeypatch):
+    """A queued or running task is not a failed one: it is not scored yet."""
+    from click.testing import CliRunner
+    from maverick import world_model
+    from maverick.cli import main
+    from maverick.health_score import goal_health
+
+    monkeypatch.setattr(world_model, "DEFAULT_DB", tmp_path / "world.db")
+    world = world_model.open_world()
+    gid = world.create_goal("report", "")
+    assert goal_health(world, gid)[1] is None          # pending
+    world.set_goal_status(gid, "active")
+    assert goal_health(world, gid)[1] is None
+    world_model.close_world_if_owned(world)
+    result = CliRunner().invoke(main, ["diag", "health", str(gid)])
+    assert result.exit_code == 0, result.output
+    assert result.output == (f"goal #{gid} (active):\n"
+                             "No health score yet: the task has not finished.\n")
+    world = world_model.open_world()
+    # Blocked is a pause (a question, an approval or a limit): the task can go on.
+    world.set_goal_status(gid, "blocked", result="waiting for an answer")
+    assert goal_health(world, gid)[1] is None
+    world_model.close_world_if_owned(world)
+    # It will not end unaided, so the words say who it waits on and what to do.
+    result = CliRunner().invoke(main, ["diag", "health", str(gid)])
+    assert result.output == (f"goal #{gid} (blocked):\n"
+                             "No health score yet: the task is waiting on a person. "
+                             "Open the task to see what it needs.\n")
+    world = world_model.open_world()
+    world.set_goal_status(gid, "failed")
+    assert goal_health(world, gid)[1].score == 40      # a task that ended without finishing
+    world_model.close_world_if_owned(world)
+

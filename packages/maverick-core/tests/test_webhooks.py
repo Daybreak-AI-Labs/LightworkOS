@@ -1,6 +1,8 @@
 """Tests for outbound webhooks (maverick.webhooks)."""
 from __future__ import annotations
 
+import contextlib
+
 # ---------- webhooks ----------
 
 def test_webhooks_no_urls_no_op():
@@ -72,16 +74,11 @@ def test_webhooks_outbound_post_blocks_ssrf(monkeypatch):
     from maverick import webhooks
     posted: list[str] = []
 
-    def _spy(self, url, **kw):  # pragma: no cover - must not run for blocked host
+    def _spy(self, method, url, **kw):  # pragma: no cover - must not run for blocked host
         posted.append(str(url))
+        raise AssertionError("a blocked address must not be contacted")
 
-        class _R:
-            status_code = 200
-            text = ""
-
-        return _R()
-
-    monkeypatch.setattr(httpx.Client, "post", _spy)
+    monkeypatch.setattr(httpx.Client, "stream", _spy)
     for url in (
         "http://127.0.0.1:8765/internal",
         "http://169.254.169.254/latest/meta-data/",
@@ -97,19 +94,40 @@ def test_webhooks_outbound_post_allows_public(monkeypatch):
     from maverick import webhooks
     posted: list[str] = []
 
-    def _spy(self, url, **kw):
-        posted.append(str(url))
+    @contextlib.contextmanager
+    def _spy(self, method, url, **kw):
+        posted.append(f"{method} {url}")
+        yield httpx.Response(200, content=b"")
 
-        class _R:
-            status_code = 200
-            text = ""
-
-        return _R()
-
-    monkeypatch.setattr(httpx.Client, "post", _spy)
+    monkeypatch.setattr(httpx.Client, "stream", _spy)
     # Literal public IP -> deterministic offline (no DNS).
     webhooks._post("http://93.184.216.34/wh", b"{}", {}, 5.0)
-    assert posted == ["http://93.184.216.34/wh"]
+    assert posted == ["POST http://93.184.216.34/wh"]
+
+
+def test_webhooks_outbound_post_reads_only_the_start_of_the_reply(monkeypatch):
+    """The receiver chooses the size of its reply. Only a short start of it is
+    kept, so only a short start of it is read."""
+    import httpx
+    from maverick import webhooks
+    from maverick.tools import _ssrf
+    pulled: list[int] = []
+
+    def _endless_reply():
+        for index in range(10_000):  # 10 MiB if anyone reads it all
+            pulled.append(index)
+            yield (b"ok " if index == 0 else b"x") * 341 + b"\n"
+
+    def _client(url, timeout=None):
+        return httpx.Client(transport=httpx.MockTransport(
+            lambda request: httpx.Response(503, content=_endless_reply())))
+
+    monkeypatch.setattr(_ssrf, "safe_client", _client)
+    status, _latency, snippet, error = webhooks._post_result(
+        "https://hooks.example.com/wh", b"{}", {}, 5.0)
+    assert (status, error) == (503, "HTTP 503")
+    assert snippet.startswith("ok ok ok") and len(snippet) == 200
+    assert len(pulled) < 20
 
 
 def test_string_outbound_is_one_url_not_characters(monkeypatch):
@@ -119,3 +137,35 @@ def test_string_outbound_is_one_url_not_characters(monkeypatch):
         "webhooks": {"outbound": "https://example.com/hook"}})
     urls, _secret = webhooks._load_config_outbound()
     assert urls == ["https://example.com/hook"]
+
+
+def test_webhooks_outbound_post_stops_reading_a_slow_reply_at_the_timeout(monkeypatch):
+    """Each read of a trickled reply is quick, so the per-read timeout never
+    fires. The whole reply still has to finish within the timeout."""
+    import types
+
+    import httpx
+    from maverick import webhooks
+    from maverick.tools import _ssrf
+
+    clock = [100.0]
+    pulled: list[int] = []
+
+    def _trickle():
+        for index in range(10_000):
+            pulled.append(index)
+            clock[0] += 0.5  # half a second per byte
+            yield b"x"
+
+    monkeypatch.setattr(webhooks, "time", types.SimpleNamespace(
+        monotonic=lambda: clock[0], time=lambda: clock[0]))
+    monkeypatch.setattr(_ssrf, "safe_client", lambda url, timeout=None: httpx.Client(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, content=_trickle()))))
+
+    status, latency, snippet, error = webhooks._post_result(
+        "https://hooks.example.com/wh", b"{}", {}, 2.0)
+
+    # The same result as any reply that timed out: no status, and not "never sent".
+    assert status is None and snippet == "" and "ReadTimeout" in error
+    assert not isinstance(error, webhooks.NotSent)
+    assert len(pulled) <= 6 and 2000 <= latency <= 3500

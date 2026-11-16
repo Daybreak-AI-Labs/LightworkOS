@@ -20,6 +20,12 @@ MAX_ITEMS = 5000
 MAX_PAGES = 32
 MAX_SEEN = 20000
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.!,:@-]{0,255}")
+# A reserved entry in the remembered list: this source was once longer than one
+# check reads, so only an item above a remembered one is new (see
+# ``_new_in_view``), also after the list has shrunk. It has the shape of an
+# identity digest, so the saved position keeps its format and a build from
+# before the mark reads it as one more remembered item.
+_ONCE_LONGER = "0" * 64
 
 
 def identifier(value):
@@ -78,7 +84,7 @@ def validate(source, config):
         if not isinstance(baseline, str) or len(baseline) > 400000:
             raise events.EventSourceError("The dated source baseline is unavailable. Review this source again.")
         ids = events._decode_cursor(baseline, "connected_app", 1)
-        if not isinstance(ids, list) or len(ids) > MAX_ITEMS or any(not isinstance(item, str) or not re.fullmatch(r"[0-9a-f]{64}", item) for item in ids):
+        if not isinstance(ids, list) or len(ids) > MAX_ITEMS + 1 or any(not isinstance(item, str) or not re.fullmatch(r"[0-9a-f]{64}", item) for item in ids):
             raise events.EventSourceError("The dated source baseline is unavailable. Review this source again.")
     return {**config, "origin": base, "selection": selected}
 
@@ -123,6 +129,51 @@ def collection(source, config, path, *, key="value", paginated=True):
     raise events.EventSourceError("The source exceeds 32 result pages. Choose a smaller source; no event position was advanced.")
 
 
+def newest_first(source, selected):
+    """Whether a source lists its items newest-created first.
+
+    Such a source is read as its newest ``MAX_ITEMS`` items, so a table of any
+    size can be watched: a new record always arrives at the top. The other
+    sources are read whole and refused above ``MAX_ITEMS``. A closed
+    opportunity is one of those: it can be an old record that closed today, so
+    it appears anywhere in the list.
+    """
+    return source == "servicenow_tickets" or (source == "salesforce_records" and not selected["closed_only"])
+
+
+def _new_in_view(digests, seen):
+    """Positions of the new items in the newest-first view of a source that
+    holds, or once held, more than one check reads.
+
+    An item that is not remembered is new only when it sits above a
+    remembered one. Below the oldest remembered item are older records that
+    moved into view because newer ones were deleted: they are remembered, not
+    reported. A record saved with an earlier creation date lands there too
+    and is never reported; the review notice says so.
+    """
+    known = [index for index, digest in enumerate(digests) if digest in seen]
+    if not digests:
+        return []
+    if not known:
+        raise events.EventSourceError(
+            "None of the remembered items is among the newest 5,000, so new items cannot be told from older ones. "
+            "Check and review this source again; no event position was advanced.")
+    oldest_known = known[-1]
+    fresh = [index for index, digest in enumerate(digests[:oldest_known]) if digest not in seen]
+    seen.update(digests[oldest_known + 1:])
+    return fresh
+
+
+def _position(seen, once_longer):
+    return events._encode_cursor("connected_app", sorted(seen | ({_ONCE_LONGER} if once_longer else set())))
+
+
+def baseline(source, selected, ids):
+    """The saved position that remembers ``ids``, as read by ``read_items``."""
+    return _position({hashlib.sha256(item.encode()).hexdigest() for item in ids},
+                     newest_first(source, selected) and len(ids) >= MAX_ITEMS)
+
+
 def read_items(source, config):
     cfg = validate(source, config)
     selected = cfg["selection"]
@@ -141,16 +192,16 @@ def read_items(source, config):
         if obj == "Opportunity":
             fields += ",IsClosed,StageName,LastModifiedDate"
         query = "SELECT " + fields + " FROM " + obj + (" WHERE IsClosed = true" if selected["closed_only"] else "") + " ORDER BY CreatedDate DESC,Id DESC"
+        if newest_first(source, selected):
+            query += f" LIMIT {MAX_ITEMS}"
         return collection(source, cfg, "/services/data/v61.0/query?" + urlencode({"q": query}), key="records"), "Id", "CreatedDate"
     rows = []
-    for offset in range(0, MAX_ITEMS + 1, 1000):
+    for offset in range(0, MAX_ITEMS, 1000):
         page = collection(source, cfg, "/api/now/table/" + selected["table"] + "?" + urlencode({"sysparm_query": "ORDERBYDESCsys_created_on^ORDERBYDESCsys_id", "sysparm_fields": "sys_id,number,short_description,sys_created_on,state", "sysparm_limit": 1000, "sysparm_offset": offset}), key="result", paginated=False)
         rows.extend(page)
-        if len(rows) > MAX_ITEMS:
-            raise events.EventSourceError("This ticket source exceeds 5,000 items. No event position was advanced.")
         if len(page) < 1000:
-            return rows, "sys_id", "sys_created_on"
-    raise events.EventSourceError("This ticket source exceeds its supported bound. No event position was advanced.")
+            break
+    return rows[:MAX_ITEMS], "sys_id", "sys_created_on"
 
 
 class ConnectedAppSource:
@@ -162,24 +213,34 @@ class ConnectedAppSource:
         ids = [str(row.get(id_field) or "") for row in items]
         if any(not item or len(item) > 512 for item in ids) or len(set(ids)) != len(ids):
             raise events.EventSourceError("The source returned duplicate or missing identities. No event position was advanced.")
-        hashed = {hashlib.sha256(item.encode()).hexdigest() for item in ids}
+        digests = [hashlib.sha256(item.encode()).hexdigest() for item in ids]  # in the source's order
+        hashed = set(digests)
         preview_baseline = not cursor and bool(config.get("baseline"))
         cursor = cursor or config.get("baseline", "")
+        once_longer = len(items) >= MAX_ITEMS and newest_first(self.source, config["selection"])
         if not cursor:
-            return events.PollResult(cursor=events._encode_cursor("connected_app", sorted(hashed)))
+            return events.PollResult(cursor=_position(hashed, once_longer))
         if not isinstance(cursor, str) or len(cursor) > 1400000:
             raise events.EventSourceError("The source position is unavailable. No events were repeated.")
         prior = events._decode_cursor(cursor, "connected_app", 1 if preview_baseline else config.get("_lightwork_cursor_format"))
-        if not isinstance(prior, list) or len(prior) > MAX_SEEN or any(not isinstance(item, str) or not re.fullmatch(r"[0-9a-f]{64}", item) for item in prior):
+        if not isinstance(prior, list) or len(prior) > MAX_SEEN + 1 or any(not isinstance(item, str) or not re.fullmatch(r"[0-9a-f]{64}", item) for item in prior):
             raise events.EventSourceError("The source position is unavailable. No events were repeated.")
         seen = set(prior)
-        fresh = [row for row in items if hashlib.sha256(str(row[id_field]).encode()).hexdigest() not in seen]
+        once_longer = once_longer or _ONCE_LONGER in seen
+        seen.discard(_ONCE_LONGER)
+        if once_longer:
+            fresh = [items[index] for index in _new_in_view(digests, seen)]
+        else:
+            fresh = [row for row, digest in zip(items, digests, strict=True) if digest not in seen]
         fresh.sort(key=lambda row: (str(row.get(date_field) or ""), str(row[id_field])))
         fresh = fresh[:events._MAX_EVENTS]
         seen.update(hashlib.sha256(str(row[id_field]).encode()).hexdigest() for row in fresh)
         if len(seen) > MAX_SEEN:
-            raise events.EventSourceError("This source's retained identity limit was reached. Review a replacement source; no event position was advanced.")
-        return events.PollResult(events=[events._flatten(row) for row in fresh], event_ids=[str(row[id_field]) for row in fresh], cursor=events._encode_cursor("connected_app", sorted(seen)))
+            # Roll over instead of stopping for good: forget what is no longer
+            # in the source. An item that is deleted and later restored after
+            # this point is reported again.
+            seen &= hashed
+        return events.PollResult(events=[events._flatten(row) for row in fresh], event_ids=[str(row[id_field]) for row in fresh], cursor=_position(seen, once_longer))
 
 
 def register_sources():

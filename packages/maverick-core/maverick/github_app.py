@@ -25,6 +25,42 @@ DEFAULT_LABELS = ("maverick", "automate", "ai-fix")
 
 # Slash-command that triggers a run from an issue comment.
 SLASH_TRIGGER = "/maverick"
+# The trigger counts only as a word of its own: at the start of the comment or
+# after white space or an opening quote/bracket, and not continued as a path,
+# a file name or a longer word. A substring match also fired on
+# "packages/maverick-core/foo.py" and on URLs.
+_SLASH_TRIGGER_RE = re.compile(
+    r"""(?<![^\s("'`\[*_])""" + re.escape(SLASH_TRIGGER) + r"(?![\w/-]|\.\w)",
+    re.IGNORECASE,
+)
+
+
+_FENCE_RE = re.compile(r"\s*(`{3,}|~{3,})(.*)$")
+
+
+def _own_words(comment: str) -> str:
+    """The comment without quoted replies and fenced code. A quoted earlier
+    request, or one shown as an example, is not a request.
+
+    A fence opens on a line that is a run of three or more backticks or
+    tildes with at most an info string after it, and closes on a line of only
+    the same character, at least as long. A line that opens and closes inline
+    code with three backticks is ordinary text.
+    """
+    kept: list[str] = []
+    fence = ""  # the run of characters that opened the block we are inside
+    for line in comment.splitlines():
+        match = _FENCE_RE.match(line)
+        marker, rest = (match.group(1), match.group(2)) if match else ("", "")
+        if fence:
+            if marker[:1] == fence[0] and len(marker) >= len(fence) and not rest.strip():
+                fence = ""
+        elif marker and marker[:3] not in rest:
+            fence = marker
+        elif not line.lstrip().startswith(">"):
+            kept.append(line)
+    return "\n".join(kept)
+
 
 # A comment author must have write-ish access to trigger a run via the
 # slash command. GitHub's author_association reflects the commenter's
@@ -135,7 +171,7 @@ def parse_webhook(event: str, payload: dict) -> WebhookPayload | None:
     if event == "issue_comment" and action == "created":
         comment_obj = objects["comment"]
         comment = comment_obj.get("body", "") or ""
-        if not isinstance(comment, str) or SLASH_TRIGGER not in comment.lower():
+        if not isinstance(comment, str) or not _SLASH_TRIGGER_RE.search(_own_words(comment)):
             return None
         # Authorization: only repo-privileged commenters may trigger a run.
         # Without this, any public user can comment "/maverick" and spend

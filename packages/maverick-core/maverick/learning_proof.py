@@ -5,7 +5,8 @@ Provability needs two things the learning loop doesn't give on its own:
 
   1. a FIXED held-out task suite scored for SUCCESS (not lexical coverage), and
   2. a clean A/B -- the same tasks run with learning LIVE vs forced-FROZEN
-     (``calibration.learning_frozen`` via ``MAVERICK_LEARNING_FROZEN``), scored
+     (``calibration.learning_frozen`` via ``calibration.FORCED_FREEZE``, or
+     ``MAVERICK_LEARNING_FROZEN`` when the arms are collected by hand), scored
      the same way, with the paired difference reported as an effect size + CI.
 
 This module owns the statistics and the (dependency-injected) A/B runner so it
@@ -17,7 +18,6 @@ bootstrap CI is seeded, so a reported lift is reproducible for a given seed.
 from __future__ import annotations
 
 import math
-import os
 import random
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -27,18 +27,21 @@ FROZEN_ENV = "MAVERICK_LEARNING_FROZEN"
 
 @contextmanager
 def forced_freeze(frozen: bool):
-    """Temporarily force ``calibration.learning_frozen()`` via the env override,
-    restoring the prior value on exit. Used to build the control (frozen) and
-    treatment (live) arms around an agent run."""
-    prev = os.environ.get(FROZEN_ENV)
-    os.environ[FROZEN_ENV] = "1" if frozen else "0"
+    """Choose the arm for ``calibration.learning_frozen()`` in this context
+    only, restoring the prior choice on exit. Used to build the control
+    (frozen) and treatment (live) arms around an agent run.
+
+    The process environment is not touched, so other tasks in the process keep
+    their own state. The live arm ignores ``MAVERICK_LEARNING_FROZEN`` but not
+    a freeze raised because the verifier drifted: learning from a verifier
+    that cannot be trusted is not a fair treatment arm."""
+    from .calibration import FORCED_FREEZE
+
+    token = FORCED_FREEZE.set(bool(frozen))
     try:
         yield
     finally:
-        if prev is None:
-            os.environ.pop(FROZEN_ENV, None)
-        else:
-            os.environ[FROZEN_ENV] = prev
+        FORCED_FREEZE.reset(token)
 
 
 @dataclass
@@ -133,11 +136,16 @@ def measure_lift(
     (treatment), score both, and return the paired lift.
 
     ``run(task, frozen: bool) -> output`` performs one attempt with learning
-    forced off/on (this fn sets ``MAVERICK_LEARNING_FROZEN`` around the call via
+    forced off/on (this fn chooses the arm around the call via
     :func:`forced_freeze`); ``score(task, output) -> float`` is the
     verifier-backed success score in ``[0, 1]``. Both are injected so this is
     testable without a live agent. Each task is run once per arm, in order, so a
     deterministic ``run``/``score`` yields a deterministic result.
+
+    The arm is carried in this context only, not in the process environment.
+    A ``run`` that starts a subprocess must pass the arm on itself (for
+    example by setting ``MAVERICK_LEARNING_FROZEN`` for that child); nothing
+    calls it that way today. A thread needs a copy of the context.
 
     Every control run comes before any treatment run: freezing stops learning
     writes but not recall, so a control run after a live one could use what

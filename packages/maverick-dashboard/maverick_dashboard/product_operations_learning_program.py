@@ -131,7 +131,9 @@ def decision_snapshot(request, _selection, *, undo):
     candidates = [row for row in rows if row.get("status") == ("applied" if undo else "pending")]
     if not undo:
         actor = native._actor(request)
+        # The page offers the same: only standing instructions can be applied.
         candidates = [row for row in candidates if row.get("proposed_by") == actor
+                      and row.get("target") == "prompt"
                       and (not settings["require_approval"] or native._approval_state(row.get("approval_id")) == "Approved")]
     choices = [{"value": row["id"], "label": str(row["name"]).replace("-", " ")}
                for row in candidates[:100]]

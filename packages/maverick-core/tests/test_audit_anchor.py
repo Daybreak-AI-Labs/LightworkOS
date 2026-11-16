@@ -204,3 +204,41 @@ def test_highwater_is_not_written_from_a_half_written_ledger_line(tmp_path, monk
         f.write('{"kind": "anchor", "day": "')     # append still in progress
     signing._write_anchor_highwater(tmp_path)
     assert hw.read_bytes() == before
+
+
+@pytest.mark.parametrize("method", ["record", "record_strict_signed"])
+def test_append_to_a_day_anchored_under_the_writer_goes_to_today(tmp_path, monkeypatch, method):
+    # A writer picks its day-file just before midnight; another process rolls
+    # over first and anchors that day. The late row must land in today's file:
+    # appended to the anchored day it is a tamper alarm that never clears.
+    import time
+
+    from maverick.audit import writer
+    from maverick.audit.events import AuditEvent
+
+    _isolate_keys(monkeypatch, tmp_path)
+    audit_dir = tmp_path / "audit"
+    log = writer.AuditLog(audit_dir, sign=True)
+    assert log.record(AuditEvent(ts=time.time(), kind="tool_call"))
+    closed = audit_dir / f"{log._current_day}.ndjson"
+    tomorrow = datetime.now(timezone.utc) + timedelta(days=1)
+    monkeypatch.setattr(signing, "_today_utc", lambda: tomorrow.strftime("%Y-%m-%d"))
+    assert ensure_anchors(audit_dir) == 1
+    reads: list[int] = []
+
+    class Midnight(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            reads.append(1)  # the first read is the pick made before midnight
+            return datetime.now(tz) if len(reads) == 1 else tomorrow
+
+    monkeypatch.setattr(writer, "datetime", Midnight)
+
+    assert getattr(log, method)(AuditEvent(ts=time.time(), kind="tool_call")) is True
+
+    assert len(closed.read_text().splitlines()) == 1
+    today_file = audit_dir / f"{tomorrow.strftime('%Y-%m-%d')}.ndjson"
+    assert len(today_file.read_text().splitlines()) == 1
+    assert verify_anchors(audit_dir) == []
+    # A direct signer on a fixed day path keeps appending unless it asks.
+    assert AuditSigner(closed).write({"kind": "tool_call"})

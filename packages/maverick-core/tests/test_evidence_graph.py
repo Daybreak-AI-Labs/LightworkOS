@@ -232,6 +232,25 @@ def test_partial_security_evidence_does_not_count_as_coverage():
     assert report["partial_controls"] == ["IAM-02"]
 
 
+def test_default_pack_counts_a_control_supported_only_in_part():
+    """With no control list given, the pack used to take its controls from the
+    fully supported ones, so a control with only partial evidence vanished and
+    coverage read 100%."""
+    mapped = security_ops.map_evidence(
+        "MFA note", "MFA", control_ids=["IAM-02"], submitted_by="grc-analyst")
+    assert security_ops.decide_evidence(
+        mapped["id"], "approved", "Reviewed; the note only partly supports the control.",
+        "control-owner", mapped["revision"]) is not None
+    projected = evidence_graph.collect_security_evidence(actor="collector")[0]
+    assert projected["controls"] == [] and projected["attributes"]["partial_controls"] == ["IAM-02"]
+
+    coverage = evidence_graph.render_pack()["coverage"]
+    assert coverage["required_controls"] == ["IAM-02"]
+    assert coverage["missing_controls"] == ["IAM-02"]
+    assert coverage["partial_controls"] == ["IAM-02"]
+    assert coverage["coverage_percent"] == 0.0
+
+
 def test_collection_after_upgrade_supersedes_a_node_projected_by_older_code():
     mapped = security_ops.map_evidence(
         "MFA note", "MFA", control_ids=["IAM-02"], submitted_by="grc-analyst",

@@ -466,3 +466,29 @@ def test_junk_consumed_entry_is_skipped_and_spends_stay_spent(monkeypatch):
             hr._consume_approval(store, record, record["approval_id"], applied_by="local:operator")
     last = records[2]
     assert hr._consume_approval(store, last, last["approval_id"], applied_by="local:operator") == last["approval_id"]
+
+
+def test_only_standing_instructions_can_be_refined_and_older_kinds_are_closed():
+    """A skill or memory refinement was approved, applied and read by nothing.
+    Those kinds are no longer offered; one saved earlier is closed, not applied."""
+    _configure()
+    for target in ("skill", "memory"):
+        with pytest.raises(hr.RefineError, match="no longer offered"):
+            hr.propose(_observation(target=target))
+    assert hr.list_proposals() == []
+
+    # A proposal saved by an earlier release still loads.
+    old = hr.propose(_observation(name="older-kind"))
+    with hr._locked():
+        store = hr._load_store()
+        record = store["proposals"][old["id"]]
+        record["target"] = "skill"
+        record["digest"] = hr._digest("skill", record["name"], record["change"])
+        hr._save_store(store)
+    _approve(old["approval_id"])
+    with pytest.raises(hr.RefineError, match="no longer offered"):
+        hr.apply(old["id"], applied_by="ops@corp.test")
+    assert hr.list_proposals()[0]["status"] == "rejected"
+    assert hr.refinements() == []
+    assert "harness_refinement_applied" not in _audit_kinds()
+

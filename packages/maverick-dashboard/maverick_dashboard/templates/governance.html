@@ -85,8 +85,9 @@
     {% endif %}
   </p>
   {% else %}
-  <p class="muted">{% if incidents and not incidents.complete %}No alerts were found in the records that could be read. Incident reporting needs a current check.{% else %}Nothing needs attention in the available records right now. Items appear here when a control fails or a review is due.{% endif %}</p>
+  <p class="muted">{% if incidents and not incidents.complete %}No alerts were found in the records that could be read. Incident reporting needs a current check.{% elif attention.complete is false %}No alerts were found in the records that could be read.{% else %}Nothing needs attention in the available records right now. Items appear here when a control fails or a review is due.{% endif %}</p>
   {% endif %}
+  {% if attention.complete is false and not (incidents and incidents.unavailable_registers) %}<p class="badge warn" role="status">Some alerts could not be checked, so this list may be incomplete. Refresh to check again.</p>{% endif %}
   {% if incidents and incidents.unavailable_registers %}<p class="badge warn" role="status">Incident reporting is incomplete. {% for register in incidents.unavailable_registers %}{{ 'Serious-incident declarations' if register == 'declarations' else 'Article 73 incident records' }} could not be read.{% if not loop.last %} {% endif %}{% endfor %} Refresh to check again; unavailable records may contain deadlines.</p>{% endif %}
   {% if incidents and incidents.enabled %}<p class="muted">{{ incidents.notice }}{% if incidents.listed_ids_truncated %} Totals include every supported retained record; detailed alert references show the first 50 in deadline order.{% endif %}</p>{% endif %}
   {% for name, section in attention.sections.items() %}{% if section.error %}
@@ -709,9 +710,15 @@
       summary.replaceChildren();
       const count = document.createElement("p");
       const incidents = result.sections.serious_incidents;
-      const incomplete = incidents && incidents.complete === false;
-      count.textContent = result.attention_count ? `${result.attention_count} item${result.attention_count === 1 ? "" : "s"} need attention.` : incomplete ? "No alerts were found in the records that could be read. Incident reporting needs a current check." : "Nothing needs attention in the available records right now.";
+      const incidentGap = incidents && incidents.complete === false;
+      const incomplete = result.complete === false;
+      count.textContent = result.attention_count ? `${result.attention_count} item${result.attention_count === 1 ? "" : "s"} need attention.` : incidentGap ? "No alerts were found in the records that could be read. Incident reporting needs a current check." : incomplete ? "No alerts were found in the records that could be read." : "Nothing needs attention in the available records right now.";
       summary.appendChild(count);
+      if (incomplete && !incidentGap) {
+        const gap = document.createElement("p"); gap.className = "badge warn";
+        gap.textContent = "Some alerts could not be checked, so this list may be incomplete. Refresh to check again.";
+        summary.appendChild(gap);
+      }
       const labels = {
         serious_incidents: {label:"Serious incidents",fields:{overdue_count:"reports overdue",due_soon_count:"reports due soon"}},
         ai_literacy: {label:"Staff AI training",fields:{missing:"trainings not done",expired:"trainings expired",expiring_soon:"trainings expiring soon"}},

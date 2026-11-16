@@ -448,25 +448,35 @@ def test_facts_newest_write_order_survives_clock_rollback(
 
 
 def test_facts_matching_is_prefix_scoped(world):
-    world.upsert_fact("user:alice:email", "a@x.com")
-    world.upsert_fact("user:alice:phone", "555")
-    world.upsert_fact("user:bob:email", "b@x.com")
+    world.upsert_fact("user:sms:alice:email", "a@x.com")
+    world.upsert_fact("user:sms:alice:phone", "555")
+    world.upsert_fact("user:sms:alice%3Aops:email", "ops@x.com")
+    world.upsert_fact("user:sms:bob:email", "b@x.com")
     world.upsert_fact("global:tz", "UTC")  # not user-scoped
 
-    assert set(world.facts_matching("alice")) == {"user:alice:email", "user:alice:phone"}
+    assert set(world.facts_matching("sms:alice")) == {
+        "user:sms:alice:email", "user:sms:alice:phone"}
     assert world.facts_matching("") == {}  # empty token matches nothing
+    # A token that is not the two quoted parts <channel>:<user> covers many
+    # people or is ambiguous, so every subject-prefix call refuses it.
+    for bad in ("sms", "alice", "sms:alice:ops", "sms:+1"):
+        for call in (world.facts_matching, world.delete_facts_matching,
+                     world.fact_history_matching):
+            with pytest.raises(ValueError, match="one person"):
+                call(bad)
+    assert "user:sms:alice%3Aops:email" in world.get_facts()
 
 
 def test_delete_facts_matching_scoped(world):
-    world.upsert_fact("user:carol:email", "c@x.com")
-    world.upsert_fact("user:carol:ssn", "secret")
-    world.upsert_fact("user:dave:email", "d@x.com")
+    world.upsert_fact("user:sms:carol:email", "c@x.com")
+    world.upsert_fact("user:sms:carol:ssn", "secret")
+    world.upsert_fact("user:sms:dave:email", "d@x.com")
 
-    deleted = world.delete_facts_matching("carol")
-    assert deleted == ["user:carol:email", "user:carol:ssn"]  # sorted keys
+    deleted = world.delete_facts_matching("sms:carol")
+    assert deleted == ["user:sms:carol:email", "user:sms:carol:ssn"]  # sorted keys
     remaining = world.get_facts()
-    assert "user:carol:email" not in remaining
-    assert remaining.get("user:dave:email") == "d@x.com"  # other users untouched
+    assert "user:sms:carol:email" not in remaining
+    assert remaining.get("user:sms:dave:email") == "d@x.com"  # other users untouched
 
 
 def test_list_goals_filter_and_order(world):
@@ -843,6 +853,22 @@ def test_the_undo_window_closes_at_its_end_even_on_an_equal_clock_reading(world,
     assert world.get_approval(aid).status == "pending"
 
 
+def test_approval_undo_window_starts_when_last_audit_vote_is_delivered(world):
+    # Same rule as the SQLite backend: the decision takes effect when the last
+    # vote reaches the signed audit log, so that is when the undo window
+    # starts. The vote time would use up the window while delivery waits.
+    aid = world.create_approval("wire-funds", risk="high", approvals_required=2, undoable=True)
+    first = world.decide_approval_audited(aid, "approved", decided_by="user:a")
+    final = world.decide_approval_audited(aid, "approved", decided_by="user:b")
+    delivered = final.created_at + 100
+    world.mark_approval_audit_delivered(final.event_id, delivered_at=delivered)
+    assert world.get_approval(aid).status == "pending"
+    world.mark_approval_audit_delivered(first.event_id, delivered_at=delivered + 60)
+    assert world.get_approval(aid).decided_at == delivered + 60
+    world.mark_approval_audit_delivered(first.event_id, delivered_at=delivered + 120)
+    assert world.get_approval(aid).decided_at == delivered + 60
+
+
 def test_decide_approval_rejects_bad_status(world):
     aid = world.create_approval("do thing")
     with pytest.raises(ValueError, match="approved.*denied"):
@@ -1145,6 +1171,21 @@ def test_prune_processed_messages(world):
         removed = world.prune_processed_messages(older_than_seconds=0)
         assert removed >= 1
         assert world.is_processed_message("sms", "to-prune") is False
+
+
+def test_audit_erase_records_are_stored_in_order_per_day(world):
+    from maverick.erasure_receipts import load_audit_erase_records, persist_audit_erase_record
+    from maverick.paths import current_tenant_id
+
+    tenant = current_tenant_id() or "shared"
+    rewrite = {"tenant_id": tenant, "day": "2026-01-02", "rows_before": 3, "rows_erased": 1}
+    first = persist_audit_erase_record(
+        world, erasure_id="a" * 32, rows_after=3, tip_hash="1" * 64, **rewrite)
+    second = persist_audit_erase_record(
+        world, erasure_id="b" * 32, rows_after=2, tip_hash="2" * 64, **rewrite)
+
+    assert load_audit_erase_records(world, "2026-01-02", expected_tenant=tenant) == [first, second]
+    assert load_audit_erase_records(world, "2026-01-03", expected_tenant=tenant) == []
 
 
 def test_erase_conversations_deletes_pg_rows(world, monkeypatch):
@@ -1556,6 +1597,32 @@ def test_list_approvals_newest_first(world, monkeypatch):
     assert a1 in ids and a2 in ids
     assert ids.index(a2) < ids.index(a1)  # newest (a2) first
     assert [row.id for row in world.list_approvals(limit=1)] == [a2]
+
+
+def test_list_approvals_for_owner_filters_before_the_limit(world):
+    import uuid
+
+    from maverick.paths import tenant_scope
+
+    alice, bob = f"user:alice-{uuid.uuid4().hex[:8]}", f"user:bob-{uuid.uuid4().hex[:8]}"
+    tenant = f"t-{uuid.uuid4().hex[:8]}"
+    old = world.create_approval("old transfer", requested_by=alice)
+    newer = [world.create_approval(f"newer-{i}", requested_by=bob) for i in range(3)]
+    world.decide_approval(newer[0], "approved", decided_by=alice)
+    with tenant_scope(tenant=tenant):
+        other_workspace = world.create_approval("elsewhere", requested_by=alice)
+
+    # Requested, claimed or decided by the person, newest first, and the limit
+    # applies after the person filter; another workspace's rows stay out.
+    assert [a.id for a in world.list_approvals_for_owner(alice, limit=5)] == [newer[0], old]
+    assert [a.id for a in world.list_approvals_for_owner(alice, limit=1)] == [newer[0]]
+    assert [a.id for a in world.list_approvals_for_owner(bob)] == newer[::-1]
+    unowned = world.create_approval("nobody asked")
+    nobody = world.list_approvals_for_owner("", limit=20)
+    assert unowned in [a.id for a in nobody]
+    assert not any(a.requested_by for a in nobody)
+    with tenant_scope(tenant=tenant):
+        assert other_workspace in [a.id for a in world.list_approvals_for_owner(alice)]
 
 
 def test_release_processed_message_allows_retry(world):

@@ -30,10 +30,12 @@ router = APIRouter(prefix="/learning-loop", tags=["learning-loop"])
 _MAX_ROWS = 100
 _MAX_TEXT = 300
 _PROPOSAL_ID = re.compile(r"[0-9a-f]{16}\Z")
+# Only standing instructions are read by the agent. The other two kinds were
+# once offered and changed nothing; a row saved then is shown as what it is.
 _TARGET_LABELS = {
     "prompt": "Standing instructions",
-    "skill": "A named procedure",
-    "memory": "Something it remembers",
+    "skill": "A named procedure (no longer offered: it changes nothing)",
+    "memory": "Something it remembers (no longer offered: it changes nothing)",
 }
 _APPROVAL_LABELS = {
     "pending": "Waiting for approval",
@@ -52,7 +54,7 @@ _HALTED = "Learning is stopped for this installation right now, so nothing was c
 
 
 class ProposeIn(BaseModel):
-    target: Literal["prompt", "skill", "memory"] = "prompt"
+    target: Literal["prompt"] = "prompt"
     title: str = Field(min_length=1, max_length=90)
     failure: str = Field(min_length=1, max_length=2000)
     change: str = Field(min_length=1, max_length=2000)
@@ -159,6 +161,8 @@ def _refine_problem(exc: Exception) -> HTTPException:
         ("is off", f"Suggested instruction changes are turned off. Turn on {_refine_switch_place()} first."),
         ("injection screen", "Part of this text reads like an instruction to ignore Lightwork's rules, "
                              "so it was refused. Reword it and try again."),
+        ("no longer offered", "This kind of change is no longer offered because it changed nothing. "
+                              "The suggestion was closed. Suggest a change to the standing instructions instead."),
         ("queue is full", "Too many suggestions are waiting for a decision. Decide some of them first."),
         ("refinement name", "Give the change a short title using letters and numbers."),
         ("ceiling", "Each box can hold up to 2,000 characters."),
@@ -217,7 +221,8 @@ def _proposal_view(row: dict) -> dict:
         "applied_at": row.get("applied_at"),
         "reverted_at": row.get("reverted_at"),
         "approval": approval,
-        "can_apply": status == "pending" and approval in ("", "Approved"),
+        "can_apply": (status == "pending" and approval in ("", "Approved")
+                      and row.get("target") == "prompt"),
         "can_revert": status == "applied",
         "technical": {
             "reference": str(row.get("id") or ""),

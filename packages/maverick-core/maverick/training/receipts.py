@@ -747,6 +747,33 @@ def _strict_receipt_json(raw: str) -> object:
     )
 
 
+def _rows_and_prior_receipt(stream, event: dict[str, Any]) -> tuple[int, bool]:
+    """Count the stored rows and say whether one already is a receipt for this
+    run or for this approved subject.
+
+    A row that names either but cannot be read counts as one: the store then
+    cannot show that the run has no receipt."""
+    run_id = event["evidence"]["run_id"]
+    subject = event["approval_subject_sha256"]
+    # Both are plain ASCII identifiers, so a row about them contains these bytes.
+    needles = (run_id.encode("ascii"), subject.encode("ascii"))
+    rows, prior = 0, False
+    for line in stream:
+        rows += 1
+        if prior or not any(needle in line for needle in needles):
+            continue
+        try:
+            row = _strict_receipt_json(line.decode("utf-8"))
+        except (UnicodeError, ValueError):
+            prior = True
+            continue
+        evidence = row.get("evidence") if isinstance(row, dict) else None
+        prior = (not isinstance(row, dict)
+                 or row.get("approval_subject_sha256") == subject
+                 or (isinstance(evidence, dict) and evidence.get("run_id") == run_id))
+    return rows, prior
+
+
 def _append_checked_receipt(path: Path, event: dict[str, Any], approver_trust: dict) -> tuple[dict, str]:
     from ..audit.signing import AuditSigner
     from ..file_lock import cross_process_lock
@@ -765,10 +792,15 @@ def _append_checked_receipt(path: Path, event: dict[str, Any], approver_trust: d
             before = os.fstat(stream.fileno())
             if not before.st_size:
                 row_size -= 64  # the genesis row has an empty previous hash
+            rows, prior = _rows_and_prior_receipt(stream, event)
             if (row_size > MAX_RECEIPT_ROW_BYTES
                     or before.st_size + row_size > MAX_RECEIPT_STORE_BYTES
-                    or sum(1 for _ in stream) >= MAX_RECEIPT_ROWS):
+                    or rows >= MAX_RECEIPT_ROWS):
                 raise TrainingReceiptError("training receipt store exceeds its storage boundary")
+            if prior:
+                # Checked under the lock that covers the append, so two
+                # issuers cannot both find the run without a receipt.
+                raise TrainingReceiptError("a receipt for this training run already exists")
             written = signer.write(event)
             stream.seek(before.st_size)
             appended = stream.read(MAX_RECEIPT_ROW_BYTES + 1)

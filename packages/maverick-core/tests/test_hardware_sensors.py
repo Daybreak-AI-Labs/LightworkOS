@@ -196,3 +196,40 @@ def test_psutil_import_ignores_current_directory(tmp_path, monkeypatch):
 
     hs_mod._psutil()
     assert not marker.exists()
+
+
+def test_overlapping_psutil_lookups_restore_the_import_path(tmp_path, monkeypatch):
+    """Two tool calls at once must not leave the import path stripped: the
+    second used to save the first's stripped list and put that back last."""
+    import threading
+    from types import SimpleNamespace
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.syspath_prepend(str(tmp_path))  # an entry the lookup strips
+    monkeypatch.delitem(sys.modules, "psutil", raising=False)
+    before = list(sys.path)
+    second_in, first_done = threading.Event(), threading.Event()
+    seen: list[list[str]] = []
+
+    def _import(name):
+        seen.append(list(sys.path))
+        if len(seen) == 1:
+            second_in.wait(0.5)  # let an unserialised second lookup overlap
+        else:
+            second_in.set()
+            first_done.wait(5)
+        raise ImportError(name)
+
+    monkeypatch.setattr(hs_mod, "importlib", SimpleNamespace(import_module=_import))
+    first = threading.Thread(target=hs_mod._psutil)
+    second = threading.Thread(target=hs_mod._psutil)
+    first.start()
+    while not seen:
+        pass
+    second.start()
+    first.join(5)
+    first_done.set()
+    second.join(5)
+
+    assert len(seen) == 2 and all(str(tmp_path) not in path for path in seen)
+    assert sys.path == before

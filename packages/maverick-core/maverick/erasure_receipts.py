@@ -29,6 +29,9 @@ from typing import Any
 
 RECEIPT_SCHEMA = "lightwork.erasure-receipt.v2"
 ERASURE_CLOSURE_SCHEMA = "lightwork.erasure-closure.v1"
+AUDIT_ERASE_RECORD_SCHEMA = "lightwork.audit-erase-record.v1"
+#: Erasures of one audit day that are looked for, oldest first.
+MAX_AUDIT_ERASE_RECORDS_PER_DAY = 512
 RECEIPT_RETENTION_DAYS = 365 * 7
 MAX_RECEIPT_IDS = 100_000
 
@@ -92,6 +95,31 @@ _SIGNED_CLOSURE_FIELDS = _CLOSURE_BODY_FIELDS | {
     "key_id",
     "signature",
 }
+
+
+_AUDIT_ERASE_BODY_FIELDS = {
+    "schema",
+    "record_id",
+    "tenant_id",
+    "erasure_id",
+    "day",
+    "ordinal",
+    "rows_before",
+    "rows_after",
+    "rows_erased",
+    "tip_hash",
+    "checkpoints",
+    "issued_at",
+    "retained_until",
+}
+#: Checkpoint folders one erasure can compare a day with, at most.
+MAX_AUDIT_ERASE_CHECKPOINTS = 64
+_SIGNED_AUDIT_ERASE_FIELDS = _AUDIT_ERASE_BODY_FIELDS | {
+    "payload_sha256",
+    "key_id",
+    "signature",
+}
+_DAY_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 class ErasureReceiptError(RuntimeError):
@@ -721,6 +749,229 @@ def persist_erasure_closure(
     return recovered
 
 
+def _audit_erase_storage_id(day: str, ordinal: int) -> str:
+    """The immutable-row id of the ``ordinal``-th erasure of one audit day."""
+    return hashlib.sha256(
+        f"{AUDIT_ERASE_RECORD_SCHEMA}:{day}:{ordinal}".encode("ascii")
+    ).hexdigest()[:32]
+
+
+def _count(value: Any, field: str, *, minimum: int = 0) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < minimum:
+        raise ErasureReceiptError(f"audit erase record {field} is invalid")
+    return value
+
+
+def validate_audit_erase_record(
+    value: Mapping[str, Any],
+    *,
+    require_signature: bool = False,
+    expected_tenant: str | None = None,
+) -> dict[str, Any]:
+    """Validate the record of one audit day rewritten by an erasure.
+
+    It names the erasure, the day, how many rows the day had before and after,
+    how many were erased, the day's tip hash after the rewrite and the digest
+    of each published checkpoint the erasure compared the day with before it
+    rewrote anything. It holds no channel, user identifier or hash of an
+    erased row.
+    """
+    if not isinstance(value, Mapping):
+        raise ErasureReceiptError("audit erase record must be an object")
+    fields = _SIGNED_AUDIT_ERASE_FIELDS if require_signature else _AUDIT_ERASE_BODY_FIELDS
+    if set(value) != fields:
+        raise ErasureReceiptError("audit erase record has missing or unexpected fields")
+    if value.get("schema") != AUDIT_ERASE_RECORD_SCHEMA:
+        raise ErasureReceiptError("audit erase record schema is unsupported")
+    tenant_id, erasure_id = value.get("tenant_id"), value.get("erasure_id")
+    day, tip_hash = value.get("day"), value.get("tip_hash")
+    if (
+        not isinstance(tenant_id, str)
+        or not tenant_id
+        or len(tenant_id) > 256
+        or any(ord(char) < 32 for char in tenant_id)
+    ):
+        raise ErasureReceiptError("audit erase record tenant is invalid")
+    if expected_tenant is not None and tenant_id != expected_tenant:
+        raise ErasureReceiptError("audit erase record belongs to another tenant")
+    if not isinstance(erasure_id, str) or not _RECEIPT_ID_RE.fullmatch(erasure_id):
+        raise ErasureReceiptError("audit erase record erasure id is invalid")
+    if not isinstance(day, str) or not _DAY_RE.fullmatch(day):
+        raise ErasureReceiptError("audit erase record day is invalid")
+    if not isinstance(tip_hash, str) or not _SHA256_RE.fullmatch(tip_hash):
+        raise ErasureReceiptError("audit erase record tip hash is invalid")
+    checkpoints = value.get("checkpoints")
+    if (
+        not isinstance(checkpoints, list)
+        or len(checkpoints) > MAX_AUDIT_ERASE_CHECKPOINTS
+        or any(not isinstance(item, str) or not _SHA256_RE.fullmatch(item) for item in checkpoints)
+        or checkpoints != sorted(set(checkpoints))
+    ):
+        raise ErasureReceiptError("audit erase record checkpoints are invalid")
+    ordinal = _count(value.get("ordinal"), "ordinal", minimum=1)
+    if value.get("record_id") != _audit_erase_storage_id(day, ordinal):
+        raise ErasureReceiptError("audit erase record id is not bound to its day")
+    normalized = {
+        "schema": AUDIT_ERASE_RECORD_SCHEMA,
+        "record_id": value["record_id"],
+        "tenant_id": tenant_id,
+        "erasure_id": erasure_id,
+        "day": day,
+        "ordinal": ordinal,
+        "rows_before": _count(value.get("rows_before"), "rows_before", minimum=1),
+        "rows_after": _count(value.get("rows_after"), "rows_after", minimum=1),
+        "rows_erased": _count(value.get("rows_erased"), "rows_erased", minimum=1),
+        "tip_hash": tip_hash,
+        "checkpoints": list(checkpoints),
+        "issued_at": _utc(_parse_utc(value.get("issued_at"), "issued_at")),
+        "retained_until": _utc(_parse_utc(value.get("retained_until"), "retained_until")),
+    }
+    if require_signature:
+        payload_sha256, key_id = value.get("payload_sha256"), value.get("key_id")
+        signature = value.get("signature")
+        if (
+            not isinstance(payload_sha256, str)
+            or not _SHA256_RE.fullmatch(payload_sha256)
+            or not isinstance(key_id, str)
+            or not _KEY_ID_RE.fullmatch(key_id)
+            or not isinstance(signature, str)
+            or not _SIGNATURE_RE.fullmatch(signature)
+        ):
+            raise ErasureReceiptError("audit erase record signing fields are invalid")
+        normalized.update(payload_sha256=payload_sha256, key_id=key_id, signature=signature)
+    return normalized
+
+
+def load_audit_erase_records(
+    world: Any,
+    day: str,
+    *,
+    expected_tenant: str,
+) -> list[dict[str, Any]]:
+    """The verified erase records of one audit day, oldest first.
+
+    Read from the world model's receipt store. Its rows cannot be changed or
+    deleted early, but anything that can write the world model can insert
+    one, and they are signed with the audit key: a record shows that an
+    erasure of the day was recorded here, nothing more. A stored row that
+    does not verify is left out; an unreadable store raises.
+    """
+    if not isinstance(day, str) or not _DAY_RE.fullmatch(day):
+        raise ErasureReceiptError("audit erase record day is invalid")
+    records: list[dict[str, Any]] = []
+    for ordinal in range(1, MAX_AUDIT_ERASE_RECORDS_PER_DAY + 1):
+        try:
+            raw = world.get_erasure_receipt(
+                _audit_erase_storage_id(day, ordinal),
+                tenant_id=expected_tenant,
+            )
+        except Exception as error:
+            raise ErasureReceiptError("audit erase record storage is unavailable") from error
+        if raw is None:
+            break
+        try:
+            record = validate_audit_erase_record(
+                _parse_canonical_record(raw, label="audit erase record"),
+                require_signature=True,
+                expected_tenant=expected_tenant,
+            )
+            _verify_signed_body(record, _AUDIT_ERASE_BODY_FIELDS)
+        except ErasureReceiptError:
+            continue
+        if record["day"] == day and record["ordinal"] == ordinal:
+            records.append(record)
+    return records
+
+
+def audit_erase_records(open_world_model: Any):
+    """A per-day erase-record lookup for the checkpoint publisher and verifier.
+
+    ``open_world_model`` is called once, on the first lookup, so a check that
+    never meets a superseded day opens no database.
+    """
+    opened: list[Any] = []
+
+    def lookup(day: str) -> list[dict[str, Any]]:
+        from .paths import current_tenant_id
+
+        if not opened:
+            opened.append(open_world_model())
+        return load_audit_erase_records(
+            opened[0], day, expected_tenant=current_tenant_id() or "shared",
+        )
+
+    return lookup
+
+
+def persist_audit_erase_record(
+    world: Any,
+    *,
+    tenant_id: str,
+    erasure_id: str,
+    day: str,
+    rows_before: int,
+    rows_after: int,
+    rows_erased: int,
+    tip_hash: str,
+    checkpoints: list[str] | tuple[str, ...] = (),
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Sign and insert the record of one audit day an erasure rewrote.
+
+    A later checkpoint that replaces the day's earlier one must be backed by
+    this record. Nothing here checks that an erasure took place: any caller
+    with the signing key and write access to the world model can store one.
+    """
+    issued = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    for ordinal in range(1, MAX_AUDIT_ERASE_RECORDS_PER_DAY + 1):
+        record_id = _audit_erase_storage_id(day, ordinal)
+        try:
+            if world.get_erasure_receipt(record_id, tenant_id=tenant_id) is not None:
+                continue
+        except Exception as error:
+            raise ErasureReceiptError("audit erase record storage is unavailable") from error
+        signed = _sign_body(validate_audit_erase_record({
+            "schema": AUDIT_ERASE_RECORD_SCHEMA,
+            "record_id": record_id,
+            "tenant_id": str(tenant_id),
+            "erasure_id": erasure_id,
+            "day": day,
+            "ordinal": ordinal,
+            "rows_before": rows_before,
+            "rows_after": rows_after,
+            "rows_erased": rows_erased,
+            "tip_hash": tip_hash,
+            "checkpoints": sorted(set(checkpoints)),
+            "issued_at": _utc(issued),
+            "retained_until": _utc(issued + timedelta(days=RECEIPT_RETENTION_DAYS)),
+        }))
+        raw = _canonical(signed)
+        try:
+            world.store_erasure_receipt(
+                record_id,
+                raw,
+                tenant_id=signed["tenant_id"],
+                created_at=issued.timestamp(),
+                retained_until=_parse_utc(signed["retained_until"], "retained_until").timestamp(),
+            )
+        except Exception as error:
+            # Rows are insert-only: another erasure of this day may have taken
+            # this one. Anything else is a failed store.
+            try:
+                taken = world.get_erasure_receipt(record_id, tenant_id=tenant_id) is not None
+            except Exception:  # failure-policy: fail_closed -- reported as the failed store below
+                taken = False
+            if not taken:
+                raise ErasureReceiptError(
+                    "audit erase record could not be durably stored"
+                ) from error
+            continue
+        if world.get_erasure_receipt(record_id, tenant_id=signed["tenant_id"]) != raw:
+            raise ErasureReceiptError("audit erase record durable recovery did not match issuance")
+        return validate_audit_erase_record(signed, require_signature=True)
+    raise ErasureReceiptError("audit erase record could not be durably stored")
+
+
 def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:
@@ -771,8 +1022,10 @@ def retire_expired_receipts(
 
 
 __all__ = [
+    "AUDIT_ERASE_RECORD_SCHEMA",
     "AUXILIARY_ERASURE_STORES",
     "ERASURE_CLOSURE_SCHEMA",
+    "audit_erase_records",
     "ErasurePlanChanged",
     "ErasureReceiptError",
     "GOAL_LINKED_STORES",
@@ -781,13 +1034,16 @@ __all__ = [
     "RECEIPT_RETENTION_DAYS",
     "SOURCE_EPISODE_STORES",
     "build_manifest",
+    "load_audit_erase_records",
     "load_verified_erasure_closure",
     "load_verified_receipt",
+    "persist_audit_erase_record",
     "persist_erasure_closure",
     "persist_receipt",
     "receipt_is_durable",
     "retire_expired_receipts",
     "sign_erasure_closure",
+    "validate_audit_erase_record",
     "validate_erasure_closure",
     "validate_manifest",
     "verify_signed_receipt",

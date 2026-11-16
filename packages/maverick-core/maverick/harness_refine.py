@@ -40,11 +40,17 @@ from typing import Any
 
 log = logging.getLogger("maverick.harness_refine")
 
-#: What one refinement may touch. ``prompt`` is standing operating guidance,
-#: ``skill`` a named procedure, ``memory`` a durable belief — the three things
-#: Prime-Agent-style ``/refine`` rewrites, kept as an explicit closed set so a
+#: What one refinement may touch: ``prompt``, the standing operating guidance
+#: the orchestrator reads into every brief. An explicit closed set, so a
 #: proposal can never widen its own blast radius by naming a new target.
-TARGETS = ("prompt", "skill", "memory")
+#: ``skill`` and ``memory`` were once accepted here, but nothing ever read
+#: them: such a refinement was approved, snapshotted and audited as applied,
+#: and changed nothing. They are refused until something consumes them.
+TARGETS = ("prompt",)
+_UNOFFERED = (
+    "skill and memory refinements are no longer offered: nothing reads them, "
+    "so applying one changed nothing. Propose a change to the standing "
+    "instructions (target 'prompt') instead")
 
 #: Approval provenance. Trusted caller-supplied metadata (never inferred from
 #: ``detail``, which carries model-authored text) — the operator UI and the
@@ -413,6 +419,21 @@ def _retire_denied(pending: list[dict]) -> bool:
     return changed
 
 
+def _close_unoffered(proposals) -> bool:
+    """Close pending proposals of a kind that is no longer offered.
+
+    One saved by an earlier release could only be applied to no effect, so it
+    must neither be applied nor hold a place in the pending queue. Returns
+    whether any record changed."""
+    changed = False
+    for record in proposals:
+        if record.get("status") == "pending" and record.get("target") not in TARGETS:
+            record["status"] = "rejected"
+            record["rejected_at"] = time.time()
+            changed = True
+    return changed
+
+
 def propose(observation: dict, *, goal_id: int | None = None,
             proposed_by: str = "") -> dict:
     """Record one proposed refinement and park its approval.
@@ -428,6 +449,8 @@ def propose(observation: dict, *, goal_id: int | None = None,
     if not isinstance(observation, dict):
         raise RefineError("observation must be a mapping")
     target = str(observation.get("target") or "").strip().lower()
+    if target in ("skill", "memory"):
+        raise RefineError(_UNOFFERED)
     if target not in TARGETS:
         raise RefineError(
             f"unknown refinement target {target!r}; expected one of "
@@ -454,6 +477,8 @@ def propose(observation: dict, *, goal_id: int | None = None,
     }
     with _locked():
         store = _load_store()
+        if _close_unoffered(store["proposals"].values()):
+            _save_store(store)
         pending = [p for p in store["proposals"].values()
                    if p.get("status") == "pending"]
         if len(pending) >= cfg["max_pending"] and _retire_denied(pending):
@@ -902,6 +927,9 @@ def apply(proposal_id: str, *, applied_by: str = "",
         record = store["proposals"].get(str(proposal_id))
         if record is None:
             raise RefineError(f"unknown refinement proposal {proposal_id!r}")
+        if _close_unoffered([record]):
+            _save_store(store)
+            raise RefineError(_UNOFFERED)
         if record.get("status") != "pending":
             raise RefineError(
                 f"proposal {proposal_id!r} is {record.get('status')}; only a "

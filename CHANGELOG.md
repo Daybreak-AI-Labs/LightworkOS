@@ -476,6 +476,156 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   value is ignored, logged, listed by `maverick doctor` and shown in Settings
   or on the agent page as "Set by your organisation"; the file still loads.
   Remove the looser values from the file to clear the warning.
+- An activity-log entry written just as the day ends now goes to the new
+  day's file once the finished day has its tip anchor. Before, it could be
+  added after the anchor, and `maverick audit verify` then reported that
+  day as changed for good. Nothing to do.
+- Checking audit checkpoints against a kept receipt or `--minimum-sequence`
+  now fails for any day whose checkpoint was replaced or retired after it,
+  naming the day and, for a replacement, the erasures behind it. Review it,
+  then keep the newest receipt; a scheduled check must do so after each
+  retention purge, and `maverick audit checkpoint retire` now prints the
+  sequence and digest to keep.
+- Replacing a checkpoint after an erasure needs the erase record that
+  `maverick erase` now stores. A day erased before this version has none:
+  tick "Replace it without an erasure record" on the activity-log page, or
+  publish with `--without-erase-record`. Either is written to the activity
+  log first, and a check against an older receipt reports that day.
+- An erase record vouches only for a checkpoint the day still matched when
+  the erase ran. If you keep checkpoints in a folder given only as
+  `--checkpoint-dir`, pass the same option to `maverick erase`; otherwise
+  replacing them needs the step above. A person is erased either way.
+- `maverick erase` after a signing-key rotation no longer re-signs audit
+  days that do not hold the person, or the tip ledger. Before, their
+  anchors and checkpoints stopped matching. This does not repair days an
+  earlier erase already re-signed; they still report a change.
+- `maverick import run --activate-schedules` now marks the schedule it
+  creates. Importing a workflow again after it changed at the source updates
+  that schedule's task text, title and timing instead of leaving the old
+  text running; a paused schedule stays paused. Changes you made to the
+  schedule in Lightwork are kept while the source is unchanged, and replaced
+  (the time zone is reset with the time) when it changes; the import note
+  and the schedule's history give the replaced time, zone and title. A
+  workflow renamed at the source counts as a new one, and the note names the
+  schedule still running under the old name. A workflow that has no id at
+  the source cannot be told from another with the same name, so its
+  schedule is created once and never changed by a later import. A schedule
+  made before this release has no mark and is still left unchanged: remove
+  it once, then import again.
+- A flow run records a step inside a loop, a parallel lane, a try block or
+  a subflow under its container, for example `loop1/n0` or `fanout/1/n0`.
+  It no longer shows as, or counts towards, the top-level step with the same
+  id. Outcomes recorded earlier keep their old ids.
+- The task health check (`maverick diag health` and the task page) no longer
+  scores a queued, running or paused (blocked) task as a failure (40, grade
+  F). It says the task has no score yet; a paused task says it is waiting
+  on a person and to look at what it needs.
+- `grant_type = "authorization_code"` under `[mcp_servers.<name>.oauth]` (and
+  `[mcp_sidecar.oauth]`) is now refused when the settings are read. Nothing
+  could complete that sign-in, so such a server only ever failed to start.
+  Use `grant_type = "client_credentials"`, or a static `auth_token`.
+- Suggested instruction changes can target standing instructions only. The
+  "A named procedure" and "Something it remembers" choices (`--target skill`
+  and `--target memory` in `maverick refine propose`) are removed: nothing
+  read those changes, so approving one changed nothing. A waiting suggestion
+  of those kinds is closed when someone applies it or suggests a new change;
+  one already applied is listed as changing nothing and can be undone.
+- A release request on the Research page that cannot move on now shows as
+  "Stuck" and says why. If an action stopped before its result was saved,
+  "Retry: check what happened" reads the real state without repeating the
+  action. If the approval ran out, or stopped counting because the
+  reviewer's access changed, a release administrator can review it again.
+  If the release rules changed, even before the first review, discard the
+  request and make a new one. "Discard this request" closes a stuck or
+  unwanted request that was never published. A published request that
+  cannot be settled offers "Close this request" and ends as "Closed after
+  publication". Both are refused while the request is the version in use;
+  if its history is also full, publish another version, then close it.
+  A request's history holds 128 steps: renewed reviews and repeated failed
+  restores stop there, and the request can still be settled and closed.
+  The Copilot offers the same retry and discard for taught workflow
+  releases.
+- A person's Operating Record now reads that person's approvals from the
+  store directly, so older approvals no longer drop out when other people
+  have thousands of newer ones. Nothing to do; totals for one person can rise.
+- A HashiCorp Vault transit key that was not created with `derived=true` no
+  longer wraps new workspace keys, because such a key does not keep
+  workspaces apart; existing data still opens and a warning is logged. Create
+  a transit key with `derived=true` and rotate to it. The check runs when a
+  key is first wrapped or opened and needs encrypt and decrypt on the key.
+- The AI governance page now says when its Needs attention check could not
+  read every record, instead of reporting that nothing needs attention.
+  Press Refresh to check again.
+- The diagram tool now works in container sandboxes: the source goes to the
+  renderer on standard input and the image is written in the workspace, under
+  a temporary name that is moved into place when the render succeeds. A
+  source over 64 KiB is refused outside the local sandbox.
+- The accessibility checker's browser now connects through a local proxy that
+  refuses internal addresses and applies the destination policy to every
+  host a page loads, and the page itself is checked against that policy. It
+  reaches public sites on ports 80 and 443 only. A container sandbox with
+  network access is refused: use the local sandbox, or turn the sandbox's
+  network off to check local files. `MAVERICK_FETCH_ALLOW_PRIVATE=1` keeps
+  the previous behaviour for local development servers. With the proxy, a
+  workspace `pa11y.json` is honoured for `standard`, `ignore`, `timeout`,
+  `wait`, `hideElements`, `rootElement`, `includeNotices`, `includeWarnings`,
+  `level`, `threshold`, `rules`, `viewport`, `userAgent`, the `axe` and
+  `htmlcs` runners, and the browser switches `--no-sandbox`,
+  `--disable-setuid-sandbox`, `--disable-dev-shm-usage` and `--disable-gpu`;
+  `actions`, `headers` and other browser settings are not used.
+- Outbound webhooks now read only the first 4 KiB of a receiver's reply, so
+  a very large reply no longer fills memory. The delivery log still shows
+  the first 200 characters. Nothing to do.
+- With `[limits] file_write_quota_mb` set, a file write or edit that fails
+  no longer counts against the run's quota. Nothing to do.
+- `view_video` and `wasm_run` now work in container sandboxes: commands get
+  workspace-relative paths, video frames are staged in a hidden folder in
+  the workspace and removed afterwards, and the programs are looked for in
+  the sandbox, not on the host. A WebAssembly module now sees a granted
+  folder under its workspace-relative name (`data`), not its host path.
+- `view_video` now refuses to run without an active run budget, as
+  `view_image` does, so its vision call is always charged and capped. Code
+  that builds the tool directly must pass the run's budget.
+- On the Safety monitoring page the Copilot can now show where sensitive data
+  went, including what to do when earlier labels for a task cannot be read.
+  It needs the page's audit permission and the `reviews` control family in
+  `[copilot] operation_families`; it reads the record and changes nothing.
+- A GitHub comment starts a run only when `/maverick` is a word of its own.
+  A path or link that contains it, such as `packages/maverick-core`, no
+  longer starts one, and neither does one in a quoted reply (a line that
+  starts with `>`) or a fenced code block. Indented code, HTML comments and
+  quote lines without a `>` are read as before. Write `/maverick` on its
+  own to start a run.
+- On Postgres, the time allowed to undo an approval now starts when the
+  decision reaches the signed audit log, as it already did on SQLite. It
+  used to start at the vote, so a slow audit log shortened it. Nothing to do.
+- A schedule is now paused when a worker stops during the last attempt of a
+  run and the next run was not queued. Before, the schedule stayed active
+  but never ran again. Review the paused schedule, then resume it.
+- When a saved secret in the dashboard's settings cannot be opened, the
+  settings made in the dashboard are on hold until the file can be opened,
+  except stricter safety choices, which stay in force. Before, those were
+  ignored too, which put back limits you had tightened there. A sandbox
+  that was set up in the dashboard may not start until then. Health and
+  `maverick doctor` say so. Save that secret again, or restore the key, to
+  clear the warning.
+- A workspace's `config.toml` can no longer let people approve their own
+  requests (`[security] allow_self_approval`) or run sandbox work as user 0
+  (`[sandbox] run_as_user`). The looser value is ignored and listed by
+  `maverick doctor`, like other workspace settings that loosen policy.
+- Automations that watch new Salesforce records or ServiceNow tickets now
+  work on lists with more than 5,000 items: each check reads the newest
+  5,000. In such a list, a record saved with an earlier creation date is
+  not reported. A source that was refused for its size starts again by
+  itself and reports the items it missed, if fewer than 5,000 arrived
+  meanwhile; with more, it is refused with a message that asks you to review
+  the source again. A source also no longer stops for good after 20,000
+  remembered items; it forgets items that are gone from the source.
+- Company sign-in now checks that the provider's discovery document names
+  the issuer you configured, and reads that document again every hour. If
+  the provider cannot be reached then, the last answer stays in use. If
+  sign-in stops with "misconfigured", copy the issuer exactly as your
+  provider shows it; the server log names both values.
 
 ### Fixed
 
