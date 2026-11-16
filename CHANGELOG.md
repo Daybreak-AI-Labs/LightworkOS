@@ -496,7 +496,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   id. Outcomes recorded earlier keep their old ids.
 - The task health check (`maverick diag health` and the task page) no longer
   scores a queued, running or paused (blocked) task as a failure (40, grade
-  F). It says the task has no score yet; check again when the task ends.
+  F). It says the task has no score yet; a paused task says it is waiting
+  on a person and to look at what it needs.
 - `grant_type = "authorization_code"` under `[mcp_servers.<name>.oauth]` (and
   `[mcp_sidecar.oauth]`) is now refused when the settings are read. Nothing
   could complete that sign-in, so such a server only ever failed to start.

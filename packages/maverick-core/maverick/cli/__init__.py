@@ -3780,8 +3780,14 @@ def diag_health(ctx, goal_id: int) -> None:
         sys.exit(2)
     g, h = found
     click.echo(f"goal #{goal_id} ({g.status}):")
-    click.echo(render(h) if h is not None
-               else "No health score yet: the task has not finished.")
+    if h is not None:
+        click.echo(render(h))
+    elif g.status == "blocked":
+        # A blocked task will not end unaided: say who it waits on.
+        click.echo("No health score yet: the task is waiting on a person. "
+                   "Open the task to see what it needs.")
+    else:
+        click.echo("No health score yet: the task has not finished.")
 
 
 @diag.command("replay")

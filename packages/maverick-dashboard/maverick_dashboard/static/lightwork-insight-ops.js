@@ -146,7 +146,9 @@
       try {
         var h = await request('/api/v1/goals/' + encodeURIComponent(goal) + '/health');
         if (h.score === null) {
-          say(status, 'This task has not finished, so it has no health score yet. Check again when it ends.');
+          say(status, h.waiting_on_person
+            ? 'This task is waiting on a person, so it has no health score yet. See what it needs in the task above.'
+            : 'This task has not finished, so it has no health score yet. Check again when it ends.');
           return;
         }
         say(status, 'Health: ' + h.score + ' out of 100 (grade ' + h.grade + ').' +

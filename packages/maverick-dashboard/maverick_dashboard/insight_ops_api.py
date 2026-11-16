@@ -221,7 +221,9 @@ async def goal_health(goal_id: int, request: Request) -> dict:
     goal, health = found
     if health is None:
         # Still queued, running or waiting: there is no outcome to score yet.
+        # A blocked task waits on a person and will not end unaided.
         return {"score": None, "grade": "", "finished": False, "ended": False,
+                "waiting_on_person": goal.status == "blocked",
                 "status": goal.status, "tokens_used": 0, "parts": []}
     f = health.factors
     finished = goal.status == "done"

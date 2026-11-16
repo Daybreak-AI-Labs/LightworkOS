@@ -94,6 +94,12 @@ test('task health shows the score and its parts', async (t) => {
   await ui.settle();
   assert.match(ui.document.getElementById('task-health-status').textContent, /has not finished, so it has no health score yet/);
   assert.equal(ui.document.getElementById('task-health-out').textContent, '');
+  // A paused task will not end unaided: the words say who it waits on and what to do.
+  answer = {...answer, status: 'blocked', waiting_on_person: true};
+  ui.document.getElementById('task-health-check').click();
+  await ui.settle();
+  assert.match(ui.document.getElementById('task-health-status').textContent, /waiting on a person, so it has no health score yet\. See what it needs/);
+  assert.doesNotMatch(ui.document.getElementById('task-health-status').textContent, /when it ends/);
 });
 
 test('recorded steps are shown, filtered by kind, and a missing recording is explained', async (t) => {

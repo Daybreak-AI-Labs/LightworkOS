@@ -180,7 +180,10 @@ def test_health_of_an_unfinished_task_is_not_scored_as_a_failure(client, monkeyp
     _as(monkeypatch, "operator", "user:ada")
     h = client.get(f"/api/v1/goals/{gid}/health").json()
     assert h == {"score": None, "grade": "", "finished": False, "ended": False,
-                 "status": "active", "tokens_used": 0, "parts": []}
+                 "waiting_on_person": False, "status": "active", "tokens_used": 0, "parts": []}
+    paused = _task("user:ada", "Ada's paused report", 1.0, status="blocked")
+    h = client.get(f"/api/v1/goals/{paused}/health").json()
+    assert h["score"] is None and h["waiting_on_person"] is True
     failed = _task("user:ada", "Ada's failed report", 1.0, status="failed")
     h = client.get(f"/api/v1/goals/{failed}/health").json()
     assert h["score"] == 40 and h["ended"] is True and h["finished"] is False
