@@ -487,6 +487,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   a subflow under its container, for example `loop1/n0` or `fanout/1/n0`.
   It no longer shows as, or counts towards, the top-level step with the same
   id. Outcomes recorded earlier keep their old ids.
+- The task health check (`maverick diag health` and the task page) no longer
+  scores a queued or running task as a failure (40, grade F). It says the
+  task has no score yet; check again when the task ends.
 
 ### Fixed
 

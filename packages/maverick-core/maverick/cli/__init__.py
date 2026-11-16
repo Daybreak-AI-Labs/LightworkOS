@@ -3764,7 +3764,7 @@ def diag_ratelimits(as_json: bool) -> None:
 @click.argument("goal_id", type=int)
 @click.pass_context
 def diag_health(ctx, goal_id: int) -> None:
-    """Compute a 0-100 health score for a finished goal from its episode."""
+    """Compute a 0-100 health score for a goal that has ended, from its episodes."""
     from ..health_score import goal_health, render
     from ..world_model import close_world_if_owned, open_world
     # An explicit --db selects this diagnostic's database; otherwise retain
@@ -3780,7 +3780,8 @@ def diag_health(ctx, goal_id: int) -> None:
         sys.exit(2)
     g, h = found
     click.echo(f"goal #{goal_id} ({g.status}):")
-    click.echo(render(h))
+    click.echo(render(h) if h is not None
+               else "No health score yet: the task has not finished.")
 
 
 @diag.command("replay")

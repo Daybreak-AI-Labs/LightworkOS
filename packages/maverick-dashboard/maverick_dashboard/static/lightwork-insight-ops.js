@@ -145,8 +145,12 @@
       say(status, 'Checking…');
       try {
         var h = await request('/api/v1/goals/' + encodeURIComponent(goal) + '/health');
+        if (h.score === null) {
+          say(status, 'This task has not finished, so it has no health score yet. Check again when it ends.');
+          return;
+        }
         say(status, 'Health: ' + h.score + ' out of 100 (grade ' + h.grade + ').' +
-          (h.finished ? '' : ' The task has not finished, which lowers the score.'));
+          (h.finished ? '' : ' The task ended without finishing, which lowers the score.'));
         var rows = h.parts.map(function (p) { return [p.label, (p.points > 0 ? '+' : '') + p.points]; });
         rows.push(['AI used (tokens)', h.tokens_used.toLocaleString()]);
         out.appendChild(table(['Part of the score', 'Points'], rows, 'How the health score is made'));

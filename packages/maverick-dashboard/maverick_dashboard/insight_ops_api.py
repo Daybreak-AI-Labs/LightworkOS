@@ -219,15 +219,19 @@ async def goal_health(goal_id: int, request: Request) -> dict:
     if found is None:
         raise HTTPException(404, "That task was not found.")
     goal, health = found
+    if health is None:
+        # Still queued, running or waiting: there is no outcome to score yet.
+        return {"score": None, "grade": "", "finished": False, "ended": False,
+                "status": goal.status, "tokens_used": 0, "parts": []}
     f = health.factors
     finished = goal.status == "done"
-    parts = [{"label": "Starting score" + (" (the task finished)" if finished else " (the task did not finish)"),
+    parts = [{"label": "Starting score" + (" (the task finished)" if finished else " (the task ended without finishing)"),
               "points": int(f.get("base", 0))}]
     if f.get("tool_penalty"):
         parts.append({"label": "Tool errors and retries", "points": int(f["tool_penalty"])})
     if f.get("efficiency_penalty"):
         parts.append({"label": "Used more AI than expected", "points": int(f["efficiency_penalty"])})
-    return {"score": health.score, "grade": health.grade, "finished": finished,
+    return {"score": health.score, "grade": health.grade, "finished": finished, "ended": True,
             "status": goal.status, "tokens_used": int(f.get("tokens_used", 0)), "parts": parts}
 
 
