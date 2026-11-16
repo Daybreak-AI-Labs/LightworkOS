@@ -43,7 +43,9 @@ def _plain_state(state):
 
 
 _STUCK = {"outcome_unknown": "Stuck: the last action stopped before its result was saved",
-          "approval_expired": "Stuck: the approval ran out before the next step"}
+          "approval_expired": "Stuck: the approval ran out before the next step",
+          "approval_void": "Stuck: the approval no longer counts because the reviewer's access changed",
+          "policy_changed": "Stuck: the release rules changed after this request was made"}
 
 
 def _standing(row):
@@ -55,11 +57,11 @@ def _offered(row, action):
     """Whether the release page offers this decision for the request now."""
     state, stuck = row["state"], native.stuck_reason(row)
     if action == "review":
-        return state == "awaiting_review" or stuck == "approval_expired"
+        return state == "awaiting_review" or stuck in ("approval_expired", "approval_void")
     if action in ("stage", "activate"):
         return state == {"stage": "authorized", "activate": "staged"}[action] and not stuck
     if action == "discard":
-        return state in {"authorized", "staged"} | native._UNSETTLED_STATES
+        return row.get("can_discard") is True      # never a request that was published
     if action == "reconcile":
         return stuck == "outcome_unknown"
     return state in {"canary": {"canary"}, "rollback": {"canary", "active"}}[action]

@@ -231,12 +231,15 @@
   }
 
   // A request is stuck when its normal next step cannot run: an action stopped
-  // before its result was saved, or the approval ran out. Each has a retry.
+  // before its result was saved, or its approval no longer stands.
   const STUCK = {
     outcome_unknown: 'The last action stopped before its result was saved. Retry reads what happened; nothing is repeated.',
     approval_expired: 'The approval ran out before the next step. Retry with a fresh independent review, or discard this request.',
+    approval_void: 'The approval no longer counts because the reviewer\'s access changed. Retry with a fresh independent review, or discard this request.',
+    policy_changed: 'The release rules changed after this request was made. Discard it and make a new request.',
   };
-  const DISCARDABLE = ['authorized', 'staged', 'uncertain', 'stage_claimed', 'activation_claimed', 'rollback_claimed'];
+  // A fresh review is the retry for an approval that ran out or stopped counting.
+  const REVIEW_AGAIN = ['approval_expired', 'approval_void'];
 
   function discardButton(candidate) {
     const button = element('button', 'Discard this request', 'btn');
@@ -355,7 +358,7 @@
     }
 
     if (!canManage) return item;
-    if (candidate.state === 'awaiting_review' || stuck === 'approval_expired') item.appendChild(reviewForm(candidate));
+    if (candidate.state === 'awaiting_review' || REVIEW_AGAIN.includes(stuck)) item.appendChild(reviewForm(candidate));
     if (candidate.state === 'authorized' && !stuck) item.appendChild(actionButton(
       candidate.local_release ? 'Prepare approved workflow' : 'Stage candidate', candidate, 'stage',
       candidate.local_release ? 'Prepare this approved workflow version and keep its exact previous published rules available for restoration? Nothing is published yet.' : 'Stage this exact candidate after another current rights and artifact check?', 'btn btn--primary'));
@@ -378,7 +381,7 @@
     if (stuck === 'outcome_unknown') item.appendChild(actionButton(
       'Retry: check what happened', candidate, 'reconcile',
       candidate.local_release ? 'Read the actual published rules and saved decision without repeating the uncertain action?' : 'Read the authoritative deployment state without replaying the uncertain action?', 'btn btn--primary'));
-    if (DISCARDABLE.includes(candidate.state)) item.appendChild(discardButton(candidate));
+    if (candidate.can_discard === true) item.appendChild(discardButton(candidate));
     return item;
   }
 

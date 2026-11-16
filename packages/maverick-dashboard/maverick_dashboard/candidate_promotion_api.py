@@ -195,8 +195,9 @@ def _mapping(value: object) -> Mapping[str, Any]:
 
 def stuck_reason(value: Mapping[str, Any]) -> str:
     """Why a request cannot take its next step: ``outcome_unknown``,
-    ``approval_expired`` or ``""``. The coordinator reports it when it lists
-    or inspects a request; an unsettled action is stuck whoever reports it."""
+    ``approval_expired``, ``approval_void``, ``policy_changed`` or ``""``.
+    The coordinator reports it when it lists or inspects a request; an
+    unsettled action is stuck whoever reports it."""
     return str(value.get("stuck") or (
         "outcome_unknown" if value.get("state") in _UNSETTLED_STATES else ""))
 
@@ -267,6 +268,8 @@ def _projection(value: Mapping[str, Any]) -> dict[str, Any]:
         # Why the request cannot take its next step ("" when it can): the page
         # and the Copilot offer a retry and a discard from this one reading.
         "stuck": stuck_reason(value),
+        # Only the coordinator knows whether the request was ever published.
+        "can_discard": value.get("can_discard") is True,
         "revision": value.get("revision"),
         "created_at": value.get("created_at"),
         "updated_at": value.get("updated_at"),
@@ -392,7 +395,7 @@ def _projection(value: Mapping[str, Any]) -> dict[str, Any]:
         # The native customer journey needs saved names, versions and decisions;
         # exact commitments remain inside the canonical coordinator's record.
         result = {key: result[key] for key in ("candidate_id", "requested_by", "candidate_principal", "state", "stuck",
-                  "revision", "created_at", "updated_at", "local_release")}
+                  "can_discard", "revision", "created_at", "updated_at", "local_release")}
         result["review"] = {key: review.get(key) for key in ("reviewed_by", "approved", "reason_code", "note", "reviewed_at")} if review else None
         result["block"] = {"detail": block.get("detail")} if block else None
         result["events"] = [{key: item.get(key) for key in ("sequence", "state", "actor", "recorded_at")} for item in events]

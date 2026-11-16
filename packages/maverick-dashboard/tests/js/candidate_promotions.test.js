@@ -202,7 +202,7 @@ test('actions confirm in the page dialog and failures read as plain sentences', 
 
 test('a stuck request says so and offers a retry and a discard', async () => {
   const posts = [];
-  let items = [candidate({state:'activation_claimed', stuck:'outcome_unknown', revision:5})];
+  let items = [candidate({state:'activation_claimed', stuck:'outcome_unknown', can_discard:true, revision:5})];
   const ui = await fixture(async (url, options) => {
     if (options.method === 'POST') {
       posts.push({url, body:JSON.parse(options.body)});
@@ -226,7 +226,7 @@ test('a stuck request says so and offers a retry and a discard', async () => {
   assert.match(ui.prompts[1].prompt, /first checks that it is not in use/);
 
   // An approval that ran out: the retry is a fresh review, and discard is still offered.
-  items = [candidate({state:'staged', stuck:'approval_expired', revision:3})];
+  items = [candidate({state:'staged', stuck:'approval_expired', can_discard:true, revision:3})];
   ui.document.getElementById('research-promotions-refresh').click();
   await settle();
   assert.equal(list.querySelector('.research-badge').textContent, 'Stuck');
@@ -234,8 +234,32 @@ test('a stuck request says so and offers a retry and a discard', async () => {
   assert.equal(button('Start a limited trial'), undefined);
   assert.ok(button('Approve exact candidate') && button('Discard this request'));
 
+  // An approval that stopped counting is stuck the same way, before it expires.
+  items = [candidate({state:'authorized', stuck:'approval_void', can_discard:true, revision:2})];
+  ui.document.getElementById('research-promotions-refresh').click();
+  await settle();
+  assert.match(list.textContent, /The approval no longer counts/);
+  assert.equal(button('Stage candidate'), undefined);
+  assert.ok(button('Approve exact candidate') && button('Discard this request'));
+
+  // Changed release rules: no review can continue this request, only a discard.
+  items = [candidate({state:'authorized', stuck:'policy_changed', can_discard:true, revision:2})];
+  ui.document.getElementById('research-promotions-refresh').click();
+  await settle();
+  assert.match(list.textContent, /The release rules changed after this request was made/);
+  assert.equal(button('Stage candidate'), undefined);
+  assert.equal(button('Approve exact candidate'), undefined);
+  assert.ok(button('Discard this request'));
+
+  // A request that was published is never offered a discard, even while unsettled.
+  items = [candidate({state:'rollback_claimed', stuck:'outcome_unknown', can_discard:false, revision:7})];
+  ui.document.getElementById('research-promotions-refresh').click();
+  await settle();
+  assert.ok(button('Retry: check what happened'));
+  assert.equal(button('Discard this request'), undefined);
+
   // A request that is not stuck can still be withdrawn before it is published.
-  items = [candidate({state:'staged', stuck:'', revision:3}), candidate({candidate_id:'candidate-2', state:'discarded', revision:4})];
+  items = [candidate({state:'staged', stuck:'', can_discard:true, revision:3}), candidate({candidate_id:'candidate-2', state:'discarded', revision:4})];
   ui.document.getElementById('research-promotions-refresh').click();
   await settle();
   assert.ok(button('Start a limited trial') && button('Discard this request'));

@@ -389,11 +389,14 @@ def test_operator_transitions_keep_exact_revision_and_server_identity(
 
 def test_overview_says_which_requests_are_stuck_and_why(client):
     customer, service, _ = client
-    service.row = {**_row(state="activation_claimed", revision=4), "stuck": "outcome_unknown"}
+    service.row = {**_row(state="activation_claimed", revision=4), "stuck": "outcome_unknown",
+                   "can_discard": True}
     item = customer.get(BASE).json()["items"][0]
     assert item["state"] == "activation_claimed" and item["stuck"] == "outcome_unknown"
-    service.row = _row(state="staged", revision=3)       # an older service reports no reason
-    assert customer.get(BASE).json()["items"][0]["stuck"] == ""
+    assert item["can_discard"] is True
+    service.row = _row(state="staged", revision=3)       # an older service reports neither
+    item = customer.get(BASE).json()["items"][0]
+    assert item["stuck"] == "" and item["can_discard"] is False
 
 
 def test_stale_context_and_non_admin_stop_before_service_effect(client, monkeypatch):

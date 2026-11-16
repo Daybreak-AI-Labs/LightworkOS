@@ -507,11 +507,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A release request on the Research page that cannot move on now shows as
   "Stuck" and says why. If an action stopped before its result was saved,
   "Retry: check what happened" reads the real state without repeating the
-  action. If the approval ran out before the next step, a release
-  administrator can review it again. "Discard this request" closes a stuck
-  or unwanted request before publication; it is refused while the request is
-  in use. The Copilot offers the same retry and discard for taught workflow
-  releases.
+  action. If the approval ran out, or stopped counting because the
+  reviewer's access changed, a release administrator can review it again.
+  If the release rules changed, make a new request. "Discard this request"
+  closes a stuck or unwanted request that was never published; a published
+  one is settled with the retry and restored instead. A request reviewed
+  again about 118 times must be discarded and requested anew. The Copilot
+  offers the same retry and discard for taught workflow releases.
 
 ### Fixed
 
