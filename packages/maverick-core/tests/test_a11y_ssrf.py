@@ -162,6 +162,50 @@ def test_runner_browser_can_only_reach_what_the_pinned_proxy_admits(monkeypatch)
     # A site on another port cannot go through the proxy: say so before the browser starts.
     out = a11y().fn({"op": "check", "url": "http://example.com:8080/"})
     assert out.startswith("ERROR") and "443" in out
+    # ...without pointing the person at the switch that opens private addresses.
+    assert "ALLOW_PRIVATE" not in out
+
+
+def test_project_pa11y_settings_are_kept_but_cannot_undo_the_proxy(tmp_path, monkeypatch):
+    """pa11y is given a private config that carries the proxy, so it no longer
+    reads the project's own ``pa11y.json``. Its harmless settings are carried
+    over; anything that chooses the browser or its network is not."""
+    import json
+    from pathlib import Path
+
+    import maverick.tools as tools_mod
+    from maverick.sandbox.local import LocalBackend
+    from maverick.tenant import egress
+
+    (tmp_path / "pa11y.json").write_text(json.dumps({
+        "standard": "WCAG2AAA", "ignore": ["notice"], "timeout": 5000,
+        "runners": ["axe", "../evil-runner"],
+        "actions": ["navigate to http://169.254.169.254/"],
+        "chromeLaunchConfig": {
+            "executablePath": "/tmp/not-a-browser",
+            "args": ["--no-sandbox", "--no-proxy-server", "--proxy-server=direct://"],
+        },
+    }), encoding="utf-8")
+    monkeypatch.setattr(egress, "egress_allowed", lambda tool, host, **_kw: True)
+    monkeypatch.setattr("shutil.which", lambda b: f"/usr/bin/{b}")
+    monkeypatch.delenv("MAVERICK_FETCH_ALLOW_PRIVATE", raising=False)
+    seen: dict = {}
+
+    def _runner(sandbox, cmd, **_kw):
+        seen.update(json.loads(Path(cmd[cmd.index("--config") + 1]).read_text(encoding="utf-8")))
+        return 0, "[]", ""
+
+    monkeypatch.setattr(tools_mod, "sandbox_run", _runner)
+    out = a11y(LocalBackend(workdir=tmp_path)).fn({"op": "check", "url": "https://example.com/"})
+
+    assert out == "no a11y issues", out
+    assert (seen["standard"], seen["ignore"], seen["timeout"]) == ("WCAG2AAA", ["notice"], 5000)
+    assert seen["runners"] == ["axe"]
+    assert "actions" not in seen and "executablePath" not in seen["chromeLaunchConfig"]
+    args = seen["chromeLaunchConfig"]["args"]
+    assert "--no-sandbox" in args and "--no-proxy-server" not in args
+    assert [a for a in args if a.startswith("--proxy-server=")] == [args[0]]
+    assert args[0].startswith("--proxy-server=socks5://127.0.0.1:")
 
 
 def test_check_is_refused_when_the_browser_cannot_be_limited(tmp_path, monkeypatch):

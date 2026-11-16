@@ -16219,7 +16219,7 @@
       "observed_mechanism_markers": {},
       "source_sites": [
         {
-          "line": 245,
+          "line": 289,
           "function": "_run_pa11y",
           "kind": "write_text",
           "expression": "config.write_text(json.dumps({...}), encoding='utf-8')"

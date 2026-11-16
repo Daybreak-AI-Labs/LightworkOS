@@ -230,6 +230,49 @@ def _confine_path(sandbox, user_path: str) -> str:
     return str(candidate)
 
 
+# Settings carried over from the workspace's own ``pa11y.json`` when pa11y is
+# given the private config: what to check and how to report it. Nothing that
+# chooses the browser, its network, its requests or a file to write.
+_PA11Y_KEYS = (
+    "standard", "ignore", "timeout", "wait", "hideElements", "rootElement",
+    "includeNotices", "includeWarnings", "level", "threshold", "rules",
+    "viewport", "userAgent",
+)
+_PA11Y_RUNNERS = frozenset({"axe", "htmlcs"})  # other names load code by path
+# Browser switches a project may need (running as root, small /dev/shm).
+_PA11Y_CHROME_ARGS = frozenset({
+    "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu",
+})
+
+
+def _project_pa11y_settings(sandbox) -> tuple[dict[str, Any], list[str]]:
+    """``(settings, browser switches)`` kept from the workspace's ``pa11y.json``.
+
+    pa11y reads that file only when it is given no other config, so with the
+    private config it would be ignored without notice."""
+    root = Path(sandbox.workdir) if sandbox is not None else Path.cwd()
+    path = root / "pa11y.json"
+    try:
+        if not path.is_file() or path.stat().st_size > 64 * 1024:
+            return {}, []
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        log.warning("a11y: the workspace's pa11y.json was not used (%s)", type(e).__name__)
+        return {}, []
+    if not isinstance(raw, dict):
+        return {}, []
+    kept = {key: raw[key] for key in _PA11Y_KEYS if key in raw}
+    runners = raw.get("runners")
+    if isinstance(runners, list):
+        kept["runners"] = [name for name in runners
+                           if isinstance(name, str) and name in _PA11Y_RUNNERS]
+    launch = raw.get("chromeLaunchConfig")
+    args = launch.get("args") if isinstance(launch, dict) else None
+    if not isinstance(args, list):
+        return kept, []
+    return kept, [arg for arg in args if isinstance(arg, str) and arg in _PA11Y_CHROME_ARGS]
+
+
 def _run_pa11y(target: str, sandbox, *, proxy: str | None = None) -> tuple[int, str, str]:
     from . import sandbox_run
     # `--` ends option parsing so a target beginning with `-` is treated
@@ -242,10 +285,12 @@ def _run_pa11y(target: str, sandbox, *, proxy: str | None = None) -> tuple[int, 
             # host folder is readable by it and out of the workspace's reach.
             staged = cleanup.enter_context(tempfile.TemporaryDirectory(prefix="maverick-a11y-"))
             config = Path(staged) / "pa11y.json"
-            config.write_text(json.dumps({"chromeLaunchConfig": {
+            settings, switches = _project_pa11y_settings(sandbox)
+            config.write_text(json.dumps({**settings, "chromeLaunchConfig": {
                 "ignoreHTTPSErrors": True,  # pa11y's own default
                 "args": [f"--proxy-server={proxy}", *(f"--{s}" for s in _PROXY_SWITCHES),
-                         "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1"],
+                         "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1",
+                         *switches],
             }}), encoding="utf-8")
             options += ["--config", str(config)]
         code, out, err = sandbox_run(sandbox, [*options, "--", target], timeout=120)
@@ -325,8 +370,7 @@ def _op_check(target: str, runner: str, max_issues: int, sandbox, *, url: bool =
             if url and proxy:
                 from urllib.parse import urlparse
                 if urlparse(target).port not in (None, 80, 443):
-                    return ("ERROR: a11y checks public sites on ports 80 and 443 only. "
-                            "Set MAVERICK_FETCH_ALLOW_PRIVATE=1 to check another port.")
+                    return "ERROR: this check supports only ports 80 and 443."
             elif url:
                 # No proxy pins the connection: pin the host to a validated
                 # public IP so the headless browser cannot re-resolve/rebind

@@ -497,7 +497,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reaches public sites on ports 80 and 443 only. A container sandbox with
   network access is refused: use the local sandbox, or turn the sandbox's
   network off to check local files. `MAVERICK_FETCH_ALLOW_PRIVATE=1` keeps
-  the previous behaviour for local development servers.
+  the previous behaviour for local development servers. With the proxy, a
+  workspace `pa11y.json` is honoured for `standard`, `ignore`, `timeout`,
+  `wait`, `hideElements`, `rootElement`, `includeNotices`, `includeWarnings`,
+  `level`, `threshold`, `rules`, `viewport`, `userAgent`, the `axe` and
+  `htmlcs` runners, and the browser switches `--no-sandbox`,
+  `--disable-setuid-sandbox`, `--disable-dev-shm-usage` and `--disable-gpu`;
+  `actions`, `headers` and other browser settings are not used.
 - Outbound webhooks now read only the first 4 KiB of a receiver's reply, so
   a very large reply no longer fills memory. The delivery log still shows
   the first 200 characters. Nothing to do.
