@@ -3827,6 +3827,23 @@ class WorldModel:
         )
         return _approvals_from_rows(rows)
 
+    def list_approvals_for_owner(self, owner: str, limit: int = 500) -> list[Approval]:
+        """Approvals one person requested, claimed or decided, newest first.
+
+        An empty ``owner`` selects approvals nobody requested. The person
+        filter runs in SQL, before ``limit``, so other people's newer rows
+        cannot push this person's older ones out of the result."""
+        if owner:
+            where, params = "? IN (requested_by, claimed_by, decided_by)", (owner,)
+        else:
+            where, params = "(requested_by IS NULL OR requested_by = '')", ()
+        rows = self._read_all(
+            f"SELECT * FROM approvals WHERE {where} "
+            "ORDER BY requested_at DESC, id DESC LIMIT ?",
+            (*params, max(1, int(limit))),
+        )
+        return _approvals_from_rows(rows)
+
     def approvals_requested_between(self, since: float, until: float) -> list[Approval]:
         """Approvals with ``since <= requested_at <= until``, in the order
         :meth:`list_approvals` returns them. The window is applied in SQL, so

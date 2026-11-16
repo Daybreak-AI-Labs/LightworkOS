@@ -476,6 +476,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   value is ignored, logged, listed by `maverick doctor` and shown in Settings
   or on the agent page as "Set by your organisation"; the file still loads.
   Remove the looser values from the file to clear the warning.
+- A person's Operating Record now reads that person's approvals from the
+  store directly, so older approvals no longer drop out when other people
+  have thousands of newer ones. Nothing to do; totals for one person can rise.
 
 ### Fixed
 
