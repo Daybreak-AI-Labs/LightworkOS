@@ -35,13 +35,6 @@ def _identity_options(func):
     )(bound_identity)
 
 
-def _to_dict(value: Any) -> Any:
-    if value is None:
-        return None
-    method = getattr(value, "to_dict", None)
-    return method() if callable(method) else value
-
-
 def _emit_json(value: Any) -> None:
     click.echo(json.dumps(value, sort_keys=True, indent=2))
 

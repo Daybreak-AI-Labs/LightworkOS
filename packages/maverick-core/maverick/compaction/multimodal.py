@@ -143,10 +143,6 @@ def _stub_for_block_steps(block: dict, llm=None, budget=None):
     return {"type": "text", "text": text}
 
 
-def _compact_block_list(blocks: list, llm, budget=None) -> tuple[list, bool]:
-    """Synchronous entry for the shared compaction algorithm."""
-    return run_sync(_compact_block_list_steps(blocks, llm, budget))
-
 def _compact_block_list_steps(blocks: list, llm, budget=None):
     """Replace media blocks in a content list (recursing into tool_results)."""
     out: list = []

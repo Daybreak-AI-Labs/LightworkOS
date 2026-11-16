@@ -1354,7 +1354,7 @@ class HoldoutQueryLedger:
             raise HoldoutLedgerTampered("holdout ledger id is invalid")
         return meta
 
-    def _read_state(self, conn: sqlite3.Connection) -> _State:  # noqa: C901
+    def _read_state(self, conn: sqlite3.Connection) -> _State:
         try:
             integrity = conn.execute("PRAGMA integrity_check(1)").fetchone()
         except sqlite3.Error as exc:

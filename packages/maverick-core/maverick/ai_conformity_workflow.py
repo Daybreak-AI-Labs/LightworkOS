@@ -445,15 +445,6 @@ def _blank_items(domain: str) -> dict[str, dict[str, Any]]:
     return {section: _blank_item() for section in CHECKLIST_SECTIONS[domain]}
 
 
-def _item_payload(value: Mapping[str, Any]) -> dict[str, Any]:
-    return {
-        "status": value.get("status"),
-        "evidence_bindings": value.get("evidence_bindings"),
-        "rationale_sha256": value.get("rationale_sha256"),
-        "citations": value.get("citations"),
-    }
-
-
 def _validate_citation_rows(value: object) -> list[dict[str, str]]:
     if not isinstance(value, list) or len(value) > _MAX_CITATIONS:
         raise ValueError("stored citations are malformed")
@@ -1209,7 +1200,7 @@ class EUAIConformityWorkflow:
         *,
         tenant_ref: str,
         current_asset: Mapping[str, Any],
-    ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:  # noqa: C901
+    ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
         references = self._validated_references(record, tenant_ref=tenant_ref)
         gaps: list[str] = []
         declaration = record["declaration"]

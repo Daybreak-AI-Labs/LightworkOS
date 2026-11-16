@@ -692,14 +692,6 @@ def _trust_entry(agent_id: str):
     return load_registry_strict().get(agent_id)
 
 
-def _managed_entry(agent_id: str) -> dict | None:
-    from .agent_trust import _load_managed
-    for entry in _load_managed():
-        if str(entry.get("id") or "") == agent_id:
-            return dict(entry)
-    return None
-
-
 def _overlay_from(agent) -> dict:
     """A managed-registry entry equivalent to a parsed ``TrustedAgent`` (used
     when the entry lives only in TOML: the overlay overrides it by id).

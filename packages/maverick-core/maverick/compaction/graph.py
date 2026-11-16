@@ -52,10 +52,6 @@ def _heuristic_triples(text: str) -> list[list[str]]:
         return []
 
 
-def _llm_triples(text: str, llm, budget=None) -> list[list[str]]:
-    """Synchronous entry for the shared compaction algorithm."""
-    return run_sync(_llm_triples_steps(text, llm, budget))
-
 def _llm_triples_steps(text: str, llm, budget=None):
     """Extra triples via the injected llm seam; [] on any failure."""
     if llm is None:

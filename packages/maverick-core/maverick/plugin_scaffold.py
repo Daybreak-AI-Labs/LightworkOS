@@ -237,10 +237,6 @@ from the dashboard's catalog tab.
 '''
 
 
-def _ascii_title(slug: str) -> str:
-    return " ".join(p.capitalize() for p in slug.replace("_", " ").replace("-", " ").split())
-
-
 def _factory_call(kind: str) -> str:
     return "()" if kind in ("tool", "persona") else "(handler=lambda msg: None)"
 

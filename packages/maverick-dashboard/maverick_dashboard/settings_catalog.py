@@ -2948,7 +2948,7 @@ _RISK_RANK = {"low": 0, "medium": 1, "high": 2}
 MAX_TABLE_ROWS = 64
 
 
-def _coerce_table(setting: Setting, value: object) -> dict:  # noqa: C901 - one branch per row kind
+def _coerce_table(setting: Setting, value: object) -> dict:  # one branch per row kind
     label = setting.label
     if value is None or value == "":
         return {}

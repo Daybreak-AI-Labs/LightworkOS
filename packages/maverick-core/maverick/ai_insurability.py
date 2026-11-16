@@ -434,7 +434,7 @@ def _normalize_summary(value: object, label: str, *, findings: bool) -> dict[str
     return result
 
 
-def _normalize_content(value: object) -> dict[str, Any]:  # noqa: C901
+def _normalize_content(value: object) -> dict[str, Any]:
     content = _closed(value, _CONTENT_FIELDS, "profile content")
 
     governance = _closed(

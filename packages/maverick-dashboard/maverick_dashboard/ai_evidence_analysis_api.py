@@ -368,7 +368,7 @@ def _adapter_out(authority: Any) -> dict[str, object]:
     }
 
 
-def _record_out(record: Any) -> dict[str, object]:  # noqa: C901 - closed projection
+def _record_out(record: Any) -> dict[str, object]:  # closed projection
     """Project a core record without tenant/actor identities or raw material."""
 
     artifact = record.artifact

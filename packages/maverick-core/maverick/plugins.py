@@ -433,28 +433,6 @@ def _ep_module_name(ep) -> str:
     return module
 
 
-def _ep_module_file(ep):
-    """On-disk path of the entry point's module WITHOUT importing it."""
-    from pathlib import Path
-    module = _ep_module_name(ep)
-    dist = getattr(ep, "dist", None)
-    if not module or dist is None:
-        return None
-    rel = module.replace(".", "/")
-    candidates = {rel + ".py", rel + "/__init__.py"}
-    try:
-        files = list(dist.files or [])
-    except Exception:
-        return None
-    for f in files:
-        if str(f).replace("\\", "/") in candidates:
-            try:
-                return Path(dist.locate_file(f))
-            except Exception:
-                return None
-    return None
-
-
 # Non-source distribution files that still execute (or steer execution) once
 # the package is importable: native extensions, byte-compiled code, and .pth
 # startup hooks. Hashing only ``.py`` left these OUTSIDE the signature, so a

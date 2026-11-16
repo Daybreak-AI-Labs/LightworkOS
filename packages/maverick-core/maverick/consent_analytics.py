@@ -293,7 +293,7 @@ class ConsentAnalytics:
             raise ConsentAnalyticsUnavailable("stored analytics dimension is invalid")
         return value
 
-    def snapshot(  # noqa: C901
+    def snapshot(
         self,
         tenant_id: str,
         start_at: float,

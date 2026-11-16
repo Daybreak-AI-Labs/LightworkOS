@@ -56,13 +56,6 @@ def _inside_workspace(root: Path, candidate: Path) -> bool:
         return False
 
 
-def clear_repo_map_cache() -> None:
-    """Invalidate the repo_map cache. Called by the harness between
-    instances when the workdir is reset to a different commit."""
-    with _CACHE_LOCK:
-        _CACHE.clear()
-
-
 def _detect_languages(root: Path) -> list[str]:
     markers = {
         "Python (pyproject)": "pyproject.toml",

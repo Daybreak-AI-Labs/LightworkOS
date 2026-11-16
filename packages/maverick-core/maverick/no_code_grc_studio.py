@@ -2813,7 +2813,7 @@ class GRCStudioStore:
         }
         return {**body, "result_sha256": _sha256(body)}
 
-    def verify_integrity(self, tenant_id: str) -> dict[str, object]:  # noqa: C901
+    def verify_integrity(self, tenant_id: str) -> dict[str, object]:
         """Verify versions, active pointers, history, operations, tombstones and audit chain."""
 
         self._gate()
