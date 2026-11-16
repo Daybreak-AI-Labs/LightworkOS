@@ -731,6 +731,7 @@ def flow_run_values_endpoint(
     """Read bounded pages from the owner's complete, verified native checkpoint."""
     from maverick.authority_effects import authority_effect_fence
     from maverick.flow import store
+    from maverick.flow.execution_trace import trace_key
     from maverick.flow.payloads import FlowPayloadError
 
     from .auth import fresh_configuration
@@ -762,7 +763,7 @@ def flow_run_values_endpoint(
                                     and definition.id == run.flow_id
                                     and definition.is_single_agent()
                                     and any(node.kind == "agent" and node.output == sorted(run.data)[path[0]]
-                                            and (run.nodes.get(node.id) or {}).get("status") == "done"
+                                            and (run.nodes.get(trace_key(node.id)) or {}).get("status") == "done"
                                             for node in definition.nodes.values()))
             if _flow_value_version(_load_owned_run(request, run_id)) != current_version:
                 raise HTTPException(409, "The saved values changed. Reload the run information.")
@@ -1963,6 +1964,7 @@ def flow_signals_endpoint(request: Request, flow_id: str) -> dict:
     require_permission(request, "operate")
     _require_flows()
     from maverick.flow import execution, node_outcomes, store
+    from maverick.flow.execution_trace import trace_node, trace_path
 
     f = store.load_flow(flow_id)
     if f is None:
@@ -1974,12 +1976,14 @@ def flow_signals_endpoint(request: Request, flow_id: str) -> dict:
     for nid, s in stats.items():
         if nid == execution.TRIGGER_NODE:
             continue
-        node = f.nodes.get(nid)
+        # A key is a step's path: a top-level id, or container/step for a
+        # nested one. The label is the step's own, else the id it ends in.
+        node = trace_node(f, nid)
         nodes[nid] = {
             "n": s["n"],
             "mean": s["mean"],
             "kind": s.get("kind"),
-            "label": (node.label if node else "") or nid,
+            "label": (node.label if node else "") or trace_path(nid)[-1],
         }
     return {
         "nodes": nodes,

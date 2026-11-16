@@ -519,7 +519,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A flow run records a step inside a loop, a parallel lane, a try block or
   a subflow under its container, for example `loop1/n0` or `fanout/1/n0`.
   It no longer shows as, or counts towards, the top-level step with the same
-  id. Outcomes recorded earlier keep their old ids.
+  id. Inside one step id, `/` is recorded as `~s` and `~` as `~~`, so a step
+  whose own id contains a slash is never read as a nested one. Outcomes
+  recorded earlier keep their old ids; for a top-level id that contains `/`
+  or `~`, earlier outcomes are no longer counted for that step.
 - The task health check (`maverick diag health` and the task page) no longer
   scores a queued, running or paused (blocked) task as a failure (40, grade
   F). It says the task has no score yet; a paused task says it is waiting

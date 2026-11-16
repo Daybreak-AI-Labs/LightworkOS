@@ -563,7 +563,7 @@ test("a step inside a loop or a parallel path shows its own last-run result", ()
     FDPresentation: require("../../maverick_dashboard/templates/flow_designer_presentation.js"),
     BODY_KINDS: { foreach: "Steps repeated for each item" },
     stack: [], crumbs: ["Main flow"], selected: null, runCursor: "a",
-    runState: { "each/a": { outcome: 1 }, "fan/1/a": { outcome: 0 } },
+    runState: { "each/a": { outcome: 1 }, "fan/1/a": { outcome: 0 }, "each~sa": { status: "true" } },
     signals: { nodes: { "each/a": { n: 3, mean: 1 } } },
     flow: { nodes: [{ id: "a", kind: "agent" }, { id: "each", kind: "foreach", body },
       { id: "fan", kind: "parallel", branches: lanes }] },
@@ -578,6 +578,8 @@ test("a step inside a loop or a parallel path shows its own last-run result", ()
   }
   const root = context.flow;
   assert.equal(context.runBadge("a"), "⏳");                  // the top-level step is where the run waits
+  // A top-level step whose id contains the separator has its own key.
+  assert.equal(context.runBadge("each/a"), "✓");
   context.enterSub(root.nodes[1], "foreach");
   assert.equal(context.runBadge("a"), "🟢");
   assert.equal(context.runClass("a"), " run-ok");

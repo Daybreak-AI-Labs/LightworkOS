@@ -403,6 +403,29 @@ def test_signals_surfaces_approval_and_trigger_stats(monkeypatch, tmp_path):
     assert execution.TRIGGER_NODE not in body["nodes"]
 
 
+def test_signals_label_a_nested_step_and_a_top_level_id_with_a_slash(monkeypatch, tmp_path):
+    # A statistics key is a step's path. "loop~sa" is the top-level step named
+    # "loop/a"; "loop/a" is the step "a" inside the loop.
+    _isolate(monkeypatch, tmp_path)
+    c = _client()
+    saved = c.post("/api/v1/flows", json={"flow": {
+        "id": "n", "name": "N", "start": "loop/a",
+        "nodes": [{"id": "loop/a", "kind": "agent", "brief": "x", "label": "Outer", "next": "loop"},
+                  {"id": "loop", "kind": "foreach", "items": "rows", "var": "item", "label": "Each row",
+                   "body": {"id": "b", "name": "b", "start": "a", "nodes": [
+                       {"id": "a", "kind": "agent", "brief": "y", "label": "Inner"}]}}]}})
+    assert saved.status_code == 201, saved.text
+    from maverick.flow import node_outcomes
+    from maverick.flow.execution_trace import trace_key
+    node_outcomes.record("n", trace_key("loop/a"), "agent", 1.0)
+    node_outcomes.record("n", "loop/a", "agent", 0.0)
+    node_outcomes.record("n", "loop/gone", "agent", 0.0)        # a step since removed
+    nodes = c.get("/api/v1/flows/n/signals").json()["nodes"]
+    assert nodes["loop~sa"]["label"] == "Outer" and nodes["loop~sa"]["mean"] == 1.0
+    assert nodes["loop/a"]["label"] == "Inner" and nodes["loop/a"]["mean"] == 0.0
+    assert nodes["loop/gone"]["label"] == "gone"
+
+
 def test_signals_unknown_flow_is_404(monkeypatch, tmp_path):
     _isolate(monkeypatch, tmp_path)
     assert _client().get("/api/v1/flows/ghost/signals").status_code == 404

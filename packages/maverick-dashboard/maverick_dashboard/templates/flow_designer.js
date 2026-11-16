@@ -277,7 +277,9 @@
   function ports(node) { return FDPresentation.ports(node, W); }
   // A run records a nested step under its container ("each/a", "fan/1/a"), so
   // the open canvas reads results by the path the person drilled in through.
-  function traceId(id) { return stack.map(function (frame) { return frame.trace; }).join('') + id; }
+  function traceId(id) {
+    return stack.map(function (frame) { return frame.trace; }).join('') + FDPresentation.traceKey(id);
+  }
   function runClass(id) { return FDPresentation.runClass(traceId(id), runCursor, runState); }
   function runBadge(id) { return FDPresentation.runBadge(traceId(id), runCursor, runState); }
 
@@ -606,7 +608,7 @@
     }
     normalizeFlow(sub);
     stack.push({ flow: flow, selected: selected,
-      trace: node.id + '/' + (BODY_KINDS[kind] ? '' : index + '/') });
+      trace: FDPresentation.traceKey(node.id) + '/' + (BODY_KINDS[kind] ? '' : index + '/') });
     crumbs.push(label);
     flow = sub; selected = null;
     if (window.__fdShowCanvas) window.__fdShowCanvas();
@@ -1746,7 +1748,9 @@
     // Paint one run snapshot onto the canvas; returns true when the run has
     // reached a state that needs no further watching.
     runState = run.nodes || {};
-    runCursor = (['paused_approval', 'paused_delay', 'paused_event'].indexOf(run.status) >= 0) ? run.cursor : null;
+    // A run pauses on a top-level step; keep its key so it compares with traceId().
+    runCursor = (['paused_approval', 'paused_delay', 'paused_event'].indexOf(run.status) >= 0 && run.cursor)
+      ? FDPresentation.traceKey(run.cursor) : null;
     render(); if (selected) renderProps();
     if (run.status === 'paused_approval') { sayWithRunLink('⏸ Waiting for someone to approve —', runId); return true; }
     if (run.status === 'paused_event') { sayWithRunLink('📥 Waiting for a signal from another app —', runId); return true; }

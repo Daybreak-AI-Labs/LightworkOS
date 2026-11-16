@@ -233,10 +233,14 @@
     });
   }
 
-  function badgeFor(run, id) {
+  // The key a run records a top-level step under: "~" and "/" inside the id
+  // are escaped ("~~", "~s"), so it never reads as a step nested in another.
+  function traceKey(id) { return String(id).replace(/~/g, '~~').replace(/\//g, '~s'); }
+
+  function badgeFor(run, id, key) {
     if (run.cursor === id && ['paused_approval', 'paused_delay', 'paused_event'].indexOf(run.status) >= 0) return '⏳';
     if (run.cursor === id && run.status === 'failed') return '🔴';
-    var rs = (run.nodes || {})[id];
+    var rs = (run.nodes || {})[key];
     if (!rs) return '·';
     if (rs.outcome === 1) return '🟢';
     if (rs.outcome === 0) return '🔴';
@@ -248,14 +252,16 @@
   function renderSteps(run) {
     var ul = document.getElementById('fr-steps');
     ul.textContent = '';
-    var list = flowNodes || Object.keys(run.nodes || {}).map(function (id) { return { id: id, kind: '', label: '' }; });
+    // Without the flow's steps, list what the run recorded: those are keys already.
+    var list = flowNodes || Object.keys(run.nodes || {}).map(function (id) { return { id: id, key: id, kind: '', label: '' }; });
     list.forEach(function (n) {
       var li = document.createElement('li');
       li.className = 'fr__step' + (run.cursor === n.id ? ' cursor' : '');
-      var rs = (run.nodes || {})[n.id] || {};
+      var key = n.key || traceKey(n.id);
+      var rs = (run.nodes || {})[key] || {};
       li.innerHTML = '';
       function span(cls, text) { var s = document.createElement('span'); s.className = cls; s.textContent = text; return s; }
-      li.appendChild(span('badge', badgeFor(run, n.id)));
+      li.appendChild(span('badge', badgeFor(run, n.id, key)));
       li.appendChild(span('kind', (KIND_ICON[n.kind] || '') + ' ' + (KIND_LABEL[n.kind] || human(n.kind || 'Step'))));
       li.appendChild(span('lbl', n.label || ''));
       var st;
