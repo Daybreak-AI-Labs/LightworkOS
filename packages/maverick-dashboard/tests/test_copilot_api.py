@@ -86,11 +86,21 @@ def test_live_code_checks_say_what_was_not_checked_under_admin_access(client, mo
              "head": "b" * 40, "isolation": "namespace",
              "tests": {"command": "t", "passed": True, "commit": "b" * 40},
              "check": {"state": "ran", "runs": 1, "commit": "b" * 40, "findings": []}}
+    # Two checkers of the author's own kind; Lightwork confirmed one finding itself.
+    twin = {"id": "2123456789abcdef", "repo": "billing", "title": "Twin check",  # pragma: allowlist secret
+            "head": "c" * 40, "isolation": "container",
+            "tests": {"command": "t", "passed": True, "commit": "c" * 40},
+            "check": {"state": "ran", "runs": 1, "commit": "c" * 40,
+                      "checkers": [{"n": 1, "model": "m1", "same_family": True},
+                                   {"n": 2, "model": "m2", "same_family": True}],
+                      "findings": [{"id": "1.1", "severity": "minor", "status": "not attempted",
+                                    "what": "w", "evidence": "ran",
+                                    "repro_state": "confirmed"}]}}
     merged = dict(pending, id="fedcba9876543210", title="Old change")  # pragma: allowlist secret
     monkeypatch.setattr(api, "_copilot_model_route_status", lambda: pytest.fail("live records went to the provider route"))
     monkeypatch.setattr(dashboard_app, "_world", lambda: object())
     monkeypatch.setattr(vault, "enabled", lambda: True)
-    monkeypatch.setattr(features, "list_proposals", lambda: [pending, clean, merged])
+    monkeypatch.setattr(features, "list_proposals", lambda: [pending, clean, twin, merged])
     monkeypatch.setattr(features, "status", lambda _world, p: "merged" if p is merged else "pending")
     allowed = {"admin": True}
     monkeypatch.setattr(live.auth, "has_permission", lambda _request, permission: allowed[permission])
@@ -101,6 +111,8 @@ def test_live_code_checks_say_what_was_not_checked_under_admin_access(client, mo
     assert "Nobody independently tried to break this change" in result["reply"]
     assert features.NAMESPACE_GAP in result["reply"]
     assert "left no blocking problem open" not in result["reply"]
+    assert features.SAME_FAMILY_GAP in result["reply"]
+    assert "Lightwork re-ran 1 finding(s) itself and confirmed 1." in result["reply"]
     assert result["action_link"]["href"] == "/code"
     allowed["admin"] = False                     # the review panel needs an administrator
     refused = client.post("/api/v1/copilot", json=ask).json()

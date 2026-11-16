@@ -502,11 +502,33 @@ def _pick_codebase(advanced: dict[str, Any]) -> None:
         advanced["codebase_check_rounds"] = max(1, min(3, _safe_int(_q_text(
             "    How many times may it look? (1-3; a second look confirms fixes)",
             default="2"), default=2)))
+        _pick_codebase_checkers(advanced)
     advanced["codebase_require_container"] = _q_confirm(
         "    Refuse to build a change unless its steps run in a container? Without one, "
         "the tests, the checker and the agent share this computer.",
         default=False,
     )
+
+
+def _pick_codebase_checkers(advanced: dict[str, Any]) -> None:
+    """How many independent checkers, their models, where they run, and how
+    many of their findings Lightwork re-runs itself to confirm."""
+    advanced["codebase_checkers"] = max(1, min(3, _safe_int(_q_text(
+        "    How many separate checkers should look at each version? (1-3; none sees "
+        "another's findings; each is one more agent run per look)", default="1"), default=1)))
+    models = _csv_list(_q_text(
+        "    Models for the checkers, one per checker, comma-separated (blank = the reviewer "
+        "model, or a different kind of model when it matches the author's)", default=""))
+    if models:
+        advanced["codebase_checker_models"] = models[:3]
+    image = str(_q_text(
+        "    Container image for checks, with a database and a browser (blank = the "
+        "protected work area; see deploy/checker)", default="") or "").strip()
+    if image and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/:@-]{0,254}", image):
+        advanced["codebase_checker_image"] = image
+    advanced["codebase_max_repros"] = max(0, min(20, _safe_int(_q_text(
+        "    How many findings per look should Lightwork re-run itself to confirm? (0-20)",
+        default="5"), default=5)))
 
 
 def _pick_ifc(advanced: dict[str, Any]) -> None:
@@ -3290,6 +3312,16 @@ def _cfg_advanced_memory_and_immune(advanced: dict[str, Any]) -> list[str]:
         lines.append(f"repair_rounds = {int(advanced.get('codebase_repair_rounds', 2))}")
         lines.append(f"checker = {'true' if advanced.get('codebase_checker', True) else 'false'}")
         lines.append(f"check_rounds = {int(advanced.get('codebase_check_rounds', 2))}")
+        lines.append("# Independent checkers that never see each other's findings; Lightwork")
+        lines.append("# re-runs up to max_repros of their findings per look to confirm them.")
+        lines.append(f"checkers = {int(advanced.get('codebase_checkers', 1))}")
+        lines.append(f"max_repros = {int(advanced.get('codebase_max_repros', 5))}")
+        if advanced.get("codebase_checker_models"):
+            lines.append("checker_models = ["
+                         + ", ".join(_toml_str(m) for m in advanced["codebase_checker_models"])
+                         + "]")
+        if advanced.get("codebase_checker_image"):
+            lines.append(f"checker_image = {_toml_str(advanced['codebase_checker_image'])}")
         if advanced.get("codebase_require_container"):
             lines.append("require_container = true")
     if advanced.get("ifc_mode"):
