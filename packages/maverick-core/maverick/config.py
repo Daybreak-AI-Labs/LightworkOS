@@ -482,8 +482,8 @@ _UNOPENED = object()
 
 # Ends the error recorded for a dashboard overlay that was only partly opened.
 # ``operator_preflight`` (``maverick doctor``, Installation health) repeats it.
-DASHBOARD_ON_HOLD = ("Permissions and looser limits chosen in Settings are on hold until this "
-                     "file can be read; stricter choices still apply.")
+DASHBOARD_ON_HOLD = ("Settings made in the dashboard are on hold until this file can be opened, "
+                     "except stricter safety choices, which stay in force.")
 
 
 def _open_leaves(value: object) -> object:
@@ -507,65 +507,27 @@ def _open_leaves(value: object) -> object:
     return value
 
 
-def _readable_overlay_sections(tree: dict) -> tuple[dict, list[str]]:
-    """What is left of a dashboard overlay that cannot be opened whole, and
-    the names of the top-level sections left out.
+def _stricter_policy_only(tree: dict) -> dict:
+    """What still applies from a dashboard overlay that cannot be opened whole.
 
-    A policy section (governance, safety, capabilities, sandbox, security)
-    loses only the values that cannot be opened, so its plain choices such as
-    ``profile = "strict"`` stay; :func:`_hold_overlay_grants` then decides
-    which of them apply. Any other section is all or nothing: its other values
-    belong to the secret that failed (a provider's address to its key, a
-    channel's switch to its token), so keeping them would pair them with
-    values from another source. Reset markers for a dropped section and for
-    every policy section go too, so the settings file underneath is what the
-    remaining values are compared with.
-    """
-    from .config_resets import METADATA
-    from .policy_tighten import TENANT_RULES
-
-    kept: dict = {}
-    dropped: list[str] = []
-    for name, value in tree.items():
-        if name in TENANT_RULES and isinstance(value, dict):
-            kept[name] = _open_leaves(value)
-            continue
-        try:
-            kept[name] = _unseal_config_tree(value)
-        except Exception:
-            dropped.append(name)
-    resets = kept.get(METADATA)
-    if isinstance(resets, dict):
-        kept[METADATA] = {
-            identifier: spec for identifier, spec in resets.items()
-            if not (isinstance(spec, dict) and isinstance(spec.get("path"), list)
-                    and spec["path"][:1] and (spec["path"][0] in dropped or spec["path"][0] in TENANT_RULES))
-        }
-    return kept, dropped
-
-
-def _hold_overlay_grants(overlay: dict) -> dict:
-    """A partly opened dashboard overlay, limited to what is at least as
-    strict as the settings file underneath.
-
-    While part of the overlay cannot be read, the choices that were meant to
-    go together may be incomplete (a permission without the sandbox or safety
-    setting that contains it). So each policy value applies only where the
-    tenant rule would let it: a stricter value still applies, a looser one or
-    a permission waits until the file can be read again. Other sections are
-    not policy and pass through.
+    Nothing outside the policy sections (governance, safety, capabilities,
+    sandbox, security): a raised spending cap or a switched-on feature from a
+    file that cannot be fully read does not apply, as when the whole file was
+    ignored. A policy section loses the values that cannot be opened, and each
+    remaining value applies only where the tenant rule would let it over the
+    settings file underneath: a stricter value such as ``profile = "strict"``
+    stays in force, a permission or a looser limit waits until the file can be
+    read again. Reset markers wait too, so the file underneath is unchanged.
     """
     from .policy_tighten import TENANT_RULES, merge_tenant_section
 
     under = _load_config_file(config_path())
-    held = dict(overlay)
+    held: dict = {}
     for name in TENANT_RULES:
-        if name not in overlay:
-            continue
-        section, base = overlay[name], under.get(name, {})
+        section, base = tree.get(name), under.get(name, {})
         if not isinstance(section, dict) or not isinstance(base, dict):
-            del held[name]
             continue
+        section = _open_leaves(section)
         merged, _ignored, _fixed = merge_tenant_section(name, base, section, _deep_merge_config)
         held[name] = {key: merged[key] for key in section if key in merged}
     return held
@@ -609,24 +571,20 @@ def _load_config_file(path: Path, *, interpolate: bool = True) -> dict:
             # sealed under the old key) must NOT crash every config read.
             # Fail soft like a corrupt-TOML source: record the error so
             # config_source_errors() surfaces it (health goes red and security
-            # callers fail closed), and ignore what cannot be opened so that
-            # falls back to base/env config instead of load_config() raising
-            # process-wide. Of the rest, a policy value applies only where it
-            # is at least as strict as the settings file underneath: dropping
-            # the whole overlay put every limit it had tightened back, and
-            # keeping all of it left permissions on without the sandbox and
-            # safety choices saved with them.
+            # callers fail closed), and put the overlay on hold instead of
+            # load_config() raising process-wide. Only its stricter policy
+            # values stay in force: dropping those too put every limit the
+            # dashboard had tightened back to the installer's value.
             with _toml_lock:
                 _record_source_error(
                     key, f"{type(exc).__name__}: {exc}. {DASHBOARD_ON_HOLD}", _unseal_errors)
-            unsealed, dropped = _readable_overlay_sections(loaded)
-            unsealed = _hold_overlay_grants(unsealed)
+            unsealed = _stricter_policy_only(loaded)
             partial = True
             logging.getLogger(__name__).warning(
-                "dashboard overlay %s could not be decrypted; ignoring its "
-                "section(s) %s and holding the permissions and looser limits it "
-                "sets (rotate keys / re-save those settings to restore): %s",
-                path, ", ".join(sorted(dropped)) or "(none)", exc,
+                "dashboard overlay %s could not be decrypted; its settings are on "
+                "hold, except stricter safety choices (rotate keys / re-save the "
+                "unreadable settings to restore): %s",
+                path, exc,
             )
         try:
             from .config_resets import _specs

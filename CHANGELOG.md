@@ -489,12 +489,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   run and the next run was not queued. Before, the schedule stayed active
   but never ran again. Review the paused schedule, then resume it.
 - When a saved secret in the dashboard's settings cannot be opened, the
-  stricter choices made in Settings still apply. Before, every dashboard
-  setting was ignored, which put back limits you had tightened there.
-  Permissions and looser limits chosen in Settings are on hold until the
-  file can be read, and a group of sign-in details with an unreadable secret
-  is ignored. Health and `maverick doctor` say so. Save that secret again,
-  or restore the key, to clear the warning.
+  settings made in the dashboard are on hold until the file can be opened,
+  except stricter safety choices, which stay in force. Before, those were
+  ignored too, which put back limits you had tightened there. Health and
+  `maverick doctor` say so. Save that secret again, or restore the key, to
+  clear the warning.
 - Automations that watch new Salesforce records or ServiceNow tickets now
   work on lists with more than 5,000 items: each check reads the newest
   5,000. In such a list, a record saved with an earlier creation date is

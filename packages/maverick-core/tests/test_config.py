@@ -860,11 +860,7 @@ def test_a_failed_key_read_is_not_kept_for_the_rest_of_a_decision(config_home, m
     monkeypatch.setattr(crypto_at_rest, "_load_or_create_key", flaky)
     with config.single_read():
         keys = [config.load_config().get("providers", {}).get("anthropic", {}).get("api_key") for _ in range(3)]
-    # The read that met the failure tries each section once more, so it
-    # already has the key; it is not shared, so the next read opens the file
-    # again instead of reusing a read that saw an error.
-    assert keys == ["sk-test-not-a-real-key"] * 3  # pragma: allowlist secret
-    assert len(calls) == 3
+    assert keys == [None, "sk-test-not-a-real-key", "sk-test-not-a-real-key"]  # pragma: allowlist secret
 
 
 def test_a_gate_reads_the_current_files_even_inside_another_decision(config_home):

@@ -110,9 +110,10 @@ def test_corrupted_member_refuses_entire_overlay_and_next_read_can_recover(tmp_p
     assert str(overlay) not in config.config_source_errors()
 
 
-def test_unreadable_secret_drops_its_section_not_the_other_dashboard_settings(tmp_path):
+def test_unreadable_secret_keeps_the_limits_the_dashboard_tightened(tmp_path):
     """One credential that cannot be opened used to drop the whole dashboard
-    overlay, which put back every limit the dashboard had tightened."""
+    overlay, which put back every limit the dashboard had tightened. The
+    stricter limits stay; the rest of the file waits until it can be opened."""
     (tmp_path / "config.toml").write_text(
         '[capabilities]\ncode_exec = true\n[providers.openai]\napi_key = "installer-key"\n'  # pragma: allowlist secret
         '[webhooks]\noutbound = ["https://installer.example"]\n',
@@ -140,10 +141,10 @@ def test_unreadable_secret_drops_its_section_not_the_other_dashboard_settings(tm
     merged, ignored, _fixed = config._tighten_tenant(
         config.load_global_config(), {"capabilities": {"code_exec": True}})
     assert merged["capabilities"]["code_exec"] is False and ignored == ["capabilities.code_exec"]
-    assert loaded["channels"]["slack"]["bot_token"] == "authenticated-value"
-    # A section with an unreadable secret is ignored as a unit, with its reset
-    # marker: the installer's own values stay, and its key is never paired
+    # Everything else in the file is on hold, readable or not, with the reset
+    # markers: the installer's own values stay, and its key is never paired
     # with the dashboard's address.
+    assert "channels" not in loaded
     assert loaded["providers"]["openai"] == {"api_key": "installer-key"}  # pragma: allowlist secret
     assert loaded["webhooks"] == {"outbound": ["https://installer.example"]}
     assert str(overlay) in config.config_source_errors()  # still reported
@@ -155,6 +156,7 @@ def test_unreadable_secret_drops_its_section_not_the_other_dashboard_settings(tm
     assert config.load_config()["providers"]["openai"] == {
         "base_url": "https://proxy.example", "api_key": "authenticated-value"}  # pragma: allowlist secret
     assert "outbound" not in config.load_config()["webhooks"]
+    assert config.load_config()["channels"]["slack"]["bot_token"] == "authenticated-value"
     assert str(overlay) not in config.config_source_errors()
 
 
@@ -217,3 +219,33 @@ def test_one_damaged_secret_in_safety_keeps_its_stricter_plain_values(tmp_path):
     assert config.get_sandbox()["backend"] == "docker"  # the looser choice from Settings is on hold
     assert config.get_capabilities()["browser"] is False
     assert str(overlay) in config.config_source_errors()
+
+
+def test_a_raised_budget_cap_waits_until_the_dashboard_file_can_be_opened(tmp_path):
+    """A spending cap raised in Settings stayed in force from a file that could
+    not be fully read. Outside the policy sections nothing from such a file
+    applies, so the cap is the one in config.toml until the file opens again."""
+    (tmp_path / "config.toml").write_text(
+        '[budget]\nmax_dollars = 50.0\n[features]\nsavings = false\n', encoding="utf-8")
+    good = _seal("a-saved-secret")
+    blob = bytearray(base64.b64decode(good.partition(":")[2]))
+    blob[-1] ^= 1
+    damaged = "MVKAR1:" + base64.b64encode(blob).decode("ascii")
+    overlay = tmp_path / config.DASHBOARD_OVERRIDES_BASENAME
+    overlay.write_text(
+        '[budget]\nmax_dollars = 500.0\n[features]\nsavings = true\n[plugins]\nallow_install = true\n'
+        '[safety]\nprofile = "strict"\n'
+        f'[channels.slack]\nbot_token = "{damaged}"\n', encoding="utf-8")
+    config.reset_config_cache()
+
+    loaded = config.load_config()
+    assert loaded["budget"]["max_dollars"] == 50.0
+    assert loaded["features"] == {"savings": False} and "plugins" not in loaded and "channels" not in loaded
+    assert loaded["safety"] == {"profile": "strict"}  # a stricter safety choice stays in force
+    assert "on hold" in config.config_source_errors()[str(overlay)]
+
+    overlay.write_text(overlay.read_text(encoding="utf-8").replace(damaged, good), encoding="utf-8")
+    config.reset_config_cache()
+    loaded = config.load_config()
+    assert loaded["budget"]["max_dollars"] == 500.0 and loaded["features"] == {"savings": True}
+    assert str(overlay) not in config.config_source_errors()
