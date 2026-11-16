@@ -1427,7 +1427,7 @@ def base_registry(
     reg.register(gitlab())
     reg.register(embeddings())
     reg.register(error_patterns())
-    reg.register(huggingface())
+    reg.register(huggingface(budget=budget))
     reg.register(notify_tool())
     reg.register(diagnose())
     reg.register(differential_privacy())
@@ -1443,7 +1443,7 @@ def base_registry(
     _register_local_workspace_tool(
         reg, sandbox, lambda sb: spreadsheet(sb, goal_id=goal_id), has_local_workdir)
     _register_local_workspace_tool(reg, sandbox, spreadsheet_read, has_local_workdir)
-    reg.register(translate())
+    reg.register(translate(budget=budget))
     reg.register(slack_bot())
     reg.register(stripe_tool())
     from .sanctions_screen import sanctions_screen
@@ -1600,7 +1600,8 @@ def base_registry(
     reg.register(ai_act_classifier())
     reg.register(cache_admin())
     _register_local_workspace_tool(reg, sandbox, openapi_runner, has_local_workdir)
-    _register_local_workspace_tool(reg, sandbox, ocr, has_local_workdir)
+    _register_local_workspace_tool(
+        reg, sandbox, lambda sb: ocr(sb, budget=budget), has_local_workdir)
     _register_local_workspace_tool(reg, sandbox, container_build, has_local_workdir)
     from .catalog import ToolDescriptor, register_descriptors
 
@@ -1650,7 +1651,7 @@ def base_registry(
     # The long tail of token-authed REST connectors (one spec each, built on
     # make_rest_tool). Same house rules: explicit env auth, confirm-gated writes.
     from .enterprise_connectors import enterprise_connectors
-    for _conn in enterprise_connectors():
+    for _conn in enterprise_connectors(budget=budget):
         reg.register(_conn)
         # The long tail is deferred-eligible: with [capabilities]
         # deferred_tools on (the default), these schemas stay out of the
@@ -1686,7 +1687,7 @@ def base_registry(
     register_descriptors(reg, (
         ToolDescriptor("trello", trello_tool, True),
         ToolDescriptor("confluence", confluence_tool, True),
-        ToolDescriptor("replicate", replicate_tool, True),
+        ToolDescriptor("replicate", lambda: replicate_tool(budget=budget), True),
         ToolDescriptor("newsapi", newsapi_tool, True),
         ToolDescriptor("wolfram", wolfram_tool, True),
         ToolDescriptor("dropbox", dropbox_tool, True),
@@ -1709,7 +1710,8 @@ def base_registry(
         reg.register(hardware_sensors())
     _register_local_workspace_tool(reg, sandbox, imagemagick_tool, has_local_workdir)
     _register_local_workspace_tool(reg, sandbox, audio_understanding, has_local_workdir)
-    _register_local_workspace_tool(reg, sandbox, image_edit, has_local_workdir)
+    _register_local_workspace_tool(
+        reg, sandbox, lambda sb: image_edit(sb, budget=budget), has_local_workdir)
     _register_local_workspace_tool(reg, sandbox, embedded_device, has_local_workdir)
     register_descriptors(reg, (
         ToolDescriptor("ga4", ga4_tool, True),
@@ -1722,8 +1724,10 @@ def base_registry(
     # when called without the required API key OR SDK; registering is
     # cheap).
     from .voice import speak, transcribe_audio
-    _register_local_workspace_tool(reg, sandbox, transcribe_audio, has_local_workdir)
-    _register_local_workspace_tool(reg, sandbox, speak, has_local_workdir)
+    _register_local_workspace_tool(
+        reg, sandbox, lambda sb: transcribe_audio(sb, budget=budget), has_local_workdir)
+    _register_local_workspace_tool(
+        reg, sandbox, lambda sb: speak(sb, budget=budget), has_local_workdir)
 
     # Capability tools that live in the parent package (maverick/), not the
     # tools subpackage.
@@ -1778,6 +1782,7 @@ def base_registry(
 
     _register_optional_tools(
         reg, sandbox,
+        budget=budget,
         enable_web_search=enable_web_search,
         enable_computer_use=enable_computer_use,
         enable_browser=enable_browser,
@@ -1913,13 +1918,14 @@ def _register_optional_tools(
     reg: ToolRegistry,
     sandbox,
     *,
+    budget=None,
     enable_web_search: bool,
     enable_computer_use: bool,
     enable_browser: bool,
 ) -> None:
     if enable_web_search:
         from .web_search import web_search
-        reg.register(web_search())
+        reg.register(web_search(budget=budget))
 
     if enable_computer_use:
         from .computer import computer

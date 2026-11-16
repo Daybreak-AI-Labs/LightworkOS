@@ -547,3 +547,35 @@ def test_voice_speak_caps_text_length():
     from maverick.tools.voice import speak
     out = speak().fn({"text": "x" * 5000})
     assert "too long" in out
+
+
+def test_hosted_speech_from_the_tool_is_charged_per_character_and_needs_a_budget(monkeypatch, tmp_path):
+    # Kernel rule 3: ElevenLabs speech made by the speak tool is charged to the
+    # run at the [budget.tool_prices] per-character price. A speak tool with no
+    # run budget refuses before sending; the dashboard's own use (no run) is
+    # not charged.
+    import pytest
+    from maverick import config
+    from maverick.budget import Budget
+
+    _isolate(monkeypatch, tmp_path)
+    (tmp_path / "config.toml").write_text(
+        '[budget.tool_prices]\nelevenlabs = { dollars = 0.001, per = "character" }\n',
+        encoding="utf-8")
+    config.reset_config_cache()
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "k")
+    sent = []
+
+    def _post(url, **kw):
+        sent.append(kw["json"]["text"])
+        return SimpleNamespace(raise_for_status=lambda: None, content=b"mp3")
+
+    monkeypatch.setattr(voice_mod, "_governed_sender", lambda _send: _post)
+    sandbox = SimpleNamespace(workdir=str(tmp_path))
+    budget = Budget()
+    out = voice_mod.speak(sandbox, budget=budget).fn({"text": "hello there", "backend": "elevenlabs"})
+    assert out.startswith("wrote") and budget.dollars == pytest.approx(0.011)
+    out = voice_mod.speak(sandbox).fn({"text": "hello", "backend": "elevenlabs"})
+    assert out.startswith("ERROR") and "nothing was sent" in out and len(sent) == 1
+    assert voice_mod._tts_elevenlabs("unmetered", None, tmp_path / "d.mp3") and len(sent) == 2
+    assert budget.dollars == pytest.approx(0.011)

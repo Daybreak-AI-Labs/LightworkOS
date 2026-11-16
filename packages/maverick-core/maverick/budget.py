@@ -1043,6 +1043,147 @@ def record_tool_tokens(
     return charge
 
 
+# A paid tool call billed per request, page, character, image or second is
+# priced from [budget.tool_prices] (one entry per service: dollars per unit
+# and the unit). A service with no usable entry, or a call whose unit is not
+# known, is charged the per-call safety ceiling [budget]
+# unpriced_tool_call_dollars. No provider's price is written here.
+TOOL_PRICE_UNITS = ("request", "page", "character", "image", "second")
+DEFAULT_UNPRICED_TOOL_CALL_DOLLARS = 0.10
+_MAX_TOOL_UNIT_DOLLARS = 10_000.0
+_TOOL_PRICE_VERSION = "operator-tool-price-v1"
+_UNPRICED_TOOL_CEILING = "unpriced-tool-call-ceiling-v1"
+_TOOL_CEILING_WARNED: set[str] = set()
+
+# The paid tool services a [budget.tool_prices] entry prices, in plain words.
+# The pay-per-use connectors (tools.enterprise_connectors.PAID_CONNECTOR_NAMES)
+# are priced under their own names too.
+PAID_TOOL_SERVICES = {
+    "huggingface": "Hugging Face", "replicate": "Replicate", "deepl": "DeepL",
+    "libretranslate": "LibreTranslate on a public server",
+    "openai_whisper": "OpenAI speech-to-text", "groq_whisper": "Groq speech-to-text",
+    "openai_tts": "OpenAI text-to-speech", "elevenlabs": "ElevenLabs",
+    "tavily": "Tavily search", "brave": "Brave search", "serpapi": "SerpAPI search",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class ToolCallPrice:
+    """How one paid tool service is charged: ``unit`` is ``None`` when no
+    usable price is set, so every call takes the ``ceiling``."""
+
+    service: str
+    unit: str | None
+    dollars_per_unit: float
+    ceiling: float
+
+    def cost(self, units: dict[str, float] | None) -> tuple[float, bool]:
+        """``(dollars, priced)`` for a call measured in ``units``.
+
+        ``priced`` is false when the ceiling applied: no price is set, or the
+        call's amount of the priced unit is not known.
+        """
+        amount = (units or {}).get(self.unit) if self.unit else None
+        if amount is None:
+            return self.ceiling, False
+        return _nonnegative_finite(amount, "tool usage") * self.dollars_per_unit, True
+
+
+def _tool_ceiling(value: object) -> float:
+    """[budget] unpriced_tool_call_dollars: a number (or its text) above 0."""
+    if value is None:
+        return DEFAULT_UNPRICED_TOOL_CALL_DOLLARS
+    try:
+        amount = float(value.strip()) if isinstance(value, str) else (
+            float(value) if isinstance(value, (int, float)) and not isinstance(value, bool)
+            else math.nan)
+    except ValueError:
+        amount = math.nan
+    if math.isfinite(amount) and 0 < amount <= _MAX_TOOL_UNIT_DOLLARS:
+        return amount
+    log.warning("[budget] unpriced_tool_call_dollars must be a number above 0; "
+                "charging $%.2f per unpriced tool call", DEFAULT_UNPRICED_TOOL_CALL_DOLLARS)
+    return DEFAULT_UNPRICED_TOOL_CALL_DOLLARS
+
+
+def tool_price_entry(value: object) -> tuple[float, str] | None:
+    """``(dollars per unit, unit)`` from a [budget.tool_prices] entry, else None."""
+    if not isinstance(value, dict):
+        return None
+    dollars, unit = value.get("dollars"), value.get("per")
+    if (isinstance(dollars, bool) or not isinstance(dollars, (int, float))
+            or not math.isfinite(dollars) or not 0 <= dollars <= _MAX_TOOL_UNIT_DOLLARS
+            or unit not in TOOL_PRICE_UNITS):
+        return None
+    return float(dollars), str(unit)
+
+
+def tool_price_settings() -> tuple[dict[str, object], float]:
+    """The raw [budget.tool_prices] table and the per-call ceiling in force.
+
+    An unreadable configuration ignores every set price and charges the
+    default ceiling, the restrictive branch: a workspace's lower price must
+    not apply while its file cannot be checked.
+    """
+    try:
+        from .config import config_source_errors, get_budget_overrides
+
+        if config_source_errors(include_tenant=True):
+            return {}, DEFAULT_UNPRICED_TOOL_CALL_DOLLARS
+        section = get_budget_overrides() or {}
+    except Exception:
+        log.warning("tool prices are unreadable; charging the safety ceiling", exc_info=True)
+        return {}, DEFAULT_UNPRICED_TOOL_CALL_DOLLARS
+    if not isinstance(section, dict):
+        return {}, DEFAULT_UNPRICED_TOOL_CALL_DOLLARS
+    prices = section.get("tool_prices")
+    return ((prices if isinstance(prices, dict) else {}),
+            _tool_ceiling(section.get("unpriced_tool_call_dollars")))
+
+
+def tool_call_price(service: str) -> ToolCallPrice:
+    """The price for one paid call to ``service`` (a [budget.tool_prices] key)."""
+    prices, ceiling = tool_price_settings()
+    entry = tool_price_entry(prices.get(service))
+    if entry is not None:
+        return ToolCallPrice(service, entry[1], entry[0], ceiling)
+    if service not in _TOOL_CEILING_WARNED:
+        _TOOL_CEILING_WARNED.add(service)
+        log.warning(
+            "%s has no usable price in [budget.tool_prices], so each paid call is "
+            "charged the safety ceiling of $%.2f. Set its price in Settings > Models, "
+            "under Prices for paid tool services.", service, ceiling,
+        )
+    return ToolCallPrice(service, None, 0.0, ceiling)
+
+
+def record_tool_dollars(
+    budget: Budget, price: ToolCallPrice, dollars: float, *, priced: bool,
+) -> TokenCharge:
+    """Charge one paid tool call's ``dollars`` to ``budget``.
+
+    ``priced`` is false when the safety ceiling set the amount; the cost line
+    then names the fix. Raises as :meth:`Budget.record_tokens` does.
+    """
+    route = f"tool:{price.service}"
+    if priced:
+        quote = _estimate_policy_price(
+            route, (0.0, 0.0), source=f"config://budget.tool_prices.{price.service}",
+            confidence=0.0, version=_TOOL_PRICE_VERSION, evidence_id=_TOOL_PRICE_VERSION,
+            pricing_basis=f"Administrator-entered USD {price.dollars_per_unit:g} per {price.unit}",
+            applicability="Spend-limit charge for this paid tool service; the "
+                          "provider's invoice remains authoritative.")
+    else:
+        quote = _estimate_policy_price(
+            route, (0.0, 0.0), source="maverick://pricing-policy/unpriced-tool-call-ceiling",
+            confidence=0.0, version=_UNPRICED_TOOL_CEILING, evidence_id=_UNPRICED_TOOL_CEILING,
+            pricing_basis=f"Safety ceiling of USD {price.ceiling:g} per call with no usable price",
+            applicability="Spend-limit charge for a paid tool call with no price; "
+                          "the provider's invoice remains authoritative.")
+    with _attempt_price_scope(lambda _budget, _model: quote):
+        return budget.record_tokens(0, 0, model=route, cost_dollars=dollars)
+
+
 def _lookup_price(
     model: str | None,
     *,
@@ -1544,6 +1685,12 @@ class Budget:
                 f". Spend for {', '.join(models)} used the safety ceiling because "
                 "it has no price set. Set the model's price in Settings > Models, "
                 "under Prices for the models you use"
+            )
+        if tools := priced_by.get(_UNPRICED_TOOL_CEILING):
+            note += (
+                f". Spend for {', '.join(tools)} used the per-call safety ceiling "
+                "because it has no usable price. Set the service's price in Settings > "
+                "Models, under Prices for paid tool services"
             )
         return note
 

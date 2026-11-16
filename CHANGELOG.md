@@ -699,6 +699,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   steps were kept apart, and lists it as not fully checked. To refuse such
   runs, turn on `[codebase] require_container` in Settings. A workspace can
   no longer weaken the `[codebase]` checks in its own config file.
+- Paid tool calls now count against the task's spending limit, so a capped
+  run can stop on tool spend. This covers Hugging Face (and its OCR),
+  Replicate and hosted image edits, DeepL, LibreTranslate on a public
+  server, OpenAI and Groq speech-to-text, OpenAI and ElevenLabs speech,
+  Tavily, Brave and SerpAPI search, and the pay-per-use AI connectors
+  (such as `openai_platform`) for every request but a GET. A call that
+  would pass the limit is stopped before it is sent. Local engines,
+  DuckDuckGo and servers on a private address are free.
+- Set each paid tool service's price in Settings > Models, under Prices for
+  paid tool services, the Copilot, the setup wizard, or
+  `[budget.tool_prices]` (for example
+  `deepl = { dollars = 0.00002, per = "character" }`; units are request,
+  page, character, image and second). A service with no price is charged
+  `[budget] unpriced_tool_call_dollars` per call (default $0.10, in All
+  settings); a warning and the cost line say so. A workspace may only
+  raise these prices.
+- A flow's tool step has no run budget, so it refuses these paid tools and
+  connectors: call them from an agent step. The dashboard microphone, its
+  read-aloud voice and `maverick voice` are not part of a run and are not
+  charged.
 
 ### Fixed
 

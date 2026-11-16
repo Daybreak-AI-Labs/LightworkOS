@@ -5,23 +5,25 @@ import sys
 import types
 from unittest.mock import MagicMock
 
+from maverick.budget import Budget
+
 # ---------- HuggingFace tool ----------
 
 def test_hf_requires_op():
     from maverick.tools.huggingface import huggingface
-    assert "op is required" in huggingface().fn({})
+    assert "op is required" in huggingface(budget=Budget()).fn({})
 
 
 def test_hf_requires_model():
     from maverick.tools.huggingface import huggingface
-    out = huggingface().fn({"op": "infer"})
+    out = huggingface(budget=Budget()).fn({"op": "infer"})
     assert "model is required" in out
 
 
 def test_hf_missing_httpx(monkeypatch):
     monkeypatch.setitem(sys.modules, "httpx", None)
     from maverick.tools.huggingface import huggingface
-    out = huggingface().fn({"op": "infer", "model": "x", "inputs": "y"})
+    out = huggingface(budget=Budget()).fn({"op": "infer", "model": "x", "inputs": "y"})
     assert "httpx not installed" in out
 
 
@@ -37,7 +39,7 @@ def test_hf_infer_calls_api(monkeypatch):
 
     monkeypatch.setenv("HUGGINGFACE_API_TOKEN", "hf_xxx")
     from maverick.tools.huggingface import huggingface
-    out = huggingface().fn({
+    out = huggingface(budget=Budget()).fn({
         "op": "infer", "model": "distilbert-base-uncased-finetuned-sst-2-english",
         "inputs": "I love this!",
     })
@@ -55,19 +57,19 @@ def test_hf_infer_error_propagates(monkeypatch):
     fake_httpx.post = MagicMock(return_value=resp)
     monkeypatch.setitem(sys.modules, "httpx", fake_httpx)
     from maverick.tools.huggingface import huggingface
-    out = huggingface().fn({"op": "infer", "model": "x", "inputs": "y"})
+    out = huggingface(budget=Budget()).fn({"op": "infer", "model": "x", "inputs": "y"})
     assert "ERROR" in out and "503" in out
 
 
 def test_hf_summarize_requires_text():
     from maverick.tools.huggingface import huggingface
-    out = huggingface().fn({"op": "summarize", "model": "x"})
+    out = huggingface(budget=Budget()).fn({"op": "summarize", "model": "x"})
     assert "non-empty text" in out
 
 
 def test_hf_image_classify_requires_url():
     from maverick.tools.huggingface import huggingface
-    out = huggingface().fn({"op": "image_classify", "model": "x"})
+    out = huggingface(budget=Budget()).fn({"op": "image_classify", "model": "x"})
     assert "requires url" in out
 
 
@@ -81,7 +83,7 @@ def test_hf_image_classify_blocks_private_ip(monkeypatch):
         raise ssrf.BlockedHost("127.0.0.1 is loopback")
 
     monkeypatch.setattr(ssrf, "safe_get", _boom)
-    out = huggingface().fn({"op": "image_classify", "model": "x", "url": "http://127.0.0.1/a.png"})
+    out = huggingface(budget=Budget()).fn({"op": "image_classify", "model": "x", "url": "http://127.0.0.1/a.png"})
     assert "refusing" in out
 
 
@@ -93,7 +95,7 @@ def test_hf_image_classify_rejects_redirects(monkeypatch):
     resp.headers = {"content-type": "text/plain"}
     monkeypatch.setattr(ssrf, "safe_get", lambda url, **k: resp)
     from maverick.tools.huggingface import huggingface
-    out = huggingface().fn({"op": "image_classify", "model": "x", "url": "https://example.com/i.png"})
+    out = huggingface(budget=Budget()).fn({"op": "image_classify", "model": "x", "url": "https://example.com/i.png"})
     assert "image fetch 302" in out
 
 
@@ -108,11 +110,39 @@ def test_hf_model_id_and_image_url_stay_within_policy(monkeypatch):
     fake_httpx = types.ModuleType("httpx")
     fake_httpx.post = MagicMock()
     monkeypatch.setitem(sys.modules, "httpx", fake_httpx)
-    out = huggingface().fn({"op": "infer", "model": "../../api/whoami-v2?x=1#", "inputs": "y"})
+    out = huggingface(budget=Budget()).fn({"op": "infer", "model": "../../api/whoami-v2?x=1#", "inputs": "y"})
     assert out.startswith("ERROR:") and not fake_httpx.post.called
 
     fetched = MagicMock()
     monkeypatch.setattr(ssrf, "safe_get", fetched)
     monkeypatch.setattr(egress, "egress_allowed", lambda tool, host: False)
-    out = huggingface().fn({"op": "image_classify", "model": "o/m", "url": "https://example.com/i.png"})
+    out = huggingface(budget=Budget()).fn({"op": "image_classify", "model": "o/m", "url": "https://example.com/i.png"})
     assert "egress policy blocks" in out and not fetched.called
+
+
+def test_hf_unpriced_call_is_charged_the_ceiling_and_says_so(monkeypatch, caplog):
+    # A service with no [budget.tool_prices] entry is charged the per-call
+    # safety ceiling, not nothing; a one-time warning and the cost line say so
+    # and name where to set the price.
+    import logging
+
+    import pytest
+    from maverick import budget as budget_mod
+    from maverick.tools.huggingface import huggingface
+
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json = MagicMock(return_value=[{"label": "POSITIVE"}])
+    fake_httpx = types.ModuleType("httpx")
+    fake_httpx.post = MagicMock(return_value=resp)
+    monkeypatch.setitem(sys.modules, "httpx", fake_httpx)
+    monkeypatch.setattr(budget_mod, "_TOOL_CEILING_WARNED", set())
+    budget = Budget()
+    tool = huggingface(budget=budget)
+    with caplog.at_level(logging.WARNING, logger="maverick.budget"):
+        for _ in range(2):
+            assert "POSITIVE" in tool.fn({"op": "infer", "model": "o/m", "inputs": "hi"})
+    assert budget.dollars == pytest.approx(2 * budget_mod.DEFAULT_UNPRICED_TOOL_CALL_DOLLARS)
+    warnings = [r.getMessage() for r in caplog.records if "huggingface has no usable price" in r.getMessage()]
+    assert len(warnings) == 1 and "Prices for paid tool services" in warnings[0]
+    assert "per-call safety ceiling" in budget.summary() and "tool:huggingface" in budget.summary()

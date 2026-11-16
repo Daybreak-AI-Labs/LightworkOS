@@ -10,6 +10,14 @@ ops:
 
 ``model`` is "owner/name" or "owner/name:version". When no version is
 given we resolve the latest version automatically.
+
+Creating a prediction is a paid call charged to the run budget (kernel rule
+3) through ``_paid_call.charged_call``, polling included when ``wait`` is
+set: priced from ``[budget.tool_prices] replicate`` per request, per image
+returned or per second of compute (``metrics.predict_time``), else the
+per-call safety ceiling. A unit the reply does not report (seconds when not
+waiting) is charged the ceiling. A tool built with no run budget refuses
+before anything is sent.
 """
 from __future__ import annotations
 
@@ -21,6 +29,7 @@ from typing import Any
 
 from ..governed_http import guarded_sender as _governed_sender
 from . import Tool, as_bool, safe_path_segment
+from ._paid_call import STOP_SIGNALS, charged_call
 
 log = logging.getLogger(__name__)
 
@@ -92,6 +101,47 @@ def _resolve_version(model: str) -> str | None:
     return results[0].get("id") if results else None
 
 
+def _measured(result) -> dict[str, float | None]:
+    """What one prediction used, from its final state when it was polled."""
+    code, created, final, _error = result
+    if code >= 400 or not isinstance(created, dict):
+        return {"request": 0, "image": 0, "second": 0}
+    if not isinstance(final, dict):
+        return {}
+    metrics = final.get("metrics") if isinstance(final.get("metrics"), dict) else {}
+    seconds = metrics.get("predict_time")
+    output = final.get("output")
+    images = (len(output) if isinstance(output, list) else 0 if output is None else 1)
+    return {"second": (float(seconds) if isinstance(seconds, (int, float))
+                       and not isinstance(seconds, bool) else None),
+            "image": images if final.get("status") == "succeeded" else 0}
+
+
+def run_prediction(version: str, inp: dict, wait: bool, budget, *, label: str = "Replicate"):
+    """Create one prediction and, with ``wait``, poll it for up to ~90s.
+
+    One paid call charged to ``budget``. Returns ``(code, created, final,
+    poll_error)``: ``final`` is the finished prediction, or ``None`` when not
+    waiting, still running or the poll failed (``poll_error`` says how).
+    """
+    def send():
+        code, data = _post("/predictions", {"version": version, "input": inp})
+        if code >= 400 or not isinstance(data, dict) or not wait:
+            return code, data, None, None
+        deadline = time.time() + 90
+        while time.time() < deadline:
+            c2, p2 = _get(f"/predictions/{data.get('id')}")
+            if c2 >= 400 or not isinstance(p2, dict):
+                return code, data, None, f"ERROR: poll ({c2}): {p2}"
+            if p2.get("status") in ("succeeded", "failed", "canceled"):
+                return code, data, p2, None
+            time.sleep(2)
+        return code, data, None, None
+
+    return charged_call("replicate", send, budget=budget, label=label,
+                        units={"request": 1}, measure=_measured)
+
+
 def _fmt_prediction(p: dict) -> str:
     out = p.get("output")
     out_str = json.dumps(out, default=str)[:1500] if out is not None else "(none)"
@@ -103,7 +153,7 @@ def _fmt_prediction(p: dict) -> str:
     )
 
 
-def _op_run(args: dict) -> str:
+def _op_run(args: dict, budget=None) -> str:
     model = (args.get("model") or "").strip()
     if not model:
         return "ERROR: run requires model"
@@ -118,21 +168,17 @@ def _op_run(args: dict) -> str:
     version = _resolve_version(model)
     if not version:
         return f"ERROR: could not resolve version for model {model!r}"
-    code, data = _post("/predictions", {"version": version, "input": inp})
+    wait = as_bool(args.get("wait"))
+    code, data, final, poll_error = run_prediction(version, inp, wait, budget)
     if code >= 400 or not isinstance(data, dict):
         return f"ERROR: run ({code}): {data}"
     pid = data.get("id")
-    if not args.get("wait"):
+    if not wait:
         return f"created prediction {pid} (status={data.get('status')})"
-    # Poll up to ~90s.
-    deadline = time.time() + 90
-    while time.time() < deadline:
-        c2, p2 = _get(f"/predictions/{pid}")
-        if c2 >= 400 or not isinstance(p2, dict):
-            return f"ERROR: poll ({c2}): {p2}"
-        if p2.get("status") in ("succeeded", "failed", "canceled"):
-            return _fmt_prediction(p2)
-        time.sleep(2)
+    if poll_error:
+        return poll_error
+    if final is not None:
+        return _fmt_prediction(final)
     return f"prediction {pid} still running after 90s; use predict_get to poll"
 
 
@@ -199,7 +245,7 @@ def _op_models(args: dict) -> str:
     )
 
 
-def _run(args: dict[str, Any]) -> str:
+def _run(args: dict[str, Any], budget=None) -> str:
     op = args.get("op")
     if not op:
         return "ERROR: op is required"
@@ -208,19 +254,22 @@ def _run(args: dict[str, Any]) -> str:
     except ImportError:
         return "ERROR: httpx not installed."
     try:
+        if op == "run":
+            return _op_run(args, budget)
         return {
-            "run":         _op_run,
             "predict_get": _op_predict_get,
             "cancel":      _op_cancel,
             "models":      _op_models,
         }.get(op, lambda a: f"ERROR: unknown op {op!r}")(args)
+    except STOP_SIGNALS:
+        raise
     except RuntimeError as e:
         return f"ERROR: {e}"
     except Exception as e:
         return f"ERROR: Replicate request failed: {type(e).__name__}: {e}"
 
 
-def replicate_tool() -> Tool:
+def replicate_tool(*, budget=None) -> Tool:
     return Tool(
         name="replicate",
         description=(
@@ -230,5 +279,5 @@ def replicate_tool() -> Tool:
             "Auth: REPLICATE_API_TOKEN."
         ),
         input_schema=_RP_SCHEMA,
-        fn=_run,
+        fn=lambda args: _run(args, budget),
     )

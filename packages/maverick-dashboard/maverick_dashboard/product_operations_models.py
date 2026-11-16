@@ -302,6 +302,99 @@ def execute_remove_price(request, selection, arguments, review, operation_id):
     return Outcome("confirmed", f"The saved spending ceiling for {done['model']} was removed.", done)
 
 
+class ToolPrice(StrictInput):
+    service: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9_]+$")
+    dollars: float = Field(ge=0, le=10_000, allow_inf_nan=False)
+    per: str = Field(pattern=r"^(request|page|character|image|second)$")
+    confirmed: bool = False
+
+
+class SavedToolPrice(StrictInput):
+    service: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9_]+$")
+
+
+def _tool_prices(request) -> dict:
+    """The Settings page's "Prices for paid tool services": the same
+    administrator check, the same words for each service's charge."""
+    from . import admin_pages
+
+    auth.require_global_permission(request, "admin")
+    return {"services": admin_pages.tool_price_states()}
+
+
+def tool_price_snapshot(request, selection):
+    from . import admin_pages
+
+    state = _tool_prices(request)
+    unpriced = [row["service"] for row in state["services"] if not row["priced"]]
+    summary = ("Every listed paid tool service has a price." if not unpriced else
+               "These services are charged the safety ceiling per call: " + ", ".join(unpriced) + ".")
+    choices = [{"value": row["service"], "label": row["label"]} for row in admin_pages._tool_price_choices()]
+    fields = [{"name": "service", "label": "Service", "kind": "select",
+               "value": unpriced[0] if unpriced else choices[0]["value"], "choices": choices},
+              {"name": "dollars", "label": "Price in USD", "kind": "number", "value": None},
+              {"name": "per", "label": "Charged per", "kind": "select", "value": "request",
+               "choices": [{"value": unit, "label": words.capitalize()}
+                           for unit, words in admin_pages.TOOL_PRICE_UNIT_WORDS.items()]},
+              {"name": "confirmed", "kind": "boolean", "value": False,
+               "label": "I checked this service's own price."}]
+    return Snapshot(digest(state), "Current paid tool service prices", summary, state, fields=fields)
+
+
+def _tool_charge_now(request, service: str) -> str:
+    row = next((row for row in _tool_prices(request)["services"] if row["service"] == service), None)
+    return row["charge"] if row else "Safety ceiling per call"
+
+
+def prepare_tool_price(request, selection, arguments):
+    from . import admin_pages
+
+    service, amount, unit = admin_pages.check_tool_price_input(
+        request, arguments["service"], dollars=arguments["dollars"], per=arguments["per"],
+        confirmed=arguments["confirmed"])
+    return Preview("Save the price this tool service is charged against spending limits. "
+                   "Its invoice remains the final bill.",
+                   changes=[{"field": f"Charge for {service}", "before": _tool_charge_now(request, service),
+                             "after": admin_pages._tool_charge((amount, unit), 0.0)}])
+
+
+def execute_tool_price(request, selection, arguments, review, operation_id):
+    from . import admin_pages
+
+    done = admin_pages.apply_tool_price(request, arguments["service"], dollars=arguments["dollars"],
+                                        per=arguments["per"], confirmed=arguments["confirmed"])
+    return Outcome("confirmed", f"{done['service']} is now charged "
+                   f"{admin_pages._tool_charge((done['dollars'], done['per']), 0.0)}.", done)
+
+
+def remove_tool_price_snapshot(request, selection):
+    state = _tool_prices(request)
+    choices = [{"value": row["service"], "label": f"{row['label']}: {row['charge']}"}
+               for row in state["services"] if row["priced"]]
+    return Snapshot(digest(state), "Current paid tool service prices",
+                    "Remove a saved tool price. That service is then charged the safety ceiling per call.",
+                    state, fields=[{"name": "service", "label": "Saved price", "kind": "select",
+                                    "value": choices[0]["value"] if choices else "", "choices": choices}],
+                    blocked="" if choices else "No saved tool price to remove.")
+
+
+def prepare_remove_tool_price(request, selection, arguments):
+    row = next((row for row in _tool_prices(request)["services"]
+                if row["service"] == arguments["service"] and row["priced"]), None)
+    if row is None:
+        raise HTTPException(409, "Choose a saved tool price to remove.")
+    return Preview("Remove this saved tool price. The service is then charged the safety ceiling per call.",
+                   changes=[{"field": f"Charge for {row['service']}", "before": row["charge"],
+                             "after": "Safety ceiling per call"}])
+
+
+def execute_remove_tool_price(request, selection, arguments, review, operation_id):
+    from . import admin_pages
+
+    done = admin_pages.remove_tool_price(request, arguments["service"])
+    return Outcome("confirmed", f"The saved price for {done['service']} was removed.", done)
+
+
 def entries():
     pages = ("/settings", "/settings/all")
     return [Adapter("models.provider_status", "Check AI service status", "models", "/settings",
@@ -325,4 +418,13 @@ def entries():
             Adapter("models.price.remove", "Remove a model's saved spending ceiling", "models",
                     "/settings#settings-model-prices", pages, SavedPrice, remove_price_snapshot,
                     prepare_remove_price, execute_remove_price,
-                    aliases=("remove a model price", "remove a company rate"))]
+                    aliases=("remove a model price", "remove a company rate")),
+            Adapter("tools.price.set", "Set a paid tool service's price", "models",
+                    "/settings#settings-tool-prices", pages, ToolPrice, tool_price_snapshot,
+                    prepare_tool_price, execute_tool_price,
+                    aliases=("set a tool price", "price a paid tool", "tool safety ceiling",
+                             "deepl price", "search price")),
+            Adapter("tools.price.remove", "Remove a paid tool service's price", "models",
+                    "/settings#settings-tool-prices", pages, SavedToolPrice, remove_tool_price_snapshot,
+                    prepare_remove_tool_price, execute_remove_tool_price,
+                    aliases=("remove a tool price",))]

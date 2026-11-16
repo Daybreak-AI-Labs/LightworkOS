@@ -18,6 +18,17 @@ loads installed weights; downloading missing weights requires explicit opt-in.
 Text-to-speech backends:
   1. OpenAI TTS API (OPENAI_API_KEY)
   2. ElevenLabs (ELEVENLABS_API_KEY)
+
+A hosted backend called from the ``transcribe_audio`` or ``speak`` tool (or
+from another tool that passes its run budget, such as ``view_video``) is a
+paid call charged to the run budget (kernel rule 3) through
+``_paid_call.charged_call``: priced from ``[budget.tool_prices]``
+``openai_whisper`` / ``groq_whisper`` (per request, or per second when the
+reply gives the audio length) and ``openai_tts`` / ``elevenlabs`` (per
+request or character), else the per-call safety ceiling. Such a tool built
+with no run budget refuses a hosted call before anything is sent. Local
+engines are free. Callers outside a run (the dashboard microphone, the CLI)
+pass no budget and are not charged.
 """
 from __future__ import annotations
 
@@ -32,6 +43,7 @@ from typing import Any
 
 from ..governed_http import guarded_sender as _governed_sender
 from . import Tool, safe_path_segment
+from ._paid_call import STOP_SIGNALS, PaidCallRefused, charged_call
 
 log = logging.getLogger(__name__)
 
@@ -92,6 +104,28 @@ _TTS_SCHEMA: dict[str, Any] = {
 _TRANSCRIBE_CONTEXT: ContextVar[tuple[Any, Path] | None] = ContextVar("voice_transcribe_context", default=None)
 
 
+# The run budget a hosted backend call is charged to. The default marks a
+# caller outside a run (dashboard, CLI), which is not charged.
+_UNMETERED = object()
+_PAID_BUDGET: ContextVar[object] = ContextVar("voice_paid_budget", default=_UNMETERED)
+# Errors a backend must not turn into "try the next backend".
+_PASS_THROUGH = (*STOP_SIGNALS, PaidCallRefused)
+
+
+def _paid(service: str, label: str, send, **metering):
+    """Send one hosted request, charged to the run budget when there is one."""
+    budget = _PAID_BUDGET.get()
+    if budget is _UNMETERED:
+        return send()
+    return charged_call(service, send, budget=budget, label=label, **metering)
+
+
+def _audio_seconds(resp) -> dict[str, float | None]:
+    seconds = getattr(resp, "duration", None)
+    return {"second": float(seconds) if isinstance(seconds, (int, float))
+            and not isinstance(seconds, bool) else None}
+
+
 def _open_audio(audio_path: Path):
     from .fs import _open_contained
 
@@ -141,8 +175,12 @@ def _whisper_openai(audio_path: Path, language: str | None) -> str | None:
             }
             if language:
                 kwargs["language"] = language
-            resp = client.audio.transcriptions.create(**kwargs)
+            resp = _paid("openai_whisper", "OpenAI speech-to-text",
+                         lambda: client.audio.transcriptions.create(**kwargs),
+                         units={"request": 1}, measure=_audio_seconds)
         return getattr(resp, "text", None) or str(resp)
+    except _PASS_THROUGH:
+        raise
     except Exception as e:
         log.warning("whisper (openai): %s", e)
         return None
@@ -174,8 +212,12 @@ def _whisper_groq(audio_path: Path, language: str | None) -> str | None:
             }
             if language:
                 kwargs["language"] = language
-            resp = client.audio.transcriptions.create(**kwargs)
+            resp = _paid("groq_whisper", "Groq speech-to-text",
+                         lambda: client.audio.transcriptions.create(**kwargs),
+                         units={"request": 1}, measure=_audio_seconds)
         return getattr(resp, "text", None) or str(resp)
+    except _PASS_THROUGH:
+        raise
     except Exception as e:
         log.warning("whisper (groq): %s", e)
         return None
@@ -471,12 +513,13 @@ def warm_up_local_stt(*, cancel: threading.Event | None = None) -> bool:
         _WARMING.clear()
 
 
-def _run_transcribe_internal(args: dict[str, Any]) -> str:
+def _run_transcribe_internal(args: dict[str, Any], *, budget: object = _UNMETERED) -> str:
     """Transcribe a trusted caller's file without granting a model host access.
 
     The caller chooses the file (generated audio, a verified private
     attachment snapshot, or a CLI argument). The ordinary tool entry point must continue to pass its own
     sandbox and must never call this helper with a model-chosen path.
+    A tool that calls it passes its run budget, so a hosted backend is charged.
     """
     from types import SimpleNamespace
 
@@ -485,16 +528,20 @@ def _run_transcribe_internal(args: dict[str, Any]) -> str:
         return "ERROR: source is required"
     path = Path(source).absolute()
     return _run_transcribe({**args, "source": str(path)}, SimpleNamespace(workdir=path.parent),
-                           operator_backend=True)
+                           operator_backend=True, budget=budget)
 
 
 def _run_transcribe(args: dict[str, Any], sandbox: Any = None, *,
-                    operator_backend: bool = False) -> str:
+                    operator_backend: bool = False, budget: object = _UNMETERED) -> str:
     root = Path(getattr(sandbox, "workdir", Path.cwd())).resolve()
     token = _TRANSCRIBE_CONTEXT.set((None if operator_backend else sandbox, root))
+    paid = _PAID_BUDGET.set(budget)
     try:
         return _run_transcribe_scoped(args, sandbox, operator_backend=operator_backend)
+    except PaidCallRefused as e:
+        return f"ERROR: {e}"
     finally:
+        _PAID_BUDGET.reset(paid)
         _TRANSCRIBE_CONTEXT.reset(token)
 
 
@@ -574,11 +621,11 @@ def _tts_openai(text: str, voice: str | None, output: Path) -> bool:
     try:
         # One OpenAI attempt, then the outer router can try ElevenLabs.
         client = OpenAI(api_key=key, max_retries=0)
-        resp = client.audio.speech.create(
+        resp = _paid("openai_tts", "OpenAI text-to-speech", lambda: client.audio.speech.create(
             model=_hosted_model("MAVERICK_TTS_OPENAI_MODEL", "tts-1", "tts_openai_model"),
             voice=voice or "alloy",
             input=text,
-        )
+        ), units={"request": 1, "character": len(text)})
         # Stream to file (SDK exposes a stream_to_file helper).
         try:
             resp.stream_to_file(str(output))
@@ -586,6 +633,8 @@ def _tts_openai(text: str, voice: str | None, output: Path) -> bool:
             # Older SDK: write resp.content.
             output.write_bytes(getattr(resp, "content", b""))
         return output.exists() and output.stat().st_size > 0
+    except _PASS_THROUGH:
+        raise
     except Exception as e:
         log.warning("tts (openai): %s", e)
         return False
@@ -605,7 +654,7 @@ def _tts_elevenlabs(text: str, voice: str | None, output: Path) -> bool:
         log.warning("tts (elevenlabs): voice id is not a single path segment")
         return False
     try:
-        resp = _governed_sender(httpx.post)(
+        resp = _paid("elevenlabs", "ElevenLabs text-to-speech", lambda: _governed_sender(httpx.post)(
             f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
             headers={
                 "xi-api-key": key,
@@ -621,10 +670,12 @@ def _tts_elevenlabs(text: str, voice: str | None, output: Path) -> bool:
                 ),
             },
             timeout=60.0,
-        )
+        ), units={"request": 1, "character": len(text)})
         resp.raise_for_status()
         output.write_bytes(resp.content)
         return True
+    except _PASS_THROUGH:
+        raise
     except Exception as e:
         log.warning("tts (elevenlabs): %s", e)
         return False
@@ -640,7 +691,17 @@ def _next_output_path(sandbox: Any = None) -> Path:
         i += 1
 
 
-def _run_speak(args: dict[str, Any], sandbox: Any = None) -> str:
+def _run_speak(args: dict[str, Any], sandbox: Any = None, *, budget: object = _UNMETERED) -> str:
+    paid = _PAID_BUDGET.set(budget)
+    try:
+        return _run_speak_scoped(args, sandbox)
+    except PaidCallRefused as e:
+        return f"ERROR: {e}"
+    finally:
+        _PAID_BUDGET.reset(paid)
+
+
+def _run_speak_scoped(args: dict[str, Any], sandbox: Any = None) -> str:
     # Voice personas / per-language voices ([voice.personas]/[voice.languages]):
     # explicit voice/backend args still win; unknown presets degrade silently.
     try:
@@ -691,7 +752,7 @@ def _run_speak(args: dict[str, Any], sandbox: Any = None) -> str:
     )
 
 
-def transcribe_audio(sandbox: Any = None) -> Tool:
+def transcribe_audio(sandbox: Any = None, *, budget=None) -> Tool:
     return Tool(
         name="transcribe_audio",
         description=(
@@ -702,11 +763,11 @@ def transcribe_audio(sandbox: Any = None) -> Tool:
             "Set `language='en'` to skip auto-detect."
         ),
         input_schema=_TRANSCRIBE_SCHEMA,
-        fn=lambda args: _run_transcribe(args, sandbox),
+        fn=lambda args: _run_transcribe(args, sandbox, budget=budget),
     )
 
 
-def speak(sandbox: Any = None) -> Tool:
+def speak(sandbox: Any = None, *, budget=None) -> Tool:
     return Tool(
         name="speak",
         description=(
@@ -716,5 +777,5 @@ def speak(sandbox: Any = None) -> Tool:
             "'alloy'. Output path defaults to ./speech-N.mp3."
         ),
         input_schema=_TTS_SCHEMA,
-        fn=lambda args: _run_speak(args, sandbox),
+        fn=lambda args: _run_speak(args, sandbox, budget=budget),
     )

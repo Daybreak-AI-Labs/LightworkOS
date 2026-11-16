@@ -281,6 +281,42 @@
     {% endif %}
   </section>
 
+  <section class="panel" data-settings-group="models" id="settings-tool-prices" aria-labelledby="tool-prices-title">
+    <h3 id="tool-prices-title">Prices for paid tool services</h3>
+    <p class="muted">Some tools call a paid service, such as speech, translation, search or hosted image models. Each call counts against the task's spending limit. A service with no price here is charged a safety ceiling per call.</p>
+    <table data-tool-prices><thead><tr><th scope="col">Service</th><th scope="col">Charge now</th><th scope="col">Action</th></tr></thead>
+      <tbody>{% for row in tool_price_states %}<tr>
+        <td>{{ row.label }}<br><span class="muted">Name in settings: {{ row.service }}</span></td>
+        <td><span class="badge {{ 'active' if row.priced else 'blocked' }}">{{ row.charge }}</span></td>
+        <td>{% if row.priced %}<form method="post" action="/settings/tools/price/remove" data-settings-local="true"><input type="hidden" name="service" value="{{ row.service }}"><button class="btn btn--ghost" type="submit">Remove price</button></form>{% endif %}</td>
+      </tr>{% endfor %}</tbody>
+    </table>
+    <p class="muted">Enter the service's own USD price and what it charges for. Its invoice remains the final bill. Change the safety ceiling in <a href="/settings/all">All settings</a>.</p>
+    <form method="post" action="/settings/tools/price" class="settings-row-form" data-settings-local="true">
+      <label class="settings-field">Service
+        <select class="select" name="service" required>
+          {% for choice in tool_price_services %}<option value="{{ choice.service }}">{{ choice.label }}</option>{% endfor %}
+        </select>
+      </label>
+      <label class="settings-field">Price in USD
+        <input class="input" type="number" name="dollars" min="0" max="10000" step="any" required>
+      </label>
+      <label class="settings-field">Charged per
+        <select class="select" name="per" required>
+          <option value="request">Request</option>
+          <option value="character">Character of text</option>
+          <option value="page">Page</option>
+          <option value="image">Image</option>
+          <option value="second">Second of audio or compute</option>
+        </select>
+      </label>
+      <label class="settings-field"><input type="checkbox" name="confirm" required>
+        I checked this service's own price.
+      </label>
+      <button class="btn" type="submit">Save tool price</button>
+    </form>
+  </section>
+
   <section class="panel" data-settings-group="models" id="model-tests" aria-labelledby="model-tests-title">
     <h3 id="model-tests-title">Try one bounded model sample</h3>
     <p>A model-list refresh does not generate a response. This separate test sends a synthetic text or image sample to the model you select, after you review and confirm the possible cost. It does not change your model choices.</p>

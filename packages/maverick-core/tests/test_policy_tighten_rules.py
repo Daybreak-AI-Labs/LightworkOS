@@ -23,6 +23,13 @@ def _perm(default: bool):  # a permission: may only turn off
 
 _DEFAULT_KEYS = ["budget.max_dollars", "governance.*", "plugins.*", "safety.*"]
 CASES = {
+    # A workspace may charge paid tool calls more, never less: a higher
+    # per-call ceiling, or a higher price in the unit the organisation set.
+    "budget.unpriced_tool_call_dollars": dict(os=0.25, s=0.5, l=0.05, us=0.5, ul=0.01),
+    "budget.tool_prices": dict(os={"deepl": {"dollars": 0.02, "per": "request"}},
+                               s={"deepl": {"dollars": 0.03, "per": "request"}},
+                               l={"deepl": {"dollars": 0.01, "per": "request"}},
+                               ul={"deepl": {"dollars": 0.01, "per": "request"}}),
     # A deny-like list only grows: the tenant's names are added to the
     # organisation's, so only a value the consumer cannot read is ignored.
     "governance.deny_actions": dict(os=["shell"], s=["browser"], se=["shell", "browser"], l="shell", us=["shell"]),

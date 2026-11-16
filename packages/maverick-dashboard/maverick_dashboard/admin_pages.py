@@ -257,6 +257,8 @@ def _settings_response(request: Request, saved: str = "", *, notice: str = "",
         "allowed": "Approved models updated.",
         "model_rate": "Model spending ceiling updated.",
         "model_rate_removed": "Model spending ceiling removed.",
+        "tool_price": "Paid tool price saved.",
+        "tool_price_removed": "Paid tool price removed. That service is charged the safety ceiling.",
         "discover": "Model lists refreshed from your provider keys.",
         "providers": "Provider keys updated.",
         "provider_test": "Connection test finished. The result is shown next to the provider.",
@@ -275,6 +277,8 @@ def _settings_response(request: Request, saved: str = "", *, notice: str = "",
         "allowed": "models",
         "model_rate": "models",
         "model_rate_removed": "models",
+        "tool_price": "models",
+        "tool_price_removed": "models",
         "discover": "models",
         "discovery": "models",
         "providers": "integrations",
@@ -306,6 +310,8 @@ def _settings_response(request: Request, saved: str = "", *, notice: str = "",
         "route_prices": route_prices,
         "operator_rates": operator_rates,
         "self_hosted_states": self_hosted_states(),
+        "tool_price_states": tool_price_states(),
+        "tool_price_services": _tool_price_choices(),
         "price_today": today.isoformat(),
         "price_review_until": (today + timedelta(days=30)).isoformat(),
         "model_options": model_options,
@@ -567,6 +573,146 @@ async def settings_self_hosted_free(request: Request) -> RedirectResponse:
         raise HTTPException(status_code=400, detail=SELF_HOSTED_CONFIRM)
     await run_in_threadpool(apply_self_hosted_free, request, name, free)
     return RedirectResponse("/settings?saved=model_rate#settings-model-prices", status_code=303)
+
+
+TOOL_PRICE_CONFIRM = "Confirm that you checked this service's own price before saving."
+TOOL_PRICE_UNIT_WORDS = {"request": "request", "page": "page", "character": "character",
+                         "image": "image", "second": "second of audio or compute"}
+
+
+def _tool_charge(entry: tuple[float, str] | None, ceiling: float) -> str:
+    from .plain_labels import money
+
+    if entry is None:
+        return f"Safety ceiling: {money(ceiling, 2)} per call"
+    return f"{money(entry[0], 6)} per {TOOL_PRICE_UNIT_WORDS[entry[1]]}"
+
+
+def _tool_price_choices() -> list[dict[str, str]]:
+    from maverick.tools._paid_call import paid_tool_services
+
+    return [{"service": name, "label": label} for name, label in paid_tool_services().items()]
+
+
+def tool_price_states() -> list[dict]:
+    """How each paid tool service is charged now, in the page's words: the
+    named services, then any other service with a saved price."""
+    from maverick.budget import tool_price_entry, tool_price_settings
+    from maverick.tools._paid_call import PAID_TOOL_SERVICES, paid_tool_services
+
+    prices, ceiling = tool_price_settings()
+    labels = paid_tool_services()
+    shown = [*PAID_TOOL_SERVICES, *sorted(k for k in prices if k in labels and k not in PAID_TOOL_SERVICES)]
+    rows = []
+    for service in shown:
+        entry = tool_price_entry(prices.get(service))
+        rows.append({"service": service, "label": labels[service], "priced": entry is not None,
+                     "charge": _tool_charge(entry, ceiling)})
+    return rows
+
+
+def check_tool_price_input(request: Request, service: str, *, dollars: object, per: object,
+                           confirmed: bool) -> tuple[str, float, str]:
+    """The service and price :func:`apply_tool_price` would save, with the same
+    refusals: an installation administrator, the confirmation, a known paid
+    service, a unit and a USD amount from 0 to 10,000. Saves nothing."""
+    import math
+
+    from maverick.budget import TOOL_PRICE_UNITS
+    from maverick.tools._paid_call import paid_tool_services
+
+    auth.require_global_permission(request, "admin")
+    if not confirmed:
+        raise HTTPException(status_code=400, detail=TOOL_PRICE_CONFIRM)
+    if service not in paid_tool_services():
+        raise HTTPException(status_code=400, detail="Choose a paid tool service from the list.")
+    if per not in TOOL_PRICE_UNITS:
+        raise HTTPException(status_code=400, detail="Choose what the service charges for.")
+    try:
+        amount = float(str(dollars))
+    except ValueError:
+        amount = math.nan
+    if not (math.isfinite(amount) and 0 <= amount <= 10_000):
+        raise HTTPException(status_code=400, detail="Enter a USD amount from 0 to 10,000.")
+    return service, amount, str(per)
+
+
+def _tool_price_audit(data: dict, service: str) -> dict[str, object]:
+    entry = ((data.get("budget") or {}).get("tool_prices") or {}).get(service)
+    return {"configured": entry is not None, "price": entry}
+
+
+def _saved_tool_price(service: str):
+    from maverick.budget import tool_price_entry, tool_price_settings
+
+    return tool_price_entry(tool_price_settings()[0].get(service))
+
+
+def _write_tool_price(request: Request, service: str, dollars: float | None, per: str = "") -> None:
+    from . import settings_store
+
+    try:
+        with _setting_write(request, "budget", "tool_prices",
+                            lambda data: _tool_price_audit(data, service)):
+            settings_store.set_tool_price(service, dollars, per)
+    except (OSError, settings_store.SettingsNotStorable) as exc:
+        raise HTTPException(status_code=503, detail=(
+            "The change could not be confirmed. Refresh Settings and Activity before retrying."
+        )) from exc
+    expected = None if dollars is None else (dollars, per)
+    if _saved_tool_price(service) != expected:
+        raise HTTPException(status_code=409, detail=(
+            "Another settings file sets this service's price, so this change has no "
+            f"effect. Edit [budget.tool_prices] {service} there."
+        ))
+
+
+def apply_tool_price(request: Request, service: str, *, dollars: object, per: object,
+                     confirmed: bool) -> dict:
+    """Save the price a paid tool service is charged against spending limits.
+
+    One path for the Settings form and the Copilot: the checks in
+    :func:`check_tool_price_input`, an audited write, then a read-back of
+    the price in effect.
+    """
+    service, amount, unit = check_tool_price_input(request, service, dollars=dollars, per=per,
+                                                   confirmed=confirmed)
+    _write_tool_price(request, service, amount, unit)
+    _admin_audit(request, "settings_tool_price", service=service)
+    return {"service": service, "dollars": amount, "per": unit}
+
+
+def remove_tool_price(request: Request, service: str) -> dict:
+    """Remove a saved tool price, so the service is charged the safety ceiling."""
+    from maverick.tools._paid_call import paid_tool_services
+
+    auth.require_global_permission(request, "admin")
+    if service not in paid_tool_services() or _saved_tool_price(service) is None:
+        raise HTTPException(status_code=400, detail="Choose a saved tool price to remove.")
+    _write_tool_price(request, service, None)
+    _admin_audit(request, "settings_tool_price_removed", service=service)
+    return {"service": service}
+
+
+@router.post("/settings/tools/price")
+async def settings_set_tool_price(request: Request) -> RedirectResponse:
+    """Save the price a paid tool service is charged against spending limits."""
+    _app()._require_same_origin(request)
+    auth.require_global_permission(request, "admin")
+    form = await request.form()
+    await run_in_threadpool(
+        lambda: apply_tool_price(request, str(form.get("service", "")),
+                                 dollars=form.get("dollars", ""), per=form.get("per", ""),
+                                 confirmed=form.get("confirm") == "on"))
+    return RedirectResponse("/settings?saved=tool_price#settings-tool-prices", status_code=303)
+
+
+@router.post("/settings/tools/price/remove")
+async def settings_remove_tool_price(request: Request, service: str = Form("")) -> RedirectResponse:
+    _app()._require_same_origin(request)
+    auth.require_global_permission(request, "admin")
+    await run_in_threadpool(remove_tool_price, request, service)
+    return RedirectResponse("/settings?saved=tool_price_removed#settings-tool-prices", status_code=303)
 
 
 def remove_model_rate(request: Request, model: str) -> dict:

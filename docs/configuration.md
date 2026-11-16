@@ -129,6 +129,16 @@ task_limits_enabled = true
 # max_input_tokens  = 1000000
 # max_output_tokens = 200000
 strict_pricing      = true
+# Charged per paid tool call (speech, translation, search, hosted image models,
+# pay-per-use AI connectors) when [budget.tool_prices] has no price for it.
+# unpriced_tool_call_dollars = 0.10
+
+# [budget.tool_prices]
+# One entry per paid tool service: USD per unit, and the unit (request, page,
+# character, image or second). Settings > Models, under Prices for paid tool
+# services, writes these too. A workspace may only raise them.
+# deepl = { dollars = 0.00002, per = "character" }
+# tavily = { dollars = 0.008, per = "request" }
 
 [context]
 # Longest reply one model call may return, in tokens. The hold taken before

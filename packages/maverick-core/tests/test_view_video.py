@@ -161,7 +161,7 @@ def test_view_video_clamps_num_frames(monkeypatch, tmp_path):
 def test_view_video_includes_transcript_when_requested(monkeypatch, tmp_path):
     frames = [(3.0, b"\xff\xd8a")]
     vid = _prep(monkeypatch, tmp_path, frames=frames)
-    monkeypatch.setattr(vv, "_transcribe_track", lambda src, tmp, sandbox: "hello from the clip")
+    monkeypatch.setattr(vv, "_transcribe_track", lambda src, tmp, sandbox, budget=None: "hello from the clip")
     view_video(sandbox=SimpleNamespace(workdir=tmp_path), budget=_budget()).fn({"source": str(vid), "transcribe": True})
     texts = [b["text"] for b in _FakeLLM.last_messages[0]["content"]
              if b.get("type") == "text"]

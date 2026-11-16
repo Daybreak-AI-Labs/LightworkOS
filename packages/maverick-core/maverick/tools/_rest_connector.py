@@ -481,6 +481,31 @@ def _rest_execute(
         return f"ERROR: {name} request failed ({type(e).__name__[:120]})"
 
 
+def _charged_execute(name: str, execute, config, budget) -> str:
+    """One paid connector request, charged to the run budget unless its server
+    is private. A request that was never dispatched is not charged."""
+    from ._paid_call import PaidCallRefused, charged_call, is_free_backend
+
+    try:
+        base, _token = config()
+    except _ConnectorConfigError as e:
+        return f"ERROR: {e}"
+    except RuntimeError:
+        return "ERROR: connector configuration or request failed (RuntimeError)"
+    if is_free_backend(base):
+        return execute()
+
+    def sent(result) -> dict[str, float] | None:
+        attempt = getattr(result, "attempt", None)
+        return {} if attempt is not None and attempt.dispatch_may_have_happened else None
+
+    try:
+        return charged_call(name, execute, budget=budget, label=name,
+                            units={"request": 1}, measure=sent)
+    except PaidCallRefused as e:
+        return f"ERROR: {e}"
+
+
 def make_rest_tool(
     *,
     name: str,
@@ -496,6 +521,8 @@ def make_rest_tool(
     keyless: bool = False,
     query_auth: str | None = None,
     default_base_url: str | None = None,
+    paid: bool = False,
+    budget=None,
 ) -> Tool:
     """Build a thin authenticated-REST ``Tool``.
 
@@ -530,6 +557,14 @@ def make_rest_tool(
     ``allowed_read_paths`` optionally narrows a read-only connector to known-safe
     API resource prefixes. This is intended for credentialed finance APIs where
     GET-only is not, by itself, an adequate data-access boundary.
+
+    ``paid=True`` marks a pay-per-use AI service: every request other than a
+    GET is a paid call charged to ``budget`` (kernel rule 3) through
+    ``_paid_call.charged_call``, priced per request from ``[budget.tool_prices]
+    <name>``, else the per-call safety ceiling. A request that never left (a
+    refused address, missing settings) is not charged, nor is a server on this
+    machine or a private network. With no ``budget`` such a request is refused
+    before anything is sent.
     """
 
     def _config() -> tuple[str, str]:
@@ -606,14 +641,20 @@ def make_rest_tool(
         if isinstance(validated, str):
             return validated
         op, path = validated
-        return _rest_execute(
-            op, path, args,
-            name=name,
-            config=_config,
-            headers=_headers,
-            norm=_norm,
-            query_auth=query_auth,
-        )
+
+        def execute() -> str:
+            return _rest_execute(
+                op, path, args,
+                name=name,
+                config=_config,
+                headers=_headers,
+                norm=_norm,
+                query_auth=query_auth,
+            )
+
+        if not paid or op == "get":
+            return execute()
+        return _charged_execute(name, execute, _config, budget)
 
     return Tool(name=name, description=description,
                 input_schema=_READ_SCHEMA if read_only else _SCHEMA, fn=_run)

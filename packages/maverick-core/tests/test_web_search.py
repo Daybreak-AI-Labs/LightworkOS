@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+from maverick.budget import Budget
+
 # ---------- web_search ----------
 
 class _FakeHttpxResponse:
@@ -26,7 +28,7 @@ class _FakeHttpxResponse:
 
 def test_web_search_empty_query():
     from maverick.tools.web_search import web_search
-    tool = web_search()
+    tool = web_search(budget=Budget())
     assert "query is required" in tool.fn({"query": ""}).lower()
 
 
@@ -46,7 +48,7 @@ def test_web_search_tavily_path(monkeypatch):
     import httpx
     with patch.object(httpx, "post", return_value=fake_resp):
         from maverick.tools.web_search import web_search
-        out = web_search().fn({"query": "hello world", "num_results": 5})
+        out = web_search(budget=Budget()).fn({"query": "hello world", "num_results": 5})
     assert "[backend: tavily]" in out
     assert "Result 1" in out
     assert "https://a.example" in out
@@ -68,7 +70,7 @@ def test_web_search_falls_through_to_ddg_when_no_keys(monkeypatch):
     import httpx
     with patch.object(httpx, "get", return_value=fake):
         from maverick.tools.web_search import web_search
-        out = web_search().fn({"query": "test", "num_results": 3})
+        out = web_search(budget=Budget()).fn({"query": "test", "num_results": 3})
 
     assert "[backend: ddg]" in out
     assert "Example Title" in out
@@ -80,7 +82,7 @@ def test_web_search_forced_backend_skipped_if_no_creds(monkeypatch):
     monkeypatch.setenv("MAVERICK_SEARCH_BACKEND", "tavily")
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
     from maverick.tools.web_search import web_search
-    out = web_search().fn({"query": "test"})
+    out = web_search(budget=Budget()).fn({"query": "test"})
     assert "ERROR" in out
 
 
@@ -90,10 +92,10 @@ def test_web_search_unknown_forced_backend_is_refused(monkeypatch):
     monkeypatch.setenv("MAVERICK_SEARCH_BACKEND", "tavilly")
     monkeypatch.setattr(ws, "_try_duckduckgo", lambda *a, **k: (_ for _ in ()).throw(
         AssertionError("fell through to DuckDuckGo")))
-    out = ws.web_search().fn({"query": "test"})
+    out = ws.web_search(budget=Budget()).fn({"query": "test"})
     assert out.startswith("ERROR") and "tavilly" in out
     monkeypatch.setenv("MAVERICK_SEARCH_BACKEND", "auto")  # documented default
-    assert "not supported" not in ws.web_search().fn({"query": "test"})
+    assert "not supported" not in ws.web_search(budget=Budget()).fn({"query": "test"})
 
 
 def test_web_search_site_filter(monkeypatch):
@@ -109,7 +111,7 @@ def test_web_search_site_filter(monkeypatch):
     import httpx
     with patch.object(httpx, "post", side_effect=fake_post):
         from maverick.tools.web_search import web_search
-        web_search().fn({"query": "react hooks", "site": "github.com"})
+        web_search(budget=Budget()).fn({"query": "react hooks", "site": "github.com"})
     assert captured_payload["q"].startswith("site:github.com ")
 
 

@@ -9,6 +9,7 @@ import types
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from maverick.budget import Budget
 from maverick.tools.image_edit import image_edit
 
 
@@ -82,7 +83,7 @@ def _fake_pil(monkeypatch, img=None):
 
 
 def test_requires_op_and_rejects_unknown():
-    t = image_edit()
+    t = image_edit(budget=Budget())
     assert "op is required" in t.fn({})
     assert "unknown op" in t.fn({"op": "bogus"})
 
@@ -93,7 +94,7 @@ def test_requires_op_and_rejects_unknown():
 def test_remote_op_requires_token(monkeypatch):
     monkeypatch.delenv("REPLICATE_API_TOKEN", raising=False)
     _fake_httpx(monkeypatch, get=MagicMock(), post=MagicMock())
-    out = image_edit().fn({"op": "variation", "image": "https://x/cat.png"})
+    out = image_edit(budget=Budget()).fn({"op": "variation", "image": "https://x/cat.png"})
     assert "REPLICATE_API_TOKEN" in out
 
 
@@ -101,7 +102,7 @@ def test_inpaint_creates_prediction_with_data_uris(monkeypatch, tmp_path):
     get, post = _wire_replicate(monkeypatch)
     (tmp_path / "img.png").write_bytes(b"\x89PNG\r\n\x1a\ndata")
     (tmp_path / "mask.png").write_bytes(b"\x89PNG\r\n\x1a\nmask")
-    out = image_edit(_SB(tmp_path)).fn(
+    out = image_edit(_SB(tmp_path), budget=Budget()).fn(
         {
             "op": "inpaint",
             "image": "img.png",
@@ -121,7 +122,7 @@ def test_inpaint_creates_prediction_with_data_uris(monkeypatch, tmp_path):
 
 def test_inpaint_requires_mask_and_prompt(monkeypatch):
     _wire_replicate(monkeypatch)
-    out = image_edit().fn({"op": "inpaint", "image": "https://x/cat.png"})
+    out = image_edit(budget=Budget()).fn({"op": "inpaint", "image": "https://x/cat.png"})
     assert "requires mask and prompt" in out
 
 
@@ -129,7 +130,7 @@ def test_variation_and_upscale_use_env_model_knobs(monkeypatch):
     get, post = _wire_replicate(monkeypatch)
     monkeypatch.setenv("MAVERICK_VARIATION_MODEL", "acme/vary")
     monkeypatch.setenv("MAVERICK_UPSCALE_MODEL", "acme/upscale")
-    t = image_edit()
+    t = image_edit(budget=Budget())
     t.fn({"op": "variation", "image": "https://x/cat.png", "prompt": "wider"})
     assert "acme/vary" in get.call_args[0][0]
     t.fn({"op": "upscale", "image": "https://x/cat.png", "scale": 4})
@@ -139,7 +140,7 @@ def test_variation_and_upscale_use_env_model_knobs(monkeypatch):
 
 def test_upscale_validates_scale(monkeypatch):
     _wire_replicate(monkeypatch)
-    t = image_edit()
+    t = image_edit(budget=Budget())
     assert "scale must be a positive number" in t.fn(
         {"op": "upscale", "image": "https://x/c.png", "scale": -2}
     )
@@ -148,7 +149,7 @@ def test_upscale_validates_scale(monkeypatch):
 def test_remote_local_image_must_be_real_bounded_image(monkeypatch, tmp_path):
     _wire_replicate(monkeypatch)
     (tmp_path / "secret.env").write_text("TOKEN=exfiltrate-me")
-    t = image_edit(_SB(tmp_path))
+    t = image_edit(_SB(tmp_path), budget=Budget())
     out = t.fn({"op": "variation", "image": "secret.env"})
     assert out.startswith("ERROR") and "must be .png" in out
 
@@ -163,7 +164,7 @@ def test_remote_local_image_must_be_real_bounded_image(monkeypatch, tmp_path):
 
 def test_remote_model_override_is_ignored(monkeypatch):
     get, _post = _wire_replicate(monkeypatch)
-    t = image_edit()
+    t = image_edit(budget=Budget())
     out = t.fn(
         {
             "op": "variation",
@@ -194,13 +195,13 @@ def test_remote_wait_polls_to_terminal(monkeypatch):
     )
     post = MagicMock(return_value=_resp(201, {"id": "pred1", "status": "starting"}))
     _fake_httpx(monkeypatch, get=get, post=post)
-    out = image_edit().fn({"op": "variation", "image": "https://x/cat.png", "wait": True})
+    out = image_edit(budget=Budget()).fn({"op": "variation", "image": "https://x/cat.png", "wait": True})
     assert "status: succeeded" in out and "out.png" in out
 
 
 def test_remote_local_image_confined_to_workspace(monkeypatch, tmp_path):
     _wire_replicate(monkeypatch)
-    out = image_edit(_SB(tmp_path)).fn({"op": "variation", "image": "../../etc/passwd"})
+    out = image_edit(_SB(tmp_path), budget=Budget()).fn({"op": "variation", "image": "../../etc/passwd"})
     assert out.startswith("ERROR") and "escapes the workspace" in out
 
 
@@ -210,7 +211,7 @@ def test_remote_local_image_confined_to_workspace(monkeypatch, tmp_path):
 def test_crop_resize_rotate_apply_and_write(monkeypatch, tmp_path):
     img = _fake_pil(monkeypatch)
     (tmp_path / "in.png").write_bytes(b"x")
-    t = image_edit(_SB(tmp_path))
+    t = image_edit(_SB(tmp_path), budget=Budget())
     assert "wrote" in t.fn(
         {"op": "crop", "input_path": "in.png", "output_path": "c.png", "box": [0, 0, 4, 4]}
     )
@@ -226,7 +227,7 @@ def test_crop_resize_rotate_apply_and_write(monkeypatch, tmp_path):
 
 def test_local_ops_validate_args(monkeypatch, tmp_path):
     _fake_pil(monkeypatch)
-    t = image_edit(_SB(tmp_path))
+    t = image_edit(_SB(tmp_path), budget=Budget())
     assert "requires input_path and output_path" in t.fn({"op": "crop", "box": [0, 0, 1, 1]})
     assert "box=[left, top, right, bottom]" in t.fn(
         {"op": "crop", "input_path": "a", "output_path": "b", "box": [1, 2]}
@@ -242,7 +243,7 @@ def test_local_ops_refuse_oversized_output(monkeypatch, tmp_path):
     # allocate gigabytes before Pillow failed.
     img = _fake_pil(monkeypatch)
     (tmp_path / "in.png").write_bytes(b"x")
-    t = image_edit(_SB(tmp_path))
+    t = image_edit(_SB(tmp_path), budget=Budget())
     big = {"input_path": "in.png", "output_path": "o.png"}
     assert "at most 8192" in t.fn({"op": "resize", "width": 40000, "height": 40000, **big})
     assert "at most 8192" in t.fn({"op": "crop", "box": [0, 0, 40000, 10], **big})
@@ -251,7 +252,7 @@ def test_local_ops_refuse_oversized_output(monkeypatch, tmp_path):
 
 def test_local_output_path_confined(monkeypatch, tmp_path):
     _fake_pil(monkeypatch)
-    out = image_edit(_SB(tmp_path)).fn(
+    out = image_edit(_SB(tmp_path), budget=Budget()).fn(
         {
             "op": "rotate",
             "input_path": "in.png",
@@ -265,7 +266,7 @@ def test_local_output_path_confined(monkeypatch, tmp_path):
 def test_local_ops_actionable_without_pillow(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "PIL", None)
     (tmp_path / "in.png").write_bytes(b"x")
-    out = image_edit(_SB(tmp_path)).fn(
+    out = image_edit(_SB(tmp_path), budget=Budget()).fn(
         {
             "op": "crop",
             "input_path": "in.png",

@@ -435,3 +435,30 @@ def test_graphql_failure_never_echoes_low_entropy_active_token(monkeypatch):
 
     assert out == "ERROR: graphql (401): upstream request failed"
     assert "tok123" not in out
+
+
+def test_paid_ai_connector_charges_each_write_to_the_run_budget(monkeypatch):
+    # A pay-per-use AI connector's POST is a paid call charged to the run
+    # budget (the per-call safety ceiling with no price set); a GET is not
+    # charged, a server on a private address is free, and the registered
+    # connector without a run budget refuses before sending.
+    import pytest
+    from maverick.budget import DEFAULT_UNPRICED_TOOL_CALL_DOLLARS, Budget
+    from maverick.tools.enterprise_connectors import enterprise_connectors
+
+    _set(monkeypatch)
+    req = MagicMock(return_value=_resp(200, {"ok": True}))
+    _fake_httpx(monkeypatch, request=req)
+    budget = Budget()
+    tool = _tool(paid=True, budget=budget)
+    write = {"op": "post", "path": "/v1/run", "body": {"x": 1}, "confirm": True}
+    assert "ok" in tool.fn(write) and "ok" in tool.fn({"op": "get", "path": "/v1/models"})
+    assert budget.dollars == pytest.approx(DEFAULT_UNPRICED_TOOL_CALL_DOLLARS)
+    monkeypatch.setenv("ACME_BASE_URL", "http://192.168.1.20:8000")
+    assert "ok" in tool.fn(write) and req.call_count == 3
+    assert budget.dollars == pytest.approx(DEFAULT_UNPRICED_TOOL_CALL_DOLLARS)
+    monkeypatch.setenv("OPENAI_PLATFORM_BASE_URL", "https://api.openai.com")
+    monkeypatch.setenv("OPENAI_PLATFORM_TOKEN", "tok")
+    unbudgeted = next(t for t in enterprise_connectors() if t.name == "openai_platform")
+    out = unbudgeted.fn({"op": "post", "path": "/v1/chat/completions", "body": {}, "confirm": True})
+    assert out.startswith("ERROR") and "nothing was sent" in out and req.call_count == 3
