@@ -323,7 +323,7 @@ def create_ott_ctv_privacy_rights_router(  # noqa: C901 - closed route compositi
         tags=["public-consent-ott-ctv-rights"],
     )
 
-    async def admitted(request: Request) -> _Admitted:  # noqa: C901
+    async def admitted(request: Request) -> _Admitted:
         try:
             if deps.gate() is not True or deps.public.gate() is not True:
                 raise HTTPException(status_code=404, detail="not found")

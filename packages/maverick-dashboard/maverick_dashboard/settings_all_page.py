@@ -396,7 +396,7 @@ def _source_choices(source: str) -> list[tuple[str, str]]:
     return list(memo[source])
 
 
-def _build_source_choices(source: str) -> list[tuple[str, str]]:  # noqa: C901 - one branch per source
+def _build_source_choices(source: str) -> list[tuple[str, str]]:  # one branch per source
     from . import identity_format
 
     if source == "people":

@@ -1209,7 +1209,7 @@ class EUAIConformityWorkflow:
         *,
         tenant_ref: str,
         current_asset: Mapping[str, Any],
-    ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:  # noqa: C901
+    ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
         references = self._validated_references(record, tenant_ref=tenant_ref)
         gaps: list[str] = []
         declaration = record["declaration"]
