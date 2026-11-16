@@ -282,8 +282,8 @@ class TestBuiltinRules:
         # alphabets must give the same rule names, in both directions.
         import random
 
-        key = "sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUV"
-        b64 = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9w"
+        key = "sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUV"  # pragma: allowlist secret
+        b64 = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9w"  # pragma: allowlist secret
         cases = []
         for n in [*range(0, 4200, 97), 1023, 1024, 1025, 2047, 2048, 2049, 2050, 3071, 3072, 3073]:
             cases += [
