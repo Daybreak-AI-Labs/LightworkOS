@@ -140,6 +140,24 @@ def test_remove_fleet_deletes_run_index(monkeypatch, tmp_path):
     assert load_runs("a") == []
 
 
+def test_record_run_for_a_removed_fleet_writes_nothing(monkeypatch, tmp_path):
+    """A run that starts just after its fleet was removed used to leave a
+    history file behind, which a new fleet with the same name then showed."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
+    from maverick.fleet import Fleet, load_runs, record_run, remove_fleet, runs_path, save_fleet
+
+    save_fleet(Fleet(name="a", owner="x"))
+    assert remove_fleet("a") is True
+    record_run("a", "agent", 123)  # the late write
+    assert not runs_path("a").exists()
+
+    save_fleet(Fleet(name="a", owner="y"))
+    assert load_runs("a") == []
+    record_run("a", "agent", 456)
+    assert [r["goal_id"] for r in load_runs("a")] == [456]
+
+
 def test_record_run_is_atomic_under_concurrency(monkeypatch, tmp_path):
     """Concurrent runs of the same fleet must not lose run-log entries to a
     read-modify-write race."""
@@ -147,8 +165,9 @@ def test_record_run_is_atomic_under_concurrency(monkeypatch, tmp_path):
     monkeypatch.delenv("MAVERICK_TENANT", raising=False)
     import threading
 
-    from maverick.fleet import load_runs, record_run
+    from maverick.fleet import Fleet, load_runs, record_run, save_fleet
 
+    save_fleet(Fleet(name="acme", owner="x"))
     n = 50
     barrier = threading.Barrier(n)
 
