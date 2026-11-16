@@ -8,8 +8,8 @@ the company's git host until a person approves the change.
 maverick code add payments https://git.example.com/acme/payments.git \
   --test "python -m pytest -q" --token-env ACME_GIT_TOKEN
 maverick code feature payments "Add refund reasons" -d "Store a reason code on every refund"
-maverick code proposals            # pending | approved | rejected | merged
-maverick code show <id>            # diff, test output, independent review
+maverick code proposals            # pending | approved | rejected | merged; gaps
+maverick code show <id>            # what was checked, diff, test output, review
 # approve codebase_merge #<n> in the dashboard's approvals queue, then:
 maverick code merge --approved     # merge every approved proposal into the vault
 maverick code push <id>            # push the branch to the git host for a pull request
@@ -55,25 +55,64 @@ maverick code export payments ./payments   # plaintext clone for the owner
    workdir, under the run's labels. If the run fails, the goal is marked
    `failed` and nothing is proposed.
 3. The host commits the working tree's files and pins the branch to that exact
-   commit. It bundles the branch before any repository code (tests) runs. The
-   repository's test command then runs through the sandbox.
-4. The independent reviewer reads the diff of that pinned commit. It uses a
+   commit. It bundles the branch before any repository code (tests) runs.
+   The repository's test command then runs through the sandbox on a **fresh
+   copy of the pinned commit** (no remote, deleted afterwards), never on the
+   author's working copy. Whatever the tests write never reaches the author
+   or the proposal. The test command must install what it needs: files the
+   agent left untracked or ignored are not in that copy.
+4. **Repair rounds.** If the tests fail, the failing output goes back to the
+   author as a follow-up goal (a child of the feature goal) on the same
+   working copy. Its new files are committed and pinned again, and the tests
+   run again on a fresh copy. This repeats up to `[codebase] repair_rounds`
+   times (default 2).
+5. **The independent checker** (`[codebase] checker`, on by default). A
+   separate goal with a fresh context gets the request and its own throwaway
+   copy of the pinned commit, where `git diff <base> HEAD` shows the change.
+   It never sees the author's goal, transcript or reasoning. It runs in the
+   sandbox under the same `code:<repo>` label and protection mode as the
+   author. Its copy has no remote, and nothing in it is read back, so it
+   cannot push, merge or change the proposal. It reports findings: severity
+   (`blocker`, `should-fix`, `minor`), what is wrong, and whether it ran a
+   command or read the code to know. Blockers go back to the author for a
+   repair round (from the same `repair_rounds` allowance), then the checker
+   looks again, up to `[codebase] check_rounds` looks (default 2). Each
+   finding ends `fixed` (a later look confirmed it gone), `still open` (sent
+   back but not confirmed fixed) or `not attempted` (never sent back:
+   should-fix and minor findings, or no rounds left). Its model is the
+   `reviewer` role (`[models] reviewer`), so it can differ from the
+   author's; when both share a provider family and
+   `[verification] cross_family_model` is set, that model is used instead.
+6. **One budget.** Every author and checker round charges one budget for the
+   feature run (`--max-dollars`, else `[budget]` and the per-goal defaults).
+   `budget.check()` runs before each round; when it runs out, the loop stops
+   and the last pinned, tested version is proposed.
+7. The independent reviewer reads the diff of that pinned commit. It uses a
    cross-family model where possible.
-5. The sealed proposal (diff, tests, review, branch bundle) parks a
-   `codebase_merge` approval: a structured approval card committing to the
-   repository, branch, base and approved head, stating the test result, the
-   review verdict and, when the diff is too large to store whole, a warning.
-   It can be approved in the dashboard's approvals queue for 7 days; after
-   that the proposal shows `expired` and `maverick code renew ID` parks a fresh
-   approval. The proposal is saved before its approval is parked, so a failure
-   there (`unrequested`) never loses the work. A change the swarm
-   did not make produces an `empty` proposal and no approval.
-6. `merge` and `push` require that approval to be an approved `codebase_merge`
+8. The sealed proposal (diff, tests, rounds, findings, review, branch bundle)
+   parks a `codebase_merge` approval: a structured approval card committing
+   to the repository, branch, base and approved head. The card states in
+   plain words what was and was not checked: whether the tests passed on the
+   exact version being approved, how many repair rounds ran, each checker
+   finding and its status, and whether a finding rests on a command that was
+   run. Its "unresolved assumptions" list every gap: tests failing or not
+   configured, the checker turned off, unable to run or not looking at the
+   final version, blockers still open, or the budget running out. It never
+   calls a change checked when one of these holds. It also warns when the
+   diff is too large to store whole. The card can be approved in the
+   dashboard's approvals queue for 7 days; after that the proposal shows
+   `expired` and `maverick code renew ID` parks a fresh approval. The
+   proposal is saved before its approval is parked, so a failure there
+   (`unrequested`) never loses the work. A change the swarm did not make
+   produces an `empty` proposal and no approval. Proposals saved before
+   repair rounds and the checker existed still load; they read as not
+   independently checked.
+9. `merge` and `push` require that approval to be an approved `codebase_merge`
    for this repository. Both verify the branch is the approved commit. Merges
    are `--no-ff`, so each is one reviewable commit. A merge that no longer
    applies cleanly leaves the vault untouched and marks the proposal
    `conflict`.
-7. `sync` fetches upstream as `upstream/*` and never overwrites vault work:
+10. `sync` fetches upstream as `upstream/*` and never overwrites vault work:
    - a branch behind upstream fast-forwards;
    - a branch ahead of upstream (approved merges not pushed yet) is kept;
    - a diverged default branch has upstream merged in, and a conflict changes
@@ -83,10 +122,13 @@ maverick code export payments ./payments   # plaintext clone for the owner
 ## Dashboard
 
 **Operate → Code** (`/code`, operate permission) lists vaulted repositories and
-each proposal's files, test result, review verdict and approval state. It
-reads one summary (`GET /api/v1/code/summary`) that never includes code, diffs
-or test output. Approve in the approvals queue; merges run through
-`maverick code merge --approved`.
+each proposal's files, test result, independent check outcome, review verdict
+and approval state. It reads one summary (`GET /api/v1/code/summary`) that
+never includes code, diffs or test output. An administrator's review panel
+opens with "What was checked", in the same words as the approval card. Ask
+Copilot "What was checked on the proposed code changes?" for the same points
+(administrators only, like the panel). Approve in the approvals queue; merges
+run through `maverick code merge --approved`.
 
 ## Configuration
 
@@ -94,7 +136,15 @@ or test output. Approve in the approvals queue; merges run through
 [codebase]
 enable = true              # off by default: it stores your source
 default_protect = "block"  # block | approve | audit for runs over vaulted code
+repair_rounds = 2          # 0-5 more author runs after failing tests or blockers
+checker = true             # the independent checker (one agent run per look)
+check_rounds = 2           # 1-3 looks; a second look confirms blocker fixes
 ```
+
+At the defaults a feature run makes at most five agent runs instead of one:
+the author's first run, two repair rounds and two checker looks. All of them
+share one spending limit. `maverick code feature --no-check` skips the
+checker for one run.
 
 ## Limits
 

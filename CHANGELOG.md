@@ -626,6 +626,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the provider cannot be reached then, the last answer stays in use. If
   sign-in stops with "misconfigured", copy the issuer exactly as your
   provider shows it; the server log names both values.
+- A code change built with `maverick code feature` or the Code page now
+  repairs itself: failing tests go back to the agent for up to two more
+  tries, then a separate agent runs the change and tries to break it.
+  Blocking problems it finds go back too, and it looks again. Tests and
+  checks run on a fresh copy of exactly the commit you approve, so your test
+  command must install anything it needs. Every round shares one spending
+  limit. The approval card, `maverick code show` and the Code page list what
+  was and was not checked. Set `[codebase] repair_rounds`, `checker` and
+  `check_rounds` in Settings; each round or look is one more agent run.
 
 ### Fixed
 
