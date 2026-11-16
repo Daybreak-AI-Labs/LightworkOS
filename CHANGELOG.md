@@ -683,6 +683,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   workspace; before, it reported that it assigned 0 rows. A script that
   runs it that way now gets exit code 2. Run it as a login that bypasses
   row-level security.
+- A code change built with `maverick code feature` or the Code page now
+  repairs itself: failing tests go back to the agent for up to two more
+  tries, then a separate agent runs the change and tries to break it.
+  Blocking problems it finds go back too, and it looks again. Tests and
+  checks run on a fresh copy of exactly the commit you approve, so your test
+  command must install anything it needs. Every round shares one spending
+  limit. The approval card, `maverick code show` and the Code page list what
+  was and was not checked. Set `[codebase] repair_rounds`, `checker` and
+  `check_rounds` in Settings; each round or look is one more agent run.
+- On the default `local` work area, a code change's tests, checker and
+  agent share this computer. Each round now starts from a fresh copy. Where
+  Linux allows it, each command gets its own processes and temporary
+  folder, runs as your own user, and nothing it starts outlives it. The approval card says how the
+  steps were kept apart, and lists it as not fully checked. To refuse such
+  runs, turn on `[codebase] require_container` in Settings. A workspace can
+  no longer weaken the `[codebase]` checks in its own config file.
 
 ### Fixed
 

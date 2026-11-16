@@ -179,7 +179,7 @@ _OPERATIONAL_GUIDES = (
      "Add a code project, start a change and review proposals when your access allows it.",
      "Choose a code project, then use Start a change and review the proposal before any merge.",
      "A proposed change is not merged merely because it appears here; code work may be turned off.",
-     "How do I start a code change?", "Where can I review a proposed change?"),
+     "How do I start a code change?", "What was checked on the proposed code changes?"),
     ("/me", "My work", "See decisions and questions waiting for you, recent results, expiring keys and your summary choices.",
      "Open an approval or task question, link your chat account, and set daily-summary preferences.",
      "Open Waiting for your decision or Questions an agent is waiting on, then use that item's page to respond.",

@@ -348,6 +348,8 @@ def test_cli_end_to_end_with_approval_in_the_middle(upstream, tmp_path, monkeypa
     monkeypatch.setattr(cli_mod, "_require_llm_key", lambda *a, **k: "k")
     run_fn, _ = _swarm(lambda work: (work / "feature.py").write_text("ok = True\n"))
     monkeypatch.setattr(features, "default_runner", lambda **k: run_fn)
+    monkeypatch.setattr(features, "default_checker",
+                        lambda **k: lambda gid, copy: {"findings": [], "fixed": []})
 
     out = run(main, ["code", "add", "pricing", str(upstream)])
     assert out.exit_code == 0 and "protect=approve" in out.output, out.output
@@ -356,6 +358,7 @@ def test_cli_end_to_end_with_approval_in_the_middle(upstream, tmp_path, monkeypa
     assert out.exit_code == 0 and "pricing now at " in out.output, out.output
     out = run(main, ["code", "feature", "pricing", "Add flag", "--no-review"])
     assert out.exit_code == 0 and "awaiting approval #1" in out.output, out.output
+    assert "Independent check: looked 1 time(s)" in out.output, out.output
     pid = out.output.split()[1]
     assert "pending" in run(main, ["code", "proposals"]).output
     assert "+ok = True" in run(main, ["code", "show", pid]).output
@@ -549,3 +552,660 @@ def test_an_approved_but_expired_approval_no_longer_merges_and_can_be_renewed(tm
     with pytest.raises(features.VaultError, match="expired"):
         features._require_approved(world, p)
     assert features.request_approval(world, p) == 2
+
+
+# -- the verified feature run: repair rounds, the independent checker, the card --
+
+def _card(world, p):
+    from maverick.approval_cards import decode_approval_detail
+    card = decode_approval_detail(world.get_approval(p["approval_id"]).detail)
+    return {"parameter_summary": card["parameters"]["summary"],
+            "unresolved_assumptions": card["consequences"]["unresolved_assumptions"]}
+
+
+def _rounds(*edits):
+    """An author whose Nth round applies the Nth edit (the last one repeats);
+    records each round's goal and what its working copy looked like."""
+    calls: list = []
+
+    def run(goal_id, work):
+        calls.append({"goal_id": goal_id, "files": sorted(p.name for p in work.iterdir())})
+        edits[min(len(calls), len(edits)) - 1](work)
+        return "AUTHOR TRANSCRIPT: my private reasoning"
+    return run, calls
+
+
+def _passing(work):
+    (work / "app.py").write_text(SECRET_LINE + "\n\ndef discount(): return 0.1\n")
+
+
+def _failing(work):
+    (work / "app.py").write_text("def pricing_model(): return -1\n")
+
+
+def test_failing_tests_go_back_to_the_author_until_they_pass(upstream, tmp_path):
+    vault.register("pricing", str(upstream), test_command="python -m pytest -q")
+    world = WorldModel(tmp_path / "world.db")
+    run, calls = _rounds(_failing, _passing)
+    p = features.propose(world, "pricing", "Add a discount", "10% helper", run,
+                         sandbox_factory=_Sandbox, repair_rounds=2)
+    assert len(calls) == 2                                  # stopped once the tests passed
+    repair = world.get_goal(calls[1]["goal_id"])
+    assert repair.parent_id == p["goal_id"] and "AssertionError" in repair.description
+    assert "10% helper" in repair.description               # the follow-up carries the request
+    assert p["tests"]["passed"] and p["tests"]["commit"] == p["head"]
+    assert [r["kind"] for r in p["rounds"]] == ["author", "tests"]
+    card = _card(world, p)
+    assert "Tests: PASSED" in " ".join(card["parameter_summary"])
+    assert "Repair rounds: 1 of 2 used." in card["parameter_summary"]
+    # the approved commit is the one that was tested
+    world.decide_approval(p["approval_id"], "approved", decided_by="user:lead")
+    features.merge(world, p["id"])
+    with vault.checkout("pricing") as work:
+        assert "def discount" in (work / "app.py").read_text()
+
+
+def test_test_side_effects_never_reach_the_author_or_the_proposal(upstream, tmp_path):
+    vault.register("pricing", str(upstream), test_command="python -m pytest -q")
+    world = WorldModel(tmp_path / "world.db")
+    seen_dirs: list = []
+
+    class TestsThatWriteFiles(_Sandbox):
+        def exec(self, cmd, timeout=None):
+            seen_dirs.append(Path(self.workdir))
+            (Path(self.workdir) / "late.py").write_text("late = True\n")
+            (Path(self.workdir) / "app.py").write_text("tampered = True\n")
+            return super().exec(cmd, timeout)
+    run, calls = _rounds(_failing, _passing)
+    p = features.propose(world, "pricing", "Discount", "", run,
+                         sandbox_factory=TestsThatWriteFiles, repair_rounds=1, checker=None)
+    assert "late.py" not in calls[1]["files"]               # the author never saw it
+    assert p["files"] == ["app.py"] and "late" not in p["diff"] and "tampered" not in p["diff"]
+    assert len({d.parent for d in seen_dirs}) == 2          # a fresh copy for every test run
+    assert all(not d.exists() for d in seen_dirs)
+
+
+def test_a_checker_blocker_goes_back_to_the_author_and_is_checked_again(upstream, tmp_path):
+    vault.register("pricing", str(upstream), test_command="python -m pytest -q")
+    world = WorldModel(tmp_path / "world.db")
+
+    def careless(work):
+        _passing(work)
+        (work / "notes.py").write_text("x = 1 / 0\n")
+
+    def careful(work):
+        (work / "notes.py").write_text("x = 1\n")
+    run, calls = _rounds(careless, careful)
+    looks: list = []
+
+    def checker(goal_id, copy):
+        brief = world.get_goal(goal_id).description
+        looks.append({"brief": brief, "notes": (copy / "notes.py").read_text(),
+                      "git": (copy / ".git").exists()})
+        if len(looks) == 1:
+            return ('Here is my report: {"findings": [{"severity": "blocker", '
+                    '"what": "notes.py divides by zero on import", "evidence": "ran", '
+                    '"how": "python -c \\"import notes\\""}, {"severity": "minor", '
+                    '"what": "no docstring", "evidence": "read", "how": "notes.py line 1"}], '
+                    '"fixed": []}')
+        return {"findings": [], "fixed": ["1.1"]}
+    p = features.propose(world, "pricing", "Discount", "10% helper", run, checker=checker,
+                         sandbox_factory=_Sandbox, repair_rounds=2, check_rounds=2)
+    assert len(looks) == 2 and len(calls) == 2
+    assert "10% helper" in looks[0]["brief"] and "notes.py" in looks[0]["brief"]
+    assert "AUTHOR TRANSCRIPT" not in looks[0]["brief"]      # never the author's reasoning
+    assert looks[0]["notes"] == "x = 1 / 0\n" and looks[1]["notes"] == "x = 1\n"
+    assert "divides by zero" in world.get_goal(calls[1]["goal_id"]).description
+    assert "1.1" in looks[1]["brief"]                         # the checker sees its earlier finding
+    check = p["check"]
+    assert check["state"] == "ran" and check["runs"] == 2 and check["commit"] == p["head"]
+    assert [(f["id"], f["severity"], f["status"]) for f in check["findings"]] == [
+        ("1.1", "blocker", "fixed"), ("1.2", "minor", "not attempted")]
+    card = _card(world, p)
+    text = " ".join(card["parameter_summary"])
+    # The card (which reaches chat channels and operate-level lists) carries
+    # counts and statuses only; finding text can quote code and stays in the
+    # administrator-only detail.
+    assert "1 blocker fixed, 1 minor not attempted" in text and "maverick code show" in text
+    assert "divides by zero" not in text and "no docstring" not in text
+    assert any("Finding 1.1, blocker, fixed" in f and "shown by running a command" in f
+               for f in features.evidence(p)["findings"])
+    assert card["unresolved_assumptions"] == []
+    assert features.evidence(p)["gaps"] == []
+
+
+def test_a_blocker_that_is_never_fixed_stays_open_and_is_never_called_checked(
+        upstream, tmp_path):
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    run, calls = _rounds(lambda work: (work / "a.py").write_text("a = 1\n"))
+    blocker = {"findings": [{"severity": "blocker", "what": "a is wrong", "evidence": "read",
+                             "how": "a.py"}], "fixed": []}
+    p = features.propose(world, "pricing", "A", "", run, checker=lambda gid, copy: blocker,
+                         repair_rounds=1, check_rounds=2)
+    assert len(calls) == 2                                    # one repair round, then no more
+    statuses = [(f["id"], f["status"]) for f in p["check"]["findings"]]
+    assert statuses == [("1.1", "still open"), ("2.1", "not attempted")]
+    card = _card(world, p)
+    text = " ".join(card["parameter_summary"] + card["unresolved_assumptions"]).lower()
+    assert "2 blocker(s) from the independent check are still open" in text
+    assert "not configured" in text and "verified" not in text
+
+
+def test_the_spending_limit_stops_the_loop_and_the_card_says_so(upstream, tmp_path):
+    from maverick.budget import Budget
+    vault.register("pricing", str(upstream), test_command="python -m pytest -q")
+    world = WorldModel(tmp_path / "world.db")
+    budget = Budget(max_tool_calls=1)
+
+    def spend(work):
+        budget.tool_calls = 1                                  # at the cap, not over it
+        _failing(work)
+
+    class CostlyTests(_Sandbox):
+        def exec(self, cmd, timeout=None):
+            budget.tool_calls += 1                             # the test run tips it over
+            return super().exec(cmd, timeout)
+    run, calls = _rounds(spend)
+    checks: list = []
+    p = features.propose(world, "pricing", "Discount", "", run, budget=budget,
+                         checker=lambda gid, copy: checks.append(gid),
+                         sandbox_factory=CostlyTests, repair_rounds=2)
+    assert len(calls) == 1 and checks == []                  # nothing ran after the cap
+    assert p["stopped"] == "budget" and p["check"]["state"] == "skipped"
+    assert p["status"] == "pending" and not p["tests"]["passed"]
+    card = _card(world, p)
+    assert any("spending limit ran out" in line for line in card["parameter_summary"])
+    assert any("spending limit" in line for line in card["unresolved_assumptions"])
+
+
+def test_a_round_that_overruns_the_budget_is_never_offered(upstream, tmp_path):
+    """A governed run swallows the budget stop and returns normally; the
+    feature run still sees the spent budget after the round, keeps the last
+    finished version, and says the spending limit stopped it."""
+    from maverick.budget import Budget, BudgetExceeded
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    budget = Budget(max_tool_calls=3)
+
+    def half(work):
+        (work / "half.py").write_text("half = True\n")
+        budget.tool_calls += 10
+        return "Stopped: budget limit reached"
+    run, calls = _rounds(lambda work: (work / "a.py").write_text("a = 1\n"), half)
+    blocker = {"findings": [{"severity": "blocker", "what": "a", "evidence": "read",
+                             "how": "a.py"}], "fixed": []}
+    reviews: list = []
+    p = features.propose(world, "pricing", "A", "", run, budget=budget,
+                         checker=lambda gid, copy: blocker, repair_rounds=1,
+                         reviewer=lambda brief, diff: reviews.append(diff))
+    assert len(calls) == 2 and p["files"] == ["a.py"] and p["stopped"] == "budget"
+    assert reviews == []                                     # no model call after the stop
+    assert any("spending limit ran out" in line for line in _card(world, p)["parameter_summary"])
+
+    budget = Budget(max_tool_calls=3)
+
+    def costly_check(goal_id, copy):
+        budget.tool_calls += 10
+        return "Stopped: budget limit reached. Raise the cap and resume."
+    run, _ = _rounds(lambda work: (work / "b.py").write_text("b = 1\n"))
+    q = features.propose(world, "pricing", "B", "", run, budget=budget, checker=costly_check)
+    assert q["stopped"] == "budget" and q["check"]["state"] == "skipped"
+    lines = features.evidence(q)["lines"]
+    assert not any("could not run" in line or "check: did not run" in line for line in lines)
+    assert "Independent check: was cut short by the spending limit, so nothing it found " \
+           "was recorded." in lines
+
+    budget = Budget(max_tool_calls=3)
+
+    def costly_review(brief, diff):
+        budget.tool_calls += 10
+        raise BudgetExceeded("tool calls")
+    run, _ = _rounds(lambda work: (work / "d.py").write_text("d = 1\n"))
+    r = features.propose(world, "pricing", "D", "", run, budget=budget, reviewer=costly_review,
+                         checker=lambda gid, copy: {"findings": [], "fixed": []})
+    facts = features.evidence(r)
+    assert r["stopped"] is None and r["review_cut_short"]          # every round ran
+    assert not any("later rounds did not run" in line for line in facts["lines"])
+    assert "Independent review: cut short by the spending limit." in \
+        _card(world, r)["parameter_summary"]
+    assert "The spending limit ran out before the diff review finished." in facts["gaps"]
+
+    budget = Budget(max_tool_calls=3)
+
+    def first_round_overruns(work):
+        (work / "c.py").write_text("c = 1\n")
+        budget.tool_calls += 10
+    run, calls = _rounds(first_round_overruns)
+    with pytest.raises(vault.VaultError, match="spending limit ran out"):
+        features.propose(world, "pricing", "C", "", run, budget=budget, checker=None)
+    assert world.get_goal(calls[0]["goal_id"]).status == "failed"
+    assert [x["title"] for x in features.list_proposals()] == ["D", "B", "A"]
+
+
+def test_the_checker_cannot_change_the_proposal(upstream, tmp_path):
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    run, _ = _rounds(lambda work: (work / "a.py").write_text("a = 1\n"))
+    pushed: list = []
+
+    def meddling(goal_id, copy):
+        (copy / "a.py").write_text("a = 'checker'\n")
+        (copy / "planted.py").write_text("evil = True\n")
+        _sh("add", "-A", cwd=copy)
+        _sh("commit", "-q", "-m", "checker", cwd=copy)
+        pushed.append(subprocess.run(["git", "push", "origin", "HEAD:refs/heads/main"],
+                                     cwd=copy, capture_output=True).returncode)
+        return {"findings": [], "fixed": []}
+    p = features.propose(world, "pricing", "A", "", run, checker=meddling, repair_rounds=0)
+    assert pushed[0] != 0                                     # its copy has no remote at all
+    assert p["files"] == ["a.py"] and "checker" not in p["diff"]
+    world.decide_approval(p["approval_id"], "approved", decided_by="user:lead")
+    features.merge(world, p["id"])
+    with vault.checkout("pricing") as work:
+        assert (work / "a.py").read_text() == "a = 1\n" and not (work / "planted.py").exists()
+
+
+def test_a_proposal_saved_before_verified_runs_still_loads_and_shows(upstream, tmp_path,
+                                                                     monkeypatch):
+    from click.testing import CliRunner
+    from maverick import config
+    from maverick.cli import main
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    old = {"id": "0123456789abcdef", "repo": "pricing", "title": "Old", "goal_id": 1,
+           "branch": "lightwork/old-012345", "base": "b" * 40, "head": "a" * 40,
+           "files": ["x.py"], "diff": "+x", "diff_truncated": False, "diff_chars": 2,
+           "tests": {"command": "pytest", "exit_code": 0, "passed": True},
+           "tests_output": "ok", "review": None, "status": "pending", "approval_id": None,
+           "created_at": 1.0, "merged_at": None}
+    features._save(old)
+    loaded = features.find(old["id"])
+    lines = features.evidence(loaded)["lines"]
+    assert "Tests: PASSED (`pytest`)." in lines and "Independent check: not run." in lines
+    assert features.summary(world)["proposals"][0]["check"] is None
+    features.request_approval(world, loaded)                  # renew builds its card
+    monkeypatch.setattr(config, "get_codebase",
+                        lambda: {"enable": True, "default_protect": "block"})
+    out = CliRunner().invoke(main, ["code", "show", old["id"]])
+    assert out.exit_code == 0 and "Independent check: not run." in out.output, out.output
+
+
+# -- isolation between rounds: nothing a test run or a checker leaves behind
+#    reaches the next author round or the proposal --
+
+@pytest.fixture
+def private_tmp(tmp_path, monkeypatch):
+    """Working copies live under this test's own temp folder, so a planting
+    probe can find them without touching other tests."""
+    import tempfile
+    root = tmp_path / "t"
+    root.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(root))
+    return root
+
+
+def test_a_test_run_cannot_plant_files_in_the_next_author_round(upstream, tmp_path, private_tmp):
+    probe = (f"import glob, os, sys\n"
+             f"for d in glob.glob({str(private_tmp)!r} + '/lw-work-*/work'):\n"
+             f"    open(os.path.join(d, 'planted.py'), 'w').write('planted = True\\n')\n"
+             f"sys.exit(0 if os.path.exists('fixed.txt') else 1)\n")
+    vault.register("pricing", str(upstream), test_command="python probe.py")
+    world = WorldModel(tmp_path / "world.db")
+
+    def first(work):
+        (work / "probe.py").write_text(probe)
+
+    def second(work):
+        (work / "fixed.txt").write_text("ok\n")
+    run, calls = _rounds(first, second)
+    p = features.propose(world, "pricing", "T", "", run, sandbox_factory=_Sandbox,
+                         repair_rounds=1, checker=None)
+    assert "planted.py" not in calls[1]["files"] and "planted.py" not in p["files"]
+    assert p["tests"]["passed"]
+
+
+def test_a_checker_cannot_plant_files_then_call_the_change_clean(upstream, tmp_path, private_tmp):
+    import glob
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    run, _ = _rounds(lambda work: (work / "a.py").write_text("a = 1\n"))
+    looks: list = []
+
+    def checker(goal_id, copy):
+        looks.append(goal_id)
+        if len(looks) == 1:
+            for d in glob.glob(str(private_tmp) + "/lw-work-*/work"):
+                Path(d, "backdoor.py").write_text("import os  # planted by the checker\n")
+            return {"findings": [{"severity": "blocker", "what": "a is wrong",
+                                  "evidence": "read", "how": "a.py"}], "fixed": []}
+        return {"findings": [], "fixed": ["1.1"]}
+    p = features.propose(world, "pricing", "K", "", run, checker=checker, repair_rounds=1)
+    assert p["files"] == ["a.py"] and "backdoor" not in p["diff"]
+
+
+SLEEPER = ("import glob, pathlib, time\n"
+           "for _ in range(40):\n"
+           "    for d in glob.glob({root!r} + '/lw-work-*/work'):\n"
+           "        pathlib.Path(d, 'late_{tag}.py').write_text('late = True\\n')\n"
+           "    time.sleep(0.1)\n")
+
+
+def _start_sleeper(root, tag):
+    import subprocess as sp
+    sp.Popen([sys.executable, "-c", SLEEPER.format(root=str(root), tag=tag)],
+             start_new_session=True, stdout=sp.DEVNULL, stderr=sp.DEVNULL)
+
+
+def test_processes_a_test_run_or_a_checker_leave_running_are_stopped(upstream, tmp_path,
+                                                                    private_tmp, monkeypatch):
+    """The fallback where namespaces are unavailable: detached background
+    processes that keep the step's marker cannot write into the next round's
+    copy, because each test run and each checker look stops all of them."""
+    import time
+
+    from maverick.sandbox import local
+    from maverick.sandbox.local import LocalBackend
+    monkeypatch.setattr(local, "step_namespaces_available", lambda: False)
+    probe = ("import os, subprocess, sys\n"
+             "if not os.path.exists('fixed.txt'):\n"
+             f"    subprocess.Popen([sys.executable, '-c', {SLEEPER.format(root=str(private_tmp), tag='tests')!r}],\n"
+             "                     start_new_session=True, stdout=subprocess.DEVNULL,\n"
+             "                     stderr=subprocess.DEVNULL)\n"
+             "    sys.exit(1)\n")
+    vault.register("pricing", str(upstream), test_command=f"{sys.executable} probe.py")
+    world = WorldModel(tmp_path / "world.db")
+    seen: list = []
+
+    def edit(n):
+        def apply(work):
+            time.sleep(0.6)                       # long enough for a survivor to write
+            seen.append(sorted(p.name for p in work.iterdir()))
+            (work / "probe.py").write_text(probe)
+            if n:
+                (work / "fixed.txt").write_text(f"{n}\n")
+        return apply
+    run, _ = _rounds(edit(0), edit(1), edit(2))
+    looks: list = []
+
+    def checker(goal_id, copy):
+        looks.append(goal_id)
+        if len(looks) == 1:
+            LocalBackend(workdir=copy).exec(
+                f"{sys.executable} -c 'import subprocess, sys; subprocess.Popen([sys.executable, "
+                f"\"-c\", {SLEEPER.format(root=str(private_tmp), tag='check')!r}], "
+                "start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)'")
+            return {"findings": [{"severity": "blocker", "what": "x", "evidence": "read",
+                                  "how": "x"}], "fixed": []}
+        return {"findings": [], "fixed": ["1.1"]}
+    p = features.propose(world, "pricing", "L", "", run, sandbox_factory=LocalBackend,
+                         checker=checker, repair_rounds=2, check_rounds=2)
+    assert len(seen) == 3 and len(looks) == 2
+    assert not [f for files in seen for f in files if f.startswith("late_")], seen
+    assert not [f for f in p["files"] if f.startswith("late_")]
+    facts = features.evidence(p)                                   # the card says so
+    assert features.HOST_LINE in facts["lines"] and features.HOST_GAP in facts["gaps"]
+
+
+ESCAPES = {
+    # a daemon in its own session with an empty environment: no marker to find
+    "envi": ("import subprocess, sys\n"
+             "subprocess.Popen([sys.executable, '-c', S], env={}, start_new_session=True,\n"
+             "                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"),
+    # a daemon that detaches, then re-executes itself with a cleared environment
+    "reexec": ("import os, sys\n"
+               "if os.fork() == 0:\n"
+               "    os.setsid()\n"
+               "    os.execve(sys.executable, [sys.executable, '-c', S], {'PATH': '/usr/bin'})\n"),
+}
+
+
+@pytest.mark.parametrize("how", sorted(ESCAPES))
+def test_a_daemon_that_clears_its_environment_dies_with_its_step(upstream, tmp_path,
+                                                                  private_tmp, how):
+    """Each command of a step runs in its own PID and mount namespace: when it
+    ends, the kernel kills everything it started, whatever its environment,
+    and it never sees the temporary folder holding other rounds' copies."""
+    import time
+
+    from maverick.sandbox import local
+    from maverick.sandbox.local import LocalBackend
+    if not local.step_namespaces_available():
+        pytest.skip("this host does not allow unprivileged user namespaces; "
+                    "the marker fallback is covered by the test above")
+    sleeper = SLEEPER.format(root=str(private_tmp), tag=how)
+    probe = ("import glob, os, sys\n"
+             f"S = {sleeper!r}\n"
+             f"seen = glob.glob({str(private_tmp)!r} + '/lw-*')\n"
+             "open('seen.txt', 'w').write(repr(sorted(os.path.basename(x) for x in seen)))\n"
+             "if not os.path.exists('fixed.txt'):\n"
+             + "".join("    " + line + "\n" for line in ESCAPES[how].splitlines())
+             + "    sys.exit(1)\n")
+    vault.register("pricing", str(upstream), test_command=f"{sys.executable} probe.py")
+    world = WorldModel(tmp_path / "world.db")
+    seen: list = []
+
+    def run(goal_id, work):
+        time.sleep(1.0)                          # long enough for a survivor to write
+        seen.append(sorted(p.name for p in work.iterdir()))
+        (work / "probe.py").write_text(probe)
+        if len(seen) > 1:
+            (work / "fixed.txt").write_text("1\n")
+    p = features.propose(world, "pricing", "E", "", run, sandbox_factory=LocalBackend,
+                         checker=None, repair_rounds=1)
+    assert len(seen) == 2 and not [f for f in seen[1] if f.startswith("late_")], seen
+    assert not [f for f in p["files"] if f.startswith("late_")]
+    assert p["tests"]["passed"] and p["isolation"] == "namespace"
+    facts = features.evidence(p)
+    assert features.NAMESPACE_LINE in facts["lines"] and features.NAMESPACE_GAP in facts["gaps"]
+    assert features.HOST_LINE not in facts["lines"]
+
+
+def test_a_step_sees_only_its_own_copy_in_the_temporary_folder(tmp_path, private_tmp):
+    from maverick.sandbox import local
+    from maverick.sandbox.local import LocalBackend, contained_step
+    if not local.step_namespaces_available():
+        pytest.skip("this host does not allow unprivileged user namespaces")
+    other = private_tmp / "lw-work-other" / "work"
+    other.mkdir(parents=True)
+    mine = private_tmp / "lw-work-mine"
+    (mine / "work").mkdir(parents=True)
+    with contained_step(mine):
+        out = LocalBackend(workdir=mine / "work").exec(
+            f"ls {private_tmp}; ls {mine}; touch made.txt")
+    assert out.exit_code == 0, out.stderr
+    assert "lw-work-other" not in out.stdout and "lw-work-mine" in out.stdout
+    assert (mine / "work" / "made.txt").exists()          # its own copy is the real one
+
+
+def test_a_container_requirement_refuses_a_run_on_this_computer(upstream, tmp_path, monkeypatch):
+    from maverick import config
+    from maverick.sandbox.local import LocalBackend
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    monkeypatch.setattr(config, "get_codebase", lambda: {"enable": True, "require_container": True})
+    calls: list = []
+    with pytest.raises(vault.VaultError, match="must run in a container"):
+        features.propose(world, "pricing", "A", "", lambda gid, work: calls.append(gid),
+                         sandbox_factory=LocalBackend)
+    assert calls == [] and features.list_proposals() == []
+    assert features.container_refusal(LocalBackend) == features.CONTAINER_REQUIRED
+    assert features.container_refusal(_Sandbox) is None          # not this computer's shell
+
+
+def test_the_checker_cannot_read_past_goals_or_memory(tmp_path, monkeypatch):
+    """The checker's run is a fresh context: the tools that read past goals or
+    other runs' memory are denied, and prior goals are not recalled into its
+    brief, so it cannot reach the author's reasoning that way."""
+    from types import SimpleNamespace
+
+    from maverick import orchestrator, tools
+    from maverick.sandbox.local import LocalBackend
+    seen = {}
+
+    def fake_run(llm, world, budget, goal_id, **kwargs):
+        seen["fresh"] = tools.fresh_context()
+        return '{"findings": []}'
+    monkeypatch.setattr(orchestrator, "run_goal_sync", fake_run)
+    monkeypatch.setattr("maverick.llm.LLM", lambda *a, **k: object())
+    monkeypatch.setattr("maverick.sandbox.build_sandbox", lambda **k: None)
+    monkeypatch.setattr("maverick.world_model.open_world", lambda *a, **k: None)
+    monkeypatch.setattr("maverick.world_model.close_world_if_owned", lambda world: None)
+    monkeypatch.setattr(features, "checker_model", lambda: "anthropic:checker")
+    features.default_checker(budget=None)(1, tmp_path)
+    assert seen["fresh"] is True and tools.fresh_context() is False
+    world = WorldModel(tmp_path / "w.db")
+    with tools.fresh_context_run():
+        reg = tools.base_registry(world, LocalBackend(workdir=tmp_path))
+    assert {"recall_past_goals", "memory", "kv_memory"} <= tools.PAST_WORK_TOOLS
+    assert not any(reg._acl_allows(name) for name in tools.PAST_WORK_TOOLS)
+    monkeypatch.setenv("MAVERICK_AUTO_RECALL", "1")
+    goal = SimpleNamespace(id=2, title="Add a discount", description="", owner="")
+    with tools.fresh_context_run():
+        assert orchestrator._maybe_recall_prior_work(world, goal, None) is None
+    # nor the outcomes of similar earlier goals (experience guidance)
+    from maverick import experience
+    monkeypatch.setattr(experience, "recall", lambda *a, **k: "2 similar goals succeeded")
+    assert orchestrator._maybe_experience_guidance(world, goal, None)
+    with tools.fresh_context_run():
+        assert orchestrator._maybe_experience_guidance(world, goal, None) is None
+
+
+def test_an_unreadable_checker_report_keeps_the_work(upstream, tmp_path):
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    run, _ = _rounds(lambda work: (work / "a.py").write_text("a = 1\n"))
+    p = features.propose(world, "pricing", "R", "", run,
+                         checker=lambda gid, copy: '{"a":' + "[" * 40000)
+    assert p["check"]["state"] == "failed" and "could not be read" in p["check"]["error"]
+    assert [q["id"] for q in features.list_proposals()] == [p["id"]]
+
+
+def test_the_card_says_whether_the_checker_was_off_for_this_run_or_in_settings(
+        upstream, tmp_path, monkeypatch):
+    from maverick import config
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    run, _ = _rounds(lambda work: (work / "a.py").write_text("a = 1\n"))
+    p = features.propose(world, "pricing", "Skipped once", "", run, checker=None)
+    assert "Independent check: turned off for this run." in features.evidence(p)["lines"]
+    monkeypatch.setattr(config, "get_codebase", lambda: {"enable": True, "checker": False})
+    q = features.propose(world, "pricing", "Off", "", run, checker=None)
+    assert "Independent check: turned off in settings." in features.evidence(q)["lines"]
+
+
+def test_running_on_this_computer_is_a_gap_on_every_summary(upstream, tmp_path, monkeypatch):
+    """A change whose tests passed and whose check came back clean is still
+    not called checked when its steps ran on this computer."""
+    from click.testing import CliRunner
+    from maverick import config
+    from maverick.cli import main
+    from maverick.sandbox.local import LocalBackend
+    vault.register("pricing", str(upstream), test_command=f"{sys.executable} -m pytest -q")
+    world = WorldModel(tmp_path / "world.db")
+    run, _ = _rounds(_passing)
+    p = features.propose(world, "pricing", "Clean", "", run, sandbox_factory=LocalBackend,
+                         checker=lambda gid, copy: {"findings": [], "fixed": []})
+    assert p["tests"]["passed"] and p["check"]["state"] == "ran"
+    gap = features.NAMESPACE_GAP if p["isolation"] == "namespace" else features.HOST_GAP
+    assert features.evidence(p)["gaps"] == [gap]
+    assert _card(world, p)["unresolved_assumptions"] == [gap]
+    monkeypatch.setattr(config, "get_codebase", lambda: {"enable": True})
+    import maverick.cli._code_groups as groups
+    monkeypatch.setattr(groups, "open_world", lambda *a, **k: WorldModel(tmp_path / "world.db"))
+    out = CliRunner().invoke(main, ["code", "proposals"])
+    assert out.exit_code == 0 and "1 gap(s)" in out.output and "checked" not in out.output
+
+
+def test_the_checker_task_keeps_counts_not_finding_text(upstream, tmp_path):
+    """Finding text can quote vaulted code; the checker's own task record (goal
+    pages, finished-task webhooks) keeps only counts."""
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    run, _ = _rounds(lambda work: (work / "a.py").write_text("a = 1\n"))
+    report = ('{"findings": [{"severity": "minor", "what": "QUOTED_CODE_LINE is odd", '
+              '"evidence": "read", "how": "a.py"}], "fixed": []}')
+
+    def checker(goal_id, copy):
+        world.set_goal_status(goal_id, "done", result=report)   # as a governed run does
+        return report
+    p = features.propose(world, "pricing", "A", "", run, checker=checker, repair_rounds=0)
+    goal = world.get_goal(p["check"]["goal_ids"][0])
+    assert goal.status == "done" and "QUOTED_CODE_LINE" not in (goal.result or "")
+    assert "1 finding(s)" in goal.result and p["id"] in goal.result
+
+
+
+def test_a_fresh_context_run_sends_no_result_text_to_webhooks(monkeypatch):
+    from maverick import orchestrator, tools, webhooks
+    sent: list = []
+    monkeypatch.setattr(webhooks, "fire", lambda event, payload: sent.append(payload))
+    with tools.fresh_context_run():
+        orchestrator._fire_webhook("goal_finished", {"goal_id": 1, "status": "done",
+                                                     "result": "QUOTED_CODE_LINE"})
+    orchestrator._fire_webhook("goal_finished", {"goal_id": 2, "status": "done",
+                                                 "result": "ordinary"})
+    assert "QUOTED_CODE_LINE" not in repr(sent[0]) and "ordinary" in repr(sent[1])
+
+
+STEP_AS_USER = """
+import os, pathlib, sys, tempfile
+from maverick.sandbox.local import LocalBackend, contained_step, step_namespaces_available
+if not step_namespaces_available():
+    print("NO-NAMESPACES"); sys.exit(0)
+root = tempfile.mkdtemp(prefix="lw-work-")
+work = pathlib.Path(root, "work"); work.mkdir()
+secret = work / "secret"; secret.write_text("hidden"); secret.chmod(0)
+with contained_step(root):
+    out = LocalBackend(workdir=work).exec("id -u; id -g; cat secret")
+print(repr((out.stdout, out.exit_code, os.getuid(), os.getgid())))
+"""
+
+
+def test_step_commands_run_as_the_real_user_not_root(tmp_path):
+    """Repository tests must not run as root inside the wrapper: they would
+    skip root-unsafe tests, read files their user cannot, or refuse to run."""
+    import ast
+    import os
+    import shutil
+    import subprocess as sp
+
+    import maverick
+    env = {**os.environ, "HOME": str(tmp_path), "MAVERICK_HOME": str(tmp_path / ".mh"),
+           "PYTHONPATH": os.pathsep.join([str(Path(maverick.__file__).parents[1]),
+                                          os.environ.get("PYTHONPATH", "")])}
+    argv = [sys.executable, "-c", STEP_AS_USER]
+    if os.getuid() == 0:                    # root reads every file: check as nobody
+        if not shutil.which("setpriv"):
+            pytest.skip("running as root without setpriv to drop to an ordinary user")
+        tmp_path.chmod(0o777)
+        argv = ["setpriv", "--reuid=65534", "--regid=65534", "--clear-groups", *argv]
+    done = sp.run(argv, capture_output=True, text=True, env=env, cwd=str(tmp_path), timeout=120)
+    assert done.returncode == 0, done.stderr[-2000:]
+    if done.stdout.strip() == "NO-NAMESPACES":
+        pytest.skip("this host does not allow unprivileged user namespaces")
+    stdout, code, uid, gid = ast.literal_eval(done.stdout.strip().splitlines()[-1])
+    assert stdout.split()[:2] == [str(uid), str(gid)] and "hidden" not in stdout
+    assert code != 0                        # the mode-000 file stayed unreadable
+
+
+def test_a_work_area_that_cannot_be_set_up_is_not_a_test_result(upstream, tmp_path,
+                                                                private_tmp, monkeypatch):
+    from maverick.sandbox import local
+    from maverick.sandbox.local import LocalBackend
+    if not local.step_namespaces_available():
+        pytest.skip("this host does not allow unprivileged user namespaces")
+    monkeypatch.setattr(local, "_NS_PRELUDE",
+                        local._NS_PRELUDE.replace("mount -t tmpfs", "false\n  mount -t tmpfs"))
+    vault.register("pricing", str(upstream), test_command=f"{sys.executable} -m pytest -q")
+    world = WorldModel(tmp_path / "world.db")
+    run, _ = _rounds(_passing)
+    p = features.propose(world, "pricing", "S", "", run, sandbox_factory=LocalBackend,
+                         checker=None, repair_rounds=1)
+    assert p["tests"]["setup_failed"] and not p["tests"]["passed"]
+    assert p["repair_rounds"]["used"] == 0                   # nothing to repair in the change
+    facts = features.evidence(p)
+    assert "Tests: not run. The isolated work area could not be set up." in facts["lines"]
+    assert features.NAMESPACE_LINE not in facts["lines"]
+    assert features.SETUP_FAILED_LINE in facts["lines"]
+    assert features.SETUP_FAILED_LINE in facts["gaps"]

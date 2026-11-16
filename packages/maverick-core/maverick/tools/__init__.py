@@ -1824,6 +1824,7 @@ def base_registry(
         if not _skip_tool_acl:
             _apply_containment(reg)
             _apply_network_posture(reg)
+        _apply_fresh_context(reg)
         _apply_deferred_loading(reg)
 
         # Route every compatible external connector write through the durable,
@@ -2009,6 +2010,35 @@ def _apply_containment(reg: ToolRegistry) -> None:
     profile = active_profile()
     if profile is not None:
         apply(profile, registry=reg, sandbox_env={})
+
+
+# A run that must start from a fresh context (the code checker, which must
+# never read the author's goals or reasoning): the tools that read past goals
+# or other runs' memory are denied for the whole run, and the orchestrator
+# recalls no prior goals into its brief.
+PAST_WORK_TOOLS = frozenset({"recall_past_goals", "memory", "kv_memory", "spend_report"})
+_FRESH_CONTEXT: ContextVar[bool] = ContextVar("maverick_fresh_context_run", default=False)
+
+
+@contextlib.contextmanager
+def fresh_context_run():
+    """Run the enclosed goal without access to past goals or shared memory."""
+    token = _FRESH_CONTEXT.set(True)
+    try:
+        yield
+    finally:
+        _FRESH_CONTEXT.reset(token)
+
+
+def fresh_context() -> bool:
+    return _FRESH_CONTEXT.get()
+
+
+def _apply_fresh_context(reg: ToolRegistry) -> None:
+    if fresh_context():
+        reg.set_acl(allowed=set(getattr(reg, "_acl_allowed", set()) or set()),
+                    denied=set(getattr(reg, "_acl_denied", set()) or set()) | PAST_WORK_TOOLS,
+                    max_risk=getattr(reg, "_acl_max_risk", None))
 
 
 def _apply_network_posture(reg: ToolRegistry) -> None:

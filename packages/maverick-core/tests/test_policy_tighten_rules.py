@@ -101,6 +101,13 @@ CASES = {
     "security.allow_self_approval": _perm(False),
     "security.isolate_parsers": _prot(False),
     "security.secure_defaults": _prot(True),
+    # A workspace may protect code more, never less: stricter protection,
+    # the checker on, a container required, more repair rounds and looks.
+    "codebase.default_protect": dict(os="approve", s="block", l="audit", ul="audit"),
+    "codebase.checker": _prot(True),
+    "codebase.require_container": _prot(False),
+    "codebase.repair_rounds": dict(os=2, s=3, l=1, us=3, ul=0),
+    "codebase.check_rounds": dict(os=2, s=3, l=1, us=3, ul=1),
 }
 
 

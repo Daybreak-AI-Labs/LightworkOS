@@ -73,6 +73,40 @@ def test_live_approval_answer_uses_authorized_action_center_without_provider(cli
     assert result["checked_at"]
 
 
+def test_live_code_checks_say_what_was_not_checked_under_admin_access(client, monkeypatch):
+    from maverick.codebase import features, vault
+    from maverick_dashboard import api
+    from maverick_dashboard import app as dashboard_app
+    from maverick_dashboard import copilot_live_state as live
+
+    pending = {"id": "0123456789abcdef", "repo": "billing", "title": "Add retries",
+               "head": "a" * 40, "tests": None, "check": {"state": "off"}}
+    # Tests passed and a clean check, but the steps ran on this computer.
+    clean = {"id": "1123456789abcdef", "repo": "billing", "title": "Clean change",  # pragma: allowlist secret
+             "head": "b" * 40, "isolation": "namespace",
+             "tests": {"command": "t", "passed": True, "commit": "b" * 40},
+             "check": {"state": "ran", "runs": 1, "commit": "b" * 40, "findings": []}}
+    merged = dict(pending, id="fedcba9876543210", title="Old change")  # pragma: allowlist secret
+    monkeypatch.setattr(api, "_copilot_model_route_status", lambda: pytest.fail("live records went to the provider route"))
+    monkeypatch.setattr(dashboard_app, "_world", lambda: object())
+    monkeypatch.setattr(vault, "enabled", lambda: True)
+    monkeypatch.setattr(features, "list_proposals", lambda: [pending, clean, merged])
+    monkeypatch.setattr(features, "status", lambda _world, p: "merged" if p is merged else "pending")
+    allowed = {"admin": True}
+    monkeypatch.setattr(live.auth, "has_permission", lambda _request, permission: allowed[permission])
+    ask = {"message": "What was checked on the proposed code changes?", "page": "/code"}
+    result = client.post("/api/v1/copilot", json=ask).json()
+    assert result["mode"] == "live" and result["source"] == "Code"
+    assert "Add retries" in result["reply"] and "Old change" not in result["reply"]
+    assert "Nobody independently tried to break this change" in result["reply"]
+    assert features.NAMESPACE_GAP in result["reply"]
+    assert "left no blocking problem open" not in result["reply"]
+    assert result["action_link"]["href"] == "/code"
+    allowed["admin"] = False                     # the review panel needs an administrator
+    refused = client.post("/api/v1/copilot", json=ask).json()
+    assert "Add retries" not in refused["reply"] and "administrator" in refused["reply"]
+
+
 def test_live_running_tasks_are_owner_scoped_and_state_is_bounded(client, monkeypatch):
     from maverick_dashboard import api
     from maverick_dashboard import app as dashboard_app

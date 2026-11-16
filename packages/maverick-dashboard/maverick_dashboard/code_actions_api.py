@@ -209,6 +209,10 @@ async def start_feature(request: Request, body: FeatureIn, bg: BackgroundTasks) 
     if _provider_missing():
         raise HTTPException(status_code=503, detail=(
             "Set up an AI provider in Settings before asking Lightwork to build a change."))
+    from maverick.codebase import features
+    refusal = await run_in_threadpool(features.container_refusal)
+    if refusal:
+        raise HTTPException(status_code=409, detail=refusal)
     owner = caller_principal(request) or ""
     user_id = execution_user_id_from_request(request)
     if owner and owner != f"user:{user_id}":
@@ -222,6 +226,7 @@ async def start_feature(request: Request, body: FeatureIn, bg: BackgroundTasks) 
 async def proposal_detail(request: Request, pid: str) -> dict:
     require_permission(request, "admin")
     _vault()
+    from maverick.codebase import features
     p = await run_in_threadpool(_find, pid)
     world = _world()
     tests = p.get("tests")
@@ -238,6 +243,7 @@ async def proposal_detail(request: Request, pid: str) -> dict:
             "comments": [{"file": c.get("path"), "line": c.get("line"),
                           "severity": c.get("severity"), "message": c.get("message")}
                          for c in (review.get("comments") or [])[:50]]},
+        "checks": features.evidence(p),
         "changes": p.get("diff") or "", "changes_cut_short": bool(p.get("diff_truncated")),
         "created_at": p.get("created_at"), "merged_at": p.get("merged_at"),
     }
@@ -332,10 +338,16 @@ def _run_feature(repo: str, title: str, description: str, max_dollars: float | N
         if (current_owner != owner or current_user_id != user_id
                 or (owner and "admin" not in rbac.permissions_for(auth.role_for_principal(owner)))):
             raise PermissionError("Current code-change authority is required")
+        # One spending cap for every author and checker round of this run.
+        budget = features.feature_budget(max_dollars)
+        checker = (features.default_checker(budget=budget, user_id=user_id,
+                                            allowed_suites=suites)
+                   if features.loop_settings()["checker"] else None)
         features.propose(world, repo, title, description,
-                         features.default_runner(max_dollars=max_dollars, user_id=user_id,
+                         features.default_runner(budget=budget, user_id=user_id,
                                                  allowed_suites=suites),
-                         reviewer=features.default_reviewer(), owner=owner)
+                         reviewer=features.default_reviewer(budget=budget), checker=checker,
+                         owner=owner, budget=budget)
     except Exception as exc:  # noqa: BLE001 -- the failed goal carries the outcome
         log.warning("code feature for %s did not finish (%s)", repo, type(exc).__name__)
     finally:

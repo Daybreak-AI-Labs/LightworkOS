@@ -470,7 +470,12 @@ def _fire_webhook(event: str, payload: dict[str, Any]) -> None:
         from .immune import twin
         if twin.active():
             return  # a production twin replay is not a run anyone subscribed to
+        from .tools import fresh_context
         from .webhooks import fire
+        if fresh_context() and "result" in payload:
+            # A fresh-context run (the code checker) may quote vaulted code;
+            # its result stays with its proposal, never in an outbound hook.
+            payload = {**payload, "result": "(kept with the code change it checked)"}
         fire(event, _webhook_public_payload(event, payload))
     except Exception as e:  # pragma: no cover -- webhooks never block a run
         log.debug(
@@ -674,7 +679,10 @@ def _maybe_recall_prior_work(world, goal, shield) -> str | None:
     Tunables: ``MAVERICK_AUTO_RECALL_K`` (default 3); min similarity 0.10.
     """
     from .env_setting import env_or_config
+    from .tools import fresh_context
 
+    if fresh_context():  # e.g. the code checker: never recall the author's goals
+        return None
     if (env_or_config("MAVERICK_AUTO_RECALL", "context", "auto_recall") or "").strip().lower() not in {
         "1", "true", "yes", "on",
     }:
@@ -1031,6 +1039,22 @@ def _brief_facts_block(world: WorldModel, goal_id: int, shield: Any | None) -> s
     return facts_block
 
 
+def _maybe_experience_guidance(world, goal, shield) -> str | None:
+    """Outcomes of similar prior goals, or None for a fresh-context run (the
+    code checker), which must not learn how the author's goal went."""
+    from .tools import fresh_context
+
+    if fresh_context():
+        return None
+    from . import experience
+    return experience.recall(
+        world,
+        f"{goal.title}\n{goal.description or ''}",
+        shield=shield,
+        owner=str(getattr(goal, "owner", "") or ""),
+    )
+
+
 async def _apply_brief_enrichments(
     brief: str, *, llm: LLM, world: WorldModel, budget: Budget,
     blackboard: Blackboard, goal: Any, conversation_id: int | None,
@@ -1071,13 +1095,7 @@ async def _apply_brief_enrichments(
     # brief on outcomes of similar prior goals (how many succeeded/failed).
     # No-op when explicitly disabled or no useful history exists; fail-open.
     with _enrich("experience guidance"):
-        from . import experience
-        _exp = experience.recall(
-            world,
-            f"{goal.title}\n{goal.description or ''}",
-            shield=shield,
-            owner=str(getattr(goal, "owner", "") or ""),
-        )
+        _exp = _maybe_experience_guidance(world, goal, shield)
         if _exp:
             brief = brief + "\n\n" + _exp
 
@@ -1120,7 +1138,8 @@ async def _apply_brief_enrichments(
     # or there are no similar prior failures.
     with _enrich("reflexion recall"):
         from . import reflexion
-        if reflexion.enabled():
+        from .tools import fresh_context
+        if reflexion.enabled() and not fresh_context():
             recalled = reflexion.recall(
                 f"{goal.title}\n{goal.description or ''}",
                 channel=channel,

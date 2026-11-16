@@ -5427,8 +5427,14 @@ tested without spawning py-spy.
 - **Feature swarms** (`codebase/features.py`, `maverick code feature|proposals|
   show|merge|push`): a governed swarm builds the change on a branch, labelled
   `code:<repo>` and enforced at the repository's protection mode; the repo's
-  tests run in the sandbox and the independent reviewer reads the diff; the
-  sealed proposal waits for a `codebase_merge` approval before any merge or push.
+  tests run in the sandbox on a fresh copy of the pinned commit, and failing
+  tests go back to the author (`[codebase] repair_rounds`); an independent
+  checker with a fresh context runs the change on its own copy and reports
+  findings, whose blockers go back to the author (`checker`, `check_rounds`);
+  every round charges one budget; the independent reviewer reads the diff; the
+  sealed proposal records what was and was not checked
+  (`features.evidence`) and waits for a `codebase_merge` approval before any
+  merge or push.
 
 ## Information-flow control
 
