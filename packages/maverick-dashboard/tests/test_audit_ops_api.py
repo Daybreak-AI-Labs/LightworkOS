@@ -10,6 +10,7 @@ import os
 import re
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 pytest.importorskip("cryptography", reason="checkpoints are always signed")
@@ -144,6 +145,118 @@ def test_a_changed_day_is_reported_in_plain_words(client):
     assert checked["intact"] is False and checked["problems"]
     assert all(not BANNED.search(p) for p in checked["problems"])
     assert checked["technical"]
+
+
+def test_a_checkpoint_replaced_after_the_kept_receipt_is_reported(client):
+    from maverick.audit.erase import scrub_user
+    from maverick.audit.signing import AuditSigner
+    from maverick.erasure_receipts import audit_erase_records, persist_audit_erase_record
+    from maverick_dashboard._shared import _world
+
+    day_file = _write_day()
+    signer = AuditSigner(day_file)
+    for person in ("recorded", "unrecorded"):
+        assert signer.write({"ts": 1_767_225_700.0, "kind": "tool_call", "channel": "slack", "user_id": person})
+    assert client.post(f"{BASE}/publish", json={"day": DAY}).status_code == 200
+    kept = client.get(f"{BASE}/1/receipt").text
+    lookup = audit_erase_records(_world)
+
+    def store(summary):
+        persist_audit_erase_record(_world(), tenant_id="shared", erasure_id="e" * 32, **summary)
+    assert scrub_user("slack", "recorded", audit_dir=day_file.parent,
+                      on_rewrite=store, erase_records=lookup)[0] == 1
+    replaced = client.post(f"{BASE}/publish", json={"day": DAY, "after_erasure": True})
+    assert replaced.status_code == 200 and replaced.json()["sequence"] == 2, replaced.text
+
+    # The receipt kept before the erasure no longer covers that day, and says so.
+    checked = client.post(f"{BASE}/verify", json={"receipt": kept}).json()
+    assert checked["intact"] is False and checked["pinned"] is True
+    assert len(checked["problems"]) == 1 and DAY in checked["problems"][0]
+    assert "erasure record is on file" in checked["problems"][0]
+    assert not BANNED.search(checked["problems"][0])
+    assert client.post(f"{BASE}/verify", json={}).json()["intact"] is True
+    newer = client.get(f"{BASE}/2/receipt").text
+    assert client.post(f"{BASE}/verify", json={"receipt": newer}).json()["intact"] is True
+
+    # An erasure that left no erasure record cannot replace the checkpoint here,
+    # and a later erasure of that day goes ahead without covering for it.
+    assert scrub_user("slack", "unrecorded", audit_dir=day_file.parent, erase_records=lookup)[0] == 1
+    refused = client.post(f"{BASE}/publish", json={"day": DAY, "after_erasure": True})
+    assert refused.status_code == 409 and "No erasure record" in refused.json()["detail"]
+    assert not BANNED.search(refused.json()["detail"])
+    assert AuditSigner(day_file).write({"ts": 1_767_225_800.0, "kind": "tool_call", "channel": "slack", "user_id": "later"})
+    from maverick.audit.signing import reanchor_day_after_erase
+    reanchor_day_after_erase(day_file.parent, day_file)
+    assert scrub_user("slack", "later", audit_dir=day_file.parent,
+                      on_rewrite=store, erase_records=lookup)[0] == 1
+    assert client.post(f"{BASE}/publish", json={"day": DAY, "after_erasure": True}).status_code == 409
+
+
+def test_a_person_is_erased_from_a_day_an_earlier_version_already_erased(client, monkeypatch):
+    # What an upgrade finds: a checkpointed day, erased once by a version that
+    # stored no erasure record, its checkpoint never replaced. The page must
+    # still erase a second person and be able to replace the checkpoint.
+    from maverick.audit.erase import scrub_user
+    from maverick.audit.signing import AuditSigner
+
+    day_file = _write_day()
+    signer = AuditSigner(day_file)
+    for person in ("first", "second"):
+        assert signer.write({"ts": 1_767_225_700.0, "kind": "tool_call", "channel": "slack", "user_id": person})
+    assert client.post(f"{BASE}/publish", json={"day": DAY}).status_code == 200
+    kept = client.get(f"{BASE}/1/receipt").text
+    assert scrub_user("slack", "first", audit_dir=day_file.parent)[0] == 1  # as the base did
+
+    erased = client.post("/api/v1/compliance/people/erase", json={"channel": "slack", "user": "second"})
+    assert erased.status_code == 200 and erased.json()["erased"] is True, erased.text
+    assert "second" not in day_file.read_text(encoding="utf-8")
+
+    refused = client.post(f"{BASE}/publish", json={"day": DAY, "after_erasure": True})
+    assert refused.status_code == 409 and "No erasure record" in refused.json()["detail"]
+    assert "without an erasure record" in refused.json()["detail"]
+    assert not BANNED.search(refused.json()["detail"])
+    # The override is written to the activity log first, under the name a
+    # later check tells the reader to look for. No entry, nothing published.
+    import maverick.audit as audit_pkg
+    override = {"day": DAY, "after_erasure": True, "without_erasure_record": True}
+    with monkeypatch.context() as patch:
+        patch.setattr(audit_pkg, "audit_event", lambda kind, **payload: False)
+        unrecorded = client.post(f"{BASE}/publish", json=override)
+    assert unrecorded.status_code == 503 and "nothing was changed" in unrecorded.json()["detail"]
+    assert client.get(BASE).json()["total"] == 1
+    seen = _recorded(monkeypatch)
+    replaced = client.post(f"{BASE}/publish", json=override)
+    assert replaced.status_code == 200 and replaced.json()["sequence"] == 2, replaced.text
+    assert [r["day"] for r in seen
+            if r.get("action") == "audit_checkpoint_publish_without_erase_record"] == [DAY]
+    checked = client.post(f"{BASE}/verify", json={"receipt": kept}).json()
+    assert "audit_checkpoint_publish_without_erase_record" in checked["technical"][0]
+    assert checked["intact"] is False and "no erasure record" in checked["problems"][0]
+    assert client.post(f"{BASE}/verify", json={}).json()["intact"] is True
+
+
+def test_a_day_retired_after_the_kept_receipt_is_reported(client):
+    from maverick.audit.checkpoints import list_checkpoints, retire_checkpoint
+    from maverick.audit.signing import record_retention_purge
+    from maverick_dashboard import audit_ops_api
+
+    day_file = _write_day()
+    assert client.post(f"{BASE}/publish", json={"day": DAY}).status_code == 200
+    kept = client.get(f"{BASE}/1/receipt").text
+    published = list_checkpoints(audit_ops_api._checkpoint_dir())[0]
+    tip = json.loads(day_file.read_text(encoding="utf-8").splitlines()[-1])["hash"]
+    day_file.unlink()
+    assert record_retention_purge(
+        day_file.parent, [{"day": DAY, "row_count": published["row_count"], "tip_hash": tip}])
+    retire_checkpoint(day_file.parent, audit_ops_api._checkpoint_dir(),
+                      supersedes_checkpoint_sha256=published["sha256"],
+                      lifecycle_reason="retention_purge")
+
+    assert client.post(f"{BASE}/verify", json={}).json()["intact"] is True
+    checked = client.post(f"{BASE}/verify", json={"receipt": kept}).json()
+    assert checked["intact"] is False and len(checked["problems"]) == 1
+    assert DAY in checked["problems"][0] and "retired after your kept receipt" in checked["problems"][0]
+    assert not BANNED.search(checked["problems"][0])
 
 
 def test_bad_input_is_refused_before_anything_happens(client, monkeypatch):
@@ -394,3 +507,160 @@ def test_audit_page_shows_the_settings_to_installation_administrators_only(clien
     finally:
         reset_tenant(token)
     assert 'id="ops-ckpt-publish"' in page and 'id="ops-ckpt-folder"' not in page
+
+
+# ---- the same actions through the dashboard Copilot ---------------------------
+
+COPILOT = "/api/v1/copilot/product-operations"
+
+
+def _copilot_on(monkeypatch):
+    """Turn on Copilot actions and the family the checkpoint operations are in."""
+    from maverick_dashboard import product_operations as registry
+
+    monkeypatch.setattr(registry, "_gate", lambda request: None)
+    monkeypatch.setattr(registry, "enabled_families", lambda: {"reviews"})
+    return registry
+
+
+def _copilot_review(client, operation: str, arguments: dict):
+    """Open Copilot on the Activity log page and ask for one operation's review."""
+    listed = client.post(f"{COPILOT}/catalog", json={"page": "/audit", "selection": {}})
+    assert listed.status_code == 200, listed.text
+    row = next(item for item in listed.json()["operations"] if item["id"] == operation)
+    assert row["available"], row
+    return client.post(f"{COPILOT}/prepare", json={
+        "page": "/audit", "selection": {}, "operation": operation, "context": listed.json()["context"],
+        "revision": row["revision"], "arguments": arguments})
+
+
+def _copilot_apply(client, operation: str, arguments: dict, confirmed: bool = True):
+    review = _copilot_review(client, operation, arguments)
+    assert review.status_code == 200, review.text
+    return review.json(), client.post(f"{COPILOT}/execute",
+                                      json={"token": review.json()["token"], "confirmed": confirmed})
+
+
+def test_copilot_publishes_and_checks_checkpoints_like_the_page(client, monkeypatch):
+    """Publish, publish after an erasure, the "without an erasure record"
+    override and a check against a kept receipt run the page's own functions."""
+    import maverick.audit as audit_pkg
+    from maverick.audit.erase import scrub_user
+    from maverick.audit.signing import AuditSigner
+    from maverick_dashboard import audit_ops_api
+
+    registry = _copilot_on(monkeypatch)
+    assert {"audit.checkpoints.publish", "audit.checkpoints.retire",
+            "audit.checkpoints.check_receipt"} <= set(registry.adapters())
+    day_file = _write_day()
+    signer = AuditSigner(day_file)
+    for person in ("first", "second"):
+        assert signer.write({"ts": 1_767_225_700.0, "kind": "tool_call", "channel": "slack", "user_id": person})
+    seen = _recorded(monkeypatch)
+
+    # A review that is not confirmed publishes nothing; a confirmed one publishes.
+    review, refused = _copilot_apply(client, "audit.checkpoints.publish", {"day": DAY}, confirmed=False)
+    assert refused.status_code == 400 and client.get(BASE).json()["total"] == 0
+    assert review["changes"] == [{"field": f"Checkpoint for {DAY}", "before": "None yet", "after": "Published"}]
+    _, done = _copilot_apply(client, "audit.checkpoints.publish", {"day": DAY})
+    assert done.status_code == 200 and done.json()["status"] == "confirmed", done.text
+    assert done.json()["details"] == {"published": True, "sequence": 1, "day": DAY}
+    assert [r["day"] for r in seen if r.get("action") == "audit_checkpoint_publish"] == [DAY]
+    assert all(not BANNED.search(text) for text in (review["summary"], done.json()["message"]))
+    kept = client.get(f"{BASE}/1/receipt").text
+
+    # A day erased once with no erasure record, then erased again (see above).
+    assert scrub_user("slack", "first", audit_dir=day_file.parent)[0] == 1
+    assert client.post("/api/v1/compliance/people/erase",
+                       json={"channel": "slack", "user": "second"}).json()["erased"] is True
+    _, refused = _copilot_apply(client, "audit.checkpoints.publish", {"day": DAY, "after_erasure": True})
+    assert refused.status_code == 409 and "without an erasure record" in refused.json()["detail"]
+    lone = _copilot_review(client, "audit.checkpoints.publish", {"day": DAY, "without_erasure_record": True})
+    assert lone.status_code == 422 and "Nothing was published" in lone.json()["detail"]
+
+    # The override: the entry goes to the activity log first. No entry, nothing published.
+    override = {"day": DAY, "after_erasure": True, "without_erasure_record": True}
+    review = _copilot_review(client, "audit.checkpoints.publish", override).json()
+    assert "without an erasure record" in review["summary"] and len(review["changes"]) == 2
+    with monkeypatch.context() as patch:
+        patch.setattr(audit_pkg, "audit_event", lambda kind, **payload: False)
+        unrecorded = client.post(f"{COPILOT}/execute", json={"token": review["token"], "confirmed": True})
+    assert unrecorded.status_code == 503 and "nothing was changed" in unrecorded.json()["detail"]
+    assert client.get(BASE).json()["total"] == 1
+    logged_before_publishing = []
+    publish = audit_ops_api._publish
+    monkeypatch.setattr(audit_ops_api, "_publish", lambda body, supersede: logged_before_publishing.append(
+        [r["actor"] for r in seen if r.get("action") == "audit_checkpoint_publish_without_erase_record"])
+        or publish(body, supersede))
+    replaced = client.post(f"{COPILOT}/execute", json={"token": review["token"], "confirmed": True})
+    assert replaced.status_code == 200 and replaced.json()["details"]["sequence"] == 2, replaced.text
+    assert logged_before_publishing == [["local administrator"]]
+
+    # A check against the receipt kept before: the page's own sentences.
+    on_page = client.post(f"{BASE}/verify", json={"receipt": kept}).json()
+    checked = _copilot_review(client, "audit.checkpoints.check_receipt", {"receipt": kept}).json()
+    assert checked["read_only"] is True and "token" not in checked
+    assert checked["details"]["result"] == ["Problems were found:", *on_page["problems"]]
+    assert "no erasure record" in checked["details"]["result"][1]
+    # Raw reason codes stay in the page's closed "Technical details" box.
+    assert "technical_details" not in checked["details"]
+    assert "audit_checkpoint_publish_without_erase_record" in on_page["technical"][0]
+    newest = _copilot_review(client, "audit.checkpoints.check_receipt",
+                             {"receipt": client.get(f"{BASE}/2/receipt").text}).json()
+    assert newest["details"]["matches"] is True and newest["summary"].endswith("Your kept receipt matches too.")
+    script = (audit_ops_api.Path(audit_ops_api.__file__).parent / "static" / "lightwork-ops-panels.js").read_text(
+        encoding="utf-8")
+    for sentence in (audit_ops_api.CHECK_MATCHES, audit_ops_api.CHECK_KEYS_PINNED,
+                     audit_ops_api.CHECK_RECEIPT_MATCHES, audit_ops_api.CHECK_NO_RECEIPT,
+                     audit_ops_api.CHECK_NONE_YET, audit_ops_api.CHECK_PROBLEMS):
+        assert sentence in script
+    assert client.get(BASE).json()["total"] == 2   # checking changed nothing
+
+
+def test_copilot_retires_a_checkpoint_and_refuses_people_who_are_not_administrators(client, monkeypatch):
+    from maverick.audit import checkpoints
+    from maverick_dashboard import audit_ops_api
+    from maverick_dashboard import product_operations_audit_checkpoints as ops
+    from starlette.requests import Request
+
+    _copilot_on(monkeypatch)
+    _write_day()
+    assert client.post(f"{BASE}/publish", json={"day": DAY}).status_code == 200
+    listed = client.post(f"{COPILOT}/catalog", json={"page": "/audit", "selection": {}}).json()["operations"]
+    assert next(o for o in listed if o["id"] == "audit.checkpoints.retire")["blocked"]   # the day is still kept
+    monkeypatch.setattr(audit_ops_api, "_retired_by_policy", lambda: {DAY})
+    calls = []
+    monkeypatch.setattr(checkpoints, "retire_checkpoint",
+                        lambda audit_dir, checkpoint_dir, **kwargs: calls.append(kwargs))
+    seen = _recorded(monkeypatch)
+    unconfirmed = _copilot_review(client, "audit.checkpoints.retire", {"checkpoint": 1})
+    assert unconfirmed.status_code == 409 and "Confirm" in unconfirmed.json()["detail"]
+    retire = {"checkpoint": 1, "confirmed": True}
+    review, refused = _copilot_apply(client, "audit.checkpoints.retire", retire, confirmed=False)
+    assert refused.status_code == 400 and not calls and not seen
+    assert "cannot be undone" in review["summary"] and review["changes"][0]["before"] == "Checkpoint"
+
+    # Reading is not changing: an auditor may check a receipt but not publish or retire.
+    by_id = {a.id: a for a in ops.entries()}
+    request = Request({"type": "http", "method": "POST", "path": "/audit", "headers": [(b"host", b"127.0.0.1")]})
+    with monkeypatch.context() as patch:
+        _as(patch, "auditor", "user:aud")
+        for call in (lambda: by_id["audit.checkpoints.publish"].snapshot(request, {}),
+                     lambda: by_id["audit.checkpoints.retire"].snapshot(request, {}),
+                     lambda: by_id["audit.checkpoints.publish"].execute(request, {}, {"day": DAY}, {}, "a" * 32),
+                     lambda: by_id["audit.checkpoints.retire"].execute(request, {}, retire, {}, "b" * 32)):
+            with pytest.raises(HTTPException) as error:
+                call()
+            assert error.value.status_code == 403
+        assert not by_id["audit.checkpoints.check_receipt"].snapshot(request, {}).blocked
+        _as(patch, "viewer", "user:view")
+        with pytest.raises(HTTPException) as error:
+            by_id["audit.checkpoints.check_receipt"].snapshot(request, {})
+        assert error.value.status_code == 403
+    assert not calls and not [r for r in seen if r.get("action")]
+
+    _, done = _copilot_apply(client, "audit.checkpoints.retire", retire)
+    assert done.status_code == 200 and done.json()["details"] == {"retired": True, "day": DAY}, done.text
+    assert calls[0]["lifecycle_reason"] == "retention_purge"
+    assert [(r["day"], r["actor"]) for r in seen if r.get("action") == "audit_checkpoint_retire"] == [
+        (DAY, "local administrator")]

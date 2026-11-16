@@ -603,3 +603,215 @@ def test_unbound_artifact_authority_rotation_requires_fresh_review(promotion):
         service.stage(TENANT, OPERATOR, "candidate-one", expected_revision=record["revision"])
 
     assert state["calls"] == []
+
+
+def test_expired_approval_is_stuck_until_a_fresh_review_or_a_discard(promotion):
+    service, state = promotion
+    reviewed = _review(service, _request(service))
+    assert service.inspect(TENANT, OPERATOR, "candidate-one")["stuck"] == ""
+    with pytest.raises(CandidatePromotionConflict, match="still current"):
+        _review(service, reviewed)
+
+    # The approval runs out before anyone stages: every next step refused it.
+    service.store.authoritative_time = lambda: float(reviewed["review"]["expires_at"]) + 1
+    assert service.inspect(TENANT, OPERATOR, "candidate-one")["stuck"] == "approval_expired"
+    assert service.list(TENANT, OPERATOR)[0]["stuck"] == "approval_expired"
+    with pytest.raises(CandidatePromotionDenied):
+        service.stage(TENANT, OPERATOR, "candidate-one", expected_revision=reviewed["revision"])
+
+    # Retry: a fresh independent review keeps the request where it was.
+    again = _review(service, reviewed)
+    assert again["state"] == "authorized" and again["revision"] == reviewed["revision"] + 1
+    staged = service.stage(TENANT, OPERATOR, "candidate-one", expected_revision=again["revision"])
+    assert staged["state"] == "staged"
+
+    # Discard: the staged request expires too and is closed without publishing.
+    service.store.authoritative_time = lambda: float(again["review"]["expires_at"]) + 1
+    assert service.inspect(TENANT, OPERATOR, "candidate-one")["stuck"] == "approval_expired"
+    with pytest.raises(CandidatePromotionDenied):
+        service.discard(TENANT, REQUESTER, "candidate-one", expected_revision=staged["revision"],
+                        reason_code="stuck_request")
+    calls = len(state["calls"])
+    discarded = service.discard(TENANT, OPERATOR, "candidate-one",
+                                expected_revision=staged["revision"], reason_code="stuck_request")
+    assert discarded["state"] == "discarded"
+    assert state["calls"][calls:] == ["observe"]            # read only: nothing replayed
+    assert state["active_sha256"] == state["previous_sha256"]
+    assert service.inspect(TENANT, OPERATOR, "candidate-one")["stuck"] == ""
+    with pytest.raises(CandidatePromotionConflict):
+        service.activate(TENANT, OPERATOR, "candidate-one", expected_revision=discarded["revision"])
+
+
+def test_an_interrupted_action_is_stuck_and_a_live_candidate_cannot_be_discarded(promotion):
+    service, state = promotion
+    reviewed = _review(service, _request(service))
+    staged = service.stage(TENANT, OPERATOR, "candidate-one", expected_revision=reviewed["revision"])
+    adapter = service.deployment_adapter
+
+    def interrupted(manifest, stage_receipt):
+        state["active_sha256"] = state["candidate_sha256"]      # the effect landed
+        raise KeyboardInterrupt
+
+    adapter.activate = interrupted
+    with pytest.raises(KeyboardInterrupt):
+        service.activate(TENANT, OPERATOR, "candidate-one", expected_revision=staged["revision"])
+    claimed = service.inspect(TENANT, OPERATOR, "candidate-one")
+    assert claimed["state"] == "activation_claimed" and claimed["stuck"] == "outcome_unknown"
+
+    with pytest.raises(CandidatePromotionConflict, match="in use"):
+        service.discard(TENANT, OPERATOR, "candidate-one",
+                        expected_revision=claimed["revision"], reason_code="stuck_request")
+    assert service.inspect(TENANT, OPERATOR, "candidate-one")["state"] == "activation_claimed"
+    # Retry reads what happened; the live candidate becomes a trial that can be rolled back.
+    assert service.reconcile(
+        TENANT, OPERATOR, "candidate-one", expected_revision=claimed["revision"]
+    )["state"] == "canary"
+
+
+def _failing_rollback(manifest, rollback_handle):
+    raise RuntimeError("fixture restore could not be completed")
+
+
+def test_a_published_request_closes_only_once_it_is_no_longer_the_active_artifact(promotion):
+    service, state = promotion
+    reviewed = _review(service, _request(service))
+    staged = service.stage(TENANT, OPERATOR, "candidate-one", expected_revision=reviewed["revision"])
+    canary = service.activate(TENANT, OPERATOR, "candidate-one", expected_revision=staged["revision"])
+    service.deployment_adapter.rollback = _failing_rollback
+    with pytest.raises(CandidatePromotionInterrupted):
+        service.rollback(TENANT, OPERATOR, "candidate-one", expected_revision=canary["revision"],
+                         reason_code="operator_requested")
+    stuck = service.inspect(TENANT, OPERATOR, "candidate-one")
+    assert stuck["state"] == "uncertain" and stuck["published"] is True and stuck["can_discard"] is True
+
+    # Still the active artifact: closing it would hide a live release.
+    with pytest.raises(CandidatePromotionConflict, match="in use"):
+        service.discard(TENANT, OPERATOR, "candidate-one",
+                        expected_revision=stuck["revision"], reason_code="stuck_request")
+
+    # Another version is published directly: retry can never settle this one.
+    state["active_sha256"] = _sha("published-directly")
+    with pytest.raises(CandidatePromotionInterrupted):
+        service.reconcile(TENANT, OPERATOR, "candidate-one", expected_revision=stuck["revision"])
+    closed = service.discard(TENANT, OPERATOR, "candidate-one",
+                             expected_revision=stuck["revision"], reason_code="stuck_request")
+    assert closed["state"] == "closed"                      # never "discarded": it was published
+    assert closed["events"][-1]["details"]["published"] is True
+    assert closed["can_discard"] is False and closed["stuck"] == ""
+
+
+def test_a_request_awaiting_review_under_a_replaced_policy_is_stuck_and_can_be_discarded(promotion):
+    service, state = promotion
+    waiting = _request(service)
+    standing = service.inspect(TENANT, OPERATOR, "candidate-one")
+    assert standing["stuck"] == "" and standing["can_discard"] is False
+    with pytest.raises(CandidatePromotionConflict):
+        service.discard(TENANT, OPERATOR, "candidate-one", expected_revision=waiting["revision"],
+                        reason_code="no_longer_wanted")
+
+    state["policy_version"] = "v2"
+    standing = service.list(TENANT, OPERATOR)[0]
+    assert standing["stuck"] == "policy_changed" and standing["can_discard"] is True
+    with pytest.raises(CandidatePromotionConflict, match="policy changed"):
+        _review(service, waiting)
+    assert service.discard(TENANT, OPERATOR, "candidate-one", expected_revision=waiting["revision"],
+                           reason_code="stuck_request")["state"] == "discarded"
+
+
+def test_a_full_history_on_a_live_release_can_still_be_settled_and_closed(promotion):
+    service, state = promotion
+    reviewed = _review(service, _request(service))
+    staged = service.stage(TENANT, OPERATOR, "candidate-one", expected_revision=reviewed["revision"])
+    current = service.activate(TENANT, OPERATOR, "candidate-one", expected_revision=staged["revision"])
+    service.deployment_adapter.rollback = _failing_rollback
+    refused = None
+    for _ in range(80):                 # every restore attempt fails; the candidate stays live
+        try:
+            service.rollback(TENANT, OPERATOR, "candidate-one", expected_revision=current["revision"],
+                             reason_code="operator_requested")
+        except CandidatePromotionInterrupted:
+            uncertain = service.inspect(TENANT, OPERATOR, "candidate-one")
+            current = service.reconcile(TENANT, OPERATOR, "candidate-one",
+                                        expected_revision=uncertain["revision"])
+        except CandidatePromotionConflict as exc:
+            refused = str(exc)
+            break
+    # The restore refusal and the close refusal name the same way out.
+    way_out = "publish another version directly, then close this request"
+    assert refused is not None and "history is full" in refused and way_out in refused
+    full = service.inspect(TENANT, OPERATOR, "candidate-one")
+    # No restore was claimed without room for its result inside the cap; only
+    # the outcome (reconcile) went past it, and the list still loads.
+    claims = [event["sequence"] for event in full["events"] if event["state"] == "rollback_claimed"]
+    assert full["state"] == "canary" and max(claims) <= 127 and len(full["events"]) <= 130
+    assert service.list(TENANT, OPERATOR)[0]["can_discard"] is True
+    with pytest.raises(CandidatePromotionConflict, match=way_out):
+        service.discard(TENANT, OPERATOR, "candidate-one", expected_revision=full["revision"],
+                        reason_code="stuck_request")
+    state["active_sha256"] = _sha("published-directly")
+    assert service.discard(TENANT, OPERATOR, "candidate-one", expected_revision=full["revision"],
+                           reason_code="stuck_request")["state"] == "closed"
+
+
+def test_a_voided_approval_is_stuck_and_a_changed_policy_leaves_only_discard(promotion):
+    service, state = promotion
+    reviewed = _review(service, _request(service))
+
+    # The reviewer's access changed: the approval no longer counts, before it expires.
+    state["authority_epochs"][REVIEWER] = "v2"
+    assert service.inspect(TENANT, OPERATOR, "candidate-one")["stuck"] == "approval_void"
+    again = _review(service, reviewed)
+    assert again["state"] == "authorized"
+    assert service.inspect(TENANT, OPERATOR, "candidate-one")["stuck"] == ""
+
+    # The release rules changed: no review of this request can continue it.
+    state["policy_version"] = "v2"
+    standing = service.list(TENANT, OPERATOR)[0]
+    assert standing["stuck"] == "policy_changed" and standing["can_discard"] is True
+    with pytest.raises(CandidatePromotionConflict, match="policy changed"):
+        _review(service, again)
+    assert service.discard(TENANT, OPERATOR, "candidate-one", expected_revision=again["revision"],
+                           reason_code="stuck_request")["state"] == "discarded"
+
+
+def test_repeated_reviews_stop_before_the_history_can_no_longer_be_read(promotion):
+    service, _state = promotion
+    current = _review(service, _request(service))
+    clock = [float(current["review"]["expires_at"])]
+    service.store.authoritative_time = lambda: clock[0]
+    refused = None
+    for _ in range(200):
+        clock[0] = float(current["review"]["expires_at"]) + 1
+        try:
+            current = _review(service, current)
+        except CandidatePromotionConflict as exc:
+            refused = str(exc)
+            break
+    assert refused is not None and "discard" in refused
+    # One request can never make itself, or the workspace's list, unreadable.
+    assert len(service.inspect(TENANT, OPERATOR, "candidate-one")["events"]) <= 128
+    assert service.list(TENANT, OPERATOR)[0]["stuck"] == "approval_expired"
+    assert service.discard(TENANT, OPERATOR, "candidate-one", expected_revision=current["revision"],
+                           reason_code="stuck_request")["state"] == "discarded"
+
+
+def test_an_activation_that_may_have_landed_is_never_recorded_as_never_published(promotion):
+    service, state = promotion
+    reviewed = _review(service, _request(service))
+    staged = service.stage(TENANT, OPERATOR, "candidate-one", expected_revision=reviewed["revision"])
+
+    def interrupted(manifest, stage_receipt):
+        state["active_sha256"] = state["candidate_sha256"]      # it went live; the result was lost
+        raise KeyboardInterrupt
+
+    service.deployment_adapter.activate = interrupted
+    with pytest.raises(KeyboardInterrupt):
+        service.activate(TENANT, OPERATOR, "candidate-one", expected_revision=staged["revision"])
+    claimed = service.inspect(TENANT, OPERATOR, "candidate-one")
+    assert claimed["state"] == "activation_claimed" and claimed["published"] is True
+
+    state["active_sha256"] = _sha("published-directly")         # then another version replaced it
+    closed = service.discard(TENANT, OPERATOR, "candidate-one",
+                             expected_revision=claimed["revision"], reason_code="stuck_request")
+    assert closed["state"] == "closed" and closed["events"][-1]["details"]["published"] is True
+

@@ -15,6 +15,7 @@ import types
 import pytest
 from maverick import automation_import as ai
 from maverick.automation_import import ir, n8n
+from maverick.job_queue import JobQueue
 
 # --- fixtures: realistic n8n workflow JSON ---------------------------------
 
@@ -371,13 +372,17 @@ def test_make_fetch_refuses_silent_truncation(monkeypatch):
         importer.fetch()
 
 
-class _FakeQueue:
-    def __init__(self):
+class _RecordingQueue(JobQueue):
+    """A real queue (materialize looks up the schedule an earlier import made)
+    that also records what was enqueued."""
+
+    def __init__(self, path):
+        super().__init__(path)
         self.enqueued: list[tuple] = []
 
-    def enqueue(self, kind, payload, run_at=None):
+    def enqueue(self, kind, payload=None, *, run_at=None):
         self.enqueued.append((kind, payload, run_at))
-        return len(self.enqueued)
+        return super().enqueue(kind, payload, run_at=run_at)
 
 
 class TestMaterialize:
@@ -418,9 +423,9 @@ class TestMaterialize:
         assert retained.generation == original.generation
         assert retained.body == original.body
 
-    def test_schedule_automation_with_queue_creates_schedule(self):
+    def test_schedule_automation_with_queue_creates_schedule(self, tmp_path):
         a = n8n.translate(CRON_WORKFLOW)
-        q = _FakeQueue()
+        q = _RecordingQueue(tmp_path / "jobs.db")
         res = ai.materialize(a, queue=q)
         assert res.schedule is not None
         assert res.schedule["cron"] == "0 9 * * *"
@@ -435,9 +440,9 @@ class TestMaterialize:
         assert payload["schedule_id"]
         assert "template" not in payload  # snapshot the brief, not a template ref
 
-    def test_schedule_automation_with_identity_preserves_runner_context(self):
+    def test_schedule_automation_with_identity_preserves_runner_context(self, tmp_path):
         a = n8n.translate(CRON_WORKFLOW)
-        q = _FakeQueue()
+        q = _RecordingQueue(tmp_path / "jobs.db")
         ai.materialize(
             a,
             queue=q,
@@ -450,11 +455,11 @@ class TestMaterialize:
         assert payload["channel"] == "api"
         assert payload["user_id"] == "alice"
 
-    def test_scheduled_payload_satisfies_worker_contract(self):
+    def test_scheduled_payload_satisfies_worker_contract(self, tmp_path):
         # Regression: feed the enqueued payload straight to the worker's
         # start_goal validation so an empty-text payload can't slip back in.
         a = n8n.translate(CRON_WORKFLOW)
-        q = _FakeQueue()
+        q = _RecordingQueue(tmp_path / "jobs.db")
         ai.materialize(a, queue=q)
         payload = q.enqueued[0][1]
         assert (payload.get("text") or "").strip(), "worker rejects empty text"
@@ -467,13 +472,13 @@ class TestMaterialize:
             "kind": "schedule", "cron": "0 9 * * *", "template": res.template_name,
         }
 
-    def test_disabled_source_automation_is_not_auto_scheduled(self):
+    def test_disabled_source_automation_is_not_auto_scheduled(self, tmp_path):
         # An automation turned OFF at the source (n8n active=False) must not be
         # auto-activated into a live cron schedule on import.
         wf = dict(CRON_WORKFLOW, active=False)
         a = n8n.translate(wf)
         assert a.enabled is False
-        q = _FakeQueue()
+        q = _RecordingQueue(tmp_path / "jobs.db")
         res = ai.materialize(a, queue=q)
         # No live schedule and nothing enqueued to fire.
         assert res.schedule is None

@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import time
 from types import SimpleNamespace
+from urllib.parse import quote
 
 import pytest
 
@@ -108,7 +109,8 @@ def test_delete_window_survives_clock_rollback(
 
 def test_gdpr_history_export_and_purge(temporal_world):
     w = temporal_world
-    tok = w._kp.replace("-", "")  # token must be embeddable in a key
+    # The token is the two quoted parts <channel>:<user> the erase path builds.
+    tok = "sms:" + quote(w._kp, safe="")
     k = f"user:{tok}:email"
     w.upsert_fact(k, "a@x.com")
     w.upsert_fact(k, "b@x.com")

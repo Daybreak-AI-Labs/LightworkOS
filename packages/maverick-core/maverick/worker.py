@@ -23,7 +23,6 @@ CLI entry: ``maverick worker [--db PATH] [--idle-sleep 2.0]``
 """
 from __future__ import annotations
 
-import json
 import logging
 import signal
 import threading
@@ -397,10 +396,11 @@ class Worker:
         """Make a terminally unarmed recurrence visible before dead-lettering.
 
         A failed pause write leaves the attempt running; queue-level stale
-        reclamation can still fail it without pausing its schedule. A successor
-        or a newer lease always belongs to its current worker.
+        reclamation then fails it and pauses its schedule in one transaction
+        (``JobQueue.reclaim_stale``). A successor or a newer lease always
+        belongs to its current worker.
         """
-        from .schedule_definitions import _record_version
+        from .schedule_definitions import pause_unarmed
 
         if not job.recurrence_id:
             return
@@ -408,19 +408,7 @@ class Worker:
             current = connection.execute("SELECT * FROM jobs WHERE id=?", (job.id,)).fetchone()
             if current is None or current["status"] != "running" or current["attempts"] != job.attempts:
                 return
-            if current["successor_id"] or json.loads(current["payload"]).get("__rearmed__"):
-                return
-            definition = connection.execute(
-                "SELECT * FROM schedule_definitions WHERE id=?",
-                (current["recurrence_id"],),
-            ).fetchone()
-            if definition is not None and definition["state"] == "active":
-                _record_version(
-                    connection, definition, payload=json.loads(definition["payload"]),
-                    state="paused", actor="system",
-                    rationale=f"Job {job.id} could not arm its next occurrence; review and resume the schedule",
-                    now=time.time(),
-                )
+            if pause_unarmed(connection, current, now=time.time()):
                 log.warning("worker: schedule %s paused after re-arm failure", job.recurrence_id)
 
     def run_once(self, *, ready_at: float | None = None) -> bool:

@@ -138,12 +138,14 @@ def claim_audit_is_tamper_evident():
     from pathlib import Path
 
     from .audit import signing
-    # KEY_DIR is a module global; this guarantee runs IN-PROCESS (via proof_pack),
-    # so restore it or the dangling temp path leaks into later tests' audit probes.
-    saved_key_dir = signing.KEY_DIR
+    # This guarantee runs IN-PROCESS (via proof_pack). The scratch key folder is
+    # set for this thread only, so an audit write on another thread keeps the
+    # real keys; restore it or the dangling temp path leaks into later probes.
+    override = signing._KEY_DIR_OVERRIDE
+    saved_key_dir = getattr(override, "path", None)
     try:
         with tempfile.TemporaryDirectory() as td:
-            signing.KEY_DIR = Path(td) / "keys"
+            override.path = Path(td) / "keys"
             path = Path(td) / "audit.ndjson"
             signer = signing.AuditSigner(path)
             signer.write({"event": "release_payment", "amount": 6000, "decision": "REQUIRE_HUMAN"})
@@ -164,7 +166,7 @@ def claim_audit_is_tamper_evident():
                     "NOT tamper-evidence vs a same-uid actor. Independently retained "
                     "checkpoints can expose later history changes")
     finally:
-        signing.KEY_DIR = saved_key_dir
+        override.path = saved_key_dir
 
 
 def _audit_ledger_label() -> str:

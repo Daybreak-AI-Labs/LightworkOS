@@ -97,6 +97,38 @@ def test_forced_freeze_restores_prior_value(monkeypatch):
     assert os.environ[FROZEN_ENV] == "1"  # prior value restored
 
 
+def test_forced_freeze_stays_in_its_own_run_and_keeps_a_drift_freeze(monkeypatch, tmp_path):
+    """The harness used to set the process-wide variable, so every other task
+    in the process changed arm with it, and its live arm switched off a freeze
+    raised because the verifier had drifted."""
+    import json
+    import os
+    import threading
+
+    monkeypatch.delenv(FROZEN_ENV, raising=False)
+    elsewhere = []
+
+    def other_task():
+        elsewhere.append(calibration.learning_frozen())
+
+    with forced_freeze(True):
+        assert calibration.learning_frozen() is True
+        assert FROZEN_ENV not in os.environ
+        thread = threading.Thread(target=other_task)
+        thread.start()
+        thread.join()
+    assert elsewhere == [False]  # a task outside the harness is not frozen with it
+
+    monkeypatch.setattr(calibration, "_settings", lambda: {
+        "enforce": True, "min_samples": 20, "min_discrimination": 0.15, "max_ece": 0.2})
+    verdict = tmp_path / "verdict.json"
+    verdict.write_text(json.dumps({"adequate": False}), encoding="utf-8")
+    monkeypatch.setattr(calibration, "_verdict_path", lambda: verdict)
+    with forced_freeze(False):
+        assert FROZEN_ENV not in os.environ
+        assert calibration.learning_frozen() is True  # the drift freeze still holds
+
+
 def test_calibration_override_forces_state(monkeypatch):
     monkeypatch.setenv(FROZEN_ENV, "1")
     assert calibration.learning_frozen() is True  # even with enforcement off

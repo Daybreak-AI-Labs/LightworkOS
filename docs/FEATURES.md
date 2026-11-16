@@ -3316,7 +3316,8 @@ and a `maverick_llm_cache_tokens_total` hit-rate metric.
   [catalog synchronization](operations/mcp-catalogs.md) for refresh limits and
   the HTTP notification subscription boundary.
 - **MCP client** (`mcp_client.py`) — consume remote HTTP servers; **OAuth 2.1
-  client-credentials and authorization-code + PKCE** grants (`mcp_oauth.py`).
+  client-credentials** grant (`mcp_oauth.py`). The authorization-code grant is
+  not offered: nothing completes that sign-in for an MCP server.
 - **MCP registry** (`mcp_registry.py`) — `maverick mcp-registry browse/add/...`.
 - **Federated marketplace indexes** — `[catalogs] indexes` takes any number of
   index base URLs; catalogs merge across them (earlier indexes win on name

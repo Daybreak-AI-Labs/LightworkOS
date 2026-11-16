@@ -28,6 +28,7 @@ from ..audit.errors import AuditRefused
 from ..budget import BudgetExceeded
 from ..killswitch import Halted
 from .continuation_frame import ContinuationFrame
+from .execution_trace import child_scope, node_scope
 from .expressions import (
     _CREDENTIAL_REPAIR,
     _FN_CALL,
@@ -130,8 +131,16 @@ class _Ctx:
     recipe_teaching_check: dict | None = None
     recipe_workflow_check: dict | None = None
     execution_owner: str | None = None  # inherited from the root, never an inline graph
+    scope: str = ""                 # trace prefix for this chain's steps ("" at top level)
+    at: str = ""                    # id of the step this chain is running now
 
-    def nested(self, slot: str = "body") -> _Ctx:
+    def _child_scope(self, lane: str) -> str:
+        # Nested graphs have their own id space. Each lane of a parallel step is
+        # a different graph, so it gets its own prefix; the passes of a loop
+        # repeat one graph and share theirs.
+        return child_scope(self.scope, self.at, lane)
+
+    def nested(self, slot: str = "body", lane: str = "") -> _Ctx:
         # A copy that cannot pause (foreach body / subflow run straight). Shares
         # flow_stack + deadline so cycle detection and the whole-flow deadline
         # span the linear nesting.
@@ -141,9 +150,9 @@ class _Ctx:
                     parallel_slots=self.parallel_slots,
                     frame=self.frame.setdefault("children", {}).setdefault(slot, {}),
                     control_stop=self.control_stop, run_id=self.run_id,
-                    execution_owner=self.execution_owner)
+                    execution_owner=self.execution_owner, scope=self._child_scope(lane))
 
-    def branched(self, slot: str = "body") -> _Ctx:
+    def branched(self, slot: str = "body", lane: str = "") -> _Ctx:
         # For a CONCURRENT parallel branch: its own flow_stack copy (independent
         # cycle detection -- a sibling branch's subflow isn't a cycle here), but a
         # shared clock/deadline and the shared on_node sink.
@@ -153,7 +162,7 @@ class _Ctx:
                     parallel_slots=self.parallel_slots,
                     frame=self.frame.setdefault("children", {}).setdefault(slot, {}),
                     control_stop=self.control_stop, run_id=self.run_id,
-                    execution_owner=self.execution_owner)
+                    execution_owner=self.execution_owner, scope=self._child_scope(lane))
 
 
 def _secret_expression(expression: str) -> bool:
@@ -1064,11 +1073,11 @@ def _run_parallel(node: FlowNode, data: dict, ctx: _Ctx) -> str | None:
         if futs:
             with _cf.ThreadPoolExecutor(max_workers=len(futs)) as ex:
                 futs = [ex.submit(copy_context().run, _run_chain_with_parallel_slot, br, sub,
-                                  ctx.branched(str(index)), br.start)
+                                  ctx.branched(str(index), lane=str(index)), br.start)
                         for index, br, sub in futs]
                 for index, br, sub in inline:
                     try:
-                        _run_chain(br, sub, ctx.branched(str(index)), br.start)
+                        _run_chain(br, sub, ctx.branched(str(index), lane=str(index)), br.start)
                     except Exception as e:
                         first_error = _branch_error(first_error, e)
                 for f in futs:
@@ -1078,11 +1087,11 @@ def _run_parallel(node: FlowNode, data: dict, ctx: _Ctx) -> str | None:
                         first_error = _branch_error(first_error, e)
         else:
             for index, br, sub in inline:
-                _run_chain(br, sub, ctx.branched(str(index)), br.start)
+                _run_chain(br, sub, ctx.branched(str(index), lane=str(index)), br.start)
         _raise_branch_error(first_error, ctx)
     else:
         for br, sub in zip(node.branches, branch_outputs, strict=True):
-            _run_chain(br, sub, ctx.nested(), br.start)
+            _run_chain(br, sub, ctx.nested(lane="0"), br.start)
     for sub in branch_outputs:            # merge new keys deterministically, in order
         for k, v in sub.items():          # (a later branch wins a key conflict)
             if k not in base:
@@ -1173,6 +1182,11 @@ def _run_node(node: FlowNode, data: dict, ctx: _Ctx) -> str | None:
 
 
 def _run_chain(flow: Flow, data: dict, ctx: _Ctx, start: str | None) -> None:
+    with node_scope(ctx.scope):
+        _run_chain_steps(flow, data, ctx, start)
+
+
+def _run_chain_steps(flow: Flow, data: dict, ctx: _Ctx, start: str | None) -> None:
     from .action_recipe import WORKFLOW_SCHEMAS
 
     if ctx.execution_owner is None:
@@ -1209,6 +1223,7 @@ def _run_chain(flow: Flow, data: dict, ctx: _Ctx, start: str | None) -> None:
         node = flow.node(cursor)
         if node is None:
             raise ValueError("flow continuation node no longer exists")
+        ctx.at = node.id
         try:
             if ctx.recipe is not None and node.kind == NODE_APPROVAL:
                 if ctx.recipe_teaching is not None and node.id == "teaching_review":

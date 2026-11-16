@@ -13,9 +13,9 @@ The sidecar is a deployable Streamable HTTP request/response subset.  It serves
 its own ``initialize`` and ``tools/list`` responses from the reviewed manifest,
 and proxies only approved ``tools/call`` requests.  It intentionally does not
 pretend that a static manifest proves an upstream's safety or availability.
-Provider pilots and authorization-code OAuth callbacks remain deployment work;
-the non-interactive runtime supports OAuth 2.1 client credentials through the
-existing ``maverick.mcp_oauth`` implementation.
+Provider pilots remain deployment work; the non-interactive runtime supports
+OAuth 2.1 client credentials through the existing ``maverick.mcp_oauth``
+implementation (the only grant it offers).
 
 Config (all capability-changing settings are explicit)::
 
@@ -414,14 +414,10 @@ def _validate_sidecar_oauth(raw: dict[str, Any]) -> None:
     from maverick.mcp_oauth import OAuthConfig
 
     try:
-        cfg = OAuthConfig.from_dict(raw)
+        OAuthConfig.from_dict(raw)
     except (TypeError, ValueError) as exc:
+        # Any grant other than client_credentials is refused here too.
         raise SidecarConfigError("mcp_sidecar.oauth is invalid") from exc
-    if cfg.grant_type != "client_credentials":
-        raise SidecarConfigError(
-            "the non-interactive sidecar supports OAuth client_credentials; "
-            "complete authorization-code PKCE through the managed MCP client first"
-        )
 
 
 def _validated_origin(value: object) -> str:

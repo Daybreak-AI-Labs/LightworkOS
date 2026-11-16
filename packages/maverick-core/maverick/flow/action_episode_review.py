@@ -31,6 +31,7 @@ from .action_episodes import (
     teaching_capture_plan,
 )
 from .approvals import paused_operation_binding
+from .execution_trace import trace_key
 
 SCHEMA = "lightwork.action-episode-review.v1"
 ENVELOPE_SCHEMA = "lightwork.action-episode-envelope.v1"
@@ -307,7 +308,7 @@ def _validate_teaching_capture(row, payload, run, pinned):
                 or run.data.get("_recipe_teaching_question") != question):
             raise ValueError("durable teaching decision differs from native source completion")
         finished_actions = {node.id for node in pinned.nodes.values() if node.kind == "action"
-                            and (run.nodes.get(node.id) or {}).get("status") == "done"}
+                            and (run.nodes.get(trace_key(node.id)) or {}).get("status") == "done"}
         if finished_actions != {pair[0] for pair in payload["expected"]}:
             raise ValueError("completed teaching source has a different native action trace")
 
@@ -573,7 +574,7 @@ class ActionEpisodeReviewService:
                 expected = capture_plan(pinned, allowed_tools=allowed_tools, no_forms=True)
             if (run.status != "paused_approval" or run.cursor != pinned.start
                     or pinned.nodes[pinned.start].kind != "approval"
-                    or any(node_id in run.nodes for node_id, _ in expected)
+                    or any(trace_key(node_id) in run.nodes for node_id, _ in expected)
                     or paused_operation_binding(run) != expected_pause_binding):
                 raise ActionEpisodeConflict("capture enrollment requires the exact initial approval before actions")
             inputs = _object(run.input_data.get("input", run.input_data))
@@ -603,7 +604,8 @@ class ActionEpisodeReviewService:
         slots = payload["slots"]
         complete = all(slot["status"] == "completed" for slot in slots)
         expected = payload["expected"]
-        finished = [node for node, _ in expected if (run.nodes.get(node) or {}).get("status") == "done"]
+        finished = [node for node, _ in expected
+                    if (run.nodes.get(trace_key(node)) or {}).get("status") == "done"]
         admitted = [slot["node_id"] for slot in slots if slot["status"] == "completed"]
         if not complete or finished != admitted:
             status, reason = "unusable", "native_prefix_incomplete"

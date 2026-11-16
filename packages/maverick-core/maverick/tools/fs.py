@@ -441,11 +441,9 @@ def write_file(sandbox, goal_id: str | int | None = "default") -> Tool:
         except ValueError as e:
             return f"ERROR: {e}"
         # Opt-in per-run file-write quota (default off -> no-op).
-        from ..file_quota import check_and_add
-        ok, msg = check_and_add(
-            len(args["content"].encode("utf-8", "replace")),
-            goal_id=quota_goal_id,
-        )
+        from ..file_quota import check_and_add, refund
+        charged = len(args["content"].encode("utf-8", "replace"))
+        ok, msg = check_and_add(charged, goal_id=quota_goal_id)
         if not ok:
             return f"ERROR: {msg}"
         content = args["content"]
@@ -454,6 +452,7 @@ def write_file(sandbox, goal_id: str | int | None = "default") -> Tool:
         try:
             write_text_contained(sandbox, target, content)
         except (ValueError, PermissionError, OSError) as e:
+            refund(charged, goal_id=quota_goal_id)  # the write did not complete
             return f"ERROR: {e}"
         return f"wrote {len(content)} bytes to {target}"
 

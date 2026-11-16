@@ -1847,6 +1847,7 @@ _CONTEXTS = tuple(
                 "Workspace records are decision support, not legal advice, certification, or a regulatory filing.",
                 "Nothing on this page transmits a record to an authority or external system without separately configured and authorized integration.",
                 "Local readiness and recorded evidence do not prove legal sufficiency, provider acceptance, or regulator acceptance.",
+                "The Needs attention list can be incomplete when a record could not be read; the page says so, and Refresh checks again.",
             ),
             next_steps=(
                 "Open the governance record that needs attention and confirm its current revision and evidence.",

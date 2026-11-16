@@ -337,9 +337,30 @@ class ImportedAutomation:
         # when their truncated bases collide.
         base = slugify(f"{self.source}-{self.name}")[:64].rstrip("-") or "imported"
         if self.source_id:
-            suffix = hashlib.sha256(self.source_id.encode("utf-8")).hexdigest()[:6]
-            return f"{base}-{suffix}"
+            return f"{base}-{self._id_suffix()}"
         return base
+
+    def _id_suffix(self) -> str:
+        return hashlib.sha256(self.source_id.encode("utf-8")).hexdigest()[:6]
+
+    def is_other_name_of(self, mark: str) -> bool:
+        """Whether ``mark`` belongs to the same source id under another name:
+        this workflow before a rename at the source, or another export's
+        workflow that happens to share the id."""
+        return bool(self.source_id) and mark != self.import_ref() and (
+            mark.startswith(f"{self.source}:") and mark.endswith(f"-{self._id_suffix()}"))
+
+    def import_ref(self) -> str:
+        """The mark a schedule created from this automation carries.
+
+        A re-import finds its own schedule by this mark and updates it. The
+        template slug is the identity, as it is for the saved template: a
+        source id alone is not unique (two exports can both hold a workflow
+        numbered ``1``), and the slug carries the name and a hash of the id.
+        A workflow renamed at the source is therefore a new one here. Without
+        a source id the slug is only the name, which another workflow can
+        share, so no schedule is marked with it."""
+        return f"{self.source}:{self.template_name()}"
 
     def payload_fields(self) -> list[str]:
         """The trigger-payload field names this automation reads (see the

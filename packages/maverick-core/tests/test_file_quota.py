@@ -123,3 +123,39 @@ def test_editor_and_spreadsheet_writes_count_against_the_goal_quota(monkeypatch,
     assert blocked.startswith("ERROR") and "quota exceeded" in blocked
     assert not (tmp_path / "b.csv").exists()
     file_quota.reset("303")
+
+
+def test_a_write_that_fails_gives_its_bytes_back(monkeypatch, tmp_path):
+    """The quota is charged before the write. A write that then fails wrote
+    nothing, so it must not use up the run's allowance."""
+    from maverick.sandbox import build_sandbox
+    from maverick.tools import str_edit
+    from maverick.tools.fs import write_file
+
+    file_quota.reset("default")
+    monkeypatch.setattr(file_quota, "_limit_bytes", lambda: 50)
+    sandbox = build_sandbox(workdir=str(tmp_path))
+    (tmp_path / "folder").mkdir()
+    tool = write_file(sandbox)
+
+    failed = tool.fn({"path": "folder", "content": "x" * 40})  # a folder cannot be written
+    assert failed.startswith("ERROR") and "quota" not in failed
+    assert tool.fn({"path": "a.txt", "content": "y" * 40}).startswith("wrote")
+
+    # The editor charges the same quota, and gives back the same way.
+    file_quota.reset("default")
+
+    def _disk_full(*_args, **_kwargs):
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(str_edit, "write_text_contained", _disk_full)
+    editor = str_edit.str_replace_editor(sandbox)
+    failed = editor.fn({"command": "create", "path": "b.txt", "file_text": "z" * 40})
+    assert failed.startswith("ERROR") and "no space" in failed
+    assert file_quota.check_and_add(40, goal_id="default")[0] is True
+
+    # A refund never takes the count below zero or touches another run.
+    file_quota.reset("default")
+    file_quota.refund(10, goal_id="default")
+    assert file_quota.check_and_add(50, goal_id="default")[0] is True
+    file_quota.reset("default")

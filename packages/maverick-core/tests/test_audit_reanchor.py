@@ -327,6 +327,8 @@ def test_erase_checks_the_chosen_checkpoint_folder_too(_isolate_keys, tmp_path):
 
     (blocker,) = erase_blockers("telegram", "alice", audit_dir=ad)
     assert "published checkpoint" in blocker
+    # Restoring is the only repair, and an older backup holds erased rows.
+    assert "backup" in blocker and "erase again anyone who was erased" in blocker
     with pytest.raises(RuntimeError):
         scrub_user("telegram", "alice", audit_dir=ad, strict=True)
     assert path.read_bytes() == before
@@ -386,3 +388,103 @@ def test_erase_refuses_when_a_tip_ledger_that_existed_is_gone(
         scrub_user("telegram", "alice", audit_dir=ad, strict=True)
     assert path.read_bytes() == before_bytes
     assert not (ad / ANCHOR_FILENAME).exists()
+
+
+@pytest.mark.usefixtures("local_audit_key_custody")
+def test_erase_after_a_key_rotation_leaves_other_days_and_their_anchors_alone(
+    _isolate_keys, tmp_path,
+):
+    """Only days that hold the subject are rewritten, and each is re-anchored.
+
+    The follow-up re-anchor used to re-sign every day-file and the tip ledger
+    under the new key without anchoring them again."""
+    from maverick.audit.erase import scrub_user
+    from maverick.audit.signing import (
+        ANCHOR_FILENAME,
+        AuditSigner,
+        ensure_anchors,
+        rotate_audit_keypair,
+        verify_anchors,
+        verify_chain,
+    )
+    from maverick.audit.writer import AuditLog
+
+    ad = tmp_path / "audit"
+    held, other = ad / "2000-01-01.ndjson", ad / "2000-01-02.ndjson"
+    signer = AuditSigner(held)
+    assert signer.write({"kind": "tool_call", "channel": "telegram", "user_id": "alice"})
+    assert signer.write({"kind": "tool_call", "tool": "read"})
+    assert AuditSigner(other).write({"kind": "tool_call", "tool": "read"})
+    assert ensure_anchors(ad) == 2
+    untouched = {path: path.read_bytes() for path in (other, ad / ANCHOR_FILENAME)}
+    rotate_audit_keypair()
+
+    assert scrub_user("telegram", "alice", audit_dir=ad, strict=True)[0] == 1
+    ledger_after_erase = (ad / ANCHOR_FILENAME).read_bytes()
+    assert AuditLog(audit_dir=ad, sign=True).reanchor_after_erase() == 0
+
+    assert other.read_bytes() == untouched[other]
+    assert ledger_after_erase.startswith(untouched[ad / ANCHOR_FILENAME])
+    assert (ad / ANCHOR_FILENAME).read_bytes() == ledger_after_erase
+    assert verify_anchors(ad) == []
+    assert verify_chain(held) == [] and verify_chain(other) == []
+
+
+def test_an_erase_vouches_for_a_checkpoint_only_when_the_day_still_matches_it(
+    _isolate_keys, tmp_path,
+):
+    """A genuine erase must not turn an earlier, unrecorded change into a
+    recorded erasure, and must not refuse the person either: a day erased by
+    a version that stored no erase record looks the same. The erase goes
+    ahead and its record leaves that checkpoint off its list. A second erase
+    before the next checkpoint carries the first one's list on."""
+    import json
+    from datetime import datetime, timezone
+
+    from maverick.audit.checkpoints import publish_checkpoint
+    from maverick.audit.erase import erase_blockers, scrub_user
+    from maverick.audit.events import AuditEvent, EventKind
+    from maverick.audit.signing import _load_or_create_keypair, resign_rows, verify_chain
+    from maverick.audit.writer import reset_signer_after_erase
+
+    log, ad, path = _signed_log(tmp_path)
+    store = ad.parent / "audit-checkpoints"
+    checkpoint = publish_checkpoint(ad, store, day=path.stem)
+    original = path.read_bytes()
+    records: list[dict] = []
+
+    def lookup(day):
+        return [record for record in records if record["day"] == day]
+
+    def remember(summary):
+        records.append({**summary, "issued_at": datetime.now(timezone.utc).isoformat()})
+
+    def erase(subject):
+        assert erase_blockers("telegram", subject, audit_dir=ad, erase_records=lookup) == []
+        assert scrub_user("telegram", subject, audit_dir=ad, strict=True,
+                          on_rewrite=remember, erase_records=lookup)[0] == 2
+        return records[-1]["checkpoints"]
+
+    rows = [json.loads(line) for line in original.decode("utf-8").splitlines()]
+    rows[1]["title"] = "edited by whoever holds the key"
+    path.write_text(resign_rows([("json", row) for row in rows], _load_or_create_keypair())[0],
+                    encoding="utf-8")
+    assert verify_chain(path) == []
+    assert erase("alice") == []
+
+    # The day as it was checkpointed, grown since: two erasures in a row.
+    import hashlib
+
+    records.clear()
+    path.write_bytes(original)
+    reset_signer_after_erase(ad)
+    assert log.record(AuditEvent(ts=2000.0, kind=EventKind.GOAL_START, payload={"title": "later"}))
+    listed = [hashlib.sha256(checkpoint.read_bytes()).hexdigest()]
+    assert erase("alice") == listed
+    assert erase("bob") == listed
+    # Without the first erasure's record the second vouches for nothing.
+    records.clear()
+    path.write_bytes(original)
+    reset_signer_after_erase(ad)
+    assert scrub_user("telegram", "alice", audit_dir=ad, strict=True)[0] == 2
+    assert erase("bob") == []

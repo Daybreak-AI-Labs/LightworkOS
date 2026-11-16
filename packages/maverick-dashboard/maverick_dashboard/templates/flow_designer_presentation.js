@@ -25,6 +25,10 @@ var FDPresentation = (function () {
       { key: 'if_false', x: width - 50, cls: 'f', label: 'No' }];
     return [{ key: 'next', x: width / 2, cls: '', label: '' }];
   }
+  // The key a run records one step id under, as one path component: the
+  // runner escapes "~" as "~~" and "/" as "~s", so an id that contains a slash
+  // never reads as a step nested inside another. A plain id is unchanged.
+  function traceKey(id) { return String(id).replace(/~/g, '~~').replace(/\//g, '~s'); }
   function runClass(id, cursor, state) {
     if (id === cursor) return ' run-active';
     var result = state[id]; if (!result) return '';
@@ -41,7 +45,8 @@ var FDPresentation = (function () {
     if (result.status === 'false') return '✗';
     return '🟠';
   }
-  return { truncate: truncate, summary: summary, ports: ports, runClass: runClass, runBadge: runBadge };
+  return { truncate: truncate, summary: summary, ports: ports, runClass: runClass, runBadge: runBadge,
+    traceKey: traceKey };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = FDPresentation;

@@ -40,6 +40,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import ipaddress
+import logging
 import os
 import re
 from typing import Any
@@ -47,6 +48,8 @@ from urllib.parse import urlsplit
 
 from .config_contracts import TEXT_SETTINGS
 from .crypto_at_rest import EncryptionUnavailable
+
+log = logging.getLogger(__name__)
 
 _AWS_MAGIC = b"MVKKMS-AWS1\n"
 _GCP_MAGIC = b"MVKKMS-GCP1\n"
@@ -152,10 +155,32 @@ class GcpKmsKEK:
         return resp.plaintext
 
 
+_VAULT_NOT_DERIVED = (
+    "The Vault transit key was not created with derived=true, so it does not keep "
+    "each workspace's key separate. Create a transit key with derived=true and "
+    "rotate to it.")
+
+
+def _vault_invalid_request(err: Exception) -> bool:
+    """Whether ``err`` is Vault's own "invalid request" answer (HTTP 400), which
+    is how transit refuses a ciphertext under the wrong context. hvac raises it
+    as ``InvalidRequest``; it is matched by name (or by a status code, as for
+    Azure above) so hvac is not imported here. Any other failure (403, 429,
+    5xx, a sealed or unreachable Vault) is not that answer."""
+    if getattr(err, "status_code", None) == 400:
+        return True
+    return any(cls.__name__ == "InvalidRequest" for cls in type(err).__mro__)
+
+
 class VaultTransitKMS:
     """KEK in HashiCorp Vault's transit engine. The tenant context is passed as
     the transit ``context`` (the transit key must be created with
-    ``derived=true`` so the context is bound into key derivation)."""
+    ``derived=true`` so the context is bound into key derivation).
+
+    Vault ignores the context of a key that is not derived, so the key is
+    checked by behaviour before it wraps anything: a value sealed under one
+    context must not open under another. A key that fails the check still
+    unwraps what it already wrapped, with a warning, so it can be rotated away."""
 
     def __init__(self, *, key_id: str | None = None, address: str | None = None,
                  token: str | None = None, mount: str | None = None,
@@ -182,6 +207,7 @@ class VaultTransitKMS:
         self.token = token or os.environ.get("VAULT_TOKEN")
         self.mount = mount or cfg.get("mount") or TEXT_SETTINGS["kms.mount"].runtime_default
         self._client = client
+        self._context_bound: bool | None = None
 
     def _vault(self):
         if self._client is None:
@@ -193,7 +219,46 @@ class VaultTransitKMS:
             self._client = hvac.Client(url=self.address, token=self.token)
         return self._client
 
+    def _context_is_bound(self) -> bool:
+        """Whether the transit key binds the context (``derived=true``).
+
+        Asked by behaviour, with the encrypt and decrypt permissions this
+        backend already needs (reading the key's settings needs one more that
+        many Vault policies withhold). Raises when Vault cannot answer."""
+        if self._context_bound is None:
+            transit = self._vault().secrets.transit
+            probe = base64.b64encode(os.urandom(32)).decode("ascii")
+            sealed = transit.encrypt_data(
+                name=self.key_id, mount_point=self.mount, plaintext=probe,
+                context=_ctx_b64(b"maverick-derived-check:a"))["data"]["ciphertext"]
+            opened = transit.decrypt_data(
+                name=self.key_id, mount_point=self.mount, ciphertext=sealed,
+                context=_ctx_b64(b"maverick-derived-check:a"))["data"]["plaintext"]
+            if opened != probe:
+                raise EncryptionUnavailable("Vault did not return the test value it sealed")
+            try:
+                transit.decrypt_data(
+                    name=self.key_id, mount_point=self.mount, ciphertext=sealed,
+                    context=_ctx_b64(b"maverick-derived-check:b"))
+            except Exception as e:
+                if not _vault_invalid_request(e):
+                    raise  # sealed, busy, failing or unreachable: no answer either way
+                # The other context was refused. An answer reached through an
+                # error is not kept: the next call asks Vault again.
+                return True
+            self._context_bound = False
+        return self._context_bound
+
     def wrap(self, dek: bytes, *, context: bytes | None = None) -> bytes:
+        try:
+            bound = self._context_is_bound()
+        except Exception as e:
+            raise EncryptionUnavailable(
+                "Vault could not check that the transit key was created with "
+                f"derived=true ({type(e).__name__}); nothing was wrapped. The check "
+                "needs both encrypt and decrypt on the key.") from e
+        if not bound:
+            raise EncryptionUnavailable(_VAULT_NOT_DERIVED)
         resp = self._vault().secrets.transit.encrypt_data(
             name=self.key_id, mount_point=self.mount,
             plaintext=base64.b64encode(dek).decode("ascii"),
@@ -206,6 +271,13 @@ class VaultTransitKMS:
         resp = self._vault().secrets.transit.decrypt_data(
             name=self.key_id, mount_point=self.mount,
             ciphertext=ciphertext, context=_ctx_b64(context))
+        # Refusing here would lock away data already sealed under such a key and
+        # block the rotation that fixes it, so an old key is reported, not refused.
+        try:
+            if not self._context_is_bound():
+                log.warning("%s", _VAULT_NOT_DERIVED)
+        except Exception as e:
+            log.debug("Vault derived-key check did not finish: %s", type(e).__name__)
         return base64.b64decode(resp["data"]["plaintext"])
 
 

@@ -291,6 +291,7 @@ def _adapter_modules():
         product_operations_runtime_enforcement,
         product_operations_runtime_policy_recovery,
         product_operations_schedule_setup,
+        product_operations_sensitive_data_exit,
         product_operations_settings_catalog,
         product_operations_skills,
         product_operations_specialist_drafts,
@@ -458,6 +459,7 @@ def _adapter_modules():
         product_operations_continuous_evidence,
         product_operations_viewpoints,
         product_operations_partner_limits,
+        product_operations_sensitive_data_exit,
     )
 
 

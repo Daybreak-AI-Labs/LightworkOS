@@ -3471,11 +3471,15 @@ class WorldModel:
         only considers facts whose key is deliberately namespaced as
         ``user:<token>:<name>``.  Values are never searched and arbitrary
         substrings are ignored because short/common user ids can otherwise
-        match unrelated secrets or other users' data.
+        match unrelated secrets or other users' data.  ``token`` is the quoted
+        ``<channel>:<user>`` pair; any other shape raises ``ValueError`` (see
+        ``fact_revision.subject_fact_prefix``).
         """
-        if not token:
+        from .fact_revision import subject_fact_prefix
+
+        prefix = subject_fact_prefix(token)
+        if not prefix:
             return {}
-        prefix = f"user:{token}:"
         return {k: v for k, v in self.get_facts().items() if k.startswith(prefix)}
 
     def delete_facts_matching(self, token: str) -> list[str]:
@@ -3484,10 +3488,12 @@ class WorldModel:
         Returns the keys removed so the caller can report exactly what was
         scrubbed.
         """
-        if not token:
+        from .fact_revision import subject_fact_prefix
+
+        prefix = subject_fact_prefix(token)
+        if not prefix:
             return []
         keys = sorted(self.facts_matching(token).keys())
-        prefix = f"user:{token}:"
         with self._writing() as conn:
             if keys:
                 ph = ",".join("?" * len(keys))
@@ -3552,9 +3558,11 @@ class WorldModel:
         subject's historical fact values (including keys already removed from the
         live table), for the GDPR Art.15 right-of-access export. Empty unless
         ``[memory] temporal`` retained any history."""
-        if not token:
+        from .fact_revision import subject_fact_prefix
+
+        prefix = subject_fact_prefix(token)
+        if not prefix:
             return {}
-        prefix = f"user:{token}:"
         rows = self._read_all(
             "SELECT key, value, valid_from, valid_to, source, trust_tier, "
             "sensitivity FROM fact_history WHERE substr(key, 1, ?) = ? "
@@ -3824,6 +3832,23 @@ class WorldModel:
         rows = self._read_all(
             "SELECT * FROM approvals ORDER BY requested_at DESC, id DESC LIMIT ?",
             (max(1, int(limit)),),
+        )
+        return _approvals_from_rows(rows)
+
+    def list_approvals_for_owner(self, owner: str, limit: int = 500) -> list[Approval]:
+        """Approvals one person requested, claimed or decided, newest first.
+
+        An empty ``owner`` selects approvals nobody requested. The person
+        filter runs in SQL, before ``limit``, so other people's newer rows
+        cannot push this person's older ones out of the result."""
+        if owner:
+            where, params = "? IN (requested_by, claimed_by, decided_by)", (owner,)
+        else:
+            where, params = "(requested_by IS NULL OR requested_by = '')", ()
+        rows = self._read_all(
+            f"SELECT * FROM approvals WHERE {where} "
+            "ORDER BY requested_at DESC, id DESC LIMIT ?",
+            (*params, max(1, int(limit))),
         )
         return _approvals_from_rows(rows)
 

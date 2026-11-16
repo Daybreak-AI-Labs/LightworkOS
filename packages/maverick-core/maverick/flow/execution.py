@@ -38,7 +38,7 @@ from .budgeting import (
     _MeteredAgentResult as _MeteredAgentResult,
 )
 from .execution_plan import bind_execution_plan, pin_new_plan
-from .execution_trace import ExecutionTrace
+from .execution_trace import ExecutionTrace, scoped_id, trace_key
 from .ir import Flow, FlowNode
 from .lifecycle import serialize_runs
 from .pause_snapshot import ApprovalPauseContext, build_human_pause
@@ -377,7 +377,7 @@ def execute(flow: Flow, *, agent_runner: AgentRunner, action_runner: ActionRunne
             agent_data,
             node.timeout,
             flow_id=flow.id,
-            node_id=node.id,
+            node_id=scoped_id(node.id),   # a nested step's tools are its own
             revision=definition_revision or flow.revision,
             cohort=evidence_cohort,
             run_id=rid,
@@ -476,11 +476,11 @@ def execute(flow: Flow, *, agent_runner: AgentRunner, action_runner: ActionRunne
                     definition_revision=run.definition_revision,
                     release_id=run.release_id,
                     performed_work_nodes=sum(node.kind in {"agent", "action"}
-                        and run.nodes.get(node.id, {}).get("status") == "done"
+                        and run.nodes.get(trace_key(node.id), {}).get("status") == "done"
                         for node in flow.nodes.values()),
                     performed_work_node_ids=[node.id for node in flow.nodes.values()
                         if node.kind in {"agent", "action"}
-                        and run.nodes.get(node.id, {}).get("status") == "done"])
+                        and run.nodes.get(trace_key(node.id), {}).get("status") == "done"])
     finish_capture(episode_capture, run)
     # Learn the shape of this flow's output keys from a REAL run's data (never a
     # dry run -- mock executors produce placeholder shapes), so the designer's

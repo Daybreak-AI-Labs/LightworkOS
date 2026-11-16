@@ -92,6 +92,29 @@ def test_owner_scoped_approvals_overfetch_past_global_limit():
     assert any(r.decided_by == "alice" for r in records)
 
 
+def test_owner_scope_is_applied_in_the_store_not_after_a_capped_read(tmp_path):
+    """One person's older approval stays in their record however many newer
+    approvals other people have: the store filters by person before the cap."""
+    with WorldModel(tmp_path / "owner-scope.db") as world:
+        mine = world.create_approval("old transfer", requested_by="user:alice")
+        world.decide_approval(mine, "approved", decided_by="user:cfo")
+        unowned = world.create_approval("nobody asked")
+        with world._writing() as conn:
+            conn.executemany(
+                "INSERT INTO approvals(action, risk, status, requested_at, "
+                "approvals_required, requested_by) VALUES(?, 'low', 'pending', ?, 1, ?)",
+                [(f"bulk-{i}", 4_000_000_000.0 + i, "user:bob") for i in range(5_001)],
+            )
+        requested = orec.assemble(world, limit=10, owner="user:alice")
+        decided = orec.assemble(world, limit=10, owner="user:cfo")
+        nobody = orec.assemble(world, limit=10, owner="")
+        assert [row.id for row in world.list_approvals_for_owner("", limit=10)] == [unowned]
+
+    assert [r.subject for r in requested] == ["old transfer"]
+    assert [r.subject for r in decided] == ["old transfer"]
+    assert [r.subject for r in nobody] == ["nobody asked"]
+
+
 def test_empty_owner_reads_unowned_approvals_only():
     def approval(i, requested_by):
         return SimpleNamespace(decided_at=float(i), requested_at=float(i), requested_by=requested_by,

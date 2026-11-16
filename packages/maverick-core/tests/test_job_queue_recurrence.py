@@ -37,6 +37,30 @@ def test_reclaimed_attempt_cannot_write_checkpoint_or_arm(tmp_path):
     assert peer.list(status="pending") == []
 
 
+def test_reclaim_pauses_schedule_when_last_attempt_ends_unarmed(tmp_path):
+    """A worker that dies on the last attempt (or cannot write the pause)
+    leaves the row running. Reclaim then fails it for good; with no next
+    occurrence armed the schedule would stay "active" and never run again."""
+    from maverick.schedule_definitions import list_definitions
+
+    q, job, jid = _claimed(tmp_path)
+    armed = JobQueue(tmp_path / "armed.db")
+    armed_id = armed.enqueue("noop", {"__cron__": CRON}, run_at=100)
+    armed.rearm(armed_id, expected_attempts=armed.claim(now=100).attempts, now=100)
+
+    assert q.reclaim_stale(1, now=102, max_attempts=job.attempts) == 1
+    assert q.get(jid).status == "failed"
+    [definition] = list_definitions(q)
+    assert definition["state"] == "paused"
+    assert q.list(status="pending") == []
+
+    # The next occurrence is already armed: the schedule keeps running.
+    assert armed.reclaim_stale(1, now=102, max_attempts=1) == 1
+    assert armed.get(armed_id).status == "failed"
+    assert list_definitions(armed)[0]["state"] == "active"
+    assert len(armed.list(status="pending")) == 1
+
+
 def test_two_connections_racing_same_occurrence_commit_one_successor(tmp_path):
     q, job, jid = _claimed(tmp_path)
     peer = JobQueue(q.db_path)

@@ -17,11 +17,14 @@ another.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import threading
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 # Concurrent runs of the same fleet append to one ``<name>.runs.json`` index.
 # Serialize the read-modify-write so simultaneous dispatches don't clobber each
@@ -235,7 +238,11 @@ def record_run(
     """Append a ``{agent, goal_id, ts}`` entry to the fleet's run index (0600).
 
     Atomic under ``_runs_lock`` + a temp-file rename, so concurrent runs of the
-    same fleet never lose each other's entries to a read-modify-write race."""
+    same fleet never lose each other's entries to a read-modify-write race.
+
+    Writes nothing when the fleet no longer exists: ``remove_fleet`` deletes the
+    index under the same fleet lock, and a run that started just before the
+    removal must not leave history for the next fleet with that name."""
     if not valid_name(name):
         raise ValueError(f"invalid fleet name: {name!r}")
     from .file_lock import atomic_write_text, cross_process_lock, ensure_private_directory
@@ -243,7 +250,11 @@ def record_run(
     d = fleets_dir(tenant=tenant)
     ensure_private_directory(d)
     path = runs_path(name, tenant=tenant)
-    with _runs_lock, cross_process_lock(d / f"{name}.json"), cross_process_lock(path):
+    fleet_path = d / f"{name}.json"
+    with _runs_lock, cross_process_lock(fleet_path), cross_process_lock(path):
+        if not fleet_path.exists():
+            log.debug("fleet %r is gone; its run was not added to the history", name)
+            return
         runs = load_runs(name, tenant=tenant)
         runs.append({"agent": agent, "goal_id": goal_id, "ts": time.time()})
         atomic_write_text(path, json.dumps(runs, indent=2))

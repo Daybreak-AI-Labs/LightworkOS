@@ -192,13 +192,19 @@
       var day = daySel && daySel.value;
       if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) { say(result, 'Choose a day first.'); return; }
       var erasure = $('ops-ckpt-erasure') && $('ops-ckpt-erasure').checked;
-      var message = erasure
+      // Only for a day that was already erased and has no erasure record.
+      var noRecord = erasure && $('ops-ckpt-norecord') && $('ops-ckpt-norecord').checked;
+      var message = noRecord
+        ? 'Replace the checkpoint for ' + day + ' without an erasure record? Do this only for a day that was already erased. A later check with an older receipt will report it.'
+        : erasure
         ? 'Start a new checkpoint for ' + day + ' because its log changed after a person\'s data was erased? The earlier checkpoint stays on record.'
         : 'Publish the checkpoint of ' + dayText(day) + '? It is kept in a separate folder so a later change to that day can be proven.';
       if (!(await confirmed(message, 'Publish'))) return;
       say(result, 'Publishing…');
       try {
-        var done = await request('/api/v1/audit/checkpoints/publish', {method: 'POST', json: {day: day, after_erasure: !!erasure}});
+        var body = {day: day, after_erasure: !!erasure};
+        if (noRecord) body.without_erasure_record = true;
+        var done = await request('/api/v1/audit/checkpoints/publish', {method: 'POST', json: body});
         say(result, 'Published checkpoint ' + done.sequence + ' for ' + dayText(done.day) + '. Keep its receipt somewhere else, such as your email, so rolling it back can be caught.');
         await load();
       } catch (failure) { say(result, await failText(failure, 'publish the checkpoint')); }

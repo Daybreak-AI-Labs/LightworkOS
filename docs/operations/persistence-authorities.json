@@ -16208,6 +16208,25 @@
       ]
     },
     {
+      "path": "packages/maverick-core/maverick/tools/a11y.py",
+      "contract": "transient",
+      "owner": "packages/maverick-core/maverick/tools/a11y.py",
+      "purpose": "Accessibility check tool: a private temporary pa11y browser-launch file, removed when the check ends.",
+      "referenced_store_owners": [],
+      "review": "module purpose and persistence seam read; contract-family classification (not every operation tested)",
+      "governed_namespaces": [],
+      "literal_path_hints": [],
+      "observed_mechanism_markers": {},
+      "source_sites": [
+        {
+          "line": 289,
+          "function": "_run_pa11y",
+          "kind": "write_text",
+          "expression": "config.write_text(json.dumps({...}), encoding='utf-8')"
+        }
+      ]
+    },
+    {
       "path": "packages/maverick-core/maverick/tools/android.py",
       "contract": "external",
       "owner": "packages/maverick-core/maverick/tools/android.py",
@@ -16329,25 +16348,6 @@
           "function": "_check_config_dir",
           "kind": "data_dir",
           "expression": "data_dir()"
-        }
-      ]
-    },
-    {
-      "path": "packages/maverick-core/maverick/tools/diagram_tool.py",
-      "contract": "transient",
-      "owner": "packages/maverick-core/maverick/tools/diagram_tool.py",
-      "purpose": "Diagramming tool: render Graphviz DOT or Mermaid source to an image.",
-      "referenced_store_owners": [],
-      "review": "module purpose and persistence seam read; contract-family classification (not every operation tested)",
-      "governed_namespaces": [],
-      "literal_path_hints": [],
-      "observed_mechanism_markers": {},
-      "source_sites": [
-        {
-          "line": 59,
-          "function": "_run",
-          "kind": "write_text",
-          "expression": "infile.write_text(source, encoding='utf-8')"
         }
       ]
     },
