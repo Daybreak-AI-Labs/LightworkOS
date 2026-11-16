@@ -7391,6 +7391,21 @@ def audit_checkpoint() -> None:
     """Publish and verify independently held live audit-tip commitments."""
 
 
+def _existing_world(ctx):
+    """The world model, opened only where it already exists.
+
+    The checkpoint commands read erase records from it. Opening a missing
+    SQLite file would create an empty one, and on a copy of the audit and
+    checkpoint folders every genuine erasure would then read as unrecorded
+    instead of not checked.
+    """
+    from ..world_model_backends import is_postgres_configured
+
+    if not is_postgres_configured() and not Path(ctx.obj["db"]).is_file():
+        raise FileNotFoundError("the world model database is not here")
+    return open_world(ctx.obj["db"])
+
+
 @audit_checkpoint.command("publish")
 @click.option(
     "--checkpoint-dir",
@@ -7450,7 +7465,7 @@ def audit_checkpoint_publish(
             trusted_pubkeys=pubkey or None,
             supersedes_checkpoint_sha256=supersede_digest,
             lifecycle_reason=lifecycle_reason,
-            erase_records=audit_erase_records(lambda: open_world(ctx.obj["db"])),
+            erase_records=audit_erase_records(lambda: _existing_world(ctx)),
             allow_missing_erase_record=without_erase_record,
         )
     except (AuditCheckpointError, ImportError, OSError, RuntimeError, ValueError) as exc:
@@ -7564,7 +7579,7 @@ def audit_checkpoint_verify(
             trusted_pubkeys=pubkey or None,
             minimum_sequence=minimum_sequence,
             minimum_digest=minimum_digest,
-            erase_records=audit_erase_records(lambda: open_world(ctx.obj["db"])),
+            erase_records=audit_erase_records(lambda: _existing_world(ctx)),
         )
     except (ImportError, OSError, RuntimeError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc

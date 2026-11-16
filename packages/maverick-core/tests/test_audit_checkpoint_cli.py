@@ -195,6 +195,17 @@ def test_erase_then_new_checkpoint_fails_an_older_pin_until_it_is_retained(
     ])
     assert stale.exit_code == 1, stale.output
     assert "superseded_after_pin" in stale.output and "1 of 2 rows" in stale.output
+    # On a copy without the world database the erasure cannot be looked up:
+    # that is "not checked", never "no record", and no database is created.
+    missing = tmp_path / "copy" / "world.db"
+    copy = runner.invoke(main, [
+        "--db", str(missing), "audit", "checkpoint", "verify", *base,
+        "--minimum-sequence", "1", "--minimum-digest", pinned,
+    ])
+    assert copy.exit_code == 1, copy.output
+    assert "superseded_erase_record_unchecked" in copy.output
+    assert "superseded_without_erase_record" not in copy.output
+    assert not missing.exists()
     retained = runner.invoke(main, [
         "audit", "checkpoint", "verify", *base,
         "--minimum-sequence", "2", "--minimum-digest", digest(2),
