@@ -778,6 +778,57 @@ def test_every_erasure_behind_a_replaced_checkpoint_is_reported(isolated_audit):
     assert f"1 earlier erase record is also on file for this day ({'1' * 32})" in found.detail
 
 
+def test_overlapping_erasures_of_one_day_keep_the_checkpoint_evidence(isolated_audit):
+    # The second erasure must not rewrite the day between the first one's
+    # rewrite and the storing of its erase record: it would find a day that no
+    # longer matches the checkpoint, with no record to explain why, and its
+    # own record would vouch for nothing.
+    from maverick.audit.erase import scrub_user
+
+    audit_dir, checkpoint_dir = isolated_audit
+    day = "2000-01-01"
+    signer = AuditSigner(audit_dir / f"{day}.ndjson")
+    for person in ("first", "second"):
+        assert signer.write({"kind": "tool_call", "channel": "slack", "user_id": person})
+    assert signer.write({"kind": "tool_call", "index": 2})
+    assert ensure_anchors(audit_dir) == 1
+    pinned = _digest(publish_checkpoint(audit_dir, checkpoint_dir, day=day))
+    erased, store_erase_record, erase_records = _erase_record_store()
+    rewritten, proceed, results = threading.Event(), threading.Event(), {}
+
+    def held_store(summary):
+        rewritten.set()  # the day is rewritten, its record not yet stored
+        assert proceed.wait(10)
+        store_erase_record(summary)
+
+    def erase(person, on_rewrite):
+        results[person] = scrub_user(
+            "slack", person, audit_dir=audit_dir, strict=True, on_rewrite=on_rewrite,
+            erase_records=erase_records, checkpoint_dirs=[checkpoint_dir],
+        )[0]
+
+    first = threading.Thread(target=erase, args=("first", held_store))
+    second = threading.Thread(target=erase, args=("second", store_erase_record))
+    first.start()
+    assert rewritten.wait(10)
+    second.start()
+    second.join(1)  # long enough to get in, if anything lets it
+    proceed.set()
+    first.join(10)
+    second.join(10)
+
+    assert results == {"first": 1, "second": 1}
+    assert [record["checkpoints"] for record in erased] == [[pinned], [pinned]]
+    publish_checkpoint(
+        audit_dir,
+        checkpoint_dir,
+        day=day,
+        supersedes_checkpoint_sha256=pinned,
+        lifecycle_reason="gdpr_reanchor",
+        erase_records=erase_records,
+    )
+
+
 def test_an_erasure_undone_by_a_restore_is_not_counted_as_still_in_effect(isolated_audit):
     from maverick.audit.erase import scrub_user
 

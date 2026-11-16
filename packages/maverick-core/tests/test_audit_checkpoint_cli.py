@@ -376,3 +376,40 @@ def test_retire_prints_what_to_retain_and_a_pinned_check_says_what_to_look_at(
         "audit", "checkpoint", "verify", *base,
         "--minimum-sequence", "2", "--minimum-digest", newest,
     ]).exit_code == 0
+
+
+def test_an_erase_whose_record_cannot_be_stored_says_so_and_keeps_no_lock(tmp_path, monkeypatch):
+    import threading
+
+    import maverick.erasure_receipts as receipts
+    from maverick.audit.erase import scrub_user
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setattr(signing, "KEY_DIR", signing._LEGACY_KEY_DIR)
+    from maverick.paths import data_dir
+
+    audit_dir = data_dir("audit")
+    day_file = audit_dir / "2000-01-01.ndjson"
+    closed = signing.AuditSigner(day_file)
+    for person in ("alice", "bob"):
+        assert closed.write({"kind": "tool_call", "channel": "telegram", "user_id": person})
+    assert signing.ensure_anchors(audit_dir) == 1
+
+    def store_is_down(*args, **kwargs):
+        raise receipts.ErasureReceiptError("store is down")
+
+    monkeypatch.setattr(receipts, "persist_audit_erase_record", store_is_down)
+    erased = CliRunner().invoke(main, ["erase", "--channel", "telegram", "--user", "alice", "--yes"])
+
+    # The person is gone, and the run does not pass as complete without its record.
+    assert "alice" not in day_file.read_text(encoding="utf-8")
+    assert erased.exit_code == 1, erased.output
+    assert "erasure incomplete" in erased.output and "audit_erase_record" in erased.output
+    # The next erasure, from another thread, is not left waiting.
+    done: list[int] = []
+    other = threading.Thread(
+        target=lambda: done.append(scrub_user("telegram", "bob", audit_dir=audit_dir)[0]))
+    other.start()
+    other.join(10)
+    assert done == [1]

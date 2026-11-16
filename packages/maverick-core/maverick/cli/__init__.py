@@ -6123,11 +6123,13 @@ def _exit_if_erasure_incomplete(ctx, verification: dict, failures: list[str],
     ctx.exit(1)
 
 
-def _audit_erase_recorder(world, erasure_id: str):
+def _audit_erase_recorder(world, erasure_id: str, failures: list[str]):
     """Store the erase record of each audit day the scrub rewrites.
 
     A checkpoint that later replaces that day's earlier one must cite it. A
-    record that cannot be stored never holds the erasure back.
+    record that cannot be stored never holds the erasure back, but the
+    erasure is then reported as incomplete: the person's rows are gone and
+    the record of it is not.
     """
     def store(summary: dict) -> None:
         from ..erasure_receipts import persist_audit_erase_record
@@ -6139,6 +6141,7 @@ def _audit_erase_recorder(world, erasure_id: str):
                 erasure_id=erasure_id, **summary,
             )
         except Exception as exc:  # failure-policy: fail_soft_with_audit -- the erasure itself is done
+            failures.append(f"audit_erase_record: {_erasure_failure_label(exc)}")
             click.echo(
                 f"warning: the erase record for audit day {summary.get('day')} could not be "
                 f"stored ({_erasure_failure_label(exc)}). A new checkpoint for that day will "
@@ -6159,7 +6162,8 @@ def _scrub_subject_audit(channel: str, user: str, failures: list[str],
     try:
         scrubbed, _ = audit.scrub_user(
             channel, user, strict=True,
-            on_rewrite=_audit_erase_recorder(world, erasure_id) if world is not None else None,
+            on_rewrite=(_audit_erase_recorder(world, erasure_id, failures)
+                        if world is not None else None),
             erase_records=audit_erase_records(lambda: world) if world is not None else None,
             checkpoint_dirs=checkpoint_dirs,
         )

@@ -495,6 +495,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the erase ran. If you keep checkpoints in a folder given only as
   `--checkpoint-dir`, pass the same option to `maverick erase`; otherwise
   replacing them needs the step above. A person is erased either way.
+- Two erasures that touch the same audit day at once now take turns, so
+  each one's erase record is stored before the next rewrites the day.
+  If an erase record cannot be stored, the person is still erased but
+  `maverick erase` reports the erasure as incomplete and names the record.
 - `maverick erase` after a signing-key rotation no longer re-signs audit
   days that do not hold the person, or the tip ledger. Before, their
   anchors and checkpoints stopped matching. This does not repair days an
