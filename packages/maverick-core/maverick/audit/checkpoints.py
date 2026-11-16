@@ -959,6 +959,40 @@ def _lifecycle_after_pin(
     return breaks
 
 
+def erasure_explains_day(
+    audit_dir: Path | str,
+    checkpoint_dir: Path | str,
+    day: str,
+    *,
+    erase_records: EraseRecords | None,
+    pubkey_hex: str | None = None,
+    trusted_pubkeys: Iterable[str] | None = None,
+) -> bool:
+    """Whether a stored erase record accounts for ``day`` not matching its checkpoints.
+
+    True when a record issued after the day's newest checkpoint record in
+    this store left the rows the day still starts with. An erase asks this
+    before it rewrites a day: a day changed some other way must not gain an
+    erase record that would then pass for the whole change. Anything that
+    cannot be read counts as unexplained.
+    """
+    try:
+        audit, checkpoints = _resolved_directories(audit_dir, checkpoint_dir)
+        trusted_keys = _trusted_key_map(pubkey_hex=pubkey_hex, trusted_pubkeys=trusted_pubkeys)
+        chain = _load_checkpoint_chain(checkpoints, trusted_keys)
+        latest = next((entry for entry in reversed(chain) if entry.record["day"] == day), None)
+        if latest is None:
+            return False
+        snapshot = _snapshot_day_unlocked(audit / f"{day}.ndjson", trusted_keys)
+        return _backing_erase_record(
+            erase_records, day=day, row_count=snapshot.row_count, tip_hash=snapshot.tip_hash,
+            hashes=snapshot.hashes, not_before=latest.record["created_at"],
+        ) is not None
+    # failure-policy: fail_closed
+    except Exception:
+        return False
+
+
 def _new_record_body(
     *,
     record_type: str,
@@ -1564,6 +1598,7 @@ __all__ = [
     "AuditCheckpointError",
     "CheckpointBreak",
     "CHECKPOINT_SCHEMA",
+    "erasure_explains_day",
     "latest_checkpoint_sequence",
     "list_checkpoints",
     "publish_checkpoint",

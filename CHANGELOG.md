@@ -489,6 +489,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   retention purge. Replacing a checkpoint after an erasure needs the erase record
   that `maverick erase` now stores; for a day erased before this version,
   publish from the command line with `--without-erase-record`.
+- `maverick erase` now refuses, before deleting anything, when an audit day
+  holding the person no longer matches its published checkpoint and no
+  earlier erasure's record explains why. A day erased before this version
+  is such a day: publish its new checkpoint first (`--without-erase-record`),
+  or restore the day from a backup, then run erase again.
 - `maverick erase` after a signing-key rotation no longer re-signs audit
   days that do not hold the person, or the tip ledger. Before, their
   anchors and checkpoints stopped matching. Days already affected still

@@ -118,6 +118,13 @@ signed, explicit lifecycle records:
   records existed has none; publish it with `--without-erase-record`, and
   expect `superseded_without_erase_record` from anyone verifying against an
   older retained sequence.
+- `maverick erase` checks each day it is about to rewrite against the
+  checkpoint folders this installation knows (beside the log, the custody
+  store, and the folder chosen in the checkpoint settings). A day that no
+  longer matches its checkpoint is refused unless an earlier erasure's
+  record shows it left the day that way, so a genuine erasure cannot give a
+  change nobody recorded an erase record. A folder passed only as
+  `--checkpoint-dir` is not checked: choose it in the settings instead.
 - After signed retention has removed a day, retire its latest commitment:
 
 ```console

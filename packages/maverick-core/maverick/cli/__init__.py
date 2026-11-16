@@ -6064,7 +6064,7 @@ def _refuse_subject_under_legal_hold(ctx, channel: str, user: str) -> None:
         ctx.exit(1)
 
 
-def _refuse_unerasable_audit(ctx, channel: str, user: str) -> None:
+def _refuse_unerasable_audit(ctx, channel: str, user: str, world=None) -> None:
     """Refuse before anything is deleted when the subject's audit lines cannot go.
 
     Erasure is all or nothing from the person's view: an audit day that holds
@@ -6073,9 +6073,13 @@ def _refuse_unerasable_audit(ctx, channel: str, user: str) -> None:
     their conversations were already deleted.
     """
     from ..audit.erase import erase_blockers
+    from ..erasure_receipts import audit_erase_records
 
     try:
-        blockers = erase_blockers(channel, user)
+        blockers = erase_blockers(
+            channel, user,
+            erase_records=audit_erase_records(lambda: world) if world is not None else None,
+        )
     except Exception as exc:  # failure-policy: fail_closed -- unchecked is not erasable
         blockers = [f"the audit log could not be checked ({_erasure_failure_label(exc)})"]
     if not blockers:
@@ -6140,12 +6144,14 @@ def _scrub_subject_audit(channel: str, user: str, failures: list[str],
                          world=None, erasure_id: str = "") -> int:
     """Scrub the subject's prior audit lines; record a failure instead of raising."""
     from .. import audit
+    from ..erasure_receipts import audit_erase_records
 
     scrubbed = 0
     try:
         scrubbed, _ = audit.scrub_user(
             channel, user, strict=True,
             on_rewrite=_audit_erase_recorder(world, erasure_id) if world is not None else None,
+            erase_records=audit_erase_records(lambda: world) if world is not None else None,
         )
     except Exception as exc:
         failures.append(f"audit_scrub: {_erasure_failure_label(exc)}")
@@ -6347,7 +6353,7 @@ def _erase_subject_residue(ctx, world, channel: str, user: str, yes: bool) -> No
     from .. import audit
 
     _refuse_subject_under_legal_hold(ctx, channel, user)
-    _refuse_unerasable_audit(ctx, channel, user)
+    _refuse_unerasable_audit(ctx, channel, user, world)
     if not yes:
         click.echo(f"This will erase stored facts, notes, audit lines and "
                    f"knowledge for {channel}:{user}.")
@@ -6440,7 +6446,7 @@ def erase(ctx, channel: str, user: str, yes: bool) -> None:
     # conversation with >10k turns doesn't leave orphan attachments.
     conv_ids = [c.id for c in convs]
     _refuse_under_legal_hold(ctx, world, conv_ids)
-    _refuse_unerasable_audit(ctx, channel, user)
+    _refuse_unerasable_audit(ctx, channel, user, world)
     (
         erasure_plan,
         erasure_manifest,
