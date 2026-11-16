@@ -265,7 +265,8 @@ def test_named_note_preserves_identity_and_rechecks_dispatch_authority(
         assert not admissions and not identities
     else:
         budget = admissions[0].pop("budget")
-        assert admissions == [{"reviewer": None, "checker": None, "owner": "user:alice"}]
+        # One checker by default ([codebase] checkers), built as alice.
+        assert admissions == [{"reviewer": None, "checker": [None], "owner": "user:alice"}]
         # The author and the checker run as alice and charge the run's one budget.
         assert identities == [{"budget": budget, "user_id": "alice", "allowed_suites": None}] * 2
 

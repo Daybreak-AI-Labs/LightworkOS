@@ -130,6 +130,7 @@ from .advanced import _pick_agent_budget_reporting as _pick_agent_budget_reporti
 from .advanced import _pick_approval_url as _pick_approval_url
 from .advanced import _pick_client_id as _pick_client_id
 from .advanced import _pick_codebase as _pick_codebase
+from .advanced import _pick_codebase_checkers as _pick_codebase_checkers
 from .advanced import _pick_data_protection_toggles as _pick_data_protection_toggles
 from .advanced import _pick_device_pairing as _pick_device_pairing
 from .advanced import _pick_enterprise_toggles as _pick_enterprise_toggles
