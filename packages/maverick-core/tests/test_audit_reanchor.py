@@ -353,10 +353,25 @@ def test_an_erase_that_rewrites_nothing_leaves_the_tip_ledger_as_it_was(
     before = _state(ad, path.with_name("2020-01-01.ndjson"))
     assert before[1] == ["anchor_ledger_missing"]
     subject = "nobody-here" if signing == "1" else "alice"
-    erase_blockers("telegram", subject, audit_dir=ad)
-    try:
-        scrub_user("telegram", subject, audit_dir=ad, strict=True)
-    except RuntimeError:
-        pass
+    assert erase_blockers("telegram", subject, audit_dir=ad) == []
+    matched, _ = scrub_user("telegram", subject, audit_dir=ad, strict=True)
+    # With signing off the person is still erased: a ledger that never
+    # existed is not something to restore.
+    assert matched == (0 if signing == "1" else 2)
     assert not (ad / ANCHOR_FILENAME).exists()
-    assert _state(ad, path.with_name("2020-01-01.ndjson"))[1] == ["anchor_ledger_missing"]
+    assert _state(ad, path.with_name("2020-01-01.ndjson")) == ([], ["anchor_ledger_missing"])
+
+
+def test_erase_refuses_when_a_tip_ledger_that_existed_is_gone(_isolate_keys, tmp_path):
+    from maverick.audit.erase import erase_blockers, scrub_user
+    from maverick.audit.signing import ANCHOR_FILENAME
+
+    ad, path = _anchored_past_day(tmp_path)
+    (ad / ANCHOR_FILENAME).unlink()
+    before_bytes = path.read_bytes()
+
+    assert "anchors.ndjson" in erase_blockers("telegram", "alice", audit_dir=ad)[0]
+    with pytest.raises(RuntimeError):
+        scrub_user("telegram", "alice", audit_dir=ad, strict=True)
+    assert path.read_bytes() == before_bytes
+    assert not (ad / ANCHOR_FILENAME).exists()

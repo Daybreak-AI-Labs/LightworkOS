@@ -165,7 +165,7 @@ def _anchor_problem(path: Path, *, reanchors: bool) -> str | None:
     the erase would add an anchor (``reanchors``), any break in the ledger
     itself refuses too.
     """
-    from .signing import verify_anchors
+    from .signing import _ensure_anchor_ledger, verify_anchors
 
     day = path.stem
     try:
@@ -180,6 +180,13 @@ def _anchor_problem(path: Path, *, reanchors: bool) -> str | None:
                 f"({', '.join(sorted({b.reason for b in mine}))}; see `maverick audit verify`); "
                 f"erase will not re-anchor it. {_RESTORE_DAY}")
     ledger = [b for b in breaks if b.reason not in _DAY_ANCHOR_BREAKS]
+    if (all(b.reason == "anchor_ledger_missing" for b in ledger)
+            and _ensure_anchor_ledger(path.parent)):
+        # No ledger was ever written here (signing was turned off before the
+        # first day closed, say): there is nothing to restore. The erase goes
+        # ahead and adds no anchor, so `audit verify` reports what it did
+        # before. A ledger that was once required and is now gone refuses.
+        ledger = []
     if reanchors and ledger:
         return ("the audit tip ledger reports a break "
                 f"({', '.join(sorted({b.reason for b in ledger}))}; see `maverick audit verify`); "
@@ -433,7 +440,12 @@ def _process_file_locked(
         atomic_write_bytes(path, new_bytes, mode=0o600)
         if any_signed:
             try:
-                from .signing import reanchor_day_after_erase
+                from .signing import ANCHOR_FILENAME, reanchor_day_after_erase
+
+                if not (path.parent / ANCHOR_FILENAME).exists():
+                    # No ledger has ever existed here (``_anchor_problem``
+                    # refused a missing one that was required): add none.
+                    return matched, written
 
                 # The rewrite changed the file's tip hash -> append a fresh
                 # superseding tip-ledger anchor so verify_anchors matches the
