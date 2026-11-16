@@ -479,6 +479,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A person's Operating Record now reads that person's approvals from the
   store directly, so older approvals no longer drop out when other people
   have thousands of newer ones. Nothing to do; totals for one person can rise.
+- A HashiCorp Vault transit key that was not created with `derived=true` no
+  longer wraps new workspace keys, because such a key does not keep
+  workspaces apart; existing data still opens and a warning is logged. Create
+  a transit key with `derived=true` and rotate to it. The check runs when a
+  key is first wrapped or opened and needs encrypt and decrypt on the key.
 
 ### Fixed
 

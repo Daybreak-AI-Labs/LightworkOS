@@ -121,6 +121,41 @@ def test_wrong_provider_magic_rejected(make):
         kms.unwrap(b"NOT-OUR-MAGIC" + b"x" * 40, context=b"c")
 
 
+def test_vault_key_that_ignores_the_context_cannot_wrap_but_still_unwraps(caplog):
+    """A transit key made without ``derived=true`` ignores the context, so one
+    workspace's wrapped key opens under another's. New wraps are refused; keys
+    already wrapped still open (with a warning) so they can be rotated away."""
+
+    class _NotDerived(_FakeVault):
+        class _Transit(_FakeVault._Transit):
+            def encrypt_data(self, name, mount_point, plaintext, context):
+                return super().encrypt_data(name, mount_point, plaintext, "")
+
+            def decrypt_data(self, name, mount_point, ciphertext, context):
+                return super().decrypt_data(name, mount_point, ciphertext, "")
+
+    class _Unreachable(_FakeVault):
+        class _Transit(_FakeVault._Transit):
+            def decrypt_data(self, name, mount_point, ciphertext, context):
+                raise ConnectionError("vault went away")
+
+    dek = b"\x42" * 32
+    weak = _NotDerived()
+    old = weak.secrets.transit.encrypt_data("k", "transit", base64.b64encode(dek).decode(), "")
+    wrapped = kms_backends._VAULT_MAGIC + old["data"]["ciphertext"].encode()
+
+    kms = kms_backends.VaultTransitKMS(key_id="k", client=weak)
+    with pytest.raises(EncryptionUnavailable, match="derived=true"):
+        kms.wrap(dek, context=b"tenant:acme")
+    with caplog.at_level("WARNING", logger="maverick.kms_backends"):
+        assert kms.unwrap(wrapped, context=b"tenant:evil") == dek
+    assert any("derived=true" in r.getMessage() for r in caplog.records)
+
+    # A check that could not finish is not a pass: nothing new is wrapped.
+    with pytest.raises(EncryptionUnavailable, match="could not check"):
+        kms_backends.VaultTransitKMS(key_id="k", client=_Unreachable()).wrap(dek, context=b"c")
+
+
 # ---- Azure Key Vault / Managed HSM ----------------------------------------
 
 _AZ_VAULT = "https://acme-kv.vault.azure.net"
