@@ -538,7 +538,42 @@ def test_backfill_does_not_queue_behind_a_transaction_that_is_writing(postgres_t
         assert time.monotonic() - started < 10
         message = pg_rls.database_error_message(stopped.value)
         assert "busy writing" in message and "Nothing was changed" in message
+        assert "did not start" not in message  # it may have re-sealed values first
         assert conn.execute("SELECT tenant_id FROM goals WHERE id = %s", (goal,)).fetchone() == (None,)
         conn.rollback()
         writer.commit()
         assert pg_rls.backfill(conn, "acme")["goals"] == 1
+
+
+def test_a_connection_lost_while_committing_does_not_claim_nothing_changed():
+    """A commit that fails may already have taken effect: the message must not
+    say nothing was changed, and running again is the way to find out."""
+
+    class _Lost(Exception):
+        sqlstate = "08006"
+
+    class _Conn:
+        autocommit = False
+
+        def cursor(self, *args, **kwargs):
+            raise AssertionError("not reached")
+
+        def commit(self):
+            raise _Lost("server closed the connection unexpectedly")
+
+        def rollback(self):
+            raise _Lost("no connection")
+
+    conn = _Conn()
+    monkey = pytest.MonkeyPatch()
+    try:
+        monkey.setattr(pg_rls, "_policies_hide_legacy_rows", lambda cur: False)
+        monkey.setattr(pg_rls, "_reseal_legacy_values", lambda *a, **k: 0)
+        monkey.setattr(pg_rls, "_PREFLIGHT_TABLES", ())
+        monkey.setattr(conn, "cursor", lambda *a, **k: object())
+        with pytest.raises(pg_rls.BackfillCommitUncertain) as lost:
+            pg_rls.backfill(conn, "acme")
+    finally:
+        monkey.undo()
+    message = pg_rls.database_error_message(lost.value)
+    assert "may have finished" in message and "Nothing was changed" not in message

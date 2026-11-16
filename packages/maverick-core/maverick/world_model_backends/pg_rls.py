@@ -299,16 +299,27 @@ def _policies_hide_legacy_rows(cur) -> bool:
     return bool(row) and row[0] is True
 
 
+class BackfillCommitUncertain(Exception):
+    """The database connection ended while the backfill was being committed,
+    so it may or may not have taken effect."""
+
+    sqlstate = "commit"
+
+
 def database_error_message(exc: BaseException) -> str | None:
     """Plain words for a database error that stopped :func:`backfill`, or
-    ``None`` when ``exc`` is not one. The backfill is one transaction, so
-    whatever stopped it, nothing was changed."""
+    ``None`` when ``exc`` is not one. The backfill is one transaction: an error
+    before its commit changed nothing; one during the commit may not have."""
+    if isinstance(exc, BackfillCommitUncertain):
+        return ("The connection to the database ended while the backfill was finishing, "
+                "so it may have finished. Run it again to check: it does not change "
+                "records it already assigned.")
     if not hasattr(exc, "sqlstate"):
         return None
     state = getattr(exc, "sqlstate", None)
     if state == "55P03":
         why = (f"Lightwork was busy writing to these records for more than "
-               f"{int(_LOCK_TIMEOUT_SECONDS)} seconds, so the backfill did not start.")
+               f"{int(_LOCK_TIMEOUT_SECONDS)} seconds, so the backfill stopped.")
     elif state == "40P01":
         why = "The database stopped the backfill because it collided with other work."
     else:
@@ -362,7 +373,12 @@ def backfill(conn, tenant_id: str, *, dry_run: bool = False) -> BackfillReport:
                 )
                 report[t] = cur.rowcount
         if not dry_run:
-            conn.commit()
+            try:
+                conn.commit()
+            except Exception as exc:
+                if hasattr(exc, "sqlstate"):
+                    raise BackfillCommitUncertain(str(exc)) from exc
+                raise
     except Exception as exc:
         if not dry_run:
             try:
@@ -433,4 +449,4 @@ def shared_legacy_rows(world) -> dict[str, Any] | None:
 
 
 __all__ = ["resolve_dsn", "connect", "preflight", "backfill", "shared_legacy_rows",
-           "database_error_message", "BackfillReport"]
+           "database_error_message", "BackfillReport", "BackfillCommitUncertain"]
