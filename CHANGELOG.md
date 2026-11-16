@@ -407,6 +407,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   remove, so it finishes the job or names again what remains. The list of
   such files keeps only folders and name digests; an unusable list is kept
   aside as `pending_attachment_files.json.unusable-<n>` to check by hand.
+  Two erase runs at once no longer lose each other's entries in that list.
 - The privacy request page's erase button now runs the erase even when the
   person has no conversation, and shows what it actually removed.
 - Erasing a person also deletes the durable-execution checkpoints of their
@@ -423,7 +424,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   cost line say so and name the fix. An administrator can mark an Ollama,
   vLLM or TGI server free under Settings > Prices, which also shows how each
   one is charged now; a server marked free in `config.toml` must be changed
-  there. The Copilot cannot make this change yet (nor other price changes).
+  there. The Copilot can make the same change ("Mark a self-hosted server
+  free or charged"); it cannot yet set or remove a model's own price.
   The cost line counts calls whose token counts were estimated.
 - Once Postgres has been used, Lightwork remembers which database it last
   used (`world_backend` in the data folder). If that was Postgres and a
