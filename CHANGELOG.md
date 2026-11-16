@@ -491,6 +491,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the settings section that holds it is ignored. Before, every dashboard
   setting was ignored, which put back limits you had tightened there. Health
   still reports the file. Save that secret again to clear the warning.
+- Automations that watch new Salesforce records or ServiceNow tickets now
+  work on lists with more than 5,000 items: each check reads the newest
+  5,000. A source that was refused for its size starts again by itself and
+  reports the items it missed. A source also no longer stops for good after
+  20,000 remembered items; it forgets items that are gone from the source.
 
 ### Fixed
 

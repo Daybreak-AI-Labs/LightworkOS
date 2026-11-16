@@ -18,7 +18,9 @@ from .plain_labels import datetime_text
 router = APIRouter(prefix="/connected-event-sources", tags=["connected-event-sources"])
 NOTICE = ("Checking reads only the selected source. Review the dated snapshot and current account before creating the automation. "
           "Items already seen during the preview are remembered; later arrivals can start the chosen work once armed. "
-          "This does not confirm future event delivery. Each check reads at most 32 pages and 5,000 items; larger sources are refused without advancing their position.")
+          "This does not confirm future event delivery. Each check reads at most 32 pages and 5,000 items. "
+          "For new Salesforce records and ServiceNow tickets it reads the newest 5,000. "
+          "Other sources larger than that are refused without advancing their position.")
 
 
 class Choices(BaseModel):
