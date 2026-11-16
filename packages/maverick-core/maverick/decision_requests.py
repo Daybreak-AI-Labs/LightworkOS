@@ -18,9 +18,10 @@ What it reuses:
   checks a question answer uses.
 * Who may answer reuses the approval rules: the run's owner or a workspace
   administrator, and an area listed in ``[approval] decision_admin_areas``
-  needs an administrator. The person who started the run may not answer such a
-  decision unless ``[security] allow_self_approval`` is on (a workspace file
-  cannot turn that on; see :mod:`maverick.policy_tighten`).
+  needs an administrator. Whether the person who started the run may answer
+  such a decision follows ``[approval] separate_approver``, exactly as for a
+  high-risk approval: by default someone else answers whenever another
+  administrator could.
 * Every request, answer and expiry goes to the audit log
   (:func:`maverick.audit.audit_event`) with the actor, and to the task's
   timeline.
@@ -45,6 +46,7 @@ import json
 import logging
 import threading
 import time
+import weakref
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -104,6 +106,15 @@ POSTGRES_SCHEMA: list[str] = [
     for statement in SQLITE_SCHEMA
 ]
 
+#: Open decisions of a goal and every goal below it (one ``?``: the goal id).
+OPEN_IN_TREE_SQL = (
+    "SELECT COUNT(*) FROM decision_requests WHERE status = 'open' AND goal_id IN ("
+    "WITH RECURSIVE tree(id) AS (SELECT CAST(? AS INTEGER) UNION "
+    "SELECT c.id FROM goals c JOIN tree t ON c.parent_id = t.id) SELECT id FROM tree)"
+)
+WAITING_SENTENCE = ("This run is waiting for a person's decision. Answer it on the Approvals "
+                    "page before the run continues.")
+
 _COLUMNS = ("id, goal_id, area, question, options, recommended, reason, admin_required, "
             "requested_by, status, created_at, expires_at, chosen, note, decided_by, decided_at")
 
@@ -127,6 +138,65 @@ class DecisionRefused(Exception):
 
 class DecisionRecordError(RuntimeError):
     """The decision request could not be saved; the run must not continue."""
+
+
+# ---------------------------------------------------------------------------
+# The running process's view of a goal's decision, shared by every agent of
+# the run (the root, subagents, swarms, task graphs): once one of them files a
+# decision, or fails to, none of them may act again until the run pauses.
+# ---------------------------------------------------------------------------
+
+WAITING, UNRECORDED = "waiting", "unrecorded"
+WAITING_RESULT = "ERROR: tool not executed (waiting for a person's decision)"
+_RUN_STATE: dict[int, tuple[Any, dict[int, str]]] = {}
+_RUN_LOCK = threading.Lock()
+#: Set while a flow step runs its agent goal; a flow does not wait for a person yet.
+IN_FLOW_STEP: contextvars.ContextVar[bool] = contextvars.ContextVar("decision_in_flow_step",
+                                                                    default=False)
+FLOW_REFUSAL = ("ERROR: a flow step cannot stop to ask a person yet. Do not decide this "
+                "yourself: finish the step with FINAL and say which choice a person must make.")
+
+
+def _states(world, create: bool) -> dict[int, str] | None:
+    key = id(world)
+    with _RUN_LOCK:
+        entry = _RUN_STATE.get(key)
+        if entry is not None and entry[0]() is world:
+            return entry[1]
+        if not create:
+            return None
+        try:
+            ref: Any = weakref.ref(world)
+        except TypeError:  # an object without weak references is kept alive
+            def ref(held=world):
+                return held
+        states: dict[int, str] = {}
+        _RUN_STATE[key] = (ref, states)
+        return states
+
+
+def mark_run(world, goal_id: int | None, state: str) -> None:
+    """Record that this goal's run is waiting on a decision (or failed to file one)."""
+    if goal_id is None:
+        return
+    states = _states(world, True)
+    if states is not None and states.get(int(goal_id)) != UNRECORDED:
+        states[int(goal_id)] = state
+
+
+def run_state(world, goal_id: int | None) -> str | None:
+    """``WAITING``, ``UNRECORDED`` or None for this goal's current run."""
+    if goal_id is None:
+        return None
+    states = _states(world, False)
+    return states.get(int(goal_id)) if states else None
+
+
+def clear_run(world, goal_id: int | None) -> None:
+    """Forget the in-process state when a run of the goal starts again."""
+    states = _states(world, False) if goal_id is not None else None
+    if states:
+        states.pop(int(goal_id), None)
 
 
 @dataclass
@@ -194,10 +264,17 @@ def _section() -> tuple[dict, bool]:
     return (section if isinstance(section, dict) else {}), broken
 
 
-def _known(values: object, fallback: tuple[str, ...]) -> list[str]:
+def _known(values: object, fallback: tuple[str, ...], setting: str) -> list[str]:
+    """The listed areas. A value that is not a list, or a name Lightwork does
+    not know (a typo), cannot be trusted to narrow the list: the default areas
+    stay required alongside the names that are known."""
     if not isinstance(values, list):
+        log.warning("[approval] %s is not a list; the default areas apply", setting)
         return list(fallback)
     chosen = [v.strip() for v in values if isinstance(v, str) and v.strip() in AREAS]
+    if len(chosen) != len(values):
+        log.warning("[approval] %s names an unknown area; the default areas stay required", setting)
+        return list(dict.fromkeys([*fallback, *chosen]))
     return list(dict.fromkeys(chosen))
 
 
@@ -205,10 +282,11 @@ def areas() -> list[str]:
     """Areas where a run must ask a person instead of deciding alone."""
     section, broken = _section()
     if broken:
-        return list(dict.fromkeys([*DEFAULT_AREAS, *_known(section.get("decision_areas"), ())]))
+        return list(dict.fromkeys([*DEFAULT_AREAS, *_known(section.get("decision_areas"), (),
+                                                           "decision_areas")]))
     if "decision_areas" not in section:
         return list(DEFAULT_AREAS)
-    return _known(section.get("decision_areas"), DEFAULT_AREAS)
+    return _known(section.get("decision_areas"), DEFAULT_AREAS, "decision_areas")
 
 
 def admin_areas() -> list[str]:
@@ -219,7 +297,7 @@ def admin_areas() -> list[str]:
         return [*AREAS, OTHER_AREA]
     if "decision_admin_areas" not in section:
         return list(DEFAULT_ADMIN_AREAS)
-    return _known(section.get("decision_admin_areas"), DEFAULT_ADMIN_AREAS)
+    return _known(section.get("decision_admin_areas"), DEFAULT_ADMIN_AREAS, "decision_admin_areas")
 
 
 def expiry_seconds() -> float:
@@ -314,9 +392,10 @@ def _from_row(row, store) -> Decision:
 
 def _select(world, where: str, params: tuple = ()) -> list[Decision]:
     store = _store(world)
+    columns = ", ".join(f"d.{c.strip()}" for c in _COLUMNS.split(","))
     rows = world.tenant_query(
-        f"SELECT {_COLUMNS} FROM decision_requests d WHERE {{tenant_goal:d.goal_id}} AND {where} "
-        "ORDER BY d.id", params)
+        f"SELECT {columns} FROM decision_requests d JOIN goals g ON g.id = d.goal_id "
+        f"WHERE {{tenant_exact:g.tenant_id}} AND {where} ORDER BY d.id", params)
     return [_from_row(row, store) for row in rows]
 
 
@@ -327,6 +406,15 @@ def get(world, decision_id: int) -> Decision | None:
 
 def open_for_goal(world, goal_id: int) -> list[Decision]:
     return _select(world, "d.goal_id = ? AND d.status = 'open'", (int(goal_id),))
+
+
+def open_for_tree(world, goal_id: int) -> list[Decision]:
+    """Open decisions of ``goal_id`` and every goal below it."""
+    return _select(
+        world,
+        "d.status = 'open' AND d.goal_id IN (WITH RECURSIVE tree(id) AS ("
+        "SELECT CAST(? AS INTEGER) UNION SELECT c.id FROM goals c JOIN tree t ON c.parent_id = t.id) "
+        "SELECT id FROM tree)", (int(goal_id),))
 
 
 def for_goal(world, goal_id: int) -> list[Decision]:
@@ -382,12 +470,16 @@ def request(world, goal_id: int, *, question: str, options: list[dict[str, str]]
                         needs_admin=admin_required, options=len(options),
                         recommended=int(recommended), expires_at=expires_at)
     except DecisionRecordError:
+        mark_run(world, goal_id, UNRECORDED)
         raise
     except AuditRefused as exc:
+        mark_run(world, goal_id, UNRECORDED)
         raise DecisionRecordError("the audit log refused the decision request") from exc
     except Exception as exc:  # noqa: BLE001 -- any storage failure stops the run
         log.warning("decision request for goal #%s was not saved: %s", goal_id, type(exc).__name__)
+        mark_run(world, goal_id, UNRECORDED)
         raise DecisionRecordError("the decision request could not be saved") from exc
+    mark_run(world, goal_id, WAITING)
     decision = Decision(decision_id, int(goal_id), area, question, list(options), int(recommended),
                         reason, admin_required, goal.owner or "", "open", now, expires_at)
     _timeline(world, int(goal_id), f"Waiting for a person to decide: {question}")
@@ -418,11 +510,15 @@ def refusal(decision: Decision, actor: str, *, is_admin: bool,
     """``(reason, sentence)`` saying why ``actor`` may not answer, or ``("", "")``.
 
     The run's owner or a workspace administrator may answer. An area that
-    needs an administrator refuses everyone else, and refuses the person who
-    started the run unless ``[security] allow_self_approval`` is on. A chat
-    channel cannot prove an administrator, so it never answers those."""
-    from .safety.dual_control import allow_self_approval
+    needs an administrator refuses everyone else. A chat channel cannot prove
+    an administrator, so it never answers those.
 
+    The person who started the run follows the approval system's own
+    separation of duties (``[approval] separate_approver``, as
+    :func:`maverick.channel_approvals.separate_approver_refusal` applies it to
+    a high-risk request): by default someone else answers whenever another
+    administrator could, and a run with no named starter (a single-person
+    install) is never refused for this."""
     who = " ".join(str(actor or "").split())
     owner = " ".join(str(decision.requested_by or "").split())
     needs_admin = decision.admin_required or decision.area in admin_areas()
@@ -432,14 +528,38 @@ def refusal(decision: Decision, actor: str, *, is_admin: bool,
                     "Answer it on the Approvals page.")
         if not is_admin:
             return ("admin_required", "This decision needs a workspace administrator.")
-        if who == owner and not allow_self_approval():
-            return ("self_answer", "You started this run, so another administrator "
-                    "must answer this decision.")
-        return ("", "")
+        sentence = _self_answer_refusal(owner, who)
+        return ("self_answer", sentence) if sentence else ("", "")
     if who != owner and not is_admin:
         return ("not_permitted", "Only the person who started this run or a workspace "
                 "administrator can answer this decision.")
     return ("", "")
+
+
+def _other_admin_available(requester: str) -> bool:
+    """Whether a workspace administrator other than ``requester`` exists. The
+    roster is the dashboard's; without it nobody else is known."""
+    try:
+        from maverick_dashboard.approval_decisions import other_decision_admins
+    except ImportError:
+        return False
+    try:
+        return bool(other_decision_admins(requester))
+    except Exception:  # noqa: BLE001 -- an unreadable roster counts nobody
+        return False
+
+
+def _self_answer_refusal(requester: str, who: str) -> str:
+    if not requester or requester != who:
+        return ""
+    from .safety.dual_control import separate_approver_mode
+
+    mode = separate_approver_mode()
+    if mode == "never" or (mode == "when_available" and not _other_admin_available(requester)):
+        return ""
+    return ("You started this run, so another administrator must answer this decision."
+            if mode == "when_available" else
+            "You started this run, so someone else must answer this decision.")
 
 
 # ---------------------------------------------------------------------------
@@ -461,9 +581,12 @@ def answer(world, decision_id: int, option: int, *, actor: str, is_admin: bool,
            recorded_as: str = "", now: float | None = None) -> dict[str, Any]:
     """Record ``actor``'s choice and reserve the run's restart.
 
-    Returns ``{"decision": Decision, "resume": bool}``. ``resume`` is true when
-    this was the last thing the run waited for and the goal moved back to
-    ``pending``; the caller then starts it (:func:`resume_kwargs`). The answer,
+    Returns ``{"decision": Decision, "resume": bool, "next": str}``.
+    ``resume`` is true when this was the last thing the run waited for and the
+    goal moved back to ``pending``; the caller then starts it
+    (:func:`resume_kwargs`). ``next`` says what happens: ``"resumed"``,
+    ``"waiting"`` (other decisions or questions remain) or ``"manual"`` (a run
+    bound to its own access key, which only its owner can restart). The answer,
     the audit row and the move to ``pending`` commit together or not at all.
     ``actor`` is who answers for the authorization rule; ``recorded_as`` names
     them in the record when the surface has a better label (a local session)."""
@@ -494,6 +617,7 @@ def answer(world, decision_id: int, option: int, *, actor: str, is_admin: bool,
     store = threads.store
     resumable = resume_kwargs(world.get_goal(current.goal_id)) is not None
     resume = False
+    waiting = 0
     try:
         with threads._restart_transaction(current.goal_id) as (connection, binding, status):
             changed = store.execute(
@@ -504,11 +628,11 @@ def answer(world, decision_id: int, option: int, *, actor: str, is_admin: bool,
                  recorded, now, int(decision_id), current.goal_id))
             if changed.rowcount != 1:
                 raise DecisionRefused("not_open", "This decision has already been answered.")
-            waiting = store.execute(
-                connection,
-                "SELECT (SELECT COUNT(*) FROM decision_requests WHERE goal_id = ? AND status = 'open')"
-                " + (SELECT COUNT(*) FROM questions WHERE goal_id = ? AND answer IS NULL)",
-                (current.goal_id, current.goal_id)).fetchone()[0]
+            waiting = int(store.execute(connection, OPEN_IN_TREE_SQL,
+                                        (current.goal_id,)).fetchone()[0])
+            waiting += int(store.execute(
+                connection, "SELECT COUNT(*) FROM questions WHERE goal_id = ? AND answer IS NULL",
+                (current.goal_id,)).fetchone()[0])
             resume = status == "blocked" and int(waiting) == 0 and resumable
             if resume:
                 if binding is not None:
@@ -521,8 +645,11 @@ def answer(world, decision_id: int, option: int, *, actor: str, is_admin: bool,
                         recommended=current.recommended, channel=channel,
                         followed_recommendation=int(option) == current.recommended,
                         with_note=bool(note))
-    except (DecisionRefused, AuditRefused):
+    except DecisionRefused:
         raise
+    except AuditRefused as exc:
+        raise DecisionRefused("unavailable", "The audit log refused this answer, so it was not "
+                              "saved. Nothing changed. Try again later.") from exc
     except SubmissionConflict as exc:
         raise DecisionRefused("cannot_resume", "The task changed while you answered. "
                               "Check its current state, then answer again.") from exc
@@ -533,19 +660,38 @@ def answer(world, decision_id: int, option: int, *, actor: str, is_admin: bool,
     label = (current.option(option) or {}).get("label", "")
     _timeline(world, current.goal_id, f"{recorded} chose “{label}” for: {current.question}")
     decided = get(world, decision_id) or current
-    return {"decision": decided, "resume": resume}
+    following = ("resumed" if resume else
+                 "manual" if not int(waiting) and not resumable else "waiting")
+    return {"decision": decided, "resume": resume, "next": following}
 
 
-def expire_due(world, *, now: float | None = None) -> list[int]:
+_NEXT_TEXT = {
+    "resumed": "The run continues with this choice.",
+    "waiting": "The run continues once its other decisions and questions are answered.",
+    "manual": ("This run uses its own access key, so Lightwork cannot restart it. "
+               "Ask whoever started it to start it again."),
+}
+
+
+def next_text(outcome: dict[str, Any]) -> str:
+    """The plain sentence every surface shows after an answer."""
+    return _NEXT_TEXT.get(str(outcome.get("next") or ""), _NEXT_TEXT["waiting"])
+
+
+def expire_due(world, *, now: float | None = None, goal_id: int | None = None) -> list[int]:
     """Expire every open decision past its time and stop its run.
 
     The run does not pick the recommendation: its goal is stopped (``failed``)
-    with a sentence saying nobody answered. Returns the expired ids."""
+    with a sentence saying nobody answered. Returns the expired ids. With
+    ``goal_id`` only that goal's decisions are checked (a cheap read path)."""
     from .audit import audit_event
 
     now = time.time() if now is None else float(now)
     try:
-        due = _select(world, "d.status = 'open' AND d.expires_at <= ?", (now,))
+        where, params = "d.status = 'open' AND d.expires_at <= ?", (now,)
+        if goal_id is not None:
+            where, params = where + " AND d.goal_id = ?", (now, int(goal_id))
+        due = _select(world, where, params)
     except Exception:  # noqa: BLE001 -- a store without the table has nothing to expire
         log.debug("decision expiry read failed", exc_info=True)
         return []
@@ -571,6 +717,80 @@ def expire_due(world, *, now: float | None = None) -> list[int]:
             world.set_goal_status(decision.goal_id, "failed", result=message)
         _timeline(world, decision.goal_id, message)
     return expired
+
+
+SWEEP_SECONDS = 300.0
+
+
+def sweep_once(*, now: float | None = None) -> int:
+    """Expire past-due decisions in the default workspace and every
+    provisioned workspace, so a team that only uses chat still sees a run
+    stop on time. Returns how many expired. Never raises."""
+    from .world_model import close_world_if_owned, open_world
+
+    workspaces: list[str | None] = [None]
+    try:
+        from .tenant.registry import list_tenants
+
+        workspaces += [record.id for record in list_tenants()]
+    except Exception:  # noqa: BLE001 -- no registry: the default workspace only
+        log.debug("workspace list unavailable for decision expiry", exc_info=True)
+    total = 0
+    for workspace in workspaces:
+        try:
+            from .paths import tenant_scope
+
+            with tenant_scope(tenant=workspace):
+                world = open_world()
+                try:
+                    total += len(expire_due(world, now=now))
+                finally:
+                    close_world_if_owned(world)
+        except Exception:  # noqa: BLE001 -- one workspace must not stop the others
+            log.warning("decision expiry failed for one workspace", exc_info=True)
+    return total
+
+
+_SWEEPER: threading.Thread | None = None
+
+
+def start_sweeper(stop: threading.Event, *, interval: float = SWEEP_SECONDS) -> threading.Thread:
+    """Run :func:`sweep_once` every ``interval`` seconds until ``stop`` is set.
+    One sweeper per process: a second start returns the running one."""
+    global _SWEEPER
+
+    def loop() -> None:
+        while not stop.wait(interval):
+            sweep_once()
+
+    with _RUN_LOCK:
+        if _SWEEPER is not None and _SWEEPER.is_alive():
+            return _SWEEPER
+        _SWEEPER = threading.Thread(target=loop, name="decision-expiry", daemon=True)
+        _SWEEPER.start()
+        return _SWEEPER
+
+
+def resume_refusal(world, goal_id: int, *, now: float | None = None) -> str:
+    """Why this goal may not start again yet, or ``""``.
+
+    Every path that moves a waiting goal back to work asks this: a run whose
+    own decision, or a decision of a goal below it, is still open must wait
+    for a person's answer, never for a Resume or a clarification answer."""
+    expire_due(world, now=now, goal_id=goal_id)
+    try:
+        waiting = open_for_tree(world, goal_id)
+    except Exception:  # noqa: BLE001 -- a store without the table has no decisions
+        log.debug("decision lookup failed", exc_info=True)
+        return ""
+    if not waiting:
+        return ""
+    first = waiting[0]
+    who = ("Only a workspace administrator can answer it." if first.admin_required
+           else "The person who started the run or a workspace administrator can answer it.")
+    more = f" {len(waiting) - 1} more decision(s) also wait." if len(waiting) > 1 else ""
+    return (f"This run is waiting for a decision: “{first.question}”. Answer it on the "
+            f"Approvals page before the run continues. {who}{more}")
 
 
 # ---------------------------------------------------------------------------

@@ -6164,6 +6164,9 @@ class Agent:
                 stop_kind="cancelled", stop_detail="cancelled via dashboard",
             )
 
+        waiting = self._decision_wait_stop(resp, st.messages, answered=False)
+        if waiting is not None:
+            return waiting
         run_parallel = (
             len(resp.tool_calls) > 1
             and _env_or_config("MAVERICK_PARALLEL_TOOLS", "agent", "parallel_tools", "1") != "0"
@@ -6191,7 +6194,7 @@ class Agent:
         self._maybe_speculate_reads()
         if blocked:
             return AgentResult(blocked_on_user=True, role=self.role, name=self.name)
-        return None
+        return self._decision_wait_stop(resp, st.messages, answered=True)
 
     def _answer_pending_tool_uses(self, resp, messages: list[dict],
                                   tool_results: list[dict], reason: str) -> None:
@@ -6311,7 +6314,14 @@ class Agent:
         bb = st.bb
         messages = st.messages
         blocked = False
+        # A decision pauses the whole turn: nothing else in it runs, before or
+        # after the request, so no step acts on a choice nobody has made.
+        deciding = any(tc.name == "request_decision" for tc in resp.tool_calls)
         for tc in resp.tool_calls:
+            if deciding and tc.name != "request_decision":
+                from .decision_requests import WAITING_RESULT
+                tool_results.append(self._make_tool_result(tc.id, WAITING_RESULT))
+                continue
             # A serial turn may run a long shell command; honour a halt that
             # lands mid-turn.
             try:
@@ -6392,6 +6402,31 @@ class Agent:
             tool_results.append(self._make_tool_result(tc.id, output))
             self._record_tool_lineage(tc, output)
         return None, blocked
+
+    def _decision_wait_stop(self, resp, messages: list[dict], *,
+                            answered: bool) -> AgentResult | None:
+        """Stop this agent when any agent of the run filed a decision (or
+        failed to): a subagent's request pauses its parent, a swarm sibling and
+        the root alike. ``answered`` says this turn's tool results are already
+        in ``messages``; otherwise each call is answered as not executed."""
+        from .decision_requests import (
+            STOP_KIND,
+            STOP_MESSAGE,
+            UNRECORDED,
+            WAITING_RESULT,
+            run_state,
+        )
+
+        state = run_state(self.ctx.world, self.ctx.goal_id)
+        if state is None:
+            return None
+        if not answered:
+            results: list[dict] = []
+            self._answer_pending_tool_uses(resp, messages, results, WAITING_RESULT)
+        if state == UNRECORDED:
+            return AgentResult(error=STOP_MESSAGE, role=self.role, name=self.name,
+                               stop_kind=STOP_KIND, stop_detail=STOP_MESSAGE)
+        return AgentResult(blocked_on_user=True, role=self.role, name=self.name)
 
     def _decision_outcome(self, bb, resp, tc, output, messages: list[dict],
                           tool_results: list[dict]) -> tuple[AgentResult | None, bool]:

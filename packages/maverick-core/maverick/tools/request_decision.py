@@ -21,6 +21,8 @@ def request_decision(world, goal_id: int | None = None) -> Tool:
     def fn(args: dict) -> str:
         if goal_id is None:
             return "ERROR: a decision request needs a task; ask in plain text instead."
+        if dr.IN_FLOW_STEP.get():
+            return dr.FLOW_REFUSAL
         try:
             values = dr.validate(args)
         except ValueError as exc:

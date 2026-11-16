@@ -951,7 +951,8 @@ def decision_blocks(decision: dict[str, Any], *, dashboard_url: str = "") -> lis
              + (" (recommended)" if o["number"] == decision["recommended"] else "")
              + f"\n{o['effect']}" for o in decision["options"]]
     blocks: list[dict[str, Any]] = [
-        {"type": "header", "text": _plain(f"Decision needed: {decision['question']}")},
+        {"type": "header", "text": _plain("Decision needed")},
+        {"type": "section", "text": _plain(str(decision["question"]), 3000)},
         {"type": "section", "text": _plain("\n\n".join(lines), 3000)},
         {"type": "section", "fields": [
             _plain(f"Area\n{decision['area_label']}", 2000),
@@ -977,6 +978,19 @@ def decision_blocks(decision: dict[str, Any], *, dashboard_url: str = "") -> lis
     return blocks
 
 
+def _decision_authority():
+    """The dashboard's operate-role check for a chat answer. Without the
+    dashboard there is no roster to ask, so every answer is refused."""
+    try:
+        from maverick_dashboard.approval_decisions import decision_authority_for
+    except ImportError:
+        def refuse(principal: str, decision_id: int) -> None:
+            raise PermissionError("Decisions can't be answered from Slack here. "
+                                  "Use the Lightwork dashboard.")
+        return refuse
+    return decision_authority_for("slack")
+
+
 def handle_decision_action(action: dict[str, Any], *, world, principal: str,
                            resume: Callable[[Any, int], Any] | None = None) -> dict[str, Any]:
     """A person pressed an option on a decision card. The chat rule applies:
@@ -989,6 +1003,10 @@ def handle_decision_action(action: dict[str, Any], *, world, principal: str,
     except ValueError:
         return _ephemeral("That button no longer points at a decision.")
     try:
+        _decision_authority()(principal, decision_id)
+    except Exception as exc:  # noqa: BLE001 -- a refusal is a plain sentence
+        return _ephemeral(str(exc) or "Your Lightwork account can't answer decisions here.")
+    try:
         outcome = dr.answer(world, decision_id, option, actor=principal, is_admin=False,
                             chat=True, channel="slack")
     except dr.DecisionRefused as exc:
@@ -1000,9 +1018,8 @@ def handle_decision_action(action: dict[str, Any], *, world, principal: str,
     if outcome["resume"]:
         (resume or dr.dispatch_resume)(world, decision.goal_id)
     label = (decision.option(option) or {}).get("label", "")
-    text = (f"{principal} chose “{label}” for decision #{decision.id}. "
-            + ("The run continues with this choice." if outcome["resume"]
-               else "The run continues once nothing else is waiting."))
+    text = f"{principal} chose “{label}” for decision #{decision.id}. {dr.next_text(outcome)}"
     return {"replace_original": True, "text": text,
-            "blocks": [{"type": "header", "text": _plain(f"Decided: {decision.question}")},
+            "blocks": [{"type": "header", "text": _plain("Decided")},
+                       {"type": "section", "text": _plain(decision.question, 3000)},
                        {"type": "section", "text": _plain(text, 3000)}]}

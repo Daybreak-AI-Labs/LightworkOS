@@ -5323,16 +5323,17 @@ def resume(ctx, goal_id_arg, goal_id, max_depth: int, max_dollars, max_wall_seco
         # and still exits 0, which a script can't detect (export exits 2 here).
         click.echo(f"no such goal #{goal_id}. See `maverick status`.", err=True)
         sys.exit(2)
-    from ..decision_requests import open_for_goal
+    from ..decision_requests import expire_due, open_for_tree
 
-    waiting = open_for_goal(world, goal_id)
+    expire_due(world, goal_id=goal_id)
+    waiting = open_for_tree(world, goal_id)
     if waiting:
         click.echo(f"cannot resume goal #{goal_id}: it is waiting for "
                    f"{len(waiting)} decision{'s' if len(waiting) != 1 else ''}.")
         for d in waiting:
             click.echo(f"  #{d.id}: {d.question}")
         click.echo("Answer with: maverick decisions answer <id> <option number>")
-        return
+        sys.exit(2)
     open_qs = world.open_questions(goal_id)
     if open_qs:
         click.echo(f"cannot resume goal #{goal_id}: {len(open_qs)} open question(s).")

@@ -753,6 +753,14 @@ class Server:
                 log.warning("reclaimed %d orphan goal(s) from prior crash", reclaimed)
         except Exception:  # pragma: no cover
             log.exception("orphan goal reclaim failed on serve startup")
+        try:
+            import threading
+
+            from .decision_requests import start_sweeper
+
+            start_sweeper(threading.Event())
+        except Exception:  # pragma: no cover -- expiry also runs when decisions are read
+            log.exception("decision expiry sweep not started")
         log.info(
             "starting %d channel(s): %s",
             len(self._channels),

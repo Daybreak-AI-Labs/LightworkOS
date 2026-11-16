@@ -2274,6 +2274,20 @@ def _brief_decisions_block(world: Any, goal_id: int, shield: Any) -> str:
     return rules + made
 
 
+def _decision_start_refusal(world: Any, goal_id: int) -> str:
+    """Every path that starts or restarts a goal ends here: a goal with an
+    open decision (its own or a sub-goal's) stays waiting for a person."""
+    from . import decision_requests
+
+    waiting = decision_requests.resume_refusal(world, goal_id)
+    if waiting:
+        world.set_goal_status(goal_id, "blocked", result=waiting)
+        log.info("goal #%s not started: it waits for a decision", goal_id)
+        return "Paused: " + waiting
+    decision_requests.clear_run(world, goal_id)
+    return ""
+
+
 def _settle_decision_result(*, result: Any, world: WorldModel, goal_id: int,
                             lifecycle: _RunLifecycle) -> str | None:
     """A run waiting on a person's decision, or stopped because its decision
@@ -2286,9 +2300,11 @@ def _settle_decision_result(*, result: Any, world: WorldModel, goal_id: int,
         _fire_webhook("goal_finished", {"goal_id": goal_id, "status": "blocked",
                                         "result": decision_requests.STOP_MESSAGE})
         return decision_requests.STOP_MESSAGE
-    if not result.blocked_on_user:
+    if result.error:
         return None
-    waiting = decision_requests.open_for_goal(world, goal_id)
+    # A run never finishes while a decision of this goal, or of a goal below
+    # it, is open: whichever agent filed it, the run waits for the answer.
+    waiting = decision_requests.open_for_tree(world, goal_id)
     if not waiting:
         return None
     lifecycle.end_episode("blocked awaiting a decision", "interrupted")
@@ -2822,6 +2838,9 @@ async def _run_goal_impl(  # noqa: C901  -- core goal-execution loop
         world.set_goal_status(goal_id, "blocked", result=_risk_refusal)
         log.warning("goal #%s not started: %s", goal_id, _risk_refusal)
         return _risk_refusal
+    _waiting = _decision_start_refusal(world, goal_id)
+    if _waiting:
+        return _waiting
     _lifecycle.started = True
     try:
         world.set_goal_status(goal_id, "active")

@@ -69,7 +69,7 @@ def answer_decision(ctx, decision_id: int, option: int, note: str) -> None:
     if outcome["resume"]:
         click.echo(f"The run is ready to continue. Start it with: maverick resume {current.goal_id}")
     else:
-        click.echo("The run continues once nothing else is waiting.")
+        click.echo(dr.next_text(outcome))
 
 
 @decisions.command("expire")
