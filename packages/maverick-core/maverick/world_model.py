@@ -3471,11 +3471,15 @@ class WorldModel:
         only considers facts whose key is deliberately namespaced as
         ``user:<token>:<name>``.  Values are never searched and arbitrary
         substrings are ignored because short/common user ids can otherwise
-        match unrelated secrets or other users' data.
+        match unrelated secrets or other users' data.  ``token`` is the quoted
+        ``<channel>:<user>`` pair; any other shape raises ``ValueError`` (see
+        ``fact_revision.subject_fact_prefix``).
         """
-        if not token:
+        from .fact_revision import subject_fact_prefix
+
+        prefix = subject_fact_prefix(token)
+        if not prefix:
             return {}
-        prefix = f"user:{token}:"
         return {k: v for k, v in self.get_facts().items() if k.startswith(prefix)}
 
     def delete_facts_matching(self, token: str) -> list[str]:
@@ -3484,10 +3488,12 @@ class WorldModel:
         Returns the keys removed so the caller can report exactly what was
         scrubbed.
         """
-        if not token:
+        from .fact_revision import subject_fact_prefix
+
+        prefix = subject_fact_prefix(token)
+        if not prefix:
             return []
         keys = sorted(self.facts_matching(token).keys())
-        prefix = f"user:{token}:"
         with self._writing() as conn:
             if keys:
                 ph = ",".join("?" * len(keys))
@@ -3552,9 +3558,11 @@ class WorldModel:
         subject's historical fact values (including keys already removed from the
         live table), for the GDPR Art.15 right-of-access export. Empty unless
         ``[memory] temporal`` retained any history."""
-        if not token:
+        from .fact_revision import subject_fact_prefix
+
+        prefix = subject_fact_prefix(token)
+        if not prefix:
             return {}
-        prefix = f"user:{token}:"
         rows = self._read_all(
             "SELECT key, value, valid_from, valid_to, source, trust_tier, "
             "sensitivity FROM fact_history WHERE substr(key, 1, ?) = ? "

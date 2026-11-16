@@ -3994,14 +3994,18 @@ class PostgresWorldModel:
         considered (never values, never arbitrary substrings), so GDPR
         export/erase can't disclose or delete unrelated global facts.
         """
-        if not token:
+        from ..fact_revision import subject_fact_prefix
+
+        prefix = subject_fact_prefix(token)
+        if not prefix:
             return {}
-        prefix = f"user:{token}:"
         return {k: v for k, v in self.get_facts().items() if k.startswith(prefix)}
 
     def delete_facts_matching(self, token: str) -> list[str]:
         """Delete user-scoped facts (see :meth:`facts_matching`); return the keys."""
-        prefix = f"user:{token}:" if token else ""
+        from ..fact_revision import subject_fact_prefix
+
+        prefix = subject_fact_prefix(token)
         if not prefix:
             return []
         # A bound compatibility tenant can read legacy NULL rows, so an Art.17
@@ -4044,10 +4048,12 @@ class PostgresWorldModel:
         """All recorded fact versions under ``user:<token>:`` (incl. keys removed
         from the live table) for the GDPR Art.15 export. Empty unless ``[memory]
         temporal`` retained history. Mirrors the SQLite backend."""
-        if not token:
-            return {}
+        from ..fact_revision import subject_fact_prefix
         from ..world_records import FactVersion
-        prefix = f"user:{token}:"
+
+        prefix = subject_fact_prefix(token)
+        if not prefix:
+            return {}
         frag, params = _tenant_scope()
         tenant = _active_tenant()
         compatibility_tenant = (

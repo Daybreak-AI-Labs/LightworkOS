@@ -448,25 +448,35 @@ def test_facts_newest_write_order_survives_clock_rollback(
 
 
 def test_facts_matching_is_prefix_scoped(world):
-    world.upsert_fact("user:alice:email", "a@x.com")
-    world.upsert_fact("user:alice:phone", "555")
-    world.upsert_fact("user:bob:email", "b@x.com")
+    world.upsert_fact("user:sms:alice:email", "a@x.com")
+    world.upsert_fact("user:sms:alice:phone", "555")
+    world.upsert_fact("user:sms:alice%3Aops:email", "ops@x.com")
+    world.upsert_fact("user:sms:bob:email", "b@x.com")
     world.upsert_fact("global:tz", "UTC")  # not user-scoped
 
-    assert set(world.facts_matching("alice")) == {"user:alice:email", "user:alice:phone"}
+    assert set(world.facts_matching("sms:alice")) == {
+        "user:sms:alice:email", "user:sms:alice:phone"}
     assert world.facts_matching("") == {}  # empty token matches nothing
+    # A token that is not the two quoted parts <channel>:<user> covers many
+    # people or is ambiguous, so every subject-prefix call refuses it.
+    for bad in ("sms", "alice", "sms:alice:ops", "sms:+1"):
+        for call in (world.facts_matching, world.delete_facts_matching,
+                     world.fact_history_matching):
+            with pytest.raises(ValueError, match="one person"):
+                call(bad)
+    assert "user:sms:alice%3Aops:email" in world.get_facts()
 
 
 def test_delete_facts_matching_scoped(world):
-    world.upsert_fact("user:carol:email", "c@x.com")
-    world.upsert_fact("user:carol:ssn", "secret")
-    world.upsert_fact("user:dave:email", "d@x.com")
+    world.upsert_fact("user:sms:carol:email", "c@x.com")
+    world.upsert_fact("user:sms:carol:ssn", "secret")
+    world.upsert_fact("user:sms:dave:email", "d@x.com")
 
-    deleted = world.delete_facts_matching("carol")
-    assert deleted == ["user:carol:email", "user:carol:ssn"]  # sorted keys
+    deleted = world.delete_facts_matching("sms:carol")
+    assert deleted == ["user:sms:carol:email", "user:sms:carol:ssn"]  # sorted keys
     remaining = world.get_facts()
-    assert "user:carol:email" not in remaining
-    assert remaining.get("user:dave:email") == "d@x.com"  # other users untouched
+    assert "user:sms:carol:email" not in remaining
+    assert remaining.get("user:sms:dave:email") == "d@x.com"  # other users untouched
 
 
 def test_list_goals_filter_and_order(world):
