@@ -204,6 +204,8 @@ def test_merge_waits_for_the_approval_then_merges(client, monkeypatch, tmp_path)
     detail = client.get(f"/api/v1/code/proposals/{pid}").json()
     assert detail["status"] == "pending" and detail["files"] == ["a.py"]
     assert "VALUE = 2" in detail["changes"]
+    assert "Independent check: turned off in settings." in detail["checks"]["lines"]
+    assert "Nobody independently tried to break this change." in detail["checks"]["gaps"]
     # The kernel's gate: no merge and no push without an approved approval.
     r = client.post(f"/api/v1/code/proposals/{pid}/merge")
     assert r.status_code == 409 and "waiting for a person to approve" in r.json()["detail"]
@@ -258,12 +260,19 @@ def test_named_code_runs_keep_execution_owner_and_approval_scope(client, monkeyp
     monkeypatch.setattr(features, "default_reviewer", lambda: None)
     observed = []
 
+    budgets = set()
+
     def run_without_provider(_llm, world, _budget, goal_id, **kwargs):
         goal = world.get_goal(goal_id)
+        budgets.add(id(_budget))
+        if goal.title.startswith("[core] Check: "):  # the independent checker's own run
+            checks.append((goal.owner, goal.execution_principal, kwargs["user_id"]))
+            return '{"findings": [], "fixed": []}'
         observed.append((goal_id, goal.owner, goal.execution_principal, kwargs["user_id"]))
         from pathlib import Path
         (Path(kwargs["sandbox"].workdir) / "a.py").write_text("VALUE = 2\n")
         world.set_goal_status(goal_id, "done", result="local fixture")
+    checks: list = []
 
     monkeypatch.setattr(orchestrator, "run_goal_sync", run_without_provider)
     for subject in ("alice", "bob"):
@@ -272,6 +281,9 @@ def test_named_code_runs_keep_execution_owner_and_approval_scope(client, monkeyp
         assert response.status_code == 202, response.text
     assert [(owner, execution, user_id) for _, owner, execution, user_id in observed] == [
         ("user:alice", "user:alice", "alice"), ("user:bob", "user:bob", "bob")]
+    # The checker runs under the same identity, and each run charges one budget.
+    assert checks == [("user:alice", "user:alice", "alice"), ("user:bob", "user:bob", "bob")]
+    assert len(budgets) == 2
     world = dash_app._world()
     for subject, (goal_id, _, _, _) in zip(("alice", "bob"), observed, strict=True):
         headers = {"Authorization": f"Bearer {subject}"}

@@ -48,7 +48,9 @@ async function fixture({ confirm = true, reply } = {}) {
     if (url.endsWith("/merge")) return json({ merged: true, repo: "website" });
     if (url.includes("/proposals/") && (!options.method || options.method === "GET")) {
       return json({ id: "fedcba9876543210", repo: "website", title: "Fix typo", status: "pending", approval_id: 8,  // pragma: allowlist secret
-        files: ["a.py"], tests: { passed: false }, tests_output: "1 failed", review: null, changes: "-a\n+b", changes_cut_short: false });
+        files: ["a.py"], tests: { passed: false }, tests_output: "1 failed", review: null, changes: "-a\n+b", changes_cut_short: false,
+        checks: { lines: ["Tests: FAILED."], gaps: ["Nobody independently tried to break this change."],
+          findings: ["Finding 1.1, blocker, still open: a is wrong (from reading the code)."] } });
     }
     return json({});
   };
@@ -119,6 +121,9 @@ test("review shows tests, files and the changed lines behind a disclosure", asyn
   const body = ui.doc.getElementById("code-review-body");
   assert.equal(ui.doc.getElementById("code-review").hidden, false);
   assert.match(body.textContent, /tests failed/);
+  assert.match(body.textContent, /Not everything was checked/);
+  assert.match(body.textContent, /Nobody independently tried to break this change/);
+  assert.match(body.textContent, /Finding 1\.1, blocker, still open/);
   assert.match(body.querySelector("details summary").textContent, /changed lines/);
 });
 

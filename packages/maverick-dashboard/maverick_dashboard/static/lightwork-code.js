@@ -83,6 +83,12 @@
     if (value === null || value === undefined) { return "Not run"; }
     return value ? "Recommends it" : "Has concerns";
   }
+  var CHECK = { clean: "No open problems", open: "Problems still open", failed: "Could not run",
+    off: "Turned off", not_run: "Not run on this version" };
+  function checkText(value) {
+    if (value === null || value === undefined) { return "Not run"; }
+    return CHECK[value] || human(value);
+  }
 
   function renderRepos() {
     var body = document.getElementById("ic-repo-rows");
@@ -123,7 +129,7 @@
     var props = summary.proposals || [];
     if (!props.length) {
       var start = canAdmin && (summary.repos || []).length ? button("Start a change", "btn--primary", function () { pickRepo(""); }) : null;
-      emptyRow(body, 7, "No proposed changes yet. Changes appear here when an agent proposes one; ask for one in Chat.", start);
+      emptyRow(body, 8, "No proposed changes yet. Changes appear here when an agent proposes one; ask for one in Chat.", start);
       return;
     }
     props.forEach(function (p) {
@@ -132,6 +138,7 @@
       tr.appendChild(el("td", null, p.repo));
       tr.appendChild(el("td", null, p.files));
       tr.appendChild(el("td", null, testsText(p.tests)));
+      tr.appendChild(el("td", null, checkText(p.check)));
       tr.appendChild(el("td", null, reviewText(p.review)));
       tr.appendChild(el("td", null, STATUS[p.status] || human(p.status)));
       var td = el("td");
@@ -390,6 +397,28 @@
     parent.appendChild(el("h3", null, title));
   }
 
+  function list(parent, items) {
+    var ul = el("ul", "ic-list");
+    items.forEach(function (text) { ul.appendChild(el("li", null, text)); });
+    parent.appendChild(ul);
+  }
+
+  function checks(parent, value) {
+    if (!value) { return; }
+    section(parent, "What was checked");
+    if (value.gaps.length) {
+      parent.appendChild(el("p", null, "Not everything was checked. Read these points before you approve:"));
+      list(parent, value.gaps);
+    } else {
+      parent.appendChild(el("p", null, "The tests passed on this version. The independent check left no blocking problem open."));
+    }
+    list(parent, value.lines);
+    if (value.findings.length) {
+      section(parent, "What the independent check found");
+      list(parent, value.findings);
+    }
+  }
+
   async function review(pid) {
     var panel = document.getElementById("code-review");
     var body = document.getElementById("code-review-body");
@@ -398,6 +427,7 @@
     catch (error) { fail(failure(error, "open the change")); return; }
     clear(body);
     body.appendChild(el("p", null, p.title + " · " + p.repo + " · " + (STATUS[p.status] || human(p.status))));
+    checks(body, p.checks);
     section(body, "Tests");
     body.appendChild(el("p", null, p.tests ? (p.tests.passed ? "The project’s tests passed." :
       "The project’s tests failed. Look at the test results before approving.") :
