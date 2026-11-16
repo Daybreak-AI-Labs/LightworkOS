@@ -190,12 +190,18 @@ check_retention_days    = 90
 # in the model's instructions; nothing detects every such choice by itself):
 decision_areas          = ["security", "workspace_boundaries", "data_erasure_retention",
                            "spending", "user_facing", "governance"]
-# Decisions in these areas need a workspace administrator; the person who
-# started the run may answer only with [security] allow_self_approval on.
+# Decisions in these areas need a workspace administrator. Whether the person
+# who started the run may answer follows separate_approver above, as for a
+# high-risk approval: by default someone else answers whenever another
+# administrator can; with nobody else (a single-person install) they may.
 decision_admin_areas    = ["governance"]
 # An unanswered decision expires after this long and the run stops without
-# choosing an option. A workspace file may add areas or shorten this wait,
-# never remove an area.
+# choosing an option (checked every five minutes, and when the task or a
+# decision is read). A workspace file may add areas or shorten this wait,
+# never remove an area. A flow step cannot wait for a decision yet: inside a
+# flow, request_decision is refused and the step reports the choice instead.
+# Decision rows are deleted with their goal on erasure; erasure receipts do
+# not list them, because receipts already on disk name a fixed set of stores.
 decision_expiry_hours   = 72
 
 [sandbox]

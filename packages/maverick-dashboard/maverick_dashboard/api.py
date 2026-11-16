@@ -1667,10 +1667,17 @@ def search_goals(request: Request, q: str, limit: int = 50, response: Response =
 
 @router.get("/goals/{goal_id}", response_model=GoalOut)
 def get_goal(request: Request, goal_id: int) -> GoalOut:
-    g = _world().get_goal(goal_id)
+    w = _world()
+    g = w.get_goal(goal_id)
     if g is None:
         raise HTTPException(status_code=404, detail="no such goal")
     assert_goal_access(request, g)
+    if g.status == "blocked":
+        # A run waiting on a decision that has expired stops when it is read.
+        from maverick.decision_requests import expire_due
+
+        if expire_due(w, goal_id=goal_id):
+            g = w.get_goal(goal_id) or g
     return _to_goal_out(g)
 
 

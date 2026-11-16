@@ -397,6 +397,45 @@ def eligible_approvers(world, approval) -> set[str]:
     return {person for person in candidates if _may_decide(person)}
 
 
+def other_decision_admins(requester: str) -> list[str]:
+    """Workspace administrators other than ``requester`` who could answer a
+    run's decision now (maverick.decision_requests): the decision twin of
+    :func:`other_eligible_approvers`. A deprovisioned person never counts, and
+    a roster that can't be read counts nobody."""
+    from . import rbac, scim_groups
+    from .auth import role_for_principal
+
+    who = " ".join(str(requester or "").split())
+    others = []
+    for principal in rbac.list_users():
+        if principal == who:
+            continue
+        try:
+            if ("admin" in rbac.permissions_for(role_for_principal(principal))
+                    and scim_groups.active_for_principal(principal) is not False):
+                others.append(principal)
+        except Exception:  # noqa: BLE001 -- an unreadable entry counts nobody
+            continue
+    return sorted(others)
+
+
+def decision_authority_for(channel: str):
+    """The chat permission check for answering a run's decision: the linked
+    person must hold ``operate``, exactly as for an approval vote."""
+    def authorize(principal: str, decision_id: int) -> None:
+        from . import rbac
+        from .auth import role_for_principal
+
+        if "operate" in rbac.permissions_for(role_for_principal(principal)):
+            return
+        _audit_channel_denial(principal, channel=channel, approval_id=-int(decision_id),
+                              reason="decision_authority_missing")
+        raise ApprovalDecisionRefused(
+            "Your Lightwork account can't answer decisions. Ask an administrator for "
+            "the operator role.", status_code=403, reason="not_permitted")
+    return authorize
+
+
 def other_eligible_approvers(world, approval, requester: str) -> list[str]:
     """The eligible approvers other than ``requester``, sorted."""
     who = " ".join(str(requester or "").split())

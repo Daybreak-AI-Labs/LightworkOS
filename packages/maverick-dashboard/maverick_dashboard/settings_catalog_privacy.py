@@ -1106,8 +1106,9 @@ def _other_rows(S) -> tuple:
           aliases="decision request ask a person policy question recommendation options",
           warning="Runs will decide these choices on their own instead of asking a person."),
         S("approval", "decision_admin_areas", "Choices only an administrator can decide",
-          "Decisions in these areas need a workspace administrator. The person who started "
-          "the run may answer only when people may approve their own requests.",
+          "Decisions in these areas need a workspace administrator. As with a risky approval, "
+          "someone other than the person who started the run answers whenever another "
+          "administrator can.",
           "multiselect", "Safety", list(_DECISION_ADMIN_DEFAULTS), "maverick.decision_requests",
           subgroup="Approvals", choices=_DECISION_AREA_CHOICES, weaker="shrink",
           aliases="decision administrator admin answer",

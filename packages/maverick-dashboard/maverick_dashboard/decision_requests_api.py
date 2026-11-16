@@ -62,6 +62,17 @@ def selected(request: Request, decision_id: int, world=None) -> dr.Decision:
     return found
 
 
+def answered_by_me(request: Request, decision_id: int, world=None) -> dr.Decision | None:
+    """The decision this person already answered, for reading the saved
+    result back (a Copilot replay), or None."""
+    require_permission(request, "operate")
+    world = world if world is not None else _world()
+    found = dr.get(world, int(decision_id))
+    if found is None or found.status != "answered":
+        return None
+    return found if found.decided_by == (actor(request) or "local:dashboard") else None
+
+
 def answer_for_request(request: Request, decision_id: int, option: int, note: str = "", *,
                        channel: str = "dashboard", world=None) -> dict[str, Any]:
     """Record a choice for the signed-in person. The Approvals page and the
@@ -97,8 +108,7 @@ def outcome_message(outcome: dict[str, Any]) -> str:
     label = (decision.option(decision.chosen) or {}).get("label", "")
     if outcome["resume"]:
         return f"You chose “{label}”. The run continues with your choice."
-    return (f"You chose “{label}”. The run continues once nothing else is waiting. "
-            "Open the task to check it.")
+    return f"You chose “{label}”. {dr.next_text(outcome)}"
 
 
 @router.get("/decisions")

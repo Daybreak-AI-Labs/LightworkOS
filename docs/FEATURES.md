@@ -5016,14 +5016,20 @@ tested without spawning py-spy.
   without spending. The owner or a workspace administrator answers on the
   Approvals page (`/api/v1/decisions`), the Copilot (`reviews.decision_*`), a
   Slack card or `maverick decisions answer`; areas in `[approval]
-  decision_admin_areas` need an administrator other than the starter unless
-  `allow_self_approval` is on. The run resumes with the choice as a structured
+  decision_admin_areas` need an administrator, and the starter answers only as
+  `[approval] separate_approver` allows a requester to approve a high-risk
+  action. The run resumes with the choice as a structured
   record in its brief. An unanswered decision expires
   (`decision_expiry_hours`) and stops the run without choosing; an unsaved
   request stops it before it acts. Requests, answers and expiries are audited
-  (`decision_requested`, `decision_answered`, `decision_expired`). A flow agent
-  step's goal pauses the same way, but the flow still counts a paused goal as a
-  failed step attempt; it does not wait for the answer yet.
+  (`decision_requested`, `decision_answered`, `decision_expired`). Once any
+  agent of a run files a decision (a subagent, swarm member or task graph
+  included), no other tool runs in that turn or later, and the run cannot finish,
+  restart or be resumed while a decision of the goal or a sub-goal is open.
+  Expiry is checked every five minutes by the dashboard and `maverick serve`,
+  and when the task is read. Inside a flow step `request_decision` is refused:
+  flows do not wait for a decision yet. Decision rows are deleted with their
+  goal; erasure receipts do not list them, so receipts already on disk stay valid.
 - **Web dashboard** — run list, plan-tree, chat at `/chat`,
   [root conversation summaries and shared durable SSE replay](./dashboard-read-models.md)
   (schema 37 root indexes; monotonic heartbeat deadlines), and an approval queue with

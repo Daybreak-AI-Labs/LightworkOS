@@ -83,3 +83,30 @@ def _request():
     from starlette.requests import Request
 
     return Request({"type": "http", "method": "POST", "headers": [], "path": "/", "query_string": b""})
+
+
+def test_copilot_replay_reads_back_the_saved_answer(env, monkeypatch):
+    from maverick_dashboard import product_operations_decisions as copilot
+
+    _client, world, _goal, decision, _who, _started = env
+    selection = {"kind": "decision", "id": decision.id}
+    monkeypatch.setattr("maverick_dashboard.app._require_same_origin", lambda _r: None)
+    preview = copilot.prepare(_request(), selection, {"option": 2, "note": ""})
+    copilot.execute(_request(), selection, {"option": 2, "note": ""}, preview.native, "op-1")
+
+    state = copilot.snapshot(_request(), selection, answering=True)
+    replay = copilot.recover(_request(), selection, {"option": 2, "note": ""}, preview.native, "op-1")
+    assert state.blocked == "You already answered this decision."
+    assert replay.status == "replayed" and replay.details == {"decision": decision.id, "option": 2}
+
+
+def test_reading_the_task_stops_a_run_whose_decision_expired(env, monkeypatch):
+    import time
+
+    client, world, goal, decision, _who, _started = env
+    monkeypatch.setattr(api, "assert_goal_access", lambda *a: None)
+    monkeypatch.setattr(time, "time", lambda: decision.expires_at + 1)
+
+    body = client.get(f"/api/v1/goals/{goal}").json()
+
+    assert body["status"] == "failed" and dr.get(world, decision.id).status == "expired"

@@ -1142,6 +1142,19 @@ def repair_default_workspace() -> None:
 
 
 @asynccontextmanager
+def _start_decision_sweeper() -> None:
+    """Past-due decisions stop their runs on time, even for a team that
+    answers only in chat and never opens the Approvals page."""
+    try:
+        import threading
+
+        from maverick.decision_requests import start_sweeper
+
+        start_sweeper(threading.Event())
+    except Exception:  # pragma: no cover - never block startup
+        log.exception("decision expiry sweep not started")
+
+
 async def _lifespan(app: FastAPI):
     """Application lifespan: run startup tasks, then yield to serve.
 
@@ -1255,6 +1268,7 @@ async def _lifespan(app: FastAPI):
         await run_in_threadpool(start_starter_team_scheduler)
         warm_ready = threading.Event()
         warm_stop = _warm_goal_runtime(ready=warm_ready)
+        _start_decision_sweeper()
         try:
             from maverick_dashboard.security_api import start_hunter_scheduler
 

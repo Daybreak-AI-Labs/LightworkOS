@@ -38,7 +38,13 @@ def _details(decision) -> dict:
 
 
 def snapshot(request, selection, *, answering=False):
-    decision = native.selected(request, _selected_id(selection))
+    decision_id = _selected_id(selection)
+    saved = native.answered_by_me(request, decision_id)
+    if saved is not None:
+        return Snapshot(digest(saved.public()), "The decision you already answered",
+                        "Your choice is saved.", _details(saved), [],
+                        "You already answered this decision.")
+    decision = native.selected(request, decision_id)
     reason, sentence = native.dr.refusal(decision, native.actor(request),
                                          is_admin=native.is_admin(request))
     fields = []
@@ -90,9 +96,8 @@ def execute(request, selection, arguments, prepared, _operation_id):
 
 
 def recover(request, selection, arguments, _prepared, _operation_id):
-    decision = native.dr.get(native._world(), _selected_id(selection))
-    who = native.actor(request) or "local:dashboard"
-    if decision is None or decision.status != "answered" or decision.decided_by != who:
+    decision = native.answered_by_me(request, _selected_id(selection))
+    if decision is None:
         return None
     return Outcome("replayed", "Your earlier choice is already saved.",
                    {"decision": decision.id, "option": decision.chosen})
