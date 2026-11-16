@@ -470,7 +470,12 @@ def _fire_webhook(event: str, payload: dict[str, Any]) -> None:
         from .immune import twin
         if twin.active():
             return  # a production twin replay is not a run anyone subscribed to
+        from .tools import fresh_context
         from .webhooks import fire
+        if fresh_context() and "result" in payload:
+            # A fresh-context run (the code checker) may quote vaulted code;
+            # its result stays with its proposal, never in an outbound hook.
+            payload = {**payload, "result": "(kept with the code change it checked)"}
         fire(event, _webhook_public_payload(event, payload))
     except Exception as e:  # pragma: no cover -- webhooks never block a run
         log.debug(

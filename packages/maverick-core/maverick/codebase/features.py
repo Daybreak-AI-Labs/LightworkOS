@@ -416,7 +416,23 @@ class _Loop:
         report = _report(out)
         if report is None:
             self.check["error"] = "its report could not be read"
+        self._count_only(gid, report)
         return report
+
+    def _count_only(self, goal_id: int, report: dict | None) -> None:
+        """Finding text can quote vaulted code: the check task's own result
+        (goal pages, later reads) keeps only counts; the text stays in the
+        sealed proposal, which only administrators read."""
+        found = "its report could not be read" if report is None else \
+            f"{len(report['findings'][:MAX_FINDINGS])} finding(s)"
+        try:
+            goal = self.world.get_goal(goal_id)
+            self.world.set_goal_status(
+                goal_id, goal.status if goal is not None else "done",
+                result=f"Independent check of Lightwork proposal {self.pid}: {found}. "
+                       f"Read them with maverick code show {self.pid}.")
+        except Exception:  # noqa: BLE001 -- the proposal still records the check
+            pass
 
     def verify(self) -> None:
         """Test repairs, then checker looks with blocker repairs in between."""

@@ -1109,3 +1109,34 @@ def test_running_on_this_computer_is_a_gap_on_every_summary(upstream, tmp_path, 
     monkeypatch.setattr(groups, "open_world", lambda *a, **k: WorldModel(tmp_path / "world.db"))
     out = CliRunner().invoke(main, ["code", "proposals"])
     assert out.exit_code == 0 and "1 gap(s)" in out.output and "checked" not in out.output
+
+
+def test_the_checker_task_keeps_counts_not_finding_text(upstream, tmp_path):
+    """Finding text can quote vaulted code; the checker's own task record (goal
+    pages, finished-task webhooks) keeps only counts."""
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    run, _ = _rounds(lambda work: (work / "a.py").write_text("a = 1\n"))
+    report = ('{"findings": [{"severity": "minor", "what": "QUOTED_CODE_LINE is odd", '
+              '"evidence": "read", "how": "a.py"}], "fixed": []}')
+
+    def checker(goal_id, copy):
+        world.set_goal_status(goal_id, "done", result=report)   # as a governed run does
+        return report
+    p = features.propose(world, "pricing", "A", "", run, checker=checker, repair_rounds=0)
+    goal = world.get_goal(p["check"]["goal_ids"][0])
+    assert goal.status == "done" and "QUOTED_CODE_LINE" not in (goal.result or "")
+    assert "1 finding(s)" in goal.result and p["id"] in goal.result
+
+
+
+def test_a_fresh_context_run_sends_no_result_text_to_webhooks(monkeypatch):
+    from maverick import orchestrator, tools, webhooks
+    sent: list = []
+    monkeypatch.setattr(webhooks, "fire", lambda event, payload: sent.append(payload))
+    with tools.fresh_context_run():
+        orchestrator._fire_webhook("goal_finished", {"goal_id": 1, "status": "done",
+                                                     "result": "QUOTED_CODE_LINE"})
+    orchestrator._fire_webhook("goal_finished", {"goal_id": 2, "status": "done",
+                                                 "result": "ordinary"})
+    assert "QUOTED_CODE_LINE" not in repr(sent[0]) and "ordinary" in repr(sent[1])
