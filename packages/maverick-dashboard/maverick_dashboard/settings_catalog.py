@@ -429,6 +429,23 @@ SETTINGS: tuple[Setting, ...] = (
                ("audit", "Allow it and record it")),
       weaker=True, order=("block", "approve", "audit"),
       warning="Code from new repositories will be able to leave with less oversight."),
+    S("codebase", "repair_rounds", "Repair rounds for a code change",
+      "How many more tries the agent gets after failing tests or a blocking problem. "
+      "Each try is one more agent run, paid from the same spending limit.",
+      "number", "Safety", 2, "maverick.config", minimum=0, maximum=5, integer=True,
+      unit="tries", weaker="lower",
+      warning="Changes will reach you with failing tests or open problems more often."),
+    S("codebase", "checker", "Independent check of code changes",
+      "A separate agent with a fresh view runs the change and tries to break it before you "
+      "approve. Each look is one more agent run.",
+      "toggle", "Safety", True, "maverick.config", weaker=False,
+      warning="Nobody will try to break code changes before you are asked to approve them."),
+    S("codebase", "check_rounds", "Independent check looks",
+      "How many times the independent check may look at a change. A second look confirms "
+      "that blocking problems were fixed.",
+      "number", "Safety", 2, "maverick.config", minimum=1, maximum=3, integer=True,
+      unit="looks", weaker="lower",
+      warning="Fixes to blocking problems may reach you without a second look."),
     S("autonomy", "enable", "Extra checks on uncertain work",
       "When agents disagree or are unsure, double-check the answer and tighten what risky tools may do.",
       "toggle", "Safety", False, "maverick.autonomy", env=("MAVERICK_AUTONOMY_GATE",)),

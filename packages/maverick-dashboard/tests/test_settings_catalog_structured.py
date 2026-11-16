@@ -738,8 +738,10 @@ def test_the_feature_path_labels_the_work_with_the_projects_protection(monkeypat
     from maverick_dashboard import code_actions_api
 
     assert "features.propose(" in inspect.getsource(code_actions_api._run_feature)
-    assert 'labelled_run({f"code:{name}"}, mode=repo.protect)' in inspect.getsource(
-        features.propose)
+    # Every author and checker round enters the project's labels and mode.
+    assert "_Loop(" in inspect.getsource(features.propose)
+    assert 'labelled_run({f"code:{self.repo.name}"}, mode=self.repo.protect)' in \
+        inspect.getsource(features._Loop._labelled)
 
 
 def test_the_code_page_no_longer_starts_notes_as_ordinary_tasks():

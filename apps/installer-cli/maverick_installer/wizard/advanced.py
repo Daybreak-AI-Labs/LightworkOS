@@ -488,6 +488,20 @@ def _pick_codebase(advanced: dict[str, Any]) -> None:
         default="block   - be refused (recommended)",
     )
     advanced["codebase_protect"] = (str(protect or "").split() or ["block"])[0]
+    # Each repair round or checker look is one more agent run, paid from the
+    # same spending limit as the change itself.
+    advanced["codebase_repair_rounds"] = max(0, min(5, _safe_int(_q_text(
+        "    When tests fail or a blocking problem is found, how many more tries "
+        "does the agent get? (0-5; each is one more agent run)", default="2"), default=2)))
+    advanced["codebase_checker"] = _q_confirm(
+        "    Have a separate agent run each change and try to break it before you "
+        "approve it? (recommended; one more agent run per look)",
+        default=True,
+    )
+    if advanced["codebase_checker"]:
+        advanced["codebase_check_rounds"] = max(1, min(3, _safe_int(_q_text(
+            "    How many times may it look? (1-3; a second look confirms fixes)",
+            default="2"), default=2)))
 
 
 def _pick_ifc(advanced: dict[str, Any]) -> None:
@@ -3266,6 +3280,11 @@ def _cfg_advanced_memory_and_immune(advanced: dict[str, Any]) -> list[str]:
         protect = advanced.get("codebase_protect", "block")
         if protect in ("block", "approve", "audit"):
             lines.append(f'default_protect = "{protect}"')
+        lines.append("# A feature run: repair rounds after failing tests or checker blockers,")
+        lines.append("# and an independent checker that runs the change and tries to break it.")
+        lines.append(f"repair_rounds = {int(advanced.get('codebase_repair_rounds', 2))}")
+        lines.append(f"checker = {'true' if advanced.get('codebase_checker', True) else 'false'}")
+        lines.append(f"check_rounds = {int(advanced.get('codebase_check_rounds', 2))}")
     if advanced.get("ifc_mode"):
         lines.append("")
         lines.append("[ifc]")
