@@ -31,12 +31,8 @@
     <details id="llp-propose-box">
       <summary>Suggest a change</summary>
       <form id="llp-propose" class="llp-form">
-        <label for="llp-target">What should change</label>
-        <select id="llp-target" name="target" class="select">
-          <option value="prompt">Standing instructions</option>
-          <option value="skill">A named procedure</option>
-          <option value="memory">Something it remembers</option>
-        </select>
+        <input type="hidden" name="target" value="prompt">
+        <p class="muted">A suggestion changes the standing instructions Lightwork reads before each task.</p>
         <label for="llp-title">Short title</label>
         <input id="llp-title" name="title" class="input" maxlength="90" required
                aria-describedby="llp-title-help">

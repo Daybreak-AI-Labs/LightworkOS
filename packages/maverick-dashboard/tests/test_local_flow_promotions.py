@@ -272,3 +272,85 @@ def test_practice_run_picker_finds_a_practice_run_buried_under_real_runs(harness
     assert response.status_code == 200, response.text
     [flow] = response.json()["flows"]
     assert [row["id"] for row in flow["practice_runs"]] == [practice.run_id]
+
+
+def test_copilot_offers_the_same_retry_and_discard_as_the_release_page(monkeypatch):
+    """A stuck release request has the same way out in the Copilot as on the page."""
+    from maverick_dashboard import product_operations_flow_releases as releases
+
+    def row(name, state, stuck="", can_discard=False, published=False):
+        return {"candidate_id": name, "state": state, "stuck": stuck, "can_discard": can_discard,
+                "published": published, "revision": 4, "events": [],
+                "requested_by": OWNER, "candidate_principal": "agent:candidate", "manifest_sha256": "1" * 64,
+                "manifest": {"target": {"state_schema": "lightwork.rule-only-flow-release.v1"}}}
+
+    rows = [row("waiting", "awaiting_review"), row("ready", "staged", can_discard=True),
+            row("expired", "staged", "approval_expired", True), row("void", "authorized", "approval_void", True),
+            row("rules", "authorized", "policy_changed", True),
+            row("claimed", "activation_claimed", "outcome_unknown", True),
+            row("restoring", "rollback_claimed", "outcome_unknown", True, True),   # was published
+            row("unreviewed", "awaiting_review", "policy_changed", True),
+            row("uncertain", "uncertain", "outcome_unknown", True), row("live", "canary", published=True)]
+
+    class Service:
+        calls = []
+
+        def inspect(self, _tenant, _actor, candidate_id):
+            return next(item for item in rows if item["candidate_id"] == candidate_id)
+
+        def discard(self, _tenant, _actor, candidate_id, **kwargs):
+            self.calls.append((candidate_id, kwargs))
+            return {**self.inspect(None, None, candidate_id), "state": "discarded", "stuck": ""}
+
+    service = Service()
+    monkeypatch.setattr(releases, "_state", lambda _request, administrator=False: (
+        TENANT, "user:admin", "c" * 64, service, rows))
+    monkeypatch.setattr(release_module, "release_status", lambda _manifest, **_kwargs: {
+        "name": "Order total", "version": 2, "can_assess": True, "evidence": "Practice only.",
+        "rollback": "Restore the retained rules.", "steps": []})
+
+    def offered(action):
+        snapshot = releases.decisions_snapshot(None, {}, action=action)
+        return {choice["value"] for choice in snapshot.fields[0]["choices"]}
+
+    assert offered("reconcile") == {"claimed", "restoring", "uncertain"}
+    # A fresh review is the retry; under changed rules no review can decide a request.
+    assert offered("review") == {"waiting", "expired", "void"}
+    assert offered("activate") == {"ready"}                  # not the request whose approval ran out
+    assert offered("stage") == set()                         # neither a void approval nor changed rules
+    assert offered("discard") == {"ready", "expired", "void", "rules", "claimed", "restoring",
+                                  "unreviewed", "uncertain"}
+    status = releases.decisions_snapshot(None, {}, action="status").details["releases"]
+    assert {item["request"]: item["state"] for item in status}["claimed"].startswith("Stuck: the last action stopped")
+    assert {item["request"]: item["state"] for item in status}["expired"].startswith("Stuck: the approval ran out")
+    assert {item["request"]: item["state"] for item in status}["rules"].startswith("Stuck: the release rules changed")
+
+    prepared = releases.decision_prepare(None, {}, {"candidate": "expired"}, action="discard")
+    assert "first checks that it is not in use" in prepared.summary
+    outcome = releases.decision_execute(None, {}, {"candidate": "expired"}, prepared.native, None, action="discard")
+    assert service.calls == [("expired", {"expected_revision": 4, "reason_code": "stuck_request"})]
+    assert outcome.status == "confirmed" and "Discarded without publishing" in outcome.message
+
+    # A request that was already uncertain when the person reviewed the action is
+    # exactly what retry and close are for: neither is held back as "unconfirmed".
+    for action in ("reconcile", "discard"):
+        ready = releases.decision_prepare(None, {}, {"candidate": "uncertain"}, action=action)
+        assert releases.decision_recover(None, {}, {"candidate": "uncertain"}, ready.native, None,
+                                         action=action) is None
+    # An action whose own result became uncertain after the review is still unconfirmed.
+    ready = releases.decision_prepare(None, {}, {"candidate": "live"}, action="rollback")
+    live = next(item for item in rows if item["candidate_id"] == "live")
+    live.update(state="uncertain", events=[{"actor": "user:admin", "state": "rollback_claimed"},
+                                           {"actor": "user:admin", "state": "uncertain"}])
+    unconfirmed = releases.decision_recover(None, {}, {"candidate": "live"}, ready.native, None,
+                                            action="rollback")
+    assert unconfirmed.status == "unconfirmed"
+
+    # A published request is closed with words that say it was published.
+    service.discard = lambda _tenant, _actor, candidate_id, **kwargs: {
+        **service.inspect(None, None, candidate_id), "state": "closed", "stuck": ""}
+    prepared = releases.decision_prepare(None, {}, {"candidate": "restoring"}, action="discard")
+    assert "was published" in prepared.summary
+    outcome = releases.decision_execute(None, {}, {"candidate": "restoring"}, prepared.native, None, action="discard")
+    assert "Closed after publication" in outcome.message
+    assert "learning.release_discard" in {entry.id for entry in releases.entries()}

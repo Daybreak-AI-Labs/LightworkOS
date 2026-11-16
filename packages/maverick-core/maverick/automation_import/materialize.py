@@ -11,6 +11,8 @@ imported automations appear in the Automations history automatically.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -29,6 +31,121 @@ class MaterializeResult:
     notes: list[str] = field(default_factory=list)
 
 
+# What an import itself sets on the schedule it creates. Their digest is kept
+# with the schedule, so a re-import can tell "the source changed" from "a
+# person changed this schedule here".
+_IMPORTED_KEYS = ("text", "title", "__cron__", "max_dollars", "max_wall_seconds",
+                  "owner", "channel", "user_id", "imported_from")
+
+
+def _import_digest(payload: dict[str, Any]) -> str:
+    values = {key: payload.get(key) for key in _IMPORTED_KEYS}
+    return hashlib.sha256(json.dumps(values, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+
+
+def _replaced_values(stored: dict[str, Any], payload: dict[str, Any]) -> str:
+    """The time, zone and title a re-import is about to replace, in words.
+
+    They go in the import note and the schedule's history, so a person whose
+    own changes are replaced can put them back.
+    """
+    was = []
+    zone = str(stored.get("__tz__") or "")
+    if stored.get("__cron__") != payload["__cron__"] or zone:
+        was.append(f"the time was {stored.get('__cron__')}" + (f" ({zone})" if zone else ""))
+    if stored.get("title") != payload["title"]:
+        was.append(f"the title was {str(stored.get('title') or '')[:80]!r}")
+    return ", ".join(was)
+
+
+def _other_name_note(automation: ImportedAutomation, marked: list[dict[str, Any]]) -> str:
+    """Name a schedule that keeps running for the same source id under another name."""
+    for row in marked:
+        if automation.is_other_name_of(str(row["payload"].get("imported_from") or "")):
+            return (f"a schedule from an earlier import with the same source id is still active "
+                    f"under another name (job {row['id']}, {row['title']!r}); if this workflow "
+                    "was renamed at the source, that is its old schedule -- retire it if it is "
+                    "no longer wanted")
+    return ""
+
+
+def _activate_schedule(queue: Any, automation: ImportedAutomation, payload: dict[str, Any],
+                       result: MaterializeResult, notes: list[str], *, mark: bool) -> None:
+    """Create this import's schedule, or bring the one it made earlier up to date.
+
+    The schedule follows the source only when the source changed since the
+    last import. Until then a person's own changes to it (time, zone, title)
+    are kept, and so is a pause. With ``mark`` off, or for a workflow that
+    has no source id, the schedule carries no mark and is only ever created:
+    this workflow cannot be told from another one with the same name.
+    """
+    from ..schedule_definitions import change_definition, imported_definitions
+    from ..scheduler import CronError, schedule_cron
+
+    cron = payload["__cron__"]
+    try:
+        current = None
+        if not automation.source_id:
+            # A mark built from a name alone would also match another workflow
+            # that has the same name, and update its schedule.
+            mark = False
+            notes.append("this workflow has no id at the source, so a later import cannot tell "
+                         "it from another workflow with the same name; an import creates its "
+                         "schedule once and never changes it")
+        if mark:
+            payload["imported_from"] = automation.import_ref()
+            digest = payload["import_digest"] = _import_digest(payload)
+            marked = imported_definitions(queue, owner=payload.get("owner", ""))
+            current = next((row for row in marked
+                            if row["payload"].get("imported_from") == payload["imported_from"]), None)
+            if current is None and (note := _other_name_note(automation, marked)):
+                notes.append(note)
+        if current is None:
+            job_id, run_at = schedule_cron(queue, cron, "start_goal", payload)
+            result.schedule = {"job_id": job_id, "run_at": run_at, "cron": cron,
+                               "schedule_id": payload["schedule_id"]}
+            return
+        stored = current["payload"]
+        paused = current["state"] == "paused"
+        # An import sets no time zone, so a zone is always a person's choice.
+        edited = _import_digest(stored) != stored.get("import_digest") or bool(stored.get("__tz__"))
+        updates, replaced = None, ""
+        if stored.get("import_digest") != digest:
+            # The time and its zone belong together: a new source time read in
+            # the person's old zone would be a time nobody chose.
+            updates = {**{key: payload.get(key) for key in _IMPORTED_KEYS},
+                       "import_digest": digest, "__tz__": None}
+            replaced = _replaced_values(stored, payload) if edited else ""
+        elif paused or current["next_run"] or current["running"]:
+            notes.append(f"schedule already {'exists and is paused' if paused else 'active'} "
+                         f"(job {current['id']}); not duplicated"
+                         + ("; the workflow did not change, so changes made to this "
+                            "schedule in Lightwork were kept" if edited else ""))
+            return
+        # Future runs follow the definition. A run already admitted keeps the
+        # text it started with.
+        changed = change_definition(
+            queue, current["definition_id"], expected_revision=current["revision"],
+            state="paused" if paused else "active", actor=payload.get("owner") or "import",
+            rationale="Workflow imported again" + (f"; replaced: {replaced}" if replaced else ""),
+            payload_updates=updates,
+        )
+        result.schedule = {"job_id": changed["id"], "run_at": changed["next_run"],
+                           "cron": changed["cron"], "schedule_id": changed["schedule_id"],
+                           "updated": True}
+        if updates is None:
+            notes.append("schedule had no upcoming run and is scheduled again")
+        else:
+            notes.append("schedule updated to match the re-imported workflow"
+                         + ("; it is still paused" if paused else "")
+                         + ("; changes made to this schedule in Lightwork were replaced"
+                            + (f": {replaced}" if replaced else "") if edited else ""))
+    except CronError as e:
+        notes.append(f"could not create schedule from cron {cron!r}: {e}")
+    except (KeyError, ValueError) as e:
+        notes.append(f"schedule was not updated: {e}")
+
+
 def materialize(
     automation: ImportedAutomation,
     *,
@@ -43,6 +160,7 @@ def materialize(
     expected_generation: int | None = None,
     effect_guard: Callable[[], None] | None = None,
     complete: bool = False,
+    mark_schedule: bool = True,
 ) -> MaterializeResult:
     """Create the Template (and optionally a cron schedule) for one automation.
 
@@ -52,6 +170,9 @@ def materialize(
     ``channel``/``user_id`` carry the authenticated identity into scheduled runs.
     Webhook/event triggers are returned as ``suggested_trigger`` for the caller
     to wire (the webhook trigger store is a dashboard concern).
+    ``mark_schedule=False`` creates the schedule without the import's mark, so
+    no later import updates it: for a caller that cannot tell this workflow
+    from another one in the same import (same name, no source id).
     """
     from ..catalog_trust import shield_scan
     from ..templates import save_user_template
@@ -109,7 +230,6 @@ def materialize(
         elif trig.cron and queue is not None and save:
             from uuid import uuid4
 
-            from ..scheduler import CronError, schedule_cron
             # Match the dashboard /api/v1/schedules payload exactly: the worker's
             # start_goal handler mints a fresh goal from "text" on every fire and
             # requires it to be non-empty (a {"template": ...} payload would fail
@@ -117,12 +237,11 @@ def materialize(
             # the dashboard does, and carry a schedule_id for run provenance.
             # Authenticated callers may also pass owner/channel/user_id to match
             # the normal dashboard schedule path and avoid falling back to local.
-            schedule_id = uuid4().hex
             payload = {
                 "text": body,
                 "title": title[:200],
                 "__cron__": trig.cron,
-                "schedule_id": schedule_id,
+                "schedule_id": uuid4().hex,
             }
             if budget_dollars is not None:
                 payload["max_dollars"] = budget_dollars
@@ -137,14 +256,9 @@ def materialize(
                 if channel_value:
                     payload["channel"] = channel_value
                 payload["user_id"] = user_id_value
-            try:
-                job_id, run_at = schedule_cron(queue, trig.cron, "start_goal", payload)
-                result.schedule = {
-                    "job_id": job_id, "run_at": run_at, "cron": trig.cron,
-                    "schedule_id": schedule_id,
-                }
-            except CronError as e:
-                notes.append(f"could not create schedule from cron {trig.cron!r}: {e}")
+            # The import's own mark lets a re-import update this schedule
+            # instead of adding a second one or leaving stale text running.
+            _activate_schedule(queue, automation, payload, result, notes, mark=mark_schedule)
         elif trig.cron:
             result.suggested_trigger = {"kind": "schedule", "cron": trig.cron, "template": tname}
             notes.append("schedule recovered; pass a queue (or use the dashboard) to activate it")

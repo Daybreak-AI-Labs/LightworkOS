@@ -79,14 +79,27 @@ test('a missing add-on and typed questions are handled in words', async (t) => {
 
 test('task health shows the score and its parts', async (t) => {
   const markup = '<button id="task-health-check" data-goal="7">Check</button><p id="task-health-status"></p><div id="task-health-out"></div>';
-  const ui = await fixture(markup, () => response({score: 60, grade: 'D', finished: false, status: 'failed', tokens_used: 1500,
-    parts: [{label: 'Starting score (the task did not finish)', points: 40}, {label: 'Tool errors and retries', points: -8}]}));
+  let answer = {score: 60, grade: 'D', finished: false, ended: true, status: 'failed', tokens_used: 1500,
+    parts: [{label: 'Starting score (the task ended without finishing)', points: 40}, {label: 'Tool errors and retries', points: -8}]};
+  const ui = await fixture(markup, () => response(answer));
   t.after(() => ui.window.close());
   ui.document.getElementById('task-health-check').click();
   await ui.settle();
   assert.equal(ui.calls[0].url, '/api/v1/goals/7/health');
-  assert.match(ui.document.getElementById('task-health-status').textContent, /60 out of 100 \(grade D\)\. The task has not finished/);
+  assert.match(ui.document.getElementById('task-health-status').textContent, /60 out of 100 \(grade D\)\. The task ended without finishing/);
   assert.match(ui.document.getElementById('task-health-out').textContent, /Tool errors and retries-8/);
+  // A task that is still queued or running is not scored as a failure.
+  answer = {score: null, grade: '', finished: false, ended: false, status: 'active', tokens_used: 0, parts: []};
+  ui.document.getElementById('task-health-check').click();
+  await ui.settle();
+  assert.match(ui.document.getElementById('task-health-status').textContent, /has not finished, so it has no health score yet/);
+  assert.equal(ui.document.getElementById('task-health-out').textContent, '');
+  // A paused task will not end unaided: the words say who it waits on and what to do.
+  answer = {...answer, status: 'blocked', waiting_on_person: true};
+  ui.document.getElementById('task-health-check').click();
+  await ui.settle();
+  assert.match(ui.document.getElementById('task-health-status').textContent, /waiting on a person, so it has no health score yet\. See what it needs/);
+  assert.doesNotMatch(ui.document.getElementById('task-health-status').textContent, /when it ends/);
 });
 
 test('recorded steps are shown, filtered by kind, and a missing recording is explained', async (t) => {

@@ -38,7 +38,7 @@ from .budgeting import (
     _MeteredAgentResult as _MeteredAgentResult,
 )
 from .execution_plan import bind_execution_plan, pin_new_plan
-from .execution_trace import ExecutionTrace
+from .execution_trace import ExecutionTrace, scoped_id
 from .ir import Flow, FlowNode
 from .lifecycle import serialize_runs
 from .pause_snapshot import ApprovalPauseContext, build_human_pause
@@ -377,7 +377,7 @@ def execute(flow: Flow, *, agent_runner: AgentRunner, action_runner: ActionRunne
             agent_data,
             node.timeout,
             flow_id=flow.id,
-            node_id=node.id,
+            node_id=scoped_id(node.id),   # a nested step's tools are its own
             revision=definition_revision or flow.revision,
             cohort=evidence_cohort,
             run_id=rid,

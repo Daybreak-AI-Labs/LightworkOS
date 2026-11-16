@@ -221,6 +221,33 @@ class TestExecution:
         from maverick.flow import store
         assert store.load_run(run.run_id).nodes["b"]["outcome"] == 0.0   # persisted
 
+    def test_nested_steps_are_traced_apart_from_a_top_level_step_with_the_same_id(
+            self, tmp_path, monkeypatch):
+        # Nested bodies have their own id space (the drafter numbers each level
+        # from n0), so a repeated step must not be recorded as the top-level one.
+        _patch_home(tmp_path, monkeypatch)
+        body = Flow(id="body", name="b", start="a", nodes={
+            "a": FlowNode(id="a", kind=NODE_AGENT, brief="inner {{item}}")})
+        lanes = [Flow(id=f"lane{i}", name="l", start="a", nodes={
+            "a": FlowNode(id="a", kind=NODE_AGENT, brief=f"lane {i}")}) for i in range(2)]
+        f = Flow(id="fNest", name="f", start="br", nodes={
+            "br": FlowNode(id="br", kind="branch", condition="{{go}} == yes",
+                           if_true="a", if_false="fe"),
+            "a": FlowNode(id="a", kind=NODE_AGENT, brief="top-level step"),
+            "fe": FlowNode(id="fe", kind="foreach", items="rows", var="item", body=body,
+                           next="par"),
+            "par": FlowNode(id="par", kind="parallel", branches=lanes)})
+        assert f.validate() == []
+        run = execution.execute(
+            f, agent_runner=lambda brief, d: ("ok", 0.6 if brief == "lane 1" else 1.0),
+            action_runner=lambda t, p, d: ("", None), data={"go": "no", "rows": [1, 2, 3]})
+        assert run.status == "completed"
+        assert "a" not in run.nodes            # the untaken top-level step never ran
+        assert run.nodes["fe/a"]["status"] == "done" and "seconds" in run.nodes["fe/a"]
+        assert run.nodes["par/0/a"]["outcome"] == 1.0 and run.nodes["par/1/a"]["outcome"] == 0.6
+        stats = node_outcomes.stats("fNest")
+        assert "a" not in stats and stats["fe/a"]["n"] == 3 and stats["par/1/a"]["mean"] == 0.6
+
     def test_run_trace_survives_pause_and_resume(self, tmp_path, monkeypatch):
         _patch_home(tmp_path, monkeypatch)
         f = Flow(id="fTR", name="f", start="a", nodes={

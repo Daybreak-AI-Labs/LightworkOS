@@ -499,6 +499,52 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   days that do not hold the person, or the tip ledger. Before, their
   anchors and checkpoints stopped matching. This does not repair days an
   earlier erase already re-signed; they still report a change.
+- `maverick import run --activate-schedules` now marks the schedule it
+  creates. Importing a workflow again after it changed at the source updates
+  that schedule's task text, title and timing instead of leaving the old
+  text running; a paused schedule stays paused. Changes you made to the
+  schedule in Lightwork are kept while the source is unchanged, and replaced
+  (the time zone is reset with the time) when it changes; the import note
+  and the schedule's history give the replaced time, zone and title. A
+  workflow renamed at the source counts as a new one, and the note names the
+  schedule still running under the old name. A workflow that has no id at
+  the source cannot be told from another with the same name, so its
+  schedule is created once and never changed by a later import. A schedule
+  made before this release has no mark and is still left unchanged: remove
+  it once, then import again.
+- A flow run records a step inside a loop, a parallel lane, a try block or
+  a subflow under its container, for example `loop1/n0` or `fanout/1/n0`.
+  It no longer shows as, or counts towards, the top-level step with the same
+  id. Outcomes recorded earlier keep their old ids.
+- The task health check (`maverick diag health` and the task page) no longer
+  scores a queued, running or paused (blocked) task as a failure (40, grade
+  F). It says the task has no score yet; a paused task says it is waiting
+  on a person and to look at what it needs.
+- `grant_type = "authorization_code"` under `[mcp_servers.<name>.oauth]` (and
+  `[mcp_sidecar.oauth]`) is now refused when the settings are read. Nothing
+  could complete that sign-in, so such a server only ever failed to start.
+  Use `grant_type = "client_credentials"`, or a static `auth_token`.
+- Suggested instruction changes can target standing instructions only. The
+  "A named procedure" and "Something it remembers" choices (`--target skill`
+  and `--target memory` in `maverick refine propose`) are removed: nothing
+  read those changes, so approving one changed nothing. A waiting suggestion
+  of those kinds is closed when someone applies it or suggests a new change;
+  one already applied is listed as changing nothing and can be undone.
+- A release request on the Research page that cannot move on now shows as
+  "Stuck" and says why. If an action stopped before its result was saved,
+  "Retry: check what happened" reads the real state without repeating the
+  action. If the approval ran out, or stopped counting because the
+  reviewer's access changed, a release administrator can review it again.
+  If the release rules changed, even before the first review, discard the
+  request and make a new one. "Discard this request" closes a stuck or
+  unwanted request that was never published. A published request that
+  cannot be settled offers "Close this request" and ends as "Closed after
+  publication". Both are refused while the request is the version in use;
+  if its history is also full, publish another version, then close it.
+  A request's history holds 128 steps: renewed reviews and repeated failed
+  restores stop there, and the request can still be settled and closed.
+  The Copilot offers the same retry and discard for taught workflow
+  releases.
 
 ### Fixed
 

@@ -99,7 +99,7 @@ def repl_close_cmd(session_id: str) -> None:
 @main.group("refine")
 def refine_group() -> None:
     """Propose, approve, apply, and revert changes to the agent's own
-    prompts, skills, and memory.
+    standing instructions.
 
     A proposal never self-applies: with ``[harness_refine] require_approval``
     (the default) it parks a dual-control approval bound to the change's
@@ -110,9 +110,9 @@ def refine_group() -> None:
 @refine_group.command("propose")
 @click.option("--failure", required=True,
               help="What went wrong that motivates the change.")
-@click.option("--target", type=click.Choice(["prompt", "skill", "memory"]),
-              default="prompt", show_default=True)
-@click.option("--name", default="", help="Which prompt/skill/memory entry.")
+@click.option("--target", type=click.Choice(["prompt"]), default="prompt", show_default=True,
+              help="Only standing instructions (prompt) are read by the agent.")
+@click.option("--name", default="", help="A short name for this instruction.")
 @click.option("--change", required=True, help="The proposed new text.")
 @click.option("--rationale", default="", help="Why this should help.")
 @click.option("--by", "proposed_by", default="cli",

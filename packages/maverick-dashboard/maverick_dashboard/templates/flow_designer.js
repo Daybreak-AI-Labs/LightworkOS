@@ -26,7 +26,7 @@
 
   var flow = { id: '', name: '', start: '', nodes: [] };
   var rootFlow = flow;  // the top-level flow (save/run/history operate on this)
-  var stack = [];       // drill-in frames: {flow, selected} for each level above root
+  var stack = [];       // drill-in frames: {flow, selected, trace} for each level above root
   var crumbs = ['Main flow'];   // breadcrumb labels; length === stack.length + 1
   var proposals = {};   // node_id -> {to_kind, reason, inferred_tool} from grounded per-node outcomes
   var impacts = {};     // node_id -> {changed, applied, impact} measured before/after a rewrite
@@ -275,8 +275,11 @@
     });
   }
   function ports(node) { return FDPresentation.ports(node, W); }
-  function runClass(id) { return FDPresentation.runClass(id, runCursor, runState); }
-  function runBadge(id) { return FDPresentation.runBadge(id, runCursor, runState); }
+  // A run records a nested step under its container ("each/a", "fan/1/a"), so
+  // the open canvas reads results by the path the person drilled in through.
+  function traceId(id) { return stack.map(function (frame) { return frame.trace; }).join('') + id; }
+  function runClass(id) { return FDPresentation.runClass(traceId(id), runCursor, runState); }
+  function runBadge(id) { return FDPresentation.runBadge(traceId(id), runCursor, runState); }
 
   function render() {
     if (draftRecovery) draftRecovery.changed();
@@ -602,7 +605,8 @@
       sub = node.branches[index]; label = '🔱 ' + (node.label || 'Run together') + ' · path ' + (index + 1);
     }
     normalizeFlow(sub);
-    stack.push({ flow: flow, selected: selected });
+    stack.push({ flow: flow, selected: selected,
+      trace: node.id + '/' + (BODY_KINDS[kind] ? '' : index + '/') });
     crumbs.push(label);
     flow = sub; selected = null;
     if (window.__fdShowCanvas) window.__fdShowCanvas();
@@ -1068,16 +1072,16 @@
       })));
     });
     // last run outcome for this step (from the live/last run overlay)
-    var rs = runState[n.id];
-    if (rs || n.id === runCursor) {
+    var rs = runState[traceId(n.id)];
+    if (rs || traceId(n.id) === runCursor) {
       var badge = runBadge(n.id);
       var rl = document.createElement('p'); rl.className = 'fd__empty'; rl.style.marginTop = 'var(--space-2)';
-      rl.textContent = 'Last run: ' + (n.id === runCursor ? 'waiting here'
+      rl.textContent = 'Last run: ' + (traceId(n.id) === runCursor ? 'waiting here'
         : (rs.outcome === 1 ? 'worked' : (rs.outcome === 0 ? 'failed' : (rs.status === 'true' ? 'answered yes' : (rs.status === 'false' ? 'answered no' : 'ran')))))
         + (rs && rs.seconds != null ? ' · took ' + (rs.seconds < 1 ? 'under a second' : Math.round(rs.seconds) + ' seconds') : '') + ' ' + badge;
       props.appendChild(rl);
     }
-    var sig = signals.nodes[n.id];
+    var sig = signals.nodes[traceId(n.id)];
     if (sig && sig.n) {
       var sl = document.createElement('p'); sl.className = 'fd__empty'; sl.style.marginTop = 'var(--space-2)';
       var pct = Math.round(sig.mean * 100);
