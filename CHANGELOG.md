@@ -476,6 +476,29 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   value is ignored, logged, listed by `maverick doctor` and shown in Settings
   or on the agent page as "Set by your organisation"; the file still loads.
   Remove the looser values from the file to clear the warning.
+- An activity-log entry written just as the day ends now goes to the new
+  day's file once the finished day has its tip anchor. Before, it could be
+  added after the anchor, and `maverick audit verify` then reported that
+  day as changed for good. Nothing to do.
+- Checking audit checkpoints against a kept receipt or `--minimum-sequence`
+  now fails for any day whose checkpoint was replaced or retired after it,
+  naming the day and, for a replacement, the erasures behind it. Review it,
+  then keep the newest receipt; a scheduled check must do so after each
+  retention purge, and `maverick audit checkpoint retire` now prints the
+  sequence and digest to keep.
+- Replacing a checkpoint after an erasure needs the erase record that
+  `maverick erase` now stores. A day erased before this version has none:
+  tick "Replace it without an erasure record" on the activity-log page, or
+  publish with `--without-erase-record`. Either is written to the activity
+  log first, and a check against an older receipt reports that day.
+- An erase record vouches only for a checkpoint the day still matched when
+  the erase ran. If you keep checkpoints in a folder given only as
+  `--checkpoint-dir`, pass the same option to `maverick erase`; otherwise
+  replacing them needs the step above. A person is erased either way.
+- `maverick erase` after a signing-key rotation no longer re-signs audit
+  days that do not hold the person, or the tip ledger. Before, their
+  anchors and checkpoints stopped matching. This does not repair days an
+  earlier erase already re-signed; they still report a change.
 
 ### Fixed
 

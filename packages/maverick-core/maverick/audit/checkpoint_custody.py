@@ -290,14 +290,15 @@ class RetainedCheckpoints:
             raise CustodyUnconfirmed("The upload may have happened. Read the original retained result; do not repeat this request.") from exc
 
 
-def verify_current(transport, audit_dir, checkpoint_dir, *, keys=None):
+def verify_current(transport, audit_dir, checkpoint_dir, *, keys=None, erase_records=None):
     remote = transport.inventory()
     if not remote["versions"]:
         return {"verified": False, "reason": "No currently locked independent checkpoint was found.",
                 "expired_versions": remote["expired"], "complete_inventory": True}
     pin = max(remote["versions"], key=lambda row: row["sequence"])
     breaks = checkpoints.verify_checkpoints(audit_dir, checkpoint_dir, trusted_pubkeys=keys,
-        minimum_sequence=pin["sequence"], minimum_digest=pin["checkpoint_sha256"])
+        minimum_sequence=pin["sequence"], minimum_digest=pin["checkpoint_sha256"],
+        erase_records=erase_records)
     transport.guard()
     if time.monotonic() >= transport.deadline:
         raise CustodyRefused("Independent history verification did not complete within 60 seconds. No partial result was accepted.")

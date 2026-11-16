@@ -70,6 +70,25 @@ test('checkpoints list days to choose, offer a receipt per row and publish after
   assert.match(ui.document.getElementById('ops-ckpt-result').textContent, /Published checkpoint 2 for Jan 2, 2026/);
 });
 
+test('a day already erased can have its checkpoint replaced without an erasure record', async (t) => {
+  const ui = await fixture(partial('_ops_audit_checkpoints.html'), (url) => {
+    if (url.endsWith('/publish')) return response({published: true, sequence: 2, day: '2026-01-02'});
+    return response(CHECKPOINTS);
+  });
+  t.after(() => ui.window.close());
+  // Alone, the second box changes nothing: it only applies after an erasure.
+  ui.document.getElementById('ops-ckpt-norecord').checked = true;
+  ui.document.getElementById('ops-ckpt-publish').click();
+  await ui.settle();
+  assert.deepEqual(posts(ui, '/publish')[0].body, {day: '2026-01-02', after_erasure: false});
+  ui.document.getElementById('ops-ckpt-erasure').checked = true;
+  ui.document.getElementById('ops-ckpt-publish').click();
+  await ui.settle();
+  assert.match(ui.confirms[1], /without an erasure record/);
+  assert.deepEqual(posts(ui, '/publish')[1].body,
+    {day: '2026-01-02', after_erasure: true, without_erasure_record: true});
+});
+
 test('retiring a checkpoint asks first and sends only the row it showed', async (t) => {
   const ui = await fixture(partial('_ops_audit_checkpoints.html'), (url) => {
     if (url.endsWith('/retire')) return response({retired: true, day: '2026-01-01'});

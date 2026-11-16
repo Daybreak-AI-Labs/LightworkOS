@@ -5,13 +5,17 @@
   <h2 id="ops-ckpt-title">History checkpoints</h2>
   <p class="muted">A checkpoint is a signed note of how long one day of the log was and how it ended, kept in a
     separate folder. Checking it can detect changes to its retained prefix. Later entries after the checkpoint are outside that commitment. Keep its receipt outside this installation
-    to check whether the checkpoint history was replaced or rolled back.</p>
+    to check whether the checkpoint history was replaced or rolled back. A check with a receipt also reports any
+    day whose checkpoint was replaced or retired after that receipt, such as after an erasure.
+    Tick the second box only for a day that was already erased and has no erasure record.</p>
   {% if can_admin %}
   <div class="ops-row">
     <label for="ops-ckpt-day">Day
       <select id="ops-ckpt-day" class="select"><option value="">Loading days…</option></select></label>
     <label for="ops-ckpt-erasure" class="ops-actions"><input type="checkbox" id="ops-ckpt-erasure">
       The log changed after a person&rsquo;s data was erased</label>
+    <label for="ops-ckpt-norecord" class="ops-actions"><input type="checkbox" id="ops-ckpt-norecord">
+      Replace it without an erasure record</label>
     <button type="button" class="btn btn--primary" id="ops-ckpt-publish">Publish checkpoint</button>
   </div>
   {% endif %}

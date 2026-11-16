@@ -1147,6 +1147,21 @@ def test_prune_processed_messages(world):
         assert world.is_processed_message("sms", "to-prune") is False
 
 
+def test_audit_erase_records_are_stored_in_order_per_day(world):
+    from maverick.erasure_receipts import load_audit_erase_records, persist_audit_erase_record
+    from maverick.paths import current_tenant_id
+
+    tenant = current_tenant_id() or "shared"
+    rewrite = {"tenant_id": tenant, "day": "2026-01-02", "rows_before": 3, "rows_erased": 1}
+    first = persist_audit_erase_record(
+        world, erasure_id="a" * 32, rows_after=3, tip_hash="1" * 64, **rewrite)
+    second = persist_audit_erase_record(
+        world, erasure_id="b" * 32, rows_after=2, tip_hash="2" * 64, **rewrite)
+
+    assert load_audit_erase_records(world, "2026-01-02", expected_tenant=tenant) == [first, second]
+    assert load_audit_erase_records(world, "2026-01-03", expected_tenant=tenant) == []
+
+
 def test_erase_conversations_deletes_pg_rows(world, monkeypatch):
     from maverick.attachment_submissions import SubmissionStore
     from maverick.erasure_receipts import (

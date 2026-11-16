@@ -928,13 +928,33 @@ class AuditSigner:
             ) from e
         return _validated_tail_hash(data, operation=operation, path=self._path)
 
+    def _day_is_anchored(self) -> bool:
+        """Whether this is a finished day-file the tip ledger already anchors.
+
+        The caller holds the day lock, which ``ensure_anchors`` also holds from
+        reading the tip to writing the anchor, so the answer cannot change
+        while the row is appended. The ledger is read only for a day before
+        today.
+        """
+        day = self._path.stem
+        if self._path.suffix != ".ndjson" or not _DAY_RE.fullmatch(day) or day >= _today_utc():
+            return False
+        return day in _anchored_days(self._path.parent)
+
     def write(
         self,
         event: dict,
         *,
         idempotency_identity: tuple[str, str] | None = None,
+        refuse_anchored_day: bool = False,
     ) -> bool:
-        """Append one signed row, or acknowledge an identical prior identity."""
+        """Append one signed row, or acknowledge an identical prior identity.
+
+        ``refuse_anchored_day`` returns False, writing nothing, when the file
+        is a finished day already in the tip ledger: a row added after the
+        anchor makes ``verify_anchors`` report that day for good. The audit
+        log asks for it and writes the row to today's file instead.
+        """
         with self._lock:
             try:
                 from .writer import (
@@ -957,6 +977,8 @@ class AuditSigner:
                 # Ordering is always sidecar -> append lock; rewriters take only
                 # the sidecar, so the two cannot deadlock.
                 with cross_process_lock(self._path):
+                    if refuse_anchored_day and self._day_is_anchored():
+                        return False
                     ensure_private_file(self._path, 0o600)
                     with open(self._path, "a+b") as f, _file_append_lock(f):
                         # The append lock still covers tail read, hash/sign, and

@@ -370,7 +370,11 @@ def check(request, body):
     guard()
     transport = core.RetainedCheckpoints(target, account, workspace=current_tenant_id_strict(), actor=actor,
         guard=guard, keys=settings.trusted_pubkeys())
-    return core.verify_current(transport, data_dir("audit"), settings.checkpoint_dir(), keys=settings.trusted_pubkeys())
+    from maverick.erasure_receipts import audit_erase_records
+
+    from ._shared import _world
+    return core.verify_current(transport, data_dir("audit"), settings.checkpoint_dir(), keys=settings.trusted_pubkeys(),
+                               erase_records=audit_erase_records(_world))
 
 
 async def _call(function, *args):
