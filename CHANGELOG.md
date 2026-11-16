@@ -511,6 +511,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `view_video` now refuses to run without an active run budget, as
   `view_image` does, so its vision call is always charged and capped. Code
   that builds the tool directly must pass the run's budget.
+- On the Safety monitoring page the Copilot can now show where sensitive data
+  went, including what to do when earlier labels for a task cannot be read.
+  It needs the page's audit permission and the `reviews` control family in
+  `[copilot] operation_families`; it reads the record and changes nothing.
 
 ### Fixed
 
