@@ -484,6 +484,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - On Postgres, the time allowed to undo an approval now starts when the
   decision reaches the signed audit log, as it already did on SQLite. It
   used to start at the vote, so a slow audit log shortened it. Nothing to do.
+- A schedule is now paused when a worker stops during the last attempt of a
+  run and the next run was not queued. Before, the schedule stayed active
+  but never ran again. Review the paused schedule, then resume it.
 
 ### Fixed
 

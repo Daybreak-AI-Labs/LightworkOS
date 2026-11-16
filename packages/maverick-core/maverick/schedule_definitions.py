@@ -120,6 +120,29 @@ def _record_version(connection, row, *, payload, state, actor, rationale, now):
                        (row["id"], revision, encoded, state, actor, rationale, now))
 
 
+def pause_unarmed(connection, job, *, now):
+    """Pause the active schedule of a job row that ends with no next occurrence.
+
+    Without this the schedule stays "active" but nothing is queued for it, so
+    it silently never runs again. A row whose next occurrence is already armed
+    is left alone. Returns whether the schedule was paused.
+    """
+    if not job["recurrence_id"] or job["successor_id"] or json.loads(job["payload"]).get("__rearmed__"):
+        return False
+    definition = connection.execute(
+        "SELECT * FROM schedule_definitions WHERE id=?", (job["recurrence_id"],),
+    ).fetchone()
+    if definition is None or definition["state"] != "active":
+        return False
+    _record_version(
+        connection, definition, payload=json.loads(definition["payload"]),
+        state="paused", actor="system",
+        rationale=f"Job {job['id']} could not arm its next occurrence; review and resume the schedule",
+        now=now,
+    )
+    return True
+
+
 def _future_occurrence(queue, connection, row, payload, now):
     from .scheduler import next_run
 
