@@ -14680,6 +14680,7 @@ from .data_use_provider_api import router as data_use_provider_router  # noqa: E
 from .data_use_provider_audit_api import (  # noqa: E402
     router as data_use_provider_audit_router,
 )
+from .decision_requests_api import router as decision_requests_router  # noqa: E402
 from .ediscovery_api import router as ediscovery_router  # noqa: E402
 from .finance_api import router as finance_operations_router  # noqa: E402
 from .governance_agent_cross_suite_context_api import (  # noqa: E402
@@ -14737,6 +14738,7 @@ from .trust_center_branding_api import router as trust_center_branding_router  #
 router.include_router(ai_governance_loop_router)
 router.include_router(flow_action_episodes_router)
 router.include_router(copilot_operations_router)
+router.include_router(decision_requests_router)
 from .intent_value_api import router as intent_value_router  # noqa: E402
 
 router.include_router(intent_value_router)

@@ -1,0 +1,100 @@
+// Decisions a run is waiting for, on the Approvals page. Each card shows the
+// question, the options with what each one does, and the run's
+// recommendation. Choosing an option sends it; the run then continues.
+(function () {
+  'use strict';
+  var root = document.getElementById('decision-requests');
+  if (!root || typeof window.mvFetchJSON !== 'function') return;
+  var list = root.querySelector('[data-decision-list]');
+  var status = root.querySelector('[data-decision-status]');
+
+  function el(tag, text, cls) {
+    var node = document.createElement(tag);
+    if (text != null) node.textContent = text;
+    if (cls) node.className = cls;
+    return node;
+  }
+
+  function when(seconds) {
+    try { return new Date(seconds * 1000).toLocaleString(); } catch (_) { return ''; }
+  }
+
+  function card(d) {
+    var item = el('article', null, 'approval-item');
+    item.id = 'decision-' + d.id;
+    var head = el('div', null, 'approval-item__head');
+    var title = el('h3', d.question, 'approval-item__title');
+    title.id = 'decision-title-' + d.id;
+    item.setAttribute('aria-labelledby', title.id);
+    head.appendChild(title);
+    head.appendChild(el('span', d.area_label, 'badge pending'));
+    item.appendChild(head);
+    item.appendChild(el('p', 'Lightwork recommends option ' + d.recommended + '. ' + d.reason));
+    item.appendChild(el('p', 'Decide by ' + when(d.expires_at) + '. With no answer by then, the run stops without choosing.', 'muted'));
+    var form = el('form');
+    var set = el('fieldset');
+    set.appendChild(el('legend', 'Options'));
+    d.options.forEach(function (o) {
+      var row = el('div', null, 'decision-option');
+      var input = el('input');
+      input.type = 'radio'; input.name = 'decision-' + d.id; input.value = String(o.number);
+      input.id = 'decision-' + d.id + '-option-' + o.number;
+      input.required = true;
+      if (!d.can_answer) input.disabled = true;
+      var label = el('label');
+      label.htmlFor = input.id;
+      label.appendChild(el('strong', o.number + '. ' + o.label + (o.number === d.recommended ? ' (recommended)' : '')));
+      label.appendChild(el('span', ' ' + o.effect));
+      row.appendChild(input); row.appendChild(label);
+      set.appendChild(row);
+    });
+    form.appendChild(set);
+    var noteId = 'decision-' + d.id + '-note';
+    var noteLabel = el('label', 'Note for the run (optional)');
+    noteLabel.htmlFor = noteId;
+    var note = el('textarea');
+    note.id = noteId; note.maxLength = 2000; note.rows = 2;
+    if (!d.can_answer) note.disabled = true;
+    form.appendChild(noteLabel); form.appendChild(note);
+    var actions = el('div', null, 'approval-actions');
+    var send = el('button', 'Send my choice', 'btn');
+    send.type = 'submit';
+    if (!d.can_answer) send.disabled = true;
+    actions.appendChild(send);
+    form.appendChild(actions);
+    if (!d.can_answer && d.why_not) form.appendChild(el('p', d.why_not, 'muted'));
+    var said = el('p'); said.setAttribute('role', 'status');
+    form.appendChild(said);
+    form.addEventListener('submit', async function (event) {
+      event.preventDefault();
+      var picked = form.querySelector('input[type=radio]:checked');
+      if (!picked) { said.textContent = 'Choose one option first.'; return; }
+      send.disabled = true;
+      try {
+        var result = await window.mvFetchJSON('/api/v1/decisions/' + d.id + '/answer', {
+          method: 'POST', body: {option: Number(picked.value), note: note.value}, serverDetail: '',
+          timeout: 15000}, 'send your choice');
+        said.textContent = result.message;
+        set.disabled = true; note.disabled = true;
+      } catch (error) {
+        said.textContent = error.message;
+        send.disabled = false;
+      }
+    });
+    item.appendChild(form);
+    return item;
+  }
+
+  async function load() {
+    try {
+      var data = await window.mvFetchJSON('/api/v1/decisions', {cache: 'no-store', timeout: 15000}, 'load decisions');
+      list.textContent = '';
+      (data.decisions || []).forEach(function (d) { list.appendChild(card(d)); });
+      root.hidden = !(data.decisions || []).length;
+    } catch (error) {
+      root.hidden = false;
+      status.textContent = 'Decisions could not be loaded. Refresh this page.';
+    }
+  }
+  load();
+})();

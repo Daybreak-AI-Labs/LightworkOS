@@ -83,6 +83,13 @@
     </div>
   </section>{% endif %}
 
+  <section class="panel" id="decision-requests" aria-labelledby="decision-requests-title" hidden>
+    <h2 id="decision-requests-title">Decisions waiting</h2>
+    <p class="muted">A run stopped to ask a person to choose. It continues with the option you pick.</p>
+    <div class="approval-list" data-decision-list></div>
+    <p role="status" data-decision-status></p>
+  </section>
+  <script src="{{ static_url('lightwork-decisions.js') if static_url is defined else '/static/lightwork-decisions.js' }}" defer></script>
   <div class="panel">
     {% include "_approvals_queue.html" %}
   </div>

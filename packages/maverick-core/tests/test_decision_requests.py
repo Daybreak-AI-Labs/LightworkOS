@@ -176,3 +176,54 @@ async def test_an_unsaved_request_stops_the_run_before_it_continues(
     assert len(fake_llm.calls) == 1
     goal = world.get_goal(gid)
     assert goal.status == "blocked" and goal.result == dr.STOP_MESSAGE
+
+
+def test_postgres_keeps_a_decision_inside_its_named_workspace(postgres_test_dsn, monkeypatch):
+    from maverick.paths import tenant_scope
+    from maverick.world_model_backends.postgres import PostgresWorldModel
+
+    monkeypatch.setattr("maverick.outcome_pilot_start_gate.require_work_item_admission",
+                        lambda *a: None)
+    with PostgresWorldModel(dsn=postgres_test_dsn) as world:
+        with tenant_scope(tenant="tenant-a"):
+            gid = world.create_goal("tidy the retention settings", "", owner="alice")
+            world.set_goal_status(gid, "blocked")
+            decision = dr.request(world, gid, **dr.validate(_REQUEST))
+        with tenant_scope(tenant="tenant-b"):
+            assert dr.get(world, decision.id) is None and dr.list_open(world) == []
+            with pytest.raises(dr.DecisionRefused) as hidden:
+                dr.answer(world, decision.id, 1, actor="alice", is_admin=True)
+            assert hidden.value.reason == "not_found"
+        with tenant_scope(tenant="tenant-a"):
+            assert [d.id for d in dr.list_open(world)] == [decision.id]
+            outcome = dr.answer(world, decision.id, 2, actor="alice", is_admin=False)
+            assert outcome["resume"] and world.get_goal(gid).status == "pending"
+            assert '"option": 2' in dr.brief_block(world, gid)
+
+
+def test_the_slack_card_answers_under_the_same_owner_rule(tmp_path, monkeypatch):
+    from maverick import slack_interactive as slack
+
+    started = []
+    monkeypatch.setattr(dr, "dispatch_resume", lambda _world, goal_id: started.append(goal_id))
+    world = _world(tmp_path)
+    gid, decision = _paused_goal(world)
+    buttons = slack.decision_blocks(decision.public())[-1]["elements"]
+    assert [b["value"] for b in buttons] == [f"{decision.id}:1", f"{decision.id}:2"]
+    people = {"U1": "alice", "U2": "mallory"}
+
+    def press(user, button):
+        return slack.handle_block_action({"type": "block_actions", "user": {"id": user},
+                                          "actions": [button]}, world=world, principal_for=people.get)
+
+    assert "Only the person who started this run" in press("U2", buttons[0])["text"]
+    assert dr.get(world, decision.id).status == "open"
+    done = press("U1", buttons[1])
+    assert done["replace_original"] and "Keep two years" in done["text"]
+    assert dr.get(world, decision.id).chosen == 2 and started == [gid]
+
+    # An administrator-only decision has no buttons; a forged press is refused.
+    _gid2, admin_only = _paused_goal(world, area="governance")
+    assert slack.decision_blocks(admin_only.public())[-1]["type"] == "context"
+    forged = {"action_id": "lightwork_decide_1", "value": f"{admin_only.id}:1"}
+    assert "workspace administrator" in press("U1", forged)["text"]

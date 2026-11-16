@@ -458,13 +458,15 @@ def _require_admission(goal_id: int) -> None:
 
 def answer(world, decision_id: int, option: int, *, actor: str, is_admin: bool,
            note: str = "", channel: str = "dashboard", chat: bool = False,
-           now: float | None = None) -> dict[str, Any]:
+           recorded_as: str = "", now: float | None = None) -> dict[str, Any]:
     """Record ``actor``'s choice and reserve the run's restart.
 
     Returns ``{"decision": Decision, "resume": bool}``. ``resume`` is true when
     this was the last thing the run waited for and the goal moved back to
     ``pending``; the caller then starts it (:func:`resume_kwargs`). The answer,
-    the audit row and the move to ``pending`` commit together or not at all."""
+    the audit row and the move to ``pending`` commit together or not at all.
+    ``actor`` is who answers for the authorization rule; ``recorded_as`` names
+    them in the record when the surface has a better label (a local session)."""
     from .attachment_submissions import SubmissionConflict
     from .audit import AuditRefused, audit_event
     from .chat_threads import ChatThreads
@@ -487,6 +489,7 @@ def answer(world, decision_id: int, option: int, *, actor: str, is_admin: bool,
     if reason:
         raise DecisionRefused(reason, sentence)
     note = " ".join(str(note or "").split())[:MAX_NOTE]
+    recorded = recorded_as or actor or "unknown"
     threads = ChatThreads(world)
     store = threads.store
     resumable = resume_kwargs(world.get_goal(current.goal_id)) is not None
@@ -498,7 +501,7 @@ def answer(world, decision_id: int, option: int, *, actor: str, is_admin: bool,
                 "UPDATE decision_requests SET status = 'answered', chosen = ?, note = ?, "
                 "decided_by = ?, decided_at = ? WHERE id = ? AND goal_id = ? AND status = 'open'",
                 (int(option), store.seal(note, "decision_requests.note") if note else None,
-                 actor, now, int(decision_id), current.goal_id))
+                 recorded, now, int(decision_id), current.goal_id))
             if changed.rowcount != 1:
                 raise DecisionRefused("not_open", "This decision has already been answered.")
             waiting = store.execute(
@@ -513,7 +516,7 @@ def answer(world, decision_id: int, option: int, *, actor: str, is_admin: bool,
                                          except_goal=current.goal_id)
                 _require_admission(current.goal_id)
                 threads._pending(connection, current.goal_id)
-            audit_event("decision_answered", agent=actor or "unknown", goal_id=current.goal_id,
+            audit_event("decision_answered", agent=recorded, goal_id=current.goal_id,
                         decision_id=int(decision_id), area=current.area, option=int(option),
                         recommended=current.recommended, channel=channel,
                         followed_recommendation=int(option) == current.recommended,
@@ -528,7 +531,7 @@ def answer(world, decision_id: int, option: int, *, actor: str, is_admin: bool,
         raise DecisionRefused("unavailable", "Your answer could not be saved. "
                               "Nothing changed. Try again.") from exc
     label = (current.option(option) or {}).get("label", "")
-    _timeline(world, current.goal_id, f"{actor or 'A person'} chose “{label}” for: {current.question}")
+    _timeline(world, current.goal_id, f"{recorded} chose “{label}” for: {current.question}")
     decided = get(world, decision_id) or current
     return {"decision": decided, "resume": resume}
 
