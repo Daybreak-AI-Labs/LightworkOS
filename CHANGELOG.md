@@ -478,6 +478,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   value is ignored, logged, listed by `maverick doctor` and shown in Settings
   or on the agent page as "Set by your organisation"; the file still loads.
   Remove the looser values from the file to clear the warning.
+- An activity-log entry written just as the day ends now goes to the new
+  day's file once the finished day has its tip anchor. Before, it could be
+  added after the anchor, and `maverick audit verify` then reported that
+  day as changed for good. Nothing to do.
 
 ### Fixed
 

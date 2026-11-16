@@ -541,22 +541,14 @@ class AuditLog:
             try:
                 payload = _redact_event(event.to_dict())
                 identity = _audit_idempotency_identity(payload)
-                guard = (
-                    cross_process_lock(
-                        self.audit_dir / ".governed-audit-idempotency"
-                    )
-                    if identity is not None
-                    else contextlib.nullcontext()
-                )
-                with guard:
-                    if identity is not None and _prior_day_identity_exists(
-                        self.audit_dir,
-                        path,
-                        payload,
-                        identity,
-                    ):
-                        return True
-                    return self._append_payload(path, payload, identity)
+                if self._append_guarded(path, payload, identity):
+                    return True
+                # The day can end between picking its file and taking its
+                # lock; the signer refuses a day the tip ledger has anchored.
+                rolled = self._rotate_if_needed()
+                if rolled is None or rolled == path:
+                    return False
+                return self._append_guarded(rolled, payload, identity)
             except (OSError, TypeError, ValueError, RuntimeError) as e:
                 from .segments import SegmentReadError
 
@@ -568,6 +560,52 @@ class AuditLog:
                     raise
                 log.warning("audit: write failed: %s", e)
                 return False
+
+    def _append_guarded(
+        self,
+        path: Path,
+        payload: dict[str, Any],
+        identity: tuple[str, str] | None,
+    ) -> bool:
+        """Append to ``path`` unless an earlier day already holds the identity."""
+        guard = (
+            cross_process_lock(self.audit_dir / ".governed-audit-idempotency")
+            if identity is not None
+            else contextlib.nullcontext()
+        )
+        with guard:
+            if identity is not None and _prior_day_identity_exists(
+                self.audit_dir,
+                path,
+                payload,
+                identity,
+            ):
+                return True
+            return self._append_payload(path, payload, identity)
+
+    def _strict_append(self, path: Path, signer: Any, payload: dict[str, Any]) -> bool:
+        """Verify ``path``'s chain and append under one strict rewrite lock.
+
+        ``AuditSigner.write`` re-enters this path lock safely, then takes its
+        append-handle lock; an erase/re-anchor/other cooperative whole-file
+        rewriter therefore cannot replace the segment between verification
+        and append. Identity handling is the caller's; passing it into
+        AuditSigner would re-enter its legacy presence-only acknowledgement
+        path without cryptographic verification.
+        """
+        from .signing import verify_chain
+
+        with cross_process_lock(path, strict=True):
+            breaks = verify_chain(path)
+            if breaks:
+                first = breaks[0]
+                raise ValueError(
+                    "audit destination chain is not verifiable "
+                    f"({first.reason})"
+                )
+            return signer.write(
+                payload, idempotency_identity=None, refuse_anchored_day=True,
+            ) is True
 
     def record_strict_signed(self, event: AuditEvent) -> bool:
         """Append ``event`` only through an initialized signed writer.
@@ -624,25 +662,15 @@ class AuditLog:
                         identity,
                     ):
                         return True
-                    # Verify the destination chain and append while holding the
-                    # SAME strict rewrite lock. ``AuditSigner.write`` re-enters
-                    # this path lock safely, then takes its append-handle lock;
-                    # an erase/re-anchor/other cooperative whole-file rewriter
-                    # therefore cannot replace the segment between verification
-                    # and append. Identity handling was completed above; passing
-                    # it into AuditSigner would re-enter its legacy presence-only
-                    # acknowledgement path without cryptographic verification.
-                    from .signing import verify_chain
-
-                    with cross_process_lock(path, strict=True):
-                        breaks = verify_chain(path)
-                        if breaks:
-                            first = breaks[0]
-                            raise ValueError(
-                                "audit destination chain is not verifiable "
-                                f"({first.reason})"
-                            )
-                        return signer.write(payload, idempotency_identity=None) is True
+                    if self._strict_append(path, signer, payload):
+                        return True
+                    # The day ended under this write: the signer refuses a day
+                    # the tip ledger has anchored, so use today's file.
+                    rolled = self._rotate_if_needed()
+                    if rolled is None or rolled == path:
+                        return False
+                    signer = self._signer_for(rolled)
+                    return signer is not None and self._strict_append(rolled, signer, payload)
             except AuditRefused:
                 raise
             except (OSError, TypeError, ValueError) as error:
@@ -661,7 +689,9 @@ class AuditLog:
             # Sign the already-redacted payload so secrets never enter the
             # signed bytes either.
             return bool(
-                signer.write(payload, idempotency_identity=identity)
+                signer.write(
+                    payload, idempotency_identity=identity, refuse_anchored_day=True,
+                )
             )
         line = json.dumps(payload, default=str) + "\n"
         # Sidecar lock FIRST, exactly as AuditSigner.write does. Whole-file
