@@ -14,14 +14,20 @@ publication.  No checkpoint path ever acquires these locks in the reverse
 order.  Verification is deliberately lock-free and non-mutating so a verifier
 can operate against read-only/WORM media.
 
-A supersession (a new era for a day whose signed prefix changed) is signed
-with the same key as the day it replaces, so the key's holder could replace a
-commitment a verifier had already retained.  Two rules cover that.  A new
-supersession must be backed by an erase record: the row an erasure stores in
-the world model for each audit day it rewrites, which the signing key alone
-cannot write.  And verification against an externally retained sequence
-reports every supersession published after it, with or without such a record,
+A supersession (a new era for a day whose signed prefix changed) and a
+retirement (the day-file is gone) are signed with the same key as the log, so
+the key's holder could replace or drop a commitment a verifier had already
+retained.  The control is the report: verification against an externally
+retained sequence shows every supersession and retirement published after it,
 until the verifier has reviewed it and retains a newer sequence.
+
+A supersession is also expected to be backed by an erase record: the row an
+erasure stores in the world model for each audit day it rewrites.  That record
+is signed with the same audit key, and its table accepts an insert from
+anything that can write the world model, on SQLite and on Postgres.  It shows
+that an erasure of the day was recorded there, not that one was requested or
+that nothing else changed.  It tells an honest erasure apart from a bare
+re-sign and gives the verifier an erasure to look up; it is not proof.
 """
 from __future__ import annotations
 
@@ -890,8 +896,8 @@ def _supersession_report(
                 f"erase records could not be read ({type(exc).__name__})")
     if backing is not None:
         return ("superseded_after_pin",
-                f"erase record {backing.get('erasure_id')} erased "
-                f"{backing.get('rows_erased')} of {backing.get('rows_before')} rows")
+                f"erase record {backing.get('erasure_id')} says "
+                f"{backing.get('rows_erased')} of {backing.get('rows_before')} rows were erased")
     if hashes is None:
         return ("superseded_then_replaced",
                 "the day was replaced or retired again since, so this record can no longer "

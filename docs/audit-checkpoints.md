@@ -66,12 +66,15 @@ sequence and names the day:
   Check that your retention policy was due to delete that day, then retain
   the newest sequence and digest.
 
-- `superseded_after_pin`: an erase record stored by the erasure backs the
-  change. The line gives its erasure id and how many rows it erased. Compare
-  it with the erasure request you know about, then retain the newest sequence
-  and digest; the check is clean again from there.
+- `superseded_after_pin`: a stored erase record matches the change. The
+  line gives its erasure id and how many rows it says were erased. Match that
+  id against an erasure request you know about, then retain the newest
+  sequence and digest; the check is clean again from there. The record is
+  not proof on its own (see "What an erase record proves").
 - `superseded_without_erase_record`: no stored erase record matches the day
-  as it is now. Only the signing key vouches for the change, so compare the
+  as it is now. It was published with `--without-erase-record` (the activity
+  log then holds an `audit_checkpoint_publish_without_erase_record` entry),
+  by an earlier version, or by someone holding the signing key. Compare the
   day with a copy kept elsewhere before you retain anything newer.
 - `superseded_erase_record_unchecked`: the erase records could not be read.
   Run the check where the world model is available.
@@ -110,14 +113,16 @@ signed, explicit lifecycle records:
   and the exact superseded checkpoint into the new signed record.
 - That evidence is signed with the audit key, so the key's holder can produce
   it alone. Publication therefore also requires an erase record: `maverick
-  erase` stores one in the world model's immutable receipt table for each
-  audit day it rewrites, with the day, its row counts and its new tip hash
-  and nothing about the person. The day being published must still contain
+  erase` stores one in the world model's receipt table for each audit day it
+  rewrites, with the day, its row counts and its new tip hash and nothing
+  about the person. The day being published must still contain
   that tip, and the record must be newer than the checkpoint being replaced,
   so one erasure cannot explain a later change. A day erased before these
   records existed has none; publish it with `--without-erase-record`, and
   expect `superseded_without_erase_record` from anyone verifying against an
-  older retained sequence.
+  older retained sequence. The command writes an activity-log entry naming
+  who ran it, the day and both sequences before it publishes, and publishes
+  nothing if that entry cannot be written.
 - `maverick erase` checks each day it is about to rewrite against the
   checkpoint folders this installation knows (beside the log, the custody
   store, and the folder chosen in the checkpoint settings). A day that no
@@ -138,6 +143,27 @@ Retirement is accepted only when the signed retention ledger names the exact
 day, row count, and tip committed by the checkpoint. Prior evidence remains
 immutable; the lifecycle record explains why it is no longer compared with the
 current filesystem.
+
+## What an erase record proves
+
+An erase record is a row in the world model's receipt table, signed with the
+audit key. The table refuses updates and early deletes, but it accepts an
+insert from anything that can write the world model, on SQLite and on
+Postgres alike, and nothing checks that an erasure took place.
+
+- It shows that something holding the signing key and write access to the
+  world model recorded an erasure of that day, with those row counts.
+- It does not show that anyone asked for the erasure, that the erased rows
+  were the person's, or that nothing else in the day changed. Someone with
+  both the key and the database can store one for a change of their own.
+- `maverick erase` narrows the last point only for checkpoint folders it
+  knows, and only while that folder is in place when the erase runs.
+
+The control is the report, not the record: every supersession and retirement
+published after your retained sequence is shown to you, with or without an
+erase record, until you retain a newer sequence. Keep that sequence and digest
+where the installation cannot change them, and review each reported day
+against what you know was erased or deleted.
 
 Run publication on a short, risk-appropriate schedule and after
 security-sensitive changes. Checkpoints complement rather than replace

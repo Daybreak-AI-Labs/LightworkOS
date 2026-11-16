@@ -836,9 +836,11 @@ def load_audit_erase_records(
 ) -> list[dict[str, Any]]:
     """The verified erase records of one audit day, oldest first.
 
-    Read from the world model's immutable receipt store, which the audit
-    signing key alone cannot write. A stored row that does not verify is not
-    evidence and is left out; an unreadable store raises.
+    Read from the world model's receipt store. Its rows cannot be changed or
+    deleted early, but anything that can write the world model can insert
+    one, and they are signed with the audit key: a record shows that an
+    erasure of the day was recorded here, nothing more. A stored row that
+    does not verify is left out; an unreadable store raises.
     """
     if not isinstance(day, str) or not _DAY_RE.fullmatch(day):
         raise ErasureReceiptError("audit erase record day is invalid")
@@ -901,8 +903,9 @@ def persist_audit_erase_record(
 ) -> dict[str, Any]:
     """Sign and insert the record of one audit day an erasure rewrote.
 
-    A later checkpoint that replaces the day's earlier one cites this record:
-    whoever holds only the signing key cannot add it to the world model.
+    A later checkpoint that replaces the day's earlier one must be backed by
+    this record. Nothing here checks that an erasure took place: any caller
+    with the signing key and write access to the world model can store one.
     """
     issued = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     for ordinal in range(1, MAX_AUDIT_ERASE_RECORDS_PER_DAY + 1):

@@ -140,7 +140,7 @@
     const view = el('acc-check-result'); view.replaceChildren();
     const problems = {checkpoint_rollback:'Local checkpoints are older than independently retained history.', checkpoint_fork:'The local checkpoint was replaced with a different commitment.',
       checkpoint_missing:'Local checkpoint history is missing.', checkpoint_store_invalid:'The local checkpoint history could not be trusted.',
-      superseded_after_pin:'A day\'s checkpoint was replaced after the newest independent copy. An erasure record is on file for it. Check that erasure, then keep a new independent copy.',
+      superseded_after_pin:'A day\'s checkpoint was replaced after the newest independent copy. An erasure record is on file for it. Check it against an erasure you know about, then keep a new independent copy.',
       superseded_without_erase_record:'A day\'s checkpoint was replaced after the newest independent copy, and no erasure record is on file for it. Compare that day\'s log with a copy kept somewhere else.',
       superseded_erase_record_unchecked:'A day\'s checkpoint was replaced after the newest independent copy. The erasure records could not be read, so check again.',
       superseded_then_replaced:'A day\'s checkpoint was replaced more than once after the newest independent copy. Only the newest replacement can still be compared with the log.',

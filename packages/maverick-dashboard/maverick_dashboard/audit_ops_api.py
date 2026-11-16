@@ -87,8 +87,8 @@ _BREAK_TEXT = {
 #: recorded here; it does not show who asked for it.
 _AFTER_RECEIPT_TEXT = {
     "superseded_after_pin": "The checkpoint for {day} was replaced after your kept receipt. An erasure "
-                            "record is on file for that day. Check that erasure, then keep a receipt "
-                            "for the newest checkpoint.",
+                            "record is on file for that day. Check it against an erasure you know "
+                            "about, then keep a receipt for the newest checkpoint.",
     "superseded_without_erase_record": "The checkpoint for {day} was replaced after your kept receipt, and "
                                        "no erasure record is on file for it. Compare that day's "
                                        "log with a copy kept somewhere else.",
