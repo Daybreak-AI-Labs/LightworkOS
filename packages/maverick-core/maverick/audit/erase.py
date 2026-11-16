@@ -127,7 +127,9 @@ def _arrived_signed(event: dict | None) -> bool:
     return bool(event and event.get("sig") and event.get("hash") and event.get("key_id"))
 
 
-_RESTORE_DAY = "Restore the day from a backup (`maverick backup restore`)"
+# A backup taken before an earlier erasure still holds that person's rows.
+_RESTORE_DAY = ("Restore the day from a backup (`maverick backup restore`), then erase again "
+                "anyone who was erased from it after that backup was made")
 _DAY_ANCHOR_BREAKS = frozenset({
     "anchor_tip_mismatch", "anchor_count_mismatch", "anchored_file_deleted", "unreadable_segment",
 })

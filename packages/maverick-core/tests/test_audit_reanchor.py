@@ -327,6 +327,8 @@ def test_erase_checks_the_chosen_checkpoint_folder_too(_isolate_keys, tmp_path):
 
     (blocker,) = erase_blockers("telegram", "alice", audit_dir=ad)
     assert "published checkpoint" in blocker
+    # Restoring is the only repair, and an older backup holds erased rows.
+    assert "backup" in blocker and "erase again anyone who was erased" in blocker
     with pytest.raises(RuntimeError):
         scrub_user("telegram", "alice", audit_dir=ad, strict=True)
     assert path.read_bytes() == before
