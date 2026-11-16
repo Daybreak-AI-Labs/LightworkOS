@@ -89,6 +89,9 @@ def test_an_unfinished_task_has_no_score_until_it_ends(tmp_path, monkeypatch):
     assert result.output == (f"goal #{gid} (active):\n"
                              "No health score yet: the task has not finished.\n")
     world = world_model.open_world()
+    # Blocked is a pause (a question, an approval or a limit): the task can go on.
+    world.set_goal_status(gid, "blocked", result="waiting for an answer")
+    assert goal_health(world, gid)[1] is None
     world.set_goal_status(gid, "failed")
     assert goal_health(world, gid)[1].score == 40      # a task that ended without finishing
     world_model.close_world_if_owned(world)

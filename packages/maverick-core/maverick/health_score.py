@@ -73,8 +73,9 @@ def compute_health(
 
 
 # A goal in one of these states has ended; anything else is still queued,
-# running or waiting, and has no outcome to score.
-_ENDED = frozenset({"done", "completed", "failed", "cancelled", "blocked", "error"})
+# running or waiting, and has no outcome to score. ``blocked`` is a pause (an
+# unanswered question, a pending approval, a limit): the task can go on.
+_ENDED = frozenset({"done", "completed", "failed", "cancelled", "error"})
 
 
 def goal_health(world, goal_id: int):
