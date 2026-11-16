@@ -488,9 +488,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   read every record, instead of reporting that nothing needs attention.
   Press Refresh to check again.
 - The diagram tool now works in container sandboxes: the source goes to the
-  renderer on standard input and the image is written straight into the
-  workspace. A Mermaid output name must end with `.svg`, `.png` or `.pdf`,
-  and a source over 64 KiB is refused outside the local sandbox.
+  renderer on standard input and the image is written in the workspace, under
+  a temporary name that is moved into place when the render succeeds. A
+  source over 64 KiB is refused outside the local sandbox.
 - The accessibility checker's browser now connects through a local proxy that
   refuses internal addresses and applies the destination policy to every
   host a page loads, and the page itself is checked against that policy. It
