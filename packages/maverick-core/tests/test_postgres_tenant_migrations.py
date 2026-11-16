@@ -338,7 +338,7 @@ def test_postgres_halt_clear_is_generation_bound(monkeypatch):
 
 
 def test_goal_decoder_keeps_owner_and_execution_principal_distinct(monkeypatch):
-    monkeypatch.setattr(pg, "_unseal", lambda value, context=None: value)
+    monkeypatch.setattr(pg, "_unseal", lambda value, context=None, **_kw: value)
 
     goal = pg._dec_goal_row(
         (
