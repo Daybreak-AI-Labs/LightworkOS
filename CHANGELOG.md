@@ -503,6 +503,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the first 200 characters. Nothing to do.
 - With `[limits] file_write_quota_mb` set, a file write or edit that fails
   no longer counts against the run's quota. Nothing to do.
+- `view_video` and `wasm_run` now work in container sandboxes: commands get
+  workspace-relative paths, video frames are staged in a hidden folder in
+  the workspace and removed afterwards, and the programs are looked for in
+  the sandbox, not on the host. A WebAssembly module now sees a granted
+  folder under its workspace-relative name (`data`), not its host path.
 
 ### Fixed
 

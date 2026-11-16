@@ -172,7 +172,7 @@ def test_view_video_passes_sandbox_to_run_cmd(monkeypatch, tmp_path):
         if cmd and cmd[0] == "ffprobe":
             return (0, "5.0", "")
         if "image2" in cmd:  # frame extraction writes the -f image2 target
-            Path(cmd[-1]).write_bytes(b"\xff\xd8jpeg")
+            (tmp_path / cmd[-1]).write_bytes(b"\xff\xd8jpeg")
         return (0, "", "")
 
     monkeypatch.setattr(vv, "_need", lambda b: None)
@@ -189,14 +189,64 @@ def test_view_video_passes_sandbox_to_run_cmd(monkeypatch, tmp_path):
 def test_video_audio_uses_its_private_generated_file(monkeypatch, tmp_path):
     from maverick.tools import voice
 
+    staged = tmp_path / ".stage"
+    staged.mkdir()
+    heard: list[Path] = []
+
     def extract(_sandbox, cmd, *, timeout=600.0):
-        Path(cmd[-1]).write_bytes(b"ID3audio")
+        (tmp_path / cmd[-1]).write_bytes(b"ID3audio")
         return 0, "", ""
+
+    def whisper(path, _lang):
+        heard.append(path)
+        return path.read_bytes().decode()
 
     monkeypatch.setattr(vv, "_run_cmd", extract)
     monkeypatch.setattr(voice, "_default_stt_backend", lambda: "local")
-    monkeypatch.setattr(voice, "_whisper_local", lambda path, _lang: path.read_bytes().decode())
-    assert vv._transcribe_track("source.mp4", str(tmp_path), object()) == "ID3audio"
+    monkeypatch.setattr(voice, "_whisper_local", whisper)
+    sandbox = SimpleNamespace(workdir=tmp_path)
+    assert vv._transcribe_track("./source.mp4", str(staged), sandbox) == "ID3audio"
+    # The transcriber reads a copy outside the workspace, which the agent cannot swap.
+    assert heard and not heard[0].resolve().is_relative_to(tmp_path.resolve())
+
+
+def test_view_video_gives_the_sandbox_only_workspace_relative_paths(monkeypatch, tmp_path):
+    """A container mounts the workspace at its own root: it cannot see the
+    host's temp folder or a host path into the workspace. Frames are staged
+    inside the workspace, named relative to it, and read back with care,
+    because the agent can write there too."""
+    workspace = tmp_path / "ws"
+    (workspace / "clips").mkdir(parents=True)
+    (workspace / "clips" / "v.mp4").write_bytes(b"\x00")
+    secret = tmp_path / "host-secret.jpg"
+    secret.write_bytes(b"HOST-ONLY")
+    commands: list[list[str]] = []
+
+    def _container(sandbox, cmd, *, timeout=600.0):
+        commands.append(cmd)
+        assert not any(Path(tok).is_absolute() for tok in cmd), cmd
+        if cmd[0] == "ffprobe":
+            return (0, "5.0", "")
+        out = workspace / cmd[-1]
+        if out.name == "frame_001.jpg":
+            out.symlink_to(secret)  # planted by something else in the workspace
+        else:
+            out.write_bytes(b"\xff\xd8jpeg")
+        return (0, "", "")
+
+    monkeypatch.setattr(vv, "_run_cmd", _container)
+    monkeypatch.setattr("maverick.llm.LLM", _FakeLLM)
+    from maverick.budget import Budget
+
+    out = view_video(SimpleNamespace(workdir=str(workspace)), budget=Budget(max_dollars=1.0)).fn(
+        {"source": "clips/v.mp4", "num_frames": 3})
+
+    assert out == "a cat plays the piano, then jumps down"
+    assert all(cmd[cmd.index("-i") + 1] == "./clips/v.mp4" for cmd in commands[1:])
+    assert commands[0][-1] == "./clips/v.mp4"
+    images = [b for b in _FakeLLM.last_messages[0]["content"] if b.get("type") == "image"]
+    assert len(images) == 2  # the planted link was not followed
+    assert sorted(p.name for p in workspace.iterdir()) == ["clips"]  # staging folder removed
 
 
 def test_view_video_refuses_model_override_and_propagates_stop_signals(monkeypatch, tmp_path):

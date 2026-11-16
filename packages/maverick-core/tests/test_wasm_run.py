@@ -48,11 +48,9 @@ def test_run_builds_command_with_grants(tmp_path, have_wasmtime):
         "dirs": ["data"], "env": {"MODE": "fast"},
     })
     cmd = sb.commands[0]
-    assert cmd.startswith("wasmtime run")
-    assert "--dir" in cmd and str((tmp_path / "data").resolve()) in cmd
-    assert "--env MODE=fast" in cmd
-    assert str((tmp_path / "calc.wasm").resolve()) in cmd
-    assert "-- 6 7" in cmd
+    # Named relative to the workspace: a container sandbox mounts it at its
+    # own root and cannot see the host path.
+    assert cmd == "wasmtime run --dir ./data --env MODE=fast ./calc.wasm -- 6 7"
     assert out.strip() == "42"
 
 
