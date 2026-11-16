@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json as _json
 import logging
+from collections import Counter
 
 import click
 
@@ -69,20 +70,26 @@ def _load_raws(from_file: str | None, source: str) -> list[dict]:
     return get_importer(source).fetch()
 
 
-def _active_cron_jobs(queue) -> dict[tuple[str, str], tuple[int, str]]:
-    """``(title, cron) -> (job id, goal text)`` for unmarked cron goal jobs.
+def _active_cron_jobs(queue, *, marked: bool = False) -> dict[tuple[str, str], tuple[int, str]]:
+    """``(title, cron) -> (job id, goal text)`` for cron goal jobs.
 
     A job that carries ``imported_from`` is an import's own schedule;
-    ``materialize`` finds and updates it, so it is not listed here.
+    ``materialize`` finds and updates it, so it is listed only when ``marked``
+    is set (for a workflow that cannot be told apart by its mark).
     """
     active: dict[tuple[str, str], tuple[int, str]] = {}
     for job in queue.iter_pending("start_goal", include_running=True):
         payload = job.payload if isinstance(job.payload, dict) else {}
         cron = payload.get("__cron__")
-        if cron and not payload.get("imported_from"):
+        if cron and (marked or not payload.get("imported_from")):
             active.setdefault((str(payload.get("title") or ""), str(cron)),
                               (job.id, str(payload.get("text") or "")))
     return active
+
+
+_SHARED_NAME = ("another workflow in this import has the same name and no id, so their "
+                "schedules cannot be told apart later; an import creates this schedule "
+                "once and never changes it")
 
 
 def _reuse_or_replace(queue, active, automation) -> tuple[int | None, str | None]:
@@ -137,20 +144,29 @@ def import_run_cmd(ctx, source, from_file, dry_run, activate_schedules, as_json)
         raise click.ClickException(f"no importable automations found from {source!r}")
 
     queue = None
-    active: dict[tuple[str, str], int] = {}
+    active: dict[tuple[str, str], tuple[int, str]] = {}
+    every: dict[tuple[str, str], tuple[int, str]] = {}
     if activate_schedules and not dry_run:
         from ..job_queue import JobQueue
         queue = JobQueue()  # default queue DB path
         active = _active_cron_jobs(queue)
+        every = _active_cron_jobs(queue, marked=True)
+    # Two workflows with one name and no id would share a mark, and each
+    # would then rewrite the other's schedule. They are scheduled unmarked.
+    marks = Counter(a.import_ref() for a in automations)
 
     results = []
     for a in automations:
         # materialize updates the schedule an earlier import marked as its
-        # own. An unmarked look-alike is kept, never duplicated or rewritten.
-        existing, note = (_reuse_or_replace(queue, active, a) if queue is not None
-                          else (None, None))
-        res = materialize(a, save=not dry_run,
+        # own. An unmarked look-alike is kept, never duplicated or rewritten;
+        # so is any look-alike of a workflow that shares its mark.
+        shared = marks[a.import_ref()] > 1
+        existing, note = (_reuse_or_replace(queue, every if shared else active, a)
+                          if queue is not None else (None, None))
+        res = materialize(a, save=not dry_run, mark_schedule=not shared,
                           queue=None if existing is not None else queue)
+        if shared and queue is not None:
+            res.notes.append(_SHARED_NAME)
         if existing is not None:
             res.suggested_trigger = None
             res.notes = [n for n in res.notes if not n.startswith("schedule recovered;")]

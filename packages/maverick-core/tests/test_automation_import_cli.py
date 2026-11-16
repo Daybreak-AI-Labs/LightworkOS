@@ -133,6 +133,45 @@ def test_reimport_leaves_a_schedule_it_did_not_create_unchanged(tmp_path, monkey
     assert len(jobs) == 1 and jobs[0].payload["text"] == "older text"
 
 
+def test_two_workflows_with_one_name_and_no_id_never_overwrite_each_other(tmp_path, monkeypatch):
+    # n8n names every new workflow "My workflow"; an export may carry no ids.
+    from maverick import job_queue
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / ".maverick"))
+    monkeypatch.setattr(job_queue, "DEFAULT_DB", tmp_path / "jobs.db")
+
+    def workflow(cron, step):
+        return {"name": "My workflow", "active": True,
+                "nodes": [{"name": "Cron", "type": "n8n-nodes-base.cron", "parameters": {"cronExpression": cron}},
+                          {"name": step, "type": "n8n-nodes-base.set", "parameters": {}}],
+                "connections": {"Cron": {"main": [[{"node": step}]]}}}
+
+    def schedules():
+        return sorted((job.payload["__cron__"], "Send invoices" in job.payload["text"],
+                       "Back up files" in job.payload["text"])
+                      for job in job_queue.JobQueue().iter_pending("start_goal"))
+
+    f = tmp_path / "wf.json"
+    f.write_text(json.dumps([workflow("0 3 * * *", "Send invoices"), workflow("0 5 * * *", "Back up files")]))
+    args = ["import", "run", "n8n", "--from-file", str(f), "--activate-schedules", "--json"]
+    first = _run(args)
+    assert first.exit_code == 0, first.output
+    both = [("0 3 * * *", True, False), ("0 5 * * *", False, True)]
+    assert schedules() == both
+    assert all(any("same name" in note for note in item["notes"]) for item in json.loads(first.output))
+
+    assert _run(args).exit_code == 0
+    assert schedules() == both                                # a re-import swaps nothing
+
+    # One of them changes: neither schedule is rewritten, and the note says so.
+    f.write_text(json.dumps([workflow("0 3 * * *", "Send reminders"), workflow("0 5 * * *", "Back up files")]))
+    changed = _run(args)
+    assert changed.exit_code == 0, changed.output
+    assert schedules() == both
+    assert any("different text" in note for note in json.loads(changed.output)[0]["notes"])
+
+
 def test_untranslatable_n8n_schedule_is_reported_not_silently_dropped(tmp_path):
     good = {"id": "1", "name": "Flow", "active": True,
             "nodes": [{"name": "Hook", "type": "n8n-nodes-base.webhook", "parameters": {}}],

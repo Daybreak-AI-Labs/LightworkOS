@@ -111,21 +111,24 @@ def list_definitions(queue, *, owner=None):
                 if owner is None or json.loads(row["payload"]).get("owner", "") == owner]
 
 
-def imported_definition(queue, imported_from, *, owner=""):
-    """The schedule an imported automation created earlier, with its stored payload.
+def imported_definitions(queue, *, owner=""):
+    """The live schedules that imports created for ``owner``, newest first.
 
-    Matched by the import's own mark, never by a title or text that another
-    schedule could share. A retired schedule keeps its history and is not reused.
+    Each carries its stored payload, whose ``imported_from`` is the import's
+    own mark: a re-import finds its schedule by that, never by a title or text
+    another schedule could share. A retired schedule keeps its history and is
+    not reused.
     """
     with queue._conn() as connection:
         rows = connection.execute(
             "SELECT * FROM schedule_definitions WHERE state!='retired' ORDER BY created_at DESC,id"
         ).fetchall()
+        found = []
         for row in rows:
             payload = json.loads(row["payload"])
-            if payload.get("imported_from") == imported_from and payload.get("owner", "") == owner:
-                return {**public_definition(connection, row), "payload": payload}
-    return None
+            if payload.get("imported_from") and payload.get("owner", "") == owner:
+                found.append({**public_definition(connection, row), "payload": payload})
+    return found
 
 
 def _record_version(connection, row, *, payload, state, actor, rationale, now):

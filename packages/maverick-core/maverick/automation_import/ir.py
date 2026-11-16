@@ -337,9 +337,18 @@ class ImportedAutomation:
         # when their truncated bases collide.
         base = slugify(f"{self.source}-{self.name}")[:64].rstrip("-") or "imported"
         if self.source_id:
-            suffix = hashlib.sha256(self.source_id.encode("utf-8")).hexdigest()[:6]
-            return f"{base}-{suffix}"
+            return f"{base}-{self._id_suffix()}"
         return base
+
+    def _id_suffix(self) -> str:
+        return hashlib.sha256(self.source_id.encode("utf-8")).hexdigest()[:6]
+
+    def is_other_name_of(self, mark: str) -> bool:
+        """Whether ``mark`` belongs to the same source id under another name:
+        this workflow before a rename at the source, or another export's
+        workflow that happens to share the id."""
+        return bool(self.source_id) and mark != self.import_ref() and (
+            mark.startswith(f"{self.source}:") and mark.endswith(f"-{self._id_suffix()}"))
 
     def import_ref(self) -> str:
         """The mark a schedule created from this automation carries.
