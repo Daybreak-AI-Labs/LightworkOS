@@ -804,43 +804,20 @@ class AuditLog:
             self._signer_path = None
 
     def reanchor_after_erase(self) -> int:
-        """Refresh signed audit files after a GDPR erase.
+        """Drop the cached signer after a GDPR erase. Rewrites nothing.
 
-        Erase helpers verify each signed file before mutating it and re-anchor
-        only those modified files. This compatibility hook therefore only
-        attempts safe/idempotent re-anchors: ``reanchor_file`` refuses to
-        rewrite a chain that is not already clean unless the caller explicitly
-        supplies proof that the pre-erase file was verified.
-
-        No-op (returns 0) when signing is disabled -- an unsigned log has no
-        chain to repair. Never raises: a re-anchor failure must not undo a
-        completed erasure.
+        The erase helpers re-sign and re-anchor each day-file they change, and
+        only those. This hook used to offer every file in the audit folder to
+        ``reanchor_file`` as well; after a signing-key rotation that re-signed
+        every earlier day and the tip ledger under the new key without
+        anchoring them again, so their anchors and checkpoints stopped
+        matching. It now only forgets the in-memory chain head, so the next
+        write re-reads the tail an erase may have rewritten. Returns 0.
         """
         with self._lock:
-            # Re-anchoring rewrites the day file, so the in-memory chain head
-            # is now stale -- force a rebuild on the next write.
             self._signer = None
             self._signer_path = None
-            if not self._signing_enabled:
-                return 0
-            try:
-                from .signing import reanchor_file
-            # failure-policy: best_effort
-            except Exception:  # pragma: no cover - crypto missing
-                return 0
-            total = 0
-            if not self.audit_dir.exists():
-                return 0
-            for path in sorted(self.audit_dir.glob("*.ndjson")):
-                try:
-                    n = reanchor_file(path)
-                # failure-policy: fail_soft_with_audit
-                except Exception as e:  # pragma: no cover - defensive
-                    log.warning("audit: reanchor failed for %s: %s", path, e)
-                    continue
-                if n > 0:
-                    total += n
-            return total
+        return 0
 
     def tail(self, n: int = 50, day: str | None = None, *, report=None) -> list[dict[str, Any]]:
         """Return the last ``n`` events from ``day`` (default today)."""

@@ -386,3 +386,43 @@ def test_erase_refuses_when_a_tip_ledger_that_existed_is_gone(
         scrub_user("telegram", "alice", audit_dir=ad, strict=True)
     assert path.read_bytes() == before_bytes
     assert not (ad / ANCHOR_FILENAME).exists()
+
+
+@pytest.mark.usefixtures("local_audit_key_custody")
+def test_erase_after_a_key_rotation_leaves_other_days_and_their_anchors_alone(
+    _isolate_keys, tmp_path,
+):
+    """Only days that hold the subject are rewritten, and each is re-anchored.
+
+    The follow-up re-anchor used to re-sign every day-file and the tip ledger
+    under the new key without anchoring them again."""
+    from maverick.audit.erase import scrub_user
+    from maverick.audit.signing import (
+        ANCHOR_FILENAME,
+        AuditSigner,
+        ensure_anchors,
+        rotate_audit_keypair,
+        verify_anchors,
+        verify_chain,
+    )
+    from maverick.audit.writer import AuditLog
+
+    ad = tmp_path / "audit"
+    held, other = ad / "2000-01-01.ndjson", ad / "2000-01-02.ndjson"
+    signer = AuditSigner(held)
+    assert signer.write({"kind": "tool_call", "channel": "telegram", "user_id": "alice"})
+    assert signer.write({"kind": "tool_call", "tool": "read"})
+    assert AuditSigner(other).write({"kind": "tool_call", "tool": "read"})
+    assert ensure_anchors(ad) == 2
+    untouched = {path: path.read_bytes() for path in (other, ad / ANCHOR_FILENAME)}
+    rotate_audit_keypair()
+
+    assert scrub_user("telegram", "alice", audit_dir=ad, strict=True)[0] == 1
+    ledger_after_erase = (ad / ANCHOR_FILENAME).read_bytes()
+    assert AuditLog(audit_dir=ad, sign=True).reanchor_after_erase() == 0
+
+    assert other.read_bytes() == untouched[other]
+    assert ledger_after_erase.startswith(untouched[ad / ANCHOR_FILENAME])
+    assert (ad / ANCHOR_FILENAME).read_bytes() == ledger_after_erase
+    assert verify_anchors(ad) == []
+    assert verify_chain(held) == [] and verify_chain(other) == []

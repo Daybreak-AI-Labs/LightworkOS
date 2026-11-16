@@ -488,6 +488,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   receipt. Replacing a checkpoint after an erasure needs the erase record
   that `maverick erase` now stores; for a day erased before this version,
   publish from the command line with `--without-erase-record`.
+- `maverick erase` after a signing-key rotation no longer re-signs audit
+  days that do not hold the person, or the tip ledger. Before, their
+  anchors and checkpoints stopped matching. Days already affected still
+  report a change: restore them from a backup made before that erase.
 
 ### Fixed
 
