@@ -185,6 +185,38 @@ def test_health_check_collects_rows_without_printing(client, monkeypatch):
     assert health._row is not None and health._row.__name__ == "_row"
 
 
+def test_health_check_shows_records_every_workspace_can_read_to_administrators(client, monkeypatch):
+    """On a shared Postgres store without strict isolation, records saved
+    before workspaces were used are read by every workspace. Installation
+    health names that finding, as something to improve, for administrators."""
+    from maverick import health
+    from maverick.world_model_backends import pg_rls
+
+    class Store:
+        def query(self, sql, params=(), *, system=False):
+            assert system is True
+            return [(4, *([0] * (len(pg_rls._PREFLIGHT_TABLES) - 1)), True)]
+
+    def fake_diagnose():
+        health._FAILURES.clear()
+        health._check_workspace_records(Store())
+        return len(health._FAILURES)
+    monkeypatch.setenv("MAVERICK_STRICT_TENANT_ISOLATION", "0")
+    monkeypatch.setattr(health, "diagnose", fake_diagnose)
+    data = client.post("/api/v1/admin/system/health-check").json()
+    assert data["healthy"] is True and data["problems"] == 0 and data["attention"] == 1
+    assert data["summary"] == "Lightwork is working. 1 item could be improved."
+    row, = data["technical"]
+    assert row["state"] == "attention"
+    assert row["detail"].startswith("4 records saved before workspaces were used")
+    assert "every workspace can read them" in row["detail"]
+    assert "maverick tenant backfill --tenant <id>" in row["fix"]
+    for sentence in re.split(r"(?<=[.!?])\s+", row["detail"] + ". " + row["fix"]):
+        assert len(sentence.split()) <= 25, sentence
+    _as_viewer(monkeypatch)
+    assert client.post("/api/v1/admin/system/health-check").status_code == 403
+
+
 def test_queue_lists_stopped_jobs_and_refuses_the_old_resume_shortcut(client, monkeypatch, tmp_path):
     from maverick import job_queue
     queue = job_queue.JobQueue(tmp_path / "jobs.db")

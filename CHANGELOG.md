@@ -316,10 +316,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The gRPC server starts again: its generated stubs now import as part of
   the package. Stubs an earlier release generated are rebuilt on next start;
   with runtime generation off, run `maverick gen-stubs` after upgrading.
-- On Postgres with at-rest encryption, records saved before workspaces were
-  used (no tenant) read correctly again in compatibility mode: facts, goals,
-  goal events, artifacts, questions, episodes, sign-offs, approvals, projects
-  and chat turns no longer show a "withheld" placeholder. Nothing to do.
 - The database tool on MySQL Connector/Python now reads at most one row
   past the row limit, even when the query has its own larger LIMIT.
 - The database query timeout now also applies on MySQL Connector/Python and
@@ -630,6 +626,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the provider cannot be reached then, the last answer stays in use. If
   sign-in stops with "misconfigured", copy the issuer exactly as your
   provider shows it; the server log names both values.
+- On Postgres with at-rest encryption and strict isolation off, records
+  saved before workspaces were used are shown to every workspace again, as
+  they already are without encryption: facts, goals, goal events, artifacts,
+  questions, episodes, sign-offs, approvals, projects and chat turns no
+  longer show a "withheld" placeholder there. `maverick doctor` and
+  Installation health now warn when such records exist next to a workspace.
+  To stop every workspace reading them, assign them to one workspace with
+  `maverick tenant backfill --tenant <id>` (preview with `--dry-run`), then
+  turn on strict isolation ("Hide records with no workspace" in Settings).
+- `maverick tenant backfill` now re-seals the encrypted values of the
+  records it assigns, so the workspace they go to can read them; before,
+  that workspace saw a "withheld" placeholder. Run it on the computer that
+  runs Lightwork: it stops, changing nothing, if it cannot open a value.
 
 ### Fixed
 

@@ -44,6 +44,9 @@ class _FakeCursor:
     def fetchone(self) -> tuple | None:
         return self._result
 
+    def fetchall(self) -> list:
+        return []  # the fake store holds no encrypted values to re-seal
+
 
 class _FakeConn:
     def __init__(self, role: str, tables: dict[str, dict]) -> None:
@@ -285,3 +288,168 @@ def test_native_event_scope_conflict_rolls_back_every_backfill_table(
         assert conn.execute("SELECT COUNT(*) FROM event_trigger_batches WHERE tenant_id='' ").fetchone() == (1,)
     with tenant_scope(tenant=None), PostgresWorldModel(postgres_test_dsn) as world:
         assert event_admission.poll_batch(world, "same-trigger") == legacy_batch
+
+
+# --- records without a workspace that every workspace reads -----------------
+
+class _CountWorld:
+    """A world whose one deployment-wide read answers the legacy-row count."""
+
+    def __init__(self, *, legacy=0, named=False):
+        self.row = (legacy, *([0] * (len(_PREFLIGHT_TABLES) - 1)), named)
+        self.calls: list = []
+
+    def query(self, sql, params=(), *, system=False):
+        self.calls.append((sql, tuple(params), system))
+        return [self.row]
+
+
+def _doctor_rows(monkeypatch, world):
+    from maverick import health
+
+    rows: list[tuple] = []
+    monkeypatch.setattr(health, "_row", lambda marker, label, detail="", fix="": rows.append(
+        (marker, label, detail, fix)))
+    health._check_workspace_records(world)
+    return rows
+
+
+def test_doctor_warns_when_every_workspace_reads_records_without_a_workspace(monkeypatch):
+    """Postgres in compatibility mode shows records saved before workspaces
+    were used to every workspace. The doctor says so, with the count and the
+    way out, only when a named workspace exists and such records are there."""
+    from maverick import health
+    from maverick.paths import tenant_scope
+
+    monkeypatch.setenv("MAVERICK_STRICT_TENANT_ISOLATION", "0")
+    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
+    world = _CountWorld(legacy=3, named=True)
+    (marker, label, detail, fix), = _doctor_rows(monkeypatch, world)
+    assert marker == health.YELLOW and label == "workspace-records"
+    assert detail.startswith("3 records saved before workspaces were used")
+    assert "every workspace can read them" in detail
+    assert "maverick tenant backfill --tenant <id>" in fix and "--dry-run" in fix
+    assert "MAVERICK_STRICT_TENANT_ISOLATION=1" in fix
+    assert "tenant" not in detail.lower()
+    # One statement, marked deployment-wide, over the tables and predicate
+    # `maverick tenant backfill` uses; it counts and selects no record content.
+    (sql, params, system), = world.calls
+    assert system is True and params == ()
+    for table in _PREFLIGHT_TABLES:
+        assert f"FROM {table} WHERE {pg_rls._legacy_scope(table)} LIMIT" in sql
+
+    capped = _CountWorld(legacy=pg_rls._LEGACY_COUNT_CAP, named=True)
+    assert _doctor_rows(monkeypatch, capped)[0][2].startswith(
+        f"{pg_rls._LEGACY_COUNT_CAP} or more records")
+    # A workspace that is active counts as a named workspace.
+    with tenant_scope(tenant="acme"):
+        assert len(_doctor_rows(monkeypatch, _CountWorld(legacy=1))) == 1
+
+    # Nothing warns without such records, without a named workspace, or under
+    # strict isolation (which never reads the store for this).
+    assert _doctor_rows(monkeypatch, _CountWorld(legacy=0, named=True)) == []
+    assert _doctor_rows(monkeypatch, _CountWorld(legacy=3, named=False)) == []
+    monkeypatch.setenv("MAVERICK_STRICT_TENANT_ISOLATION", "1")
+    strict = _CountWorld(legacy=3, named=True)
+    assert _doctor_rows(monkeypatch, strict) == [] and strict.calls == []
+
+
+def test_doctor_counts_records_without_a_workspace_on_live_postgres(postgres_test_dsn, monkeypatch):
+    """The same warning from the real store: nothing while only the unbound
+    install has written, the count once a named workspace exists, and nothing
+    again after `maverick tenant backfill` assigned the records."""
+    import psycopg
+    from maverick import health
+    from maverick.paths import tenant_scope
+    from maverick.world_model_backends.postgres import PostgresWorldModel
+
+    monkeypatch.setenv("MAVERICK_WORLD_BACKEND", "postgres")
+    monkeypatch.setenv("MAVERICK_PG_RLS", "0")
+    monkeypatch.setenv("MAVERICK_STRICT_TENANT_ISOLATION", "0")
+    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
+    rows: list[tuple] = []
+    monkeypatch.setattr(health, "_row", lambda marker, label, detail="", fix="": rows.append(
+        (marker, label, detail, fix)))
+
+    def warnings():
+        rows.clear()
+        health._check_world_db()
+        assert [r[1] for r in rows if r[0] == health.GREEN] == ["world-db"]
+        return [r[2] for r in rows if r[1] == "workspace-records"]
+
+    with PostgresWorldModel(postgres_test_dsn) as world:
+        with tenant_scope(tenant=None):
+            world.create_goal("saved before workspaces")
+            world.create_project("an early project")
+        assert warnings() == []
+        with tenant_scope(tenant="acme"):
+            world.create_goal("acme's own goal")
+    found = warnings()
+    assert len(found) == 1 and found[0].startswith("2 records saved before workspaces were used")
+    monkeypatch.setenv("MAVERICK_STRICT_TENANT_ISOLATION", "1")
+    assert warnings() == []
+    monkeypatch.setenv("MAVERICK_STRICT_TENANT_ISOLATION", "0")
+    with psycopg.connect(postgres_test_dsn) as conn:
+        assert sum(pg_rls.backfill(conn, "acme", dry_run=True).values()) == 2
+        pg_rls.backfill(conn, "acme")
+    assert warnings() == []
+
+
+def test_backfill_reseals_encrypted_records_for_the_workspace_they_go_to(
+    postgres_test_dsn, monkeypatch,
+):
+    """A record saved with no workspace was sealed with the empty binding.
+    Assigning it to a workspace re-seals its values for that workspace in the
+    same transaction, so the workspace still reads it under strict isolation.
+    A value this computer cannot open stops the backfill before any change."""
+    import psycopg
+    from maverick.paths import tenant_scope
+    from maverick.world_model import _UNSEALED_WITHHELD
+    from maverick.world_model_backends import postgres
+    from maverick.world_model_backends.postgres import PostgresWorldModel
+
+    monkeypatch.setenv("MAVERICK_PG_RLS", "0")
+    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
+    monkeypatch.setenv("MAVERICK_STRICT_TENANT_ISOLATION", "0")
+    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
+
+    def read(world, goal, conversation):
+        found = world.get_goal(goal)
+        return None if found is None else (
+            found.title, found.description,
+            [e.content for e in world.goal_events(goal)],
+            [a["content"] for a in world.artifacts_for_goal(goal)],
+            [q.question for q in world.open_questions(goal)],
+            [t.content for t in world.recent_turns(conversation)],
+            world.get_fact("contact"))
+
+    with PostgresWorldModel(postgres_test_dsn) as world:
+        goal = world.create_goal("early title", "early description")
+        world.append_event(goal, "agent", "note", "early event")
+        world.add_artifact(goal, "text", "report", "early artifact")
+        world.ask("early question", goal)
+        conversation = world.get_or_create_conversation("web", "early-user").id
+        world.append_turn(conversation, "user", "early turn")
+        world.upsert_fact("contact", "early@example.test")
+        expected = read(world, goal, conversation)
+        assert _UNSEALED_WITHHELD not in str(expected)
+        with tenant_scope(tenant="beta"):
+            foreign = postgres._seal("sealed for beta", "goals.title")
+    with psycopg.connect(postgres_test_dsn) as conn:
+        stuck = conn.execute(
+            "INSERT INTO goals(title, status, created_at, updated_at) "
+            "VALUES (%s, 'pending', 0, 0) RETURNING id", (foreign,)).fetchone()[0]
+        conn.commit()
+        for dry_run in (True, False):
+            with pytest.raises(ValueError, match="No rows were reassigned"):
+                pg_rls.backfill(conn, "acme", dry_run=dry_run)
+        assert conn.execute("SELECT count(*) FROM goals WHERE tenant_id IS NULL").fetchone() == (2,)
+        conn.execute("DELETE FROM goals WHERE id=%s", (stuck,))
+        conn.commit()
+        pg_rls.backfill(conn, "acme")
+    monkeypatch.setenv("MAVERICK_STRICT_TENANT_ISOLATION", "1")
+    with PostgresWorldModel(postgres_test_dsn) as world:
+        with tenant_scope(tenant="acme"):
+            assert read(world, goal, conversation) == expected
+        with tenant_scope(tenant="beta"):
+            assert world.get_goal(goal) is None and world.get_fact("contact") is None

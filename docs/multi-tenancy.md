@@ -129,6 +129,30 @@ dashboard/serve replica and scale remote workers separately — see
 [`deploy/postgres/README.md`](https://github.com/Daybreak-AI-Labs/LightworkOS/blob/main/deploy/postgres/README.md). Row-level security
 (`MAVERICK_PG_RLS=1`) enforces the tenant boundary in the database itself.
 
+### Records saved before workspaces were used
+
+On Postgres every workspace shares the same tables. A record saved while no
+workspace was active has no workspace (`tenant_id IS NULL`). In compatibility
+mode, which is strict isolation off, **every workspace reads those records**
+next to its own. This holds with at-rest encryption on as well: encryption
+protects the stored bytes, and the row filter decides who may read a record.
+A value sealed for one workspace still cannot be opened by another.
+
+`maverick doctor` and Installation health warn when such records exist and a
+workspace exists or is active. To end the sharing:
+
+```
+maverick tenant backfill --tenant <id> --dry-run   # how many records?
+maverick tenant backfill --tenant <id>             # give them to one workspace
+```
+
+Then turn on strict isolation (`MAVERICK_STRICT_TENANT_ISOLATION=1`, or "Hide
+records with no workspace" in Settings). Run the backfill on the computer that
+runs Lightwork, with the same encryption settings: it re-seals each encrypted
+value for the workspace it goes to, and it stops without changing anything if
+it cannot open one. Nothing warns on SQLite (one file per workspace), under
+strict isolation, or when no such record exists.
+
 ### Enabling RLS safely (auto-on under enterprise; guided opt-in otherwise)
 
 RLS auto-enables under enterprise mode (`MAVERICK_PROFILE=enterprise`) along with
