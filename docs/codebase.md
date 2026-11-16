@@ -75,9 +75,15 @@ maverick code export payments ./payments   # plaintext clone for the owner
    --map-root-user --pid --fork --kill-child --mount --mount-proc`): when it
    ends, the kernel stops everything it started, whatever its environment,
    and it sees an empty private temporary folder with only its own copy
-   mounted in, so it cannot reach other rounds' or proposals' copies. Files
-   elsewhere and the network are shared, so this is not a container. It
-   costs about 30 ms per command. Where namespaces are unavailable (macOS,
+   mounted in, so it cannot reach other rounds' or proposals' copies. Root
+   in that namespace only sets up the mounts; the command runs in a nested
+   user namespace as the real user and group (`unshare --map-user
+   --map-group`), so tests behave as in the project's own CI. If the work
+   area cannot be set up, the command does not run and the card says so
+   instead of reporting a test result. Files elsewhere, the network and
+   this computer's services are shared, and a few tools (a language server,
+   a patch fallback) start host processes directly, so this is not a
+   container. It costs about 15-30 ms per command. Where namespaces are unavailable (macOS,
    Windows, hosts that forbid them), each command carries a step marker and
    the step's end stops every process still carrying it (best effort, Linux
    `/proc`; a process that clears its environment escapes).
@@ -120,9 +126,9 @@ maverick code export payments ./payments   # plaintext clone for the owner
    run. The card gives finding counts by severity and status only; the
    finding text, which can quote code, is in `maverick code show` and the
    administrator-only Code page panel. On the `local` backend it also says
-   either "Each step ran on this computer with its own processes and its own
-   temporary folder. They still shared its other files and its network,
-   unlike a container." or, without namespaces, "These steps ran on this
+   either "Commands each step ran in its work area had their own processes
+   and temporary folder. They still shared this computer's other files,
+   network and services, unlike a container." or, without namespaces, "These steps ran on this
    computer without a container or separate processes, so they were not
    isolated from each other." Its "unresolved assumptions" list every gap:
    tests failing or not configured, the checker turned off, unable to run or

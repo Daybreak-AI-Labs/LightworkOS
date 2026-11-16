@@ -115,8 +115,10 @@ def run_tests(repo: vault.Repo, work: Path, sandbox_factory=None) -> dict | None
     finally:
         _close(box)  # a container backend's leftovers end with the run
     output = (result.stdout or "") + (result.stderr or "")
+    setup_failed = bool(getattr(result, "setup_failed", False))
     return {"command": repo.test_command, "exit_code": result.exit_code,
-            "passed": result.exit_code == 0, "output": output[-MAX_TEST_OUTPUT_CHARS:]}
+            "passed": result.exit_code == 0 and not setup_failed,
+            "setup_failed": setup_failed, "output": output[-MAX_TEST_OUTPUT_CHARS:]}
 
 
 _IDENTITY = {"GIT_AUTHOR_NAME": "Lightwork", "GIT_AUTHOR_EMAIL": "lightwork@localhost",
@@ -164,8 +166,8 @@ def _step(root: Path):
     """Stop every process the step under ``root`` started when it ends, so
     nothing it left running can write into a later round's copy."""
     from ..sandbox.local import contained_step
-    with contained_step(root):
-        yield
+    with contained_step(root) as state:
+        yield state
 
 
 def _close(box) -> None:
@@ -305,6 +307,7 @@ class _Loop:
         self.repairs_left, self.repair_rounds = repair_rounds, repair_rounds
         self.head, self.bundle, self.tests = base, b"", None
         self.review_cut_short = False
+        self.setup_failed = False  # a step's isolated work area could not be set up
         self.rounds: list[dict] = []
         self.stopped: str | None = None
         self.check: dict = {"state": "off" if checker is None else "skipped", "runs": 0,
@@ -332,10 +335,11 @@ class _Loop:
         previous step ended and removed once committed, so nothing written
         between rounds carries over. State changes only when every step
         succeeded, so a failed round leaves the last pin."""
-        with vault.work_dir() as tmp, _step(tmp):
+        with vault.work_dir() as tmp, _step(tmp) as step:
             work = _fresh_copy(self.host, tmp / "work", self.head, self.branch)
             with self._labelled():
                 self.run(goal_id, work)
+            self.setup_failed |= step["setup_failed"]
             if not self._afford():
                 # A governed run returns normally when it hits the cap; what it
                 # left half done is never committed or offered.
@@ -357,9 +361,11 @@ class _Loop:
     def _test(self, head: str) -> dict | None:
         if not self.repo.test_command or head == self.base:
             return None
-        with vault.work_dir() as tmp, _step(tmp):
+        with vault.work_dir() as tmp, _step(tmp) as step:
             copy = _fresh_copy(self.host, tmp / "tests", head)
-            return {**run_tests(self.repo, copy, self.sandbox_factory), "commit": head}
+            tests = {**run_tests(self.repo, copy, self.sandbox_factory), "commit": head}
+            self.setup_failed |= step["setup_failed"]
+            return tests
 
     def _repair(self, kind: str, problem: str) -> bool:
         """A follow-up goal for the author; False when the loop must stop."""
@@ -381,7 +387,8 @@ class _Loop:
         return True
 
     def repair_tests(self) -> None:
-        while self.tests and not self.tests["passed"] and not self.stopped:
+        while (self.tests and not self.tests["passed"] and not self.stopped
+               and not self.tests.get("setup_failed")):  # nothing in the change to repair
             if not self._repair("tests", _tests_problem(self.tests)):
                 return
 
@@ -398,10 +405,11 @@ class _Loop:
             owner=self.owner, execution_principal=self.owner)
         self.check["goal_ids"].append(gid)
         try:
-            with vault.work_dir() as tmp, _step(tmp):
+            with vault.work_dir() as tmp, _step(tmp) as step:
                 copy = _fresh_copy(self.host, tmp / "check", self.head)
                 with self._labelled():
                     out = self.checker(gid, copy)
+                self.setup_failed |= step["setup_failed"]
         except BudgetExceeded as exc:
             self.stopped = "budget"
             _fail_goal(self.world, gid, exc)
@@ -571,7 +579,7 @@ def propose(world, name: str, title: str, description: str, run: Runner, *,
         "tests": None if tests is None else {k: v for k, v in tests.items() if k != "output"},
         "tests_output": None if tests is None else tests["output"],
         "test_command": bool(repo.test_command), "repair_rounds": rounds,
-        "isolation": _isolation(on_host),
+        "isolation": "setup_failed" if loop.setup_failed else _isolation(on_host),
         "rounds": loop.rounds, "check": check, "stopped": loop.stopped,
         "review_cut_short": loop.review_cut_short,
         "review": review, "status": "empty" if not changed else "pending",
@@ -653,9 +661,15 @@ _TESTS_GAP = "The repository's tests did not pass or are not configured."
 HOST_LINE = ("These steps ran on this computer without a container or separate processes, "
              "so they were not isolated from each other.")
 HOST_GAP = "The steps were not isolated from each other on this computer."
-NAMESPACE_LINE = ("Each step ran on this computer with its own processes and its own temporary "
-                  "folder. They still shared its other files and its network, unlike a container.")
-NAMESPACE_GAP = "The steps ran on this computer, not in a container, so they shared its files."
+# Only commands run in a step's work area get their own namespaces: a few
+# tools (a language server, a patch fallback) start host processes directly.
+NAMESPACE_LINE = ("Commands each step ran in its work area had their own processes and temporary "
+                  "folder. They still shared this computer's other files, network and services, "
+                  "unlike a container.")
+NAMESPACE_GAP = ("The steps ran on this computer, not in a container, so they shared its files, "
+                 "network and services.")
+SETUP_FAILED_LINE = ("The isolated work area could not be set up for some steps, so their "
+                     "commands did not run.")
 _UNCHECKED_GAP = "Nobody independently tried to break this change."
 
 
@@ -663,6 +677,8 @@ def _tests_evidence(p: dict) -> tuple[list[str], list[str]]:
     tests = p.get("tests")
     if tests is None:
         return ["Tests: not configured. Nothing ran this project's tests."], [_TESTS_GAP]
+    if tests.get("setup_failed"):
+        return ["Tests: not run. The isolated work area could not be set up."], [_TESTS_GAP]
     verdict = "PASSED" if tests.get("passed") else "FAILED"
     gaps = [] if tests.get("passed") else [_TESTS_GAP]
     if "commit" not in tests:  # saved before tests ran on the pinned commit
@@ -723,6 +739,9 @@ def evidence(p: dict) -> dict:
     if isolation in ("host", "namespace"):
         lines.append(HOST_LINE if isolation == "host" else NAMESPACE_LINE)
         gaps.append(HOST_GAP if isolation == "host" else NAMESPACE_GAP)
+    elif isolation == "setup_failed":
+        lines.append(SETUP_FAILED_LINE)
+        gaps.append(SETUP_FAILED_LINE)
     rounds = p.get("repair_rounds")
     if isinstance(rounds, dict):
         lines.append(f"Repair rounds: {rounds.get('used', 0)} of {rounds.get('allowed', 0)} used.")

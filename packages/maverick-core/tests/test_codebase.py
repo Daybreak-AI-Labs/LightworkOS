@@ -1146,3 +1146,66 @@ def test_a_fresh_context_run_sends_no_result_text_to_webhooks(monkeypatch):
     orchestrator._fire_webhook("goal_finished", {"goal_id": 2, "status": "done",
                                                  "result": "ordinary"})
     assert "QUOTED_CODE_LINE" not in repr(sent[0]) and "ordinary" in repr(sent[1])
+
+
+STEP_AS_USER = """
+import os, pathlib, sys, tempfile
+from maverick.sandbox.local import LocalBackend, contained_step, step_namespaces_available
+if not step_namespaces_available():
+    print("NO-NAMESPACES"); sys.exit(0)
+root = tempfile.mkdtemp(prefix="lw-work-")
+work = pathlib.Path(root, "work"); work.mkdir()
+secret = work / "secret"; secret.write_text("hidden"); secret.chmod(0)
+with contained_step(root):
+    out = LocalBackend(workdir=work).exec("id -u; id -g; cat secret")
+print(repr((out.stdout, out.exit_code, os.getuid(), os.getgid())))
+"""
+
+
+def test_step_commands_run_as_the_real_user_not_root(tmp_path):
+    """Repository tests must not run as root inside the wrapper: they would
+    skip root-unsafe tests, read files their user cannot, or refuse to run."""
+    import ast
+    import os
+    import shutil
+    import subprocess as sp
+
+    import maverick
+    env = {**os.environ, "HOME": str(tmp_path), "MAVERICK_HOME": str(tmp_path / ".mh"),
+           "PYTHONPATH": os.pathsep.join([str(Path(maverick.__file__).parents[1]),
+                                          os.environ.get("PYTHONPATH", "")])}
+    argv = [sys.executable, "-c", STEP_AS_USER]
+    if os.getuid() == 0:                    # root reads every file: check as nobody
+        if not shutil.which("setpriv"):
+            pytest.skip("running as root without setpriv to drop to an ordinary user")
+        tmp_path.chmod(0o777)
+        argv = ["setpriv", "--reuid=65534", "--regid=65534", "--clear-groups", *argv]
+    done = sp.run(argv, capture_output=True, text=True, env=env, cwd=str(tmp_path), timeout=120)
+    assert done.returncode == 0, done.stderr[-2000:]
+    if done.stdout.strip() == "NO-NAMESPACES":
+        pytest.skip("this host does not allow unprivileged user namespaces")
+    stdout, code, uid, gid = ast.literal_eval(done.stdout.strip().splitlines()[-1])
+    assert stdout.split()[:2] == [str(uid), str(gid)] and "hidden" not in stdout
+    assert code != 0                        # the mode-000 file stayed unreadable
+
+
+def test_a_work_area_that_cannot_be_set_up_is_not_a_test_result(upstream, tmp_path,
+                                                                private_tmp, monkeypatch):
+    from maverick.sandbox import local
+    from maverick.sandbox.local import LocalBackend
+    if not local.step_namespaces_available():
+        pytest.skip("this host does not allow unprivileged user namespaces")
+    monkeypatch.setattr(local, "_NS_PRELUDE",
+                        local._NS_PRELUDE.replace("mount -t tmpfs", "false\n  mount -t tmpfs"))
+    vault.register("pricing", str(upstream), test_command=f"{sys.executable} -m pytest -q")
+    world = WorldModel(tmp_path / "world.db")
+    run, _ = _rounds(_passing)
+    p = features.propose(world, "pricing", "S", "", run, sandbox_factory=LocalBackend,
+                         checker=None, repair_rounds=1)
+    assert p["tests"]["setup_failed"] and not p["tests"]["passed"]
+    assert p["repair_rounds"]["used"] == 0                   # nothing to repair in the change
+    facts = features.evidence(p)
+    assert "Tests: not run. The isolated work area could not be set up." in facts["lines"]
+    assert features.NAMESPACE_LINE not in facts["lines"]
+    assert features.SETUP_FAILED_LINE in facts["lines"]
+    assert features.SETUP_FAILED_LINE in facts["gaps"]
