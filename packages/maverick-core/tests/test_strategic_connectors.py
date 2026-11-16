@@ -229,15 +229,28 @@ def test_vertex_requires_config(monkeypatch):
     assert "ERROR" in out and "VERTEX" in out
 
 
-def test_vertex_generate(monkeypatch):
+def _vertex(monkeypatch, body, *, budget=None, status=200):
+    """A vertex tool bound to a run budget, with a fake Vertex endpoint."""
     monkeypatch.setenv("VERTEX_ACCESS_TOKEN", "t")
     monkeypatch.setenv("VERTEX_PROJECT", "proj")
-    post = MagicMock(return_value=_resp(200, {
-        "candidates": [{"content": {"parts": [{"text": "hello from vertex"}]}}]
-    }))
+    post = MagicMock(return_value=_resp(status, body))
     _fake_httpx(monkeypatch, post=post)
+    from maverick.budget import Budget
     from maverick.tools.vertex_tool import vertex_tool
-    out = vertex_tool().fn({"op": "generate", "model": "gemini-2.5-pro", "prompt": "hi"})
+    budget = Budget() if budget is None else budget
+    return vertex_tool(budget=budget), post, budget
+
+
+def _generated(text="ok", **usage):
+    body = {"candidates": [{"content": {"parts": [{"text": text}]}}]}
+    if usage:
+        body["usageMetadata"] = usage
+    return body
+
+
+def test_vertex_generate(monkeypatch):
+    tool, post, _budget = _vertex(monkeypatch, _generated("hello from vertex"))
+    out = tool.fn({"op": "generate", "model": "gemini-2.5-pro", "prompt": "hi"})
     assert out == "hello from vertex"
     assert ":generateContent" in post.call_args.args[0]
 
@@ -245,32 +258,24 @@ def test_vertex_generate(monkeypatch):
 def test_vertex_generate_obeys_the_model_allow_list_and_has_no_built_in_model(monkeypatch):
     # Users own model choice: the tool names no model of its own, and a model
     # outside [access] allowed_models is refused before any request is sent.
-    monkeypatch.setenv("VERTEX_ACCESS_TOKEN", "t")
-    monkeypatch.setenv("VERTEX_PROJECT", "proj")
     monkeypatch.setattr("maverick.runtime_overrides.allowed_models",
                         lambda: {"vertex:approved-model"})
-    post = MagicMock(return_value=_resp(200, {
-        "candidates": [{"content": {"parts": [{"text": "ok"}]}}]}))
-    _fake_httpx(monkeypatch, post=post)
-    from maverick.tools.vertex_tool import vertex_tool
-    out = vertex_tool().fn({"op": "generate", "prompt": "hi"})
+    tool, post, _budget = _vertex(monkeypatch, _generated())
+    out = tool.fn({"op": "generate", "prompt": "hi"})
     assert out.startswith("ERROR") and "model" in out
-    out = vertex_tool().fn({"op": "generate", "model": "other-model", "prompt": "hi"})
+    out = tool.fn({"op": "generate", "model": "other-model", "prompt": "hi"})
     assert out.startswith("ERROR") and "allowed_models" in out
     assert post.call_count == 0
-    assert vertex_tool().fn({"op": "generate", "model": "approved-model", "prompt": "hi"}) == "ok"
+    assert tool.fn({"op": "generate", "model": "approved-model", "prompt": "hi"}) == "ok"
     # Product text names no model either; it says how the allow-list spells one.
-    description = vertex_tool().input_schema["properties"]["model"]["description"]
+    description = tool.input_schema["properties"]["model"]["description"]
     assert "gemini" not in description.lower() and "vertex:<model id>" in description
 
 
 def test_vertex_calls_are_metered_against_provider_spend(monkeypatch):
     # Each Vertex request is a paid provider call, so it goes through the same
     # provider spend accounting (and caps) as web_search.
-    monkeypatch.setenv("VERTEX_ACCESS_TOKEN", "t")
-    monkeypatch.setenv("VERTEX_PROJECT", "proj")
-    post = MagicMock(return_value=_resp(200, {"predictions": [1]}))
-    _fake_httpx(monkeypatch, post=post)
+    tool, post, _budget = _vertex(monkeypatch, {"predictions": [1]})
     import maverick.tools.vertex_tool as vt
     from maverick.provider_cost_cap import ProviderCapExceeded
     metered = []
@@ -280,8 +285,8 @@ def test_vertex_calls_are_metered_against_provider_spend(monkeypatch):
         return callback()
 
     monkeypatch.setattr(vt, "metered_provider_call", meter)
-    vt.vertex_tool().fn({"op": "predict", "endpoint_id": "7", "instances": [1]})
-    vt.vertex_tool().fn({"op": "generate", "model": "m", "prompt": "hi"})
+    tool.fn({"op": "predict", "endpoint_id": "7", "instances": [1]})
+    tool.fn({"op": "generate", "model": "m", "prompt": "hi"})
     assert metered == [("vertex", "inference"), ("vertex", "generation")]
 
     def refuse(provider, callback, **metadata):
@@ -289,37 +294,162 @@ def test_vertex_calls_are_metered_against_provider_spend(monkeypatch):
 
     monkeypatch.setattr(vt, "metered_provider_call", refuse)
     with pytest.raises(ProviderCapExceeded):
-        vt.vertex_tool().fn({"op": "generate", "model": "m", "prompt": "hi"})
+        tool.fn({"op": "generate", "model": "m", "prompt": "hi"})
     assert post.call_count == 2
 
 
-def test_vertex_refuses_plainly_under_a_vertex_spending_cap(monkeypatch):
-    # No Vertex model has a verified price, so a call cannot be held to a
-    # [budget.provider_caps] vertex cap: say so instead of an accounting error.
-    monkeypatch.setenv("VERTEX_ACCESS_TOKEN", "t")
-    monkeypatch.setenv("VERTEX_PROJECT", "proj")
-    monkeypatch.setattr("maverick.provider_cost_cap.caps_from_config", lambda: {"vertex": 5.0})
-    post = MagicMock(return_value=_resp(200, {"predictions": [1]}))
-    _fake_httpx(monkeypatch, post=post)
+def _vertex_ledger(monkeypatch, tmp_path, caps=None):
+    from maverick import provider_cost_cap as cap
+    monkeypatch.setattr(cap, "caps_from_config", lambda: dict(caps or {}))
+    monkeypatch.setattr(cap, "_ledger_path", lambda: tmp_path / "provider_spend.json")
+    monkeypatch.setattr(cap, "_shared_world", lambda: None)
+    return cap
+
+
+def test_vertex_call_is_charged_to_the_run_budget_at_the_operator_rate(monkeypatch, tmp_path):
+    # Kernel rule 3: a Vertex call is model spend, so it is charged to the run
+    # like any other call. The price an operator set for the exact route wins,
+    # and the spend receipt carries that charge and how it was priced.
+    from datetime import datetime, timedelta, timezone
+
+    from maverick import runtime_overrides as ro
+    monkeypatch.setattr(ro, "OVERRIDES_PATH", tmp_path / "runtime-overrides.toml")
+    today = datetime.now(timezone.utc).date()
+    ro.set_model_rate(
+        "vertex:contract-model", input_per_mtok=2.0, output_per_mtok=8.0,
+        source="Contract R1", as_of=today.isoformat(),
+        valid_until=(today + timedelta(days=30)).isoformat(), approved_by="operator@example.com",
+    )
+    cap = _vertex_ledger(monkeypatch, tmp_path)
+    from maverick.budget import Budget
+    from maverick.sandbox.local import LocalBackend
+    from maverick.tools import base_registry
+    _tool, post, budget = _vertex(
+        monkeypatch,
+        _generated(promptTokenCount=1_000_000, candidatesTokenCount=400_000,
+                   thoughtsTokenCount=100_000, totalTokenCount=1_500_000),
+        budget=Budget(max_dollars=20.0),
+    )
+
+    class _W:
+        def open_questions(self, gid):
+            return []
+
+    # The tool an agent run gets: the registry binds it to the run's budget.
+    registry = base_registry(_W(), LocalBackend(workdir=tmp_path), budget=budget)
+    tool = next(t for t in registry.all() if t.name == "vertex")
+    with cap.work_item_scope("goal:VX-1"):
+        assert tool.fn({"op": "generate", "model": "contract-model", "prompt": "hi"}) == "ok"
+        receipt = cap.reservation_catalogue_for_work_item("goal:VX-1").receipts[0]
+    assert post.call_count == 1
+    # Thinking tokens are billed as output: 1M in at $2 + 0.5M out at $8.
+    assert (budget.input_tokens, budget.output_tokens) == (1_000_000, 500_000)
+    assert budget.dollars == pytest.approx(6.0)
+    assert budget.estimated_usage_calls == 0
+    assert budget.pricing_snapshot()["vertex:contract-model"]["rate_card_version"] == "operator-ceiling-v1"
+    assert receipt.state == "settled" and receipt.actual == pytest.approx(6.0)
+    assert receipt.cost_basis == "estimated"
+    assert receipt.pricing_evidence["rate_card_version"] == "operator-ceiling-v1"
+
+
+def test_vertex_model_with_no_price_is_charged_the_safety_ceiling_and_says_so(monkeypatch, tmp_path):
+    # No rate set and no tracked price for the route: charge the safety ceiling
+    # rather than nothing, and name the fix where the limit is reported.
+    import maverick.budget as budget_mod
+    cap = _vertex_ledger(monkeypatch, tmp_path)
+    tool, post, budget = _vertex(
+        monkeypatch, _generated(promptTokenCount=10_000, candidatesTokenCount=10_000),
+        budget=budget_mod.Budget(max_dollars=1.0),
+    )
+    args = {"op": "generate", "model": "some-model", "prompt": "hi"}
+    with cap.work_item_scope("goal:VX-2"):
+        assert tool.fn(args) == "ok"
+        receipt = cap.reservation_catalogue_for_work_item("goal:VX-2").receipts[0]
+    ceiling_in, ceiling_out = budget_mod._SELF_HOSTED_PUBLIC_CEILING
+    assert budget.dollars == pytest.approx(0.01 * ceiling_in + 0.01 * ceiling_out)
+    assert receipt.state == "settled" and receipt.actual == pytest.approx(budget.dollars)
+    assert receipt.pricing_evidence["rate_card_version"] == "unpriced-model-ceiling-v1"
+    with pytest.raises(budget_mod.BudgetExceeded) as exceeded:
+        tool.fn(args)
+    assert post.call_count == 2
+    for text in (str(exceeded.value), budget.summary()):
+        assert "safety ceiling" in text and "vertex:some-model" in text
+        assert "Set the model's price in Settings > Models" in text
+
+
+def test_vertex_reply_without_token_counts_is_charged_an_estimate(monkeypatch, tmp_path):
+    # A custom endpoint reports no token counts, and a generate reply may omit
+    # them: charge an estimate from the text length and mark it estimated.
+    import json
+    import math
+    _vertex_ledger(monkeypatch, tmp_path)
+    reply = {"predictions": ["p" * 400]}
+    tool, post, budget = _vertex(monkeypatch, reply)
+    instances = [{"text": "i" * 800}]
+    assert "pppp" in tool.fn({"op": "predict", "endpoint_id": "7", "instances": instances})
+    sent = json.dumps(post.call_args.kwargs["json"], default=str)
+    assert budget.input_tokens == math.ceil(len(sent) / 4)
+    assert budget.output_tokens == math.ceil(len(str(reply)) / 4)
+    assert budget.dollars > 0 and "vertex:endpoints/7" in budget.pricing_snapshot()
+    assert budget.estimated_usage_calls == 1 and "estimated" in budget.summary()
+    post.return_value = _resp(200, _generated("no counts"))
+    assert tool.fn({"op": "generate", "model": "m", "prompt": "hi"}) == "no counts"
+    assert budget.estimated_usage_calls == 2
+
+
+def test_vertex_is_refused_before_any_request_without_budget_left(monkeypatch, tmp_path):
+    # budget.check() runs before the request: a run with nothing left must not
+    # reach Vertex, and nothing more is charged.
+    from maverick.budget import Budget, BudgetExceeded
+    _vertex_ledger(monkeypatch, tmp_path)
+    spent = Budget(max_dollars=1.0)
+    spent.dollars = 1.5
+    tool, post, _budget = _vertex(monkeypatch, _generated(), budget=spent)
+    for args in ({"op": "generate", "model": "m", "prompt": "hi"},
+                 {"op": "predict", "endpoint_id": "7", "instances": [1]}):
+        with pytest.raises(BudgetExceeded):
+            tool.fn(args)
+    assert post.call_count == 0
+    assert spent.dollars == 1.5
+
+
+def test_vertex_without_a_run_budget_is_refused_before_any_request(monkeypatch, tmp_path):
+    # A caller with no run budget (a flow's tool step) cannot be charged, so
+    # nothing is sent and the reply says where to call Vertex instead.
     from maverick.tools.vertex_tool import vertex_tool
+    _vertex_ledger(monkeypatch, tmp_path)
+    _tool, post, _budget = _vertex(monkeypatch, _generated())
     for args in ({"op": "generate", "model": "m", "prompt": "hi"},
                  {"op": "predict", "endpoint_id": "7", "instances": [1]}):
         out = vertex_tool().fn(args)
-        assert out.startswith("ERROR") and "spending cap" in out and "price" in out
+        assert out.startswith("ERROR") and "spending limit" in out and "nothing was sent" in out
     assert post.call_count == 0
 
 
+def test_vertex_spending_cap_is_enforced_from_the_charges(monkeypatch, tmp_path):
+    # With every call charged, [budget.provider_caps] vertex holds like any
+    # other provider's cap: calls run until the cap is reached, then stop.
+    from maverick.provider_cost_cap import ProviderCapExceeded
+    cap = _vertex_ledger(monkeypatch, tmp_path, caps={"vertex": 1.0})
+    tool, post, budget = _vertex(
+        monkeypatch, _generated(promptTokenCount=10_000, candidatesTokenCount=10_000))
+    args = {"op": "generate", "model": "m", "prompt": "hi"}
+    assert tool.fn(args) == "ok" and tool.fn(args) == "ok"
+    assert cap.check("vertex").spent == pytest.approx(budget.dollars) == pytest.approx(1.2)
+    with pytest.raises(ProviderCapExceeded):
+        tool.fn(args)
+    with pytest.raises(ProviderCapExceeded):
+        tool.fn({"op": "predict", "endpoint_id": "7", "instances": [1]})
+    assert post.call_count == 2
+
+
 def test_vertex_ids_cannot_leave_their_path_segment(monkeypatch):
-    monkeypatch.setenv("VERTEX_ACCESS_TOKEN", "t")
-    monkeypatch.setenv("VERTEX_PROJECT", "proj")
-    post = MagicMock(return_value=_resp(200, {"predictions": []}))
-    _fake_httpx(monkeypatch, post=post)
-    from maverick.tools.vertex_tool import vertex_tool
-    vertex_tool().fn({"op": "generate", "model": "../../../endpoints/777:predict#", "prompt": "hi"})
+    tool, post, _budget = _vertex(monkeypatch, {"predictions": []})
+    tool.fn({"op": "generate", "model": "../../../endpoints/777:predict#", "prompt": "hi"})
     assert "/models/..%2F..%2F..%2Fendpoints%2F777%3Apredict%23:generateContent" in post.call_args.args[0]
-    vertex_tool().fn({"op": "predict", "endpoint_id": "../x", "instances": [1]})
+    tool.fn({"op": "predict", "endpoint_id": "../x", "instances": [1]})
     assert post.call_args.args[0].endswith("/endpoints/..%2Fx:predict")
-    assert vertex_tool().fn({"op": "predict", "endpoint_id": "..", "instances": [1]}).startswith("ERROR")
+    assert tool.fn({"op": "predict", "endpoint_id": "..", "instances": [1]}).startswith("ERROR")
 
 
 def test_erp_and_analytics_connectors_register(tmp_path):

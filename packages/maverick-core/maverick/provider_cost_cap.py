@@ -1647,6 +1647,8 @@ def metered_provider_call(
     parent_category: str | None = None,
     attempt_no: int | None = None,
     service: str | None = None,
+    settlement=None,
+    organization_budget=None,
 ):
     """Bracket one synchronous physical provider call with a durable receipt.
 
@@ -1654,6 +1656,11 @@ def metered_provider_call(
     free. Provider failures are re-raised only after their failed/cancelled
     attempt has been retained. If failure accounting cannot be secured, an
     accounting error stops outer retry/failover from issuing another paid call.
+
+    A cost known only from the reply is given by ``settlement``: called with
+    the callback's result, it returns ``(actual_dollars, cost_basis,
+    pricing_evidence)``. ``organization_budget`` is the run budget the call is
+    charged to, as :func:`reserve` takes it.
     """
 
     if not callable(callback):
@@ -1683,6 +1690,7 @@ def metered_provider_call(
         attempt_no=attempt_no,
         service=service,
         projection_known=projection_known,
+        organization_budget=organization_budget,
     )
     try:
         result = callback()
@@ -1695,6 +1703,8 @@ def metered_provider_call(
         raise
     if hold is not None:
         try:
+            if settlement is not None:
+                actual_dollars, cost_basis, pricing_evidence = settlement(result)
             settle(
                 hold,
                 actual_dollars,

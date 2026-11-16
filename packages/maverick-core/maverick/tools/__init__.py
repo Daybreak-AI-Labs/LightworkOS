@@ -1640,7 +1640,7 @@ def base_registry(
         ToolDescriptor("snowflake", snowflake_tool, True),
         ToolDescriptor("databricks", databricks_tool, True),
         ToolDescriptor("onetrust", onetrust_tool, True),
-        ToolDescriptor("vertex", vertex_tool, True),
+        ToolDescriptor("vertex", lambda: vertex_tool(budget=budget), True),
         ToolDescriptor("oracle", oracle_tool, True),
         ToolDescriptor("sap", sap_tool, True),
         ToolDescriptor("workday", workday_tool, True),
