@@ -881,6 +881,30 @@ def _backing_erase_record(
     return None
 
 
+def _erasures_text(erase_records: EraseRecords, backing: Mapping, *, superseded: str) -> str:
+    """What the erase records behind one supersession say, all of them.
+
+    A day erased more than once before its checkpoint was replaced has one
+    record for each erasure. Each lists the replaced checkpoint, the later
+    ones by carrying the first one's list on, so the verifier is told about
+    every erasure and not only the newest.
+    """
+    last = _instant(backing.get("issued_at"))
+    behind = [
+        record for record in erase_records(str(backing.get("day")))
+        if superseded in (record.get("checkpoints") or ())
+        and (stamp := _instant(record.get("issued_at"))) is not None
+        and last is not None and stamp <= last
+    ] or [backing]
+    if len(behind) == 1:
+        return (f"erase record {backing.get('erasure_id')} says "
+                f"{backing.get('rows_erased')} of {backing.get('rows_before')} rows were erased")
+    total = sum(int(record.get("rows_erased") or 0) for record in behind)
+    names = ", ".join(str(record.get("erasure_id")) for record in behind)
+    return (f"{len(behind)} erase records ({names}) say {total} of "
+            f"{behind[0].get('rows_before')} rows were erased")
+
+
 def _supersession_report(
     entry: _ChainEntry,
     *,
@@ -904,9 +928,8 @@ def _supersession_report(
         return ("superseded_erase_record_unchecked",
                 f"erase records could not be read ({type(exc).__name__})")
     if backing is not None:
-        return ("superseded_after_pin",
-                f"erase record {backing.get('erasure_id')} says "
-                f"{backing.get('rows_erased')} of {backing.get('rows_before')} rows were erased")
+        return "superseded_after_pin", _erasures_text(
+            erase_records, backing, superseded=str(record["supersedes_checkpoint_sha256"]))
     if hashes is None:
         return ("superseded_then_replaced",
                 "the day was replaced or retired again since, so this record can no longer "
@@ -935,7 +958,14 @@ def _lifecycle_after_pin(
     """
     breaks: list[CheckpointBreak] = []
     newest = int(chain[-1].record["checkpoint_sequence"])
-    retain = f"Review it, then retain sequence {newest} and its digest."
+    retain = f"then retain sequence {newest} and its digest."
+    advice = {
+        "superseded_after_pin": f"Check that erasure against one you know about, {retain}",
+        "superseded_without_erase_record": "Compare the day with a copy kept elsewhere.",
+        "superseded_erase_record_unchecked":
+            "Run the check again where the erase records can be read.",
+        "superseded_then_replaced": "Judge the day by that later record.",
+    }
     retained: dict[str, _ChainEntry] = {}
     for entry in chain:
         record = entry.record
@@ -949,7 +979,8 @@ def _lifecycle_after_pin(
                 sequence, "retired_after_pin",
                 f"{day} was retired (sequence {sequence}) after retained sequence "
                 f"{pinned_sequence}: its day-file is gone and a signed retention record "
-                f"is the only account of it. {retain}"))
+                "is the only account of it. Check that this was a retention purge you "
+                f"expected and not a day that should still be there, {retain}"))
             continue
         if record["record_type"] != "supersession":
             continue
@@ -964,15 +995,10 @@ def _lifecycle_after_pin(
             ),
             erase_records=erase_records,
         )
-        advice = (
-            "Compare the day with a copy kept elsewhere."
-            if reason == "superseded_without_erase_record"
-            else retain
-        )
         breaks.append(CheckpointBreak(
             sequence, reason,
             f"{day} was given a new checkpoint (sequence {sequence}) after retained "
-            f"sequence {pinned_sequence}; {finding}. {advice}"))
+            f"sequence {pinned_sequence}; {finding}. {advice[reason]}"))
     return breaks
 
 

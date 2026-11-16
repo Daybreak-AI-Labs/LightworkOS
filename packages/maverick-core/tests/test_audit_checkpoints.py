@@ -743,6 +743,40 @@ def test_erasure_supersession_is_reported_until_the_verifier_retains_it(isolated
     assert "again" in found[0].detail and "could not be read" not in found[0].detail
 
 
+def test_every_erasure_behind_a_replaced_checkpoint_is_reported(isolated_audit):
+    from maverick.audit.erase import scrub_user
+
+    audit_dir, checkpoint_dir = isolated_audit
+    day = "2000-01-01"
+    signer = AuditSigner(audit_dir / f"{day}.ndjson")
+    for person in ("first", "second"):
+        assert signer.write({"kind": "tool_call", "channel": "slack", "user_id": person})
+    assert signer.write({"kind": "tool_call", "index": 2})
+    assert ensure_anchors(audit_dir) == 1
+    pinned = _digest(publish_checkpoint(audit_dir, checkpoint_dir, day=day))
+    erased, store_erase_record, erase_records = _erase_record_store()
+    for number, person in enumerate(("first", "second"), start=1):
+        assert scrub_user("slack", person, audit_dir=audit_dir, on_rewrite=store_erase_record,
+                          erase_records=erase_records, checkpoint_dirs=[checkpoint_dir])[0] == 1
+        erased[-1]["erasure_id"] = str(number) * 32
+    publish_checkpoint(
+        audit_dir,
+        checkpoint_dir,
+        day=day,
+        supersedes_checkpoint_sha256=pinned,
+        lifecycle_reason="gdpr_reanchor",
+        erase_records=erase_records,
+    )
+
+    (found,) = verify_checkpoints(
+        audit_dir, checkpoint_dir, erase_records=erase_records,
+        minimum_sequence=1, minimum_digest=pinned,
+    )
+    assert found.reason == "superseded_after_pin"
+    assert "2 erase records" in found.detail and "2 of 3 rows" in found.detail
+    assert "1" * 32 in found.detail and "2" * 32 in found.detail
+
+
 @pytest.mark.parametrize("told", [True, False])
 def test_a_genuine_erase_does_not_cover_an_earlier_unrecorded_change(isolated_audit, told):
     # The key holder changes a pinned day and keeps its row count; later a

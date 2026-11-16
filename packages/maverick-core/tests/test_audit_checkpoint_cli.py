@@ -327,3 +327,52 @@ def test_a_person_is_erased_from_a_day_an_earlier_version_already_erased(tmp_pat
         "--minimum-sequence", "1", "--minimum-digest", pinned,
     ])
     assert stale.exit_code == 1 and "superseded_without_erase_record" in stale.output
+
+
+def test_retire_prints_what_to_retain_and_a_pinned_check_says_what_to_look_at(
+    tmp_path,
+    monkeypatch,
+):
+    import json
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setattr(signing, "KEY_DIR", signing._LEGACY_KEY_DIR)
+    from maverick.paths import data_dir
+
+    day = "2000-01-01"
+    audit_dir = data_dir("audit")
+    day_file = audit_dir / f"{day}.ndjson"
+    assert signing.AuditSigner(day_file).write({"kind": "tool_call", "tool": "read"})
+    assert signing.ensure_anchors(audit_dir) == 1
+    checkpoints = tmp_path / "external-checkpoints"
+    runner = CliRunner()
+    base = ["--checkpoint-dir", str(checkpoints)]
+    assert runner.invoke(main, ["audit", "checkpoint", "publish", "--day", day, *base]).exit_code == 0
+    first = checkpoints / f"audit-checkpoint-{1:020d}.ndjson"
+    pinned = hashlib.sha256(first.read_bytes()).hexdigest()
+    record = json.loads(first.read_text(encoding="utf-8"))
+    day_file.unlink()
+    assert signing.record_retention_purge(
+        audit_dir, [{"day": day, "row_count": record["row_count"], "tip_hash": record["tip_hash"]}])
+
+    retired = runner.invoke(main, [
+        "audit", "checkpoint", "retire", *base,
+        "--supersede-digest", pinned, "--lifecycle-reason", "retention_purge",
+    ])
+    assert retired.exit_code == 0, retired.output
+    second = checkpoints / f"audit-checkpoint-{2:020d}.ndjson"
+    newest = hashlib.sha256(second.read_bytes()).hexdigest()
+    assert f"retain externally: sequence=2 sha256={newest}" in retired.output
+
+    stale = runner.invoke(main, [
+        "audit", "checkpoint", "verify", *base,
+        "--minimum-sequence", "1", "--minimum-digest", pinned,
+    ])
+    assert stale.exit_code == 1, stale.output
+    assert "retired_after_pin" in stale.output
+    assert "a retention purge you expected" in stale.output
+    assert runner.invoke(main, [
+        "audit", "checkpoint", "verify", *base,
+        "--minimum-sequence", "2", "--minimum-digest", newest,
+    ]).exit_code == 0

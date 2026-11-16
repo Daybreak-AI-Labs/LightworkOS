@@ -7406,6 +7406,20 @@ def audit_checkpoint() -> None:
     """Publish and verify independently held live audit-tip commitments."""
 
 
+def _echo_checkpoint_to_retain(path: Path) -> None:
+    """Print the sequence and digest of a just-published record to keep elsewhere."""
+    import hashlib
+
+    try:
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        sequence = int(path.stem.rsplit("-", 1)[-1])
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(
+            f"checkpoint was published but its receipt could not be read: {exc}"
+        ) from exc
+    click.echo(f"retain externally: sequence={sequence} sha256={digest}")
+
+
 def _existing_world(ctx):
     """The world model, opened only where it already exists.
 
@@ -7526,17 +7540,8 @@ def audit_checkpoint_publish(
         )
     except (AuditCheckpointError, ImportError, OSError, RuntimeError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
-    import hashlib
-
-    try:
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
-        sequence = int(path.stem.rsplit("-", 1)[-1])
-    except (OSError, ValueError) as exc:
-        raise click.ClickException(
-            f"checkpoint was published but its receipt could not be read: {exc}"
-        ) from exc
     click.echo(f"published {path}")
-    click.echo(f"retain externally: sequence={sequence} sha256={digest}")
+    _echo_checkpoint_to_retain(path)
 
 
 @audit_checkpoint.command("retire")
@@ -7586,6 +7591,8 @@ def audit_checkpoint_retire(
     except (AuditCheckpointError, ImportError, OSError, RuntimeError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(f"retired by signed lifecycle record {path}")
+    # A pinned check reports this retirement until a newer sequence is retained.
+    _echo_checkpoint_to_retain(path)
 
 
 @audit_checkpoint.command("verify")
