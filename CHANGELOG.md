@@ -487,6 +487,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The AI governance page now says when its Needs attention check could not
   read every record, instead of reporting that nothing needs attention.
   Press Refresh to check again.
+- The diagram tool now works in container sandboxes: the source goes to the
+  renderer on standard input and the image is written straight into the
+  workspace. A Mermaid output name must end with `.svg`, `.png` or `.pdf`,
+  and a source over 64 KiB is refused outside the local sandbox.
 
 ### Fixed
 

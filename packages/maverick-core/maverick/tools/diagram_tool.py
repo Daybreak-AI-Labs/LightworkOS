@@ -1,9 +1,12 @@
 """Diagramming tool: render Graphviz DOT or Mermaid source to an image.
 
-Writes the diagram source to a temp file and shells the renderer through the
-sandbox chokepoint:
-  - ``dot`` (Graphviz)  -> ``dot -T<fmt>``
-  - ``mermaid`` (mmdc)  -> ``mmdc -i in.mmd -o out.<fmt>``
+Feeds the diagram source to the renderer on standard input, through the
+sandbox chokepoint, and has it write the workspace-relative output itself:
+  - ``dot`` (Graphviz)  -> ``dot -T<fmt> -o ./out``
+  - ``mermaid`` (mmdc)  -> ``mmdc -i - -o ./out``
+
+Nothing is staged on the host: a container backend mounts the workspace at its
+own root and cannot see a host temp folder or a host path into the workspace.
 
 The renderer binaries are host/sandbox tools (not Python deps); when they're not
 installed the sandbox command fails and the tool returns an actionable error.
@@ -12,7 +15,6 @@ validated against allowlists so model input can't inject flags.
 """
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -34,12 +36,17 @@ _SCHEMA = {
 }
 
 
-def _argv(engine: str, infile: str, outfile: str, fmt: str) -> list[str]:
-    """Build the renderer argv (engine + format already validated)."""
+def _argv(engine: str, outfile: str, fmt: str) -> list[str]:
+    """Build the renderer argv (engine + format already validated).
+
+    The source is read from standard input."""
     if engine == "dot":
-        return ["dot", f"-T{fmt}", infile, "-o", outfile]
-    # mermaid
-    return ["mmdc", "-i", infile, "-o", outfile]
+        return ["dot", f"-T{fmt}", "-o", outfile]
+    # mermaid: the format follows the output name unless it is given.
+    argv = ["mmdc", "-i", "-", "-o", outfile]
+    if not outfile.lower().endswith(f".{fmt}"):
+        argv += ["-e", fmt]
+    return argv
 
 
 def _run(args: dict[str, Any], sandbox) -> str:
@@ -59,31 +66,24 @@ def _run(args: dict[str, Any], sandbox) -> str:
         out = Path(_safe_output_path(sandbox, args.get("out") or f"diagram.{fmt}"))
     except ValueError as e:
         return f"ERROR: {e}"
-    import shutil
-    workdir = Path(tempfile.mkdtemp(prefix="mvk-diagram-"))
-    try:
-        return _render(sandbox, engine, source, fmt, workdir, out)
-    finally:
-        # The temp dir holds the source and the rendered file; never leave it.
-        shutil.rmtree(workdir, ignore_errors=True)
+    if engine == "mermaid" and out.suffix.lower().lstrip(".") not in _FORMATS:
+        # mmdc refuses any other ending, whatever format is asked for.
+        return "ERROR: a mermaid diagram's output name must end with .svg, .png or .pdf"
+    return _render(sandbox, engine, source, fmt, out)
 
 
-def _render(sandbox, engine: str, source: str, fmt: str, workdir: Path, out: Path) -> str:
-    import shutil
-    ext = "dot" if engine == "dot" else "mmd"
-    infile = workdir / f"in.{ext}"
-    infile.write_text(source, encoding="utf-8")
+def _render(sandbox, engine: str, source: str, fmt: str, out: Path) -> str:
     out.parent.mkdir(parents=True, exist_ok=True)
-    tmp_out = workdir / f"out.{fmt}"
-
+    # Sandbox backends mount the workspace at their own root, not its host path.
+    # Prefix the relative name so one beginning with '-' is not an option.
+    relative = "./" + out.relative_to(Path(sandbox.workdir).resolve()).as_posix()
     code, stdout, stderr = sandbox_run(
-        sandbox, _argv(engine, str(infile), str(tmp_out), fmt), timeout=60.0)
-    if code != 0 or not tmp_out.exists():
+        sandbox, _argv(engine, relative, fmt), timeout=60.0, stdin=source)
+    if code != 0 or not out.exists():
         tail = (stderr or stdout or "").strip()[-400:]
         binary = "dot (graphviz)" if engine == "dot" else "mmdc (mermaid-cli)"
         return (f"ERROR: {engine} render failed (exit {code}); is {binary} "
                 f"installed in the sandbox? {tail}")
-    shutil.copyfile(tmp_out, out)
     return f"rendered {engine} diagram -> {out}"
 
 
