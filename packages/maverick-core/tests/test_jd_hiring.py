@@ -34,6 +34,14 @@ Own data subject access requests and GDPR compliance operations.
 """
 
 
+@pytest.fixture(autouse=True)
+def _embed_each_pack_once(monkeypatch, tmp_path_factory):
+    """Reuse this run's vector for a pack text (test_support.embedding_memo)."""
+    from test_support.embedding_memo import reuse_embeddings
+
+    reuse_embeddings(monkeypatch, tmp_path_factory)
+
+
 # ---- match_jd ---------------------------------------------------------------
 
 def test_match_returns_ranked_relevant_packs():
