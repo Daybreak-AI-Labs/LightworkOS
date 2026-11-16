@@ -111,11 +111,12 @@ def _gone_sources(rows, world):
     present = {kind: set() for kind in named}
     if named["flow"]:
         present["flow"] = {run.run_id for run in store.iter_run_metadata()}
-    for kind, table in (("goal", "goals"), ("turn", "turns")):
+    turn_scope = "conversation_id IN (SELECT c.id FROM conversations c WHERE {tenant:c.tenant_id})"
+    for kind, table, scope in (("goal", "goals", "{tenant:tenant_id}"), ("turn", "turns", turn_scope)):
         ids = sorted(int(value) for value in named[kind] if value.isdigit())
         for index in range(0, len(ids), 500):
             chunk = ids[index:index + 500]
-            found = world.query(f"SELECT id FROM {table} WHERE id IN ({','.join('?' * len(chunk))})", tuple(chunk))
+            found = world.tenant_query(f"SELECT id FROM {table} WHERE id IN ({','.join('?' * len(chunk))}) AND {scope}", tuple(chunk))
             present[kind].update(str(row[0]) for row in found)
     return {row["id"] for row in rows if any(
         source["kind"] in named and str(source["id"]) not in present[source["kind"]]

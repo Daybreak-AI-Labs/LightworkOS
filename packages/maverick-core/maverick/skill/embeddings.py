@@ -34,6 +34,11 @@ _MAX_TEXT = 8192
 _MAX_DIM = 4096
 _MAX_CACHE_BYTES = 16 * 1024 * 1024
 _BATCH_SIZE = 64
+# Texts handed to the model in one call. The model pads a batch to its longest
+# text and memory grows with the batch: the 2,031 built-in specialist texts
+# peaked at 4.4 GB in the library's default batches of 256 and at 0.5 GB in
+# batches of 16, with the same vectors in the same time.
+_MODEL_BATCH = 16
 _PROCESS_REVISION = uuid.uuid4().hex
 _PROCESS_CACHES: OrderedDict[str, dict] = OrderedDict()
 _MAX_PROCESS_CACHES = 4
@@ -102,7 +107,12 @@ def embed(texts: list[str]) -> list[list[float]] | None:
             model = _get_model()
             if model is None or not texts:
                 return None
-            return validate_vectors([list(map(float, v)) for v in model.embed(texts)], len(texts))
+            vectors = [
+                list(map(float, v))
+                for start in range(0, len(texts), _MODEL_BATCH)
+                for v in model.embed(texts[start:start + _MODEL_BATCH])
+            ]
+            return validate_vectors(vectors, len(texts))
     except Exception as e:  # pragma: no cover
         log.error("embedding call failed: %s", e)
         return None

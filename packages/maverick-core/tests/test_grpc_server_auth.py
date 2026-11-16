@@ -553,3 +553,66 @@ def test_stubs_older_than_the_proto_are_regenerated_before_import(
     monkeypatch.setattr(grpc_server, "_generate_stubs", lambda: generated.append(1))
     grpc_server._refresh_stale_stubs()
     assert generated == ([1] if regenerated else [])
+
+
+def test_generated_stubs_import_as_part_of_the_package(monkeypatch, tmp_path):
+    """Real protoc output must import package-qualified, and stubs an older
+    release wrote with a top-level ``import maverick_pb2`` are regenerated."""
+    import shutil
+    import subprocess
+    import sys
+
+    pytest.importorskip("grpc_tools")
+    pkg = tmp_path / "maverick" / "grpc_api"
+    pkg.mkdir(parents=True)
+    for init in (tmp_path / "maverick", pkg):
+        (init / "__init__.py").write_text("", encoding="utf-8")
+    proto = pkg / "maverick.proto"
+    shutil.copyfile(grpc_server._PROTO, proto)
+    for name in ("maverick_pb2.py", "maverick_pb2_grpc.py"):  # old release
+        (pkg / name).write_text("import grpc\nimport maverick_pb2 as maverick__pb2\n",
+                                encoding="utf-8")
+    monkeypatch.setattr(grpc_server, "_PROTO", proto)
+    monkeypatch.delenv("MAVERICK_NO_RUNTIME_PROTOC", raising=False)
+    monkeypatch.delitem(sys.modules, "maverick.grpc_api.maverick_pb2", raising=False)
+
+    grpc_server._refresh_stale_stubs()
+
+    probe = ("import sys; sys.path.insert(0, sys.argv[1]); "
+             "from maverick.grpc_api import maverick_pb2, maverick_pb2_grpc; "
+             "assert maverick_pb2_grpc.MaverickServicer")
+    run = subprocess.run([sys.executable, "-I", "-c", probe, str(tmp_path)],
+                         capture_output=True, text=True, timeout=120)
+    assert run.returncode == 0, run.stderr
+
+
+@pytest.mark.parametrize("disabled", [False, True])
+def test_unrebuildable_old_style_stubs_warn_with_the_real_reason(monkeypatch, tmp_path, caplog, disabled):
+    """Stubs from an earlier release cannot import at all; when they cannot be
+    rebuilt (read-only install, runtime generation off) the warning says so
+    and what to do, not that they are merely older than the proto."""
+    import logging
+    import sys
+
+    proto = tmp_path / "maverick.proto"
+    proto.write_text('syntax = "proto3";\n', encoding="utf-8")
+    for name in ("maverick_pb2.py", "maverick_pb2_grpc.py"):
+        (tmp_path / name).write_text("import grpc\nimport maverick_pb2 as maverick__pb2\n",
+                                     encoding="utf-8")
+    monkeypatch.setattr(grpc_server, "_PROTO", proto)
+    monkeypatch.delitem(sys.modules, "maverick.grpc_api.maverick_pb2", raising=False)
+    if disabled:
+        monkeypatch.setenv("MAVERICK_NO_RUNTIME_PROTOC", "1")
+    else:
+        monkeypatch.delenv("MAVERICK_NO_RUNTIME_PROTOC", raising=False)
+
+    def read_only():
+        raise PermissionError("read-only file system")
+
+    monkeypatch.setattr(grpc_server, "_generate_stubs", read_only)
+    with caplog.at_level(logging.WARNING, logger=grpc_server.log.name):
+        grpc_server._refresh_stale_stubs()
+    text = caplog.text
+    assert "earlier release" in text and "older than" not in text
+    assert "reinstall" in text.lower() and "maverick gen-stubs" in text
+    assert ("read-only file system" in text) != disabled

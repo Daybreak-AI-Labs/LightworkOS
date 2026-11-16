@@ -841,7 +841,9 @@ def _assert_cli_auxiliary_failure_withholds_certificate(
         main,
         ["erase", "--channel", "telegram", "--user", "alice", "--yes"],
     )
-    assert erased.exit_code == 0, erased.output
+    # An erasure that cannot be certified exits non-zero and says why.
+    assert erased.exit_code == 1, erased.output
+    assert "error: erasure incomplete" in erased.output
     assert "verification: CLEAN" not in erased.output
     assert "auxiliary closure: no" in erased.output
     assert "without a clean certificate" in erased.output
@@ -928,7 +930,8 @@ def test_receipt_failure_does_not_block_cli_deletion(monkeypatch):
         ["erase", "--channel", "telegram", "--user", "alice", "--yes"],
     )
 
-    assert erased.exit_code == 0, erased.output
+    assert erased.exit_code == 1, erased.output
+    assert "error: erasure incomplete" in erased.output
     assert "deletion will continue" in erased.output
     assert "durable proof: no" in erased.output
     assert "without a clean certificate" in erased.output
@@ -956,7 +959,8 @@ def test_manifest_failure_still_uses_the_in_memory_plan_for_deletion(
         ["erase", "--channel", "telegram", "--user", "alice", "--yes"],
     )
 
-    assert erased.exit_code == 0, erased.output
+    assert erased.exit_code == 1, erased.output
+    assert "error: erasure incomplete" in erased.output
     assert "manifest could not be created" in erased.output
     assert "verification will remain indeterminate" in erased.output
     assert "without a clean certificate" in erased.output
@@ -985,6 +989,9 @@ class _PostgresEraseCursor:
 
     def fetchall(self):
         return next(self._rows)
+
+    def fetchone(self):
+        return (None,)  # no durable-execution checkpoints table
 
 
 def test_postgres_delete_contract_covers_descendants_and_every_child(
@@ -1033,3 +1040,120 @@ def test_postgres_delete_contract_covers_descendants_and_every_child(
     assert "DELETE FROM episodes" in statements
     assert "DELETE FROM goals" in statements
     assert "DELETE FROM conversations" in statements
+
+
+def test_a_rerun_finishes_or_again_names_what_remains(monkeypatch):
+    """A rerun after a partly failed erase finds no conversation, yet it still
+    clears the AI reply cache and the attachment files the first run left."""
+    from maverick.cache import llm as llm_cache
+
+    world = _cli_world()
+    attachment = Path.home() / "private.txt"
+    _seed_complete_graph(world, attachment)
+    world.close()
+    cache_path = llm_cache.default_db_path()
+    from maverick.file_lock import ensure_private_directory
+
+    ensure_private_directory(cache_path.parent)
+    cache_path.write_bytes(b"")
+    purged: list[bool] = []
+    real_unlink = Path.unlink
+
+    def broken_unlink(self, *args, **kwargs):
+        if self == attachment:
+            raise OSError(5, "busy")
+        return real_unlink(self, *args, **kwargs)
+
+    def broken_purge(self, **_kwargs):
+        raise OSError(5, "disk busy")
+
+    monkeypatch.setattr(Path, "unlink", broken_unlink)
+    monkeypatch.setattr(llm_cache.LLMCache, "purge_all_authorities_for_erasure", broken_purge)
+    erase = ["erase", "--channel", "telegram", "--user", "alice", "--yes"]
+    for _run in range(2):
+        result = CliRunner().invoke(main, erase)
+        assert result.exit_code == 1, result.output
+        assert "llm_cache: OSError (errno 5)" in result.output
+        assert "could not remove an attachment file (OSError (errno 5))" in result.output
+    assert "no conversation found" in result.output and attachment.exists()
+
+    monkeypatch.setattr(Path, "unlink", real_unlink)
+    monkeypatch.setattr(llm_cache.LLMCache, "purge_all_authorities_for_erasure",
+                        lambda self, **_kwargs: purged.append(True))
+    result = CliRunner().invoke(main, erase)
+    assert result.exit_code == 0, result.output
+    assert purged and not attachment.exists()
+
+
+def test_two_erase_runs_do_not_lose_each_others_pending_attachment(monkeypatch):
+    """Two runs whose unlinks fail at the same time must both be recorded:
+    the files' rows are gone, so a lost entry is never found again."""
+    import json
+    import threading
+
+    from maverick import cli
+    from maverick.paths import data_dir
+
+    _cli_world().close()
+    files = [Path.home() / "one.txt", Path.home() / "two.txt"]
+    for file in files:
+        file.write_text("private", encoding="utf-8")
+    both_unlinking = threading.Barrier(2)
+
+    def failing(paths):
+        # This run has read the list. Without a lock a second run reads it
+        # too and both arrive here; with one, the wait simply times out.
+        try:
+            both_unlinking.wait(timeout=1)
+        except threading.BrokenBarrierError:
+            pass
+        return 0, ["OSError (errno 5)"]
+
+    monkeypatch.setattr(cli, "_unlink_erasure_attachments", failing)
+    runs = [threading.Thread(target=cli._unlink_attachments_with_pending, args=([file],))
+            for file in files]
+    for run in runs:
+        run.start()
+    for run in runs:
+        run.join(timeout=30)
+    pending = data_dir("erasure", "pending_attachment_files.json")
+    assert len(json.loads(pending.read_text(encoding="utf-8"))) == 2
+
+
+def test_an_unusable_pending_list_never_strands_this_runs_attachment_files(monkeypatch):
+    """An unusable list is kept aside, this run's files are still removed,
+    and the new list records leftovers without their file names."""
+    from maverick.paths import data_dir
+
+    world = _cli_world()
+    attachment = Path.home() / "private.txt"
+    _seed_complete_graph(world, attachment)
+    world.close()
+    pending = data_dir("erasure", "pending_attachment_files.json")
+    pending.parent.mkdir(parents=True, exist_ok=True)
+    pending.write_text('"a string, not a list"', encoding="utf-8")
+    real_unlink = Path.unlink
+
+    def broken_unlink(self, *args, **kwargs):
+        if self == attachment:
+            raise OSError(5, "busy")
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", broken_unlink)
+    erase = ["erase", "--channel", "telegram", "--user", "alice", "--yes"]
+    result = CliRunner().invoke(main, erase)
+    assert result.exit_code == 1, result.output
+    assert "kept aside" in result.output
+    assert pending.with_name(pending.name + ".unusable-1").read_text() == '"a string, not a list"'
+    assert attachment.exists() and "private" not in pending.read_text(encoding="utf-8")
+
+    monkeypatch.setattr(Path, "unlink", real_unlink)
+    aside = pending.with_name(pending.name + ".unusable-1")
+    result = CliRunner().invoke(main, erase)
+    # The set-aside list may still name files on disk: incomplete until handled.
+    assert result.exit_code == 1, result.output
+    assert aside.name in result.output and "then delete" in result.output
+    assert not attachment.exists() and not pending.exists()
+    aside.unlink()
+    result = CliRunner().invoke(main, erase)
+    assert result.exit_code == 0, result.output

@@ -32,7 +32,7 @@ import secrets
 import threading
 import time
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager, nullcontext, suppress
 from dataclasses import dataclass
 from urllib.parse import quote
 
@@ -773,6 +773,9 @@ MIGRATIONS.append((53, [
     "ON goal_origins(ref) WHERE kind = 'external_run'",
 ]))
 
+# v54: heartbeats get their own liveness timestamp (mirrors SQLite v54).
+MIGRATIONS.append((54, ["ALTER TABLE goals ADD COLUMN IF NOT EXISTS heartbeat_at DOUBLE PRECISION"]))
+
 _PG_SCHEMA_VERSION = MIGRATIONS[-1][0]
 
 _MIGRATIONS_TABLE = (
@@ -1025,6 +1028,18 @@ def _mutation_tenant_scope(column: str = "tenant_id") -> tuple[str, list]:
     if tenant is None:
         return f"{column} IS NULL", []
     return f"{column} = %s", [tenant]
+
+
+def _tenant_marker(kind: str, column: str) -> tuple[str, list]:
+    """Resolve one ``{tenant...}`` marker of ``tenant_query`` (``?`` paramstyle)."""
+    if kind == "goal":
+        frag, params = _tenant_scope("_tg.tenant_id")
+        frag = f"{column} IN (SELECT _tg.id FROM goals _tg WHERE {frag})"
+    elif kind == "exact":
+        frag, params = _mutation_tenant_scope(column)
+    else:
+        frag, params = _tenant_scope(column)
+    return frag.replace("%s", "?"), params
 
 
 def _tenant_precedence(column: str = "tenant_id") -> tuple[str, list]:
@@ -1435,7 +1450,14 @@ class PostgresWorldModel:
         ``_reconnect_if_broken()`` opens a fresh one on the NEXT call rather
         than repeating ``OperationalError`` forever until the process
         restarts.
+
+        A ``_tx`` opened while this thread already holds one joins it under a
+        savepoint (see :meth:`_nested_tx`): it never commits the outer
+        transaction early, nor waits for a second pooled connection.
         """
+        if getattr(self._tx_depth, "value", 0):
+            yield from self._nested_tx()
+            return
         if self._pool is not None:
             # Pooled: each tx gets its own connection; the pool's context
             # commits on success and rolls back on error, so no shared lock.
@@ -1447,11 +1469,12 @@ class PostgresWorldModel:
                         cur.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
                     self._set_tenant_guc(cur)
                     self._note_encryption_posture(cur)
-                    self._tx_depth.value = getattr(self._tx_depth, "value", 0) + 1
+                    self._tx_depth.value, self._tx_depth.conn = 1, conn
+                    self._tx_depth.scope = (_active_tenant(), _active_workspace())
                     try:
                         yield cur
                     finally:
-                        self._tx_depth.value -= 1
+                        self._tx_depth.value, self._tx_depth.conn = 0, None
                 finally:
                     cur.close()
             return
@@ -1465,11 +1488,12 @@ class PostgresWorldModel:
                     cur.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
                 self._set_tenant_guc(cur)
                 self._note_encryption_posture(cur)
-                self._tx_depth.value = getattr(self._tx_depth, "value", 0) + 1
+                self._tx_depth.value, self._tx_depth.conn = 1, self.conn
+                self._tx_depth.scope = (_active_tenant(), _active_workspace())
                 try:
                     yield cur
                 finally:
-                    self._tx_depth.value -= 1
+                    self._tx_depth.value, self._tx_depth.conn = 0, None
                 self.conn.commit()
             except (psycopg.OperationalError, psycopg.InterfaceError):
                 try:
@@ -1491,6 +1515,34 @@ class PostgresWorldModel:
             finally:
                 if cur is not None:
                     cur.close()
+
+    def _nested_tx(self) -> Iterator:
+        """Run a nested ``_tx`` inside the transaction this thread holds.
+
+        A savepoint confines an inner failure to the inner statements, so the
+        outer transaction stays usable. The outer transaction's tenant binding
+        (a transaction-local setting) and locks stay in force; a nested scope
+        for another workspace is refused rather than re-binding the outer one.
+        """
+        if self._rls and self._tx_depth.scope != (_active_tenant(), _active_workspace()):
+            raise RuntimeError("a nested world transaction cannot switch workspace")
+        depth = self._tx_depth.value
+        name = f"maverick_nested_{depth}"
+        cur = self._tx_depth.conn.cursor()
+        try:
+            cur.execute(f"SAVEPOINT {name}")
+            self._tx_depth.value = depth + 1
+            try:
+                yield cur
+            except BaseException:
+                with suppress(Exception):  # a dead connection fails the outer tx anyway
+                    cur.execute(f"ROLLBACK TO SAVEPOINT {name}")
+                raise
+            finally:
+                self._tx_depth.value = depth
+            cur.execute(f"RELEASE SAVEPOINT {name}")
+        finally:
+            cur.close()
 
     def _note_encryption_posture(self, cur) -> None:
         if not getattr(self, "_posture_ready", False):
@@ -1876,9 +1928,11 @@ class PostgresWorldModel:
             "WHEN status='done' THEN completed_at "
             "ELSE GREATEST(updated_at + 0.000001, %s) END, "
             "status=%s, result=COALESCE(%s, result), "
-            "updated_at=GREATEST(updated_at + 0.000001, %s) WHERE id=%s"
+            "updated_at=GREATEST(updated_at + 0.000001, %s) WHERE id=%s "
+            # A finished task stays finished: a late cancel changes nothing.
+            "AND NOT (status='done' AND %s='cancelled')"
         )
-        params: list = [status, now, status, _seal(result, "goals.result"), now, goal_id]
+        params: list = [status, now, status, _seal(result, "goals.result"), now, goal_id, status]
         if frag:
             sql += " AND " + frag
             params += fparams
@@ -1966,11 +2020,12 @@ class PostgresWorldModel:
 
     def set_goal_partial_result(self, goal_id: int, text: str) -> bool:
         """Replace a running goal's result with the answer written so far;
-        matches the SQLite backend (non-terminal rows only, no sign-off effect)."""
+        matches the SQLite backend (non-terminal rows only, no sign-off effect,
+        refreshes ``heartbeat_at`` and keeps the reviewed ``updated_at``)."""
         now = time.time()
         frag, fparams = _mutation_tenant_scope()
         sql = (
-            "UPDATE goals SET result=%s, updated_at=GREATEST(updated_at + 0.000001, %s) "
+            "UPDATE goals SET result=%s, heartbeat_at=GREATEST(heartbeat_at, %s) "
             "WHERE id=%s AND status NOT IN "
             "('done','completed','failed','cancelled','blocked','error')"
         )
@@ -2111,13 +2166,13 @@ class PostgresWorldModel:
     def touch_goal(
         self, goal_id: int, *, expected_owner: str | None = None,
     ) -> bool:
-        """Refresh a live goal's ``updated_at`` (the orphan-reclaim liveness
-        signal) with no other side effect — the external-agent heartbeat
+        """Refresh a live goal's ``heartbeat_at`` (the orphan-reclaim liveness
+        signal; ``updated_at`` stays the reviewed version) with no other side effect — the external-agent heartbeat
         primitive, mirroring the SQLite semantics: only in-flight rows
         qualify, and the owner predicate rides in the same statement."""
         now = time.time()
         frag, fparams = _mutation_tenant_scope()
-        sql = ("UPDATE goals SET updated_at=GREATEST(updated_at + 0.000001, %s) "
+        sql = ("UPDATE goals SET heartbeat_at=GREATEST(heartbeat_at, %s) "
                "WHERE id=%s AND status IN ('active', 'pending')")
         params: list = [now, int(goal_id)]
         if expected_owner is not None:
@@ -2495,14 +2550,42 @@ class PostgresWorldModel:
 
     # -- backend-portable raw reads (mirror of WorldModel.query) -------------
 
-    def query(self, sql: str, params: tuple | list = ()) -> list:
+    def query(self, sql: str, params: tuple | list = (), *, system: bool = False) -> list:
         """Run a read-only statement written in SQLite paramstyle (``?``).
 
         The statement is rewritten for psycopg (``%s``, ``%%``), executed inside
         :meth:`_tx` (so it takes the connection lock, sets the tenant GUC and
         rolls back on error instead of poisoning the shared connection), and
         every row comes back as a tuple that also supports ``row["column"]``.
+
+        This statement carries no tenant predicate, so it is refused while
+        tenancy is on (a bound tenant, strict isolation or row-level security)
+        unless ``system=True`` marks a deliberate deployment-wide read. Tenant
+        data goes through :meth:`tenant_query`.
         """
+        if not system and self._tenancy_on():
+            from ..tenant_sql import TenantScopeRequired
+            raise TenantScopeRequired(
+                "This read has no tenant boundary. Use tenant_query, or mark a "
+                "deployment-wide read with system=True.")
+        return self._raw_query(sql, params)
+
+    def _tenancy_on(self) -> bool:
+        return bool(self._rls) or _strict_tenant_isolation() or _active_tenant() is not None
+
+    def tenant_sql(self, sql: str, params: tuple | list = (), *,
+                   require: bool = True) -> tuple[str, tuple]:
+        """Expand the ``{tenant...}`` markers of :mod:`maverick.tenant_sql` into
+        this store's tenant predicates, still in SQLite paramstyle."""
+        from ..tenant_sql import expand
+        return expand(sql, params, _tenant_marker, require=require)
+
+    def tenant_query(self, sql: str, params: tuple | list = ()) -> list:
+        """:meth:`query` for tenant data: the statement names its boundary with
+        ``{tenant:COL}``, ``{tenant_exact:COL}`` or ``{tenant_goal:COL}``."""
+        return self._raw_query(*self.tenant_sql(sql, params))
+
+    def _raw_query(self, sql: str, params: tuple | list = ()) -> list:
         params = tuple(params)
         with self._tx() as cur:
             if params:
@@ -3207,7 +3290,7 @@ class PostgresWorldModel:
 
     def reclaim_orphan_goals(
         self, *, max_age_seconds: float = 60.0,
-        statuses: tuple[str, ...] = ("active", "pending"),
+        statuses: tuple[str, ...] = ("active",),
         resolved_window_seconds: float | None = None,
         exact_tenant: bool = False,
     ) -> int:
@@ -3220,8 +3303,8 @@ class PostgresWorldModel:
         A resolved zero window explicitly reclaims every active/pending goal
         in scope, including monotonic review timestamps ahead of the wall clock.
         Positive windows continue to require the full stale interval.
-        The periodic dashboard sweep passes only ``("active",)`` so queued
-        ``pending`` goals are left for their dispatcher. ``exact_tenant``
+        Only ``active`` goals are reclaimed by default so queued ``pending``
+        goals are left for their dispatcher; a caller may ask for both. ``exact_tenant``
         excludes compatibility-mode NULL rows from that background sweep.
         Returns the number of rows reclaimed.
         """
@@ -3250,7 +3333,7 @@ class PostgresWorldModel:
                 "UPDATE goals SET status = 'blocked', "
                 "result = COALESCE(result, '') || %s, "
                 "updated_at = GREATEST(updated_at + 0.000001, %s) "
-                f"WHERE status IN ({marks}) AND (%s = 0 OR updated_at <= %s)"
+                f"WHERE status IN ({marks}) AND (%s = 0 OR GREATEST(updated_at, COALESCE(heartbeat_at, 0)) <= %s)"
             )
             params: list = [marker, now, *statuses, max_age_seconds, cutoff]
             if frag:
@@ -3266,7 +3349,7 @@ class PostgresWorldModel:
         # set on startup is tiny, so the row-by-row cost is negligible.
         sel = (
             "SELECT id, result FROM goals "
-            f"WHERE status IN ({marks}) AND (%s = 0 OR updated_at <= %s)"
+            f"WHERE status IN ({marks}) AND (%s = 0 OR GREATEST(updated_at, COALESCE(heartbeat_at, 0)) <= %s)"
         )
         sparams: list = [*statuses, max_age_seconds, cutoff]
         if frag:
@@ -3301,7 +3384,7 @@ class PostgresWorldModel:
                     update = (
                         "UPDATE goals SET status = 'blocked', updated_at = GREATEST(updated_at + 0.000001, %s) "
                         f"WHERE id = %s AND status IN ({marks}) "
-                        "AND (%s = 0 OR updated_at <= %s)"
+                        "AND (%s = 0 OR GREATEST(updated_at, COALESCE(heartbeat_at, 0)) <= %s)"
                     )
                     if frag:
                         update += " AND " + frag
@@ -3312,7 +3395,7 @@ class PostgresWorldModel:
                     "UPDATE goals SET status = 'blocked', result = %s, "
                     "updated_at = GREATEST(updated_at + 0.000001, %s) "
                     f"WHERE id = %s AND status IN ({marks}) "
-                    "AND (%s = 0 OR updated_at <= %s)"
+                    "AND (%s = 0 OR GREATEST(updated_at, COALESCE(heartbeat_at, 0)) <= %s)"
                 )
                 if frag:
                     update += " AND " + frag
@@ -5644,6 +5727,11 @@ class PostgresWorldModel:
                         f"DELETE FROM {table} WHERE goal_id = ANY(%s)",
                         (gids,),
                     )
+                # Durable-execution checkpoints hold a goal's transcript in a
+                # table created on first use; erase them wherever one exists.
+                cur.execute("SELECT to_regclass('checkpoints')")
+                if cur.fetchone()[0] is not None:
+                    cur.execute("DELETE FROM checkpoints WHERE goal_id = ANY(%s)", (gids,))
                 # Source-linked live and historical facts can retain output
                 # derived from the subject's episodes. IDs are globally unique,
                 # and the active tenant predicate prevents cross-tenant prefix
@@ -5666,16 +5754,14 @@ class PostgresWorldModel:
                 # default, unlike the SQLite path that defers FK checks for the
                 # transaction. Break edges inside the soon-to-be-deleted tree so
                 # a single goal DELETE cannot fail on parent_id references.
-                gfrag, gfparams = _erasure_tenant_scope("tenant_id")
-                edge_sql = (
-                    "UPDATE goals SET parent_id = NULL "
-                    "WHERE parent_id = ANY(%s)"
+                # Not tenant-scoped: in compatibility mode a legacy child that
+                # ran under another tenant was stamped with that tenant while
+                # its parent was not. Its link to a goal deleted here must go
+                # too (as ON DELETE SET NULL would); nothing else in it changes.
+                cur.execute(
+                    "UPDATE goals SET parent_id = NULL WHERE parent_id = ANY(%s)",
+                    (gids,),
                 )
-                edge_params: list = [gids]
-                if gfrag:
-                    edge_sql += " AND " + gfrag
-                    edge_params += gfparams
-                cur.execute(edge_sql, tuple(edge_params))
                 cur.execute(
                     "UPDATE event_goal_admissions SET sealed_contract=NULL, "
                     "delivery_state='federation_retired' WHERE admission_key LIKE 'federation:%%' "

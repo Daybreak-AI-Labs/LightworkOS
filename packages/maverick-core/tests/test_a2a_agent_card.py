@@ -74,3 +74,25 @@ def test_route_served_when_enabled(_clean, monkeypatch):
     assert body["protocolVersion"] == "0.3.0"
     # legacy alias also served
     assert client.get("/.well-known/agent.json").status_code == 200
+
+
+def test_anonymous_card_fetch_reads_the_trust_decision_without_recording_it(_clean, monkeypatch):
+    # Every unauthenticated card fetch used to append an audit denial.
+    from types import SimpleNamespace
+
+    from maverick import agent_trust
+
+    monkeypatch.setenv("MAVERICK_A2A_ALLOW_UNAUTHENTICATED", "1")
+    monkeypatch.delenv("MAVERICK_A2A_TOKEN", raising=False)
+    monkeypatch.setattr(agent_trust, "load_trust_state", lambda: (True, {}))
+    monkeypatch.setattr(agent_trust, "decide_inbound",
+                        lambda *a, **k: SimpleNamespace(denied=True, reason="not trusted"))
+    recorded = []
+    monkeypatch.setattr(agent_trust, "record_denied", lambda *a, **k: recorded.append(a))
+    card = a2a.build_agent_card()
+    assert {} not in card["security"]
+    assert recorded == []
+    from maverick.a2a_tasks import TaskEngine
+
+    assert TaskEngine().auth_error(None) is not None
+    assert len(recorded) == 1  # a real task request still records its denial

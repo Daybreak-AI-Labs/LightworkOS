@@ -304,8 +304,11 @@ def _load_env_file_locked(path: Path) -> None:
             continue
         name, sep, value = line.partition("=")
         name = name.strip()
-        canonical = ("MAVERICK_" + name[len("LIGHTWORK_"):]
-                     if name.startswith("LIGHTWORK_") else name)
+        # Windows environment names ignore case: `maverick_approver_keys`
+        # there sets MAVERICK_APPROVER_KEYS, so compare upper-cased names.
+        upper = name.upper()
+        canonical = ("MAVERICK_" + upper[len("LIGHTWORK_"):]
+                     if upper.startswith("LIGHTWORK_") else upper)
         if not sep or not _ENV_NAME_RE.match(name) or canonical in _WIZARD_FORBIDDEN_AUTHORITY_ENV:
             continue
         value = value.strip()
@@ -1014,12 +1017,73 @@ def load_config(path: Path | None = None) -> dict:
     if tcfg is not None and _present(tcfg):
         shared = _SINGLE_READ.get()
         if shared is None or not shared.open:
-            return _deep_merge_config(cfg, _load_config_file(tcfg, interpolate=False))
+            return _merge_tenant(cfg, _load_config_file(tcfg, interpolate=False), tcfg)
         with _collecting_read_errors() as noted:
             tenant = _load_config_file(tcfg, interpolate=False)
         shared.noted.update(noted)  # reported for the rest of the decision
-        cfg = _deep_merge_config(cfg, tenant)
+        cfg = _merge_tenant(cfg, tenant, tcfg)
     return cfg
+
+
+_LOOSENING_LOGGED: set[tuple[str, tuple[str, ...]]] = set()
+
+
+def _merge_tenant(cfg: dict, tenant: dict, path: Path) -> dict:
+    """A tenant overlay may only tighten governance, safety, capabilities,
+    sandbox and security settings; a looser value is ignored, logged once and listed by
+    ``maverick doctor`` (:func:`tenant_policy_loosenings`)."""
+    merged, ignored, fixed = _tighten_tenant(cfg, tenant)
+    marker = (str(path), tuple(ignored), tuple(fixed))
+    if (ignored or fixed) and marker not in _LOOSENING_LOGGED:
+        _LOOSENING_LOGGED.add(marker)
+        logging.getLogger(__name__).warning(
+            "workspace settings %s cannot loosen your organisation's policy; ignored: %s; "
+            "set by your organisation: %s", path, ", ".join(ignored) or "none", ", ".join(fixed) or "none")
+    return merged
+
+
+def _tighten_tenant(cfg: dict, tenant: dict) -> tuple[dict, list[str], list[str]]:
+    """:func:`policy_tighten.merge_tenant_overlay`, also reporting a policy
+    section the tenant wrote as something other than a table (the loader
+    already reads it as empty)."""
+    from .policy_tighten import merge_tenant_overlay
+    merged, ignored, fixed = merge_tenant_overlay(cfg, tenant, _deep_merge_config)
+    message = getattr(tenant, "message", "") if isinstance(tenant, _UnreadableTable) else ""
+    ignored += [name for name in ("safety", "sandbox") if f"[{name}] must be a configuration table" in message]
+    return merged, ignored, fixed
+
+
+def tenant_policy_loosenings() -> dict[str, list[str]]:
+    """Workspace overlays on disk whose looser policy settings are ignored,
+    keyed by workspace folder, compared with the organisation's settings."""
+    from .paths import maverick_home
+    root = maverick_home() / "tenants"
+    if not root.is_dir():
+        return {}
+    upper = load_global_config()
+    found: dict[str, list[str]] = {}
+    for path in sorted(root.glob("*/config.toml")):
+        try:
+            tenant = _load_config_file(path, interpolate=False)
+        except Exception:  # unreadable files are reported by the config checks
+            continue
+        _, ignored, fixed = _tighten_tenant(upper, tenant)
+        if ignored or fixed:
+            found[path.parent.name] = ignored + [f"{key} (set by your organisation)" for key in fixed]
+    return found
+
+
+def tenant_ignored_settings() -> set[str]:
+    """Dotted names the active workspace overlay tried to loosen (ignored)."""
+    tcfg = tenant_config_path()
+    if tcfg is None or not _present(tcfg):
+        return set()
+    try:
+        tenant = _load_config_file(tcfg, interpolate=False)
+    except Exception:
+        return set()
+    _, ignored, fixed = _tighten_tenant(load_global_config(), tenant)
+    return set(ignored) | set(fixed)
 
 
 class AgentStepConfigError(ValueError):

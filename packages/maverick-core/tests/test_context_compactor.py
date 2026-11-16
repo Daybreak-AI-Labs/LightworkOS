@@ -4,6 +4,7 @@ from __future__ import annotations
 import sys
 import types
 
+import pytest
 from maverick import context_compactor as cc
 
 # --- embedding ranking keeps head turns on vector shortfall ------
@@ -176,3 +177,29 @@ def test_over_budget_tail_is_trimmed_even_when_only_system_precedes_it():
                 {"role": "user", "content": "a" * 40_000}]
     result = cc.compact(messages, target_tokens=1000, preserve_tail=1)
     assert result.tokens_after <= 1000
+
+
+def test_a_short_batch_does_not_shift_vectors_onto_other_turns(monkeypatch):
+    """Turns are embedded 16 at a time. A batch that yields one vector too
+    few must cost only its own last turn, not misplace every later vector."""
+    class _Marked:
+        def __init__(self, model_name=None):
+            pass
+
+        def embed(self, texts):
+            texts = list(texts)
+            if texts == ["query"]:
+                yield [1.0, 0.0]
+                return
+            for text in texts[:-1]:
+                yield [1.0, 0.0] if text.startswith("match") else [0.0, 1.0]
+
+    fake_mod = types.ModuleType("fastembed")
+    fake_mod.TextEmbedding = _Marked
+    monkeypatch.setitem(sys.modules, "fastembed", fake_mod)
+    head = [{"role": "user", "content": ("match" if i == 20 else "other") + f" turn {i}"}
+            for i in range(40)]
+    scored = {i: score for score, i, _ in cc._score_by_embedding(head, "query", None)}
+    assert scored[20] == pytest.approx(1.0)
+    assert scored[15] == scored[31] == scored[39] == float("inf")  # each batch's last turn is kept
+    assert all(scored[i] == pytest.approx(0.0) for i in range(40) if i not in (15, 20, 31, 39))

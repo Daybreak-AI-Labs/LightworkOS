@@ -228,3 +228,40 @@ def test_the_inbox_states_each_handoff_from_the_listed_record(offered, monkeypat
     monkeypatch.setattr(recipient.store, "get", lambda identifier: reads.append(identifier) or real_get(identifier))
     assert [(item["id"], item["state"]) for item in recipient.inbox()] == [(row["id"], "accepted")]
     assert reads == []
+
+
+def test_the_start_checks_never_make_an_unscoped_world_read(setup, monkeypatch):
+    """On shared Postgres with a workspace bound the raw ``query`` is refused,
+    so a start check that used it stopped every task from starting."""
+    from maverick.human_conversation_handoffs import require_ai_open
+    from maverick.tenant_sql import TenantScopeRequired
+
+    world, goal, *_ = setup
+
+    raw = world.query
+
+    def refused(sql, params=(), *, system=False):
+        if not system:  # the shared Postgres store's rule for a bound workspace
+            raise TenantScopeRequired("This read has no tenant boundary.")
+        return raw(sql, params, system=True)
+
+    monkeypatch.setattr(world, "query", refused)
+    child = world.create_goal("Follow-up", owner="user:owner", parent_id=goal)
+    assert closure(world, child) is None
+    require_open(world, child)
+    require_ai_open(world, child)
+    seen = []
+
+    def execute(sql, args):
+        seen.append(sql)
+        return world.conn.execute(sql, args)
+
+    assert closure(world, child, execute=execute) is None
+    require_ai_open(world, child, execute=execute)
+    assert seen and all("{tenant" not in sql for sql in seen)
+    # A parent that no longer exists ends the walk, as it always has.
+    world.conn.execute("PRAGMA foreign_keys=OFF")
+    world.conn.execute("UPDATE goals SET parent_id=999999 WHERE id=?", (child,))
+    world.conn.commit()
+    assert closure(world, child) is None
+    require_ai_open(world, child)

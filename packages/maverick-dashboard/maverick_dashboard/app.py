@@ -1208,10 +1208,23 @@ async def _lifespan(app: FastAPI):
         previous.assert_restart_allowed()
     supervisor = ShutdownSupervisor(shutdown_seconds())
     app.state.lifecycle_supervisor = supervisor
+    app.state.restore_refusal = None
     register_main_components(app, supervisor)
     try:
         supervisor.release_control_plane = current() is None
         _acquire_control_plane(role="dashboard")
+        # A restore that stopped part-way is undone before anything reads the
+        # data folder. If it cannot be undone, only /livez answers normally;
+        # every other request gets the operator's recovery message.
+        from maverick.backup import RestoreRecoveryRefused, recover_interrupted_restore
+
+        try:
+            await run_in_threadpool(recover_interrupted_restore)
+        except RestoreRecoveryRefused as exc:
+            log.error("%s", exc)
+            app.state.restore_refusal = str(exc)
+            yield
+            return
         _assert_dashboard_auth_configured()
         open_postgres_pools()
         open_goal_admission()
@@ -2514,7 +2527,9 @@ async def _reclaim_orphans() -> None:
                     _world, resolved_window_seconds=window,
                 )
         else:
-            n = _world().reclaim_orphan_goals()
+            from maverick.runner import startup_reclaim_statuses
+
+            n = _world().reclaim_orphan_goals(statuses=startup_reclaim_statuses())
             from maverick.paths import current_tenant_id_strict
             if current_tenant_id_strict() is None:
                 from .orphan_sweeper import reclaim_registered_sqlite
@@ -3786,6 +3801,26 @@ async def runtime_policy_exception_handler(
         },
         status_code=503,
     )
+
+
+from maverick.world_model import WorldBackendUnreadable as _WorldBackendUnreadable  # noqa: E402
+
+
+@app.exception_handler(_WorldBackendUnreadable)
+async def world_backend_refused_handler(request: Request, exc: _WorldBackendUnreadable):
+    """The records database was refused (Postgres was last used and the
+    settings no longer choose it): a plain 503, never a generic 500. The
+    details, which name files, stay in the log and in ``maverick doctor``."""
+    log.error("records database refused on %s: %s", request.url.path, exc)
+    detail = ("Lightwork will not open a local records database, because it last used "
+              "its Postgres database and the settings no longer choose one. "
+              "An administrator can run maverick doctor to see what to fix.")
+    if _wants_html(request):
+        return templates.TemplateResponse(request, "error.html", {
+            "status": 503, "title": "Records database unavailable", "message": detail,
+            "path": request.url.path, "gate": "", "reauthenticate": "", "feature": {},
+        }, status_code=503)
+    return JSONResponse({"detail": detail, "code": "records_database_refused"}, status_code=503)
 
 
 @app.exception_handler(FlowPayloadError)
@@ -13822,11 +13857,11 @@ def _build_plan_tree(world, goal_id: int, depth_cap: int = 6) -> dict:
         return {}
 
     per_parent_cap = 50
-    rows = world.query(
+    rows = world.tenant_query(
         """
         WITH RECURSIVE descendants(id, parent_id, title, status, depth, created_at) AS (
           SELECT id, parent_id, title, status, 0, created_at
-            FROM goals WHERE id = ?
+            FROM goals WHERE id = ? AND {tenant:tenant_id}
           UNION ALL
           SELECT child.id, child.parent_id, child.title, child.status, d.depth + 1, child.created_at
             FROM descendants d
@@ -13834,7 +13869,7 @@ def _build_plan_tree(world, goal_id: int, depth_cap: int = 6) -> dict:
               ON child.id IN (
                 SELECT g.id
                   FROM goals g
-                 WHERE g.parent_id = d.id
+                 WHERE g.parent_id = d.id AND {tenant:g.tenant_id}
                  ORDER BY g.created_at ASC, g.id ASC
                  LIMIT ?
               )
@@ -15795,6 +15830,11 @@ from .request_activity import RequestActivityMiddleware  # noqa: E402
 
 app.add_middleware(RequestMemoMiddleware)
 app.add_middleware(RequestActivityMiddleware)
+# Outside every other layer: while start-up refused a half-restored data
+# folder, no request or websocket reaches a route (see restore_refusal).
+from .restore_refusal import RestoreRefusalGate  # noqa: E402
+
+app.add_middleware(RestoreRefusalGate)
 # Added last, so outermost: one OTLP span per request, when tracing is on. Decided
 # here, once; with tracing off nothing is added and a request pays nothing for it.
 request_spans.install(app)

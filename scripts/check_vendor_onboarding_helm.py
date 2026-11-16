@@ -72,6 +72,8 @@ def _validate_rendered(rendered: str, *, postgres: bool) -> int:
     env = {entry["name"]: entry.get("value") for entry in container.get("env", [])}
     if env.get("MAVERICK_HOME", _STATE_HOME) != _STATE_HOME:
         raise ValueError("application home differs from the persistent volume")
+    if env.get("MAVERICK_WORLD_BACKEND") != ("postgres" if postgres else "sqlite"):
+        raise ValueError("the world-model backend is not named explicitly")
     if postgres:
         if env.get("MAVERICK_WORLD_BACKEND") != "postgres" or env.get("MAVERICK_PG_RLS") != "1":
             raise ValueError("Postgres world-model configuration or RLS was omitted")

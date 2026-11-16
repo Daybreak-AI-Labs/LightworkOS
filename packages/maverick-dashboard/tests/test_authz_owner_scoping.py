@@ -452,8 +452,13 @@ def _seeded_world():
     conn.commit()
     # The export reads through the backend-portable ``query`` contract (SQLite
     # paramstyle in, index+key rows out), which this stub mirrors on its sqlite.
+    def tenant_query(sql, params=()):
+        from maverick.tenant_sql import expand, unscoped
+        return conn.execute(*expand(sql, tuple(params), unscoped)).fetchall()
+
     return types.SimpleNamespace(
-        conn=conn, query=lambda sql, params=(): conn.execute(sql, tuple(params)).fetchall()
+        conn=conn, query=lambda sql, params=(): conn.execute(sql, tuple(params)).fetchall(),
+        tenant_query=tenant_query,
     )
 
 
@@ -660,6 +665,12 @@ def test_workforce_board_api_scoped_to_owner(monkeypatch):
         "CREATE TABLE goals (id INTEGER, owner TEXT, status TEXT, "
         "created_at REAL, updated_at REAL, domain TEXT)")
     world.query = lambda sql, params=(): world.conn.execute(sql, tuple(params)).fetchall()
+
+    def tenant_query(sql, params=()):
+        from maverick.tenant_sql import expand, unscoped
+        return world.conn.execute(*expand(sql, tuple(params), unscoped)).fetchall()
+
+    world.tenant_query = tenant_query
     monkeypatch.setattr(api_mod, "_world", lambda: world)
     monkeypatch.setattr(api_mod, "goal_owner_filter", lambda request: "user:alice")
 

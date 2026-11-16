@@ -20,8 +20,9 @@ class History:
                             [(n,) for n in range(1, count + 1)])
         self.db.execute("INSERT INTO episodes VALUES(?, 2, 1000, 1001, 'success', 99, 3, 2, 0)", (count + 1,))
 
-    def query(self, sql, params=()):
-        return self.db.execute(sql, params).fetchall()
+    def tenant_query(self, sql, params=()):
+        from maverick.tenant_sql import expand, unscoped
+        return self.db.execute(*expand(sql, params, unscoped)).fetchall()
 
 
 def test_complete_owner_population_exceeds_old_5000_cap():
@@ -53,7 +54,7 @@ def test_running_attempt_excluded_and_unknown_finished_cost_preserved():
 
 def test_storage_failure_is_unavailable_not_zero():
     class Broken:
-        def query(self, *args):
+        def tenant_query(self, *args):
             raise OSError("disk unreadable")
     report = workforce_value.to_dict(workforce_value.compute(Broken(), now=2000))
     assert report["available"] is False

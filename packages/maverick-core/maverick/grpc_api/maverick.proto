@@ -6,8 +6,9 @@
 // and fails the contract gate (maverick/grpc_api/contract.py, golden in
 // maverick_v1_contract.json). Breaking changes require a maverick.v2 package.
 //
-// Generate Python stubs with:
-//   python -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. maverick.proto
+// Generate Python stubs with `maverick gen-stubs`, or from the directory
+// containing maverick/:
+//   python -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. maverick/grpc_api/maverick.proto
 // (the server does this on demand when the [grpc] extra is installed.)
 syntax = "proto3";
 

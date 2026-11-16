@@ -393,3 +393,14 @@ def test_the_chart_guard_is_wired_into_the_deployment_template() -> None:
 def test_the_chart_still_defaults_to_one_replica() -> None:
     values = (CHART / "values.yaml").read_text(encoding="utf-8")
     assert "replicaCount: 1" in values
+
+
+@pytest.mark.skipif(not CHART.is_dir(), reason="chart absent")
+def test_the_chart_always_names_the_world_backend() -> None:
+    """A release moved back to sqlite must say so: the app refuses to switch
+    away from Postgres on silence (DR 4), so the variable is never omitted."""
+    deployment = (CHART / "templates" / "deployment.yaml").read_text(encoding="utf-8")
+    at = deployment.index("- name: MAVERICK_WORLD_BACKEND")
+    guard = deployment[:at].rsplit("{{-", 1)[-1]
+    assert "worldModel.backend" not in guard, "the backend variable must not be conditional"
+    assert ".Values.worldModel.backend | quote" in deployment[at:at + 200]

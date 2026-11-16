@@ -358,3 +358,75 @@ def clear_outbox(outbox: Path | None = None) -> int:
         except OSError:
             pass
     return n
+
+
+def purge_after_opt_out(outbox: Path | None = None) -> int:
+    """Delete the queued records once donation is turned off.
+
+    People who opt out expect nothing more to leave, so records queued
+    before the opt-out are deleted, not kept. An unreadable configuration
+    deletes nothing (the choice cannot be read); export stays refused by
+    :func:`withheld_at_export`. Returns the number of records deleted.
+    """
+    try:
+        from .config import config_source_errors
+        if config_source_errors(include_tenant=True) or _donations_enabled():
+            return 0
+    except Exception:
+        return 0
+    return clear_outbox(outbox)
+
+
+def _installation_outbox_tenant(outbox: Path) -> tuple[bool, str | None]:
+    """``(True, tenant)`` when ``outbox`` is one of this installation's outboxes.
+
+    The shared outbox has tenant ``None``; ``<home>/tenants/<t>/outbox`` is
+    tenant ``t``'s. Raises when a tenant folder name cannot be decoded.
+    """
+    from urllib.parse import unquote
+
+    from .paths import _tenant_segment, maverick_home
+
+    target = Path(outbox).resolve()
+    if target == (maverick_home() / "outbox").resolve():
+        return True, None
+    if target.name == "outbox" and target.parent.parent == (maverick_home() / "tenants").resolve():
+        tenant = unquote(target.parent.name)
+        if _tenant_segment(tenant) != target.parent.name:
+            raise ValueError("unrecognised tenant folder")
+        return True, tenant
+    return False, None
+
+
+def withheld_at_export(outbox: Path) -> bool:
+    """Re-check consent before records leave one of this installation's outboxes.
+
+    ``True`` when ``outbox`` is this installation's shared outbox or any
+    tenant's outbox, and that outbox's own scope has donation off or an
+    unreadable configuration; the queue is then deleted when the opt-out is
+    readable. Any other directory is not recognised as an outbox of this
+    installation: a fleet drop carries its donors' consent, and a copy of an
+    outbox moved elsewhere cannot be told apart from one, so it is not gated.
+    """
+    from .paths import reset_tenant, set_tenant
+
+    try:
+        mine, tenant = _installation_outbox_tenant(outbox)
+    except Exception:
+        return True
+    if not mine:
+        return False
+    token = set_tenant(tenant)
+    try:
+        try:
+            from .config import config_source_errors
+            if not config_source_errors(include_tenant=True) and _donations_enabled():
+                return False
+        except Exception:
+            return True
+        deleted = purge_after_opt_out(outbox)
+    finally:
+        reset_tenant(token)
+    log.warning("trajectory donation is off; nothing was exported from the outbox "
+                "(%d queued record(s) deleted)", deleted)
+    return True

@@ -115,10 +115,14 @@ def test_a_task_that_already_ran_is_not_asked_about_again_on_resume(
 ):
     # A run of it is on record: a person (or the administrator's setting) let it
     # through once, so a crash-retry or an answered question just carries on.
+    from maverick.orchestrator import _record_risk_admission
+
     fake_llm.scripted = _script(make_llm_response)
     world = _world(tmp_path)
     goal_id = world.create_goal(_RISKY, "")
     world.start_episode(goal_id)
+    # A person approved these exact words when that run began.
+    _record_risk_admission(world, goal_id, world.get_goal(goal_id))
 
     status = _start_like_the_dashboard(tmp_path, fake_llm, monkeypatch, goal_id)
 
@@ -146,3 +150,83 @@ async def test_resume_of_a_task_that_was_held_and_never_started_asks_again(
     assert "waits for a person to approve it" in out
     assert fake_llm.calls == []
     assert world.get_goal(goal_id).status == "blocked"
+
+
+def test_retitling_a_task_that_ran_to_riskier_words_asks_again_on_resume(
+    tmp_path, fake_llm, make_llm_response, monkeypatch,
+):
+    # A run on record only lets through the words that were checked then.
+    from maverick import goal_mutations
+
+    fake_llm.scripted = _script(make_llm_response)
+    world = _world(tmp_path)
+    goal_id = world.create_goal("Summarize the weekly notes", "")
+    assert _start_like_the_dashboard(tmp_path, fake_llm, monkeypatch, goal_id) == "done"
+    world.set_goal_status(goal_id, "blocked")
+    goal_mutations.edit_structure(world, goal_id, title=_RISKY,
+                                  expected_updated_at=float(world.get_goal(goal_id).updated_at))
+    calls = len(fake_llm.calls)
+
+    status = _start_like_the_dashboard(tmp_path, fake_llm, monkeypatch, goal_id)
+
+    assert status == "blocked"
+    assert "looks high risk" in (_world(tmp_path).get_goal(goal_id).result or "")
+    assert len(fake_llm.calls) == calls, "the retitled task started without anyone approving it"
+
+
+def _approved_run(tmp_path, fake_llm, monkeypatch, goal_id):
+    monkeypatch.setenv("MAVERICK_CONSENT_DASHBOARD_TIMEOUT", "5")
+    stop = threading.Event()
+    thread = _decide_when_parked(tmp_path / "world.db", "approved", stop)
+    try:
+        return _start_like_the_dashboard(tmp_path, fake_llm, monkeypatch, goal_id)
+    finally:
+        stop.set()
+        thread.join(2)
+
+
+def test_only_the_exact_approved_words_resume_without_a_person(
+    tmp_path, fake_llm, make_llm_response, monkeypatch,
+):
+    # Same tier is not enough: an approved $40 payment retitled to $900,000
+    # is asked about again, while the approved words themselves carry on.
+    from maverick import goal_mutations
+
+    small = "Pay the $40 invoice from the office supplier"
+    fake_llm.scripted = _script(make_llm_response) * 2
+    world = _world(tmp_path)
+    goal_id = world.create_goal(small, "")
+    assert _approved_run(tmp_path, fake_llm, monkeypatch, goal_id) == "done"
+    world.set_goal_status(goal_id, "blocked")
+    approvals = len(_world(tmp_path).list_approvals())
+    assert _start_like_the_dashboard(tmp_path, fake_llm, monkeypatch, goal_id) == "done"
+    assert len(_world(tmp_path).list_approvals()) == approvals  # same words: not asked
+
+    world.set_goal_status(goal_id, "blocked")
+    goal_mutations.edit_structure(world, goal_id, title="Wire $900,000 to account 12345 at an offshore bank",
+                                  expected_updated_at=float(world.get_goal(goal_id).updated_at))
+    calls = len(fake_llm.calls)
+    assert _start_like_the_dashboard(tmp_path, fake_llm, monkeypatch, goal_id) == "blocked"
+    assert len(fake_llm.calls) == calls, "the retitled payment ran without a person"
+
+
+def test_a_run_while_the_gate_was_off_does_not_let_held_words_through_later(
+    tmp_path, fake_llm, make_llm_response, monkeypatch,
+):
+    from maverick import goal_mutations
+
+    monkeypatch.delenv("MAVERICK_GOAL_RISK_REQUIRE_HUMAN", raising=False)
+    fake_llm.scripted = _script(make_llm_response)
+    world = _world(tmp_path)
+    goal_id = world.create_goal(_RISKY, "")
+    assert _start_like_the_dashboard(tmp_path, fake_llm, monkeypatch, goal_id) == "done"
+    # A default install (gate off) records nothing for its starts.
+    assert world.query("SELECT 1 FROM goal_mutation_receipts WHERE goal_id=?", (goal_id,)) == []
+
+    monkeypatch.setenv("MAVERICK_GOAL_RISK_REQUIRE_HUMAN", "medium")
+    world.set_goal_status(goal_id, "blocked")
+    goal_mutations.edit_structure(world, goal_id, title=_RISKY + " today",
+                                  expected_updated_at=float(world.get_goal(goal_id).updated_at))
+    calls = len(fake_llm.calls)
+    assert _start_like_the_dashboard(tmp_path, fake_llm, monkeypatch, goal_id) == "blocked"
+    assert len(fake_llm.calls) == calls

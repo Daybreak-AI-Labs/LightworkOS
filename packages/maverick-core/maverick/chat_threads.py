@@ -44,15 +44,18 @@ class ChatThreads:
         self.world = world
 
     def _scope(self, alias):
-        if self.store.sqlite:
-            return "1=1", ()
-        return self.store.scope(f"{alias}.tenant_id")
+        # Exact tenant boundary, expanded by the world store (1=1 on SQLite).
+        self.store._check_context()
+        return f"{{tenant_exact:{alias}.tenant_id}}", ()
 
     def _rows(self, sql, values=(), *, connection=None):
         self.store._check_context()
         if connection is None:
-            return self.world.query(sql, values)
-        return self.store.execute(connection, sql, values).fetchall()
+            return self.world.tenant_query(sql, values)
+        return self._execute(connection, sql, values).fetchall()
+
+    def _execute(self, connection, sql, values=()):
+        return self.store.execute(connection, *self.world.tenant_sql(sql, values, require=False))
 
     def binding(self, goal_id, *, connection=None):
         gs, gv = self._scope("g")
@@ -252,7 +255,7 @@ class ChatThreads:
         self._require_open(connection, goal_id)
         advance = "MAX" if self.store.sqlite else "GREATEST"
         scope, values = self._scope("goals")
-        changed = self.store.execute(connection, "UPDATE goals SET status='pending',completed_at=NULL,"
+        changed = self._execute(connection, "UPDATE goals SET status='pending',completed_at=NULL,"
                                      f"updated_at={advance}(updated_at+0.000001,?) WHERE id=? "
                                      f"AND status IN ('blocked','cancelled','failed') AND {scope}",
                                      (time.time(), goal_id, *values))

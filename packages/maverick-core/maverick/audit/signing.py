@@ -1819,12 +1819,49 @@ def reanchor_file(path: Path, *, force: bool = False, preverified: bool = False)
         return _reanchor_file_locked(path, force=force, preverified=preverified)
 
 
+def resign_rows(
+    parsed: list[tuple[str, object]], keypair: tuple[bytes, bytes, str]
+) -> tuple[str, int]:
+    """Re-chain and re-sign rows in memory; return ``(ndjson, rows_signed)``.
+
+    ``("json", row)`` entries are signed in order under ``keypair``;
+    ``("raw", line)`` entries are kept verbatim and out of the chain, as
+    ``verify_chain`` treats them. Nothing is written, so a caller can publish
+    the result in one atomic write only once every row is signed.
+    """
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+
+    priv_bytes, _pub, key_id = keypair
+    signer = ed25519.Ed25519PrivateKey.from_private_bytes(priv_bytes)
+    out_lines: list[str] = []
+    prev = ""
+    resigned = 0
+    for kind, val in parsed:
+        if kind == "raw":
+            out_lines.append(val)  # type: ignore[arg-type]
+            continue
+        assert isinstance(val, dict)
+        # Strip the old chain fields, then rebuild them exactly as
+        # AuditSigner.write does (hash over payload incl. prev_hash + key_id,
+        # sort_keys=True; sig over the hash bytes).
+        payload = {k: v for k, v in val.items() if k not in ("hash", "sig", "prev_hash", "key_id")}
+        payload["prev_hash"] = prev
+        payload["key_id"] = key_id
+        row_hash = hashlib.sha256(
+            json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
+        payload["hash"] = row_hash
+        payload["sig"] = signer.sign(bytes.fromhex(row_hash)).hex()
+        out_lines.append(json.dumps(payload, default=str))
+        prev = row_hash
+        resigned += 1
+    return "".join(line + "\n" for line in out_lines), resigned
+
+
 def _reanchor_file_locked(
     path: Path, *, force: bool = False, preverified: bool = False
 ) -> int:
     """``reanchor_file`` body, with the file's rewrite lock already held."""
-    from cryptography.hazmat.primitives.asymmetric import ed25519
-
     try:
         ensure_private_directory(path.parent)
         ensure_private_file(path, 0o600)
@@ -1870,33 +1907,7 @@ def _reanchor_file_locked(
             )
             return -1
 
-    priv_bytes, _pub, key_id = _load_or_create_keypair()
-    signer = ed25519.Ed25519PrivateKey.from_private_bytes(priv_bytes)
-
-    out_lines: list[str] = []
-    prev = ""
-    resigned = 0
-    for kind, val in parsed:
-        if kind == "raw":
-            out_lines.append(val)  # type: ignore[arg-type]
-            continue
-        assert isinstance(val, dict)
-        # Strip the old chain fields, then rebuild them exactly as
-        # AuditSigner.write does (hash over payload incl. prev_hash + key_id,
-        # sort_keys=True; sig over the hash bytes).
-        payload = {k: v for k, v in val.items() if k not in ("hash", "sig", "prev_hash", "key_id")}
-        payload["prev_hash"] = prev
-        payload["key_id"] = key_id
-        row_hash = hashlib.sha256(
-            json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
-        ).hexdigest()
-        payload["hash"] = row_hash
-        payload["sig"] = signer.sign(bytes.fromhex(row_hash)).hex()
-        out_lines.append(json.dumps(payload, default=str))
-        prev = row_hash
-        resigned += 1
-
-    new_content = "".join(line + "\n" for line in out_lines)
+    new_content, resigned = resign_rows(parsed, _load_or_create_keypair())
     if new_content == original:
         return 0  # untouched rows under an unchanged key -> no rewrite
 

@@ -1,8 +1,8 @@
 """Qdrant tenant isolation against a REAL Qdrant server.
 
-Skipped unless MAVERICK_QDRANT_URL points at a running server (the dedicated CI
-qdrant job); needs qdrant-client + fastembed. The mock-based unit tests live in
-test_qdrant_store.py. This proves the behaviour a mock can't: a real Qdrant
+Skipped unless MAVERICK_QDRANT_URL points at a running server; no CI job sets
+it, so run it locally against one. Needs qdrant-client + fastembed. The
+mock-based unit tests live in test_qdrant_store.py. This proves the behaviour a mock can't: a real Qdrant
 server only accepts uint/UUID point ids, so the store's tenant-namespaced string
 ids must not be rejected with a 400 -- they're deterministic UUIDs with the
 logical id in the payload, and add/query/delete are tenant-scoped end to end.

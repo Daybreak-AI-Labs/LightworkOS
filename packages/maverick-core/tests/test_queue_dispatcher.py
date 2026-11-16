@@ -1023,6 +1023,15 @@ def test_packaged_arq_worker_has_matching_async_named_function(monkeypatch):
         assert result == "done"
         with pytest.raises(qd.QueueSecurityError, match="SIGNING_KEY"):
             asyncio.run(packaged.WorkerSettings.on_startup({}))
+        # The worker runs the same start-up gate as `maverick` first.
+        from maverick import installation_recovery
+
+        def refuse():
+            raise installation_recovery.MaintenanceError("An earlier restore stopped part-way.")
+
+        monkeypatch.setattr(installation_recovery, "require_normal_start", refuse)
+        with pytest.raises(SystemExit, match="stopped part-way"):
+            asyncio.run(packaged.WorkerSettings.on_startup({}))
     finally:
         sys.modules.pop("maverick.arq_worker", None)
 

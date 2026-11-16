@@ -11,10 +11,10 @@ from types import SimpleNamespace
 def iter_episodes(world, *, owner=None, since=None, until=None, finished_only=False):
     from .world_model import _dec_fields
 
-    high = int(world.query("SELECT COALESCE(MAX(id), 0) FROM episodes")[0][0])
+    high = int(world.tenant_query("SELECT COALESCE(MAX(e.id), 0) FROM episodes e WHERE {tenant_goal:e.goal_id}")[0][0])
     cursor = 0
     while cursor < high:
-        clauses = ["e.id > ?", "e.id <= ?"]
+        clauses = ["e.id > ?", "e.id <= ?", "{tenant_goal:e.goal_id}"]
         values = [cursor, high]
         if owner is not None:
             clauses.append("g.owner = ?")
@@ -27,7 +27,7 @@ def iter_episodes(world, *, owner=None, since=None, until=None, finished_only=Fa
             values.append(until)
         if finished_only:
             clauses.append("e.ended_at IS NOT NULL")
-        rows = world.query(
+        rows = world.tenant_query(
             "SELECT e.id, e.goal_id, e.started_at, e.ended_at, e.outcome, "
             "e.cost_dollars, e.input_tokens, e.output_tokens, e.tool_calls, g.domain "
             "FROM episodes e LEFT JOIN goals g ON e.goal_id = g.id WHERE "

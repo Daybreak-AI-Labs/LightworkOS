@@ -545,7 +545,9 @@
           if (res.j.retried_from) { window.location = '/flows/' + encodeURIComponent(flowId) + '/runs/' + encodeURIComponent(res.j.run_id); return; }
           pendingAction = failedRun ? { key: runKey(failedRun), reviewOnly: false,
             kind: 'retry', exhausted: false } : null;
-          say('Continuing from “' + stepLabel(res.j.from_node) + '”…');
+          say(res.j.approval_required
+            ? 'This step needs a new approval before it runs again. The request appears here.'
+            : 'Continuing from “' + stepLabel(res.j.from_node) + '”…');
           if (failedRun) renderRun(failedRun);
           poll(60, pendingAction && pendingAction.key);
         }).catch(function (e) { done(true); say(plain(e, 'run it again')); });

@@ -25,8 +25,12 @@ CAPABILITIES = MappingProxyType({
         "base_url", "default_headers", "project_id", "region", "model_id",
     })),
     **{name: ProviderCapabilities(_COMMON) for name in (
-        "moonshot", "xai", "gemini", "deepseek", "openrouter", "ollama",
-        "tgi", "vllm", "openai_compatible",
+        "moonshot", "xai", "gemini", "deepseek", "openrouter", "openai_compatible",
+    )},
+    # Self-hosted: price_per_mtok ("free" or [input, output] USD) prices a
+    # server on a public address; see budget._self_hosted_quote.
+    **{name: ProviderCapabilities(_COMMON | {"price_per_mtok"}) for name in (
+        "ollama", "tgi", "vllm",
     )},
     "codex_cli": ProviderCapabilities(frozenset({
         "api_key", "binary", "sandbox_mode", "timeout_seconds", "cwd",

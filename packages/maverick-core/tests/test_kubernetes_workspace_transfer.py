@@ -144,7 +144,10 @@ def test_failed_export_retains_pod_and_original_workspace(monkeypatch, tmp_path)
                                       ("hardlink", tarfile.LNKTYPE),
                                       ("device", tarfile.CHRTYPE),
                                       ("a/../b", tarfile.REGTYPE),
-                                      ("file:stream", tarfile.REGTYPE)])
+                                      ("file:stream", tarfile.REGTYPE),
+                                      # Names a backup cannot hold either.
+                                      ("what?.txt", tarfile.REGTYPE),
+                                      ('a"b|c*d<e>f', tarfile.REGTYPE)])
 def test_untrusted_archive_rejects_escapes_and_special_entries(tmp_path, name, kind):
     archive = tmp_path / "export.tar"
     with tarfile.open(archive, "w") as stream:
@@ -200,3 +203,17 @@ def test_interrupted_publication_retains_originals_and_export(tmp_path, monkeypa
     assert (tmp_path / "backup" / "b").read_text() == "original b"
     assert (exported / "a").read_text() == "new a"
     assert (local / "b").read_text() == "original b"
+
+
+def test_recovery_folders_are_pruned_after_the_retention_period(caplog):
+    import os
+    import time
+    old = transfer.recovery_directory()
+    (old / "transfer.json").write_text("{}")
+    past = time.time() - transfer.RECOVERY_RETENTION_SECONDS - 60
+    for path in (old / "transfer.json", old):
+        os.utime(path, (past, past))
+    recent = transfer.recovery_directory()
+    fresh = transfer.recovery_directory()
+    assert not old.exists() and recent.is_dir() and fresh.is_dir()
+    assert old.name in caplog.text

@@ -21,7 +21,7 @@ def test_erase_calls_audit_scrub_user(tmp_path, monkeypatch):
         lambda channel, user_id, **kw: (scrub_calls.append((channel, user_id)) or (2, 5)),
     )
     # Don't write a real audit file when erase records its event.
-    monkeypatch.setattr(audit_mod, "record", lambda kind, **payload: None)
+    monkeypatch.setattr(audit_mod, "record", lambda kind, **payload: True)
 
     db = tmp_path / "world.db"
     wm = WorldModel(db)

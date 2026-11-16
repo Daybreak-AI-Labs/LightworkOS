@@ -66,7 +66,7 @@ def test_reclaim_seals_marker_for_null_result(monkeypatch, tmp_path):
     wm = WorldModel(db)
     gid = wm.create_goal("g", "")  # stays 'pending', result is NULL
 
-    n = wm.reclaim_orphan_goals(max_age_seconds=0)
+    n = wm.reclaim_orphan_goals(max_age_seconds=0, statuses=("active", "pending"))
     assert n == 1
 
     # The marker round-trips and is stored sealed, never as bare plaintext in a

@@ -313,9 +313,176 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Every built-in tool now has an explicit risk rating. Discovery and
   read-only tools such as `find_tools` are low, so a low or medium
   `max_risk` keeps them. Unrated plugin and MCP tools still count as high.
+- The gRPC server starts again: its generated stubs now import as part of
+  the package. Stubs an earlier release generated are rebuilt on next start;
+  with runtime generation off, run `maverick gen-stubs` after upgrading.
+- The database tool on MySQL Connector/Python now reads at most one row
+  past the row limit, even when the query has its own larger LIMIT.
+- The database query timeout now also applies on MySQL Connector/Python and
+  MariaDB Connector/Python: the server stops the statement at the deadline
+  and a timed-out query is cancelled. Before, only PyMySQL was bounded.
+- Image OCR runs Tesseract with one OpenMP thread unless OMP_THREAD_LIMIT is
+  set, so a busy host no longer pushes small images past the OCR timeout.
+- The SSH sandbox now says "The ssh connection failed" when ssh itself
+  exits 255, and no longer reports a remote command's own exit 255 as a
+  connection failure.
+- A restore that stopped part-way, in any workspace, is now undone when the
+  dashboard, a CLI command, `maverick-mcp`, `maverick-evolve`, the gRPC
+  server or the arq queue worker starts. If its record cannot be checked
+  (for example the backup signing key changed), start-up stops with a
+  message saying what to do. The dashboard then answers `/livez`, gives
+  probes a short message, closes websockets, and shows the full steps to
+  the local owner, or to an administrator who enters the dashboard token
+  on its page. `--help` still works.
+- On Postgres, a world read made inside an open world transaction (such as
+  the check before a conversation alternative is created) now joins that
+  transaction. It no longer commits it early or, with `pool_size = 1`,
+  waits for a second connection until the pool times out.
+- On Postgres in tenant compatibility mode, erasing a conversation no
+  longer fails when a child task was later claimed by another workspace;
+  that child is kept and only its link to the erased task is removed.
+- A Kubernetes workspace transfer now refuses file names containing
+  `< > " | ? *` (as it already refused `:`): a backup cannot hold them.
+  Copies already kept in `sandbox-recovery` with such names are left out of
+  backups with a warning instead of stopping every backup; rename them to
+  keep them.
+- `maverick start --domain D --coding-mode --best-of-n N` now applies the
+  department's profile and gates to every attempt; the domain was dropped.
+- `maverick share` now refuses `--db` and a run number that is not in the
+  workspace's world, instead of uploading run-log events from another run
+  with the same number. Share such runs from their own workspace.
+- An A2A task whose start could not be saved is now marked failed, so it
+  no longer holds a task slot until the server restarts.
+- Fetching the public A2A agent card no longer writes an agent-trust
+  denial to the audit log on every anonymous request; task requests still
+  record theirs.
+- The `~/.maverick/.env` loader now ignores security-authority settings
+  in any letter case (such as `maverick_approver_keys`), as Windows reads
+  them case-insensitively. Set those in the service environment instead.
+- Approvals for protected settings now hold a file lock, so several dashboard
+  workers cannot lose each other's approvals. An unreadable approval ledger is
+  kept as `config_proposals.json.corrupt-<number>` and a warning names it.
+- The standing-consent ledger now refuses a new grant while the space left is
+  needed to revoke existing grants, so a revocation always succeeds.
+- Sandbox commands now keep only the end of their output while they run. Long
+  output starts with "[output truncated: showing the last 8,000 characters]".
+- When a local sandbox command times out or is cancelled, processes it
+  started in a new session (`setsid`) are now stopped too. After a normal
+  exit they keep running, as before.
+- Plugin input schemas with `pattern` or `patternProperties` are now checked
+  under the regex time limit, only against the answers they apply to. If the
+  check cannot finish, the form says so and nothing runs. A schema that combines
+  `patternProperties` with `unevaluatedProperties` is refused.
+- Kubernetes recovery folders under `sandbox-recovery/` are removed seven days
+  after a failed transfer. Copy out anything you need before then.
+- Turning off "Share anonymous work patterns" deletes the records still
+  waiting in the outbox and says how many. Training ingest and export also
+  re-check the setting and export nothing from this installation's outbox
+  while it is off or the configuration cannot be read.
+- `maverick trust verify` exits 1 when the decision is DENY (it exited 0).
+  Scripts that read its exit code now see the refusal.
+- `maverick erase` (and the dashboard's erase a person) is all or nothing:
+  it refuses before deleting anything when an audit day holding the person
+  cannot be rewritten, naming the day and why. Repair it and run erase again.
+- `maverick erase` exits 1 with "erasure incomplete" and what remains when
+  data is left or the erasure cannot be certified; it used to exit 0.
+- An audit erase re-signs the day in memory and writes it once, so a missing
+  signing key leaves the day unchanged instead of broken. A day with rows
+  written while signing was off can be erased; erase never signs those rows
+  or any row that did not verify, so the day verifies exactly as before.
+- `maverick erase` also refuses a day whose tip anchor, tip ledger or
+  published checkpoint already reports a break, so an erase never hides a
+  truncated or edited day. Each refusal names the step to take, such as
+  restoring the day or a retired key's public key. The checkpoint check
+  covers the default store, the custody store and the folder chosen in the
+  audit checkpoint settings; a chosen folder that cannot be read refuses.
+  An install that has never had a tip ledger can still erase: the erase adds
+  no anchor, and `maverick audit verify` reports what it did before.
+- A rerun of `maverick erase` that finds no conversation now also clears the
+  AI reply cache and retries attachment files an earlier run could not
+  remove, so it finishes the job or names again what remains. The list of
+  such files keeps only folders and name digests; an unusable list is kept
+  aside as `pending_attachment_files.json.unusable-<n>` to check by hand.
+  Two erase runs at once no longer lose each other's entries in that list.
+- The privacy request page's erase button now runs the erase even when the
+  person has no conversation, and shows what it actually removed.
+- Erasing a person also deletes the durable-execution checkpoints of their
+  goals, which kept failed or stopped goals' transcripts.
+- An Ollama, vLLM or TGI model is free only when its server is on this
+  machine or a private network. A server on a public address is charged a
+  safety ceiling ($10/$50 per million tokens) until you set
+  `[providers.<name>] price_per_mtok` to its price or `"free"`; setup asks,
+  and `maverick doctor` names unpriced servers. A reply with no token counts
+  is charged an estimate from its text length.
+- Tailscale addresses (100.64.0.0/10) and names ending in `.ts.net`, `.home`
+  or `.corp` count as private, so their self-hosted models stay free. When
+  the safety ceiling priced any spend, the spending-limit message and the
+  cost line say so and name the fix. An administrator can mark an Ollama,
+  vLLM or TGI server free under Settings > Prices, which also shows how each
+  one is charged now; a server marked free in `config.toml` must be changed
+  there. The Copilot can make the same change ("Mark a self-hosted server
+  free or charged"); it cannot yet set or remove a model's own price.
+  The cost line counts calls whose token counts were estimated.
+- Once Postgres has been used, Lightwork remembers which database it last
+  used (`world_backend` in the data folder). If that was Postgres and a
+  settings file cannot be read, it refuses to start and names the file and
+  line instead of opening a local database. An install that has only ever
+  used the local database writes no such file. Fix the file, or set `MAVERICK_WORLD_BACKEND=sqlite` to use the
+  local database on purpose.
+- Only `sqlite` and `postgres` are accepted for `MAVERICK_WORLD_BACKEND` and
+  `[world_model] backend`; any other value now stops start-up with a plain
+  message. Once Postgres was used, settings that no longer name a database
+  are refused too. A deployment that switched from Postgres back to the
+  local database must name `sqlite` explicitly once
+  (`[world_model] backend = "sqlite"` or `MAVERICK_WORLD_BACKEND=sqlite`);
+  the choice is remembered. The Helm chart now always sets the variable from
+  `worldModel.backend`. The CLI and dashboard show the refusal as a plain
+  message instead of an error trace.
+- When the independence-levels setting cannot be read (an unreadable
+  settings file, or `[workforce] levels` or `MAVERICK_WORKFORCE_LEVELS` that
+  is not true or false), every agent can only watch: consequential actions
+  are refused instead of the levels check switching off. `maverick doctor`
+  and the Workforce and Agents pages say so. Tool grants widen only when the
+  setting reads as on.
+- Stop and rename now work on a running task. Its heartbeat no longer counts
+  as a change since you reviewed it. The world database moves to schema 54
+  on the next start, on SQLite and Postgres. Stop also works while a
+  chat answer is still being written.
+- A cancel that arrives after a task finished no longer replaces "done".
+  The task stays finished, and the chat supervisor and the gRPC cancel say
+  that it had already finished.
+- With a queue or gRPC worker configured, startup recovery (`maverick
+  serve`, the dashboard on SQLite and `maverick status`) no longer marks
+  queued tasks as stuck; they wait for their worker. The in-process default
+  still blocks them, since nothing else would start them after a crash.
+- Retrying a workflow whose approved high-risk step failed now asks for a
+  new approval at that step's gate, then continues the saved work. Before,
+  the retry was refused. Approve or reject the new request as usual.
+- The `computer` tool no longer asks to approve mouse or keyboard input it
+  cannot send. It says input is not supported yet; screenshots still work.
+- When "hold risky tasks for a person" is on, a resumed task skips the
+  check only if a person approved its exact current words. Changed words,
+  and tasks that ran while the check was off, are asked about again.
+- On shared Postgres, raw world-model reads (`query`) are refused while
+  tenancy is on; the boards, chat history, handoffs and reports now read
+  through `tenant_query`, which adds the tenant boundary. Code that calls
+  `query` directly must move to `tenant_query` or pass `system=True`.
+  A task whose parent task belongs to another workspace, or to no workspace
+  under strict isolation, no longer starts: its parents cannot be checked
+  for a hold or a closed handoff. The message asks you to review the task map.
+- A workspace's `config.toml` and a workspace agent override can only make
+  governance, safety, capabilities, sandbox and security settings stricter;
+  an unset organisation value counts as the product default. A looser
+  value is ignored, logged, listed by `maverick doctor` and shown in Settings
+  or on the agent page as "Set by your organisation"; the file still loads.
+  Remove the looser values from the file to clear the warning.
 
 ### Fixed
 
+- With the optional `fastembed` package installed, the first specialist
+  match no longer needs about 4.4 GB of memory. The built-in specialist texts
+  are now embedded 16 at a time (about 0.5 GB), with the same results in the
+  same time; conversation compaction uses the same batches.
 - Resuming setup with an invalid saved advanced answer now asks the advanced
   step again, while a config-write error preserves the resume file.
 - Sessionless MCP clients can cancel their in-flight requests again without

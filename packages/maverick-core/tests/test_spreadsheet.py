@@ -234,6 +234,7 @@ def test_xlsx_rejects_fifo_and_external_links(tmp_path):
 
 
 def test_xlsx_rejects_merged_cell_and_directory_amplification(tmp_path):
+    pytest.importorskip("openpyxl")
     import zipfile
 
     merged = tmp_path / "merged.xlsx"
@@ -253,6 +254,7 @@ def test_xlsx_rejects_merged_cell_and_directory_amplification(tmp_path):
 
 
 def test_xlsx_bounds_noncanonical_parts_and_total_merged_area(tmp_path):
+    pytest.importorskip("openpyxl")
     import zipfile
 
     path = tmp_path / "book.xlsx"

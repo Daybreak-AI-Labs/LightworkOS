@@ -363,7 +363,8 @@
     try {
       var data = await request('/api/v1/workforce/posture');
       box.textContent = '';
-      say(status, data.levels_enabled ? 'Each agent and specialist has its own level of independence.' :
+      say(status, data.levels_problem ? 'The independence setting cannot be read, so every agent and specialist can only watch until it is fixed.' :
+        data.levels_enabled ? 'Each agent and specialist has its own level of independence.' :
         'Independence levels are turned off, so every agent and specialist follows the same approval rules.');
       // With levels off the per-level split is not applied to anything, so it
       // is not shown: the line above already says every specialist is treated alike.

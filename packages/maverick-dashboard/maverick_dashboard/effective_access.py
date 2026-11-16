@@ -284,7 +284,10 @@ def agent(name: str, view: dict) -> dict[str, Any]:
     for risk, title in RISKS:
         level = auto["effective"][risk]
         label, means = LEVELS.get(level, (level, ""))
-        if not auto["levels_enabled"]:
+        if auto.get("levels_problem"):
+            rule = (f"Independence settings cannot be used: {auto['levels_problem']}. "
+                    f"This {kind['noun']} can only watch until that is fixed")
+        elif not auto["levels_enabled"]:
             rule = "Independence levels are off for this installation, so every consequential action waits for a person"
         else:
             rule = _level_source(name, view, risk, kind["noun"])

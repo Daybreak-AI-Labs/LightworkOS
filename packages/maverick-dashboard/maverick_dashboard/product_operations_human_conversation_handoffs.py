@@ -31,7 +31,7 @@ class OriginalInput(StrictInput):
 def _choices(request, *, metadata_only=False):
     actor,context=native.authority(request)
     source=native.service(request)
-    rows=source.world.query('SELECT id FROM goals WHERE owner=? ORDER BY id DESC LIMIT 10001',(actor,))
+    rows=source.world.tenant_query('SELECT id FROM goals WHERE owner=? AND {tenant:tenant_id} ORDER BY id DESC LIMIT 10001',(actor,))
     if len(rows)>10000:
         raise HTTPException(409,'The complete owned conversation choices exceed the supported limit. No subset was called complete.')
     result=[]
