@@ -181,7 +181,7 @@
     "preferences": 7,
     "learning": 61,
     "sqlite_domain": 81,
-    "configuration": 70,
+    "configuration": 71,
     "read_projection": 25,
     "audit": 24,
     "transient": 26,
@@ -13925,6 +13925,35 @@
       ]
     },
     {
+      "path": "packages/maverick-core/maverick/audit/checkpoint_location.py",
+      "contract": "configuration",
+      "owner": "packages/maverick-dashboard/maverick_dashboard/audit_checkpoint_settings.py",
+      "purpose": "Reads the audit checkpoint folder and pinned trusted keys an administrator chose, so the dashboard and the erase check agree on where checkpoints live. It writes nothing; the dashboard settings module writes the file.",
+      "referenced_store_owners": [
+        "packages/maverick-dashboard/maverick_dashboard/audit_checkpoint_settings.py"
+      ],
+      "review": "module purpose and persistence seam read; contract-family classification (not every operation tested)",
+      "governed_namespaces": [],
+      "literal_path_hints": [
+        "audit-checkpoint-settings.json"
+      ],
+      "observed_mechanism_markers": {},
+      "source_sites": [
+        {
+          "line": 27,
+          "function": "settings_path",
+          "kind": "maverick_home",
+          "expression": "maverick_home()"
+        },
+        {
+          "line": 56,
+          "function": "checkpoint_dir",
+          "kind": "data_dir",
+          "expression": "data_dir('audit-checkpoints')"
+        }
+      ]
+    },
+    {
       "path": "packages/maverick-core/maverick/audit/checkpoints.py",
       "contract": "audit",
       "owner": "packages/maverick-core/maverick/audit/checkpoints.py",
@@ -23563,22 +23592,10 @@
       "observed_mechanism_markers": {},
       "source_sites": [
         {
-          "line": 32,
-          "function": "_store_path",
-          "kind": "maverick_home",
-          "expression": "maverick_home()"
-        },
-        {
-          "line": 60,
+          "line": 40,
           "function": "save",
           "kind": "atomic_write_text",
           "expression": "atomic_write_text(path, json.dumps({'folder': folder or None, 'keys': list(keys)}, indent=2), mode=384)"
-        },
-        {
-          "line": 70,
-          "function": "checkpoint_dir",
-          "kind": "data_dir",
-          "expression": "data_dir('audit-checkpoints')"
         }
       ]
     },

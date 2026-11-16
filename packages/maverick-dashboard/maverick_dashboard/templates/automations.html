@@ -1411,15 +1411,15 @@
     }
     async function retryRun(runId, fromFailure) {
       try {
-        var r = await fetch('/api/v1/flows/runs/' + encodeURIComponent(runId) + '/retry'
-          + (fromFailure ? '?from_failure=1' : ''), { method: 'POST' });
-        var body = r.ok ? await r.json().catch(function () { return {}; }) : {};
-        flowsMsg.textContent = r.ok
-          ? (body.approval_required ? 'This step needs a new approval before it runs again.'
-            : fromFailure ? 'Starting again from the step that failed…' : 'Running again with the same answers…')
-          : plainError(r, 'run it again');
+        var body = (await window.mvFetchJSON('/api/v1/flows/runs/' + encodeURIComponent(runId) + '/retry'
+          + (fromFailure ? '?from_failure=1' : ''), { method: 'POST' }, 'run it again')) || {};
+        flowsMsg.textContent = body.approval_required ? 'This step needs a new approval before it runs again.'
+          : fromFailure ? 'Starting again from the step that failed…' : 'Running again with the same answers…';
         setTimeout(loadFlowRuns, 500);
-      } catch (e) { flowsMsg.textContent = plainError(e, 'run it again'); }
+      } catch (e) {
+        flowsMsg.textContent = plainError(e, 'run it again');
+        if (e.status) setTimeout(loadFlowRuns, 500);  // a refusal: show the run as it now stands
+      }
     }
     async function resumeRun(run, decision) {
       try {

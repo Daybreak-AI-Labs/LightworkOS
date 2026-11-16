@@ -79,7 +79,9 @@ def test_training_ingest_does_not_rehydrate_holdout_events_or_donated_text(prote
         def goal_events(self, *args, **kwargs):
             pytest.fail("holdout business history must not be fetched for training")
     assert fetch_steps_for_goal(World(), 11) == []
-    outbox = protected / "outbox"
+    # A drop folder, not this installation's own outbox: that one is emptied
+    # at export while donation is off, which is not what this test is about.
+    outbox = protected / "fleet-drop"
     outbox.mkdir()
     (outbox / "held.json").write_text(json.dumps({"goal_id": 11, "source_ownership": "unowned", "task_brief_text": "private held-out case"}), encoding="utf-8")
     (outbox / "dev.json").write_text(json.dumps({"goal_id": 12, "source_ownership": "unowned", "task_brief_text": "permitted development case"}), encoding="utf-8")
