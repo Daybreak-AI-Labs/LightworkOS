@@ -686,10 +686,17 @@ def _approval_card(p: dict, *, full: bool) -> str:
     facts = evidence(p)
     lines = [f"Branch {p['branch']} at {p['head'][:12]} from {p['base'][:12]}; "
              f"{len(p['files'])} file(s) changed.", *facts["lines"]]
-    lines += facts["findings"][:6]
-    if len(facts["findings"]) > 6:
-        lines.append(f"... and {len(facts['findings']) - 6} more finding(s): "
-                     f"maverick code show {p['id']}")
+    # Counts and statuses only: this card reaches chat channels and lists that
+    # need only operate access, and finding text can quote vaulted code.
+    findings = (p.get("check") or {}).get("findings") or []
+    if findings:
+        counts: dict[str, int] = {}
+        for f in findings:
+            key = f"{f['severity']} {f['status']}"
+            counts[key] = counts.get(key, 0) + 1
+        lines.append("Independent check findings: "
+                     + ", ".join(f"{n} {key}" for key, n in counts.items())
+                     + f". Read them with maverick code show {p['id']} or on the Code page.")
     lines.append("Independent review: " + ("not run" if review is None else
                                            ("approves" if review.get("approves") else "objects")
                                            + f" ({review.get('blockers', 0)} blocker(s))"))

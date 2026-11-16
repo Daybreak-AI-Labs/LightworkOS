@@ -663,7 +663,13 @@ def test_a_checker_blocker_goes_back_to_the_author_and_is_checked_again(upstream
         ("1.1", "blocker", "fixed"), ("1.2", "minor", "not attempted")]
     card = _card(world, p)
     text = " ".join(card["parameter_summary"])
-    assert "Finding 1.1, blocker, fixed" in text and "shown by running a command" in text
+    # The card (which reaches chat channels and operate-level lists) carries
+    # counts and statuses only; finding text can quote code and stays in the
+    # administrator-only detail.
+    assert "1 blocker fixed, 1 minor not attempted" in text and "maverick code show" in text
+    assert "divides by zero" not in text and "no docstring" not in text
+    assert any("Finding 1.1, blocker, fixed" in f and "shown by running a command" in f
+               for f in features.evidence(p)["findings"])
     assert card["unresolved_assumptions"] == []
     assert features.evidence(p)["gaps"] == []
 
