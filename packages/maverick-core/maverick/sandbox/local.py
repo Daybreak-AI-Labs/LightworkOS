@@ -10,6 +10,9 @@ import re
 import signal
 import subprocess
 import sys
+import threading
+import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -191,7 +194,42 @@ def _harness_environ_hidden() -> bool:
         return False
 
 
-def _reap_process_group(proc: subprocess.Popen) -> None:
+# Every LocalBackend child carries this marker in its environment, so a
+# descendant that left the process group (setsid) can still be found.
+_RUN_MARKER_ENV = "MAVERICK_SANDBOX_RUN"
+
+
+def _reap_marked(marker: str) -> None:
+    """Kill processes that still carry this run's marker (Linux ``/proc``).
+
+    Used only when a command timed out or was cancelled; after a normal exit,
+    deliberately detached processes (a server the person started) are kept.
+
+    Best effort: a child that also clears its environment is not found."""
+    needle = f"{_RUN_MARKER_ENV}={marker}".encode()
+    for _ in range(3):  # a survivor may fork while it is being reaped
+        found = False
+        try:
+            entries = [e.name for e in os.scandir("/proc") if e.name.isdigit()]
+        except OSError:
+            return
+        for name in entries:
+            try:
+                with open(f"/proc/{name}/environ", "rb") as stream:
+                    environ = stream.read().split(b"\0")
+            except OSError:
+                continue
+            if needle in environ and int(name) != os.getpid():
+                found = True
+                try:
+                    os.kill(int(name), signal.SIGKILL)
+                except OSError:
+                    pass
+        if not found:
+            return
+
+
+def _reap_process_group(proc: subprocess.Popen, marker: str | None = None) -> None:
     """Best-effort POSIX cleanup for descendants that outlive the shell."""
     killpg = getattr(os, "killpg", None)
     if killpg is None:  # pragma: no cover -- Windows has no POSIX process groups
@@ -203,6 +241,8 @@ def _reap_process_group(proc: subprocess.Popen) -> None:
         killpg(proc.pid, signal.SIGKILL)
     except OSError:
         pass
+    if marker is not None:
+        _reap_marked(marker)
 
 
 def _create_windows_kill_job(proc: subprocess.Popen) -> int | None:
@@ -318,6 +358,90 @@ def _close_windows_kill_job(job: int | None) -> None:
         raise ctypes.WinError(ctypes.get_last_error())
 
 
+STDOUT_LIMIT = 8000
+STDERR_LIMIT = 2000
+# Bytes kept from the end of each stream while it is read: enough for the
+# last STDOUT_LIMIT characters at up to 4 UTF-8 bytes each, with margin.
+_KEEP_BYTES = 64 * 1024
+
+
+class _Tail:
+    """The last ``_KEEP_BYTES`` of a stream, so memory stays bounded."""
+
+    def __init__(self) -> None:
+        self.data = bytearray()
+
+    def feed(self, chunk: bytes) -> None:
+        self.data += chunk
+        if len(self.data) > _KEEP_BYTES:
+            del self.data[:len(self.data) - _KEEP_BYTES]
+
+    def text(self) -> str:
+        return bytes(self.data).decode("utf-8", errors="replace")
+
+
+def _drain(read, tail: _Tail) -> threading.Thread:
+    def run() -> None:
+        try:
+            while chunk := read(65536):
+                tail.feed(chunk)
+        except (OSError, ValueError):
+            pass
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    return thread
+
+
+def cap_output(text: str, limit: int = STDOUT_LIMIT) -> str:
+    """The last ``limit`` characters, with a visible note when cut."""
+    if len(text) <= limit:
+        return text
+    return f"[output truncated: showing the last {limit:,} characters]\n{text[-limit:]}"
+
+
+def run_capped(args, *, timeout: float, env=None, cwd=None) -> subprocess.CompletedProcess:
+    """``subprocess.run(args, capture_output=True, text=True)`` that keeps only
+    the tail of each stream while the command is still writing.
+
+    Raises ``subprocess.TimeoutExpired`` with the captured tail as ``stdout``.
+    """
+    tails = (_Tail(), _Tail())
+    pipes = [os.pipe(), os.pipe()]
+    readers = [_drain(lambda n, fd=r: os.read(fd, n), tail)
+               for (r, _w), tail in zip(pipes, tails, strict=True)]
+
+    def finish() -> None:
+        for _r, w in pipes:
+            try:
+                os.close(w)
+            except OSError:
+                pass
+        _join_readers(readers, deadline=time.monotonic() + _DRAIN_GRACE_S)
+        for (r, _w), reader in zip(pipes, readers, strict=True):
+            if not reader.is_alive():  # else a survivor still holds the pipe
+                os.close(r)
+
+    try:
+        result = subprocess.run(
+            args, stdout=pipes[0][1], stderr=pipes[1][1],
+            text=True, errors="replace", timeout=timeout, env=env, cwd=cwd,
+        )
+    except subprocess.TimeoutExpired as exc:
+        finish()
+        if exc.stdout is None:
+            exc.stdout = tails[0].text()
+        raise
+    except BaseException:  # failure-policy: fail_closed -- close the pipes and re-raise
+        finish()
+        raise
+    finish()
+    if not isinstance(result.stdout, str):
+        result.stdout = tails[0].text()
+    if not isinstance(result.stderr, str):
+        result.stderr = tails[1].text()
+    return result
+
+
 @dataclass
 class ExecResult:
     stdout: str
@@ -327,6 +451,25 @@ class ExecResult:
     @property
     def ok(self) -> bool:
         return self.exit_code == 0
+
+
+def _feed_stdin(proc: subprocess.Popen, text: str) -> None:
+    try:
+        proc.stdin.write(text.encode("utf-8"))
+        proc.stdin.close()
+    except (OSError, ValueError):
+        pass
+
+
+# After the command ends (or is killed), all output readers together get at
+# most this long to finish; the old communicate() drain had the same bound.
+_DRAIN_GRACE_S = 5.0
+
+
+def _join_readers(readers: list[threading.Thread], *, deadline: float) -> None:
+    """Join every reader against ONE shared monotonic deadline."""
+    for reader in readers:
+        reader.join(timeout=max(0.0, deadline - time.monotonic()))
 
 
 class LocalBackend:
@@ -348,10 +491,8 @@ class LocalBackend:
         # the default 60s (too short for real pytest on SWE-bench
         # instances). Falls back to self.timeout when unset, preserving
         # behaviour for shell-tool callers that pass no timeout.
-        # `text=True` returns str
-        # on success but TimeoutExpired.stdout is bytes — without
-        # explicit decode the result.stdout types diverge. Pin both
-        # branches to str.
+        # Output is read as bytes while the command runs, keeping only the
+        # tail of each stream, and decoded with errors="replace" on return.
         try:
             from ..chaos import maybe_fail
             maybe_fail("sandbox_exec",
@@ -359,7 +500,8 @@ class LocalBackend:
         except ImportError:
             pass
         effective = self.timeout if timeout is None else timeout
-        child_env = _contained(scrub_env())
+        marker = uuid.uuid4().hex
+        child_env = {**_contained(scrub_env()), _RUN_MARKER_ENV: marker}
         _hide_harness_environ()
 
         windows_creation_flags = (
@@ -378,8 +520,6 @@ class LocalBackend:
             stdin=subprocess.PIPE if stdin is not None else None,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
-            errors="replace",
             env=child_env,
             # Own session (= new process group) so a timeout can reap the WHOLE
             # tree. subprocess's own timeout SIGKILLs only the direct /bin/sh
@@ -398,18 +538,31 @@ class LocalBackend:
                 proc.kill()
                 proc.wait(timeout=5)
                 raise
-            out, err = proc.communicate(input=stdin, timeout=effective)
+            tails = (_Tail(), _Tail())
+            readers = [_drain(stream.read1, tail)
+                       for stream, tail in zip((proc.stdout, proc.stderr), tails, strict=True)]
+            if stdin is not None:
+                threading.Thread(target=_feed_stdin, args=(proc, stdin), daemon=True).start()
+            # Like communicate(): finish when the pipes close, so a background
+            # job that still writes to them is waited for within the timeout.
+            deadline = time.monotonic() + effective
+            proc.wait(timeout=effective)
+            _join_readers(readers, deadline=deadline)
+            if any(reader.is_alive() for reader in readers):
+                raise subprocess.TimeoutExpired(cmd, effective)
             if os.name == "nt":
                 _close_windows_kill_job(windows_job)
                 windows_job = None
             else:
+                # A normal exit leaves deliberately detached (setsid) processes
+                # alone, as before; only the command's own group is reaped.
                 _reap_process_group(proc)
             return ExecResult(
-                stdout=(out or "")[-8000:],
-                stderr=(err or "")[-2000:],
+                stdout=cap_output(tails[0].text()),
+                stderr=cap_output(tails[1].text(), STDERR_LIMIT),
                 exit_code=proc.returncode,
             )
-        except subprocess.TimeoutExpired as e:
+        except subprocess.TimeoutExpired:
             # Kill the whole process group, not just the shell:
             # start_new_session made the child the group leader, so its pid IS
             # the pgid. Fall back to killing the direct child where process
@@ -419,25 +572,30 @@ class LocalBackend:
                     _close_windows_kill_job(windows_job)
                     windows_job = None
                 elif getattr(os, "killpg", None) is not None:
-                    _reap_process_group(proc)
+                    _reap_process_group(proc, marker)
                 else:  # pragma: no cover -- unusual non-POSIX host
                     proc.kill()
             except OSError:
                 proc.kill()
+            grace = time.monotonic() + _DRAIN_GRACE_S
             try:
-                # Reap + drain what the (now dead) tree wrote before the kill;
-                # a retried communicate() loses no output. Bounded in case the
-                # group kill failed and a survivor holds the pipes open.
-                raw_out, _ = proc.communicate(timeout=5)
-            except (subprocess.TimeoutExpired, OSError, ValueError):
-                raw_out = e.stdout or ""
-            if isinstance(raw_out, bytes):
-                raw_out = raw_out.decode("utf-8", errors="replace")
+                proc.wait(timeout=_DRAIN_GRACE_S)
+            except subprocess.TimeoutExpired:
+                pass
+            # Keep what the (now dead) tree wrote before the kill. Bounded in
+            # case the group kill failed and a survivor holds the pipes open.
+            _join_readers(readers, deadline=grace)
             return ExecResult(
-                stdout=(raw_out or "")[-8000:],
+                stdout=cap_output(tails[0].text()),
                 stderr=f"TIMEOUT after {effective}s",
                 exit_code=124,
             )
+        except BaseException:  # failure-policy: fail_closed -- reap the run, then re-raise
+            # Cancelled mid-run (KeyboardInterrupt, a cancelled worker): the
+            # command did not finish, so its detached children go with it.
+            if os.name != "nt":
+                _reap_process_group(proc, marker)
+            raise
         finally:
             if windows_job is not None:
                 _close_windows_kill_job(windows_job)

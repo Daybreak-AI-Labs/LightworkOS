@@ -68,7 +68,7 @@ def test_zero_age_reclaims_logical_future_versions(
     # Positive timeouts still protect fresh/future-version sibling goals.
     assert reclaimer.reclaim_orphan_goals(max_age_seconds=1) == 0
     assert world.get_goal(active).updated_at == version
-    assert reclaimer.reclaim_orphan_goals(max_age_seconds=0) == 2
+    assert reclaimer.reclaim_orphan_goals(max_age_seconds=0, statuses=("active", "pending")) == 2
     assert world.get_goal(active).status == "blocked"
     assert world.get_goal(active).updated_at > version
     assert world.get_goal(active).result == "partial [process restarted mid-run]"

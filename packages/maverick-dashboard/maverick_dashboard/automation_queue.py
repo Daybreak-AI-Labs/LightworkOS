@@ -1777,10 +1777,13 @@ def _handle_flow_resume(job=None) -> None:  # noqa: C901
                 _mark_flow_run_failed(run_id, "immutable execution plan is unavailable")
                 return
             if retryable_failure:
-                from maverick.flow.resume_admission import retry_approval_refusal
+                from maverick.flow.resume_admission import (
+                    retry_approval_gate,
+                    retry_approval_refusal,
+                )
 
                 refusal = retry_approval_refusal(flow, prior)
-                if refusal:
+                if refusal and not retry_approval_gate(flow, prior):
                     # The run stays failed; keep its failure and say why the
                     # retry was refused.
                     prior.error = (

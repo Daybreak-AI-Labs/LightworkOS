@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import random
+import sys
 from pathlib import Path
 
 from .eval_harness import EvalCase
@@ -170,6 +171,15 @@ def main(argv: list[str] | None = None) -> int:
                    help="Actually write the adopted pack (without it, "
                         "--adopt only prints the planned changes).")
     args = p.parse_args(argv)
+    if args.adopt or args.live:
+        # These read and write the workspace: same start-up gate as `maverick`.
+        from maverick.installation_recovery import MaintenanceError, require_normal_start
+
+        try:
+            require_normal_start()
+        except MaintenanceError as exc:
+            print(f"maverick-evolve did not start. {exc}", file=sys.stderr)
+            return 1
     if args.adopt:
         return _adopt(args)
     if args.live:

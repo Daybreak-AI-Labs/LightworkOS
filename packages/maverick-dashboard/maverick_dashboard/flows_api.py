@@ -983,10 +983,14 @@ async def resume_flow_run_endpoint(request: Request, run_id: str, payload: FlowR
     return {"run_id": run_id, "status": "resuming", "decision": payload.decision}
 
 
-def _require_retry_without_new_review(run, current_flow) -> None:
-    """Refuse visibly when a retry would re-send a failed approval-gated action."""
+def _require_retry_without_new_review(run, current_flow) -> bool:
+    """Whether a retry must first ask for a fresh approval of the failed step.
+
+    Refuse visibly when it would re-send a failed approval-gated action and no
+    approval gate guards that step to ask again.
+    """
     from maverick.flow import store
-    from maverick.flow.resume_admission import retry_approval_refusal
+    from maverick.flow.resume_admission import retry_approval_gate, retry_approval_refusal
 
     try:
         pinned = (store.load_flow_snapshot(run.definition_digest)
@@ -994,8 +998,9 @@ def _require_retry_without_new_review(run, current_flow) -> None:
     except store.FlowSnapshotError as exc:
         raise HTTPException(status_code=409, detail="run release is no longer active") from exc
     refusal = retry_approval_refusal(pinned, run) if pinned is not None else ""
-    if refusal:
+    if refusal and not retry_approval_gate(pinned, run):
         raise HTTPException(status_code=409, detail=refusal)
+    return bool(refusal)
 
 
 @router.post("/flows/runs/{run_id}/retry")
@@ -1064,7 +1069,7 @@ def retry_flow_run_endpoint(
                 )
         elif budget_limit_dollars is not None:
             raise HTTPException(status_code=409, detail="Only a budget-held run can change its allowance.")
-        _require_retry_without_new_review(run, current_flow)
+        needs_approval = _require_retry_without_new_review(run, current_flow)
         try:
             aq.enqueue_flow_resume(
                 run.flow_id,
@@ -1078,7 +1083,8 @@ def retry_flow_run_endpoint(
                 status_code=409,
                 detail="run release is no longer active",
             ) from exc
-        return {"run_id": run_id, "status": "resuming", "from_node": run.cursor}
+        return {"run_id": run_id, "status": "resuming", "from_node": run.cursor,
+                **({"approval_required": True} if needs_approval else {})}
     # Runs written before immutable definition snapshots have no pin fields at
     # all.  A user-requested retry is explicitly a fresh run against the current
     # definition, so migrate that narrow legacy shape by letting the ordinary

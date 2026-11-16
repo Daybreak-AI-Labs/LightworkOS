@@ -97,8 +97,8 @@ def summary_scan(world, *, owner=None):
     else:
         from .world_model_backends.postgres import _unseal
         decode = _unseal
-    rows = world.query("SELECT g.id,g.owner,r.receipt FROM goals g JOIN goal_mutation_receipts r ON r.goal_id=g.id "
-                       "WHERE r.kind=?" + (" AND COALESCE(g.owner,'')=?" if owner is not None else "") +
+    rows = world.tenant_query("SELECT g.id,g.owner,r.receipt FROM goals g JOIN goal_mutation_receipts r ON r.goal_id=g.id "
+                       "WHERE {tenant:g.tenant_id} AND r.kind=?" + (" AND COALESCE(g.owner,'')=?" if owner is not None else "") +
                        " ORDER BY r.created_at DESC,r.operation_id DESC LIMIT " + str(SUMMARY_LIMIT),
                        (KIND, owner) if owner is not None else (KIND,))
     latest = {}
@@ -131,7 +131,8 @@ def receipt(world, goal_id, operation_id, actor):
 
 
 def latest(world, goal_id, owner):
-    rows = world.query("SELECT receipt FROM goal_mutation_receipts WHERE goal_id=? AND kind=? ORDER BY created_at DESC LIMIT 1",
+    rows = world.tenant_query("SELECT receipt FROM goal_mutation_receipts WHERE goal_id=? AND {tenant_goal:goal_id} AND kind=? "
+                              "ORDER BY created_at DESC LIMIT 1",
                        (goal_id, KIND))
     if not rows:
         return None

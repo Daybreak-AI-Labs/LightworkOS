@@ -76,7 +76,7 @@ def test_erase_scrubs_only_user_scoped_facts(tmp_path, monkeypatch):
     from maverick.world_model import WorldModel
 
     monkeypatch.setattr(audit_mod, "scrub_user", lambda *a, **k: (0, 0))
-    monkeypatch.setattr(audit_mod, "record", lambda kind, **payload: None)
+    monkeypatch.setattr(audit_mod, "record", lambda kind, **payload: True)
 
     db = _setup_subject_db(tmp_path)
     res = CliRunner().invoke(cli_mod.main, [

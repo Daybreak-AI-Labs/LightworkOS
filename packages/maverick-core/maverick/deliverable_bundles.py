@@ -93,8 +93,9 @@ class DeliverableBundles:
         return goal
 
     def _bounded_inventory(self, goal_id):
-        row = self.world.query("SELECT COUNT(*),COALESCE(SUM(LENGTH(content)),0) FROM artifacts WHERE goal_id=?", (goal_id,))[0]
-        count = self.world.query("SELECT COUNT(*) FROM attachments WHERE goal_id=?", (goal_id,))[0][0]
+        row = self.world.tenant_query("SELECT COUNT(*),COALESCE(SUM(LENGTH(content)),0) FROM artifacts "
+                                      "WHERE goal_id=? AND {tenant_goal:goal_id}", (goal_id,))[0]
+        count = self.world.tenant_query("SELECT COUNT(*) FROM attachments WHERE goal_id=? AND {tenant_goal:goal_id}", (goal_id,))[0][0]
         if row[0] + count > 1000 or row[1] > 2 * MAX_BYTES:
             raise ValueError("This task exceeds the supported evidence inventory. Select a smaller task.")
 

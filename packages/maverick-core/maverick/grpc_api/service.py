@@ -470,7 +470,9 @@ class GoalService:
             if g is None or g.status in TERMINAL_STATUSES:
                 return False
             world.set_goal_status(goal_id, "cancelled", result="cancelled via API")
-            return True
+            # A success recorded after the read above stays; nothing was cancelled.
+            current = world.get_goal(goal_id)
+            return current is None or current.status != "done"
         finally:
             _close(world)
 

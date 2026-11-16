@@ -818,6 +818,27 @@ def get_dispatcher() -> Dispatcher:
     return _dispatcher
 
 
+def startup_reclaim_statuses() -> tuple[str, ...]:
+    """Goal statuses that crash recovery at start-up should block.
+
+    The in-process dispatcher keeps a queued goal only in this process, so
+    after a crash nothing will start it again: reclaim ``pending`` too. A
+    queue or gRPC worker owns its pending goals durably; leave those queued.
+    """
+    if not isinstance(get_dispatcher(), LocalThreadDispatcher):
+        return ("active",)
+    try:
+        from .config import load_config
+        from .grpc_dispatcher import configured_target
+
+        queue = (load_config() or {}).get("queue") or {}
+        if not isinstance(queue, dict) or str(queue.get("backend") or "").strip() or configured_target():
+            return ("active",)
+    except Exception:
+        return ("active",)
+    return ("active", "pending")
+
+
 def set_dispatcher(dispatcher: Dispatcher) -> None:
     """Swap the goal dispatcher process-wide. The hook a queue/worker backend
     (arq / Celery / Temporal) installs at startup to move execution off the API

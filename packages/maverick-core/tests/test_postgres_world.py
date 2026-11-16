@@ -955,6 +955,23 @@ def test_reclaim_skips_fresh_goals(world):
     assert world.get_goal(g).status == "active"
 
 
+def test_heartbeat_keeps_review_version_and_finished_goal_stays_done(world):
+    from maverick import goal_stop
+
+    g = world.create_goal("heartbeat", owner="user:alice")
+    world.set_goal_status(g, "active")
+    reviewed = float(world.get_goal(g).updated_at)
+    assert world.touch_goal(g)
+    assert world.set_goal_partial_result(g, "Answer so far")
+    assert float(world.get_goal(g).updated_at) == reviewed
+    assert goal_stop.stop(world, g, actor="user:alice", operation_id="c" * 32,
+                          expected_updated_at=reviewed, expected_owner="user:alice")["stop_requested"]
+    done = world.create_goal("finished")
+    world.set_goal_status(done, "done", result="shipped")
+    world.set_goal_status(done, "cancelled", result="late cancel")
+    assert (world.get_goal(done).status, world.get_goal(done).result) == ("done", "shipped")
+
+
 def test_schema_version_is_int(world):
     assert isinstance(world.schema_version, int)
     assert world.schema_version >= 1
@@ -2471,6 +2488,30 @@ def test_erase_conversations_deletes_all_goal_child_rows(world):
     assert world.signoffs_for_goals([gid]) == {}
 
 
+def test_erase_conversations_erases_durable_checkpoints(world):
+    """Where a checkpoints table exists, an erased goal's resumable transcript goes too."""
+    conv = world.get_or_create_conversation("slack", f"erase-{uuid.uuid4().hex}")
+    gid = world.create_goal("secret goal")
+    other = world.create_goal("other goal")
+    world.append_turn(conv.id, "user", "please remember this", goal_id=gid)
+    with world._tx() as cur:
+        cur.execute("SELECT to_regclass('checkpoints')")
+        created = cur.fetchone()[0] is None
+        cur.execute("CREATE TABLE IF NOT EXISTS checkpoints (goal_id BIGINT NOT NULL, messages TEXT)")
+        cur.execute("INSERT INTO checkpoints (goal_id, messages) VALUES (%s, 'Alice, 12 Elm St'), "
+                    "(%s, 'keep')", (gid, other))
+    try:
+        world.erase_conversations([conv.id])
+        with world._tx() as cur:
+            cur.execute("SELECT goal_id FROM checkpoints WHERE goal_id = ANY(%s)", ([gid, other],))
+            assert [row[0] for row in cur.fetchall()] == [other]
+    finally:
+        with world._tx() as cur:
+            cur.execute("DROP TABLE checkpoints" if created
+                        else "DELETE FROM checkpoints WHERE goal_id = ANY(%s)",
+                        () if created else ([gid, other],))
+
+
 def test_query_rewrites_sqlite_paramstyle_and_buckets_days(world):
     """The dashboard boards write SQLite-paramstyle SQL once and run it on
     either backend; this is the live Postgres half of that contract."""
@@ -2529,3 +2570,243 @@ def test_results_page_and_monthly_spend_match_the_sqlite_backend(world):
                       cost_dollars=3.0, input_tokens=1, output_tokens=1)
     assert world.total_spend(owner=owner, since=before - 1)["dollars"] == 3.0
     assert world.total_spend(owner=owner, since=time.time() + 60)["dollars"] == 0
+
+
+def _legacy_record(world, kind):
+    """Write one ``kind`` record in the current tenant context; return a reader
+    of its sealed text (None when not visible) and the row whose tenant column
+    decides its binding."""
+    gid = world.create_goal("T-secret", "D-secret")
+    goal = ("goals", gid)
+    if kind == "goal":
+        return (lambda: (lambda g: g and (g.title, g.description))(world.get_goal(gid))), goal
+    if kind == "goal_list":
+        return (lambda: [(g.title, g.description) for g in world.list_goals()
+                         if g.id == gid] or None), goal
+    if kind == "event":
+        world.append_event(gid, "agent", "note", "E-secret")
+        return (lambda: [e.content for e in world.goal_events(gid)] or None), goal
+    if kind == "artifact":
+        world.add_artifact(gid, "text", "title", "A-secret")
+        return (lambda: [a["content"] for a in world.artifacts_for_goal(gid)] or None), goal
+    if kind == "question":
+        world.ask("Q-secret", gid)
+        return (lambda: [q.question for q in world.open_questions(gid)] or None), goal
+    if kind == "episode":
+        world.end_episode(world.start_episode(gid), "summary", "O-secret")
+        return (lambda: [e.outcome for e in world.list_episodes(goal_id=gid)] or None), goal
+    if kind == "signoff":
+        world.set_goal_status(gid, "done", result="R-secret")
+        world.record_signoff(gid, "approved", note="N-secret")
+        return (lambda: (lambda s: s and s["note"])(world.signoff_for(gid))), goal
+    if kind == "approval":
+        aid = world.create_approval("C-secret", scope="S-secret", detail="X-secret")
+        return (lambda: (lambda a: a and (a.action, a.scope, a.detail))(
+            world.get_approval(aid))), ("approvals", aid)
+    if kind == "project":
+        pid = world.create_project("P-secret", description="PD-secret")
+        return (lambda: (lambda p: p and (p["name"], p["description"]))(
+            world.get_project(pid))), ("projects", pid)
+    conv = world.get_or_create_conversation("web", "u-" + uuid.uuid4().hex)
+    world.append_turn(conv.id, "user", "U-secret")
+    return (lambda: [t.content for t in world.recent_turns(conv.id)] or None), ("conversations", conv.id)
+
+
+@pytest.mark.parametrize("kind", ["goal", "goal_list", "event", "artifact", "question", "episode",
+                                  "signoff", "approval", "project", "turn"])
+def test_legacy_no_tenant_records_open_under_encryption_and_foreign_ones_stay_withheld(
+        world, monkeypatch, kind):
+    """A record written with no tenant was sealed with the empty binding; a
+    tenant's compatibility read opens it, as SQLite does. A row sealed for
+    another tenant whose tenant column was NULLed still fails to open, and
+    strict isolation shows no legacy row at all."""
+    from maverick.paths import reset_tenant, set_tenant
+    from maverick.world_model import _UNSEALED_WITHHELD
+
+    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
+    monkeypatch.setenv("MAVERICK_STRICT_TENANT_ISOLATION", "0")
+    legacy, _ = _legacy_record(world, kind)
+    expected = legacy()
+    assert expected and _UNSEALED_WITHHELD not in str(expected)
+    tok = set_tenant("beta-" + uuid.uuid4().hex[:8])
+    try:
+        foreign, (table, row_id) = _legacy_record(world, kind)
+    finally:
+        reset_tenant(tok)
+    with world._tx() as cursor:
+        cursor.execute(f"UPDATE {table} SET tenant_id = NULL WHERE id = %s", (row_id,))
+
+    tok = set_tenant("acme")
+    try:
+        assert legacy() == expected
+        withheld = foreign()
+        values = [withheld] if isinstance(withheld, str) else list(withheld or [])
+        values = [v for item in values for v in (item if isinstance(item, tuple) else [item])]
+        assert values and set(values) == {_UNSEALED_WITHHELD}, withheld
+        monkeypatch.setenv("MAVERICK_STRICT_TENANT_ISOLATION", "1")
+        assert legacy() is None
+    finally:
+        reset_tenant(tok)
+@pytest.mark.parametrize("pool_size", ["0", "1"])
+def test_nested_tx_joins_the_outer_transaction(monkeypatch, pool_size):
+    """A read inside an open transaction (a submission guard reading the world)
+    used to commit the outer transaction so far, or wait on a second pooled
+    connection. It now runs inside the outer transaction."""
+    from maverick.world_model_backends.postgres import PostgresWorldModel
+
+    monkeypatch.setenv("MAVERICK_PG_POOL_SIZE", pool_size)
+    w = PostgresWorldModel(dsn=_DSN)
+    title = f"nested-tx-{pool_size}-{os.getpid()}"
+    try:
+        with pytest.raises(RuntimeError, match="outer fails"):
+            with w._tx() as cur:
+                cur.execute("INSERT INTO goals (title, status, created_at, updated_at) "
+                            "VALUES (%s, 'pending', 0, 0)", (title,))
+                seen = w.query("SELECT COUNT(*) FROM goals WHERE title=?", (title,))
+                assert seen[0][0] == 1  # the inner read sees the outer write
+                import psycopg
+
+                with pytest.raises(psycopg.errors.UndefinedColumn):
+                    w.query("SELECT no_such_column FROM goals")
+                cur.execute("SELECT 1")  # an inner failure leaves the outer usable
+                raise RuntimeError("outer fails")
+        assert w.query("SELECT COUNT(*) FROM goals WHERE title=?", (title,))[0][0] == 0
+    finally:
+        w.close()
+
+
+def test_erasure_unlinks_a_child_another_tenant_claimed(world, monkeypatch):
+    """Compatibility mode: running a legacy child under tenant B stamps B on
+    the child only. Erasing the legacy parent's conversation then failed the
+    whole erasure on the child's parent_id reference."""
+    from maverick.world_model_backends import postgres as pg
+
+    tenant = "claim-" + uuid.uuid4().hex
+    monkeypatch.setattr(pg, "_strict_tenant_isolation", lambda: False)
+    active = [None]
+    monkeypatch.setattr(pg, "_active_tenant", lambda: active[0])
+    conv = world.get_or_create_conversation("erase-claimed", uuid.uuid4().hex).id
+    parent = world.create_goal("legacy parent")
+    child = world.create_goal("legacy child", parent_id=parent)
+    world.append_turn(conv, "user", "private text", goal_id=parent)
+    active[0] = tenant
+    try:
+        assert world.bind_goal_execution_principal(child, "user:b")
+        with world._tx() as cur:
+            cur.execute("SELECT tenant_id FROM goals WHERE id=%s", (child,))
+            assert cur.fetchone()[0] == tenant
+        active[0] = None
+        goals, _paths, _turns = world.erase_conversations([conv])
+        assert parent in goals and child not in goals
+        with world._tx() as cur:
+            cur.execute("SELECT parent_id, tenant_id FROM goals WHERE id=%s", (child,))
+            assert cur.fetchone() == (None, tenant)  # the other tenant's row is kept
+    finally:
+        with world._tx() as cur:
+            cur.execute("DELETE FROM turns WHERE conversation_id=%s", (conv,))
+            cur.execute("DELETE FROM conversations WHERE id=%s", (conv,))
+            cur.execute("UPDATE goals SET parent_id=NULL WHERE id=%s", (child,))
+            cur.execute("DELETE FROM goals WHERE id IN (%s,%s)", (parent, child))
+
+
+def test_chat_action_guard_read_keeps_the_submission_lock_and_tenant(monkeypatch):
+    """The original trigger: SubmissionStore.create holds a transaction with an
+    advisory lock and the tenant setting, and its before_create guard reads
+    the world (task_handoffs.closure -> world.query). That inner read used to
+    commit the outer transaction, dropping both before the INSERTs."""
+    import psycopg
+    from maverick.attachment_submissions import SubmissionStore
+    from maverick.task_handoffs import closure
+    from maverick.world_model_backends import postgres as pg
+    from maverick.world_model_backends.postgres import PostgresWorldModel
+
+    tenant = "guard-" + uuid.uuid4().hex
+    monkeypatch.setattr(pg, "_active_tenant", lambda: tenant)
+    w = PostgresWorldModel(dsn=_DSN)
+    w._rls = True  # bind the tenant setting so it can be observed
+    try:
+        source = w.create_goal("earlier message")
+        seen = []
+
+        def guard(connection):
+            assert closure(w, source) is None  # the nested world read
+            connection.execute("SELECT pg_backend_pid(), current_setting('maverick.tenant', true)")
+            pid, bound = connection.fetchone()
+            with psycopg.connect(_DSN, autocommit=True) as other:
+                held = other.execute(
+                    "SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND pid=%s AND granted",
+                    (pid,)).fetchone()[0]
+            seen.append((bound, held))
+
+        receipt = SubmissionStore(w).create(
+            token="guard-" + uuid.uuid4().hex, fingerprint="fp", owner="owner",
+            title="alternative", description="", manifest=[], before_create=guard)
+        assert receipt["created"]
+        assert seen == [(tenant, 1), (tenant, 1)]  # before and after the INSERTs
+        with psycopg.connect(_DSN, autocommit=True) as other:
+            assert other.execute("SELECT tenant_id FROM goals WHERE id=%s",
+                                 (receipt["goal_id"],)).fetchone() == (tenant,)
+    finally:
+        w.close()
+def test_a_parent_outside_the_workspace_holds_the_start_checks(world):
+    """The start checks walk a task's parents for a hold or a closed handoff.
+    A parent the workspace boundary hides cannot be checked, so the walk
+    refuses instead of reading "nothing holds this task"."""
+    from maverick.goal_mutations import GoalMutationConflict
+    from maverick.human_conversation_handoffs import require_ai_open
+    from maverick.paths import tenant_scope
+    from maverick.task_handoffs import closure
+
+    mine = "anc-" + uuid.uuid4().hex
+    other = mine + "-other"
+    with tenant_scope(tenant=other):
+        parent = world.create_goal("another workspace's task")
+    with tenant_scope(tenant=mine):
+        own_parent = world.create_goal("this workspace's task")
+        child = world.create_goal("follow-up", parent_id=own_parent)
+    try:
+        with tenant_scope(tenant=mine):
+            assert closure(world, child) is None
+            require_ai_open(world, child)
+        with world._tx() as cur:
+            cur.execute("UPDATE goals SET parent_id=%s WHERE id=%s", (parent, child))
+        with tenant_scope(tenant=mine):
+            with pytest.raises(GoalMutationConflict):
+                closure(world, child)
+            with pytest.raises(GoalMutationConflict):
+                require_ai_open(world, child)
+    finally:
+        with world._tx() as cur:
+            cur.execute("UPDATE goals SET parent_id=NULL WHERE id=%s", (child,))
+            cur.execute("DELETE FROM goals WHERE id IN (%s,%s,%s)", (parent, own_parent, child))
+
+
+def test_raw_reads_need_a_tenant_boundary_while_tenancy_is_on(world):
+    """An unscoped raw read is refused for a bound tenant; the tenant-scoped
+    accessor sees only that tenant's root and child rows."""
+    from maverick.paths import tenant_scope
+    from maverick.tenant_sql import TenantScopeRequired
+
+    mine = "rawq-" + uuid.uuid4().hex
+    other = mine + "-other"
+    try:
+        with tenant_scope(tenant=other):
+            theirs = world.create_goal("theirs")
+            world.start_episode(theirs)
+        with tenant_scope(tenant=mine):
+            own = world.create_goal("mine")
+            world.start_episode(own)
+            with pytest.raises(TenantScopeRequired):
+                world.query("SELECT id FROM goals WHERE id IN (?, ?)", (own, theirs))
+            assert [r[0] for r in world.tenant_query(
+                "SELECT id FROM goals WHERE id IN (?, ?) AND {tenant:tenant_id}", (own, theirs))] == [own]
+            assert [r[0] for r in world.tenant_query(
+                "SELECT goal_id FROM episodes WHERE {tenant_goal:goal_id} AND goal_id IN (?, ?)",
+                (own, theirs))] == [own]
+            assert world.query("SELECT COUNT(*) FROM goals WHERE id IN (?, ?)", (own, theirs),
+                               system=True)[0][0] == 2
+    finally:
+        with world._tx() as cursor:
+            cursor.execute("DELETE FROM episodes WHERE goal_id IN "
+                           "(SELECT id FROM goals WHERE tenant_id IN (%s, %s))", (mine, other))
+            cursor.execute("DELETE FROM goals WHERE tenant_id IN (%s, %s)", (mine, other))

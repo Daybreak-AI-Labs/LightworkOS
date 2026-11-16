@@ -158,9 +158,18 @@ def _settings_response(request: Request, saved: str = "", *, notice: str = "",
             "label": label, "spec": spec,
             "status": ("Will stop before a paid request" if quote is None else
                        "Administrator ceiling" if quote.rate_card_version == "operator-ceiling-v1" else
+                       "Safety ceiling: public server with no price set"
+                       if quote.rate_card_version == "self-hosted-public-ceiling-v1" else
                        "Tracked price" if quote.verified else "Estimate only"),
             "ready": quote is not None,
         })
+    from maverick.budget import self_hosted_price_state
+    state_words = {"marked_free": "Marked free", "private": "Free: private address",
+                   "priced": "Charged at your set price", "ceiling": "Safety ceiling"}
+    self_hosted_states = [
+        {"label": label, "state": state_words[self_hosted_price_state(name)]}
+        for name, label in (("ollama", "Ollama"), ("vllm", "vLLM"), ("tgi", "Hugging Face TGI"))
+    ]
     today = datetime.now(timezone.utc).date()
     operator_rates = [
         {"spec": spec, **rate, "active": rate["valid_until"] >= today.isoformat()}
@@ -284,6 +293,7 @@ def _settings_response(request: Request, saved: str = "", *, notice: str = "",
         "role_models": role_models,
         "route_prices": route_prices,
         "operator_rates": operator_rates,
+        "self_hosted_states": self_hosted_states,
         "price_today": today.isoformat(),
         "price_review_until": (today + timedelta(days=30)).isoformat(),
         "model_options": model_options,
@@ -409,6 +419,55 @@ async def settings_set_model_rate(request: Request) -> RedirectResponse:
             "The model price could not be confirmed. Refresh Settings and Activity before retrying."
         )) from exc
     _admin_audit(request, "settings_model_rate", model=spec)
+    return RedirectResponse("/settings?saved=model_rate#settings-model-prices", status_code=303)
+
+
+@router.post("/settings/models/self-hosted-free")
+async def settings_self_hosted_free(request: Request) -> RedirectResponse:
+    """Mark an Ollama, vLLM or TGI server free, or charge it again."""
+    _app()._require_same_origin(request)
+    auth.require_global_permission(request, "admin")
+    from maverick.config import config_path, get_provider_config
+
+    from . import settings_store
+
+    form = await request.form()
+    name = str(form.get("provider", ""))
+    free = form.get("free") == "on"
+    if name not in settings_store.SELF_HOSTED_PROVIDERS:
+        raise HTTPException(status_code=400, detail="Choose Ollama, vLLM or TGI.")
+    if free and form.get("confirm") != "on":
+        raise HTTPException(status_code=400, detail=(
+            "Confirm that you run this server or that it charges nothing."
+        ))
+
+    def effective_free() -> bool:
+        return get_provider_config(name).get("price_per_mtok") == "free"
+
+    overlay = (settings_store.load_overlay().get("providers") or {}).get(name) or {}
+    if not free and effective_free() and overlay.get("price_per_mtok") != "free":
+        raise HTTPException(status_code=409, detail=(
+            f"The settings file {config_path()} marks this server free. Remove "
+            f"price_per_mtok from [providers.{name}] there to charge it again."
+        ))
+
+    def audit_value(data: dict) -> dict[str, object]:
+        table = (data.get("providers") or {}).get(name) or {}
+        return {"free": isinstance(table, dict) and table.get("price_per_mtok") == "free"}
+
+    try:
+        with _setting_write(request, "providers", name, audit_value):
+            await run_in_threadpool(settings_store.set_self_hosted_free, name, free)
+        if await run_in_threadpool(effective_free) != free:
+            raise HTTPException(status_code=409, detail=(
+                "Another settings file sets this server's price, so this change has no "
+                f"effect. Edit [providers.{name}] price_per_mtok there."
+            ))
+    except (OSError, settings_store.SettingsNotStorable) as exc:
+        raise HTTPException(status_code=503, detail=(
+            "The change could not be confirmed. Refresh Settings and Activity before retrying."
+        )) from exc
+    _admin_audit(request, "settings_self_hosted_free", provider=name, free=free)
     return RedirectResponse("/settings?saved=model_rate#settings-model-prices", status_code=303)
 
 

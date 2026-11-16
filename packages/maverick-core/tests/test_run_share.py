@@ -55,3 +55,29 @@ def test_share_run_requires_a_token(monkeypatch):
     monkeypatch.delenv("GH_TOKEN", raising=False)
     with pytest.raises(RuntimeError, match="GitHub sharing is not connected"):
         run_share.share_run(7)
+
+
+def test_share_cli_refuses_another_world_and_a_missing_run(monkeypatch, tmp_path):
+    # The run log behind `share` belongs to the workspace's own world. A run
+    # from `--db other.db` has goal ids that also exist there, so sharing it
+    # could mix two runs; a run absent from that world is refused too.
+    from click.testing import CliRunner
+    from maverick import run_share
+    from maverick.cli import main
+    from maverick.workspace import Workspace
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "home"))
+    uploaded = []
+    monkeypatch.setattr(run_share, "share_run", lambda goal_id: uploaded.append(goal_id) or "url")
+    other = CliRunner().invoke(main, ["--db", str(tmp_path / "other.db"), "share", "1"])
+    assert other.exit_code == 1 and "--db" in other.output
+    missing = CliRunner().invoke(main, ["share", "99"])
+    assert missing.exit_code == 1 and "#99" in missing.output
+    from maverick.world_model import WorldModel
+
+    world = WorldModel(path=Workspace.current().db_path)
+    goal_id = world.create_goal("shared run", "")
+    world.close()
+    shared = CliRunner().invoke(main, ["--db", str(Workspace.current().db_path), "share", str(goal_id)])
+    assert shared.exit_code == 0, shared.output
+    assert uploaded == [goal_id]

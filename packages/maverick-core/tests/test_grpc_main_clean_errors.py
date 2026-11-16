@@ -33,3 +33,18 @@ def test_main_missing_grpc_is_clean(monkeypatch, capsys):
     err = capsys.readouterr().err
     assert "pip install" in err
     assert "Traceback" not in err
+
+
+def test_main_stops_at_the_start_up_gate(monkeypatch, capsys):
+    # `python -m maverick.grpc_api` used to skip the checks `maverick` runs
+    # first, and served a half-restored workspace.
+    from maverick import installation_recovery
+
+    def refuse():
+        raise installation_recovery.MaintenanceError("An earlier restore stopped part-way.")
+
+    monkeypatch.setattr(installation_recovery, "require_normal_start", refuse)
+    monkeypatch.setattr(srv, "serve", lambda *a, **k: (_ for _ in ()).throw(AssertionError("served")))
+    assert srv.main(["--address", "127.0.0.1:0"]) == 1
+    err = capsys.readouterr().err
+    assert "An earlier restore stopped part-way." in err and "Traceback" not in err

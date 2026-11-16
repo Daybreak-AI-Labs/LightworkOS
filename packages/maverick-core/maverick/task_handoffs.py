@@ -29,7 +29,8 @@ TERMINAL = {"done", "completed", "failed", "error", "blocked", "cancelled"}
 
 def _row_receipt(world, goal_id, kind):
     store = SubmissionStore(world)
-    rows = world.query("SELECT receipt FROM goal_mutation_receipts WHERE goal_id=? AND kind=? ORDER BY created_at LIMIT 1", (goal_id, kind))
+    rows = world.tenant_query("SELECT receipt FROM goal_mutation_receipts WHERE goal_id=? AND {tenant_goal:goal_id} AND kind=? "
+                              "ORDER BY created_at LIMIT 1", (goal_id, kind))
     return json.loads(store.open(rows[0][0])) if rows else None
 
 
@@ -37,20 +38,45 @@ def lineage(world, goal_id):
     return _row_receipt(world, goal_id, "handoff_lineage")
 
 
+def tenant_reader(world, execute=None):
+    """Rows for a statement that names its tenant boundary with a marker: read
+    through the caller's open transaction when it passed ``execute``, else
+    through the world."""
+    if execute is None:
+        return world.tenant_query
+    return lambda sql, args: execute(*world.tenant_sql(sql, args)).fetchall()
+
+
+def hidden_from_tenant(world, goal_id, execute=None):
+    """Whether ``goal_id`` exists but a tenant-scoped read did not return it.
+
+    An ancestry walk that meets such a parent cannot see a hold or a closed
+    handoff recorded on it, so the caller refuses instead of reading "open".
+    A parent that no longer exists at all ends the walk, as it always has.
+    """
+    sql = "SELECT 1 FROM goals WHERE id=?"
+    if execute is not None:
+        return bool(execute(sql, (goal_id,)).fetchall())
+    return bool(world.query(sql, (goal_id,), system=True))
+
+
 def closure(world, goal_id, *, execute=None, decode=None):
     """Return lineage metadata only. Descendants cannot reopen closed work."""
     store = SubmissionStore(world)
-    query = (lambda sql, args: execute(sql, args).fetchall()) if execute else world.query
+    query = tenant_reader(world, execute)
     decode = decode or store.open
     current, seen = goal_id, set()
     while current is not None:
         if current in seen or len(seen) >= 100:
             raise GoalMutationConflict("Task ancestry is unavailable. Review the task map before starting.")
         seen.add(current)
-        rows = query("SELECT receipt FROM goal_mutation_receipts WHERE goal_id=? AND kind='handoff_closed' LIMIT 1", (current,))
+        rows = query("SELECT receipt FROM goal_mutation_receipts WHERE goal_id=? AND {tenant_goal:goal_id} "
+                     "AND kind='handoff_closed' LIMIT 1", (current,))
         if rows:
             return json.loads(decode(rows[0][0]))
-        rows = query("SELECT parent_id FROM goals WHERE id=?", (current,))
+        rows = query("SELECT parent_id FROM goals WHERE id=? AND {tenant:tenant_id}", (current,))
+        if not rows and current != goal_id and hidden_from_tenant(world, current, execute):
+            raise GoalMutationConflict("Task ancestry is unavailable. Review the task map before starting.")
         current = rows[0][0] if rows else None
     return None
 
@@ -71,7 +97,7 @@ def apply_ceiling(world, goal_id, budget):
         if record:
             # Some historical parent summaries include child spend. Counting
             # both can conservatively stop early; it cannot expand the cap.
-            spent = world.query("WITH RECURSIVE scope(id) AS (SELECT id FROM goals WHERE id=? UNION SELECT g.id FROM goals g JOIN scope s ON g.parent_id=s.id) SELECT COALESCE(SUM(e.cost_dollars),0) FROM episodes e JOIN scope s ON e.goal_id=s.id", (current,))[0][0]
+            spent = world.tenant_query("WITH RECURSIVE scope(id) AS (SELECT id FROM goals WHERE id=? AND {tenant:tenant_id} UNION SELECT g.id FROM goals g JOIN scope s ON g.parent_id=s.id WHERE {tenant:g.tenant_id}) SELECT COALESCE(SUM(e.cost_dollars),0) FROM episodes e JOIN scope s ON e.goal_id=s.id", (current,))[0][0]
             remaining = max(0.0, float(record["max_dollars"]) - float(spent))
             budget.max_dollars = remaining if budget.max_dollars is None else min(budget.max_dollars, remaining)
         parent = world.get_goal(current)
@@ -96,7 +122,7 @@ class TaskHandoffs:
     def _scope(self, source_id):
         binding = ChatThreads(self.world).binding(source_id)
         root = binding.root_id if binding else source_id
-        rows = self.world.query("WITH RECURSIVE scope(id) AS (SELECT id FROM goals WHERE id=? UNION SELECT g.id FROM goals g JOIN scope s ON g.parent_id=s.id) SELECT id FROM scope LIMIT 1001", (root,))
+        rows = self.world.tenant_query("WITH RECURSIVE scope(id) AS (SELECT id FROM goals WHERE id=? AND {tenant:tenant_id} UNION SELECT g.id FROM goals g JOIN scope s ON g.parent_id=s.id WHERE {tenant:g.tenant_id}) SELECT id FROM scope LIMIT 1001", (root,))
         if len(rows) > 1000:
             raise ValueError("This work contains too many subtasks for one handoff. Close or hand off a smaller independent task.")
         return root, sorted(int(row[0]) for row in rows)
@@ -111,7 +137,8 @@ class TaskHandoffs:
                 raise BundleDenied("Every task closed by this handoff must belong to the sender.")
             if goal.status not in TERMINAL:
                 raise TaskBusy("Stop or finish this conversation and its subtasks before offering a handoff.")
-            if self.world.query("SELECT id FROM episodes WHERE goal_id=? AND ended_at IS NULL LIMIT 1", (goal_id,)):
+            if self.world.tenant_query("SELECT id FROM episodes WHERE goal_id=? AND {tenant_goal:goal_id} AND ended_at IS NULL LIMIT 1",
+                                       (goal_id,)):
                 raise TaskBusy("An execution episode has not settled. Resolve its recovery before handing off.")
             require_open(self.world, goal_id)
         return root, ids
@@ -148,8 +175,8 @@ class TaskHandoffs:
                   "commitments": _text(commitments, "Pending commitments", 4000), "max_dollars": float(max_dollars),
                   "items": [{k: v for k, v in item.items() if k != "content_base64"} for item in payload["items"]],
                   "source_cost_scope": "Recorded episodes for the selected source task only; outside commitments are not measured automatically.",
-                  "source_cost_dollars": float(self.world.query("SELECT COALESCE(SUM(cost_dollars),0) FROM episodes WHERE goal_id=?", (source.id,))[0][0]),
-                  "open_questions": int(self.world.query("SELECT COUNT(*) FROM questions WHERE goal_id=? AND answer IS NULL", (source.id,))[0][0]),
+                  "source_cost_dollars": float(self.world.tenant_query("SELECT COALESCE(SUM(cost_dollars),0) FROM episodes WHERE goal_id=? AND {tenant_goal:goal_id}", (source.id,))[0][0]),
+                  "open_questions": int(self.world.tenant_query("SELECT COUNT(*) FROM questions WHERE goal_id=? AND {tenant_goal:goal_id} AND answer IS NULL", (source.id,))[0][0]),
                   "consequences": ["Acceptance closes this conversation and its listed subtasks to new execution; their private history remains with the original owner.",
                                    "The recipient owns a new, unstarted task with only these selected copies and next-work instructions.",
                                    "No original connections, credentials, learned memory, knowledge-source binding, project access or unselected conversation is transferred.",

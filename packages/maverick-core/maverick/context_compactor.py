@@ -416,14 +416,21 @@ def _score_by_embedding(
         return dot / (na * nb)
 
     texts = [_message_text(msg) for msg in head]
-    vectors = list(m.embed(texts))
+    # Small batches: the model's memory grows with the batch (see
+    # ``skill.embeddings._MODEL_BATCH``).
+    vectors: list = []
+    for start in range(0, len(texts), 16):
+        batch = texts[start:start + 16]
+        got = list(m.embed(batch))
+        # A short batch must not shift later vectors onto other turns.
+        vectors.extend(got + [None] * (len(batch) - len(got)))
     out: list[tuple[float, int, dict]] = []
     for i, msg in enumerate(head):
         # The embedder may yield fewer vectors than head turns (empty
         # texts / batching). Drive the loop by head and, when a turn has
         # no vector, KEEP it (treat as max relevance) rather than letting
         # it be silently dropped and culled.
-        if i < len(vectors):
+        if i < len(vectors) and vectors[i] is not None:
             out.append((_cos(qv, vectors[i]), i, msg))
         else:
             out.append((float("inf"), i, msg))

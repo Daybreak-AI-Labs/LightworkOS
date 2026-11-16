@@ -307,6 +307,31 @@ def test_run_goal_scans_initial_goal_text(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("coding_mode", ["1", "0"])
+async def test_best_of_n_passes_the_domain_to_every_attempt(tmp_path, monkeypatch, coding_mode):
+    """`maverick start --domain finance --coding-mode --best-of-n 3` used to
+    drop the domain, so the department profile and gates were not applied
+    (on the attempts and on the single-attempt fallback alike)."""
+    monkeypatch.setenv("MAVERICK_CODING_MODE", coding_mode)
+    monkeypatch.setenv("MAVERICK_BON_LADDER", "model_a:0.3,model_b:0.7")
+    domains: list = []
+
+    async def fake_run_goal(llm, world, budget, goal_id, **kwargs):
+        domains.append(kwargs.get("domain"))
+        return "FINAL:\n--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n-x\n+y\n"
+
+    monkeypatch.setattr("maverick.orchestrator.run_goal", fake_run_goal)
+    world = WorldModel(path=tmp_path / "w.db")
+    gid = world.create_goal("test", "test")
+    await run_goal_best_of_n(
+        llm=None, world=world, budget=Budget(max_dollars=4.0, max_wall_seconds=120.0),
+        goal_id=gid, sandbox=LocalBackend(workdir=tmp_path), n=2, domain="finance",
+    )
+    world.close()
+    assert domains and set(domains) == {"finance"}
+
+
+@pytest.mark.asyncio
 async def test_per_attempt_cap_grows_after_crash(tmp_path, monkeypatch):
     """Attempt 0 raises; attempt 1 should see a doubled cap."""
     monkeypatch.setenv("MAVERICK_CODING_MODE", "1")

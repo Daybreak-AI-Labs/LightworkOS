@@ -1411,13 +1411,16 @@
     }
     async function retryRun(runId, fromFailure) {
       try {
-        var r = await fetch('/api/v1/flows/runs/' + encodeURIComponent(runId) + '/retry'
-          + (fromFailure ? '?from_failure=1' : ''), { method: 'POST' });
-        flowsMsg.textContent = r.ok
-          ? (fromFailure ? 'Starting again from the step that failed…' : 'Running again with the same answers…')
-          : plainError(r, 'run it again');
+        var body = (await window.mvFetchJSON('/api/v1/flows/runs/' + encodeURIComponent(runId) + '/retry'
+          + (fromFailure ? '?from_failure=1' : ''), { method: 'POST' }, 'run it again')) || {};
+        flowsMsg.textContent = body.approval_required ? 'This step needs a new approval before it runs again.'
+          : fromFailure ? 'Starting again from the step that failed…' : 'Running again with the same answers…';
         setTimeout(loadFlowRuns, 500);
-      } catch (e) { flowsMsg.textContent = plainError(e, 'run it again'); }
+      } catch (e) {
+        flowsMsg.textContent = e.unreadable ? 'The retry could not be confirmed. Check Recent runs before trying again.'
+          : plainError(e, 'run it again');
+        if (e.status || e.unreadable) setTimeout(loadFlowRuns, 500);  // show the run as it now stands
+      }
     }
     async function resumeRun(run, decision) {
       try {

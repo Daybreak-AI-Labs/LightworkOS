@@ -109,7 +109,8 @@ NESTED_LABELS = {
     "workflow": {"name": "Step", "instruction": "Full instructions", "tools": "Suggested actions", "gate": "Declared review requirement"},
     "output": {"shape": "Presentation", "deliverable": "Deliverable", "consumers": "People who use it", "cadence": "Frequency", "gate": "Required review"},
     "autonomy": {"default": "Default independence", "low": "Low-risk work", "medium": "Medium-risk work", "high": "High-risk work",
-        "onboarding": "Setup review required", "levels_enabled": "Independence controls enabled", "config_override": "Separate workforce settings apply",
+        "onboarding": "Setup review required", "levels_enabled": "Independence controls enabled",
+        "levels_problem": "Independence setting problem", "config_override": "Separate workforce settings apply",
         "pack_default": "Agent's default independence", "pack": "Agent's saved independence", "effective": "Independence actually in use"},
 }
 INDEPENDENCE = {"observe": "Observe only", "suggest": "Suggest work", "request": "Request permission", "auto": "Act within permitted limits"}

@@ -1352,6 +1352,21 @@ def assert_normal_start_allowed() -> None:
         raise MaintenanceError(str(exc)) from exc
 
 
+def require_normal_start() -> bool:
+    """The start-up gate of every entry point that does normal work.
+
+    Refuses while installation or bootstrap recovery is unfinished, then
+    undoes restores that stopped part-way (see
+    :func:`backup.recover_interrupted_restore`). Returns True when one was
+    undone. Raises :class:`MaintenanceError` with the operator's next step.
+    """
+    assert_normal_start_allowed()
+    try:
+        return backup.recover_interrupted_restore()
+    except backup.RestoreRecoveryRefused as exc:
+        raise MaintenanceError(str(exc)) from exc
+
+
 def resume(identifier: str) -> str:
     """Native, explicitly confirmed retry of an already authorized operation.
 

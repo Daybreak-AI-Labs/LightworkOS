@@ -118,6 +118,25 @@ def _check_governance_tool_names(cfg: dict) -> None:
         _row(YELLOW, "governance", f.message)
 
 
+def _check_policy_overlays() -> None:
+    """Advisory: workspace settings and agent overrides on disk that try to
+    loosen your organisation's policy. They still load; the looser part is
+    ignored, and this lists it so an administrator can tidy the file."""
+    try:
+        from .config import tenant_policy_loosenings
+        from .domain import clamped_workspace_domains
+        loosened = tenant_policy_loosenings()
+        clamped = clamped_workspace_domains()
+    except Exception:  # pragma: no cover -- the doctor must never break
+        return
+    for workspace, keys in sorted(loosened.items())[:8]:
+        _row(YELLOW, "workspace policy", f"{workspace}: ignored {', '.join(keys)}",
+             fix="A workspace can only make these settings stricter. Remove them from its config.toml.")
+    for name, reasons in sorted(clamped.items())[:8]:
+        _row(YELLOW, "agent override", f"{name}: {'; '.join(reasons)}",
+             fix="The looser part is ignored. Edit the override so it only narrows the built-in agent.")
+
+
 def _sdk_import_failure(
     name: str, exc: ImportError, install_fix: str
 ) -> tuple[str, str]:
@@ -683,6 +702,37 @@ def _check_data_residency(cfg: dict) -> None:
              fix="set VERTEX_LOCATION to an in-region value (if Vertex is used)")
 
 
+def _check_autonomy_levels() -> None:
+    """An independence-levels setting that cannot be read holds every agent
+    to watch-only. Say so, so the operator can fix the setting."""
+    try:
+        from .agent_autonomy import levels_problem
+        problem = levels_problem()
+    except Exception:  # pragma: no cover -- the report must not crash doctor
+        return
+    if problem:
+        _row(YELLOW, "independence levels",
+             f"{problem}; every agent can only watch until this is fixed",
+             fix="correct [workforce] levels or MAVERICK_WORKFORCE_LEVELS (true or false)")
+
+
+def _check_self_hosted_prices() -> None:
+    """A self-hosted server on a public address with no price is charged a
+    safety ceiling. Say so, so the operator can set the real price."""
+    try:
+        from .budget import _SELF_HOSTED_PUBLIC_CEILING, self_hosted_price_gaps
+        gaps = self_hosted_price_gaps()
+    except Exception:  # pragma: no cover -- the report must not crash doctor
+        return
+    for provider, address in gaps:
+        _row(YELLOW, f"{provider} price",
+             f"Lightwork cannot tell that {address} is private and it has no price, "
+             f"so each call is charged ${_SELF_HOSTED_PUBLIC_CEILING[0]:g}/"
+             f"${_SELF_HOSTED_PUBLIC_CEILING[1]:g} per million tokens",
+             fix=f'set [providers.{provider}] price_per_mtok = [input, output] '
+                 'or "free", or run: maverick init')
+
+
 def _check_config_perms() -> None:
     """Config may hold tokens/secrets — warn if it's group/world-accessible."""
     try:
@@ -967,9 +1017,12 @@ def diagnose() -> int:
     cfg = _check_config()
     _check_config_lint(cfg)
     _check_governance_tool_names(cfg)
+    _check_policy_overlays()
     _check_config_perms()
     _check_profile()
     _check_data_residency(cfg)
+    _check_self_hosted_prices()
+    _check_autonomy_levels()
     _check_client_binding()
     _check_proxy_auth()
     _check_anthropic()

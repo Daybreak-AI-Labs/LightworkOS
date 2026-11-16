@@ -72,7 +72,7 @@ log = logging.getLogger(__name__)
 # intentional override from the untouched compatibility constant.
 _INITIAL_DEFAULT_DB = data_dir("world.db")
 DEFAULT_DB = _INITIAL_DEFAULT_DB
-SCHEMA_VERSION = 53
+SCHEMA_VERSION = 54
 DEFAULT_BUSY_TIMEOUT_MS = 5000
 WAL_SWITCH_BUSY_TIMEOUT_MS = 50
 WAL_SWITCH_RETRY_SECONDS = 5.0
@@ -461,6 +461,9 @@ def _bootstrap_schema(conn: sqlite3.Connection) -> str:
 
 
 MIGRATIONS: dict[int, list[str]] = {
+    # v54: a running goal's liveness heartbeat has its own timestamp, so it no
+    # longer changes ``updated_at``, the version a reviewed Stop or edit binds.
+    54: ["ALTER TABLE goals ADD COLUMN heartbeat_at REAL"],
     # v53: an external agent's run report key binds one goal. The unique
     # index makes a concurrent retry with the same key reuse that goal.
     53: ["CREATE UNIQUE INDEX IF NOT EXISTS idx_goal_origins_external_run "
@@ -1703,10 +1706,10 @@ class WorldModel:
 
     def reclaim_orphan_goals(
         self, *, max_age_seconds: float = 60.0,
-        statuses: tuple[str, ...] = ("active", "pending"),
+        statuses: tuple[str, ...] = ("active",),
         resolved_window_seconds: float | None = None,
     ) -> int:
-        """Mark goals stuck in 'active' or 'pending' as 'blocked'.
+        """Mark goals stuck in 'active' (or, when asked, 'pending') as 'blocked'.
 
         Called on startup to recover from SIGKILL / OOM / crash mid-run.
         Without this, a process death between create_goal() and
@@ -1718,9 +1721,9 @@ class WorldModel:
         a sibling process (dashboard restarting while `maverick serve`
         is mid-goal would flip the live goal to 'blocked'). Default now
         is 60 seconds: only reclaim goals whose `updated_at` is at
-        least a minute stale. Live goals re-touch updated_at via
-        set_goal_status('active') and via the runner's status writes,
-        so any goal currently being driven won't qualify. Multi-process
+        least a minute stale. Live goals refresh ``heartbeat_at`` (the run
+        heartbeat and answer previews) or write ``updated_at`` through status
+        writes, so any goal currently being driven won't qualify. Multi-process
         deployments with very slow turns can raise this via
         ``MAVERICK_ORPHAN_RECLAIM_SECONDS``.
 
@@ -1728,8 +1731,10 @@ class WorldModel:
         goal, even when its monotonic review timestamp is ahead of the wall
         clock. Positive windows continue to require the full stale interval.
 
-        A periodic sweep passes only ``("active",)``; queued ``pending`` goals
-        may legitimately wait longer than the stale window.
+        Only ``active`` goals are reclaimed by default: a queued ``pending``
+        goal may legitimately wait longer than the stale window (for a worker,
+        a schedule or a concurrency slot). A caller that knows its pending rows
+        have no other owner passes ``("active", "pending")``.
 
         Returns rows reclaimed.
         """
@@ -1751,7 +1756,7 @@ class WorldModel:
                     "UPDATE goals SET status = 'blocked', "
                     "result = COALESCE(result, '') || ?, "
                     "updated_at = MAX(updated_at + 0.000001, ?) "
-                    f"WHERE status IN ({marks}) AND (? = 0 OR updated_at <= ?)",
+                    f"WHERE status IN ({marks}) AND (? = 0 OR MAX(updated_at, COALESCE(heartbeat_at, 0)) <= ?)",
                     (marker, now, *statuses, max_age_seconds, cutoff),
                 )
                 return cur.rowcount
@@ -1763,7 +1768,7 @@ class WorldModel:
             # is negligible.
             rows = conn.execute(
                 "SELECT id, result FROM goals "
-                f"WHERE status IN ({marks}) AND (? = 0 OR updated_at <= ?)",
+                f"WHERE status IN ({marks}) AND (? = 0 OR MAX(updated_at, COALESCE(heartbeat_at, 0)) <= ?)",
                 (*statuses, max_age_seconds, cutoff),
             ).fetchall()
             from .crypto_at_rest import EncryptionUnavailable
@@ -1791,7 +1796,7 @@ class WorldModel:
                     cur = conn.execute(
                         "UPDATE goals SET status = 'blocked', updated_at = MAX(updated_at + 0.000001, ?) "
                         f"WHERE id = ? AND status IN ({marks}) "
-                        "AND (? = 0 OR updated_at <= ?)",
+                        "AND (? = 0 OR MAX(updated_at, COALESCE(heartbeat_at, 0)) <= ?)",
                         (now, row["id"], *statuses, max_age_seconds, cutoff),
                     )
                     reclaimed += cur.rowcount
@@ -1800,7 +1805,7 @@ class WorldModel:
                     "UPDATE goals SET status = 'blocked', result = ?, "
                     "updated_at = MAX(updated_at + 0.000001, ?) "
                     f"WHERE id = ? AND status IN ({marks}) "
-                    "AND (? = 0 OR updated_at <= ?)",
+                    "AND (? = 0 OR MAX(updated_at, COALESCE(heartbeat_at, 0)) <= ?)",
                     (new_result, now, row["id"], *statuses, max_age_seconds, cutoff),
                 )
                 reclaimed += cur.rowcount
@@ -2268,12 +2273,30 @@ class WorldModel:
     # methods are the contract both backends implement: write the SQL in
     # SQLite paramstyle and access rows by index or by column name.
 
-    def query(self, sql: str, params: tuple[Any, ...] | list = ()) -> list:
+    def query(self, sql: str, params: tuple[Any, ...] | list = (), *, system: bool = False) -> list:
         """Run a read-only statement written in SQLite paramstyle (``?``) and
         return every row. Rows support both ``row[0]`` and ``row["col"]`` and
         unpack like tuples. Mirrored on the Postgres backend, which rewrites
-        the paramstyle and wraps its tuple rows the same way."""
+        the paramstyle and wraps its tuple rows the same way.
+
+        Tenant data belongs in :meth:`tenant_query`. On the shared Postgres
+        store this unscoped call is refused while tenancy is on unless
+        ``system=True`` marks a deliberate deployment-wide read. This file is
+        already one tenant's store, so the flag changes nothing here."""
+        del system
         return self._read_all(sql, tuple(params))
+
+    def tenant_sql(self, sql: str, params: tuple[Any, ...] | list = (), *,
+                   require: bool = True) -> tuple[str, tuple]:
+        """Expand the ``{tenant...}`` markers of :mod:`maverick.tenant_sql`.
+        The file is the tenant boundary here, so every marker is ``1=1``."""
+        from .tenant_sql import expand, unscoped
+        return expand(sql, params, unscoped, require=require)
+
+    def tenant_query(self, sql: str, params: tuple[Any, ...] | list = ()) -> list:
+        """:meth:`query` for tenant data: the statement names its boundary with
+        ``{tenant:COL}``, ``{tenant_exact:COL}`` or ``{tenant_goal:COL}``."""
+        return self._read_all(*self.tenant_sql(sql, params))
 
     def sql_day_from_epoch(self, column: str) -> str:
         """SQL expression bucketing an epoch-seconds column into a UTC
@@ -2434,8 +2457,10 @@ class WorldModel:
                 "WHEN status = 'done' THEN completed_at "
                 "ELSE MAX(updated_at + 0.000001, ?) END, "
                 "status = ?, updated_at = MAX(updated_at + 0.000001, ?), "
-                "result = COALESCE(?, result) WHERE id = ?",
-                (status, now, status, now, _enc_field(result, "goals.result"), goal_id),
+                "result = COALESCE(?, result) WHERE id = ? "
+                # A finished task stays finished: a late cancel changes nothing.
+                "AND NOT (status = 'done' AND ? = 'cancelled')",
+                (status, now, status, now, _enc_field(result, "goals.result"), goal_id, status),
                 )
                 self._goal_changed(goal_id)
             # A sign-off is authority over one immutable terminal payload, not
@@ -2479,15 +2504,16 @@ class WorldModel:
         """Replace a RUNNING goal's result with the answer written so far.
 
         The chat page's live preview. It never touches a terminal goal, so the
-        orchestrator's final write wins any race with a late preview; it
-        advances the optimistic review version like every goal write; and it
+        orchestrator's final write wins any race with a late preview. Like the
+        heartbeat it refreshes only ``heartbeat_at``, not ``updated_at`` (the
+        version a reviewed Stop binds to), so Stop works mid-answer; and it
         revokes no sign-off because a non-terminal goal cannot carry one.
         Returns whether a row changed.
         """
         now = time.time()
         with self._writing() as conn:
             cur = conn.execute(
-                "UPDATE goals SET result = ?, updated_at = MAX(updated_at + 0.000001, ?) "
+                "UPDATE goals SET result = ?, heartbeat_at = MAX(COALESCE(heartbeat_at, 0), ?) "
                 "WHERE id = ? AND status NOT IN "
                 "('done', 'completed', 'failed', 'cancelled', 'blocked', 'error')",
                 (_enc_field(text, "goals.result"), now, goal_id),
@@ -2606,8 +2632,10 @@ class WorldModel:
     def touch_goal(
         self, goal_id: int, *, expected_owner: str | None = None,
     ) -> bool:
-        """Refresh a live goal's ``updated_at`` — the orphan-reclaim liveness
-        signal — without any other side effect.
+        """Refresh a live goal's ``heartbeat_at`` — the orphan-reclaim liveness
+        signal — without any other side effect. ``updated_at`` stays put: it
+        is the version a reviewed Stop or edit binds to, and a heartbeat is
+        not a change the reviewer needs to see again.
 
         A pure keep-alive for work running OUTSIDE this process (external
         agents heartbeating a run, remote workers between status writes):
@@ -2616,7 +2644,7 @@ class WorldModel:
         in-flight rows qualify; terminal goals are never revived. The owner
         predicate rides in the same statement so authorization cannot be
         separated from the touch by a race."""
-        sql = ("UPDATE goals SET updated_at = MAX(updated_at + 0.000001, ?) "
+        sql = ("UPDATE goals SET heartbeat_at = MAX(COALESCE(heartbeat_at, 0), ?) "
                "WHERE id = ? AND status IN ('active', 'pending')")
         params: tuple[Any, ...] = (time.time(), int(goal_id))
         if expected_owner is not None:
@@ -4929,6 +4957,11 @@ class WorldModel:
                 )
                 removed_turns += int(cursor.rowcount)
 
+            # Durable-execution checkpoints (maverick.checkpoint) hold a failed or
+            # stopped goal's transcript in a table created on first use.
+            checkpoints = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='checkpoints'"
+            ).fetchone() is not None
             if goal_ids:
                 for chunk in self._chunks(goal_ids):
                     goal_placeholders = ",".join("?" * len(chunk))
@@ -4948,6 +4981,7 @@ class WorldModel:
                         "questions",
                         "share_links",
                         "signoffs",
+                        *(("checkpoints",) if checkpoints else ()),
                     ):
                         conn.execute(
                             f"DELETE FROM {table} "
@@ -5547,6 +5581,106 @@ def reclaim_window_seconds(default: float = 60.0) -> float:
     return default
 
 
+class WorldBackendUnreadable(RuntimeError):
+    """Postgres was the last database used, but the configuration that names
+    the database cannot be read. Opening the local database instead would
+    write work where nobody looks, so Lightwork refuses to start."""
+
+
+def _world_backend_marker() -> Path:
+    # Deployment-wide, like the Postgres backend itself: never tenant-scoped.
+    return data_dir("world_backend", tenant=None)
+
+
+def _record_world_backend(backend: str) -> None:
+    """Remember that this install used Postgres, or deliberately left it (best
+    effort). An install that only ever used the local database has no marker."""
+    marker = _world_backend_marker()
+    try:
+        if marker.is_file() and marker.read_text(encoding="utf-8").strip() == backend:
+            return
+        from .file_lock import atomic_write_text
+
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(marker, backend + "\n")
+    except OSError:
+        log.warning("could not record the world database in use at %s", marker, exc_info=True)
+
+
+_WORLD_BACKENDS = ("sqlite", "postgres")
+_LOCAL_ON_PURPOSE = (
+    'To use the local database on purpose, set [world_model] backend = "sqlite" '
+    "in the settings file, or set MAVERICK_WORLD_BACKEND=sqlite."
+)
+
+
+def _last_world_backend() -> str:
+    marker = _world_backend_marker()
+    try:
+        return marker.read_text(encoding="utf-8").strip() if marker.is_file() else ""
+    except OSError:
+        return ""
+
+
+def _refuse_silent_local_fallback() -> None:
+    """Refuse the local database when Postgres may have been lost.
+
+    The backend comes from ``MAVERICK_WORLD_BACKEND`` or ``[world_model]
+    backend``; only ``sqlite`` and ``postgres`` are understood and anything
+    else is an error, never a fallback. Once Postgres was used, opening the
+    local database needs an explicit ``sqlite`` choice: settings that cannot
+    be read, or that do not name a backend, are refused. A machine that has
+    only ever used the local database keeps working.
+    """
+    env = os.environ.get("MAVERICK_WORLD_BACKEND", "").strip().lower()
+    if env and env not in _WORLD_BACKENDS:
+        raise WorldBackendUnreadable(
+            f"MAVERICK_WORLD_BACKEND is {env!r}, which Lightwork does not understand. "
+            'Use "sqlite" for the local database or "postgres" for the shared one.'
+        )
+    if env:
+        # An explicit choice (postgres was handled by the caller). Remember a
+        # deliberate move away from Postgres so later starts need no flag. A
+        # machine that never used Postgres has no marker and gets none: opening
+        # the local database must not write anything beside it.
+        if _last_world_backend() == "postgres":
+            _record_world_backend("sqlite")
+        return
+    from .config import config_path, config_source_errors, load_config
+
+    errors = config_source_errors(include_tenant=True)
+    last = _last_world_backend()
+    if errors:
+        if last != "postgres":
+            return
+        problems = "; ".join(f"{path}: {message}" for path, message in sorted(errors.items()))
+        raise WorldBackendUnreadable(
+            "Lightwork last used its Postgres database, but its settings cannot be "
+            f"read: {problems}. Fix that file and start again; Lightwork will not "
+            f"switch to a local database on its own. {_LOCAL_ON_PURPOSE}"
+        )
+    section = load_config().get("world_model") or {}
+    raw = section.get("backend") if isinstance(section, dict) else None
+    choice = raw.strip().lower() if isinstance(raw, str) else raw
+    if choice not in (None, "", *_WORLD_BACKENDS):
+        raise WorldBackendUnreadable(
+            f"[world_model] backend is {raw!r} in {config_path()} (or a settings "
+            "overlay), which Lightwork does not understand. Use "
+            '"sqlite" for the local database or "postgres" for the shared one.'
+        )
+    if last != "postgres":
+        return
+    if choice == "sqlite":
+        _record_world_backend("sqlite")
+        return
+    raise WorldBackendUnreadable(
+        "Lightwork last used its Postgres database, but its settings no longer "
+        "choose a database, so it will not switch to a local database on its "
+        'own. To keep using Postgres, set [world_model] backend = "postgres". '
+        f"{_LOCAL_ON_PURPOSE}"
+    )
+
+
 def open_world(path: Path | None = None) -> Any:
     """Open the configured world-model backend.
 
@@ -5587,7 +5721,11 @@ def open_world(path: Path | None = None) -> Any:
             raise practice.PracticeUnavailable(practice.POSTGRES_REASON)
         from .world_model_backends import open_postgres_world
 
-        return open_postgres_world()
+        world = open_postgres_world()
+        _record_world_backend("postgres")
+        return world
+    if path is None or Path(path) in (DEFAULT_DB, data_dir("world.db")):
+        _refuse_silent_local_fallback()
     if path is None:
         # No explicit path: honor the client/tenant floor so every canonical
         # world entry point opens the one per-client DB (see docstring).

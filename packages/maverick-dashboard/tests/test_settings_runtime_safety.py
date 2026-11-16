@@ -580,6 +580,9 @@ def _computer(monkeypatch, confidence):
     import maverick.vision_click as vision_click
 
     monkeypatch.setattr(vision_click, "load_calibration", lambda: None)
+    # A driver that can send bound input, so the click reaches target lookup.
+    monkeypatch.setattr(computer, "_ensure_pyautogui", lambda: type(
+        "BoundDriver", (), {"dispatch_bound": staticmethod(lambda *_args: "sent")})())
     gated: list = []
 
     def gate(action, args, context_provider=None):

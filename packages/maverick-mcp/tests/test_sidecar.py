@@ -329,3 +329,22 @@ async def test_sidecar_stops_reading_body_at_the_cap():
     response = await endpoint(request)
     assert response.status_code == 413
     assert consumed == [4096, 1]
+
+
+def test_mcp_entry_points_stop_at_the_start_up_gate(monkeypatch):
+    # The standalone scripts used to skip the checks `maverick` runs first.
+    import sys
+
+    import pytest
+    from maverick import installation_recovery
+    from maverick_mcp import server, sidecar
+
+    def refuse():
+        raise installation_recovery.MaintenanceError("An earlier restore stopped part-way.")
+
+    monkeypatch.setattr(installation_recovery, "require_normal_start", refuse)
+    monkeypatch.setattr(sys, "argv", ["maverick-mcp"])
+    for entry in (server.main, sidecar.main):
+        with pytest.raises(SystemExit) as stopped:
+            entry()
+        assert "An earlier restore stopped part-way." in str(stopped.value.code)

@@ -1293,6 +1293,163 @@ def test_commit_journal_failure_rolls_back(monkeypatch):
     assert not (root / backup._RESTORE_TX_ROOT).exists()
 
 
+def _crashed_restore(monkeypatch, root):
+    """Leave a restore journal behind as a crash mid-restore would."""
+    _seed(root)
+    archive = backup.create_backup()
+    (root / "agent_trust.json").write_text('[{"id":"live-new"}]')
+    real_publish = backup._publish_staged_file
+    real_rollback = backup._rollback
+
+    def _crash(*_args):
+        raise OSError("power lost")
+
+    def _crash_mid_apply(source, destination):
+        if destination.suffix == ".db":
+            _crash()
+        return real_publish(source, destination)
+
+    # The process dies after replacing some files and before undoing them.
+    monkeypatch.setattr(backup, "_publish_staged_file", _crash_mid_apply)
+    monkeypatch.setattr(backup, "_rollback", _crash)
+    with pytest.raises(backup.BackupError, match="power lost"):
+        backup.restore_backup(archive)
+    monkeypatch.setattr(backup, "_publish_staged_file", real_publish)
+    monkeypatch.setattr(backup, "_rollback", real_rollback)
+    tx_root = root / backup._RESTORE_TX_ROOT
+    assert tx_root.exists()
+    return tx_root
+
+
+def test_startup_recovers_interrupted_restore_or_refuses_with_plain_message(monkeypatch):
+    from maverick.paths import data_dir
+
+    root = data_dir()
+    tx_root = _crashed_restore(monkeypatch, root)
+    # A process bound to another workspace (or none, like the dashboard) still
+    # finds this workspace's journal.
+    monkeypatch.delenv("MAVERICK_CLIENT_ID")
+    client.reset_client_cache()
+
+    monkeypatch.setenv("MAVERICK_BACKUP_SIGNING_KEY", bytes(range(1, 33)).hex())
+    with pytest.raises(backup.RestoreRecoveryRefused) as refused:
+        backup.recover_interrupted_restore()
+    message = str(refused.value)
+    assert "MAVERICK_BACKUP_SIGNING_KEY" in message
+    assert "as they were before the restore" in message
+    assert "Detail" not in message and "allow_unsigned" not in message
+    assert tx_root.exists()
+
+    monkeypatch.setenv("MAVERICK_BACKUP_SIGNING_KEY", bytes(range(32)).hex())
+    assert backup.recover_interrupted_restore() is True
+    assert (root / "agent_trust.json").read_text() == '[{"id":"live-new"}]'
+    assert not tx_root.exists()
+    assert backup.recover_interrupted_restore() is False
+
+
+def test_startup_points_a_recovery_centre_restore_to_recovery_mode(monkeypatch):
+    from maverick.paths import data_dir
+
+    root = data_dir()
+    recovery_key = bytes(range(2, 34))
+    store = root / "backups" / "recovery"
+    store.mkdir(parents=True)
+    (store / "operator.key").write_text(recovery_key.hex())
+    with backup.recovery_scope(root, "acme", recovery_key):
+        tx_root = _crashed_restore(monkeypatch, root)
+    with pytest.raises(backup.RestoreRecoveryRefused) as refused:
+        backup.recover_interrupted_restore()
+    message = str(refused.value)
+    assert "recovery mode" in message
+    assert "MAVERICK_BACKUP_SIGNING_KEY" not in message
+    assert tx_root.exists()
+
+
+def test_startup_names_the_true_cause_for_a_tampered_or_ended_recovery_journal(monkeypatch):
+    import json
+
+    from maverick.paths import data_dir, maverick_home
+
+    root = data_dir()
+    tx_root = _crashed_restore(monkeypatch, root)
+    journal = next(tx_root.iterdir()) / backup._JOURNAL
+    document = json.loads(journal.read_text())
+    document["entries"] = []  # altered after signing; the key id still matches
+    journal.write_text(json.dumps(document))
+    with pytest.raises(backup.RestoreRecoveryRefused) as refused:
+        backup.recover_interrupted_restore()
+    message = str(refused.value)
+    assert "integrity check" in message and "read and written" not in message
+    assert "as they were before the restore" in message
+
+    # Installation recovery has ended by the time this can show (its marker
+    # refuses start-up first), so the message does not send the person there.
+    key = bytes(range(3, 35))
+    store = maverick_home() / "backups" / "installation-recovery"
+    store.mkdir(parents=True)
+    (store / "operator.key").write_text(key.hex())
+    document["authentication"] = {"algorithm": "hmac-sha256", "key_id": backup._key_id(key),
+                                  "signature": "0" * 64}
+    journal.write_text(json.dumps(document))
+    with pytest.raises(backup.RestoreRecoveryRefused) as refused:
+        backup.recover_interrupted_restore()
+    message = str(refused.value)
+    assert "installation recovery" in message and "Install & updates" not in message
+    assert "as they were before the restore" in message
+
+
+def test_backup_leaves_out_an_unportable_name_in_sandbox_recovery_copies(caplog):
+    # Copies kept from a failed Kubernetes transfer could hold `what?.txt`
+    # (legal on Linux), which aborted every later backup.
+    from maverick.paths import data_dir
+
+    root = data_dir()
+    _seed(root)
+    kept = data_dir("sandbox-recovery") / "k8s-1" / "input"
+    kept.mkdir(parents=True)
+    (kept / "what?.txt").write_text("x")
+    (kept / "ok.txt").write_text("y")
+    with tarfile.open(backup.create_backup()) as archive:
+        names = archive.getnames()
+    assert any(name.endswith("sandbox-recovery/k8s-1/input/ok.txt") for name in names)
+    assert not any("what?" in name for name in names)
+    assert "what?.txt" in caplog.text
+    # A whole-home backup (installation recovery) sees the copies one level
+    # down, under tenants/<name>/sandbox-recovery.
+    from maverick.paths import maverick_home
+
+    with backup.recovery_scope(maverick_home(), "acme", bytes(range(32)), whole_home=True):
+        with tarfile.open(backup.create_backup()) as archive:
+            assert not any("what?" in name for name in archive.getnames())
+    (root / "other?.txt").write_text("z")  # elsewhere the backup still refuses
+    with pytest.raises(backup.BackupError, match="unsafe"):
+        backup.create_backup()
+
+
+def test_cli_refuses_to_start_on_unrecoverable_restore_with_the_message(monkeypatch):
+    from click.testing import CliRunner
+    from maverick.cli import main
+
+    def refuse():
+        raise backup.RestoreRecoveryRefused("An earlier restore stopped part-way.")
+
+    monkeypatch.setattr(backup, "recover_interrupted_restore", refuse)
+    result = CliRunner().invoke(main, ["backup", "info", "missing.tar.gz"])
+    assert result.exit_code == 1
+    assert "An earlier restore stopped part-way." in result.output
+    assert "Traceback" not in result.output
+    # Help, version and doctor still answer, so the person can find the way out.
+    for args in (["--help"], ["backup", "--help"], ["backup", "restore", "--help"], ["version"]):
+        shown = CliRunner().invoke(main, args)
+        assert shown.exit_code == 0, (args, shown.output)
+    # "--help" as data (after "--", or as an option's value) is not a help
+    # request: the gate still runs before any write.
+    for args in (["fact", "note", "--", "--help"],
+                 ["schedule", "goal", "0 9 * * *", "text", "--title", "--help"]):
+        gated = CliRunner().invoke(main, args)
+        assert gated.exit_code == 1 and "stopped part-way" in gated.output, (args, gated.output)
+
+
 def test_next_restore_recovers_retained_applying_journal(monkeypatch):
     from maverick.paths import data_dir
 

@@ -145,13 +145,17 @@ class TestWriteOverride:
             write_override("nope", {"persona": "x" * 250})
 
     def test_workflow_edit_persists_and_drives_view(self, tenant_dir):
-        name, _ = _clean_builtin()
+        name, base = _clean_builtin()
+        # The built-in pack's review gates stay: an override may only add gates.
+        gated = [{"name": s.name, "instruction": s.instruction, "gate": s.gate}
+                 for s in base.workflow if s.gate]
         write_override(name, {"workflow": [
             {"name": "intake", "instruction": "Read the request."},
             {"name": "answer", "instruction": "Ground in docs and cite."},
+            *gated,
         ]})
         view = resolved_view(name)
-        assert [s["name"] for s in view["workflow"]] == ["intake", "answer"]
+        assert [s["name"] for s in view["workflow"]] == ["intake", "answer", *(s["name"] for s in gated)]
         assert "workflow" in view["overridden"]
 
     @pytest.mark.parametrize("name", ["../escaped", r"..\escaped", "a/b", r"a\b", "."])
@@ -242,12 +246,17 @@ class TestValidateAndList:
         assert any("allow_paths cannot broaden" in e for e in errors)
         assert any("allow_hosts cannot broaden" in e for e in errors)
 
+        # A file already on disk still loads; its looser scopes are ignored.
+        from maverick.domain import clamped_workspace_domains
+
         (tenant_dir / "z_child.toml").write_text(
             'name = "z_child"\nextends = "a_parent"\n'
             'allow_paths = []\nallow_hosts = []\n', encoding="utf-8",
         )
-        assert "z_child" not in available_domains()
-        assert rejected_workspace_domains()["z_child"]
+        child = available_domains()["z_child"]
+        assert child.allow_paths == ["C:/approved/*"] and child.allow_hosts == ["approved.example"]
+        assert "z_child" not in rejected_workspace_domains()
+        assert any("allow_paths cannot broaden" in e for e in clamped_workspace_domains()["z_child"])
 
     def test_builtin_override_cannot_extend_a_missing_base(self, tenant_dir):
         name, _ = _clean_builtin()

@@ -148,6 +148,29 @@ def test_task_capacity_never_evicts_active_tasks(monkeypatch):
     assert second.id in eng._tasks and third.id in eng._tasks
 
 
+def test_a_task_whose_working_write_fails_is_terminal_and_evictable(monkeypatch):
+    # It used to stay "working" in memory for ever, so enough such failures
+    # filled the task table until a restart.
+    import maverick.a2a_tasks as a2at
+
+    monkeypatch.setattr(a2at, "_MAX_TASKS", 2)
+    eng = TaskEngine(runner=_fake_runner)
+    task = eng._new_task(_msg_id("one", "m1"))
+
+    class _Down:
+        def save(self, _task):
+            raise OSError("disk unavailable")
+
+    eng._store = _Down()
+    with pytest.raises(Exception, match="indeterminate"):
+        eng._set_working(task)
+    eng._store = None
+    assert task.state == "failed"
+    eng._new_task(_msg_id("two", "m2"))
+    eng._new_task(_msg_id("three", "m3"))  # evicts the failed task
+    assert task.id not in eng._tasks
+
+
 # ---- message/stream --------------------------------------------------
 
 def test_stream_event_sequence():

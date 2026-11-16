@@ -40,6 +40,9 @@ def load_donations(outbox: Path, *, world=None) -> Iterator[dict]:
     """Yield each donated record (raw dict) from the outbox directory."""
     if not outbox.exists():
         return
+    from ..donation import withheld_at_export
+    if withheld_at_export(outbox):
+        return
     for p in sorted(outbox.glob("*.json")):
         try:
             record = json.loads(p.read_text(encoding="utf-8"))

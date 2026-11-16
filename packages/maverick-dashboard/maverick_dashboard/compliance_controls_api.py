@@ -655,7 +655,7 @@ def _run_subject_residue_erase(world, channel: str, user: str, actor: str) -> di
         except AuditRefused:
             refused = True  # raised only after the scrub
         except (SystemExit, click.exceptions.Exit, click.ClickException) as exc:
-            if obj.get("erase_refusal"):  # a legal hold: nothing was deleted
+            if obj.get("erase_refusal"):  # refused before anything was deleted
                 return {"erased": False, "conversations": 0, "clean": False,
                         "message": obj["erase_refusal"]}
             if "erase_residue" not in obj:
@@ -668,7 +668,7 @@ def _run_subject_residue_erase(world, channel: str, user: str, actor: str) -> di
     if refused and "the note that this erasure happened" not in unfinished:
         unfinished.append("the note that this erasure happened")
     if not removed and not unfinished:
-        return {"erased": False, "conversations": 0, "clean": False,
+        return {"erased": False, "conversations": 0, "clean": False, "nothing_found": True,
                 "message": "Nothing was found for this person."}
     if removed:
         try:  # who erased, never whose data
@@ -727,10 +727,13 @@ def _run_erase(channel: str, user: str, actor: str = "local") -> dict:
         except (SystemExit, click.exceptions.Exit, click.ClickException) as exc:
             # A command-line exit must not end the server's worker thread.
             if obj.get("erase_refusal"):
-                # A legal hold refused the erasure before anything was deleted.
+                # A legal hold or an activity record that cannot be changed
+                # refused the erasure before anything was deleted.
                 return {"erased": False, "conversations": before, "clean": False,
                         "message": obj["erase_refusal"]}
-            raise RuntimeError("erasure command stopped") from exc
+            if "erase_outcome" not in obj:
+                raise RuntimeError("erasure command stopped") from exc
+            # An incomplete erasure exits non-zero; its structured outcome says what remains.
     # Who erased, never whose data (the subject is exactly what was erased).
     from maverick.audit import EventKind, audit_event
     try:

@@ -45,14 +45,18 @@ def require_ai_open(world, goal_id, *, execute=None, decode=None):
     """Physical admission reads exact original hold pointers, including moved tasks."""
     from .attachment_submissions import SubmissionStore
     store = SubmissionStore(world)
-    query = (lambda sql, args: execute(sql, args).fetchall()) if execute else world.query
+    from .task_handoffs import hidden_from_tenant, tenant_reader
+    query = tenant_reader(world, execute)
+    start = int(goal_id)
     decode = decode or store.open
     current, seen = int(goal_id), set()
     while current is not None:
         if current in seen or len(seen) >= 100:
             raise GoalMutationConflict("The conversation's current human handoff could not be checked.")
         seen.add(current)
-        identity = query("SELECT id,owner,created_at FROM goals WHERE id=?", (current,))
+        identity = query("SELECT id,owner,created_at FROM goals WHERE id=? AND {tenant:tenant_id}", (current,))
+        if not identity and current != start and hidden_from_tenant(world, current, execute):
+            raise GoalMutationConflict("The conversation's current human handoff could not be checked.")
         if identity:
             identifier = "CI-" + digest({"root": identity[0][0], "owner": identity[0][1], "created_at": identity[0][2]})[:32]
             native = inbox.STORE.get(identifier)
@@ -61,7 +65,8 @@ def require_ai_open(world, goal_id, *, execute=None, decode=None):
                 session = human.get("sessions", {}).get(human.get("current"))
                 if session and (session.get("state") in HELD or native.get("_audit_pending")):
                     raise GoalMutationConflict("A human handoff holds this conversation. Read its original outcome or separately review hand-back.")
-        rows = query("SELECT receipt FROM goal_mutation_receipts WHERE goal_id=? AND kind='human_conversation_hold'", (current,))
+        rows = query("SELECT receipt FROM goal_mutation_receipts WHERE goal_id=? AND {tenant_goal:goal_id} "
+                     "AND kind='human_conversation_hold'", (current,))
         for (raw,) in rows:
             pointer = json.loads(decode(raw))
             record = inbox.STORE.get(pointer["record"])
@@ -69,7 +74,7 @@ def require_ai_open(world, goal_id, *, execute=None, decode=None):
             session = value.get("human", {}).get("sessions", {}).get(pointer["session"])
             if session is None or session.get("state") in HELD or record.get("_audit_pending"):
                 raise GoalMutationConflict("A human handoff holds this conversation. Read its original outcome or separately review hand-back; earlier AI work will not restart automatically.")
-        parents = query("SELECT parent_id FROM goals WHERE id=?", (current,))
+        parents = query("SELECT parent_id FROM goals WHERE id=? AND {tenant:tenant_id}", (current,))
         current = parents[0][0] if parents else None
 
 
@@ -134,7 +139,7 @@ class HumanConversations:
         return current
 
     def scope(self, root):
-        rows = self.world.query("WITH RECURSIVE scope(id) AS (SELECT id FROM goals WHERE id=? UNION SELECT g.id FROM goals g JOIN scope s ON g.parent_id=s.id) SELECT id FROM scope LIMIT 101", (root.id,))
+        rows = self.world.tenant_query("WITH RECURSIVE scope(id) AS (SELECT id FROM goals WHERE id=? AND {tenant:tenant_id} UNION SELECT g.id FROM goals g JOIN scope s ON g.parent_id=s.id WHERE {tenant:g.tenant_id}) SELECT id FROM scope LIMIT 101", (root.id,))
         if len(rows) > MAX_SCOPE:
             raise ValueError("This conversation has more than 100 related tasks. Stop its work separately before selecting a smaller conversation.")
         goals = [self.world.get_goal(int(row[0])) for row in rows]
@@ -249,7 +254,7 @@ class HumanConversations:
                 stack.enter_context(lease(self.world, goal.id))
                 guard()
                 current = self.world.get_goal(goal.id)
-                if current.status not in TERMINAL or self.world.query("SELECT id FROM episodes WHERE goal_id=? AND ended_at IS NULL LIMIT 1", (goal.id,)):
+                if current.status not in TERMINAL or self.world.tenant_query("SELECT id FROM episodes WHERE goal_id=? AND {tenant_goal:goal_id} AND ended_at IS NULL LIMIT 1", (goal.id,)):
                     raise GoalMutationConflict("AI work has not settled. Its hold is kept; separately review Finish pausing after cleanup.")
             guard()
 

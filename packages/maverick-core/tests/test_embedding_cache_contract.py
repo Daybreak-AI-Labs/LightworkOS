@@ -245,3 +245,20 @@ def test_purpose_and_outcome_weights_survive_warm_cache(embedding_runtime, monke
         assert relevant_skills("sales", [unrestricted, governed]) == [governed, unrestricted]
     with purpose_scope("marketing"):
         assert relevant_skills("sales", [unrestricted, governed]) == [unrestricted]
+
+
+def test_embed_hands_the_model_small_batches_and_keeps_the_order(monkeypatch):
+    """The model's memory grows with its batch: 2,031 specialist texts peaked
+    at 4.4 GB in one call. Every text is still embedded, in order."""
+    sizes = []
+
+    class LocalModel:
+        def embed(self, texts):
+            sizes.append(len(texts))
+            return [[float(text), 1.0] for text in texts]
+
+    monkeypatch.setattr(se, "_model", LocalModel())
+    monkeypatch.setattr(se, "_model_name", se.MODEL_NAME)
+    vectors = se.embed([str(n) for n in range(1, 41)])
+    assert [v[0] for v in vectors] == [float(n) for n in range(1, 41)]
+    assert sizes == [16, 16, 8]

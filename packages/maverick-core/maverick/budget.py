@@ -11,6 +11,7 @@ Cost correctness:
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import logging
 import math
@@ -694,16 +695,12 @@ def _lookup_price_quote(  # noqa: C901 - ordered evidence and policy precedence
             if quote is not None:
                 return quote
 
-    # Unknown self-hosted ids incur no metered API-token charge. This does not
-    # claim infrastructure is free; the source makes the accounting scope
-    # explicit and auditable.
+    # Unknown self-hosted ids incur no metered API-token charge only when the
+    # server is on this machine or a private network, or the operator said it
+    # is free. A self-hosted adapter can point at a paid public service.
     provider = requested.split(":", 1)[0] if ":" in requested else requested
     if ":" in requested and provider in ("ollama", "vllm", "tgi"):
-        return _tracked_policy_price(
-            requested,
-            (0.0, 0.0),
-            evidence_id="self-hosted-api-metering-policy-2026-07-29",
-        )
+        return _self_hosted_quote(requested, provider)
 
     # OpenRouter publishes a per-model price list; a model it lists at $0 for
     # prompt and completion incurs no metered charge. The discovery cache holds
@@ -754,6 +751,194 @@ def _lookup_price_quote(  # noqa: C901 - ordered evidence and policy precedence
         applicability=(
             "Estimate-only unknown-model fallback; no vendor-specific "
             "pricing evidence"
+        ),
+    )
+
+
+# Charged for a self-hosted route on a public address with no price set. It is
+# deliberately high (above any open-weight hosted rate on the rate card) so a
+# paid service behind a self-hosted adapter cannot slip past a spending limit.
+_SELF_HOSTED_PUBLIC_CEILING = (10.0, 50.0)
+_SELF_HOSTED_DEFAULT_URLS = {
+    "ollama": "http://localhost:11434",
+    "vllm": "http://localhost:8000",
+    "tgi": "http://localhost:8080",
+}
+# Names that only resolve on a local network: a single-label name (a Docker
+# Compose service such as ``ollama``), a reserved private-use suffix, a
+# Tailscale MagicDNS name, or a common home or company suffix. No DNS lookup.
+_LOCAL_NAME_SUFFIXES = (".local", ".internal", ".lan", ".home.arpa", ".home", ".corp", ".ts.net")
+
+
+def _self_hosted_endpoint(provider: str) -> tuple[str | None, object]:
+    """The address a self-hosted adapter calls and the price set for it.
+
+    Mirrors ``LLM._provider_client_config``: ``[providers.<name>] base_url``,
+    then the provider's environment variable, then the adapter default. An
+    unreadable configuration yields ``(None, None)``: the address is unknown.
+    """
+    try:
+        from .config import PROVIDER_BASE_URL_ENV_MAP, config_source_errors
+        from .llm import _provider_config_snapshot
+
+        if config_source_errors(include_tenant=True):
+            return None, None
+        table, environment = _provider_config_snapshot(provider)
+    except Exception:
+        log.debug("self-hosted endpoint for %s is unreadable", provider, exc_info=True)
+        return None, None
+    if not isinstance(table, dict):
+        return None, None
+    url = table.get("base_url")
+    url = url.strip() if isinstance(url, str) else ""
+    for env_name in PROVIDER_BASE_URL_ENV_MAP.get(provider, ()):
+        url = url or environment.get(env_name, "").strip()
+    return url or _SELF_HOSTED_DEFAULT_URLS[provider], table.get("price_per_mtok")
+
+
+# Address ranges priced as private: loopback, RFC 1918, link-local, unique
+# local (IPv6) and carrier-grade NAT (Tailscale). Cloud metadata is excluded.
+_PRIVATE_NETWORKS = tuple(ipaddress.ip_network(net) for net in (
+    "127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+    "169.254.0.0/16", "100.64.0.0/10", "::1/128", "fc00::/7", "fe80::/10",
+))
+_METADATA_ADDRESSES = frozenset(ipaddress.ip_address(a) for a in ("169.254.169.254", "fd00:ec2::254"))
+
+
+def _host_address(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """The address a numeric host names, in every form the OS resolver
+    accepts without DNS (dotted, short, decimal, hex, octal, IPv6)."""
+    import socket
+
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        try:
+            address = ipaddress.IPv4Address(socket.inet_aton(host))
+        except (OSError, ValueError):
+            return None
+    mapped = getattr(address, "ipv4_mapped", None)
+    return mapped if mapped is not None else address
+
+
+def _is_private_endpoint(url: str | None) -> bool:
+    from urllib.parse import urlparse
+
+    from .enterprise import _is_local_endpoint
+
+    try:
+        host = (urlparse(url or "").hostname or "").rstrip(".").lower()
+    except ValueError:
+        return False
+    if not host:
+        return False
+    address = _host_address(host)
+    if address is not None:
+        return address not in _METADATA_ADDRESSES and any(
+            address in net for net in _PRIVATE_NETWORKS if net.version == address.version)
+    if _is_local_endpoint(url):
+        return True
+    return ":" not in host and ("." not in host or host.endswith(_LOCAL_NAME_SUFFIXES))
+
+
+def _declared_endpoint_price(value: object) -> tuple[float, float] | None:
+    """``"free"`` or ``[input, output]`` USD per million tokens, else None."""
+    if isinstance(value, str) and value.strip().lower() == "free":
+        return (0.0, 0.0)
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        return None
+    if any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in value):
+        return None
+    rates = (float(value[0]), float(value[1]))
+    return rates if all(math.isfinite(v) and 0 <= v <= 1_000_000 for v in rates) else None
+
+
+def self_hosted_price_state(provider: str) -> str:
+    """How a self-hosted provider's routes are priced now: ``"marked_free"``,
+    ``"private"`` (free because the server is private), ``"priced"`` (a set
+    price) or ``"ceiling"`` (the safety ceiling)."""
+    url, raw_price = _self_hosted_endpoint(provider)
+    declared = _declared_endpoint_price(raw_price)
+    if declared == (0.0, 0.0):
+        return "marked_free"
+    if declared is not None:
+        return "priced"
+    if raw_price is None and _is_private_endpoint(url):
+        return "private"
+    return "ceiling"
+
+
+def self_hosted_price_gaps() -> list[tuple[str, str]]:
+    """Configured self-hosted servers charged the safety ceiling.
+
+    Returns ``(provider, address)`` for each ollama/vllm/tgi server that is set
+    up, is not on this machine or a private network, and has no usable
+    ``price_per_mtok``. ``maverick doctor`` and Settings show these.
+    """
+    from .config import PROVIDER_BASE_URL_ENV_MAP, get_provider_config
+
+    gaps = []
+    for provider in _SELF_HOSTED_DEFAULT_URLS:
+        try:
+            configured = bool(get_provider_config(provider)) or any(
+                os.environ.get(name, "").strip()
+                for name in PROVIDER_BASE_URL_ENV_MAP.get(provider, ())
+            )
+        except Exception:
+            configured = False
+        if not configured:
+            continue
+        url, raw_price = _self_hosted_endpoint(provider)
+        if _declared_endpoint_price(raw_price) is not None:
+            continue
+        if raw_price is None and _is_private_endpoint(url):
+            continue
+        gaps.append((provider, url or "an address Lightwork cannot read"))
+    return gaps
+
+
+def _self_hosted_quote(requested: str, provider: str) -> ModelPrice:
+    url, raw_price = _self_hosted_endpoint(provider)
+    declared = _declared_endpoint_price(raw_price)
+    if declared == (0.0, 0.0) or (declared is None and raw_price is None
+                                  and _is_private_endpoint(url)):
+        return _tracked_policy_price(
+            requested,
+            (0.0, 0.0),
+            evidence_id="self-hosted-api-metering-policy-2026-07-29",
+        )
+    if declared is not None:
+        basis = "Administrator-entered USD price per million tokens"
+        rates, version, evidence_id = declared, "operator-ceiling-v1", "self-hosted-declared-price-v1"
+    else:
+        if requested not in _UNPRICED_WARNED:
+            _UNPRICED_WARNED.add(requested)
+            log.warning(
+                "%s is a self-hosted model on a public address with no usable "
+                "price set, so Lightwork charges a safety ceiling of $%.2f/$%.2f per "
+                "million tokens. Set [providers.%s] price_per_mtok to its real "
+                "price or \"free\", or run the setup wizard.",
+                requested, *_SELF_HOSTED_PUBLIC_CEILING, provider,
+            )
+        basis = "Safety ceiling for a self-hosted model on a public address"
+        rates, version = _SELF_HOSTED_PUBLIC_CEILING, "self-hosted-public-ceiling-v1"
+        evidence_id = version
+    return ModelPrice(
+        model_id=requested,
+        input_per_mtok=rates[0],
+        output_per_mtok=rates[1],
+        source=f"config://providers.{provider}.price_per_mtok",
+        as_of="2026-11-15",
+        fetched_at="2026-11-15T00:00:00Z",
+        currency="USD",
+        confidence=0.0,
+        verified=False,
+        rate_card_version=version,
+        evidence_id=evidence_id,
+        pricing_basis=basis,
+        applicability=(
+            "Spend-limit estimate for a self-hosted route; the provider's "
+            "invoice remains authoritative."
         ),
     )
 
@@ -830,6 +1015,9 @@ class Budget:
         init=False,
         repr=False,
     )
+    # Calls whose token counts the provider did not report and were
+    # estimated from text length (see OpenAIClient._from_response).
+    estimated_usage_calls: int = field(default=0, init=False, repr=False)
 
     # Legacy defaults; only used when ``model`` isn't passed.
     price_in_per_mtok: float = _FALLBACK_PRICE_IN
@@ -1061,6 +1249,7 @@ class Budget:
             self.dollars += other.dollars
             self.tool_calls += other.tool_calls
             self.pricing_evidence.update(other.pricing_evidence)
+            self.estimated_usage_calls += other.estimated_usage_calls
             self.check()
 
     def elapsed(self) -> float:
@@ -1176,7 +1365,9 @@ class Budget:
         if self.max_dollars is not None and self.dollars > self.max_dollars and not math.isclose(
             self.dollars, self.max_dollars, rel_tol=1e-15, abs_tol=0.0,
         ):
-            raise BudgetExceeded(f"${self.dollars:.2f} > ${self.max_dollars:.2f}")
+            raise BudgetExceeded(
+                f"${self.dollars:.2f} > ${self.max_dollars:.2f}{self._ceiling_note()}"
+            )
         if self.max_tool_calls is not None and self.tool_calls > self.max_tool_calls:
             raise BudgetExceeded(f"tool calls {self.tool_calls} > {self.max_tool_calls}")
         elapsed = _nonnegative_finite(self.elapsed(), "elapsed wall time")
@@ -1208,6 +1399,7 @@ class Budget:
                 raise BudgetExceeded(
                     f"projected ${projected:.2f} > ${self.max_dollars:.2f} "
                     f"(spent ${self.dollars:.2f} + est ${est:.2f} for this call)"
+                    f"{self._ceiling_note()}"
                 )
 
     def reserve(self, est_cost: float) -> float:
@@ -1232,7 +1424,7 @@ class Budget:
                 raise BudgetExceeded(
                     f"projected ${projected:.2f} > ${self.max_dollars:.2f} "
                     f"(spent ${self.dollars:.2f} + in-flight ${held:.2f} "
-                    f"+ est ${est:.2f} for this call)"
+                    f"+ est ${est:.2f} for this call){self._ceiling_note()}"
                 )
             self._reserved = held + est
             return est
@@ -1274,12 +1466,35 @@ class Budget:
                 for model_id, evidence in self.pricing_evidence.items()
             }
 
-    def summary(self) -> str:
+    def _ceiling_note(self) -> str:
+        """Plain words when a self-hosted safety ceiling priced any spend."""
+        models = sorted(
+            model for model, evidence in dict(self.pricing_evidence).items()
+            if evidence.get("rate_card_version") == "self-hosted-public-ceiling-v1"
+        )
+        if not models:
+            return ""
         return (
+            f". Spend for {', '.join(models)} used the safety ceiling because "
+            "Lightwork cannot tell that its server is private. Set its price or "
+            "mark it free (price_per_mtok in its [providers] table)"
+        )
+
+    def mark_usage_estimated(self) -> None:
+        """Record that one call's token counts were estimated, not reported."""
+        with self._lock:
+            self.estimated_usage_calls += 1
+
+    def summary(self) -> str:
+        line = (
             f"tokens in={self.input_tokens} out={self.output_tokens} "
             f"cache_read={self.cache_read_tokens} hit_rate={self.cache_hit_rate():.0%} "
             f"$={self.dollars:.3f} tools={self.tool_calls} wall={self.elapsed():.0f}s"
         )
+        if self.estimated_usage_calls:
+            line += (f"; token counts estimated from text length for "
+                     f"{self.estimated_usage_calls} call(s)")
+        return line + self._ceiling_note()
 
 
 _BUDGET_KEY_TYPES = {

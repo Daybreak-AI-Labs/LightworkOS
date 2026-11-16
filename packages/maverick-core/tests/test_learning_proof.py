@@ -140,6 +140,22 @@ def test_measure_lift_no_gain_when_learning_inert(monkeypatch):
     assert not r.improved and not r.significant
 
 
+def test_measure_lift_control_arm_never_sees_what_the_live_arm_learned(monkeypatch):
+    # Freezing stops learning writes, not recall: alternating arms let task k's
+    # control run use skills that tasks 1..k-1's live runs had learned.
+    monkeypatch.delenv(FROZEN_ENV, raising=False)
+    learned: list = []
+
+    def run(task, frozen):
+        known = len(learned)
+        if not frozen:
+            learned.append(task)
+        return known
+
+    r = measure_lift(list(range(6)), run=run, score=lambda task, known: float(known > 0))
+    assert r.baseline_mean == 0.0
+
+
 # ---------- maverick prove-learning CLI ----------
 
 def _scores_file(tmp_path, baseline, treatment):

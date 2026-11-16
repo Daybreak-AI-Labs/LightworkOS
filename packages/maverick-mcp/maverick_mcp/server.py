@@ -1475,6 +1475,17 @@ class MCPServer:
         serve_stdio(self, stdin=sys.stdin, protocol_version=PROTOCOL_VERSION, logger=log)
 
 
+def _require_normal_start() -> None:
+    """The start-up gate the `maverick` CLI runs: unfinished recovery and a
+    restore that stopped part-way stop the server with the next step."""
+    from maverick.installation_recovery import MaintenanceError, require_normal_start
+
+    try:
+        require_normal_start()
+    except MaintenanceError as exc:
+        raise SystemExit(f"maverick-mcp did not start. {exc}") from exc
+
+
 def main() -> None:
     """Entry point. Defaults to stdio transport (Claude Desktop /
     Cursor compatible). Pass `--http` for the Streamable HTTP
@@ -1487,6 +1498,7 @@ def main() -> None:
     ap.add_argument("--port", type=int, default=8771)
     args = ap.parse_args()
     _configure_mcp_logging()
+    _require_normal_start()
     from maverick.deployment import require_enterprise_or_die
     require_enterprise_or_die()
     if args.http:

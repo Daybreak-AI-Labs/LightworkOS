@@ -726,8 +726,28 @@ def _note_unreadable_containment(row: dict[str, Any]) -> None:
         row.update(value=None, locked=True, value_text=current["message"])
 
 
+def _organisation_fixed(setting: catalog.Setting, layers: dict[str, Any]) -> bool:
+    """The workspace overlay tried to loosen a policy value the organisation
+    set; the kernel ignores that value (:mod:`maverick.policy_tighten`)."""
+    from maverick import config
+    from maverick.policy_tighten import TENANT_RULES, merge_tenant_section
+
+    if setting.section not in TENANT_RULES or len(setting.path) != 2:
+        return False
+    present, value = catalog.lookup(layers.get("tenant") or {}, setting.path)
+    if not present:
+        return False
+    section = config.load_global_config().get(setting.section) or {}
+    if not isinstance(section, dict):
+        return True
+    _, ignored, fixed = merge_tenant_section(setting.section, section, {setting.key: value})
+    return bool(ignored or fixed)
+
+
 def _row(setting: catalog.Setting, layers: dict[str, Any]) -> dict[str, Any]:
     state = _resolve(setting, layers)
+    if _organisation_fixed(setting, layers):
+        state = {**state, "source_text": "Set by your organisation"}
     value = state["value"]
     setting = _resolved(setting, value if state["known"] else None, full=False)
     row: dict[str, Any] = {
@@ -1778,7 +1798,24 @@ def _catalog_update_locked(request: Request, body: CatalogUpdate, full: bool=Fal
 
         refresh_runtime(request)
     state = _saved_state(before, asked)
-    return JSONResponse({'changed': [c['setting'].id for c in changes], 'restart': any(c['setting'].restart for c in changes), **state}, headers={'Cache-Control': 'no-store'})
+    return JSONResponse({'changed': [c['setting'].id for c in changes], 'restart': any(c['setting'].restart for c in changes), **_donation_opt_out(writes), **state}, headers={'Cache-Control': 'no-store'})
+
+
+def _donation_opt_out(writes: dict) -> dict[str, str]:
+    """Turning work-pattern sharing off deletes what was still waiting to be shared.
+
+    People who opt out expect nothing more to leave, so the save says how many
+    waiting items it deleted.
+    """
+    path = ("telemetry", "donate_trajectories")
+    if path not in writes or writes[path]:
+        return {}
+    from maverick.donation import _donations_enabled, purge_after_opt_out
+
+    if _donations_enabled():  # another configuration layer still turns it on
+        return {}
+    count = purge_after_opt_out()
+    return {'notice': f"{count} queued item{'' if count == 1 else 's'} deleted."}
 
 # ---------------------------------------------------------------- checks
 class SettingCheck(BaseModel):

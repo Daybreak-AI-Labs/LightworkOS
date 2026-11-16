@@ -4,6 +4,21 @@ from __future__ import annotations
 from maverick_shield import Shield, ShieldVerdict
 from maverick_shield.builtin_rules import RULES, scan
 
+_URL_FRAGMENTS = (
+    "http://", "https://", "HTTPS://", "hTTp://", "htt", "![", "](", "](https://", "]", "[",
+    "(", ")", "?", "=", "==", "/", "a", "Z", "-", "_", ".", "+", "%41", " ", "\n", "\t",
+    "\u00a0", "\u2028", "\u017f", "\u212a", "\u0130", "\u0131", "token", "KEY", "api",
+    "secret", "PassWord", "QUJD" * 10, "QUJD" * 9 + "QUJ", "QUJD", "sk-ant-" + "b" * 12,
+    "sk-ant-" + "b" * 11, "sk-" + "C" * 20, "sk-" + "C" * 19, "ghp_" + "d" * 20, "ghx_" + "d" * 20,
+    "github_pat_" + "e_" * 10, "sk_live_" + "f" * 16, "AKIA" + "G" * 16, "akia" + "g" * 15,
+    "AIza" + "h-" * 10, "xoxb-" + "1" * 10, "xoxz-" + "1" * 10, "eyJ", "eyJ" + "i" * 10,
+    "i" * 10, "i" * 9, "s://", "https:/",
+)
+
+
+def _url_alphabet_string(rng) -> str:
+    return "".join(rng.choice(_URL_FRAGMENTS) for _ in range(rng.randint(1, 40)))
+
 
 class TestBuiltinRules:
     def test_ignore_previous_blocked_at_balanced(self):
@@ -247,6 +262,94 @@ class TestBuiltinRules:
             ("base64_url_exfil", "https://evil.com/?http://x=" + "QUJD" * 12),
         ):
             assert rules[name].pattern.search(text), (name, text)
+
+    @staticmethod
+    def _url_rule_mismatches(texts):
+        from maverick_shield import builtin_rules as br
+
+        patterns = {r.name: r.pattern for r in RULES if r.name in br._URL_RULES}
+        bad = []
+        for text in texts:
+            expected = {name for name, pattern in patterns.items() if pattern.search(text)}
+            if br._url_findings(text) != expected:
+                bad.append((text[:120], len(text), expected))
+        return bad
+
+    def test_url_rules_find_exactly_what_the_original_patterns_find(self):
+        # The original patterns stay in RULES as the specification. Padded
+        # URLs, second schemes, unclosed images and gaps across whitespace
+        # (a reviewer's 594 cases) and seeded strings from the rules' own
+        # alphabets must give the same rule names, in both directions.
+        import random
+
+        key = "sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUV"
+        b64 = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9w"
+        cases = []
+        for n in [*range(0, 4200, 97), 1023, 1024, 1025, 2047, 2048, 2049, 2050, 3071, 3072, 3073]:
+            cases += [
+                "x https://e.com/" + "a" * n + "/" + key + " y",
+                "x https://e.com/" + "a" * n + "?d=" + b64 + " y",
+                "x https://e.com/" + "%41" * (n // 3) + "?q=" + b64 + " y",
+                "![a](https://e.com/" + "a" * n + "?api=1) more prose",
+                "![a](https://e.com/x?" + "a" * n + "token and prose",
+                "https://x.com/r/" + "a" * n + "https://evil.com/" + "b" * 1300 + key,
+                "https://e.com/" + "a" * n + "?x=1&y=2",
+                "![i](data:image/png;base64," + "A" * n + ") https://e.com/?k=" + b64,
+                " ".join(f"https://e.com/{i}?a=b" for i in range(n // 50)) + " https://e.com/?k=" + b64,
+                "[![a](https://e.com/" + "b" * n + "?secret=1)](https://x.com)",
+                "https://e.com/a?" + " w" * (n // 2) + "=" + b64,
+            ]
+        assert self._url_rule_mismatches(cases) == []
+        rng = random.Random("url-rules")
+        assert self._url_rule_mismatches(
+            [_url_alphabet_string(rng) for _ in range(20_000)]) == []
+
+    def test_scan_never_runs_the_backtracking_url_patterns(self, monkeypatch):
+        import dataclasses
+
+        from maverick_shield import builtin_rules as br
+
+        class Refuse:
+            def search(self, *_a):
+                raise AssertionError("the original URL pattern ran")
+
+        monkeypatch.setattr(br, "RULES", [
+            dataclasses.replace(r, pattern=Refuse()) if r.name in br._URL_RULES else r
+            for r in br.RULES])
+        for unit in ("![](http://a?", "![](http://a? ", "http://a? ", "http://a?=QUJD ",
+                     "![x](https://a/sk-ant-x ", "eyJ", "http://" + "?" * 50 + " "):
+            br.scan((unit * (20_000 // len(unit) + 1))[:20_000])
+        assert "credential_in_url" in br.scan("see https://e.com/" + "a" * 3000 + "/sk-" + "A" * 20)[2]
+
+    def test_long_urls_and_compact_text_are_judged_as_before(self):
+        # Length alone never blocks: compact JSON full of URLs, a long signed
+        # link, an unclosed markdown image and a large inline data image get
+        # the verdict the original patterns give.
+        import json
+
+        from maverick_shield import builtin_rules as br
+
+        def original(text):
+            names = [r.name for r in RULES
+                     if any(r.pattern.search(c) for c in br._candidates(text))]
+            return bool(names) and max(br.SEVERITY_ORDER[r.severity] for r in RULES
+                                       if r.name in names) >= br.SEVERITY_ORDER["high"], names
+
+        repos = json.dumps([{"id": i, "name": f"repo-{i}", "html_url": f"https://github.com/acme/repo-{i}",
+                             "description": "A small tool", "stargazers_count": i * 7}
+                            for i in range(30)], separators=(",", ":"))
+        signed = ("https://bucket.s3.amazonaws.com/reports/q3.pdf?X-Amz-Algorithm=AWS4-HMAC-SHA256"
+                  "&X-Amz-Credential=ASIAEXAMPLE%2F20261115%2Fus-east-1%2Fs3%2Faws4_request"
+                  "&X-Amz-Date=20261115T000000Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host"
+                  "&X-Amz-Security-Token=" + "IQoJb3JpZ2luX2VjEXAMPLE" * 90 + "&X-Amz-Signature=" + "ab12" * 16)
+        unclosed = "![chart](https://example.com/chart.png " + "The totals rose in every region. " * 100
+        page = ("# Report\n\n![logo](data:image/png;base64," + "iVBORw0KGgo" * 4546 + ")\n\n"
+                "See https://example.com/docs for details.")
+        assert len(signed) > 2300 and len(page) > 50_000
+        for text in (repos, signed, unclosed, page):
+            blocked, _, names = scan(text, block_threshold="high")
+            assert (blocked, names) == original(text)
+            assert not blocked, names
 
     def test_all_rules_have_required_fields(self):
         for r in RULES:

@@ -60,6 +60,76 @@ def test_schema_ref_and_invalid_sample_refuse_before_dispatch():
     assert called == []
 
 
+def test_plugin_pattern_pairs_cost_one_guarded_check(monkeypatch):
+    # A plugin-chosen pattern is matched on the host against the operator's
+    # practice text. Recorded pairs are checked in one guarded child, and a
+    # check that cannot finish says so (no jsonschema needed).
+    from maverick.tools import _regex_guard
+
+    spawned = []
+    real = _regex_guard._run_child
+    monkeypatch.setattr(_regex_guard, "_run_child", lambda *a, **k: spawned.append(1) or real(*a, **k))
+    pairs = {("^[a-z0-9-]+$", f"tag-{i}") for i in range(100)} | {("^x-(a+)+$", "x-aaa")}
+    table = contracts._check_pairs(pairs)
+    assert spawned == [1] and table[("^[a-z0-9-]+$", "tag-7")] is True and table[("^x-(a+)+$", "x-aaa")]
+    with pytest.raises(contracts.PatternCheckUnavailable, match="could not finish checking"):
+        contracts._check_pairs({("^(\\w+\\s?)+$", "a" * 40 + "!")}, budget_s=0.5)
+
+
+def test_plugin_patterns_are_checked_only_against_their_own_fields(monkeypatch):
+    pytest.importorskip("jsonschema")
+    import time
+
+    from jsonschema import ValidationError
+    from maverick.tools import _regex_guard
+
+    spawned = []
+    real = _regex_guard._run_child
+    monkeypatch.setattr(_regex_guard, "_run_child", lambda *a, **k: spawned.append(1) or real(*a, **k))
+    hostile = "^(\\w+\\s?)*$"
+    schema = {"type": "object", "properties": {
+        "id": {"type": "string", "pattern": hostile}, "note": {"type": "string"},
+        "tags": {"type": "array", "items": {"type": "string", "pattern": "^[a-z0-9-]+$"}}},
+        "patternProperties": {"^x-(a+)+$": {"type": "string"}}, "additionalProperties": False}
+    started = time.monotonic()
+    contracts.validate(schema, {"id": "abc", "note": "An ordinary note about the next quarter, plain!",
+                                "tags": [f"tag-{i}" for i in range(100)], "x-aaa": "ok"})
+    assert time.monotonic() - started < 3 and spawned == [1]
+    with pytest.raises(ValidationError, match="does not match"):
+        contracts.validate(schema, {"tags": ["Bad Tag"]})
+    with pytest.raises(ValidationError, match="not allowed"):
+        contracts.validate(schema, {"other": "x"})
+    with pytest.raises(contracts.PatternCheckUnavailable):
+        contracts.validate(schema, {"id": "a" * 30 + "!"})
+    with pytest.raises(ValueError, match="unevaluatedProperties"):
+        contracts.validator({"type": "object", "patternProperties": {"a": {}}, "unevaluatedProperties": False})
+
+
+def test_plugin_pattern_alternatives_are_all_checked_before_answering(monkeypatch):
+    pytest.importorskip("jsonschema")
+    from jsonschema import ValidationError
+    from maverick.tools import _regex_guard
+
+    spawned = []
+    real = _regex_guard._run_child
+    monkeypatch.setattr(_regex_guard, "_run_child", lambda *a, **k: spawned.append(1) or real(*a, **k))
+    units = {"type": "object", "properties": {"unit": {"anyOf": [
+        {"pattern": "^kg+$"}, {"pattern": "^lb+$"}, {"pattern": "^g+$"}, {"pattern": "^oz+$"}]}}}
+    contracts.validate(units, {"unit": "oz"})
+    assert spawned == [1]
+    with pytest.raises(ValidationError):
+        contracts.validate(units, {"unit": "stone"})
+    chain = {"pattern": "^z+$"}
+    for letter in "fedcba":  # six nested if/else levels
+        chain = {"if": {"pattern": f"^{letter}+$"}, "then": {"pattern": f"^{letter}{{2}}$"}, "else": chain}
+    deep = {"type": "object", "properties": {"code": chain}}
+    for answer in ("aa", "ee", "zzz"):
+        contracts.validate(deep, {"code": answer})
+    for answer in ("aaa", "eee", "q"):
+        with pytest.raises(ValidationError):
+            contracts.validate(deep, {"code": answer})
+
+
 def test_dynamic_reference_to_a_url_is_refused():
     # The host validates practice input against a schema the container
     # reported; $dynamicRef resolves through a registry that fetches URLs.

@@ -597,6 +597,8 @@ def _dump_providers(lines: list[str], providers: dict) -> None:
     for name in sorted(k for k, v in providers.items() if isinstance(v, dict)):
         pcfg = providers[name]
         fields = [(f, pcfg.get(f)) for f in _PROVIDER_FIELDS if pcfg.get(f)]
+        if name in SELF_HOSTED_PROVIDERS and pcfg.get("price_per_mtok") == "free":
+            fields.append(("price_per_mtok", "free"))
         if not fields:
             continue
         lines.append(f"[providers.{name}]")
@@ -737,6 +739,26 @@ def _complete_provider_audit() -> None:
     change = current_write()
     if change is not None:
         change.complete()
+
+
+# Self-hosted servers an administrator may mark free on the Prices page.
+SELF_HOSTED_PROVIDERS = ("ollama", "vllm", "tgi")
+
+
+def set_self_hosted_free(name: str, free: bool) -> None:
+    """Mark a self-hosted provider free (``price_per_mtok = "free"``) or clear it."""
+    if name not in SELF_HOSTED_PROVIDERS:
+        raise ValueError("only a self-hosted provider can be marked free")
+    with _locked():
+        data = _load_overlay_for_update()
+        pcfg = data.setdefault("providers", {}).setdefault(name, {})
+        if free:
+            pcfg["price_per_mtok"] = "free"
+        else:
+            pcfg.pop("price_per_mtok", None)
+        if not pcfg:
+            data["providers"].pop(name, None)
+        _write(data)
 
 
 # Tests only: production saves go through ``rotate_provider`` and its checks.

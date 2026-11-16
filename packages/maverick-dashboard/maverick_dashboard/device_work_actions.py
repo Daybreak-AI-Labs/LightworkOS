@@ -116,12 +116,9 @@ def approvals(request: Request, before_id: int = 0):
     with authority_effect_fence():
         _ident, actor, binding, _claims = _device(request, 'approve')
         world = _world()
-        from maverick.attachment_submissions import SubmissionStore
-        scope, values = SubmissionStore(world).scope('g.tenant_id')
-        scope_sql = '' if SubmissionStore(world).sqlite else ' AND ' + scope
-        rows = world.query('SELECT a.id FROM approvals a JOIN goals g ON g.id=a.goal_id '
-            "WHERE a.status='pending' AND g.owner=? AND (?=0 OR a.id<?)" + scope_sql + ' ORDER BY a.id DESC LIMIT 51',
-            (actor, before_id, before_id, *(() if not scope_sql else values)))
+        rows = world.tenant_query('SELECT a.id FROM approvals a JOIN goals g ON g.id=a.goal_id '
+            "WHERE a.status='pending' AND g.owner=? AND (?=0 OR a.id<?) AND {tenant_exact:g.tenant_id}"
+            ' ORDER BY a.id DESC LIMIT 51', (actor, before_id, before_id))
         result = []
         for (identifier,) in rows[:50]:
             try:

@@ -72,11 +72,12 @@ def test_release_processed_message_allows_reclaim(tmp_path):
 # ---------- orphan reclaim ----------
 
 def test_reclaim_orphan_goals(tmp_path):
-    """Goals in 'active'/'pending' get reset to 'blocked' on startup.
+    """Goals stuck in 'active' get reset to 'blocked' on startup.
 
     The default is max_age_seconds=60 so live goals in a sibling
     process aren't yanked out from under it. The test simulates a real
-    crashed run by passing max_age_seconds=0 explicitly.
+    crashed run by passing max_age_seconds=0 explicitly. A queued
+    'pending' goal is reclaimed only when the caller asks for it.
     """
     from maverick.world_model import WorldModel
     wm = WorldModel(tmp_path / "w.db")
@@ -88,10 +89,12 @@ def test_reclaim_orphan_goals(tmp_path):
     # c stays 'pending' (default)
 
     reclaimed = wm.reclaim_orphan_goals(max_age_seconds=0)
-    assert reclaimed == 2  # a (active) + c (pending)
+    assert reclaimed == 1  # a (active); queued c may wait for a worker
 
     assert wm.get_goal(a).status == "blocked"
     assert wm.get_goal(b).status == "done"  # untouched
+    assert wm.get_goal(c).status == "pending"
+    assert wm.reclaim_orphan_goals(max_age_seconds=0, statuses=("active", "pending")) == 1
     assert wm.get_goal(c).status == "blocked"
 
 
