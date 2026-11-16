@@ -348,6 +348,8 @@ def test_cli_end_to_end_with_approval_in_the_middle(upstream, tmp_path, monkeypa
     monkeypatch.setattr(cli_mod, "_require_llm_key", lambda *a, **k: "k")
     run_fn, _ = _swarm(lambda work: (work / "feature.py").write_text("ok = True\n"))
     monkeypatch.setattr(features, "default_runner", lambda **k: run_fn)
+    monkeypatch.setattr(features, "default_checker",
+                        lambda **k: lambda gid, copy: {"findings": [], "fixed": []})
 
     out = run(main, ["code", "add", "pricing", str(upstream)])
     assert out.exit_code == 0 and "protect=approve" in out.output, out.output
@@ -356,6 +358,7 @@ def test_cli_end_to_end_with_approval_in_the_middle(upstream, tmp_path, monkeypa
     assert out.exit_code == 0 and "pricing now at " in out.output, out.output
     out = run(main, ["code", "feature", "pricing", "Add flag", "--no-review"])
     assert out.exit_code == 0 and "awaiting approval #1" in out.output, out.output
+    assert "Independent check: looked 1 time(s)" in out.output, out.output
     pid = out.output.split()[1]
     assert "pending" in run(main, ["code", "proposals"]).output
     assert "+ok = True" in run(main, ["code", "show", pid]).output
@@ -549,3 +552,205 @@ def test_an_approved_but_expired_approval_no_longer_merges_and_can_be_renewed(tm
     with pytest.raises(features.VaultError, match="expired"):
         features._require_approved(world, p)
     assert features.request_approval(world, p) == 2
+
+
+# -- the verified feature run: repair rounds, the independent checker, the card --
+
+def _card(world, p):
+    from maverick.approval_cards import decode_approval_detail
+    card = decode_approval_detail(world.get_approval(p["approval_id"]).detail)
+    return {"parameter_summary": card["parameters"]["summary"],
+            "unresolved_assumptions": card["consequences"]["unresolved_assumptions"]}
+
+
+def _rounds(*edits):
+    """An author whose Nth round applies the Nth edit (the last one repeats);
+    records each round's goal and what its working copy looked like."""
+    calls: list = []
+
+    def run(goal_id, work):
+        calls.append({"goal_id": goal_id, "files": sorted(p.name for p in work.iterdir())})
+        edits[min(len(calls), len(edits)) - 1](work)
+        return "AUTHOR TRANSCRIPT: my private reasoning"
+    return run, calls
+
+
+def _passing(work):
+    (work / "app.py").write_text(SECRET_LINE + "\n\ndef discount(): return 0.1\n")
+
+
+def _failing(work):
+    (work / "app.py").write_text("def pricing_model(): return -1\n")
+
+
+def test_failing_tests_go_back_to_the_author_until_they_pass(upstream, tmp_path):
+    vault.register("pricing", str(upstream), test_command="python -m pytest -q")
+    world = WorldModel(tmp_path / "world.db")
+    run, calls = _rounds(_failing, _passing)
+    p = features.propose(world, "pricing", "Add a discount", "10% helper", run,
+                         sandbox_factory=_Sandbox, repair_rounds=2)
+    assert len(calls) == 2                                  # stopped once the tests passed
+    repair = world.get_goal(calls[1]["goal_id"])
+    assert repair.parent_id == p["goal_id"] and "AssertionError" in repair.description
+    assert "10% helper" in repair.description               # the follow-up carries the request
+    assert p["tests"]["passed"] and p["tests"]["commit"] == p["head"]
+    assert [r["kind"] for r in p["rounds"]] == ["author", "tests"]
+    card = _card(world, p)
+    assert "Tests: PASSED" in " ".join(card["parameter_summary"])
+    assert "Repair rounds: 1 of 2 used." in card["parameter_summary"]
+    # the approved commit is the one that was tested
+    world.decide_approval(p["approval_id"], "approved", decided_by="user:lead")
+    features.merge(world, p["id"])
+    with vault.checkout("pricing") as work:
+        assert "def discount" in (work / "app.py").read_text()
+
+
+def test_test_side_effects_never_reach_the_author_or_the_proposal(upstream, tmp_path):
+    vault.register("pricing", str(upstream), test_command="python -m pytest -q")
+    world = WorldModel(tmp_path / "world.db")
+    seen_dirs: list = []
+
+    class TestsThatWriteFiles(_Sandbox):
+        def exec(self, cmd, timeout=None):
+            seen_dirs.append(Path(self.workdir))
+            (Path(self.workdir) / "late.py").write_text("late = True\n")
+            (Path(self.workdir) / "app.py").write_text("tampered = True\n")
+            return super().exec(cmd, timeout)
+    run, calls = _rounds(_failing, _passing)
+    p = features.propose(world, "pricing", "Discount", "", run,
+                         sandbox_factory=TestsThatWriteFiles, repair_rounds=1, checker=None)
+    assert "late.py" not in calls[1]["files"]               # the author never saw it
+    assert p["files"] == ["app.py"] and "late" not in p["diff"] and "tampered" not in p["diff"]
+    assert len({d.parent for d in seen_dirs}) == 2          # a fresh copy for every test run
+    assert all(not d.exists() for d in seen_dirs)
+
+
+def test_a_checker_blocker_goes_back_to_the_author_and_is_checked_again(upstream, tmp_path):
+    vault.register("pricing", str(upstream), test_command="python -m pytest -q")
+    world = WorldModel(tmp_path / "world.db")
+
+    def careless(work):
+        _passing(work)
+        (work / "notes.py").write_text("x = 1 / 0\n")
+
+    def careful(work):
+        (work / "notes.py").write_text("x = 1\n")
+    run, calls = _rounds(careless, careful)
+    looks: list = []
+
+    def checker(goal_id, copy):
+        brief = world.get_goal(goal_id).description
+        looks.append({"brief": brief, "notes": (copy / "notes.py").read_text(),
+                      "git": (copy / ".git").exists()})
+        if len(looks) == 1:
+            return ('Here is my report: {"findings": [{"severity": "blocker", '
+                    '"what": "notes.py divides by zero on import", "evidence": "ran", '
+                    '"how": "python -c \\"import notes\\""}, {"severity": "minor", '
+                    '"what": "no docstring", "evidence": "read", "how": "notes.py line 1"}], '
+                    '"fixed": []}')
+        return {"findings": [], "fixed": ["1.1"]}
+    p = features.propose(world, "pricing", "Discount", "10% helper", run, checker=checker,
+                         sandbox_factory=_Sandbox, repair_rounds=2, check_rounds=2)
+    assert len(looks) == 2 and len(calls) == 2
+    assert "10% helper" in looks[0]["brief"] and "notes.py" in looks[0]["brief"]
+    assert "AUTHOR TRANSCRIPT" not in looks[0]["brief"]      # never the author's reasoning
+    assert looks[0]["notes"] == "x = 1 / 0\n" and looks[1]["notes"] == "x = 1\n"
+    assert "divides by zero" in world.get_goal(calls[1]["goal_id"]).description
+    assert "1.1" in looks[1]["brief"]                         # the checker sees its earlier finding
+    check = p["check"]
+    assert check["state"] == "ran" and check["runs"] == 2 and check["commit"] == p["head"]
+    assert [(f["id"], f["severity"], f["status"]) for f in check["findings"]] == [
+        ("1.1", "blocker", "fixed"), ("1.2", "minor", "not attempted")]
+    card = _card(world, p)
+    text = " ".join(card["parameter_summary"])
+    assert "Finding 1.1, blocker, fixed" in text and "shown by running a command" in text
+    assert card["unresolved_assumptions"] == []
+    assert features.evidence(p)["gaps"] == []
+
+
+def test_a_blocker_that_is_never_fixed_stays_open_and_is_never_called_checked(
+        upstream, tmp_path):
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    run, calls = _rounds(lambda work: (work / "a.py").write_text("a = 1\n"))
+    blocker = {"findings": [{"severity": "blocker", "what": "a is wrong", "evidence": "read",
+                             "how": "a.py"}], "fixed": []}
+    p = features.propose(world, "pricing", "A", "", run, checker=lambda gid, copy: blocker,
+                         repair_rounds=1, check_rounds=2)
+    assert len(calls) == 2                                    # one repair round, then no more
+    statuses = [(f["id"], f["status"]) for f in p["check"]["findings"]]
+    assert statuses == [("1.1", "still open"), ("2.1", "not attempted")]
+    card = _card(world, p)
+    text = " ".join(card["parameter_summary"] + card["unresolved_assumptions"]).lower()
+    assert "2 blocker(s) from the independent check are still open" in text
+    assert "not configured" in text and "verified" not in text
+
+
+def test_the_spending_limit_stops_the_loop_and_the_card_says_so(upstream, tmp_path):
+    from maverick.budget import Budget
+    vault.register("pricing", str(upstream), test_command="python -m pytest -q")
+    world = WorldModel(tmp_path / "world.db")
+    budget = Budget(max_tool_calls=1)
+
+    def spend(work):
+        budget.tool_calls += 5
+        _failing(work)
+    run, calls = _rounds(spend)
+    checks: list = []
+    p = features.propose(world, "pricing", "Discount", "", run, budget=budget,
+                         checker=lambda gid, copy: checks.append(gid),
+                         sandbox_factory=_Sandbox, repair_rounds=2)
+    assert len(calls) == 1 and checks == []                  # nothing ran after the cap
+    assert p["stopped"] == "budget" and p["check"]["state"] == "skipped"
+    assert p["status"] == "pending" and not p["tests"]["passed"]
+    card = _card(world, p)
+    assert any("spending limit ran out" in line for line in card["parameter_summary"])
+    assert any("spending limit" in line for line in card["unresolved_assumptions"])
+
+
+def test_the_checker_cannot_change_the_proposal(upstream, tmp_path):
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    run, _ = _rounds(lambda work: (work / "a.py").write_text("a = 1\n"))
+    pushed: list = []
+
+    def meddling(goal_id, copy):
+        (copy / "a.py").write_text("a = 'checker'\n")
+        (copy / "planted.py").write_text("evil = True\n")
+        _sh("add", "-A", cwd=copy)
+        _sh("commit", "-q", "-m", "checker", cwd=copy)
+        pushed.append(subprocess.run(["git", "push", "origin", "HEAD:refs/heads/main"],
+                                     cwd=copy, capture_output=True).returncode)
+        return {"findings": [], "fixed": []}
+    p = features.propose(world, "pricing", "A", "", run, checker=meddling, repair_rounds=0)
+    assert pushed[0] != 0                                     # its copy has no remote at all
+    assert p["files"] == ["a.py"] and "checker" not in p["diff"]
+    world.decide_approval(p["approval_id"], "approved", decided_by="user:lead")
+    features.merge(world, p["id"])
+    with vault.checkout("pricing") as work:
+        assert (work / "a.py").read_text() == "a = 1\n" and not (work / "planted.py").exists()
+
+
+def test_a_proposal_saved_before_verified_runs_still_loads_and_shows(upstream, tmp_path,
+                                                                     monkeypatch):
+    from click.testing import CliRunner
+    from maverick import config
+    from maverick.cli import main
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    old = {"id": "0123456789abcdef", "repo": "pricing", "title": "Old", "goal_id": 1,
+           "branch": "lightwork/old-012345", "base": "b" * 40, "head": "a" * 40,
+           "files": ["x.py"], "diff": "+x", "diff_truncated": False, "diff_chars": 2,
+           "tests": {"command": "pytest", "exit_code": 0, "passed": True},
+           "tests_output": "ok", "review": None, "status": "pending", "approval_id": None,
+           "created_at": 1.0, "merged_at": None}
+    features._save(old)
+    loaded = features.find(old["id"])
+    lines = features.evidence(loaded)["lines"]
+    assert "Tests: PASSED (`pytest`)." in lines and "Independent check: not run." in lines
+    assert features.summary(world)["proposals"][0]["check"] is None
+    features.request_approval(world, loaded)                  # renew builds its card
+    monkeypatch.setattr(config, "get_codebase",
+                        lambda: {"enable": True, "default_protect": "block"})
+    out = CliRunner().invoke(main, ["code", "show", old["id"]])
+    assert out.exit_code == 0 and "Independent check: not run." in out.output, out.output

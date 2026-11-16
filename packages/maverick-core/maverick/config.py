@@ -3142,19 +3142,37 @@ def get_fleet_memory() -> dict:
     return {"enable": coerce_bool(cfg.get("enable"), False)}
 
 
+CODEBASE_LOOP_DEFAULTS = {"repair_rounds": 2, "checker": True, "check_rounds": 2}
+
+
 def get_codebase() -> dict:
     """Return the ``[codebase]`` section (:mod:`maverick.codebase`).
 
     ``enable`` turns on the code vault and feature swarms (OFF by default: it
     stores a company's source). ``default_protect`` is the information-flow
     mode a newly registered repository enforces on every run over it:
-    ``block`` (default), ``approve`` or ``audit``."""
+    ``block`` (default), ``approve`` or ``audit``. A feature run then repairs
+    and checks its change: ``repair_rounds`` (0-5, default 2) follow-up rounds
+    for the author after failing tests or checker blockers; ``checker``
+    (default on; a malformed value keeps it on) runs the independent checker;
+    ``check_rounds`` (1-3, default 2) bounds how often it looks."""
     cfg = load_config().get("codebase", {})
     if not isinstance(cfg, dict):
         cfg = {}
     protect = str(cfg.get("default_protect", "block")).strip().lower()
+
+    def _rounds(key: str, low: int, high: int) -> int:
+        raw = cfg.get(key, CODEBASE_LOOP_DEFAULTS[key])
+        try:
+            value = CODEBASE_LOOP_DEFAULTS[key] if isinstance(raw, bool) else int(raw)
+        except (TypeError, ValueError, OverflowError):
+            value = CODEBASE_LOOP_DEFAULTS[key]
+        return max(low, min(high, value))
     return {"enable": _strict_config_bool(cfg, "enable", False),
-            "default_protect": protect if protect in ("audit", "approve", "block") else "block"}
+            "default_protect": protect if protect in ("audit", "approve", "block") else "block",
+            "repair_rounds": _rounds("repair_rounds", 0, 5),
+            "checker": _strict_config_bool(cfg, "checker", True, invalid=True),
+            "check_rounds": _rounds("check_rounds", 1, 3)}
 
 
 def get_ifc() -> dict:

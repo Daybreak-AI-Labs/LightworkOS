@@ -79,19 +79,26 @@ def code_sync(name) -> None:
 @click.argument("name")
 @click.argument("title")
 @click.option("--description", "-d", default="", help="What to build or change.")
-@click.option("--max-dollars", default=None, type=float)
+@click.option("--max-dollars", default=None, type=float,
+              help="Spending cap for the whole run: every repair and check round.")
 @click.option("--no-review", is_flag=True, help="Skip the independent diff review.")
-def code_feature(name, title, description, max_dollars, no_review) -> None:
+@click.option("--no-check", is_flag=True,
+              help="Skip the independent checker ([codebase] checker turns it off for good).")
+def code_feature(name, title, description, max_dollars, no_review, no_check) -> None:
     """Have a swarm build TITLE in NAME; the change waits for approval."""
     vault = _guard()
     from ..codebase import features
     from . import _require_llm_key
     _require_llm_key()
+    budget = features.feature_budget(max_dollars)
+    check = not no_check and features.loop_settings()["checker"]
     world = open_world()
     try:
         p = features.propose(world, name, title, description,
-                             features.default_runner(max_dollars=max_dollars),
-                             reviewer=None if no_review else features.default_reviewer())
+                             features.default_runner(budget=budget),
+                             reviewer=None if no_review else features.default_reviewer(),
+                             checker=features.default_checker(budget=budget) if check else None,
+                             budget=budget)
     except vault.VaultError as exc:
         _fail(exc)
     finally:
@@ -99,11 +106,21 @@ def code_feature(name, title, description, max_dollars, no_review) -> None:
     if p["status"] == "empty":
         click.echo(f"proposal {p['id']}: the swarm made no change")
         return
-    tests = p["tests"]
-    click.echo(f"proposal {p['id']} on {p['branch']}: {len(p['files'])} file(s); tests "
-               + ("not configured" if tests is None else
-                  "passed" if tests["passed"] else "FAILED")
-               + f"; awaiting approval #{p['approval_id']}")
+    click.echo(f"proposal {p['id']} on {p['branch']}: {len(p['files'])} file(s); "
+               f"awaiting approval #{p['approval_id']}")
+    _echo_evidence(p)
+
+
+def _echo_evidence(p: dict) -> None:
+    """What was and was not checked, the same words the approval card uses."""
+    from ..codebase import features
+    facts = features.evidence(p)
+    for line in facts["lines"] + facts["findings"]:
+        click.echo("  " + _strip_terminal_control(line))
+    if facts["gaps"]:
+        click.echo("  Not fully checked:")
+        for gap in facts["gaps"]:
+            click.echo("  - " + _strip_terminal_control(gap))
 
 
 @code_group.command("proposals")
@@ -115,7 +132,9 @@ def code_proposals(name) -> None:
     world = open_world()
     try:
         for p in features.list_proposals(name):
+            gaps = len(features.evidence(p)["gaps"])
             click.echo(f"  {p['id']}  {p['repo']:16} {features.status(world, p):9} "
+                       f"{'checked' if not gaps else f'{gaps} gap(s)':10} "
                        f"{_strip_terminal_control(p['title'])[:60]}")
     finally:
         world.close()
@@ -124,7 +143,7 @@ def code_proposals(name) -> None:
 @code_group.command("show")
 @click.argument("pid")
 def code_show(pid) -> None:
-    """A proposal's diff, tests and review."""
+    """A proposal's diff, tests, checks and review."""
     vault = _guard()
     from ..codebase import features
     try:
@@ -133,6 +152,8 @@ def code_show(pid) -> None:
         _fail(exc)
     click.echo(json.dumps({k: v for k, v in p.items() if k not in ("diff", "tests_output")},
                           indent=2, default=str))
+    click.echo("\n--- what was checked ---")
+    _echo_evidence(p)
     if p["tests_output"]:
         click.echo("\n--- tests ---\n" + _strip_terminal_control(p["tests_output"]))
     click.echo("\n--- diff ---\n" + _strip_terminal_control(p["diff"]))
