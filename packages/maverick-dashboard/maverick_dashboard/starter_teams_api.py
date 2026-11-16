@@ -372,13 +372,19 @@ def _origin(request):
     _require_same_origin(request)
 
 
+def _deployment_backend_kind() -> str:
+    # Read exactly the application's configured authority, without binding a
+    # durable tenant store or trying to open a PostgreSQL connection.
+    from maverick.governed_records import _selection
+
+    return _selection().kind
+
+
 @router.get("")
 def read_catalog(request: Request):
     def read():
-        from maverick.governed_records import deployment_backend_kind
-
         teams = available_catalog(request)
-        preview_only = deployment_backend_kind() == "postgres"
+        preview_only = _deployment_backend_kind() == "postgres"
         result = {"teams": teams, "setups": [] if preview_only else service(request).list_setups(),
                   "context": digest(context(request).binding()), "notice": NOTICE}
         if preview_only:
@@ -391,11 +397,10 @@ def read_catalog(request: Request):
 def preview_fixture(request: Request, team_id: str):
     """Evaluate a bundled synthetic fixture without any durable setup or case."""
     def read():
-        from maverick.governed_records import deployment_backend_kind
         from maverick.starter_team_checks import evaluate, get_team
 
         context(request)
-        if deployment_backend_kind() != "postgres":
+        if _deployment_backend_kind() != "postgres":
             raise HTTPException(404, "Use the reviewed sample workflow for this deployment.")
         team = get_team(team_id)
         require_team(request, team)

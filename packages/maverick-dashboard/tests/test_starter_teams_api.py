@@ -514,7 +514,7 @@ def test_postgres_catalog_and_fixture_preview_do_not_use_durable_service(web, mo
     def unavailable():
         raise governed_records.GovernedRecordBackendError("configuration unavailable")
 
-    monkeypatch.setattr(governed_records, "deployment_backend_kind", unavailable)
+    monkeypatch.setattr(native, "_deployment_backend_kind", unavailable)
     assert client.get(BASE).status_code == 503
     assert client.get(BASE + "/preview/order_management").status_code == 503
 
