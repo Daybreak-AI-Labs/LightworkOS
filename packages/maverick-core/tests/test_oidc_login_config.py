@@ -172,6 +172,7 @@ def test_resolve_via_discovery(monkeypatch):
 
         def json(self):
             return {
+                "issuer": "https://idp.example.com",
                 "authorization_endpoint": "https://idp.example.com/auth",
                 "token_endpoint": "https://idp.example.com/tok",
             }
@@ -200,6 +201,7 @@ def test_discovery_is_cached(monkeypatch):
 
         def json(self):
             return {
+                "issuer": "https://idp.example.com/",  # a trailing slash is the same issuer
                 "authorization_endpoint": "https://idp.example.com/auth",
                 "token_endpoint": "https://idp.example.com/tok",
             }
@@ -214,6 +216,45 @@ def test_discovery_is_cached(monkeypatch):
     resolve_endpoints(_full())
     resolve_endpoints(_full())
     assert calls["n"] == 1  # second call served from cache
+
+
+def test_discovery_must_name_the_configured_issuer_and_is_read_again_after_an_hour(monkeypatch):
+    """A document that names another issuer (or none) could send the browser
+    and the client secret to someone else's endpoints, and a cached answer
+    used to be kept for the life of the process."""
+    doc = {"authorization_endpoint": "https://idp.example.com/auth",
+           "token_endpoint": "https://idp.example.com/tok"}
+    calls = []
+
+    class _Resp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            calls.append(1)
+            return dict(doc)
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "get", lambda url, **k: _Resp())
+    clock = [1000.0]
+    monkeypatch.setattr(oidc.time, "monotonic", lambda: clock[0])
+    for wrong in (None, "https://other.example.com", "https://idp.example.com/tenant"):
+        doc.pop("issuer", None)
+        if wrong:
+            doc["issuer"] = wrong
+        with pytest.raises(OIDCError, match="issuer"):
+            resolve_endpoints(_full())
+    doc["issuer"] = "https://idp.example.com"
+    assert resolve_endpoints(_full())["token_endpoint"] == "https://idp.example.com/tok"
+    answered = len(calls)
+
+    doc["token_endpoint"] = "https://idp.example.com/tok2"  # the provider moved it
+    clock[0] += oidc._DISCOVERY_TTL_SECONDS - 1
+    assert resolve_endpoints(_full())["token_endpoint"] == "https://idp.example.com/tok"
+    assert len(calls) == answered
+    clock[0] += 2
+    assert resolve_endpoints(_full())["token_endpoint"] == "https://idp.example.com/tok2"
 
 
 def test_discovery_rejects_non_https_issuer():

@@ -492,7 +492,7 @@ async def auth_login(request: Request):
         endpoints = resolve_endpoints(cfg)
     except OIDCError as exc:
         # Don't leak discovery internals; the operator misconfigured the IdP.
-        log.warning("OIDC login: could not resolve authorization endpoint")
+        log.warning("OIDC login: could not resolve authorization endpoint: %s", exc)
         raise HTTPException(status_code=500, detail="OIDC login is misconfigured") from exc
 
     state = secrets.token_urlsafe(32)
@@ -619,8 +619,8 @@ async def auth_callback(request: Request):
     # (3) resolve + https-check the token endpoint, then exchange the code.
     try:
         endpoints = resolve_endpoints(cfg)
-    except OIDCError:
-        log.warning("OIDC callback: could not resolve token endpoint")
+    except OIDCError as exc:
+        log.warning("OIDC callback: could not resolve token endpoint: %s", exc)
         return _fail(tx.get("return_to"))
     token_endpoint = endpoints["token_endpoint"]
     if not token_endpoint.lower().startswith("https://"):

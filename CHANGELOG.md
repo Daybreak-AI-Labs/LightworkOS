@@ -496,6 +496,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   5,000. A source that was refused for its size starts again by itself and
   reports the items it missed. A source also no longer stops for good after
   20,000 remembered items; it forgets items that are gone from the source.
+- Company sign-in now checks that the provider's discovery document names
+  the issuer you configured, and reads that document again every hour. If
+  sign-in stops with "misconfigured", copy the issuer exactly as your
+  provider shows it; the server log names both values.
 
 ### Fixed
 
