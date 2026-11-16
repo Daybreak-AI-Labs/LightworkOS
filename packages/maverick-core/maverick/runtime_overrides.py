@@ -870,11 +870,11 @@ def clear_default_model() -> None:
     _write_state(denied_tools(), models or None, budget_override())
 
 
-@_serialized
-def set_model_rate(spec: str, *, input_per_mtok: float, output_per_mtok: float,
-                   source: str, as_of: str, valid_until: str, approved_by: str) -> dict:
-    """Approve a sourced USD ceiling for a route without claiming vendor verification."""
-    model = _validate_model(spec)
+def check_model_rate(*, input_per_mtok: float, output_per_mtok: float, source: str,
+                     as_of: str, valid_until: str, approved_by: str) -> dict:
+    """The rate :func:`set_model_rate` would save, or ``ValueError``; writes nothing.
+
+    One set of checks for saving and for showing a change before it is made."""
     rate = _validate_model_rate({
         "input_per_mtok": float(input_per_mtok),
         "output_per_mtok": float(output_per_mtok),
@@ -884,6 +884,17 @@ def set_model_rate(spec: str, *, input_per_mtok: float, output_per_mtok: float,
     })
     if date.fromisoformat(valid_until) < datetime.now(timezone.utc).date():
         raise ValueError("model rate has expired")
+    return rate
+
+
+@_serialized
+def set_model_rate(spec: str, *, input_per_mtok: float, output_per_mtok: float,
+                   source: str, as_of: str, valid_until: str, approved_by: str) -> dict:
+    """Approve a sourced USD ceiling for a route without claiming vendor verification."""
+    model = _validate_model(spec)
+    rate = check_model_rate(input_per_mtok=input_per_mtok, output_per_mtok=output_per_mtok,
+                            source=source, as_of=as_of, valid_until=valid_until,
+                            approved_by=approved_by)
     rates = model_rate_overrides()
     rates[model] = rate
     _write_state(denied_tools(), _models_overlay() or None, budget_override(),

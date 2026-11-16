@@ -250,12 +250,20 @@ def price_snapshot(request, selection):
 def prepare_price(request, selection, arguments):
     from . import admin_pages
 
-    spec = admin_pages.model_rate_route(request, arguments["model"], confirmed=arguments["confirmed"])
+    # The same checks as saving, so a change that cannot be saved is refused
+    # here, before the person is asked to confirm it.
+    spec, rate = admin_pages.check_model_rate_input(
+        request, arguments["model"], input_per_mtok=arguments["input_per_mtok"],
+        output_per_mtok=arguments["output_per_mtok"], source=arguments["source"],
+        as_of=arguments["as_of"], valid_until=arguments["valid_until"],
+        confirmed=arguments["confirmed"])
     saved = next((row["ceiling"] for row in _prices(request)["saved_prices"] if row["model"] == spec), None)
     return Preview("Save a spending ceiling for this model. Lightwork uses it to guard spending limits. "
                    "Your provider's invoice remains the final bill.",
                    changes=[{"field": f"Spending ceiling for {spec}", "before": saved or "No saved price",
-                             "after": _ceiling(arguments)}])
+                             "after": _ceiling(rate)},
+                            {"field": "Review the price again by", "before": "",
+                             "after": rate["valid_until"]}])
 
 
 def execute_price(request, selection, arguments, review, operation_id):

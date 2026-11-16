@@ -101,8 +101,9 @@ def receipt_check_prepare(request, selection, arguments):
     result = native.run_checked(native._verify, native.VerifyIn(receipt=arguments["receipt"]))
     native.require_permission(request, "audit")
     sentences = native.check_sentences(result)
-    return Preview(sentences[0], native={"result": sentences, "matches": result["intact"],
-                                         "technical_details": result["technical"]})
+    # The page keeps the raw reason codes in a closed "Technical details" box;
+    # here only its sentences are shown. Auditors read the codes on the page.
+    return Preview(sentences[0], native={"result": sentences, "matches": result["intact"]})
 
 
 _ERASED = "The log changed after a person's data was erased"

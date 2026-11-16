@@ -422,6 +422,22 @@ def model_rate_route(request: Request, spec: str, *, confirmed: bool) -> str:
     return spec
 
 
+def check_model_rate_input(request: Request, spec: str, *, input_per_mtok: object,
+                           output_per_mtok: object, source: object, as_of: object,
+                           valid_until: object, confirmed: bool) -> tuple[str, dict]:
+    """The model route and the price that :func:`apply_model_rate` would save,
+    with the same refusals; saves nothing. Shown before a change is confirmed."""
+    spec = model_rate_route(request, spec, confirmed=confirmed)
+    from maverick.runtime_overrides import check_model_rate
+
+    with _model_rate_refusals():
+        rate = check_model_rate(
+            input_per_mtok=float(str(input_per_mtok)), output_per_mtok=float(str(output_per_mtok)),
+            source=str(source), as_of=str(as_of), valid_until=str(valid_until),
+            approved_by=auth.caller_principal(request) or "local administrator")
+    return spec, rate
+
+
 def apply_model_rate(request: Request, spec: str, *, input_per_mtok: object, output_per_mtok: object,
                      source: object, as_of: object, valid_until: object, confirmed: bool) -> dict:
     """Save an administrator's spending ceiling for one exact model route;

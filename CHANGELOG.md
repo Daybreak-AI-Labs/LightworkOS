@@ -640,7 +640,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - On the Activity log page the Copilot can now publish a checkpoint, publish
   one after an erasure (with or without an erasure record), retire one, and
   check the checkpoints against a receipt you kept. The same administrator
-  check and activity-log entries apply (the Reviews action family).
+  check and activity-log entries apply. These are offered only once the
+  Reviews family is in `[copilot] operation_families` (it is off by
+  default); publishing and retiring also need Copilot actions turned on.
 
 ### Fixed
 

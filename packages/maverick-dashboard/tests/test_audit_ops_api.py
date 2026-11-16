@@ -602,7 +602,9 @@ def test_copilot_publishes_and_checks_checkpoints_like_the_page(client, monkeypa
     assert checked["read_only"] is True and "token" not in checked
     assert checked["details"]["result"] == ["Problems were found:", *on_page["problems"]]
     assert "no erasure record" in checked["details"]["result"][1]
-    assert "audit_checkpoint_publish_without_erase_record" in checked["details"]["technical_details"][0]
+    # Raw reason codes stay in the page's closed "Technical details" box.
+    assert "technical_details" not in checked["details"]
+    assert "audit_checkpoint_publish_without_erase_record" in on_page["technical"][0]
     newest = _copilot_review(client, "audit.checkpoints.check_receipt",
                              {"receipt": client.get(f"{BASE}/2/receipt").text}).json()
     assert newest["details"]["matches"] is True and newest["summary"].endswith("Your kept receipt matches too.")

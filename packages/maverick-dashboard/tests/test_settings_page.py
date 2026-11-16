@@ -211,11 +211,19 @@ def test_copilot_sets_and_removes_a_model_price_like_the_settings_form(monkeypat
     with pytest.raises(HTTPException) as error:
         setter.execute(request(), {}, dict(price, valid_until="2020-01-01"), {}, "a" * 32)
     assert error.value.status_code == 400
+    # A change that cannot be saved is refused before the person confirms it.
+    for unsaveable in (dict(price, valid_until="2020-01-01"), dict(price, source=" "),
+                       dict(price, as_of=price["valid_until"], valid_until=price["as_of"])):
+        with pytest.raises(HTTPException) as error:
+            setter.prepare(request(), {}, unsaveable)
+        assert error.value.status_code == 400
     assert not model_rate_overrides() and not seen
 
     review = setter.prepare(request(), {}, price)
     assert review.changes == [{"field": f"Spending ceiling for {spec}", "before": "No saved price",
-                               "after": "Input $4.0000 and output $12.0000 per million tokens"}]
+                               "after": "Input $4.0000 and output $12.0000 per million tokens"},
+                              {"field": "Review the price again by", "before": "",
+                               "after": price["valid_until"]}]
     done = setter.execute(request(), {}, price, review.native, "b" * 32)
     assert done.status == "confirmed" and model_rate_overrides()[spec]["source"] == "Contract R1"
     assert done.details["price"]["input_per_mtok"] == 4.0
