@@ -57,8 +57,48 @@ def test_new_records_are_found_in_a_table_larger_than_one_check_reads(monkeypatc
     # Nothing known is left in view: more arrived than one check reads. That
     # stays a refusal, because the rows below the newest 5,000 were never read.
     table.extend(_lead(n) for n in range(7000, 12001))
-    with pytest.raises(events.EventSourceError, match="5,000 new items"):
+    with pytest.raises(events.EventSourceError, match="None of the remembered items"):
         source.poll(config, third.cursor)
+
+
+def test_a_list_that_shrinks_below_one_check_does_not_report_its_old_rows(monkeypatch):
+    """5,200 tickets, then 300 deleted and none created: the 200 oldest came
+    into view, the view was no longer full, and they were reported as new. A
+    source that was once longer than one check keeps the newest-first rule."""
+    from urllib.parse import parse_qsl
+
+    def ticket(number):
+        return {"sys_id": f"inc{number:06d}", "number": f"INC{number}",
+                "sys_created_on": f"2026-01-01 00:00:00.{number:06d}"}
+
+    table = [ticket(n) for n in range(5200)]  # oldest first
+
+    def listing(source, config, path, **_kwargs):
+        offset = int(dict(parse_qsl(path.split("?", 1)[1]))["sysparm_offset"])
+        return list(reversed(table))[offset:offset + 1000]
+
+    monkeypatch.setattr(connected, "collection", listing)
+    source = connected.ConnectedAppSource("servicenow_tickets")
+    config = {"connection": "sn", "revision": "r1", "connector": "servicenow",
+              "origin": "https://acme.service-now.com", "selection": {"table": "incident"},
+              "_lightwork_cursor_format": 1}
+    first = source.poll(config, "")
+
+    del table[1000:1300]
+    second = source.poll(config, first.cursor)
+    assert second.events == []
+    table.append(ticket(5200))
+    third = source.poll(config, second.cursor)
+    assert third.event_ids == ["inc005200"]
+
+    # The dashboard's dated baseline carries the same mark, and a position
+    # saved before the mark existed still loads.
+    assert connected.validate("servicenow_tickets", {
+        **{k: v for k, v in config.items() if k != "_lightwork_cursor_format"},
+        "baseline": connected.baseline("servicenow_tickets", config["selection"],
+                                       [row["sys_id"] for row in reversed(table)][:5000])})
+    old_position = _cursor([row["sys_id"] for row in table])
+    assert source.poll(config, old_position).events == []
 
 
 def test_remembered_items_roll_over_instead_of_stopping_the_source(monkeypatch):

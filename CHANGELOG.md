@@ -496,9 +496,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   or restore the key, to clear the warning.
 - Automations that watch new Salesforce records or ServiceNow tickets now
   work on lists with more than 5,000 items: each check reads the newest
-  5,000. A source that was refused for its size starts again by itself and
-  reports the items it missed. A source also no longer stops for good after
-  20,000 remembered items; it forgets items that are gone from the source.
+  5,000. In such a list, a record saved with an earlier creation date is
+  not reported. A source that was refused for its size starts again by
+  itself and reports the items it missed, if fewer than 5,000 arrived
+  meanwhile; with more, it is refused with a message that asks you to review
+  the source again. A source also no longer stops for good after 20,000
+  remembered items; it forgets items that are gone from the source.
 - Company sign-in now checks that the provider's discovery document names
   the issuer you configured, and reads that document again every hour. If
   sign-in stops with "misconfigured", copy the issuer exactly as your

@@ -1,7 +1,6 @@
 """Current account/container choices and dated native event-source previews."""
 from __future__ import annotations
 
-import hashlib
 import json
 import time
 from urllib.parse import quote
@@ -20,6 +19,7 @@ NOTICE = ("Checking reads only the selected source. Review the dated snapshot an
           "Items already seen during the preview are remembered; later arrivals can start the chosen work once armed. "
           "This does not confirm future event delivery. Each check reads at most 32 pages and 5,000 items. "
           "For new Salesforce records and ServiceNow tickets it reads the newest 5,000. "
+          "In a list longer than that, a record saved with an earlier creation date is not reported. "
           "Other sources larger than that are refused without advancing their position.")
 
 
@@ -182,14 +182,16 @@ def preview(request, choices):
     if any(not value or len(value) > 512 for value in ids) or len(set(ids)) != len(ids):
         raise HTTPException(409, "The source's item identities could not be verified. Nothing was armed.")
     cfg.pop("_lightwork_authority_check")
-    cfg["baseline"] = automation_events._encode_cursor("connected_app", sorted(hashlib.sha256(value.encode()).hexdigest() for value in ids))
+    cfg["baseline"] = native.baseline(choices.source, cfg["selection"], ids)
+    # A list read as its newest 5,000 may be longer; the count would understate it.
+    existing = "5,000 or more" if native.newest_first(choices.source, cfg["selection"]) and len(rows) >= native.MAX_ITEMS else len(rows)
     now = time.time()
     reviewed = {"purpose": "connected-event-source-preview-v1", "source": choices.source, "context": choices.context, "config": cfg, "expires": now + 600}
     token = crypto_at_rest.seal_to_str(json.dumps(reviewed, ensure_ascii=False, allow_nan=False, separators=(",", ":")))
     if not crypto_at_rest.is_sealed_str(token):
         raise HTTPException(503, "Enable stored-data encryption before retaining this private source review.")
     authority(request, choices.context)
-    return {"review_token": token, "source": choices.source, "checked_at": datetime_text(now), "account": choices.connection.replace("-", " "), "destination": cfg["origin"], "details": labels, "existing_items": len(rows), "sample_names": [str(row.get("name") or row.get("Name") or row.get("number") or row.get("CaseNumber") or row.get("subject") or row.get("Subject") or "Item")[:200] for row in rows[:5]], "notice": NOTICE}
+    return {"review_token": token, "source": choices.source, "checked_at": datetime_text(now), "account": choices.connection.replace("-", " "), "destination": cfg["origin"], "details": labels, "existing_items": existing, "sample_names": [str(row.get("name") or row.get("Name") or row.get("number") or row.get("CaseNumber") or row.get("subject") or row.get("Subject") or "Item")[:200] for row in rows[:5]], "notice": NOTICE}
 
 
 def canonical_config(request, source, config, *, review_required=False):
