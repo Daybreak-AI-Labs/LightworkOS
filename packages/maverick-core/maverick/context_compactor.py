@@ -416,7 +416,9 @@ def _score_by_embedding(
         return dot / (na * nb)
 
     texts = [_message_text(msg) for msg in head]
-    vectors = list(m.embed(texts))
+    # Small batches: the model's memory grows with the batch (see
+    # ``skill.embeddings._MODEL_BATCH``).
+    vectors = [v for start in range(0, len(texts), 16) for v in m.embed(texts[start:start + 16])]
     out: list[tuple[float, int, dict]] = []
     for i, msg in enumerate(head):
         # The embedder may yield fewer vectors than head turns (empty

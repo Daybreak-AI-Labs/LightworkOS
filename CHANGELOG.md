@@ -400,6 +400,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   restoring the day or a retired key's public key. The checkpoint check
   covers the default store, the custody store and the folder chosen in the
   audit checkpoint settings; a chosen folder that cannot be read refuses.
+  An install that has never had a tip ledger can still erase: the erase adds
+  no anchor, and `maverick audit verify` reports what it did before.
 - A rerun of `maverick erase` that finds no conversation now also clears the
   AI reply cache and retries attachment files an earlier run could not
   remove, so it finishes the job or names again what remains. The list of
@@ -444,8 +446,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and the Workforce and Agents pages say so. Tool grants widen only when the
   setting reads as on.
 - Stop and rename now work on a running task. Its heartbeat no longer counts
-  as a change since you reviewed it. A schema migration adds the column; it
-  runs on the next start of SQLite and Postgres. Stop also works while a
+  as a change since you reviewed it. The world database moves to schema 54
+  on the next start, on SQLite and Postgres. Stop also works while a
   chat answer is still being written.
 - A cancel that arrives after a task finished no longer replaces "done".
   The task stays finished, and the chat supervisor and the gRPC cancel say
@@ -475,6 +477,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- With the optional `fastembed` package installed, the first specialist
+  match no longer needs about 4.4 GB of memory. The built-in specialist texts
+  are now embedded 16 at a time (about 0.5 GB), with the same results in the
+  same time; conversation compaction uses the same batches.
 - Resuming setup with an invalid saved advanced answer now asks the advanced
   step again, while a config-write error preserves the resume file.
 - Sessionless MCP clients can cancel their in-flight requests again without
