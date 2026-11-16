@@ -335,6 +335,48 @@ def _chain_entries(
     return entries
 
 
+def _rewrite_summary(path: Path, rows_before: int, text: str, matched: int) -> dict | None:
+    """What an erase did to one signed day-file, for its erase record.
+
+    The day, its row counts and its new tip hash: nothing about the subject.
+    None for a file that is not a day-file or has no signed tip.
+    """
+    from .signing import _DAY_RE
+
+    tip, rows_after = "", 0
+    for line in io.StringIO(text):
+        if not line.strip():
+            continue
+        rows_after += 1
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict):
+            tip = str(row.get("hash") or tip)
+    if not _DAY_RE.fullmatch(path.stem) or not tip:
+        return None
+    return {"day": path.stem, "rows_before": rows_before, "rows_after": rows_after,
+            "rows_erased": matched, "tip_hash": tip}
+
+
+def _report_rewrites(rewrites: list[dict], on_rewrite) -> None:
+    """Hand each rewritten day to ``on_rewrite``, after its lock is released.
+
+    The caller stores the erase record there. A failure is logged and never
+    undoes or blocks the erasure.
+    """
+    if on_rewrite is None:
+        return
+    for summary in rewrites:
+        try:
+            on_rewrite(dict(summary))
+        # failure-policy: fail_soft_with_audit
+        except Exception as e:
+            log.warning("audit erase: could not record the rewrite of %s: %s",
+                        summary.get("day"), e)
+
+
 def _process_file(
     path: Path,
     channel: str,
@@ -342,8 +384,12 @@ def _process_file(
     *,
     delete: bool,
     strict: bool = False,
+    rewrites: list[dict] | None = None,
 ) -> tuple[int, int]:
-    """Walk a single audit-log file. Returns (matched, written)."""
+    """Walk a single audit-log file. Returns (matched, written).
+
+    A signed day-file that was rewritten is added to ``rewrites``.
+    """
     if not path.exists() or path.is_dir():
         return 0, 0
     # An erase is a read-modify-write of the whole file. Held without a lock it
@@ -360,6 +406,7 @@ def _process_file(
             user_id,
             delete=delete,
             strict=strict,
+            rewrites=rewrites,
         )
 
 
@@ -370,6 +417,7 @@ def _process_file_locked(
     *,
     delete: bool,
     strict: bool = False,
+    rewrites: list[dict] | None = None,
 ) -> tuple[int, int]:
     """``_process_file`` body, with the file's rewrite lock already held."""
     try:
@@ -441,6 +489,11 @@ def _process_file_locked(
     try:
         atomic_write_bytes(path, new_bytes, mode=0o600)
         if any_signed:
+            summary = _rewrite_summary(
+                path, sum(1 for line, _event in rows if line.strip()), text, matched,
+            )
+            if summary is not None and rewrites is not None:
+                rewrites.append(summary)
             try:
                 from .signing import ANCHOR_FILENAME, reanchor_day_after_erase
 
@@ -472,12 +525,17 @@ def scrub_user(
     *,
     audit_dir: Path | None = None,
     strict: bool = False,
+    on_rewrite=None,
 ) -> tuple[int, int]:
     """Replace matching events with tombstones. Returns (matched, scanned).
 
     ``strict=True`` is reserved for the legal-erasure workflow: unreadable,
     unwritable, integrity-invalid, or unreanchorable segments raise instead of
     being indistinguishable from an observed zero.
+
+    ``on_rewrite`` is called once for each signed day-file that was rewritten,
+    with its day, row counts and new tip hash, so the caller can store the
+    erase record a later checkpoint of that day must cite.
     """
     if audit_dir is None:
         # Resolve the SAME (home + active-tenant) audit dir the writer lands
@@ -492,13 +550,18 @@ def scrub_user(
     if not audit_dir.exists():
         return 0, 0
     for path in sorted(audit_dir.glob("*.ndjson")):
-        m, w = _process_file(
-            path,
-            channel,
-            user_id,
-            delete=False,
-            strict=strict,
-        )
+        rewrites: list[dict] = []
+        try:
+            m, w = _process_file(
+                path,
+                channel,
+                user_id,
+                delete=False,
+                strict=strict,
+                rewrites=rewrites,
+            )
+        finally:
+            _report_rewrites(rewrites, on_rewrite)
         total_matched += m
         total_scanned += w
     if total_matched:
@@ -572,8 +635,12 @@ def delete_user(
     user_id: str,
     *,
     audit_dir: Path | None = None,
+    on_rewrite=None,
 ) -> tuple[int, int]:
-    """Delete matching events entirely. Returns (deleted, scanned)."""
+    """Delete matching events entirely. Returns (deleted, scanned).
+
+    ``on_rewrite`` is as for :func:`scrub_user`.
+    """
     if audit_dir is None:
         from ..paths import data_dir
         audit_dir = data_dir("audit")
@@ -582,7 +649,11 @@ def delete_user(
     if not audit_dir.exists():
         return 0, 0
     for path in sorted(audit_dir.glob("*.ndjson")):
-        m, w = _process_file(path, channel, user_id, delete=True)
+        rewrites: list[dict] = []
+        try:
+            m, w = _process_file(path, channel, user_id, delete=True, rewrites=rewrites)
+        finally:
+            _report_rewrites(rewrites, on_rewrite)
         total_matched += m
         total_scanned += w
     if total_matched:

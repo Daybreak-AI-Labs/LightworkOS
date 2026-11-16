@@ -13,6 +13,15 @@ therefore covers snapshot verification, same-era comparison, signing, and
 publication.  No checkpoint path ever acquires these locks in the reverse
 order.  Verification is deliberately lock-free and non-mutating so a verifier
 can operate against read-only/WORM media.
+
+A supersession (a new era for a day whose signed prefix changed) is signed
+with the same key as the day it replaces, so the key's holder could replace a
+commitment a verifier had already retained.  Two rules cover that.  A new
+supersession must be backed by an erase record: the row an erasure stores in
+the world model for each audit day it rewrites, which the signing key alone
+cannot write.  And verification against an externally retained sequence
+reports every supersession published after it, with or without such a record,
+until the verifier has reviewed it and retains a newer sequence.
 """
 from __future__ import annotations
 
@@ -22,7 +31,7 @@ import os
 import re
 import secrets
 import stat
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -808,6 +817,138 @@ def _retention_evidence_digest(
     )
 
 
+#: Looks up the erase records of one audit day, oldest first (see
+#: ``erasure_receipts.load_audit_erase_records``).
+EraseRecords = Callable[[str], Iterable[Mapping]]
+
+
+def _instant(value: object) -> datetime | None:
+    """An ISO timestamp with a timezone as a datetime, or None."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
+
+
+def _backing_erase_record(
+    erase_records: EraseRecords | None,
+    *,
+    day: str,
+    row_count: int,
+    tip_hash: str,
+    hashes: tuple[str, ...] | None,
+    not_before: object,
+) -> Mapping | None:
+    """The newest erase record that accounts for a day's committed prefix.
+
+    A record matches when the day it left behind is the committed prefix, or
+    a point inside it: rows appended after the erasure extend the same chain.
+    ``hashes`` are the day's row hashes when its file can still be compared.
+    A record issued before ``not_before``, the time of the checkpoint being
+    replaced, explains an earlier change and is not reused for this one.
+    """
+    if erase_records is None:
+        return None
+    floor = _instant(not_before)
+    for record in reversed(list(erase_records(day))):
+        after, tip = record.get("rows_after"), record.get("tip_hash")
+        if record.get("day") != day or not isinstance(after, int) or isinstance(after, bool):
+            continue
+        issued = _instant(record.get("issued_at"))
+        if floor is not None and (issued is None or issued < floor):
+            continue
+        if after == row_count and tip == tip_hash:
+            return record
+        if hashes is not None and 1 <= after <= min(row_count, len(hashes)) and hashes[after - 1] == tip:
+            return record
+    return None
+
+
+def _supersession_report(
+    entry: _ChainEntry,
+    *,
+    retained: _ChainEntry | None,
+    hashes: tuple[str, ...] | None,
+    erase_records: EraseRecords | None,
+) -> tuple[str, str]:
+    """``(reason, what the erase records say)`` for one supersession."""
+    if erase_records is None:
+        return "superseded_erase_record_unchecked", "erase records were not checked"
+    record = entry.record
+    try:
+        backing = _backing_erase_record(
+            erase_records, day=str(record["day"]), row_count=int(record["row_count"]),
+            tip_hash=str(record["tip_hash"]), hashes=hashes,
+            not_before=retained.record["created_at"] if retained is not None else None,
+        )
+    # failure-policy: fail_closed
+    except Exception as exc:
+        return ("superseded_erase_record_unchecked",
+                f"erase records could not be read ({type(exc).__name__})")
+    if backing is not None:
+        return ("superseded_after_pin",
+                f"erase record {backing.get('erasure_id')} erased "
+                f"{backing.get('rows_erased')} of {backing.get('rows_before')} rows")
+    if hashes is None:
+        return ("superseded_erase_record_unchecked",
+                "it was replaced again since, so its erase record cannot be matched to the log")
+    return ("superseded_without_erase_record",
+            "no stored erase record matches it: only the signing key vouches for the change")
+
+
+def _supersessions_after_pin(
+    chain: list[_ChainEntry],
+    *,
+    pinned_sequence: int,
+    snapshots: Mapping[str, _DaySnapshot | AuditCheckpointError],
+    latest_era: Mapping[str, int],
+    erase_records: EraseRecords | None,
+) -> list[CheckpointBreak]:
+    """Report each day given a new era after the externally retained sequence.
+
+    The retained record no longer speaks for that day, so the result is never
+    "verified" until the verifier has looked at the change and retains a
+    newer sequence. Each report says whether a stored erase record, issued
+    after the last record the verifier retained for that day, backs it.
+    """
+    breaks: list[CheckpointBreak] = []
+    newest = int(chain[-1].record["checkpoint_sequence"])
+    retained: dict[str, _ChainEntry] = {}
+    for entry in chain:
+        record = entry.record
+        sequence = int(record["checkpoint_sequence"])
+        day = str(record["day"])
+        if sequence <= pinned_sequence:
+            retained[day] = entry
+            continue
+        if record["record_type"] != "supersession":
+            continue
+        snapshot = snapshots.get(day)
+        reason, finding = _supersession_report(
+            entry, retained=retained.get(day),
+            # Only the day's current era can still be compared with its file.
+            hashes=(
+                snapshot.hashes
+                if isinstance(snapshot, _DaySnapshot) and entry.era == latest_era.get(day)
+                else None
+            ),
+            erase_records=erase_records,
+        )
+        advice = (
+            "Compare the day with a copy kept elsewhere."
+            if reason == "superseded_without_erase_record"
+            else f"Review it, then retain sequence {newest} and its digest."
+        )
+        breaks.append(CheckpointBreak(
+            sequence, reason,
+            f"{day} was given a new checkpoint (sequence {sequence}) after retained "
+            f"sequence {pinned_sequence}; {finding}. {advice}"))
+    return breaks
+
+
 def _new_record_body(
     *,
     record_type: str,
@@ -835,6 +976,35 @@ def _new_record_body(
     }
 
 
+def _require_erase_record(
+    erase_records: EraseRecords | None,
+    day: str,
+    snapshot: _DaySnapshot,
+    superseded: _ChainEntry,
+) -> None:
+    """Refuse a new era for ``day`` that no stored erase record accounts for."""
+    try:
+        backing = _backing_erase_record(
+            erase_records, day=day, row_count=snapshot.row_count,
+            tip_hash=snapshot.tip_hash, hashes=snapshot.hashes,
+            not_before=superseded.record["created_at"],
+        )
+    # failure-policy: fail_closed
+    except Exception as exc:
+        raise AuditCheckpointError(
+            f"erase records for {day} could not be read ({type(exc).__name__}); "
+            "the new checkpoint was not published"
+        ) from exc
+    if backing is None:
+        raise AuditCheckpointError(
+            f"no stored erase record matches {day}: a new checkpoint after an "
+            "erasure needs the record that `maverick erase` stores for each "
+            "audit day it rewrites, issued after the checkpoint being replaced. "
+            "A day erased before those records existed can be published with "
+            "--without-erase-record"
+        )
+
+
 def publish_checkpoint(
     audit_dir: Path | str,
     checkpoint_dir: Path | str,
@@ -844,6 +1014,8 @@ def publish_checkpoint(
     trusted_pubkeys: Iterable[str] | None = None,
     supersedes_checkpoint_sha256: str | None = None,
     lifecycle_reason: str | None = None,
+    erase_records: EraseRecords | None = None,
+    allow_missing_erase_record: bool = False,
 ) -> Path:
     """Publish a stable signed commitment for one audit day.
 
@@ -851,6 +1023,11 @@ def publish_checkpoint(
     explicitly start a new GDPR-reanchored era by naming the exact digest of
     the latest checkpoint, selecting ``gdpr_reanchor``, and presenting existing
     signed re-anchor/erase evidence.
+
+    The new era must also be backed by an erase record found through
+    ``erase_records``. ``allow_missing_erase_record`` publishes without one,
+    for a day erased before erase records existed; a later verification
+    against an older retained sequence says so.
     """
     audit, checkpoints = _resolved_directories(audit_dir, checkpoint_dir)
     selected_day = day or datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -947,6 +1124,8 @@ def publish_checkpoint(
                     anchor_rows=anchor_rows,
                     supersedes_checkpoint_sha256=latest_for_day.digest,
                 )
+                if not allow_missing_erase_record:
+                    _require_erase_record(erase_records, selected_day, snapshot, latest_for_day)
             else:
                 if supersedes_checkpoint_sha256 is not None:
                     raise AuditCheckpointError(
@@ -1107,11 +1286,18 @@ def verify_checkpoints(  # noqa: C901 - forensic checks remain linear and explic
     trusted_pubkeys: Iterable[str] | None = None,
     minimum_sequence: int | None = None,
     minimum_digest: str | None = None,
+    erase_records: EraseRecords | None = None,
 ) -> list[CheckpointBreak]:
     """Verify history, lifecycle evidence, and each current-era audit prefix.
 
     ``minimum_sequence`` and ``minimum_digest`` must be retained outside the
     checkpoint store. Together they detect both rollback and a signed fork.
+
+    With ``minimum_sequence``, a supersession published after it is reported:
+    the retained record no longer speaks for that day. The reason is
+    ``superseded_after_pin`` when ``erase_records`` finds a stored erase
+    record for it, ``superseded_without_erase_record`` when it finds none and
+    ``superseded_erase_record_unchecked`` when they could not be looked up.
     """
     try:
         audit, checkpoints = _resolved_directories(audit_dir, checkpoint_dir)
@@ -1192,6 +1378,11 @@ def verify_checkpoints(  # noqa: C901 - forensic checks remain linear and explic
             snapshots[day] = AuditCheckpointError(str(exc))
 
     breaks: list[CheckpointBreak] = []
+    if minimum_sequence is not None:
+        breaks.extend(_supersessions_after_pin(
+            chain, pinned_sequence=minimum_sequence, snapshots=snapshots,
+            latest_era=latest_era, erase_records=erase_records,
+        ))
     anchor_rows_cache: list[dict] | AuditCheckpointError | None = None
 
     def lifecycle_anchor_rows() -> list[dict]:

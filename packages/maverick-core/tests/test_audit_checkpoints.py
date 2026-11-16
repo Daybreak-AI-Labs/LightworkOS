@@ -55,6 +55,21 @@ def _digest(path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _erase_record_store():
+    """The erase records an erasure stores in the world model, in memory.
+
+    Returns ``(records, store, lookup)``: ``store`` is the erase's
+    ``on_rewrite`` hook and ``lookup`` what the publisher and verifier read.
+    """
+    records: list[dict] = []
+
+    def store(summary):
+        records.append({**summary, "erasure_id": "e" * 32,
+                        "issued_at": datetime.now(timezone.utc).isoformat()})
+
+    return records, store, lambda day: [record for record in records if record["day"] == day]
+
+
 def test_publish_and_verify_live_day_checkpoint(isolated_audit):
     audit_dir, checkpoint_dir = isolated_audit
     day_file = _write_rows(audit_dir, 3)
@@ -457,11 +472,13 @@ def test_gdpr_reanchor_requires_explicit_signed_supersession(isolated_audit):
     assert signer.write({"kind": "tool_call", "index": 1})
     original = publish_checkpoint(audit_dir, checkpoint_dir)
     original_digest = _digest(original)
+    _erased, store_erase_record, erase_records = _erase_record_store()
 
     matched, _written = scrub_user(
         "slack",
         "subject",
         audit_dir=audit_dir,
+        on_rewrite=store_erase_record,
     )
     assert matched == 1
     assert AuditSigner(day_file).write(
@@ -479,6 +496,7 @@ def test_gdpr_reanchor_requires_explicit_signed_supersession(isolated_audit):
         checkpoint_dir,
         supersedes_checkpoint_sha256=original_digest,
         lifecycle_reason="gdpr_reanchor",
+        erase_records=erase_records,
     )
     record = json.loads(supersession.read_text(encoding="utf-8"))
     assert record["record_type"] == "supersession"
@@ -540,11 +558,13 @@ def test_closed_day_gdpr_supersession_binds_signed_reanchor(
     assert ensure_anchors(audit_dir) == 1
     original = publish_checkpoint(audit_dir, checkpoint_dir, day=day)
     original_digest = _digest(original)
+    _erased, store_erase_record, erase_records = _erase_record_store()
 
     matched, _written = scrub_user(
         "slack",
         "subject",
         audit_dir=audit_dir,
+        on_rewrite=store_erase_record,
     )
     assert matched == 1
     supersession = publish_checkpoint(
@@ -553,6 +573,7 @@ def test_closed_day_gdpr_supersession_binds_signed_reanchor(
         day=day,
         supersedes_checkpoint_sha256=original_digest,
         lifecycle_reason="gdpr_reanchor",
+        erase_records=erase_records,
     )
 
     record = json.loads(supersession.read_text(encoding="utf-8"))
@@ -588,6 +609,7 @@ def test_later_matching_anchor_does_not_invalidate_live_supersession(
         checkpoint_dir,
         supersedes_checkpoint_sha256=original_digest,
         lifecycle_reason="gdpr_reanchor",
+        allow_missing_erase_record=True,
     )
     marker_digest = json.loads(
         supersession.read_text(encoding="utf-8")
@@ -606,6 +628,148 @@ def test_later_matching_anchor_does_not_invalidate_live_supersession(
     ]
     assert anchor_rows[-1]["hash"] != marker_digest
     assert verify_checkpoints(audit_dir, checkpoint_dir) == []
+
+
+def _checkpointed_closed_day(audit_dir, checkpoint_dir, day="2000-01-01"):
+    day_file = audit_dir / f"{day}.ndjson"
+    signer = AuditSigner(day_file)
+    assert signer.write({"kind": "tool_call", "channel": "slack", "user_id": "subject"})
+    assert signer.write({"kind": "tool_call", "index": 1})
+    assert signer.write({"kind": "tool_call", "index": 2})
+    assert ensure_anchors(audit_dir) == 1
+    return day_file, publish_checkpoint(audit_dir, checkpoint_dir, day=day)
+
+
+def _rewrite_as_key_holder(audit_dir, day_file):
+    """Drop a row, then re-sign and re-anchor the day with the signing key."""
+    rows = [json.loads(line) for line in day_file.read_text(encoding="utf-8").splitlines()]
+    del rows[1]
+    text, _signed = signing.resign_rows(
+        [("json", row) for row in rows], signing._load_or_create_keypair(),
+    )
+    day_file.write_text(text, encoding="utf-8")
+    signing.reanchor_day_after_erase(audit_dir, day_file)
+    assert signing.verify_anchors(audit_dir) == [] and verify_chain(day_file) == []
+
+
+def test_key_holder_cannot_replace_a_retained_checkpoint_unreported(isolated_audit):
+    # Whoever holds the signing key can drop a row, re-sign the day, re-anchor
+    # it and publish a supersession. All of that verifies; the verifier who
+    # retained the earlier checkpoint must still be told.
+    audit_dir, checkpoint_dir = isolated_audit
+    day = "2000-01-01"
+    day_file, pinned = _checkpointed_closed_day(audit_dir, checkpoint_dir)
+    pin = {"minimum_sequence": 1, "minimum_digest": _digest(pinned)}
+    _erased, _store, erase_records = _erase_record_store()
+
+    _rewrite_as_key_holder(audit_dir, day_file)
+    request = {
+        "day": day,
+        "supersedes_checkpoint_sha256": pin["minimum_digest"],
+        "lifecycle_reason": "gdpr_reanchor",
+    }
+
+    # No erasure stored a record of this rewrite, so the honest publisher refuses.
+    for lookup in (None, erase_records):
+        with pytest.raises(AuditCheckpointError, match="no stored erase record"):
+            publish_checkpoint(audit_dir, checkpoint_dir, erase_records=lookup, **request)
+    # The key holder is not bound by that refusal; the verifier is the control.
+    publish_checkpoint(audit_dir, checkpoint_dir, allow_missing_erase_record=True, **request)
+
+    assert verify_checkpoints(audit_dir, checkpoint_dir) == []
+    found = verify_checkpoints(audit_dir, checkpoint_dir, erase_records=erase_records, **pin)
+    assert [(item.sequence, item.reason) for item in found] == [
+        (2, "superseded_without_erase_record")
+    ]
+    assert day in found[0].detail
+    unchecked = verify_checkpoints(audit_dir, checkpoint_dir, **pin)
+    assert [item.reason for item in unchecked] == ["superseded_erase_record_unchecked"]
+
+
+def test_erasure_supersession_is_reported_until_the_verifier_retains_it(isolated_audit):
+    from maverick.audit.erase import scrub_user
+
+    audit_dir, checkpoint_dir = isolated_audit
+    day = "2000-01-01"
+    day_file, pinned = _checkpointed_closed_day(audit_dir, checkpoint_dir)
+    pin = {"minimum_sequence": 1, "minimum_digest": _digest(pinned)}
+    erased, store_erase_record, erase_records = _erase_record_store()
+
+    assert scrub_user("slack", "subject", audit_dir=audit_dir, on_rewrite=store_erase_record)[0] == 1
+    assert [(r["day"], r["rows_before"], r["rows_after"], r["rows_erased"]) for r in erased] == [
+        (day, 3, 3, 1)
+    ]
+    supersession = publish_checkpoint(
+        audit_dir,
+        checkpoint_dir,
+        day=day,
+        supersedes_checkpoint_sha256=pin["minimum_digest"],
+        lifecycle_reason="gdpr_reanchor",
+        erase_records=erase_records,
+    )
+
+    found = verify_checkpoints(audit_dir, checkpoint_dir, erase_records=erase_records, **pin)
+    assert [(item.sequence, item.reason) for item in found] == [(2, "superseded_after_pin")]
+    assert "e" * 32 in found[0].detail and "1 of 3 rows" in found[0].detail
+    # Reviewed and retained: the newer sequence verifies clean again.
+    retained = {"minimum_sequence": 2, "minimum_digest": _digest(supersession)}
+    assert verify_checkpoints(audit_dir, checkpoint_dir, erase_records=erase_records, **retained) == []
+
+
+def test_an_earlier_erasure_record_does_not_back_a_later_rewrite(isolated_audit):
+    # An erase record matches a day that still holds the rows the erasure
+    # left. Rows written after it are not covered: changing those must not
+    # pass as that same, already reviewed, erasure.
+    from maverick.audit.erase import scrub_user
+
+    audit_dir, checkpoint_dir = isolated_audit
+    day_file = audit_dir / f"{_today()}.ndjson"
+    signer = AuditSigner(day_file)
+    assert signer.write({"kind": "tool_call", "channel": "slack", "user_id": "subject"})
+    assert signer.write({"kind": "tool_call", "index": 1})
+    first = _digest(publish_checkpoint(audit_dir, checkpoint_dir))
+    _erased, store_erase_record, erase_records = _erase_record_store()
+
+    def supersede(digest, **options):
+        assert AuditSigner(day_file).write(
+            {"kind": "erase", "supersedes_checkpoint_sha256": digest}
+        )
+        return publish_checkpoint(
+            audit_dir,
+            checkpoint_dir,
+            supersedes_checkpoint_sha256=digest,
+            lifecycle_reason="gdpr_reanchor",
+            **options,
+        )
+
+    assert scrub_user("slack", "subject", audit_dir=audit_dir, on_rewrite=store_erase_record)[0] == 1
+    supersede(first, erase_records=erase_records)
+    assert AuditSigner(day_file).write({"kind": "tool_call", "note": "to be removed"})
+    assert AuditSigner(day_file).write({"kind": "tool_call", "index": 2})
+    later = publish_checkpoint(audit_dir, checkpoint_dir)
+    retained = {"minimum_sequence": 3, "minimum_digest": _digest(later)}
+    assert verify_checkpoints(audit_dir, checkpoint_dir, erase_records=erase_records, **retained) == []
+
+    rows = [json.loads(line) for line in day_file.read_text(encoding="utf-8").splitlines()]
+    del rows[3]  # after the erased prefix, inside the retained checkpoint
+    text, _signed = signing.resign_rows(
+        [("json", row) for row in rows], signing._load_or_create_keypair(),
+    )
+    day_file.write_text(text, encoding="utf-8")
+    with pytest.raises(AuditCheckpointError, match="no stored erase record"):
+        supersede(retained["minimum_digest"], erase_records=erase_records)
+    publish_checkpoint(
+        audit_dir,
+        checkpoint_dir,
+        supersedes_checkpoint_sha256=retained["minimum_digest"],
+        lifecycle_reason="gdpr_reanchor",
+        allow_missing_erase_record=True,
+    )
+
+    found = verify_checkpoints(audit_dir, checkpoint_dir, erase_records=erase_records, **retained)
+    assert [(item.sequence, item.reason) for item in found] == [
+        (4, "superseded_without_erase_record")
+    ]
 
 
 def test_retention_requires_signed_retirement_instead_of_false_clean(

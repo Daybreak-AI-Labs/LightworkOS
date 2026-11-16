@@ -6110,13 +6110,43 @@ def _exit_if_erasure_incomplete(ctx, verification: dict, failures: list[str],
     ctx.exit(1)
 
 
-def _scrub_subject_audit(channel: str, user: str, failures: list[str]) -> int:
+def _audit_erase_recorder(world, erasure_id: str):
+    """Store the erase record of each audit day the scrub rewrites.
+
+    A checkpoint that later replaces that day's earlier one must cite it. A
+    record that cannot be stored never holds the erasure back.
+    """
+    def store(summary: dict) -> None:
+        from ..erasure_receipts import persist_audit_erase_record
+        from ..paths import current_tenant_id
+
+        try:
+            persist_audit_erase_record(
+                world, tenant_id=current_tenant_id() or "shared",
+                erasure_id=erasure_id, **summary,
+            )
+        except Exception as exc:  # failure-policy: fail_soft_with_audit -- the erasure itself is done
+            click.echo(
+                f"warning: the erase record for audit day {summary.get('day')} could not be "
+                f"stored ({_erasure_failure_label(exc)}). A new checkpoint for that day will "
+                "need --without-erase-record.",
+                err=True,
+            )
+
+    return store
+
+
+def _scrub_subject_audit(channel: str, user: str, failures: list[str],
+                         world=None, erasure_id: str = "") -> int:
     """Scrub the subject's prior audit lines; record a failure instead of raising."""
     from .. import audit
 
     scrubbed = 0
     try:
-        scrubbed, _ = audit.scrub_user(channel, user, strict=True)
+        scrubbed, _ = audit.scrub_user(
+            channel, user, strict=True,
+            on_rewrite=_audit_erase_recorder(world, erasure_id) if world is not None else None,
+        )
     except Exception as exc:
         failures.append(f"audit_scrub: {_erasure_failure_label(exc)}")
     try:
@@ -6282,12 +6312,14 @@ def _purge_llm_cache_for_erasure() -> str | None:
     return None
 
 
-def _erase_subject_stores(world, channel: str, user: str, note_users, attachment_paths):
+def _erase_subject_stores(world, channel: str, user: str, note_users, attachment_paths,
+                          erasure_id: str = ""):
     """Erase every store keyed by the subject rather than by a conversation row.
 
     One list of steps for the conversation erase and for a rerun that finds
     no conversation, so a rerun finishes what an earlier run left or names
-    again what remains. Returns ``(counts, failures)``.
+    again what remains. Returns ``(counts, failures)``. ``erasure_id`` names
+    this erasure in the erase record of each audit day it rewrites.
     """
     removed_attachments, failures = _unlink_attachments_with_pending(attachment_paths)
     removed_notes, notes_error = _erase_conversation_user_notes(channel, note_users)
@@ -6297,7 +6329,7 @@ def _erase_subject_stores(world, channel: str, user: str, note_users, attachment
     cache_error = _purge_llm_cache_for_erasure()
     if cache_error:
         failures.append(f"llm_cache: {cache_error}")
-    audit_scrubbed = _scrub_subject_audit(channel, user, failures)
+    audit_scrubbed = _scrub_subject_audit(channel, user, failures, world, erasure_id)
     knowledge = _erase_subject_knowledge_strict(channel, user, failures)
     return {"attachments": removed_attachments, "notes": removed_notes,
             "fact_keys": fact_keys, "audit": audit_scrubbed, "knowledge": knowledge}, failures
@@ -6320,8 +6352,9 @@ def _erase_subject_residue(ctx, world, channel: str, user: str, yes: bool) -> No
         click.echo(f"This will erase stored facts, notes, audit lines and "
                    f"knowledge for {channel}:{user}.")
         click.confirm("Proceed?", abort=True)
+    erasure_id = secrets.token_hex(16)
     stores, failures = _erase_subject_stores(
-        world, channel, user, [types.SimpleNamespace(user_id=user)], [],
+        world, channel, user, [types.SimpleNamespace(user_id=user)], [], erasure_id,
     )
     scrubbed_fact_keys, removed_notes = stores["fact_keys"], stores["notes"]
     audit_scrubbed, knowledge_removed = stores["audit"], stores["knowledge"]
@@ -6337,7 +6370,7 @@ def _erase_subject_residue(ctx, world, channel: str, user: str, yes: bool) -> No
     # any identifier derived from the subject.
     try:
         recorded = audit.record(
-            "erase", channel=channel, erasure_id=secrets.token_hex(16),
+            "erase", channel=channel, erasure_id=erasure_id,
             durable_proof=False, auxiliary_checks_passed=not failures,
             conversations=0, turns=0, goals=0, attachments=stores["attachments"],
             audit_lines_scrubbed=audit_scrubbed,
@@ -6425,8 +6458,15 @@ def erase(ctx, channel: str, user: str, yes: bool) -> None:
     # Every store keyed by the subject (files, notes, facts, the AI reply cache,
     # audit lines, knowledge) goes through ONE list of steps, the same one a
     # rerun without a conversation takes, so a rerun finishes what this left.
+    import secrets
+
+    erasure_id = (
+        erasure_manifest["receipt_id"]
+        if isinstance(erasure_manifest, dict)
+        else secrets.token_hex(16)
+    )
     stores, closure_failures = _erase_subject_stores(
-        world, channel, user, convs, attachment_paths,
+        world, channel, user, convs, attachment_paths, erasure_id,
     )
     removed_attachments = stores["attachments"]
     removed_user_notes = stores["notes"]
@@ -6437,16 +6477,9 @@ def erase(ctx, channel: str, user: str, yes: bool) -> None:
     # identifier from the subject. Low-entropy user IDs (phone numbers, short
     # handles, numeric IDs) are enumerable, so even a truncated hash can
     # re-identify the erased person if audit logs are read.
-    import secrets
-
     from .. import audit
 
     knowledge_chunks = sum(knowledge_removed.values())
-    erasure_id = (
-        erasure_manifest["receipt_id"]
-        if isinstance(erasure_manifest, dict)
-        else secrets.token_hex(16)
-    )
     audit_record_error: str | None = None
     try:
         audit_recorded = audit.record(
@@ -7379,15 +7412,27 @@ def audit_checkpoint() -> None:
     default=None,
     help="Bounded reason for an authorized changed-prefix supersession.",
 )
+@click.option(
+    "--without-erase-record",
+    is_flag=True,
+    help=(
+        "Supersede a day erased before erase records were stored. A later "
+        "verify against an older retained sequence reports it."
+    ),
+)
+@click.pass_context
 def audit_checkpoint_publish(
+    ctx,
     checkpoint_dir: Path,
     day: str | None,
     pubkey: tuple[str, ...],
     supersede_digest: str | None,
     lifecycle_reason: str | None,
+    without_erase_record: bool,
 ) -> None:
     """Publish the current signed day tip to an independent checkpoint store."""
     from ..audit.checkpoints import AuditCheckpointError, publish_checkpoint
+    from ..erasure_receipts import audit_erase_records
     from ..paths import data_dir
 
     _require_day_opt(day)
@@ -7399,6 +7444,8 @@ def audit_checkpoint_publish(
             trusted_pubkeys=pubkey or None,
             supersedes_checkpoint_sha256=supersede_digest,
             lifecycle_reason=lifecycle_reason,
+            erase_records=audit_erase_records(lambda: open_world(ctx.obj["db"])),
+            allow_missing_erase_record=without_erase_record,
         )
     except (AuditCheckpointError, ImportError, OSError, RuntimeError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
@@ -7487,14 +7534,21 @@ def audit_checkpoint_retire(
     multiple=True,
     help="Pinned Ed25519 public key in hex; repeat to trust a rotation set.",
 )
+@click.pass_context
 def audit_checkpoint_verify(
+    ctx,
     checkpoint_dir: Path,
     minimum_sequence: int | None,
     minimum_digest: str | None,
     pubkey: tuple[str, ...],
 ) -> None:
-    """Verify published checkpoint history and every committed audit prefix."""
+    """Verify published checkpoint history and every committed audit prefix.
+
+    With --minimum-sequence, a day given a new checkpoint after that sequence
+    fails the check until you have reviewed it and retain a newer sequence.
+    """
     from ..audit.checkpoints import verify_checkpoints
+    from ..erasure_receipts import audit_erase_records
     from ..paths import data_dir
 
     try:
@@ -7504,6 +7558,7 @@ def audit_checkpoint_verify(
             trusted_pubkeys=pubkey or None,
             minimum_sequence=minimum_sequence,
             minimum_digest=minimum_digest,
+            erase_records=audit_erase_records(lambda: open_world(ctx.obj["db"])),
         )
     except (ImportError, OSError, RuntimeError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc

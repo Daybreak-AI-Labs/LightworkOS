@@ -54,6 +54,28 @@ checkpoint is also refused when the active signer is outside the supplied set.
 The minimum sequence detects rollback; the digest detects a signed fork at the
 externally retained sequence.
 
+A retained sequence also fixes what "verified" means for each day it covers.
+A supersession (see below) starts a new era for a day and is signed with the
+same key as the log, so whoever holds that key could otherwise replace a
+commitment you had already retained. With `--minimum-sequence`, verification
+therefore fails for every supersession published after that sequence and
+names the day:
+
+- `superseded_after_pin`: an erase record stored by the erasure backs the
+  change. The line gives its erasure id and how many rows it erased. Compare
+  it with the erasure request you know about, then retain the newest sequence
+  and digest; the check is clean again from there.
+- `superseded_without_erase_record`: no stored erase record matches the day
+  as it is now. Only the signing key vouches for the change, so compare the
+  day with a copy kept elsewhere before you retain anything newer.
+- `superseded_erase_record_unchecked`: the erase records could not be read,
+  or the day was replaced again since and only its newest replacement can
+  still be compared with the log. Run the check where the world model is
+  available.
+
+Without `--minimum-sequence` there is no retained point to compare with, and
+supersessions are checked only for their signed lifecycle evidence, as before.
+
 Verification never creates a lock file, changes a mode or ACL, or writes to the
 audit or checkpoint store. It can run against read-only media. All commitments
 for the same day are checked with one day-file scan.
@@ -78,6 +100,16 @@ signed, explicit lifecycle records:
   signed re-anchor evidence or, for a live day, a signed erase marker that
   names the exact superseded checkpoint digest. Lightwork binds that evidence
   and the exact superseded checkpoint into the new signed record.
+- That evidence is signed with the audit key, so the key's holder can produce
+  it alone. Publication therefore also requires an erase record: `maverick
+  erase` stores one in the world model's immutable receipt table for each
+  audit day it rewrites, with the day, its row counts and its new tip hash
+  and nothing about the person. The day being published must still contain
+  that tip, and the record must be newer than the checkpoint being replaced,
+  so one erasure cannot explain a later change. A day erased before these
+  records existed has none; publish it with `--without-erase-record`, and
+  expect `superseded_without_erase_record` from anyone verifying against an
+  older retained sequence.
 - After signed retention has removed a day, retire its latest commitment:
 
 ```console

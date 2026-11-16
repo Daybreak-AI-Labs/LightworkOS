@@ -81,6 +81,20 @@ _BREAK_TEXT = {
     "trusted_minimum_invalid": "That receipt file could not be used.",
 }
 
+#: A day whose checkpoint was replaced after the kept receipt; ``{day}`` is
+#: filled in. The receipt no longer covers that day until a newer one is kept.
+_SUPERSEDED_TEXT = {
+    "superseded_after_pin": "The checkpoint for {day} was replaced after your kept receipt. An erasure "
+                            "record is on file for that day. Check that erasure, then keep a receipt "
+                            "for the newest checkpoint.",
+    "superseded_without_erase_record": "The checkpoint for {day} was replaced after your kept receipt, and "
+                                       "no erasure record is on file for it. Compare that day's "
+                                       "log with a copy kept somewhere else.",
+    "superseded_erase_record_unchecked": "The checkpoint for {day} was replaced after your kept receipt. "
+                                         "The erasure records could not be read, so try the "
+                                         "check again.",
+}
+
 
 class PublishIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -197,6 +211,15 @@ def _latest_digest_for_day(day: str) -> str:
         "This day has no checkpoint yet, so there is nothing to start again. Publish it normally."))
 
 
+def _erase_records():
+    """Looks up the erasure records a replaced checkpoint must be backed by."""
+    from maverick.erasure_receipts import audit_erase_records
+
+    from ._shared import _world
+
+    return audit_erase_records(_world)
+
+
 def _publish(body: PublishIn, supersede: str | None) -> dict:
     from maverick.audit.checkpoints import publish_checkpoint
 
@@ -204,6 +227,7 @@ def _publish(body: PublishIn, supersede: str | None) -> dict:
         _audit_dir(), _checkpoint_dir(), day=body.day, trusted_pubkeys=_pinned(),
         supersedes_checkpoint_sha256=supersede,
         lifecycle_reason="gdpr_reanchor" if supersede else None,
+        erase_records=_erase_records(),
     )
     sequence = int(path.stem.rsplit("-", 1)[-1])
     return {"published": True, "sequence": sequence, "day": body.day}
@@ -211,6 +235,11 @@ def _publish(body: PublishIn, supersede: str | None) -> dict:
 
 def _publish_problem(exc: Exception) -> str:
     text = str(exc).lower()
+    if "no stored erase record" in text:
+        return ("No erasure record is on file for this day, so its checkpoint cannot be replaced here. "
+                "If the erasure was made before this version, an administrator can replace it from the command line.")
+    if "erase records" in text:
+        return "The erasure records could not be read, so nothing was published. Try again."
     if "prefix/count changed" in text:
         return ("The retained prefix of this day's log no longer matches its checkpoint. This can be an erasure, truncation or another change. Check the log first. A new checkpoint after erasure is allowed only when the retained signed erasure evidence confirms it.")
     if "retired" in text:
@@ -248,10 +277,14 @@ def _verify(body: VerifyIn) -> dict:
     pinned = _pinned()
     breaks = verify_checkpoints(_audit_dir(), _checkpoint_dir(), trusted_pubkeys=pinned,
                                 minimum_sequence=minimum_sequence,
-                                minimum_digest=minimum_digest)
+                                minimum_digest=minimum_digest,
+                                erase_records=_erase_records())
     problems: list[str] = []
     for item in breaks[:50]:
         text = _BREAK_TEXT.get(item.reason)
+        if item.reason in _SUPERSEDED_TEXT:
+            day = str(item.detail)[:10]  # the detail starts with the day
+            text = _SUPERSEDED_TEXT[item.reason].format(day=day if _DAY.fullmatch(day) else "one day")
         if text is None:
             text = (f"Checkpoint {item.sequence}: the activity log for that day no longer matches it."
                     if item.sequence else "A checkpoint does not match the activity log.")

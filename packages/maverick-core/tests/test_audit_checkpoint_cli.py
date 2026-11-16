@@ -152,3 +152,51 @@ def test_checkpoint_cli_surfaces_invalid_key_as_controlled_error(
     assert "Error:" in result.output
     assert "valid hex" in result.output
     assert "Traceback" not in result.output
+
+
+def test_erase_then_new_checkpoint_fails_an_older_pin_until_it_is_retained(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setattr(signing, "KEY_DIR", signing._LEGACY_KEY_DIR)
+    from maverick.paths import data_dir
+
+    day = "2000-01-01"
+    closed = signing.AuditSigner(data_dir("audit") / f"{day}.ndjson")
+    assert closed.write({"kind": "tool_call", "channel": "telegram", "user_id": "alice"})
+    assert closed.write({"kind": "tool_call", "tool": "read"})
+    assert signing.ensure_anchors(data_dir("audit")) == 1
+    checkpoints = tmp_path / "external-checkpoints"
+    runner = CliRunner()
+    base = ["--checkpoint-dir", str(checkpoints)]
+
+    def digest(sequence: int) -> str:
+        path = checkpoints / f"audit-checkpoint-{sequence:020d}.ndjson"
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    first = runner.invoke(main, ["audit", "checkpoint", "publish", "--day", day, *base])
+    assert first.exit_code == 0, first.output
+    pinned = digest(1)
+    erased = runner.invoke(main, ["erase", "--channel", "telegram", "--user", "alice", "--yes"])
+    assert erased.exit_code == 0, erased.output
+    assert "1 audit event(s) scrubbed" in erased.output
+
+    replaced = runner.invoke(main, [
+        "audit", "checkpoint", "publish", "--day", day, *base,
+        "--supersede-digest", pinned, "--lifecycle-reason", "gdpr_reanchor",
+    ])
+    assert replaced.exit_code == 0, replaced.output
+
+    stale = runner.invoke(main, [
+        "audit", "checkpoint", "verify", *base,
+        "--minimum-sequence", "1", "--minimum-digest", pinned,
+    ])
+    assert stale.exit_code == 1, stale.output
+    assert "superseded_after_pin" in stale.output and "1 of 2 rows" in stale.output
+    retained = runner.invoke(main, [
+        "audit", "checkpoint", "verify", *base,
+        "--minimum-sequence", "2", "--minimum-digest", digest(2),
+    ])
+    assert retained.exit_code == 0, retained.output

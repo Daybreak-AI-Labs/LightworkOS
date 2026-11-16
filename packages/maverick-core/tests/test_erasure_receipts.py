@@ -20,8 +20,10 @@ from maverick.erasure_receipts import (
     ErasurePlanChanged,
     ErasureReceiptError,
     build_manifest,
+    load_audit_erase_records,
     load_verified_erasure_closure,
     load_verified_receipt,
+    persist_audit_erase_record,
     persist_erasure_closure,
     persist_receipt,
     receipt_is_durable,
@@ -717,6 +719,45 @@ def test_storage_immutability_retention_and_signature_tamper_detection(tmp_path)
             current["receipt_id"],
             expected_tenant="shared",
         )
+
+
+def test_audit_erase_records_are_durable_ordered_subject_free_and_tamper_evident(tmp_path):
+    world = WorldModel(tmp_path / "world.db")
+    rewrite = {"day": "2026-01-02", "rows_before": 9, "rows_erased": 2}
+    first = persist_audit_erase_record(
+        world, tenant_id="shared", erasure_id="a" * 32, rows_after=9,
+        tip_hash="1" * 64, **rewrite,
+    )
+    second = persist_audit_erase_record(
+        world, tenant_id="shared", erasure_id="b" * 32, rows_after=7,
+        tip_hash="2" * 64, **rewrite,
+    )
+
+    assert load_audit_erase_records(world, "2026-01-02", expected_tenant="shared") == [first, second]
+    assert load_audit_erase_records(world, "2026-01-03", expected_tenant="shared") == []
+    assert load_audit_erase_records(world, "2026-01-02", expected_tenant="other") == []
+    assert set(first) == {
+        "schema", "record_id", "tenant_id", "erasure_id", "day", "ordinal", "rows_before",
+        "rows_after", "rows_erased", "tip_hash", "issued_at", "retained_until",
+        "payload_sha256", "key_id", "signature",
+    }
+    with pytest.raises(sqlite3.DatabaseError, match="immutable"):
+        with world._writing() as conn:
+            conn.execute("UPDATE erasure_receipts SET manifest = '{}' WHERE receipt_id = ?",
+                         (first["record_id"],))
+    with pytest.raises(ErasureReceiptError, match="rows_erased"):
+        persist_audit_erase_record(
+            world, tenant_id="shared", erasure_id="c" * 32, day="2026-01-02",
+            rows_before=9, rows_after=9, rows_erased=0, tip_hash="3" * 64,
+        )
+
+    # A stored row whose content no longer matches its signature is not evidence.
+    with world._writing() as conn:
+        conn.execute("DROP TRIGGER erasure_receipts_no_update")
+        tampered = dict(second, rows_erased=1)
+        conn.execute("UPDATE erasure_receipts SET manifest = ? WHERE receipt_id = ?",
+                     (_canonical(tampered), second["record_id"]))
+    assert load_audit_erase_records(world, "2026-01-02", expected_tenant="shared") == [first]
 
 
 def test_v28_sqlite_database_migrates_to_receipt_schema(tmp_path):
