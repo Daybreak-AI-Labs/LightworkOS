@@ -206,7 +206,7 @@ def test_jobs_follow_the_changed_paths(tree):
     assert _select(tree, "docs/OPEN_ITEMS.md")["jobs"] == _jobs()
     assert _select(tree, "deploy/helm/values.yaml")["jobs"] == _jobs(audit=True)
     assert _select(tree, "packages/maverick-channels/maverick_channels/irc.py")["jobs"] == _jobs(
-        docker=True, audit=True, **{"release-cohort": True},
+        docker=True, audit=True, postgres=True, **{"release-cohort": True},
     )
     assert _select(tree, "packages/maverick-core/maverick/agent.py")["jobs"] == dict.fromkeys(
         select_pr_tests.JOB_PREFIXES, True,
@@ -439,6 +439,49 @@ def test_a_slice_holding_none_of_the_selected_files_exits_5():
 
 
 # --- the wiring ------------------------------------------------------------
+
+
+#: How a test file shows that it needs the live Postgres service: it reads the
+#: DSN from the environment, or takes the disposable-database fixture.
+_LIVE_POSTGRES = re.compile(
+    r"""os\.(?:environ\.get|getenv)\(\s*["']MAVERICK_(?:PG|KNOWLEDGE)_DSN["']"""
+    r"""|os\.environ\[\s*["']MAVERICK_(?:PG|KNOWLEDGE)_DSN["']\s*\]"""
+    r"""|\bpostgres_test_""" r"""dsn\b"""
+)
+
+
+def test_postgres_job_runs_every_live_postgres_test_file_in_both_postures():
+    """The `test` legs have no Postgres, so a live-Postgres test runs only in
+    the `postgres` job, and only when that job names its file. Every such file
+    is named there, a change to it selects the job on a pull request, and the
+    list runs in the default mode and again in the production security
+    posture (at-rest encryption on), against the same service."""
+    job = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))["jobs"]["postgres"]
+    listed = job["env"]["POSTGRES_TEST_FILES"].split()
+    assert len(listed) == len(set(listed))
+    assert all((REPO_ROOT / name).is_file() for name in listed)
+    assert all(name.startswith(select_pr_tests.JOB_PREFIXES["postgres"]) for name in listed)
+    # The job installs each package a listed test imports, and a change to
+    # that package selects the job on a pull request.
+    install = next(step["run"] for step in job["steps"] if step.get("name") == "Install")
+    for prefix in select_pr_tests.JOB_PREFIXES["postgres"]:
+        assert f"pip install -e ./{prefix.rstrip('/')}" in install.replace("'", ""), prefix
+
+    live = {
+        path.relative_to(REPO_ROOT).as_posix()
+        for path in select_pr_tests.test_files(REPO_ROOT)
+        if _LIVE_POSTGRES.search(path.read_text(encoding="utf-8"))
+    }
+    # Its live tests are one class among many that need no server.
+    own_step = "packages/maverick-knowledge/tests/test_knowledge.py"
+    assert live - set(listed) == {own_step}
+
+    runs = [step for step in job["steps"] if "python -m pytest" in step.get("run", "")]
+    assert all(step["env"]["MAVERICK_PG_DSN"] for step in runs)
+    for target in ("$POSTGRES_TEST_FILES", f"{own_step} -k PgVectorLive"):
+        postures = [step["env"].get("MAVERICK_TEST_SECURE_DEFAULT")
+                    for step in runs if step["run"].endswith(target)]
+        assert postures == [None, "1"], target
 
 
 def test_ci_pull_request_legs_take_the_selection_and_the_queue_runs_everything():

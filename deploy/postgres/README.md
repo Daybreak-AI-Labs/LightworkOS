@@ -63,8 +63,13 @@ export MAVERICK_PG_RLS=1                    # force RLS on tenant-scoped tables
 export MAVERICK_STRICT_TENANT_ISOLATION=1   # exclude legacy NULL-tenant rows
 ```
 
-With RLS on, every connection sets the `maverick.tenant` session GUC and the
-DB refuses cross-tenant reads/writes even if application code has a bug.
+With RLS on, every transaction sets the `maverick.tenant` session GUC, and on
+the tables that carry a tenant column the DB refuses cross-tenant reads/writes
+even if application code misses its own filter. Tables without a tenant column
+(goal events, artifacts, questions, turns and other child tables) have no
+policy and rely on the application's filter. Connect as a login that is neither
+a superuser nor `BYPASSRLS`. See "What row-level security covers" in
+[`docs/multi-tenancy.md`](../../docs/multi-tenancy.md).
 
 ## Provision (managed Postgres)
 

@@ -127,7 +127,9 @@ shares world-model rows and enables database-enforced tenant isolation, but it
 does not share every flow, A2A, audit, learning, and policy store. Keep one
 dashboard/serve replica and scale remote workers separately — see
 [`deploy/postgres/README.md`](https://github.com/Daybreak-AI-Labs/LightworkOS/blob/main/deploy/postgres/README.md). Row-level security
-(`MAVERICK_PG_RLS=1`) enforces the tenant boundary in the database itself.
+(`MAVERICK_PG_RLS=1`) adds a database-side check of the tenant boundary on the
+tables that carry a tenant column; "What row-level security covers" below says
+what that includes and what it does not.
 
 ### Records saved before workspaces were used
 
@@ -184,6 +186,35 @@ NULL-tenant rows left), set `[world_model] rls = true` (or `MAVERICK_PG_RLS=1`).
 The installer's advanced step writes this with the same reminder. RLS is
 defense-in-depth: the app-layer `_tenant_scope` predicate already isolates
 tenants NULL-tolerantly, so single-tenant and SQLite installs need none of this.
+
+Run `rls-preflight` before RLS is on. Afterwards the policy hides rows with no
+tenant from the application's own count, so the report shows none even when
+some remain; a superuser still counts them.
+
+#### What row-level security covers
+
+- **Covered:** the 16 tables with a tenant column (`goals`, `facts`,
+  `conversations`, `approvals`, `processed_messages`, `projects`,
+  `fact_history`, `erasure_receipts`, `approval_audit_outbox`,
+  `attachment_submissions`, `event_goal_admissions`, `event_trigger_batches`,
+  `webhook_subscriptions`, `webhook_deliveries`, `deadline_alerts`,
+  `encryption_migrations`). The policy is enabled **and forced**, so it also
+  applies to the role that owns the tables. A statement with no tenant filter
+  cannot read, change or delete another tenant's rows there, or rows with no
+  tenant, and cannot move a row to another tenant.
+- **Not covered:** tables with no tenant column, among them `goal_events`,
+  `artifacts`, `questions`, `episodes`, `signoffs`, `turns`, `messages`,
+  `attachments` and `share_links`. They have no policy. Lightwork scopes them
+  through their parent goal or conversation in its own queries, and nothing in
+  the database stops a query that leaves that filter out.
+- **The login matters.** A superuser or a role with `BYPASSRLS` skips every
+  policy. Lightwork reports such a login in the readiness details and refuses
+  to start with it in enterprise mode. Use a dedicated login that is neither.
+- **The policy trusts a transaction setting.** It compares each row with
+  `maverick.tenant` (or `maverick.workspace`), which Lightwork sets at the
+  start of every transaction. SQL run directly on that connection can set it
+  too. RLS is a second check on Lightwork's own queries, not a boundary
+  against someone who can run SQL as the application's database role.
 
 The webhook and deadline-alert tables (`webhook_subscriptions`,
 `webhook_deliveries`, `deadline_alerts`) store the workspace id as written

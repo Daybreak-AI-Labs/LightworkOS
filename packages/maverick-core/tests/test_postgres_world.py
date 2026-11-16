@@ -1524,6 +1524,213 @@ def test_rls_lets_a_tenant_with_an_encoded_id_use_its_workspace_rows(monkeypatch
             cur.execute("DROP ROLE IF EXISTS mvk_rls_ws")
 
 
+# --- Row-level security for a login the policies apply to --------------------
+# The test DSN login is a superuser, and Postgres exempts a superuser from
+# every row policy. These tests run the product as a login that is neither a
+# superuser nor BYPASSRLS, once as the owner of the tables and once not.
+
+#: World tables with no row policy. None has a tenant column: the product
+#: scopes them through their parent goal or conversation in the SQL it writes
+#: (or, for ``halt`` and the provider ledgers, they are deployment-wide).
+#: Row-level security does NOT filter them. A new table gets a policy
+#: (``_RLS_TABLES``) or a deliberate place in this list.
+_TABLES_WITHOUT_ROW_POLICY = frozenset({
+    "approval_checks", "approval_signoffs", "artifacts", "attachments", "episodes",
+    "goal_events", "goal_mutation_receipts", "goal_origins", "halt", "harness_addenda",
+    "harness_corpus", "harness_line_meta", "harness_transfer_tried", "messages",
+    "provider_cap_receipts", "provider_operation_attempt_backfill",
+    "provider_operation_attempts", "provider_spend", "questions", "rate_events",
+    "schema_migrations", "share_links", "signoffs", "turns",
+})
+
+
+@pytest.fixture(params=["not_owner", "owner"])
+def rls_login(request, postgres_test_dsn, monkeypatch):
+    """A store with rows that have no workspace, row-level security on, and a
+    login the policies apply to (the table owner, or a login with only DML)."""
+    import psycopg
+    from maverick.world_model_backends.postgres import PostgresWorldModel
+    from psycopg import sql
+    from psycopg.conninfo import make_conninfo
+
+    owner = request.param == "owner"
+    role = "mvk_rls_" + uuid.uuid4().hex[:12]
+    password = uuid.uuid4().hex
+    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
+    monkeypatch.delenv("MAVERICK_STRICT_TENANT_ISOLATION", raising=False)
+    try:
+        with psycopg.connect(postgres_test_dsn, autocommit=True) as admin:
+            admin.execute(sql.SQL(
+                "CREATE ROLE {} LOGIN PASSWORD {} NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE"
+            ).format(sql.Identifier(role), sql.Literal(password)))
+    except psycopg.errors.InsufficientPrivilege:
+        pytest.skip("the Postgres test login cannot create roles")
+    login = make_conninfo(postgres_test_dsn, user=role, password=password)
+    try:
+        with psycopg.connect(postgres_test_dsn, autocommit=True) as admin:
+            admin.execute(sql.SQL("GRANT USAGE {} ON SCHEMA public TO {}").format(
+                sql.SQL(", CREATE" if owner else ""), sql.Identifier(role)))
+        # Before row-level security: whoever owns the tables creates them, and
+        # an install with no workspace saves a goal, an event and a fact.
+        monkeypatch.setenv("MAVERICK_PG_RLS", "0")
+        with PostgresWorldModel(dsn=login if owner else postgres_test_dsn) as world:
+            legacy_goal = world.create_goal("saved before workspaces")
+            world.append_event(legacy_goal, "agent", "note", "an early event")
+            world.upsert_fact("contact", "early@example.test")
+        # The owner turns it on; its start installs and forces the policies.
+        monkeypatch.setenv("MAVERICK_PG_RLS", "1")
+        PostgresWorldModel(dsn=login if owner else postgres_test_dsn).close()
+        if not owner:
+            with psycopg.connect(postgres_test_dsn, autocommit=True) as admin:
+                admin.execute(sql.SQL(
+                    "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {}"
+                ).format(sql.Identifier(role)))
+                admin.execute(sql.SQL(
+                    "GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO {}"
+                ).format(sql.Identifier(role)))
+        yield SimpleNamespace(dsn=login, admin=postgres_test_dsn, owner=owner,
+                              legacy_goal=legacy_goal)
+    finally:
+        with psycopg.connect(postgres_test_dsn, autocommit=True) as admin:
+            admin.execute(sql.SQL("REASSIGN OWNED BY {} TO CURRENT_USER").format(sql.Identifier(role)))
+            admin.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(role)))
+            admin.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(role)))
+
+
+def _raw(world, statement, params=()):
+    """Run SQL that names no workspace, inside the product's own transaction."""
+    with world._tx() as cur:
+        cur.execute(statement, params)
+        return cur.fetchall() if cur.description else cur.rowcount
+
+
+def test_rls_holds_for_a_login_the_policies_apply_to(rls_login):
+    """The product, running as an ordinary login with row-level security on,
+    reads and writes its own workspace's rows. Rows of another workspace and
+    rows with no workspace are out of reach of a raw statement that names no
+    workspace: not read, not changed, not removed. It holds for the owner of
+    the tables too, because the policies are forced."""
+    import psycopg
+    from maverick.paths import tenant_scope
+    from maverick.world_model_backends import pg_rls
+    from maverick.world_model_backends.postgres import PostgresWorldModel
+
+    with PostgresWorldModel(dsn=rls_login.dsn) as world:
+        assert world.rls_bypass_reason is None
+        assert _raw(world, "SELECT rolsuper OR rolbypassrls, "
+                    "(SELECT pg_get_userbyid(relowner) = current_user FROM pg_class "
+                    "WHERE oid = 'goals'::regclass) "
+                    "FROM pg_roles WHERE rolname = current_user") == [(False, rls_login.owner)]
+        goals = {}
+        for tenant in ("rls_alpha", "rls_beta"):
+            with tenant_scope(tenant=tenant):
+                goals[tenant] = world.create_goal(f"{tenant} goal")
+                world.upsert_fact("contact", f"{tenant}@example.test")
+                world.create_project(f"{tenant} project")
+                # Its own rows, through the product: read and written.
+                world.set_goal_status(goals[tenant], "done", result=f"{tenant} result")
+                assert world.get_goal(goals[tenant]).result == f"{tenant} result"
+                assert [goal.id for goal in world.list_goals()] == [goals[tenant]]
+                assert world.get_fact("contact") == f"{tenant}@example.test"
+        alpha, beta = goals["rls_alpha"], goals["rls_beta"]
+        with tenant_scope(tenant="rls_alpha"):
+            for table in ("goals", "facts", "projects"):
+                assert _raw(world, f"SELECT count(*) FROM {table}") == [(1,)], table
+            assert _raw(world, "SELECT id FROM goals") == [(alpha,)]
+            assert _raw(world, "UPDATE goals SET updated_at = updated_at") == 1
+            assert _raw(world, "UPDATE goals SET status = 'pending' WHERE id IN (%s, %s)",
+                        (beta, rls_login.legacy_goal)) == 0
+            assert _raw(world, "DELETE FROM goals WHERE id IN (%s, %s)",
+                        (beta, rls_login.legacy_goal)) == 0
+            assert _raw(world, "DELETE FROM facts") == 1
+            # Nor can it hand one of its rows to another workspace.
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                _raw(world, "UPDATE goals SET tenant_id = 'rls_beta'")
+            # Rows with no workspace stay invisible, to the product as well.
+            assert _raw(world, "SELECT count(*) FROM goals WHERE tenant_id IS NULL") == [(0,)]
+            assert world.get_goal(rls_login.legacy_goal) is None
+            assert world.get_goal(beta) is None
+        # With no workspace bound the policies match nothing, so the doctor's
+        # count of records without a workspace finds none for this login.
+        assert _raw(world, "SELECT count(*) FROM goals") == [(0,)]
+        assert pg_rls.shared_legacy_rows(world) is None
+    # A superuser, which the policies do not apply to, sees what is stored:
+    # the other workspace's rows and the rows with no workspace are untouched.
+    with psycopg.connect(rls_login.admin, autocommit=True) as admin:
+        assert admin.execute("SELECT id, tenant_id, status FROM goals ORDER BY id").fetchall() == [
+            (rls_login.legacy_goal, None, "pending"), (alpha, "rls_alpha", "done"),
+            (beta, "rls_beta", "done")]
+        assert admin.execute(
+            "SELECT tenant_id FROM facts ORDER BY tenant_id NULLS FIRST").fetchall() == [
+            (None,), ("rls_beta",)]
+
+
+def test_rls_readiness_and_startup_for_a_login_the_policies_apply_to(rls_login, monkeypatch):
+    """What `maverick tenant rls-preflight` and start-up report once the
+    policies are forced and rows with no workspace remain. The login cannot
+    count those rows any more, so readiness shows none; start-up does not
+    refuse, in enterprise mode either. A superuser is refused there."""
+    import psycopg
+    from maverick.world_model_backends import pg_rls, postgres
+    from maverick.world_model_backends.postgres import PostgresWorldModel
+
+    with psycopg.connect(rls_login.dsn, autocommit=True) as conn:
+        report = pg_rls.preflight(conn)
+    assert {info["owned_by_current_role"] for info in report["tables"].values()} == {rls_login.owner}
+    assert report["tables"]["goals"]["null_tenant_rows"] == 0
+    assert report["ready"] is rls_login.owner
+    with psycopg.connect(rls_login.admin, autocommit=True) as conn:
+        assert pg_rls.preflight(conn)["tables"]["goals"]["null_tenant_rows"] == 1
+
+    # Enterprise mode turns row-level security on by itself and checks first.
+    monkeypatch.delenv("MAVERICK_PG_RLS")
+    monkeypatch.setattr(postgres, "_enterprise_default", lambda: True)
+    with PostgresWorldModel(dsn=rls_login.dsn) as world:
+        assert world._rls and world.rls_bypass_reason is None
+    with pytest.raises(RuntimeError, match="superuser, which bypasses row-level security"):
+        PostgresWorldModel(dsn=rls_login.admin)
+
+
+def test_rls_does_not_filter_tables_that_have_no_tenant_column(rls_login):
+    """What row-level security does NOT do. Events, artifacts, questions,
+    turns and the other child tables have no tenant column and no row policy.
+    The product keeps them apart through their parent row, in the SQL it
+    writes. A raw statement without that predicate reads and changes every
+    workspace's rows there. The policies also key on a transaction setting,
+    which any SQL on the connection can set: they guard against a missed
+    predicate in the product, not against hostile SQL."""
+    import psycopg
+    from maverick.paths import tenant_scope
+    from maverick.world_model_backends.postgres import _RLS_TABLES, PostgresWorldModel
+
+    with psycopg.connect(rls_login.admin, autocommit=True) as admin:
+        forced = dict(admin.execute(
+            "SELECT c.relname, c.relrowsecurity AND c.relforcerowsecurity FROM pg_class c "
+            "JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = 'public' AND c.relkind = 'r'").fetchall())
+    assert {table for table, on in forced.items() if on} == set(_RLS_TABLES)
+    assert {table for table, on in forced.items() if not on} == _TABLES_WITHOUT_ROW_POLICY
+
+    with PostgresWorldModel(dsn=rls_login.dsn) as world:
+        goals = {}
+        for tenant in ("rls_alpha", "rls_beta"):
+            with tenant_scope(tenant=tenant):
+                goals[tenant] = world.create_goal(f"{tenant} goal")
+                world.append_event(goals[tenant], "agent", "note", f"{tenant} event")
+        beta = goals["rls_beta"]
+        with tenant_scope(tenant="rls_alpha"):
+            # The product's own read applies the parent predicate.
+            assert world.goal_events(beta) == []
+            assert len(world.goal_events(goals["rls_alpha"])) == 1
+            # Raw SQL is not filtered: both workspaces' events and the early one.
+            assert _raw(world, "SELECT count(*) FROM goal_events") == [(3,)]
+            assert _raw(world, "UPDATE goal_events SET kind = kind WHERE goal_id = %s", (beta,)) == 1
+            with world._tx() as cur:
+                cur.execute("SELECT set_config('maverick.tenant', 'rls_beta', true)")
+                cur.execute("SELECT id FROM goals")
+                assert cur.fetchall() == [(beta,)]
+
+
 # --- Backend parity (SQLite v13 -> v20 catch-up) -----------------------------
 
 def test_set_goal_domain_and_v14_schema(world):
