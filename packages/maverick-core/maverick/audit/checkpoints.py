@@ -847,6 +847,7 @@ def _backing_erase_record(
     tip_hash: str,
     hashes: tuple[str, ...] | None,
     not_before: object,
+    superseded: str,
 ) -> Mapping | None:
     """The newest erase record that accounts for a day's committed prefix.
 
@@ -855,6 +856,11 @@ def _backing_erase_record(
     ``hashes`` are the day's row hashes when its file can still be compared.
     A record issued before ``not_before``, the time of the checkpoint being
     replaced, explains an earlier change and is not reused for this one.
+
+    The record must also list ``superseded``, the digest of the checkpoint
+    being replaced: the erasure compared the day with that very checkpoint
+    before it rewrote anything. An erasure that never saw this checkpoint
+    folder, or ran on a day already changed some other way, does not count.
     """
     if erase_records is None:
         return None
@@ -862,6 +868,8 @@ def _backing_erase_record(
     for record in reversed(list(erase_records(day))):
         after, tip = record.get("rows_after"), record.get("tip_hash")
         if record.get("day") != day or not isinstance(after, int) or isinstance(after, bool):
+            continue
+        if superseded not in (record.get("checkpoints") or ()):
             continue
         issued = _instant(record.get("issued_at"))
         if floor is not None and (issued is None or issued < floor):
@@ -889,6 +897,7 @@ def _supersession_report(
             erase_records, day=str(record["day"]), row_count=int(record["row_count"]),
             tip_hash=str(record["tip_hash"]), hashes=hashes,
             not_before=retained.record["created_at"] if retained is not None else None,
+            superseded=str(record["supersedes_checkpoint_sha256"]),
         )
     # failure-policy: fail_closed
     except Exception as exc:
@@ -967,7 +976,7 @@ def _lifecycle_after_pin(
     return breaks
 
 
-def erasure_explains_day(
+def day_checkpoint_state(
     audit_dir: Path | str,
     checkpoint_dir: Path | str,
     day: str,
@@ -975,14 +984,20 @@ def erasure_explains_day(
     erase_records: EraseRecords | None,
     pubkey_hex: str | None = None,
     trusted_pubkeys: Iterable[str] | None = None,
-) -> bool:
-    """Whether a stored erase record accounts for ``day`` not matching its checkpoints.
+) -> tuple[str | None, Mapping | None]:
+    """``(digest, erase record)`` for ``day``'s newest record in this store.
 
-    True when a record issued after the day's newest checkpoint record in
-    this store left the rows the day still starts with. An erase asks this
-    before it rewrites a day: a day changed some other way must not gain an
-    erase record that would then pass for the whole change. Anything that
-    cannot be read counts as unexplained.
+    An erase asks this before it rewrites a day. ``digest`` names the
+    checkpoint the day can be compared with; the erase lists it in its erase
+    record, and only a listed checkpoint can later be replaced on that record.
+    It is None when the store holds no record for the day, or when the store
+    or the day cannot be read: nothing was compared, so nothing is listed.
+
+    The erase record is the stored one, if any, that left the rows the day
+    still starts with after comparing it with that same checkpoint. A day
+    that no longer matches its checkpoint is rewritten only with such a
+    record, so a change made some other way cannot gain an erase record of
+    its own.
     """
     try:
         audit, checkpoints = _resolved_directories(audit_dir, checkpoint_dir)
@@ -990,15 +1005,20 @@ def erasure_explains_day(
         chain = _load_checkpoint_chain(checkpoints, trusted_keys)
         latest = next((entry for entry in reversed(chain) if entry.record["day"] == day), None)
         if latest is None:
-            return False
+            return None, None
         snapshot = _snapshot_day_unlocked(audit / f"{day}.ndjson", trusted_keys)
-        return _backing_erase_record(
+    except (AuditCheckpointError, OSError, ValueError):
+        return None, None
+    try:
+        explained = _backing_erase_record(
             erase_records, day=day, row_count=snapshot.row_count, tip_hash=snapshot.tip_hash,
             hashes=snapshot.hashes, not_before=latest.record["created_at"],
-        ) is not None
+            superseded=latest.digest,
+        )
     # failure-policy: fail_closed
     except Exception:
-        return False
+        explained = None  # records that cannot be read explain nothing
+    return latest.digest, explained
 
 
 def _new_record_body(
@@ -1039,7 +1059,7 @@ def _require_erase_record(
         backing = _backing_erase_record(
             erase_records, day=day, row_count=snapshot.row_count,
             tip_hash=snapshot.tip_hash, hashes=snapshot.hashes,
-            not_before=superseded.record["created_at"],
+            not_before=superseded.record["created_at"], superseded=superseded.digest,
         )
     # failure-policy: fail_closed
     except Exception as exc:
@@ -1051,8 +1071,10 @@ def _require_erase_record(
         raise AuditCheckpointError(
             f"no stored erase record matches {day}: a new checkpoint after an "
             "erasure needs the record that `maverick erase` stores for each "
-            "audit day it rewrites, issued after the checkpoint being replaced. "
-            "A day erased before those records existed can be published with "
+            "audit day it rewrites, after it has compared the day with the "
+            "checkpoint being replaced (a folder outside the checkpoint settings "
+            "is named with `maverick erase --checkpoint-dir`). A day erased "
+            "before those records existed can be published with "
             "--without-erase-record"
         )
 
@@ -1606,7 +1628,7 @@ __all__ = [
     "AuditCheckpointError",
     "CheckpointBreak",
     "CHECKPOINT_SCHEMA",
-    "erasure_explains_day",
+    "day_checkpoint_state",
     "latest_checkpoint_sequence",
     "list_checkpoints",
     "publish_checkpoint",

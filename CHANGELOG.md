@@ -494,7 +494,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   holding the person no longer matches its published checkpoint and no
   earlier erasure's record explains why. A day erased before this version
   is such a day: publish its new checkpoint first (`--without-erase-record`),
-  or restore the day from a backup, then run erase again.
+  or restore the day from a backup, then run erase again. If you keep
+  checkpoints in a folder given only as `--checkpoint-dir`, pass the same
+  option to `maverick erase`: a checkpoint the erase never compared the
+  day with cannot be replaced on its erase record.
 - `maverick erase` after a signing-key rotation no longer re-signs audit
   days that do not hold the person, or the tip ledger. Before, their
   anchors and checkpoints stopped matching. Days already affected still

@@ -730,15 +730,16 @@ def test_audit_erase_records_are_durable_ordered_subject_free_and_tamper_evident
     )
     second = persist_audit_erase_record(
         world, tenant_id="shared", erasure_id="b" * 32, rows_after=7,
-        tip_hash="2" * 64, **rewrite,
+        tip_hash="2" * 64, checkpoints=["d" * 64, "c" * 64, "d" * 64], **rewrite,
     )
+    assert (first["checkpoints"], second["checkpoints"]) == ([], ["c" * 64, "d" * 64])
 
     assert load_audit_erase_records(world, "2026-01-02", expected_tenant="shared") == [first, second]
     assert load_audit_erase_records(world, "2026-01-03", expected_tenant="shared") == []
     assert load_audit_erase_records(world, "2026-01-02", expected_tenant="other") == []
     assert set(first) == {
         "schema", "record_id", "tenant_id", "erasure_id", "day", "ordinal", "rows_before",
-        "rows_after", "rows_erased", "tip_hash", "issued_at", "retained_until",
+        "rows_after", "rows_erased", "tip_hash", "checkpoints", "issued_at", "retained_until",
         "payload_sha256", "key_id", "signature",
     }
     with pytest.raises(sqlite3.DatabaseError, match="immutable"):

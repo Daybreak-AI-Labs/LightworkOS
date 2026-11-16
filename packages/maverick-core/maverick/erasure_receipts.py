@@ -108,9 +108,12 @@ _AUDIT_ERASE_BODY_FIELDS = {
     "rows_after",
     "rows_erased",
     "tip_hash",
+    "checkpoints",
     "issued_at",
     "retained_until",
 }
+#: Checkpoint folders one erasure can compare a day with, at most.
+MAX_AUDIT_ERASE_CHECKPOINTS = 64
 _SIGNED_AUDIT_ERASE_FIELDS = _AUDIT_ERASE_BODY_FIELDS | {
     "payload_sha256",
     "key_id",
@@ -768,8 +771,10 @@ def validate_audit_erase_record(
     """Validate the record of one audit day rewritten by an erasure.
 
     It names the erasure, the day, how many rows the day had before and after,
-    how many were erased and the day's tip hash after the rewrite. It holds no
-    channel, user identifier or hash of an erased row.
+    how many were erased, the day's tip hash after the rewrite and the digest
+    of each published checkpoint the erasure compared the day with before it
+    rewrote anything. It holds no channel, user identifier or hash of an
+    erased row.
     """
     if not isinstance(value, Mapping):
         raise ErasureReceiptError("audit erase record must be an object")
@@ -795,6 +800,14 @@ def validate_audit_erase_record(
         raise ErasureReceiptError("audit erase record day is invalid")
     if not isinstance(tip_hash, str) or not _SHA256_RE.fullmatch(tip_hash):
         raise ErasureReceiptError("audit erase record tip hash is invalid")
+    checkpoints = value.get("checkpoints")
+    if (
+        not isinstance(checkpoints, list)
+        or len(checkpoints) > MAX_AUDIT_ERASE_CHECKPOINTS
+        or any(not isinstance(item, str) or not _SHA256_RE.fullmatch(item) for item in checkpoints)
+        or checkpoints != sorted(set(checkpoints))
+    ):
+        raise ErasureReceiptError("audit erase record checkpoints are invalid")
     ordinal = _count(value.get("ordinal"), "ordinal", minimum=1)
     if value.get("record_id") != _audit_erase_storage_id(day, ordinal):
         raise ErasureReceiptError("audit erase record id is not bound to its day")
@@ -809,6 +822,7 @@ def validate_audit_erase_record(
         "rows_after": _count(value.get("rows_after"), "rows_after", minimum=1),
         "rows_erased": _count(value.get("rows_erased"), "rows_erased", minimum=1),
         "tip_hash": tip_hash,
+        "checkpoints": list(checkpoints),
         "issued_at": _utc(_parse_utc(value.get("issued_at"), "issued_at")),
         "retained_until": _utc(_parse_utc(value.get("retained_until"), "retained_until")),
     }
@@ -899,6 +913,7 @@ def persist_audit_erase_record(
     rows_after: int,
     rows_erased: int,
     tip_hash: str,
+    checkpoints: list[str] | tuple[str, ...] = (),
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Sign and insert the record of one audit day an erasure rewrote.
@@ -926,6 +941,7 @@ def persist_audit_erase_record(
             "rows_after": rows_after,
             "rows_erased": rows_erased,
             "tip_hash": tip_hash,
+            "checkpoints": sorted(set(checkpoints)),
             "issued_at": _utc(issued),
             "retained_until": _utc(issued + timedelta(days=RECEIPT_RETENTION_DAYS)),
         }))

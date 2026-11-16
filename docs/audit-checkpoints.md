@@ -116,20 +116,24 @@ signed, explicit lifecycle records:
   erase` stores one in the world model's receipt table for each audit day it
   rewrites, with the day, its row counts and its new tip hash and nothing
   about the person. The day being published must still contain
-  that tip, and the record must be newer than the checkpoint being replaced,
-  so one erasure cannot explain a later change. A day erased before these
+  that tip, and the record must list the checkpoint being replaced and be
+  newer than it, so one erasure cannot explain a later change. A day erased before these
   records existed has none; publish it with `--without-erase-record`, and
   expect `superseded_without_erase_record` from anyone verifying against an
   older retained sequence. The command writes an activity-log entry naming
   who ran it, the day and both sequences before it publishes, and publishes
   nothing if that entry cannot be written.
-- `maverick erase` checks each day it is about to rewrite against the
+- `maverick erase` compares each day it is about to rewrite with the
   checkpoint folders this installation knows (beside the log, the custody
-  store, and the folder chosen in the checkpoint settings). A day that no
-  longer matches its checkpoint is refused unless an earlier erasure's
-  record shows it left the day that way, so a genuine erasure cannot give a
-  change nobody recorded an erase record. A folder passed only as
-  `--checkpoint-dir` is not checked: choose it in the settings instead.
+  store, and the folder chosen in the checkpoint settings) and any named
+  with `maverick erase --checkpoint-dir`. A day that no longer matches its
+  checkpoint is refused unless an earlier erasure's record shows it left
+  the day that way. The erase record lists the checkpoints the day was
+  compared with, and only a listed checkpoint can be replaced on that
+  record. So a genuine erasure cannot cover a change nobody recorded, and
+  an erasure that never saw a checkpoint folder cannot replace its
+  checkpoints: name that folder when you erase, or publish with
+  `--without-erase-record` afterwards.
 - After signed retention has removed a day, retire its latest commitment:
 
 ```console
@@ -156,8 +160,9 @@ Postgres alike, and nothing checks that an erasure took place.
 - It does not show that anyone asked for the erasure, that the erased rows
   were the person's, or that nothing else in the day changed. Someone with
   both the key and the database can store one for a change of their own.
-- `maverick erase` narrows the last point only for checkpoint folders it
-  knows, and only while that folder is in place when the erase runs.
+- An honest `maverick erase` narrows the last point: it refuses a day that
+  no longer matches a checkpoint it can see, and its record backs replacing
+  only the checkpoints it compared the day with.
 
 The control is the report, not the record: every supersession and retirement
 published after your retained sequence is shown to you, with or without an

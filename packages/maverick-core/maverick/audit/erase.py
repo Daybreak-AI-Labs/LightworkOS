@@ -34,6 +34,8 @@ import io
 import json
 import logging
 import os
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from pathlib import Path
 
 from ..file_lock import (
@@ -197,12 +199,25 @@ def _anchor_problem(path: Path, *, reanchors: bool) -> str | None:
     return None
 
 
-def _checkpoint_stores(path: Path) -> tuple[list[Path], list[str] | None, str | None]:
+@dataclass(frozen=True)
+class _Checks:
+    """How an erase compares a day with its published checkpoints."""
+
+    #: Looks up the stored erase records of a day (``checkpoints.EraseRecords``).
+    erase_records: Callable[[str], Iterable] | None = None
+    #: Checkpoint folders to compare besides the ones the installation knows.
+    folders: tuple[Path, ...] = ()
+
+
+def _checkpoint_stores(
+    path: Path, extra: tuple[Path, ...] = (),
+) -> tuple[list[Path], list[str] | None, str | None]:
     """Every checkpoint store that may commit to ``path``'s day.
 
-    The default store and the custody store beside the audit folder, and the
-    folder an administrator chose. Returns ``(stores, pinned_keys, problem)``;
-    a chosen folder that cannot be read is a problem, not a skip.
+    The default store and the custody store beside the audit folder, the
+    folder an administrator chose, and any the caller names (``extra``).
+    Returns ``(stores, pinned_keys, problem)``; a chosen or named folder that
+    cannot be read is a problem, not a skip.
     """
     from .checkpoint_location import checkpoint_dir, load, settings_path
 
@@ -219,10 +234,16 @@ def _checkpoint_stores(path: Path) -> tuple[list[Path], list[str] | None, str | 
             return [], None, (f"the chosen checkpoint folder {chosen} cannot be read; reconnect "
                               "it, or choose another folder in the audit checkpoint settings")
         stores.append(checkpoint_dir())
+    for named in extra:
+        if not named.is_dir() or not os.access(named, os.R_OK | os.X_OK):
+            return [], None, f"the checkpoint folder {named} cannot be read; reconnect it"
+        stores.append(named)
     return list(dict.fromkeys(stores)), (settings["keys"] or None), None
 
 
-def _checkpoint_problem(path: Path, erase_records=None) -> str | None:
+def _checkpoint_problem(
+    path: Path, checks: _Checks, compared: list[str] | None = None,
+) -> str | None:
     """A published checkpoint the day no longer matches.
 
     Today's open day is never anchored, so its checkpoints are the only
@@ -230,14 +251,17 @@ def _checkpoint_problem(path: Path, erase_records=None) -> str | None:
     count back and turn that evidence into a routine prefix change.
 
     A day with the same number of rows but different ones is refused too,
-    unless a stored erase record (looked up through ``erase_records``) shows
-    an earlier erasure left it this way. Otherwise this erase would give the
-    day an erase record, and a change nobody recorded would then pass as the
-    erasure. Only the checkpoint folders this installation knows are checked.
-    """
-    from .checkpoints import erasure_explains_day, verify_checkpoints
+    unless a stored erase record shows an earlier erasure left it this way.
+    Otherwise this erase would give the day an erase record, and a change
+    nobody recorded would then pass as the erasure.
 
-    stores, keys, problem = _checkpoint_stores(path)
+    ``compared`` collects the digest of each checkpoint the day was compared
+    with. The erase record lists them, and only a checkpoint on that list can
+    be replaced on the strength of the record.
+    """
+    from .checkpoints import day_checkpoint_state, verify_checkpoints
+
+    stores, keys, problem = _checkpoint_stores(path, checks.folders)
     if problem:
         return problem
     for store in stores:
@@ -249,26 +273,34 @@ def _checkpoint_problem(path: Path, erase_records=None) -> str | None:
         except Exception as e:  # pragma: no cover - defensive
             return f"checkpoints in {store} could not be checked ({type(e).__name__}); run erase again"
         mine = {b.reason for b in breaks if f"{path.name} " in b.detail}
+        digest, explained = day_checkpoint_state(
+            path.parent, store, path.stem,
+            erase_records=checks.erase_records, trusted_pubkeys=keys)
         if "audit_tail_truncated" in mine:
             return (f"{path.name} has fewer rows than its published checkpoint in {store} (see "
                     f"`maverick audit checkpoint verify`). {_RESTORE_DAY}")
-        if "audit_prefix_mismatch" in mine and not erasure_explains_day(
-                path.parent, store, path.stem, erase_records=erase_records, trusted_pubkeys=keys):
+        if "audit_prefix_mismatch" in mine and explained is None:
             return (f"{path.name} no longer matches its published checkpoint in {store}, and no "
                     "stored erase record explains the change (see `maverick audit checkpoint "
                     f"verify`). {_RESTORE_DAY}; if an earlier erasure changed it, publish that "
                     "day's new checkpoint first")
+        if compared is not None and digest:
+            # A day an earlier erasure changed carries that erasure's list on.
+            compared.extend([digest, *(explained.get("checkpoints") or () if explained else ())])
     return None
 
 
-def _integrity_problem(path: Path, *, any_signed: bool, erase_records=None) -> str | None:
+def _integrity_problem(
+    path: Path, *, any_signed: bool, checks: _Checks | None = None,
+    compared: list[str] | None = None,
+) -> str | None:
     """Why rewriting ``path`` would hide a break ``maverick audit verify`` reports.
 
     Erase is never a repair: a day whose chain, tip anchor or published
     checkpoint already reports a break is left unchanged.
     """
     problem = ((_chain_problem(path) if any_signed else None)
-               or _checkpoint_problem(path, erase_records))
+               or _checkpoint_problem(path, checks or _Checks(), compared))
     if problem:
         return problem
     if any_signed:
@@ -349,11 +381,14 @@ def _chain_entries(
     return entries
 
 
-def _rewrite_summary(path: Path, rows_before: int, text: str, matched: int) -> dict | None:
+def _rewrite_summary(
+    path: Path, rows_before: int, text: str, matched: int, compared: list[str],
+) -> dict | None:
     """What an erase did to one signed day-file, for its erase record.
 
-    The day, its row counts and its new tip hash: nothing about the subject.
-    None for a file that is not a day-file or has no signed tip.
+    The day, its row counts, its new tip hash and the checkpoints it was
+    compared with: nothing about the subject. None for a file that is not a
+    day-file or has no signed tip.
     """
     from .signing import _DAY_RE
 
@@ -371,7 +406,7 @@ def _rewrite_summary(path: Path, rows_before: int, text: str, matched: int) -> d
     if not _DAY_RE.fullmatch(path.stem) or not tip:
         return None
     return {"day": path.stem, "rows_before": rows_before, "rows_after": rows_after,
-            "rows_erased": matched, "tip_hash": tip}
+            "rows_erased": matched, "tip_hash": tip, "checkpoints": sorted(set(compared))}
 
 
 def _report_rewrites(rewrites: list[dict], on_rewrite) -> None:
@@ -399,7 +434,7 @@ def _process_file(
     delete: bool,
     strict: bool = False,
     rewrites: list[dict] | None = None,
-    erase_records=None,
+    checks: _Checks | None = None,
 ) -> tuple[int, int]:
     """Walk a single audit-log file. Returns (matched, written).
 
@@ -422,7 +457,7 @@ def _process_file(
             delete=delete,
             strict=strict,
             rewrites=rewrites,
-            erase_records=erase_records,
+            checks=checks,
         )
 
 
@@ -434,7 +469,7 @@ def _process_file_locked(
     delete: bool,
     strict: bool = False,
     rewrites: list[dict] | None = None,
-    erase_records=None,
+    checks: _Checks | None = None,
 ) -> tuple[int, int]:
     """``_process_file`` body, with the file's rewrite lock already held."""
     try:
@@ -468,7 +503,8 @@ def _process_file_locked(
     # If this is a signed audit file, validate it before making the authorized
     # erase mutation. Re-signing may only bless changes we just made to a
     # previously clean chain, never unrelated old tampering.
-    problem = _integrity_problem(path, any_signed=any_signed, erase_records=erase_records)
+    compared: list[str] = []
+    problem = _integrity_problem(path, any_signed=any_signed, checks=checks, compared=compared)
     if problem:
         log.warning("audit erase: refusing to rewrite %s: %s", path.name, problem)
         if strict:
@@ -507,7 +543,7 @@ def _process_file_locked(
         atomic_write_bytes(path, new_bytes, mode=0o600)
         if any_signed:
             summary = _rewrite_summary(
-                path, sum(1 for line, _event in rows if line.strip()), text, matched,
+                path, sum(1 for line, _event in rows if line.strip()), text, matched, compared,
             )
             if summary is not None and rewrites is not None:
                 rewrites.append(summary)
@@ -544,6 +580,7 @@ def scrub_user(
     strict: bool = False,
     on_rewrite=None,
     erase_records=None,
+    checkpoint_dirs=(),
 ) -> tuple[int, int]:
     """Replace matching events with tombstones. Returns (matched, scanned).
 
@@ -556,6 +593,9 @@ def scrub_user(
     erase record a later checkpoint of that day must cite. ``erase_records``
     looks those records up again: a day that no longer matches its published
     checkpoint is rewritten only when an earlier erasure's record explains it.
+    ``checkpoint_dirs`` names checkpoint folders to compare each day with,
+    besides the ones the installation knows; a checkpoint in a folder the
+    erase never compared cannot later be replaced on its record.
     """
     if audit_dir is None:
         # Resolve the SAME (home + active-tenant) audit dir the writer lands
@@ -569,6 +609,7 @@ def scrub_user(
     total_scanned = 0
     if not audit_dir.exists():
         return 0, 0
+    checks = _Checks(erase_records, tuple(Path(folder) for folder in checkpoint_dirs))
     for path in sorted(audit_dir.glob("*.ndjson")):
         rewrites: list[dict] = []
         try:
@@ -579,7 +620,7 @@ def scrub_user(
                 delete=False,
                 strict=strict,
                 rewrites=rewrites,
-                erase_records=erase_records,
+                checks=checks,
             )
         finally:
             _report_rewrites(rewrites, on_rewrite)
@@ -596,7 +637,7 @@ def scrub_user(
     return total_matched, total_scanned
 
 
-def _day_blocker(path: Path, channel: str, user_id: str, erase_records=None) -> str | None:
+def _day_blocker(path: Path, channel: str, user_id: str, checks: _Checks | None = None) -> str | None:
     """Why the subject's rows in ``path`` could not be erased, or None."""
     from .sealing import segment_text
 
@@ -609,7 +650,7 @@ def _day_blocker(path: Path, channel: str, user_id: str, erase_records=None) -> 
     rows, matched, any_signed = _scan_rows(original, channel, user_id)
     if not matched:
         return None
-    problem = _integrity_problem(path, any_signed=any_signed, erase_records=erase_records)
+    problem = _integrity_problem(path, any_signed=any_signed, checks=checks)
     if problem or not any_signed:
         return problem
     try:
@@ -630,6 +671,7 @@ def erase_blockers(
     *,
     audit_dir: Path | None = None,
     erase_records=None,
+    checkpoint_dirs=(),
 ) -> list[str]:
     """Audit days holding the subject that an erase could not rewrite.
 
@@ -646,7 +688,10 @@ def erase_blockers(
     for path in sorted(audit_dir.glob("*.ndjson")):
         if path.is_dir():
             continue
-        blocker = _day_blocker(path, channel, user_id, erase_records)
+        blocker = _day_blocker(
+            path, channel, user_id,
+            _Checks(erase_records, tuple(Path(folder) for folder in checkpoint_dirs)),
+        )
         if blocker:
             blockers.append(blocker)
     return blockers
@@ -659,10 +704,12 @@ def delete_user(
     audit_dir: Path | None = None,
     on_rewrite=None,
     erase_records=None,
+    checkpoint_dirs=(),
 ) -> tuple[int, int]:
     """Delete matching events entirely. Returns (deleted, scanned).
 
-    ``on_rewrite`` and ``erase_records`` are as for :func:`scrub_user`.
+    ``on_rewrite``, ``erase_records`` and ``checkpoint_dirs`` are as for
+    :func:`scrub_user`.
     """
     if audit_dir is None:
         from ..paths import data_dir
@@ -674,8 +721,10 @@ def delete_user(
     for path in sorted(audit_dir.glob("*.ndjson")):
         rewrites: list[dict] = []
         try:
-            m, w = _process_file(path, channel, user_id, delete=True, rewrites=rewrites,
-                                 erase_records=erase_records)
+            m, w = _process_file(
+                path, channel, user_id, delete=True, rewrites=rewrites,
+                checks=_Checks(erase_records, tuple(Path(folder) for folder in checkpoint_dirs)),
+            )
         finally:
             _report_rewrites(rewrites, on_rewrite)
         total_matched += m

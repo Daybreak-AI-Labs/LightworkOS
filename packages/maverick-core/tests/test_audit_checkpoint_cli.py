@@ -179,7 +179,9 @@ def test_erase_then_new_checkpoint_fails_an_older_pin_until_it_is_retained(
     first = runner.invoke(main, ["audit", "checkpoint", "publish", "--day", day, *base])
     assert first.exit_code == 0, first.output
     pinned = digest(1)
-    erased = runner.invoke(main, ["erase", "--channel", "telegram", "--user", "alice", "--yes"])
+    erased = runner.invoke(main, [
+        "erase", "--channel", "telegram", "--user", "alice", "--yes", *base,
+    ])
     assert erased.exit_code == 0, erased.output
     assert "1 audit event(s) scrubbed" in erased.output
 

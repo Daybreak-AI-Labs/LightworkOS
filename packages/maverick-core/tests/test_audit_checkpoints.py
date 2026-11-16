@@ -479,6 +479,7 @@ def test_gdpr_reanchor_requires_explicit_signed_supersession(isolated_audit):
         "subject",
         audit_dir=audit_dir,
         on_rewrite=store_erase_record,
+        checkpoint_dirs=[checkpoint_dir],
     )
     assert matched == 1
     assert AuditSigner(day_file).write(
@@ -565,6 +566,7 @@ def test_closed_day_gdpr_supersession_binds_signed_reanchor(
         "subject",
         audit_dir=audit_dir,
         on_rewrite=store_erase_record,
+        checkpoint_dirs=[checkpoint_dir],
     )
     assert matched == 1
     supersession = publish_checkpoint(
@@ -695,7 +697,8 @@ def test_erasure_supersession_is_reported_until_the_verifier_retains_it(isolated
     pin = {"minimum_sequence": 1, "minimum_digest": _digest(pinned)}
     erased, store_erase_record, erase_records = _erase_record_store()
 
-    assert scrub_user("slack", "subject", audit_dir=audit_dir, on_rewrite=store_erase_record)[0] == 1
+    assert scrub_user("slack", "subject", audit_dir=audit_dir, on_rewrite=store_erase_record,
+                      checkpoint_dirs=[checkpoint_dir])[0] == 1
     assert [(r["day"], r["rows_before"], r["rows_after"], r["rows_erased"]) for r in erased] == [
         (day, 3, 3, 1)
     ]
@@ -740,6 +743,47 @@ def test_erasure_supersession_is_reported_until_the_verifier_retains_it(isolated
     assert "again" in found[0].detail and "could not be read" not in found[0].detail
 
 
+def test_a_genuine_erase_does_not_cover_an_earlier_unrecorded_change(isolated_audit):
+    # The key holder changes a pinned day and keeps its row count; later a
+    # genuine erasure for someone in that day runs. Its erase record must not
+    # make the whole change look like that erasure.
+    from maverick.audit.erase import scrub_user
+
+    audit_dir, checkpoint_dir = isolated_audit
+    day = "2000-01-01"
+    day_file, pinned = _checkpointed_closed_day(audit_dir, checkpoint_dir)
+    rows = [json.loads(line) for line in day_file.read_text(encoding="utf-8").splitlines()]
+    rows[1] = {"kind": "tool_call", "note": "filler"}
+    text, _signed = signing.resign_rows(
+        [("json", row) for row in rows], signing._load_or_create_keypair(),
+    )
+    day_file.write_text(text, encoding="utf-8")
+    signing.reanchor_day_after_erase(audit_dir, day_file)
+    changed = day_file.read_bytes()
+    erased, store_erase_record, erase_records = _erase_record_store()
+    erase = {"audit_dir": audit_dir, "on_rewrite": store_erase_record,
+             "erase_records": erase_records}
+
+    # Compared with the checkpoint folder, the erase refuses the day outright.
+    with pytest.raises(RuntimeError):
+        scrub_user("slack", "subject", strict=True, checkpoint_dirs=[checkpoint_dir], **erase)
+    assert day_file.read_bytes() == changed and erased == []
+
+    # Kept from seeing that folder, it erases, but its record lists no
+    # checkpoint, so it cannot back replacing the one that was pinned.
+    assert scrub_user("slack", "subject", strict=True, **erase)[0] == 1
+    assert erased[0]["checkpoints"] == []
+    with pytest.raises(AuditCheckpointError, match="no stored erase record"):
+        publish_checkpoint(
+            audit_dir,
+            checkpoint_dir,
+            day=day,
+            supersedes_checkpoint_sha256=_digest(pinned),
+            lifecycle_reason="gdpr_reanchor",
+            erase_records=erase_records,
+        )
+
+
 def test_an_earlier_erasure_record_does_not_back_a_later_rewrite(isolated_audit):
     # An erase record matches a day that still holds the rows the erasure
     # left. Rows written after it are not covered: changing those must not
@@ -766,7 +810,8 @@ def test_an_earlier_erasure_record_does_not_back_a_later_rewrite(isolated_audit)
             **options,
         )
 
-    assert scrub_user("slack", "subject", audit_dir=audit_dir, on_rewrite=store_erase_record)[0] == 1
+    assert scrub_user("slack", "subject", audit_dir=audit_dir, on_rewrite=store_erase_record,
+                      checkpoint_dirs=[checkpoint_dir])[0] == 1
     supersede(first, erase_records=erase_records)
     assert AuditSigner(day_file).write({"kind": "tool_call", "note": "to be removed"})
     assert AuditSigner(day_file).write({"kind": "tool_call", "index": 2})

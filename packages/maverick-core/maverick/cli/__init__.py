@@ -6064,7 +6064,8 @@ def _refuse_subject_under_legal_hold(ctx, channel: str, user: str) -> None:
         ctx.exit(1)
 
 
-def _refuse_unerasable_audit(ctx, channel: str, user: str, world=None) -> None:
+def _refuse_unerasable_audit(ctx, channel: str, user: str, world=None,
+                             checkpoint_dirs: tuple = ()) -> None:
     """Refuse before anything is deleted when the subject's audit lines cannot go.
 
     Erasure is all or nothing from the person's view: an audit day that holds
@@ -6079,6 +6080,7 @@ def _refuse_unerasable_audit(ctx, channel: str, user: str, world=None) -> None:
         blockers = erase_blockers(
             channel, user,
             erase_records=audit_erase_records(lambda: world) if world is not None else None,
+            checkpoint_dirs=checkpoint_dirs,
         )
     except Exception as exc:  # failure-policy: fail_closed -- unchecked is not erasable
         blockers = [f"the audit log could not be checked ({_erasure_failure_label(exc)})"]
@@ -6141,7 +6143,7 @@ def _audit_erase_recorder(world, erasure_id: str):
 
 
 def _scrub_subject_audit(channel: str, user: str, failures: list[str],
-                         world=None, erasure_id: str = "") -> int:
+                         world=None, erasure_id: str = "", checkpoint_dirs: tuple = ()) -> int:
     """Scrub the subject's prior audit lines; record a failure instead of raising."""
     from .. import audit
     from ..erasure_receipts import audit_erase_records
@@ -6152,6 +6154,7 @@ def _scrub_subject_audit(channel: str, user: str, failures: list[str],
             channel, user, strict=True,
             on_rewrite=_audit_erase_recorder(world, erasure_id) if world is not None else None,
             erase_records=audit_erase_records(lambda: world) if world is not None else None,
+            checkpoint_dirs=checkpoint_dirs,
         )
     except Exception as exc:
         failures.append(f"audit_scrub: {_erasure_failure_label(exc)}")
@@ -6319,7 +6322,7 @@ def _purge_llm_cache_for_erasure() -> str | None:
 
 
 def _erase_subject_stores(world, channel: str, user: str, note_users, attachment_paths,
-                          erasure_id: str = ""):
+                          erasure_id: str = "", checkpoint_dirs: tuple = ()):
     """Erase every store keyed by the subject rather than by a conversation row.
 
     One list of steps for the conversation erase and for a rerun that finds
@@ -6335,13 +6338,15 @@ def _erase_subject_stores(world, channel: str, user: str, note_users, attachment
     cache_error = _purge_llm_cache_for_erasure()
     if cache_error:
         failures.append(f"llm_cache: {cache_error}")
-    audit_scrubbed = _scrub_subject_audit(channel, user, failures, world, erasure_id)
+    audit_scrubbed = _scrub_subject_audit(
+        channel, user, failures, world, erasure_id, checkpoint_dirs)
     knowledge = _erase_subject_knowledge_strict(channel, user, failures)
     return {"attachments": removed_attachments, "notes": removed_notes,
             "fact_keys": fact_keys, "audit": audit_scrubbed, "knowledge": knowledge}, failures
 
 
-def _erase_subject_residue(ctx, world, channel: str, user: str, yes: bool) -> None:
+def _erase_subject_residue(ctx, world, channel: str, user: str, yes: bool,
+                           checkpoint_dirs: tuple = ()) -> None:
     """Scrub the subject-keyed stores when no conversation row matches.
 
     Exits 1 when a scrub fails or residual data remains, so a re-run after a
@@ -6353,7 +6358,7 @@ def _erase_subject_residue(ctx, world, channel: str, user: str, yes: bool) -> No
     from .. import audit
 
     _refuse_subject_under_legal_hold(ctx, channel, user)
-    _refuse_unerasable_audit(ctx, channel, user, world)
+    _refuse_unerasable_audit(ctx, channel, user, world, checkpoint_dirs)
     if not yes:
         click.echo(f"This will erase stored facts, notes, audit lines and "
                    f"knowledge for {channel}:{user}.")
@@ -6361,6 +6366,7 @@ def _erase_subject_residue(ctx, world, channel: str, user: str, yes: bool) -> No
     erasure_id = secrets.token_hex(16)
     stores, failures = _erase_subject_stores(
         world, channel, user, [types.SimpleNamespace(user_id=user)], [], erasure_id,
+        checkpoint_dirs,
     )
     scrubbed_fact_keys, removed_notes = stores["fact_keys"], stores["notes"]
     audit_scrubbed, knowledge_removed = stores["audit"], stores["knowledge"]
@@ -6409,8 +6415,17 @@ def _erase_subject_residue(ctx, world, channel: str, user: str, yes: bool) -> No
 @click.option("--channel", required=True, help="Channel name (e.g. telegram, sms).")
 @click.option("--user", required=True, help="The channel user_id to erase.")
 @click.option("--yes", is_flag=True, help="Skip confirmation.")
+@click.option(
+    "--checkpoint-dir", "checkpoint_dirs", multiple=True,
+    type=click.Path(file_okay=False, path_type=Path),
+    help=(
+        "Also compare each audit day with the checkpoints kept in this folder "
+        "before rewriting it (repeatable). Folders chosen in the checkpoint "
+        "settings are compared already."
+    ),
+)
 @click.pass_context
-def erase(ctx, channel: str, user: str, yes: bool) -> None:
+def erase(ctx, channel: str, user: str, yes: bool, checkpoint_dirs: tuple = ()) -> None:
     """Erase everything Lightwork knows about a (channel, user_id) pair.
 
     GDPR Art. 17 right-to-erasure: removes conversations, turns,
@@ -6426,7 +6441,7 @@ def erase(ctx, channel: str, user: str, yes: bool) -> None:
         # Facts, notes, audit lines and knowledge are keyed by the subject,
         # not by a conversation row, so they can outlive it (a subject who
         # never chatted, or an earlier erase that failed part-way).
-        _erase_subject_residue(ctx, world, channel, user, yes)
+        _erase_subject_residue(ctx, world, channel, user, yes, checkpoint_dirs)
         return
     if not yes:
         click.echo(f"This will erase {len(convs)} conversation(s) for {channel}:{user}.")
@@ -6446,7 +6461,7 @@ def erase(ctx, channel: str, user: str, yes: bool) -> None:
     # conversation with >10k turns doesn't leave orphan attachments.
     conv_ids = [c.id for c in convs]
     _refuse_under_legal_hold(ctx, world, conv_ids)
-    _refuse_unerasable_audit(ctx, channel, user, world)
+    _refuse_unerasable_audit(ctx, channel, user, world, checkpoint_dirs)
     (
         erasure_plan,
         erasure_manifest,
@@ -6472,7 +6487,7 @@ def erase(ctx, channel: str, user: str, yes: bool) -> None:
         else secrets.token_hex(16)
     )
     stores, closure_failures = _erase_subject_stores(
-        world, channel, user, convs, attachment_paths, erasure_id,
+        world, channel, user, convs, attachment_paths, erasure_id, checkpoint_dirs,
     )
     removed_attachments = stores["attachments"]
     removed_user_notes = stores["notes"]
