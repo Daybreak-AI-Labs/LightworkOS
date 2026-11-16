@@ -137,3 +137,35 @@ def test_string_outbound_is_one_url_not_characters(monkeypatch):
         "webhooks": {"outbound": "https://example.com/hook"}})
     urls, _secret = webhooks._load_config_outbound()
     assert urls == ["https://example.com/hook"]
+
+
+def test_webhooks_outbound_post_stops_reading_a_slow_reply_at_the_timeout(monkeypatch):
+    """Each read of a trickled reply is quick, so the per-read timeout never
+    fires. The whole reply still has to finish within the timeout."""
+    import types
+
+    import httpx
+    from maverick import webhooks
+    from maverick.tools import _ssrf
+
+    clock = [100.0]
+    pulled: list[int] = []
+
+    def _trickle():
+        for index in range(10_000):
+            pulled.append(index)
+            clock[0] += 0.5  # half a second per byte
+            yield b"x"
+
+    monkeypatch.setattr(webhooks, "time", types.SimpleNamespace(
+        monotonic=lambda: clock[0], time=lambda: clock[0]))
+    monkeypatch.setattr(_ssrf, "safe_client", lambda url, timeout=None: httpx.Client(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, content=_trickle()))))
+
+    status, latency, snippet, error = webhooks._post_result(
+        "https://hooks.example.com/wh", b"{}", {}, 2.0)
+
+    # The same result as any reply that timed out: no status, and not "never sent".
+    assert status is None and snippet == "" and "ReadTimeout" in error
+    assert not isinstance(error, webhooks.NotSent)
+    assert len(pulled) <= 6 and 2000 <= latency <= 3500

@@ -224,7 +224,7 @@ def _post_result(url: str, body: bytes, headers: dict[str, str],
     # land in the default-level logs / log aggregator verbatim.
     safe_url = scrub(url)
     try:
-        import httpx  # noqa: F401  (presence check; client built via _ssrf)
+        import httpx  # presence check; the client is built via _ssrf
     except ImportError:
         log.warning("webhooks: httpx not installed; skipping %s", safe_url)
         return None, 0, "", NotSent("httpx is not installed")
@@ -251,6 +251,10 @@ def _post_result(url: str, body: bytes, headers: dict[str, str],
                 received += chunk
                 if len(received) >= _REPLY_READ_BYTES:
                     break
+                if time.monotonic() - started > timeout:
+                    # The client's timeout is per read, so a reply sent a few
+                    # bytes at a time never trips it and would hold the worker.
+                    raise httpx.ReadTimeout("the reply was not finished within the timeout")
             text = bytes(received[:_REPLY_READ_BYTES]).decode(
                 resp.encoding or "utf-8", errors="replace")
         latency = int((time.monotonic() - started) * 1000)
