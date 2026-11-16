@@ -406,7 +406,23 @@ def run_as_user(upper: object, lower: object) -> tuple[Any, bool]:
     return lower, False
 
 
+def _chosen(value: object) -> bool:
+    return bool(value.strip()) if isinstance(value, str) else bool(value)
+
+
+def organisation_choice(upper: object, lower: object) -> tuple[Any, bool]:
+    """``[codebase] checker_image`` and ``checker_models``: where the checks
+    run and which models check. The organisation's choice stays; a lower
+    layer may make one only where the organisation has made none (an image
+    then moves checks off this computer, and the card names every model)."""
+    if not _chosen(upper) or lower == upper:
+        return lower, False
+    return upper, True
+
+
 MERGES = {
+    "codebase.checker_image": organisation_choice,
+    "codebase.checker_models": organisation_choice,
     "sandbox.run_as_user": run_as_user,
     "safety.consent_mode": consent_mode,
     **SCALARS,

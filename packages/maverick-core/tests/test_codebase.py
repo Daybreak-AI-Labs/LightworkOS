@@ -1209,3 +1209,260 @@ def test_a_work_area_that_cannot_be_set_up_is_not_a_test_result(upstream, tmp_pa
     assert features.NAMESPACE_LINE not in facts["lines"]
     assert features.SETUP_FAILED_LINE in facts["lines"]
     assert features.SETUP_FAILED_LINE in facts["gaps"]
+
+
+# -- a checker you can trust: Lightwork re-runs repros, several checkers,
+#    and a checker image that never falls back to this computer --
+
+def _settings(monkeypatch, **values):
+    from maverick import config
+    monkeypatch.setattr(config, "get_codebase", lambda: {"enable": True, **values})
+
+
+def _broken(work):
+    (work / "notes.py").write_text("x = 1 / 0\n")
+
+
+def _mended(work):
+    (work / "notes.py").write_text("x = 1\n")
+
+
+def _blocker(what="notes.py divides by zero on import", probe="import notes\n", **extra):
+    return {"severity": "blocker", "what": what, "evidence": "ran", "how": "import notes",
+            "repro": "python probe_notes.py", "probe_files": {"probe_notes.py": probe}, **extra}
+
+
+def _line(p, fid):
+    return next(line for line in features.evidence(p)["findings"] if f"Finding {fid}" in line)
+
+
+def test_a_repro_that_fails_on_a_fresh_copy_confirms_the_finding(upstream, tmp_path):
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    run, _ = _rounds(_broken)
+    p = features.propose(world, "pricing", "Notes", "", run, sandbox_factory=_Sandbox,
+                         checker=lambda gid, copy: {"findings": [_blocker()], "fixed": []},
+                         repair_rounds=0, check_rounds=1)
+    f = p["check"]["findings"][0]
+    assert f["repro_state"] == "confirmed" and f["probe_files"] == ["probe_notes.py"]
+    assert "confirmed: Lightwork re-ran it and it failed" in _line(p, "1.1")
+    assert "1 confirmed by Lightwork re-running them" in " ".join(_card(world, p)["parameter_summary"])
+
+
+def test_a_repro_that_passes_is_not_reproduced_and_reads_as_read_only(upstream, tmp_path):
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    run, calls = _rounds(_broken)
+    claim = {"findings": [_blocker(probe="import app\n")], "fixed": []}
+    p = features.propose(world, "pricing", "Notes", "", run, sandbox_factory=_Sandbox,
+                         checker=lambda gid, copy: claim, repair_rounds=1, check_rounds=2)
+    f = p["check"]["findings"][0]
+    assert f["repro_state"] == "not reproduced" and f["evidence"] == "read"
+    assert f["severity"] == "blocker" and len(calls) == 2      # a person decides: it still blocks
+    assert "not reproduced when Lightwork re-ran it: it passed; read only" in _line(p, "1.1")
+
+
+def test_a_confirmed_repro_decides_fixed_whatever_the_checker_says(upstream, tmp_path):
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    # The author mends it; the checker never says so. Lightwork's re-run does.
+    run, _ = _rounds(_broken, _mended)
+    looks: list = []
+
+    def stubborn(gid, copy):
+        looks.append(gid)
+        return {"findings": [_blocker()] if len(looks) == 1 else [], "fixed": []}
+    p = features.propose(world, "pricing", "Notes", "", run, sandbox_factory=_Sandbox,
+                         checker=stubborn, repair_rounds=1, check_rounds=2)
+    assert p["check"]["findings"][0]["status"] == "fixed"
+    assert "fixed: Lightwork re-ran it" in _line(p, "1.1")
+    assert features.evidence(p)["gaps"] == ["The repository's tests did not pass or are not configured."]
+    # The reverse: the checker says fixed, but the repro still fails on the new version.
+    run, _ = _rounds(_broken, lambda work: (work / "other.py").write_text("y = 2\n"))
+    looks.clear()
+
+    def credulous(gid, copy):
+        looks.append(gid)
+        return ({"findings": [_blocker()], "fixed": []} if len(looks) == 1
+                else {"findings": [], "fixed": ["1.1"]})
+    q = features.propose(world, "pricing", "Notes", "", run, sandbox_factory=_Sandbox,
+                         checker=credulous, repair_rounds=1, check_rounds=2)
+    assert q["check"]["findings"][0]["status"] == "still open"
+    assert "1 blocker(s) from the independent check are still open." in features.evidence(q)["gaps"]
+
+
+def test_probe_files_never_reach_the_proposal(upstream, tmp_path):
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    run, _ = _rounds(_broken)
+    claim = {"findings": [_blocker(probe="import notes  # PROBE-MARKER\n")], "fixed": []}
+    p = features.propose(world, "pricing", "Notes", "", run, sandbox_factory=_Sandbox,
+                         checker=lambda gid, copy: claim, repair_rounds=0, check_rounds=1)
+    assert p["check"]["findings"][0]["repro_state"] == "confirmed"
+    assert p["files"] == ["notes.py"] and "PROBE-MARKER" not in p["diff"]
+    import json
+    assert "PROBE-MARKER" not in json.dumps(features.find(p["id"]))
+    world.decide_approval(p["approval_id"], "approved", decided_by="user:lead")
+    features.merge(world, p["id"])
+    with vault.checkout("pricing") as work:
+        assert not (work / "probe_notes.py").exists()
+
+
+def test_a_probe_path_that_leaves_the_copy_is_refused(upstream, tmp_path):
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+
+    def with_link(work):
+        _broken(work)
+        (work / "out").symlink_to(outside)
+    run, _ = _rounds(with_link)
+    escapes = [_blocker(what=f"escape {i}", probe="import notes\n") for i in range(3)]
+    escapes[0]["probe_files"] = {"../escape.py": "import notes\n"}
+    escapes[1]["probe_files"] = {".git/hooks/pre-commit": "x\n"}
+    escapes[2]["probe_files"] = {"out/new/probe.py": "import notes\n"}   # a link in the copy
+    p = features.propose(world, "pricing", "Notes", "", run, sandbox_factory=_Sandbox,
+                         checker=lambda gid, copy: {"findings": escapes, "fixed": []},
+                         repair_rounds=0, check_rounds=1)
+    for f in p["check"]["findings"]:
+        assert f["repro_state"] == "not reproduced" and "path was refused" in f["repro_reason"]
+    assert list(outside.iterdir()) == [] and not (tmp_path / "escape.py").exists()
+
+
+def test_two_checkers_never_see_each_others_findings(upstream, tmp_path):
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    run, _ = _rounds(_broken, _mended)
+    seen: dict = {1: [], 2: []}
+
+    def checker(n, report):
+        def look(gid, copy):
+            seen[n].append((world.get_goal(gid).description, copy))
+            return report if len(seen[n]) == 1 else {"findings": [], "fixed": []}
+        return look
+    first = checker(1, {"findings": [{"severity": "blocker", "what": "FIRST-ONLY"}]})
+    second = checker(2, {"findings": [{"severity": "minor", "what": "SECOND-ONLY"}]})
+    p = features.propose(world, "pricing", "Notes", "", run, sandbox_factory=_Sandbox,
+                         checker=[first, second], repair_rounds=1, check_rounds=2)
+    assert len(seen[1]) == len(seen[2]) == 2
+    assert "FIRST-ONLY" in seen[1][1][0] and "SECOND-ONLY" not in seen[1][1][0]
+    assert "SECOND-ONLY" in seen[2][1][0] and "FIRST-ONLY" not in seen[2][1][0]
+    assert seen[1][0][1] != seen[2][0][1]                      # each on its own copy
+    assert [(f["id"], f["checker"]) for f in p["check"]["findings"]] == [("1.1", 1), ("2-1.1", 2)]
+    assert "Finding 2-1.1 from checker 2, minor" in " ".join(features.evidence(p)["findings"])
+
+
+def test_a_blocker_from_the_second_checker_blocks(upstream, tmp_path):
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    run, calls = _rounds(_broken)
+    clean = lambda gid, copy: {"findings": [], "fixed": []}  # noqa: E731
+    blocks = lambda gid, copy: {"findings": [{"severity": "blocker", "what": "SECOND"}]}  # noqa: E731
+    p = features.propose(world, "pricing", "Notes", "", run, sandbox_factory=_Sandbox,
+                         checker=[clean, blocks], repair_rounds=1, check_rounds=2)
+    assert len(calls) == 2 and "SECOND" in world.get_goal(calls[1]["goal_id"]).description
+    assert any("blocker(s) from the independent check are still open" in g
+               for g in features.evidence(p)["gaps"])
+    assert features.summary(world)["proposals"][0]["check"] == "open"
+
+
+def test_checkers_that_share_the_authors_family_are_a_gap(upstream, tmp_path, monkeypatch):
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    monkeypatch.setattr(features, "_author_model", lambda: "anthropic:author-model")
+
+    def stub(model):
+        def look(gid, copy):
+            return {"findings": [], "fixed": []}
+        look.model = model
+        return look
+    run, _ = _rounds(_mended)
+    p = features.propose(world, "pricing", "Notes", "", run, checker=[
+        stub("anthropic:checker-a"), stub("claude-checker-b")])
+    facts = features.evidence(p)
+    assert "Checker 1 used anthropic:checker-a, the same kind of model as the author." in facts["lines"]
+    assert features.SAME_FAMILY_GAP in facts["gaps"]
+    assert features.SAME_FAMILY_GAP in _card(world, p)["unresolved_assumptions"]
+    run, _ = _rounds(_mended)
+    q = features.propose(world, "pricing", "Notes", "", run, checker=[
+        stub("anthropic:checker-a"), stub("openai:checker-c")])
+    facts = features.evidence(q)
+    assert "Checker 2 used openai:checker-c, a different kind of model from the author." \
+        in facts["lines"] and features.SAME_FAMILY_GAP not in facts["gaps"]
+
+
+def test_repros_stop_at_the_per_look_cap_and_the_budget(upstream, tmp_path, monkeypatch):
+    from maverick.budget import Budget
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    four = {"findings": [_blocker(what=f"f{i}") for i in range(4)], "fixed": []}
+    _settings(monkeypatch, max_repros=2)
+    run, _ = _rounds(_broken)
+    p = features.propose(world, "pricing", "Notes", "", run, sandbox_factory=_Sandbox,
+                         checker=lambda gid, copy: four, repair_rounds=0, check_rounds=1)
+    states = [f["repro_state"] for f in p["check"]["findings"]]
+    assert states == ["confirmed", "confirmed", "not re-run", "not re-run"]
+    assert "the limit of 2 re-runs per look was reached" in _line(p, "1.3")
+    _settings(monkeypatch, max_repros=5)
+    budget = Budget(max_tool_calls=2)                         # each re-run is one tool call
+    run, _ = _rounds(_broken)
+    q = features.propose(world, "pricing", "Notes", "", run, sandbox_factory=_Sandbox,
+                         budget=budget, checker=lambda gid, copy: four, repair_rounds=0)
+    assert [f["repro_state"] for f in q["check"]["findings"]] == [
+        "confirmed", "confirmed", "not re-run", "not re-run"]
+    assert q["stopped"] == "budget"
+
+
+def test_an_unusable_checker_image_could_not_run_and_never_runs_here(upstream, tmp_path,
+                                                                    monkeypatch):
+    from maverick.sandbox import docker
+    vault.register("pricing", str(upstream), test_command="python -m pytest -q")
+    world = WorldModel(tmp_path / "world.db")
+    _settings(monkeypatch, checker_image="lightwork/checker:missing")
+
+    def no_docker(self):
+        raise RuntimeError("Docker not available.")
+    monkeypatch.setattr(docker.DockerBackend, "_verify_docker", no_docker)
+    ran_here: list = []
+
+    class Here(_Sandbox):
+        def exec(self, cmd, timeout=None):
+            ran_here.append(cmd)
+            return super().exec(cmd, timeout)
+    looked: list = []
+    run, _ = _rounds(_passing)
+    p = features.propose(world, "pricing", "Discount", "", run, sandbox_factory=Here,
+                         checker=lambda gid, copy: looked.append(gid) or
+                         {"findings": [_blocker()], "fixed": []})
+    assert looked == [] and ran_here == ["python -m pytest -q"]   # only the tests ran here
+    assert p["check"]["state"] == "failed"
+    lines = " ".join(features.evidence(p)["lines"])
+    assert "Independent check: could not run (the checker image could not be used" in lines
+    assert "The independent check could not run, so this change was not checked." in \
+        features.evidence(p)["gaps"]
+
+
+def test_a_proposal_from_before_repros_and_several_checkers_still_shows(upstream, tmp_path):
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    step1 = {"id": "fedcba9876543210", "repo": "pricing", "title": "Step one", "goal_id": 1,  # pragma: allowlist secret
+             "branch": "lightwork/one-fedcba", "base": "b" * 40, "head": "a" * 40,
+             "files": ["x.py"], "diff": "+x", "diff_truncated": False, "diff_chars": 2,
+             "tests": {"command": "pytest", "exit_code": 0, "passed": True, "commit": "a" * 40},
+             "tests_output": "ok", "test_command": True,
+             "repair_rounds": {"used": 1, "allowed": 2}, "isolation": "container",
+             "rounds": [], "stopped": None, "review_cut_short": False, "review": None,
+             "check": {"state": "ran", "runs": 2, "off": None, "max_runs": 2,
+                       "commit": "a" * 40, "error": None, "goal_ids": [2, 3],
+                       "findings": [{"id": "1.1", "severity": "blocker", "what": "w",
+                                     "evidence": "ran", "how": "h", "status": "fixed"}]},
+             "status": "pending", "approval_id": None, "created_at": 2.0, "merged_at": None}
+    features._save(step1)
+    loaded = features.find(step1["id"])
+    facts = features.evidence(loaded)
+    assert facts["findings"] == ["Finding 1.1, blocker, fixed: w (shown by running a command, "
+                                 "in the checker's own words)."]
+    assert facts["gaps"] == [] and not any(line.startswith("Checker") for line in facts["lines"])
+    assert features.summary(world)["proposals"][0]["check"] == "clean"
+    features.request_approval(world, loaded)

@@ -303,6 +303,10 @@ TENANT_RULES: dict[str, dict[str, tuple]] = {
         "require_container": ("protection", False, (), None),
         "repair_rounds": ("minimum", 2, (), None),
         "check_rounds": ("minimum", 2, (), None),
+        "checkers": ("minimum", 1, (), None),
+        "max_repros": ("minimum", 5, (), None),
+        "checker_models": _consumer("codebase.checker_models", []),
+        "checker_image": _consumer("codebase.checker_image", ""),
     },
 }
 

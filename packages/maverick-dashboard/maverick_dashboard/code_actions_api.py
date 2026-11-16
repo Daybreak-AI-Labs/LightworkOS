@@ -340,8 +340,8 @@ def _run_feature(repo: str, title: str, description: str, max_dollars: float | N
             raise PermissionError("Current code-change authority is required")
         # One spending cap for every author and checker round of this run.
         budget = features.feature_budget(max_dollars)
-        checker = (features.default_checker(budget=budget, user_id=user_id,
-                                            allowed_suites=suites)
+        checker = (features.default_checkers(budget=budget, user_id=user_id,
+                                             allowed_suites=suites)
                    if features.loop_settings()["checker"] else None)
         features.propose(world, repo, title, description,
                          features.default_runner(budget=budget, user_id=user_id,

@@ -8,10 +8,15 @@ cannot leave through an external tool. It then:
 2. runs the repository's test command through the sandbox on a FRESH copy of
    the pinned commit; failing tests go back to the author as a follow-up goal,
    and the loop repeats for up to ``[codebase] repair_rounds`` rounds;
-3. runs the independent checker, when one is supplied: a separate goal with a
-   fresh context and its own throwaway copy of the pinned commit, which tries to
-   break the change and reports findings. Blockers go back to the author, then
-   the checker looks again, for up to ``[codebase] check_rounds`` looks;
+3. runs the independent checkers, when supplied (``[codebase] checkers``, one
+   by default): each a separate goal with a fresh context and its own throwaway
+   copy of the pinned commit, which tries to break the change and reports
+   findings without seeing another checker's. A finding may carry a ``repro``
+   command (and probe files); Lightwork re-runs it on a fresh copy of the
+   pinned commit, so "confirmed" is Lightwork's word, not the checker's.
+   Blockers from any checker go back to the author, confirmed repros are
+   re-run on the repaired commit, then the checkers look again, for up to
+   ``[codebase] check_rounds`` looks;
 4. runs the independent diff reviewer, when one is supplied;
 5. seals the proposal (diff, tests, rounds, findings, review, branch bundle) and
    parks a ``codebase_merge`` approval in the real approvals queue.
@@ -43,6 +48,15 @@ MAX_DIFF_CHARS = 200_000
 MAX_TEST_OUTPUT_CHARS = 20_000
 MAX_REPAIR_OUTPUT_CHARS = 6_000
 MAX_FINDINGS = 20
+MAX_REPRO_CHARS = 2_000
+MAX_PROBE_FILES = 3
+MAX_PROBE_BYTES = 20 * 1024
+REPRO_TIMEOUT = 600
+# The checker image's entrypoint exits with this code when it cannot set up
+# (PostgreSQL did not start); Docker and Podman exit 125 when the container
+# itself could not start. Neither is the repro's own verdict.
+IMAGE_SETUP_EXIT = 97
+_IMAGE_SETUP_EXITS = (125, IMAGE_SETUP_EXIT)
 Runner = Callable[[int, Path], object]
 # (goal id of a fresh check task, its own throwaway copy of the pinned commit)
 # -> its report: text ending in a JSON object, or that object.
@@ -232,8 +246,11 @@ def _tests_problem(tests: dict) -> str:
 
 
 def _findings_problem(findings: list[dict]) -> str:
+    def confirmed(f: dict) -> str:
+        return (f" Lightwork re-ran `{f['repro']}` and it failed."
+                if f.get("repro_state") == "confirmed" else "")
     return ("An independent checker found these blockers in your last version:\n"
-            + "\n".join(f"- {f['what']} (how it knows: {f['how'] or 'not stated'})"
+            + "\n".join(f"- {f['what']} (how it knows: {f['how'] or 'not stated'}).{confirmed(f)}"
                         for f in findings))
 
 
@@ -254,9 +271,16 @@ def _check_brief(repo: vault.Repo, title: str, description: str, base: str,
             f"Run `git diff {base} HEAD` to read the change. Files changed: "
             f"{', '.join(files[:40]) or '(none)'}. {tests} Try to break it: run the tests "
             "yourself, write a probe, try an edge case." + prior + "\n\n"
+            "For a problem a command can show, add \"repro\": one command that exits "
+            "non-zero while the problem is there, and optionally \"probe_files\": the "
+            f"files it needs (at most {MAX_PROBE_FILES}, {MAX_PROBE_BYTES // 1024} KB each, "
+            "relative paths inside your copy). Lightwork runs it on a fresh copy of the "
+            "change with those files written first. A failing repro confirms the finding; "
+            "otherwise it counts as read, not ran.\n\n"
             "End with ONLY one JSON object: {\"findings\": [{\"severity\": "
             "\"blocker|should-fix|minor\", \"what\": \"<what is wrong>\", \"evidence\": "
-            "\"ran|read\", \"how\": \"<the command you ran or the lines you read>\"}], "
+            "\"ran|read\", \"how\": \"<the command you ran or the lines you read>\", "
+            "\"repro\": \"<command>\", \"probe_files\": {\"<path>\": \"<file text>\"}}], "
             "\"fixed\": [\"<earlier id>\"]}. A blocker must not merge. Say \"ran\" only "
             "when a command you ran showed the problem.")
 
@@ -278,31 +302,76 @@ def _report(out: object) -> dict | None:
     return found
 
 
-def _finding(raw: object, fid: str) -> dict:
+def _probe_files(raw: object) -> tuple[dict[str, str], str | None]:
+    """A finding's probe files, or the reason they are refused: at most three
+    text files of 20 KB, relative paths inside the copy, never ``..`` or under
+    ``.git``."""
+    from pathlib import PurePosixPath
+    if raw is None or raw == {}:
+        return {}, None
+    if not isinstance(raw, dict) or len(raw) > MAX_PROBE_FILES:
+        return {}, f"its probe files were refused (at most {MAX_PROBE_FILES} files)"
+    files: dict[str, str] = {}
+    for name, text in raw.items():
+        path = PurePosixPath(str(name))
+        if (not isinstance(name, str) or not name.strip() or "\\" in name or "\0" in name
+                or path.is_absolute() or ".." in path.parts or ".git" in path.parts
+                or not path.parts or len(name) > 200):
+            return {}, f"a probe file path was refused ({_safe_label(name, 80)})"
+        if not isinstance(text, str) or len(text.encode("utf-8")) > MAX_PROBE_BYTES:
+            return {}, f"a probe file was refused ({_safe_label(name, 80)} is not text of " \
+                       f"at most {MAX_PROBE_BYTES // 1024} KB)"
+        files[path.as_posix()] = text
+    return files, None
+
+
+def _write_probes(copy: Path, files: dict[str, str]) -> str | None:
+    """Write probe files into a repro's own copy; the reason when a path
+    would leave it (a link in the copy can point anywhere)."""
+    for name, text in files.items():
+        parts = Path(name).parts
+        # No link anywhere on the way, checked before any folder is made.
+        if any((copy.joinpath(*parts[:i])).is_symlink() for i in range(1, len(parts) + 1)):
+            return f"a probe file path was refused ({_safe_label(name, 80)})"
+        target = copy.joinpath(*parts)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+    return None
+
+
+def _finding(raw: object, fid: str, checker: int = 1) -> dict:
     raw = raw if isinstance(raw, dict) else {"what": str(raw)}
     severity = str(raw.get("severity", "")).strip().lower()
-    return {"id": fid,
-            # An unreadable severity counts as the worst: it must not pass as clean.
-            "severity": severity if severity in SEVERITIES else "blocker",
-            "what": str(raw.get("what") or "(no description)")[:300],
-            "evidence": "ran" if str(raw.get("evidence", "")).lower() == "ran" else "read",
-            "how": str(raw.get("how") or "")[:300], "sent": False, "fixed": False}
+    f = {"id": fid, "checker": checker,
+         # An unreadable severity counts as the worst: it must not pass as clean.
+         "severity": severity if severity in SEVERITIES else "blocker",
+         "what": str(raw.get("what") or "(no description)")[:300],
+         "evidence": "ran" if str(raw.get("evidence", "")).lower() == "ran" else "read",
+         "how": str(raw.get("how") or "")[:300], "sent": False, "fixed": False}
+    repro = raw.get("repro")
+    if isinstance(repro, str) and repro.strip():
+        probes, refused = _probe_files(raw.get("probe_files"))
+        f.update(repro=repro.strip()[:MAX_REPRO_CHARS], probe_files=sorted(probes),
+                 _probes=probes)
+        if refused:  # never run: it is not Lightwork's evidence
+            f.update(repro_state="not reproduced", repro_reason=refused, evidence="read")
+    return f
 
 
 class _Loop:
     """One feature run's rounds. The author works in its own working copy; every
     author round is committed host-side and pinned before any repository code
-    runs; tests and checks run on fresh copies of that pinned commit, so their
-    side effects never reach the author or the proposal."""
+    runs; tests, checks and repro re-runs run on fresh copies of that pinned
+    commit, so their side effects never reach the author or the proposal."""
 
     def __init__(self, world, repo: vault.Repo, host: Path, *, base: str,
                  branch: str, pid: str, title: str, description: str, owner: str,
-                 run: Runner, checker: Checker | None, sandbox_factory, budget,
+                 run: Runner, checkers: list[Checker], sandbox_factory, budget,
                  repair_rounds: int, check_rounds: int) -> None:
         self.world, self.repo, self.host = world, repo, host
         self.base, self.branch, self.pid = base, branch, pid
         self.title, self.description, self.owner = title, description, owner
-        self.run, self.checker, self.sandbox_factory = run, checker, sandbox_factory
+        self.run, self.checkers, self.sandbox_factory = run, checkers, sandbox_factory
         self.budget, self.check_rounds = budget, check_rounds
         self.repairs_left, self.repair_rounds = repair_rounds, repair_rounds
         self.head, self.bundle, self.tests = base, b"", None
@@ -310,11 +379,18 @@ class _Loop:
         self.setup_failed = False  # a step's isolated work area could not be set up
         self.rounds: list[dict] = []
         self.stopped: str | None = None
-        self.check: dict = {"state": "off" if checker is None else "skipped", "runs": 0,
-                            "off": None if checker is not None else
-                            "settings" if not loop_settings()["checker"] else "run",
+        settings = loop_settings()
+        self.max_repros = max(0, int(settings["max_repros"]))
+        self.image = str(settings["checker_image"] or "")
+        author = _author_model() if checkers else None
+        self.check: dict = {"state": "skipped" if checkers else "off", "runs": 0,
+                            "off": None if checkers else
+                            "settings" if not settings["checker"] else "run",
                             "max_runs": check_rounds, "commit": None, "error": None,
-                            "goal_ids": [], "findings": []}
+                            "goal_ids": [], "findings": [],
+                            "checkers": [_checker_record(c, n, author)
+                                         for n, c in enumerate(checkers, start=1)],
+                            "image": self.image or None}
 
     def _labelled(self):
         from ..ifc import labelled_run
@@ -392,30 +468,68 @@ class _Loop:
             if not self._repair("tests", _tests_problem(self.tests)):
                 return
 
-    def _look(self) -> dict | None:
-        """One look by the checker on its own copy; None when it did not run."""
+    def _box(self, workdir: str):
+        """The sandbox for a repro re-run: the checker image when one is set
+        (never this computer instead), else the tests' sandbox."""
+        if self.image:
+            return image_sandbox(self.image, workdir)
+        if self.sandbox_factory is not None:
+            return self.sandbox_factory(workdir=workdir)
+        from ..sandbox import build_sandbox
+        return build_sandbox(workdir=workdir)
+
+    def _image_problem(self) -> str | None:
+        """Why the checker image cannot be used here, or None. Tried once with
+        a command that does nothing, before any checker runs."""
+        if not self.image:
+            return None
+        with vault.work_dir() as tmp:
+            try:
+                box = self._box(str(tmp))
+            except Exception as exc:  # noqa: BLE001 -- reported, never a host run
+                return f"the checker image could not be used: {_safe_label(exc, 160)}"
+            try:
+                result = box.exec("true", timeout=300)
+            except Exception as exc:  # noqa: BLE001
+                return f"the checker image could not be used: {_safe_label(exc, 160)}"
+            finally:
+                _close(box)
+        if result.exit_code != 0 or getattr(result, "setup_failed", False):
+            said = next((line.strip() for line in ((result.stderr or "") + "\n"
+                                                   + (result.stdout or "")).splitlines()
+                         if line.strip()), "")[:160]
+            return (f"the checker image could not be used (exit code {result.exit_code}"
+                    + (f": {_safe_label(said, 160)})" if said else ")"))
+        return None
+
+    def _look(self, checker: Checker, n: int) -> dict | None:
+        """One look by checker ``n`` on its own copy; None when it did not run.
+        Its brief lists only its own earlier findings, never another's."""
         if not self._afford():
             return None
-        earlier = [f for f in self.check["findings"] if not f["fixed"]]
+        many = len(self.checkers) > 1
+        earlier = [f for f in self.check["findings"]
+                   if f.get("checker", 1) == n and not f["fixed"]]
         files = [f for f in _git(["diff", "--name-only", "-z", self.base, self.head],
                                  git_dir=self.host).split("\0") if f]
         gid = self.world.create_goal(
-            f"[{self.repo.name}] Check: {self.title}",
+            f"[{self.repo.name}] Check: {self.title}" + (f" (checker {n})" if many else ""),
             _check_brief(self.repo, self.title, self.description, self.base, files, earlier),
             owner=self.owner, execution_principal=self.owner)
         self.check["goal_ids"].append(gid)
+        who = f"checker {n}: " if many else ""
         try:
             with vault.work_dir() as tmp, _step(tmp) as step:
                 copy = _fresh_copy(self.host, tmp / "check", self.head)
                 with self._labelled():
-                    out = self.checker(gid, copy)
+                    out = checker(gid, copy)
                 self.setup_failed |= step["setup_failed"]
         except BudgetExceeded as exc:
             self.stopped = "budget"
             _fail_goal(self.world, gid, exc)
             return None
         except Exception as exc:  # noqa: BLE001 -- recorded: the change was not checked
-            self.check["error"] = f"it stopped with {type(exc).__name__}"
+            self.check["error"] = f"{who}it stopped with {type(exc).__name__}"
             _fail_goal(self.world, gid, exc)
             return None
         if not self._afford():
@@ -423,7 +537,7 @@ class _Loop:
             return None
         report = _report(out)
         if report is None:
-            self.check["error"] = "its report could not be read"
+            self.check["error"] = f"{who}its report could not be read"
         self._count_only(gid, report)
         return report
 
@@ -442,46 +556,177 @@ class _Loop:
         except Exception:  # noqa: BLE001 -- the proposal still records the check
             pass
 
+    def _look_all(self) -> list[tuple[int, dict]]:
+        """Every checker looks at the pinned head, each on its own copy."""
+        got = []
+        for n, checker in enumerate(self.checkers, start=1):
+            report = self._look(checker, n)
+            if report is not None:
+                got.append((n, report))
+                self.check["checkers"][n - 1]["commit"] = self.head
+            if self.stopped or self.check.get("cut_short"):
+                break
+        return got
+
     def verify(self) -> None:
-        """Test repairs, then checker looks with blocker repairs in between."""
+        """Test repairs, then checker looks with blocker repairs in between.
+        After each look Lightwork re-runs the new findings' repros; after each
+        repair, every confirmed repro on the repaired commit."""
         self.repair_tests()
-        if self.checker is None or self.head == self.base:
+        if not self.checkers or self.head == self.base:
+            return
+        problem = self._image_problem()
+        if problem:
+            self.check["error"] = problem
             return
         while self.check["runs"] < self.check_rounds and not self.stopped:
-            report = self._look()
-            if report is None:
+            got = self._look_all()
+            if not got:
                 break
             self.check["runs"] += 1
-            self.check["commit"] = self.head
-            self._record(report)
+            complete = len(got) == len(self.checkers)
+            if complete:
+                self.check["commit"] = self.head
+            new: list[dict] = []
+            for n, report in got:
+                new += self._record(report, n)
+            self._confirm(new)
             open_blockers = [f for f in self.check["findings"]
                              if f["severity"] == "blocker" and not f["fixed"]]
-            if not open_blockers or self.check["runs"] >= self.check_rounds:
+            if not (complete and open_blockers) or self.check["runs"] >= self.check_rounds:
                 break
             if not self._repair("check", _findings_problem(open_blockers)):
                 break
             for f in open_blockers:
                 f["sent"] = True
             self.repair_tests()
+            self._recheck()
 
-    def _record(self, report: dict) -> None:
+    def _record(self, report: dict, n: int) -> list[dict]:
+        """Checker ``n``'s report: its word on its own earlier findings (never
+        on one Lightwork confirmed), then its new findings."""
         fixed = {str(i) for i in report.get("fixed") or () if isinstance(i, (str, int))}
         for f in self.check["findings"]:
-            f["fixed"] = f["fixed"] or f["id"] in fixed
-        n = self.check["runs"]
-        self.check["findings"] += [_finding(raw, f"{n}.{i}") for i, raw in
-                                   enumerate(report["findings"][:MAX_FINDINGS], start=1)]
+            if (f.get("checker", 1) == n and f.get("repro_state") != "confirmed"
+                    and not f["fixed"] and f["id"] in fixed):
+                f["fixed"], f["fixed_by"] = True, "checker"
+        runs, prefix = self.check["runs"], "" if n == 1 else f"{n}-"
+        new = [_finding(raw, f"{prefix}{runs}.{i}", n) for i, raw in
+               enumerate(report["findings"][:MAX_FINDINGS], start=1)]
+        self.check["findings"] += new
+        return new
+
+    def _confirm(self, findings: list[dict]) -> None:
+        """Lightwork re-runs each new finding's repro, at most ``max_repros``
+        per look: a non-zero exit confirms it; exit zero, a timeout or a work
+        area that could not be set up leaves it not reproduced, read only."""
+        ran = 0
+        for f in findings:
+            if not f.get("repro") or f.get("repro_state"):
+                continue
+            if ran >= self.max_repros:
+                f.update(repro_state="not re-run", repro_reason=(
+                    f"the limit of {self.max_repros} re-runs per look was reached"))
+                continue
+            if not self._charge():
+                f.update(repro_state="not re-run", repro_reason="the spending limit ran out")
+                continue
+            ran += 1
+            outcome, reason = self._repro(f, self.head)
+            if outcome == "failed":
+                f.update(repro_state="confirmed",
+                         recheck={"commit": self.head, "result": "failed"})
+            else:
+                f.update(repro_state="not reproduced", repro_reason=reason, evidence="read")
+
+    def _recheck(self) -> None:
+        """After a repair, every confirmed repro runs on the new commit: exit
+        zero is fixed, whatever the checker says; anything else stays open."""
+        for f in self.check["findings"]:
+            if f.get("repro_state") != "confirmed" or f["recheck"]["commit"] == self.head:
+                continue
+            f["fixed"], f["fixed_by"] = False, None
+            if not self._charge():
+                f["recheck"] = {"commit": self.head, "result": "not re-run",
+                                "reason": "the spending limit ran out"}
+                continue
+            outcome, reason = self._repro(f, self.head)
+            f["recheck"] = {"commit": self.head, "result": outcome, "reason": reason}
+            if outcome == "passed":
+                f["fixed"], f["fixed_by"] = True, "lightwork"
+
+    def _charge(self) -> bool:
+        """budget.check() before a re-run, which counts as one tool call; a
+        call over the cap does not run and stops the loop."""
+        if self.stopped or not self._afford():
+            return False
+        try:
+            self.budget.record_tool_call()
+        except BudgetExceeded:
+            self.stopped = "budget"
+            return False
+        return True
+
+    def _repro(self, f: dict, head: str) -> tuple[str, str]:
+        """Run one repro on a fresh copy of ``head`` with its probe files: the
+        same contained step, sandbox and network policy as the tests (or the
+        checker image). (outcome, plain reason)."""
+        try:
+            with vault.work_dir() as tmp, _step(tmp) as step:
+                copy = _fresh_copy(self.host, tmp / "repro", head)
+                refused = _write_probes(copy, f.get("_probes") or {})
+                if refused:
+                    return "setup", refused
+                box = self._box(str(copy))
+                started = time.monotonic()
+                try:
+                    result = box.exec(f["repro"], timeout=REPRO_TIMEOUT)
+                finally:
+                    _close(box)
+                elapsed = time.monotonic() - started
+                setup = (step["setup_failed"] or bool(getattr(result, "setup_failed", False))
+                         or (bool(self.image) and result.exit_code in _IMAGE_SETUP_EXITS))
+        except Exception as exc:  # noqa: BLE001 -- a re-run that cannot start shows nothing
+            return "setup", f"it could not start ({type(exc).__name__})"
+        if setup:
+            return "setup", "its work area could not be set up"
+        if result.exit_code == 124 or elapsed >= REPRO_TIMEOUT:
+            return "timeout", "it ran out of time"
+        if result.exit_code == 0:
+            return "passed", "it passed"
+        return "failed", ""
 
     def record(self) -> tuple[dict, dict]:
         check = dict(self.check)
         check["state"] = ("ran" if check["runs"] else "failed" if check["error"]
                           else check["state"])
-        check["findings"] = [{k: v for k, v in f.items() if k not in ("sent", "fixed")}
+        check["findings"] = [{k: v for k, v in f.items()
+                              if k not in ("sent", "fixed") and not k.startswith("_")}
                              | {"status": "fixed" if f["fixed"] else
                                 "still open" if f["sent"] else "not attempted"}
                              for f in check["findings"]]
         return {"used": self.repair_rounds - self.repairs_left,
                 "allowed": self.repair_rounds}, check
+
+
+def _author_model() -> str | None:
+    """The author's model (the ``orchestrator`` role), for the family check."""
+    try:
+        from ..llm import model_for_role
+        return model_for_role("orchestrator") or None
+    except Exception:  # noqa: BLE001 -- the card then says it could not compare
+        return None
+
+
+def _checker_record(checker: Checker, n: int, author: str | None) -> dict:
+    """Which model checker ``n`` uses and whether it shares the author's family."""
+    model = getattr(checker, "model", None)
+    model = str(model) if model else None
+    same = None
+    if model and author:
+        from ..verifier import _same_family
+        same = _same_family(model, author)
+    return {"n": n, "model": model, "same_family": same, "commit": None}
 
 
 def _fail_goal(world, goal_id: int, exc: BaseException) -> None:
@@ -523,19 +768,23 @@ def _review(loop: _Loop, reviewer: Reviewer | None, brief: str, diff: str) -> di
 
 
 def propose(world, name: str, title: str, description: str, run: Runner, *,
-            reviewer: Reviewer | None = None, checker: Checker | None = None,
+            reviewer: Reviewer | None = None,
+            checker: Checker | list[Checker] | None = None,
             sandbox_factory=None, owner: str = "", budget=None,
             repair_rounds: int | None = None, check_rounds: int | None = None) -> dict:
     """Run a feature swarm, repair and check its change, and park it for
     human approval. ``budget`` is the one cap for every round (the caller's
-    runner and checker must charge the same object); ``None`` builds one from
-    configuration. Round limits default to ``[codebase]``."""
+    runner and checkers must charge the same object); ``None`` builds one from
+    configuration. ``checker`` is one checker or a list of independent ones
+    (:func:`default_checkers`). Round limits default to ``[codebase]``."""
     repo = vault.get(name)
     settings = loop_settings()
     on_host = _runs_on_host(sandbox_factory)
     if settings["require_container"] and on_host:
         raise VaultError(CONTAINER_REQUIRED)
     budget = budget if budget is not None else feature_budget()
+    checkers = ([] if checker is None else list(checker) if isinstance(checker, (list, tuple))
+                else [checker])
     pid = secrets.token_hex(8)
     branch = f"lightwork/{_slug(title)}-{pid[:6]}"
     goal_id = None
@@ -545,7 +794,7 @@ def propose(world, name: str, title: str, description: str, run: Runner, *,
                         git_dir=host).strip()
             loop = _Loop(world, repo, host, base=base, branch=branch, pid=pid,
                          title=title, description=description, owner=owner, run=run,
-                         checker=checker, sandbox_factory=sandbox_factory, budget=budget,
+                         checkers=checkers, sandbox_factory=sandbox_factory, budget=budget,
                          repair_rounds=max(0, int(settings["repair_rounds"] if repair_rounds
                                                   is None else repair_rounds)),
                          check_rounds=max(1, int(settings["check_rounds"] if check_rounds
@@ -671,6 +920,8 @@ NAMESPACE_GAP = ("The steps ran on this computer, not in a container, so they sh
 SETUP_FAILED_LINE = ("The isolated work area could not be set up for some steps, so their "
                      "commands did not run.")
 _UNCHECKED_GAP = "Nobody independently tried to break this change."
+SAME_FAMILY_GAP = ("Every checker used the same kind of model as the author, so they may "
+                   "share its blind spots.")
 
 
 def _tests_evidence(p: dict) -> tuple[list[str], list[str]]:
@@ -713,18 +964,67 @@ def _check_evidence(p: dict) -> tuple[list[str], list[str]]:
     if still:
         gaps.append(f"{still} blocker(s) from the independent check are still open.")
     if check.get("commit") != p["head"]:
-        lines.append("The last check looked at an earlier version, not the one you are approving.")
+        lines.append("Not every checker finished looking at the version you are approving."
+                     if len(check.get("checkers") or ()) > 1 else
+                     "The last check looked at an earlier version, not the one you are approving.")
         gaps.append("The independent check did not look at the version you are approving.")
     if check.get("error"):
         lines.append(f"A later check could not run ({check['error']}).")
     if check.get("cut_short"):
         lines.append("A later look was cut short by the spending limit.")
-    return lines, gaps
+    who, family = _checker_lines(check)
+    return lines + who + _repro_lines(findings), gaps + family
 
 
-def _finding_line(f: dict) -> str:
-    how = "shown by running a command" if f.get("evidence") == "ran" else "from reading the code"
-    return f"Finding {f['id']}, {f['severity']}, {f['status']}: {f['what']} ({how})."
+def _checker_lines(check: dict) -> tuple[list[str], list[str]]:
+    """Each checker's model and whether it shares the author's provider family;
+    a gap when every one of them does."""
+    rows = [c for c in check.get("checkers") or () if isinstance(c, dict)]
+    lines = [f"The checks ran in the container image {check['image']}."] \
+        if check.get("image") else []
+    for c in rows:
+        if not c.get("model"):
+            if len(rows) > 1:
+                lines.append(f"Checker {c.get('n')}: its model was not recorded.")
+            continue
+        kind = {True: "the same kind of model as the author",
+                False: "a different kind of model from the author"}.get(
+            c.get("same_family"), "a model that could not be compared with the author's")
+        lines.append(f"Checker {c.get('n')} used {c['model']}, {kind}.")
+    same = bool(rows) and all(c.get("same_family") is True for c in rows)
+    return lines, [SAME_FAMILY_GAP] if same else []
+
+
+def _repro_lines(findings: list[dict]) -> list[str]:
+    states = [f.get("repro_state") for f in findings if f.get("repro_state")]
+    if not states:
+        return []
+    skipped = states.count("not re-run")
+    return [f"Lightwork re-ran {len(states) - skipped} finding(s) on its own copy of the change: "
+            f"{states.count('confirmed')} confirmed, {states.count('not reproduced')} not "
+            "reproduced." + (f" {skipped} more were not re-run." if skipped else "")]
+
+
+def _finding_line(f: dict, many: bool = False) -> str:
+    """One finding in plain words: who found it, how sure, and who says it is fixed."""
+    state = f.get("repro_state")
+    how = ("shown by running a command, in the checker's own words" if f.get("evidence") == "ran"
+           else "from reading the code")
+    if state == "confirmed":
+        how = "confirmed: Lightwork re-ran it and it failed"
+    elif state == "not reproduced":
+        how = f"not reproduced when Lightwork re-ran it: {f.get('repro_reason')}; read only"
+    elif state == "not re-run":
+        how += f"; not re-run: {f.get('repro_reason')}"
+    status = f["status"]
+    if status == "fixed" and f.get("fixed_by"):
+        status += (": Lightwork re-ran it" if f["fixed_by"] == "lightwork"
+                   else ": the checker's word")
+    elif status != "fixed" and (f.get("recheck") or {}).get("result") not in (None, "failed"):
+        status += (" (Lightwork could not re-run it on the last version: "
+                   f"{f['recheck'].get('reason')})")
+    who = f" from checker {f.get('checker', 1)}" if many else ""
+    return f"Finding {f['id']}{who}, {f['severity']}, {status}: {f['what']} ({how})."
 
 
 def evidence(p: dict) -> dict:
@@ -755,9 +1055,10 @@ def evidence(p: dict) -> dict:
     if p.get("review_cut_short"):
         gaps.append("The spending limit ran out before the diff review finished.")
     check_lines, check_gaps = _check_evidence(p)
-    findings = (p.get("check") or {}).get("findings") or []
+    check = p.get("check") or {}
+    many = len(check.get("checkers") or ()) > 1
     return {"lines": lines + check_lines, "gaps": gaps + check_gaps,
-            "findings": [_finding_line(f) for f in findings]}
+            "findings": [_finding_line(f, many) for f in check.get("findings") or []]}
 
 
 def _approval_card(p: dict, *, full: bool) -> str:
@@ -777,8 +1078,11 @@ def _approval_card(p: dict, *, full: bool) -> str:
         for f in findings:
             key = f"{f['severity']} {f['status']}"
             counts[key] = counts.get(key, 0) + 1
+        confirmed = sum(1 for f in findings if f.get("repro_state") == "confirmed")
         lines.append("Independent check findings: "
                      + ", ".join(f"{n} {key}" for key, n in counts.items())
+                     + (f"; {confirmed} confirmed by Lightwork re-running them" if confirmed
+                        else "")
                      + f". Read them with maverick code show {p['id']} or on the Code page.")
     lines.append("Independent review: " + (
         "cut short by the spending limit." if review is None and p.get("review_cut_short") else
@@ -942,31 +1246,72 @@ def checker_model() -> str:
     return model
 
 
+def image_sandbox(image: str, workdir: str):
+    """The Docker (or, when ``[sandbox] backend = "podman"``, Podman) backend
+    running ``image``, with the rest of ``[sandbox]`` (network, memory,
+    user). Raises when it cannot be built; callers report that and never run
+    the command on this computer instead."""
+    from ..config import load_config
+    from ..sandbox import build_sandbox
+    cfg = load_config().get("sandbox")
+    cfg = dict(cfg) if isinstance(cfg, dict) else {}
+    engine = "podman" if str(cfg.get("backend", "")).strip().lower() == "podman" else "docker"
+    return build_sandbox(workdir=workdir, backend=engine, sandbox_config={
+        **cfg, "backend": engine, "image": image, "cross_run_pool": False,
+        "reuse_container": False})
+
+
+def checker_sandbox(workdir: str):
+    """A checker's sandbox: the ``[codebase] checker_image`` container when one
+    is set, else the configured backend."""
+    image = loop_settings()["checker_image"]
+    if image:
+        return image_sandbox(image, workdir)
+    from ..sandbox import build_sandbox
+    return build_sandbox(workdir=workdir)
+
+
 def default_checker(*, budget, user_id: str | None = None,
-                    allowed_suites: frozenset[str] | None = None) -> Checker:
+                    allowed_suites: frozenset[str] | None = None,
+                    model: str | None = None) -> Checker:
     """The independent checker: a separate governed run with a fresh context,
     whose sandbox is its own throwaway copy of the pinned commit, charged to
     the feature run's ``budget``. Its run is a fresh context
     (:func:`maverick.tools.fresh_context_run`): no tool that reads past goals
-    or shared memory, and no prior goals recalled into its brief."""
+    or shared memory, and no prior goals recalled into its brief. ``model``
+    defaults to :func:`checker_model`; the checker carries it as ``.model``."""
+    chosen = model or checker_model()
+
     def check(goal_id: int, copy: Path) -> object:
         from .. import orchestrator
         from ..llm import LLM
-        from ..sandbox import build_sandbox
         from ..tools import fresh_context_run
         from ..world_model import close_world_if_owned, open_world
         world = open_world()
-        box = build_sandbox(workdir=str(copy))
+        box = checker_sandbox(str(copy))
         try:
             with fresh_context_run():
                 return orchestrator.run_goal_sync(LLM(), world, budget, goal_id, sandbox=box,
                                                   user_id=user_id,
                                                   allowed_suites=allowed_suites,
-                                                  orchestrator_model_override=checker_model())
+                                                  orchestrator_model_override=chosen)
         finally:
             _close(box)
             close_world_if_owned(world)
+    check.model = chosen  # type: ignore[attr-defined]
     return check
+
+
+def default_checkers(*, budget, user_id: str | None = None,
+                     allowed_suites: frozenset[str] | None = None) -> list[Checker]:
+    """``[codebase] checkers`` independent checkers, one model each from
+    ``[codebase] checker_models`` (the :func:`checker_model` rule where the
+    list is empty or short). Each extra checker is one more agent run per look."""
+    settings = loop_settings()
+    models = list(settings["checker_models"])
+    return [default_checker(budget=budget, user_id=user_id, allowed_suites=allowed_suites,
+                            **({"model": models[i]} if i < len(models) else {}))
+            for i in range(max(1, int(settings["checkers"])))]
 
 
 def default_reviewer(*, budget=None) -> Reviewer:
@@ -985,9 +1330,9 @@ def default_reviewer(*, budget=None) -> Reviewer:
     return review
 
 
-__all__ = ["default_checker", "default_reviewer", "default_runner", "evidence",
-           "feature_budget", "find", "list_proposals", "loop_settings", "merge", "propose",
-           "push", "run_tests", "settle", "status"]
+__all__ = ["checker_sandbox", "default_checker", "default_checkers", "default_reviewer",
+           "default_runner", "evidence", "feature_budget", "find", "list_proposals",
+           "loop_settings", "merge", "propose", "push", "run_tests", "settle", "status"]
 
 
 def _check_word(check: dict, head: str) -> str:

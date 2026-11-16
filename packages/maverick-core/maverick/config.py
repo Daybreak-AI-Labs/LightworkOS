@@ -3143,7 +3143,26 @@ def get_fleet_memory() -> dict:
 
 
 CODEBASE_LOOP_DEFAULTS = {"repair_rounds": 2, "checker": True, "check_rounds": 2,
-                          "require_container": False}
+                          "require_container": False, "checkers": 1, "checker_models": [],
+                          "checker_image": "", "max_repros": 5}
+# A container image reference ([codebase] checker_image); anything else is kept
+# as an unusable name, so the check reports "could not run" instead of running
+# on this computer.
+_IMAGE_REF_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/:@-]{0,254}")
+
+
+def _codebase_models(raw: object) -> list[str]:
+    """``[codebase] checker_models``: up to three model names; anything else is empty."""
+    if not isinstance(raw, list):
+        return []
+    return [str(m).strip()[:200] for m in raw if isinstance(m, str) and m.strip()][:3]
+
+
+def _codebase_image(raw: object) -> str:
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return ""
+    text = raw.strip() if isinstance(raw, str) else ""
+    return text if _IMAGE_REF_RE.fullmatch(text) else "<unreadable image name>"
 
 
 def get_codebase() -> dict:
@@ -3158,7 +3177,13 @@ def get_codebase() -> dict:
     (default on; a malformed value keeps it on) runs the independent checker;
     ``check_rounds`` (1-3, default 2) bounds how often it looks.
     ``require_container`` (default off; a malformed value turns it on) refuses
-    a feature run whose steps would run on this computer without a container."""
+    a feature run whose steps would run on this computer without a container.
+    ``checkers`` (1-3, default 1) independent checkers look at each version;
+    ``checker_models`` names one model per checker (empty: the checker model
+    rule); ``checker_image`` (default empty) runs checks and re-runs in that
+    container image (a malformed name is kept as unusable, never dropped);
+    ``max_repros`` (0-20, default 5) bounds the findings Lightwork re-runs
+    per look."""
     cfg = load_config().get("codebase", {})
     if not isinstance(cfg, dict):
         cfg = {}
@@ -3177,7 +3202,11 @@ def get_codebase() -> dict:
             "checker": _strict_config_bool(cfg, "checker", True, invalid=True),
             "check_rounds": _rounds("check_rounds", 1, 3),
             "require_container": _strict_config_bool(cfg, "require_container", False,
-                                                     invalid=True)}
+                                                     invalid=True),
+            "checkers": _rounds("checkers", 1, 3),
+            "checker_models": _codebase_models(cfg.get("checker_models")),
+            "checker_image": _codebase_image(cfg.get("checker_image")),
+            "max_repros": _rounds("max_repros", 0, 20)}
 
 
 def get_ifc() -> dict:
