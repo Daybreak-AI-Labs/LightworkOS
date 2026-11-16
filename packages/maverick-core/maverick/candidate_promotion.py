@@ -18,7 +18,7 @@ the same way.
 A candidate whose next step cannot run is reported as stuck (``inspect`` and
 ``list`` say why): an unsettled effect is retried with ``reconcile``, an
 approval that ran out or stopped counting with a fresh ``review``. A
-candidate that was never published can be closed with ``discard``.
+candidate that is not the active artifact can be closed with ``discard``.
 """
 from __future__ import annotations
 
@@ -57,7 +57,7 @@ _ACTIONS = frozenset({"review", "stage", "activate", "canary", "rollback", "reco
 _STATES = frozenset({
     "awaiting_review", "not_advancing", "denied", "blocked", "authorized",
     "stage_claimed", "staged", "activation_claimed", "canary", "active",
-    "rollback_claimed", "rolled_back", "uncertain", "discarded",
+    "rollback_claimed", "rolled_back", "uncertain", "discarded", "closed",
 })
 _MAX_RECORDS = 10_000
 _MAX_LIST = 256
@@ -621,12 +621,26 @@ _UNRESOLVED_STATES = frozenset({
 })
 # States that wait on an approval which can run out before the next step.
 _APPROVAL_STATES = frozenset({"authorized", "staged"})
-# A record with a longer history is refused on read, so no transition may write
-# one. A review keeps room for everything that can follow it once (stage,
-# activate, canary result, rollback): repeated renewals stop first, and an
-# unpublished candidate can always still be discarded.
+# States in which the candidate is, or may be, the published artifact.
+_LIVE_STATES = frozenset({"canary", "active"})
+# A step that moves a candidate on is refused unless the history has room for
+# it and for every event that can still follow it once (the number here): an
+# approving review for stage, activation, the trial result and a rollback; a
+# claim for at least its result. Renewed reviews and repeated failed restores
+# therefore stop at _MAX_EVENTS. Recording an outcome (a claim's result,
+# reconcile, a refusal, closing the request) is never one of these steps: it
+# may use the few entries beyond, so a full history can always be settled and
+# closed, and a record is never written that cannot be read back.
 _MAX_EVENTS = 128
-_EVENTS_AFTER_REVIEW = 8
+_MAX_STORED_EVENTS = _MAX_EVENTS + 8
+_ROOM_AFTER = {
+    "candidate.promotion.review": 8,
+    "candidate.promotion.stage-claim": 6,
+    "candidate.promotion.activation-claim": 4,
+    "candidate.promotion.canary-failed": 2,
+    "candidate.promotion.canary-pass": 2,
+    "candidate.promotion.rollback-claim": 1,
+}
 
 
 def _event(events: Sequence[Mapping[str, object]], *, state: str, actor: str,
@@ -645,7 +659,7 @@ def _event(events: Sequence[Mapping[str, object]], *, state: str, actor: str,
 
 
 def _validate_events(value: object, state: str) -> list[dict]:
-    if not isinstance(value, list) or not value or len(value) > _MAX_EVENTS:
+    if not isinstance(value, list) or not value or len(value) > _MAX_STORED_EVENTS:
         raise CandidatePromotionConflict("candidate history is malformed")
     previous = None
     for index, raw in enumerate(value, start=1):
@@ -848,18 +862,19 @@ class CandidatePromotions:
         ``approval_void``: the approval ran out, or stopped counting because
         the reviewer's authority changed; a fresh ``review`` continues it.
         ``policy_changed``: the policy the request was made under was replaced,
-        so no review of this request can continue it. Each can be closed with
-        ``discard`` while the candidate was never published. Without a
-        readable policy only the unsettled action and the expiry are reported;
-        the next step reports the rest.
+        so no review of this request can continue it, whether it was already
+        approved or still awaits review. Each can be closed with ``discard``.
+        Without a readable policy only the unsettled action and the expiry
+        are reported; the next step reports the rest.
         """
         if record["state"] in _UNRESOLVED_STATES:
             return "outcome_unknown"
-        if record["state"] not in _APPROVAL_STATES:
+        if record["state"] not in _APPROVAL_STATES | {"awaiting_review"}:
             return ""
-        if policy is not None and not hmac.compare_digest(
-                str(record.get("policy_sha256") or ""), policy.sha256):
+        if self._policy_replaced(record, policy):
             return "policy_changed"
+        if record["state"] == "awaiting_review":
+            return ""
         review = record.get("review")
         expires = review.get("expires_at") if isinstance(review, dict) else None
         if (isinstance(expires, bool) or not isinstance(expires, int | float)
@@ -873,19 +888,37 @@ class CandidatePromotions:
         return ""
 
     @staticmethod
-    def _can_discard(record: Mapping[str, object]) -> bool:
-        """Only a candidate that was never published can be closed unseen.
+    def _policy_replaced(record: Mapping[str, object], policy: PromotionPolicy | None) -> bool:
+        return policy is not None and not hmac.compare_digest(
+            str(record.get("policy_sha256") or ""), policy.sha256)
 
-        Once the history holds ``canary`` the candidate was live: an unsettled
-        rollback must be reconciled, which checks that state was restored.
+    @staticmethod
+    def _published(record: Mapping[str, object]) -> bool:
+        """Whether the candidate was ever the published artifact."""
+        return any(event.get("state") == "canary" for event in record["events"])  # type: ignore[union-attr]
+
+    def _can_discard(self, record: Mapping[str, object], policy: PromotionPolicy | None) -> bool:
+        """Whether ``discard`` is the way out of the candidate's current state.
+
+        An approved or staged request, or one with an unsettled action, can be
+        closed. So can one still awaiting review under a replaced policy (no
+        review can decide it), and a live one whose history has no room left
+        to record a rollback. ``discard`` itself still refuses a candidate
+        that is the active artifact.
         """
-        return (record["state"] in _APPROVAL_STATES | _UNRESOLVED_STATES
-                and not any(event.get("state") == "canary" for event in record["events"]))  # type: ignore[union-attr]
+        state = record["state"]
+        if state == "awaiting_review":
+            return self._policy_replaced(record, policy)
+        if state in _LIVE_STATES:
+            room = 1 + _ROOM_AFTER["candidate.promotion.rollback-claim"]
+            return len(record["events"]) + room > _MAX_EVENTS  # type: ignore[arg-type]
+        return state in _APPROVAL_STATES | _UNRESOLVED_STATES
 
     def _standing(self, record: Mapping[str, object], policy: PromotionPolicy | None,
                   now: float) -> dict:
         return {**self._view(record), "stuck": self._stuck(record, policy, now),
-                "can_discard": self._can_discard(record)}
+                "can_discard": self._can_discard(record, policy),
+                "published": self._published(record)}
 
     def _standing_policy(self) -> PromotionPolicy | None:
         # Reading a candidate must not fail because the policy cannot be read.
@@ -1058,14 +1091,17 @@ class CandidatePromotions:
         action: str,
         details: Mapping[str, object],
         mutate: Callable[[dict], None] | None = None,
-        room_after: int = 0,
     ) -> dict:
-        if len(record["events"]) + 1 + room_after > _MAX_EVENTS:  # type: ignore[arg-type]
+        # A declined review closes the request; it is an outcome, not a step on.
+        room = None if state == "denied" else _ROOM_AFTER.get(action)
+        limit = _MAX_STORED_EVENTS if room is None else _MAX_EVENTS
+        if len(record["events"]) + 1 + (room or 0) > limit:  # type: ignore[arg-type]
             raise CandidatePromotionConflict(
                 "this request has been reviewed too many times to continue; "
                 "discard it and make a new request"
-                if room_after else
-                "candidate history is full; no further step can be recorded"
+                if action == "candidate.promotion.review" else
+                "this request's history is full, so this step cannot be recorded; "
+                "close the request once it is no longer in use"
             )
         now = self.store.authoritative_time()
 
@@ -1218,7 +1254,6 @@ class CandidatePromotions:
                 action="candidate.promotion.review",
                 details={"approved": approve, "decision_sha256": review["decision_sha256"]},
                 mutate=mutate,
-                room_after=_EVENTS_AFTER_REVIEW if approve else 0,
             )
             return self._view(saved)
 
@@ -1744,31 +1779,38 @@ class CandidatePromotions:
     ) -> dict:
         """Close a candidate that is not in use, without touching the deployment.
 
-        For a candidate that is stuck (an expired approval, or an action whose
-        outcome could not be settled) or no longer wanted before publication.
-        A candidate that was ever published is refused: its unsettled outcome
-        goes through ``reconcile``, which checks what was restored. Otherwise,
-        once an action has been claimed, a fresh observation must show the
-        candidate is not the active artifact. Nothing is staged, published or
-        restored here, and anything the adapter staged is left in place.
+        For a candidate that is stuck (an approval that no longer stands, a
+        replaced policy, an action whose outcome cannot be settled, a full
+        history) or no longer wanted before publication. Once an action has
+        been claimed, a fresh observation must show the candidate is not the
+        active artifact: a live candidate is reconciled and rolled back, never
+        closed here. One that was never published becomes ``discarded``; one
+        that was published becomes ``closed``, and the record says so, because
+        the checks ``reconcile`` makes on what was restored are not made.
+        Nothing is staged, published or restored here, and anything the
+        adapter staged is left in place.
         """
         canonical = canonical_tenant_id(tenant)
         actor = _principal(operator, "promotion operator", named_user=True)
         reason = _purpose(reason_code, "discard reason_code")
         with tenant_scope(tenant=canonical), self.effect_fence():
             record = self._record(canonical, candidate_id)
-            if (record["revision"] != expected_revision
-                    or record["state"] not in _APPROVAL_STATES | _UNRESOLVED_STATES):
-                raise CandidatePromotionConflict("candidate is not at a revision that can be discarded")
-            if not self._can_discard(record):
-                raise CandidatePromotionConflict(
-                    "candidate was published; check its outcome instead of discarding it"
-                )
             policy = self._policy()
+            if (
+                record["revision"] != expected_revision
+                or record["state"] not in (
+                    _APPROVAL_STATES | _UNRESOLVED_STATES | _LIVE_STATES | {"awaiting_review"})
+                or (record["state"] == "awaiting_review"
+                    and not self._policy_replaced(record, policy))
+            ):
+                raise CandidatePromotionConflict("candidate is not at a revision that can be discarded")
             now = self.store.authoritative_time()
             # The authority that may withdraw a deployment may withdraw a request.
             self._post_deployment_authority(record, policy, actor, "rollback", now)
-            details: dict[str, object] = {"reason_code": reason, "from_state": record["state"]}
+            published = self._published(record)
+            details: dict[str, object] = {
+                "reason_code": reason, "from_state": record["state"], "published": published,
+            }
             if record.get("deployment") is not None:
                 target = self._target(record)
                 observation = self._adapter().observe(canonical, target.target_id)
@@ -1780,12 +1822,12 @@ class CandidatePromotions:
                     raise CandidatePromotionInterrupted("deployment observation is unbound")
                 if observation.active_artifact_sha256 == self._candidate_sha(record):
                     raise CandidatePromotionConflict(
-                        "candidate is in use; check its outcome and roll it back instead of discarding it"
+                        "candidate is in use; check its outcome and roll it back instead of closing it"
                     )
                 details["evidence_sha256"] = observation.evidence_sha256
             saved = self._update_state(
                 record,
-                state="discarded",
+                state="closed" if published else "discarded",
                 actor=actor,
                 action="candidate.promotion.discard",
                 details=details,

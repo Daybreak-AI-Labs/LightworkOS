@@ -268,8 +268,10 @@ def _projection(value: Mapping[str, Any]) -> dict[str, Any]:
         # Why the request cannot take its next step ("" when it can): the page
         # and the Copilot offer a retry and a discard from this one reading.
         "stuck": stuck_reason(value),
-        # Only the coordinator knows whether the request was ever published.
+        # Only the coordinator knows when closing is the way out, and whether
+        # the request was ever published (it is then closed, not discarded).
         "can_discard": value.get("can_discard") is True,
+        "published": value.get("published") is True,
         "revision": value.get("revision"),
         "created_at": value.get("created_at"),
         "updated_at": value.get("updated_at"),
@@ -395,7 +397,7 @@ def _projection(value: Mapping[str, Any]) -> dict[str, Any]:
         # The native customer journey needs saved names, versions and decisions;
         # exact commitments remain inside the canonical coordinator's record.
         result = {key: result[key] for key in ("candidate_id", "requested_by", "candidate_principal", "state", "stuck",
-                  "can_discard", "revision", "created_at", "updated_at", "local_release")}
+                  "can_discard", "published", "revision", "created_at", "updated_at", "local_release")}
         result["review"] = {key: review.get(key) for key in ("reviewed_by", "approved", "reason_code", "note", "reviewed_at")} if review else None
         result["block"] = {"detail": block.get("detail")} if block else None
         result["events"] = [{key: item.get(key) for key in ("sequence", "state", "actor", "recorded_at")} for item in events]

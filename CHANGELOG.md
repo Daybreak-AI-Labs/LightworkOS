@@ -509,11 +509,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   "Retry: check what happened" reads the real state without repeating the
   action. If the approval ran out, or stopped counting because the
   reviewer's access changed, a release administrator can review it again.
-  If the release rules changed, make a new request. "Discard this request"
-  closes a stuck or unwanted request that was never published; a published
-  one is settled with the retry and restored instead. A request reviewed
-  again about 118 times must be discarded and requested anew. The Copilot
-  offers the same retry and discard for taught workflow releases.
+  If the release rules changed, even before the first review, discard the
+  request and make a new one. "Discard this request" closes a stuck or
+  unwanted request that was never published. A published request that
+  cannot be settled offers "Close this request" and ends as "Closed after
+  publication". Both are refused while the request is the version in use.
+  A request's history holds 128 steps: renewed reviews and repeated failed
+  restores stop there, and the request can still be settled and closed.
+  The Copilot offers the same retry and discard for taught workflow
+  releases.
 
 ### Fixed
 

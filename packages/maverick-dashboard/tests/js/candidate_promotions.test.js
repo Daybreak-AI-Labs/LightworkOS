@@ -251,12 +251,33 @@ test('a stuck request says so and offers a retry and a discard', async () => {
   assert.equal(button('Approve exact candidate'), undefined);
   assert.ok(button('Discard this request'));
 
-  // A request that was published is never offered a discard, even while unsettled.
-  items = [candidate({state:'rollback_claimed', stuck:'outcome_unknown', can_discard:false, revision:7})];
+  // A request that was published is closed, never "discarded without publishing".
+  items = [candidate({state:'uncertain', stuck:'outcome_unknown', can_discard:true, published:true, revision:7})];
   ui.document.getElementById('research-promotions-refresh').click();
   await settle();
   assert.ok(button('Retry: check what happened'));
   assert.equal(button('Discard this request'), undefined);
+  button('Close this request').click();
+  await settle();
+  assert.match(posts.at(-1).url, /\/candidate-1\/discard$/);
+  assert.match(ui.prompts.at(-1).prompt, /was published/);
+  assert.match(ui.prompts.at(-1).prompt, /checks that it is not in use/);
+
+  // Still waiting for review when the release rules changed: no review can decide it.
+  items = [candidate({state:'awaiting_review', stuck:'policy_changed', can_discard:true, revision:1})];
+  ui.document.getElementById('research-promotions-refresh').click();
+  await settle();
+  assert.equal(list.querySelector('.research-badge').textContent, 'Stuck');
+  assert.equal(button('Approve exact candidate'), undefined);
+  assert.ok(button('Discard this request'));
+
+  // A live trial offers no close while its history has room for a restore.
+  items = [candidate({state:'canary', stuck:'', can_discard:false, published:true, revision:8}),
+    candidate({candidate_id:'candidate-3', state:'closed', published:true, revision:9})];
+  ui.document.getElementById('research-promotions-refresh').click();
+  await settle();
+  assert.equal(button('Close this request'), undefined);
+  assert.match(list.textContent, /Closed after publication/);
 
   // A request that is not stuck can still be withdrawn before it is published.
   items = [candidate({state:'staged', stuck:'', can_discard:true, revision:3}), candidate({candidate_id:'candidate-2', state:'discarded', revision:4})];

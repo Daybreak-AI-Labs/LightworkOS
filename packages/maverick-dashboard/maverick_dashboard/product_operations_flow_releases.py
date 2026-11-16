@@ -39,7 +39,8 @@ def _plain_state(state):
             "staged": "Prepared for publication", "canary": "Published for a controlled trial",
             "active": "Published; execution check passed", "rolled_back": "Previous published rules restored",
             "denied": "Review declined", "uncertain": "Saved outcome needs checking",
-            "discarded": "Discarded without publishing"}.get(state, "Refresh the saved decision")
+            "discarded": "Discarded without publishing",
+            "closed": "Closed after publication"}.get(state, "Refresh the saved decision")
 
 
 _STUCK = {"outcome_unknown": "Stuck: the last action stopped before its result was saved",
@@ -56,12 +57,12 @@ def _standing(row):
 def _offered(row, action):
     """Whether the release page offers this decision for the request now."""
     state, stuck = row["state"], native.stuck_reason(row)
-    if action == "review":
-        return state == "awaiting_review" or stuck in ("approval_expired", "approval_void")
+    if action == "review":      # under changed release rules no review can decide a request
+        return (state == "awaiting_review" and not stuck) or stuck in ("approval_expired", "approval_void")
     if action in ("stage", "activate"):
         return state == {"stage": "authorized", "activate": "staged"}[action] and not stuck
     if action == "discard":
-        return row.get("can_discard") is True      # never a request that was published
+        return row.get("can_discard") is True      # the coordinator says when closing is the way out
     if action == "reconcile":
         return stuck == "outcome_unknown"
     return state in {"canary": {"canary"}, "rollback": {"canary", "active"}}[action]
@@ -268,7 +269,9 @@ def decision_prepare(request, _selection, arguments, *, action):
              "activate": "Publish this exact approved and prepared rule-only version. New runs will use these rules. The owner must finish a real run before its observed failure rate can be checked.",
              "canary": "Check actual finished runs from this publication. If its acceptance rules fail, Lightwork restores the retained previous rules. This does not establish answer accuracy or business improvement.",
              "rollback": report["rollback"], "reconcile": "Read the authoritative release and resolve the uncertain action without repeating it.",
-             "discard": "Close this release request without publishing it. Lightwork first checks that it is not in use. Nothing is published or restored, and the request cannot be reopened."}
+             "discard": ("Close this release request. It was published, so Lightwork first checks that it is not in use. Nothing is restored: check the published version yourself. The request cannot be reopened."
+                         if row.get("published") is True else
+                         "Close this release request without publishing it. Lightwork first checks that it is not in use. Nothing is published or restored, and the request cannot be reopened.")}
     changes = [{"label": "Workflow release", "after": report["name"] + " · version " + str(report["version"])},
                {"label": "Evidence limit", "after": report["evidence"]}]
     if action == "review":
@@ -339,7 +342,7 @@ def decision_recover(request, _selection, arguments, prepared, _operation, *, ac
         return None
     states = {"review": {"authorized", "staged", "denied"}, "stage": {"staged"}, "activate": {"canary"},
               "canary": {"active", "rolled_back"}, "rollback": {"rolled_back"}, "reconcile": {"canary", "rolled_back"},
-              "discard": {"discarded"}}
+              "discard": {"discarded", "closed"}}
     events = row["events"][prepared["event_count"]:]
     if not any(event.get("actor") == actor and event.get("state") in states[action] for event in events):
         if row["state"] == "uncertain":

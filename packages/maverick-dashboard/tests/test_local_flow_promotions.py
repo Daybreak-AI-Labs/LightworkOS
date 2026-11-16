@@ -278,9 +278,9 @@ def test_copilot_offers_the_same_retry_and_discard_as_the_release_page(monkeypat
     """A stuck release request has the same way out in the Copilot as on the page."""
     from maverick_dashboard import product_operations_flow_releases as releases
 
-    def row(name, state, stuck="", can_discard=False):
+    def row(name, state, stuck="", can_discard=False, published=False):
         return {"candidate_id": name, "state": state, "stuck": stuck, "can_discard": can_discard,
-                "revision": 4, "events": [],
+                "published": published, "revision": 4, "events": [],
                 "requested_by": OWNER, "candidate_principal": "agent:candidate", "manifest_sha256": "1" * 64,
                 "manifest": {"target": {"state_schema": "lightwork.rule-only-flow-release.v1"}}}
 
@@ -288,8 +288,9 @@ def test_copilot_offers_the_same_retry_and_discard_as_the_release_page(monkeypat
             row("expired", "staged", "approval_expired", True), row("void", "authorized", "approval_void", True),
             row("rules", "authorized", "policy_changed", True),
             row("claimed", "activation_claimed", "outcome_unknown", True),
-            row("restoring", "rollback_claimed", "outcome_unknown"),       # was published
-            row("uncertain", "uncertain", "outcome_unknown", True), row("live", "canary")]
+            row("restoring", "rollback_claimed", "outcome_unknown", True, True),   # was published
+            row("unreviewed", "awaiting_review", "policy_changed", True),
+            row("uncertain", "uncertain", "outcome_unknown", True), row("live", "canary", published=True)]
 
     class Service:
         calls = []
@@ -313,10 +314,12 @@ def test_copilot_offers_the_same_retry_and_discard_as_the_release_page(monkeypat
         return {choice["value"] for choice in snapshot.fields[0]["choices"]}
 
     assert offered("reconcile") == {"claimed", "restoring", "uncertain"}
-    assert offered("review") == {"waiting", "expired", "void"}     # a fresh review is the retry
+    # A fresh review is the retry; under changed rules no review can decide a request.
+    assert offered("review") == {"waiting", "expired", "void"}
     assert offered("activate") == {"ready"}                  # not the request whose approval ran out
     assert offered("stage") == set()                         # neither a void approval nor changed rules
-    assert offered("discard") == {"ready", "expired", "void", "rules", "claimed", "uncertain"}
+    assert offered("discard") == {"ready", "expired", "void", "rules", "claimed", "restoring",
+                                  "unreviewed", "uncertain"}
     status = releases.decisions_snapshot(None, {}, action="status").details["releases"]
     assert {item["request"]: item["state"] for item in status}["claimed"].startswith("Stuck: the last action stopped")
     assert {item["request"]: item["state"] for item in status}["expired"].startswith("Stuck: the approval ran out")
@@ -327,4 +330,12 @@ def test_copilot_offers_the_same_retry_and_discard_as_the_release_page(monkeypat
     outcome = releases.decision_execute(None, {}, {"candidate": "expired"}, prepared.native, None, action="discard")
     assert service.calls == [("expired", {"expected_revision": 4, "reason_code": "stuck_request"})]
     assert outcome.status == "confirmed" and "Discarded without publishing" in outcome.message
+
+    # A published request is closed with words that say it was published.
+    service.discard = lambda _tenant, _actor, candidate_id, **kwargs: {
+        **service.inspect(None, None, candidate_id), "state": "closed", "stuck": ""}
+    prepared = releases.decision_prepare(None, {}, {"candidate": "restoring"}, action="discard")
+    assert "was published" in prepared.summary
+    outcome = releases.decision_execute(None, {}, {"candidate": "restoring"}, prepared.native, None, action="discard")
+    assert "Closed after publication" in outcome.message
     assert "learning.release_discard" in {entry.id for entry in releases.entries()}

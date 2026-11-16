@@ -393,10 +393,12 @@ def test_overview_says_which_requests_are_stuck_and_why(client):
                    "can_discard": True}
     item = customer.get(BASE).json()["items"][0]
     assert item["state"] == "activation_claimed" and item["stuck"] == "outcome_unknown"
-    assert item["can_discard"] is True
+    assert item["can_discard"] is True and item["published"] is False
     service.row = _row(state="staged", revision=3)       # an older service reports neither
     item = customer.get(BASE).json()["items"][0]
     assert item["stuck"] == "" and item["can_discard"] is False
+    service.row = {**_row(state="uncertain", revision=9), "can_discard": True, "published": True}
+    assert customer.get(BASE).json()["items"][0]["published"] is True
 
 
 def test_stale_context_and_non_admin_stop_before_service_effect(client, monkeypatch):

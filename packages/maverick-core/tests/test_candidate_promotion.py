@@ -668,33 +668,87 @@ def test_an_interrupted_action_is_stuck_and_a_live_candidate_cannot_be_discarded
     )["state"] == "canary"
 
 
-def test_a_published_candidate_is_never_discarded_even_when_its_rollback_is_unsettled(promotion):
+def _failing_rollback(manifest, rollback_handle):
+    raise RuntimeError("fixture restore could not be completed")
+
+
+def test_a_published_request_closes_only_once_it_is_no_longer_the_active_artifact(promotion):
     service, state = promotion
     reviewed = _review(service, _request(service))
     staged = service.stage(TENANT, OPERATOR, "candidate-one", expected_revision=reviewed["revision"])
-    assert service.inspect(TENANT, OPERATOR, "candidate-one")["can_discard"] is True
     canary = service.activate(TENANT, OPERATOR, "candidate-one", expected_revision=staged["revision"])
-    adapter = service.deployment_adapter
-
-    def interrupted(manifest, rollback_handle):
-        state["active_sha256"] = state["previous_sha256"]       # the restore landed
-        raise KeyboardInterrupt
-
-    adapter.rollback = interrupted
-    with pytest.raises(KeyboardInterrupt):
+    service.deployment_adapter.rollback = _failing_rollback
+    with pytest.raises(CandidatePromotionInterrupted):
         service.rollback(TENANT, OPERATOR, "candidate-one", expected_revision=canary["revision"],
                          reason_code="operator_requested")
-    claimed = service.inspect(TENANT, OPERATOR, "candidate-one")
-    assert claimed["state"] == "rollback_claimed" and claimed["stuck"] == "outcome_unknown"
-    assert claimed["can_discard"] is False
+    stuck = service.inspect(TENANT, OPERATOR, "candidate-one")
+    assert stuck["state"] == "uncertain" and stuck["published"] is True and stuck["can_discard"] is True
 
-    # It was published: closing it as "discarded" would skip the restore checks.
-    with pytest.raises(CandidatePromotionConflict, match="was published"):
+    # Still the active artifact: closing it would hide a live release.
+    with pytest.raises(CandidatePromotionConflict, match="in use"):
         service.discard(TENANT, OPERATOR, "candidate-one",
-                        expected_revision=claimed["revision"], reason_code="stuck_request")
-    assert service.reconcile(
-        TENANT, OPERATOR, "candidate-one", expected_revision=claimed["revision"]
-    )["state"] == "rolled_back"
+                        expected_revision=stuck["revision"], reason_code="stuck_request")
+
+    # Another version is published directly: retry can never settle this one.
+    state["active_sha256"] = _sha("published-directly")
+    with pytest.raises(CandidatePromotionInterrupted):
+        service.reconcile(TENANT, OPERATOR, "candidate-one", expected_revision=stuck["revision"])
+    closed = service.discard(TENANT, OPERATOR, "candidate-one",
+                             expected_revision=stuck["revision"], reason_code="stuck_request")
+    assert closed["state"] == "closed"                      # never "discarded": it was published
+    assert closed["events"][-1]["details"]["published"] is True
+    assert closed["can_discard"] is False and closed["stuck"] == ""
+
+
+def test_a_request_awaiting_review_under_a_replaced_policy_is_stuck_and_can_be_discarded(promotion):
+    service, state = promotion
+    waiting = _request(service)
+    standing = service.inspect(TENANT, OPERATOR, "candidate-one")
+    assert standing["stuck"] == "" and standing["can_discard"] is False
+    with pytest.raises(CandidatePromotionConflict):
+        service.discard(TENANT, OPERATOR, "candidate-one", expected_revision=waiting["revision"],
+                        reason_code="no_longer_wanted")
+
+    state["policy_version"] = "v2"
+    standing = service.list(TENANT, OPERATOR)[0]
+    assert standing["stuck"] == "policy_changed" and standing["can_discard"] is True
+    with pytest.raises(CandidatePromotionConflict, match="policy changed"):
+        _review(service, waiting)
+    assert service.discard(TENANT, OPERATOR, "candidate-one", expected_revision=waiting["revision"],
+                           reason_code="stuck_request")["state"] == "discarded"
+
+
+def test_a_full_history_on_a_live_release_can_still_be_settled_and_closed(promotion):
+    service, state = promotion
+    reviewed = _review(service, _request(service))
+    staged = service.stage(TENANT, OPERATOR, "candidate-one", expected_revision=reviewed["revision"])
+    current = service.activate(TENANT, OPERATOR, "candidate-one", expected_revision=staged["revision"])
+    service.deployment_adapter.rollback = _failing_rollback
+    refused = None
+    for _ in range(80):                 # every restore attempt fails; the candidate stays live
+        try:
+            service.rollback(TENANT, OPERATOR, "candidate-one", expected_revision=current["revision"],
+                             reason_code="operator_requested")
+        except CandidatePromotionInterrupted:
+            uncertain = service.inspect(TENANT, OPERATOR, "candidate-one")
+            current = service.reconcile(TENANT, OPERATOR, "candidate-one",
+                                        expected_revision=uncertain["revision"])
+        except CandidatePromotionConflict as exc:
+            refused = str(exc)
+            break
+    assert refused is not None and "history is full" in refused and "close" in refused
+    full = service.inspect(TENANT, OPERATOR, "candidate-one")
+    # No restore was claimed without room for its result inside the cap; only
+    # the outcome (reconcile) went past it, and the list still loads.
+    claims = [event["sequence"] for event in full["events"] if event["state"] == "rollback_claimed"]
+    assert full["state"] == "canary" and max(claims) <= 127 and len(full["events"]) <= 130
+    assert service.list(TENANT, OPERATOR)[0]["can_discard"] is True
+    with pytest.raises(CandidatePromotionConflict, match="in use"):
+        service.discard(TENANT, OPERATOR, "candidate-one", expected_revision=full["revision"],
+                        reason_code="stuck_request")
+    state["active_sha256"] = _sha("published-directly")
+    assert service.discard(TENANT, OPERATOR, "candidate-one", expected_revision=full["revision"],
+                           reason_code="stuck_request")["state"] == "closed"
 
 
 def test_a_voided_approval_is_stuck_and_a_changed_policy_leaves_only_discard(promotion):

@@ -111,7 +111,7 @@
     const states = {awaiting_review: 'Waiting for independent review', authorized: 'Approved for preparation',
       staged: 'Prepared for publication', canary: 'Published for a controlled trial', active: 'Published; execution check passed',
       rolled_back: 'Previous published rules restored', uncertain: 'Saved outcome needs checking', denied: 'Review declined',
-      discarded: 'Discarded without publishing'};
+      discarded: 'Discarded without publishing', closed: 'Closed after publication'};
     if (states[value]) return states[value];
     return String(value || 'unknown').replaceAll('_', ' ');
   }
@@ -241,13 +241,16 @@
   // A fresh review is the retry for an approval that ran out or stopped counting.
   const REVIEW_AGAIN = ['approval_expired', 'approval_void'];
 
+  // A request that was published is closed, never "discarded without publishing".
   function discardButton(candidate) {
-    const button = element('button', 'Discard this request', 'btn');
+    const button = element('button', candidate.published ? 'Close this request' : 'Discard this request', 'btn');
     button.type = 'button';
     button.addEventListener('click', () => transition(
       candidate,
       'discard',
-      'Discard this request? Lightwork first checks that it is not in use. Nothing is published or restored, and the request cannot be reopened.',
+      candidate.published
+        ? 'Close this request? It was published, so Lightwork first checks that it is not in use. Nothing is restored: check the published version yourself. The request cannot be reopened.'
+        : 'Discard this request? Lightwork first checks that it is not in use. Nothing is published or restored, and the request cannot be reopened.',
       {reason_code: candidate.stuck ? 'stuck_request' : 'no_longer_wanted'},
       button.textContent,
     ));
@@ -358,7 +361,8 @@
     }
 
     if (!canManage) return item;
-    if (candidate.state === 'awaiting_review' || REVIEW_AGAIN.includes(stuck)) item.appendChild(reviewForm(candidate));
+    // Under changed release rules no review can decide a request, so none is offered.
+    if ((candidate.state === 'awaiting_review' && !stuck) || REVIEW_AGAIN.includes(stuck)) item.appendChild(reviewForm(candidate));
     if (candidate.state === 'authorized' && !stuck) item.appendChild(actionButton(
       candidate.local_release ? 'Prepare approved workflow' : 'Stage candidate', candidate, 'stage',
       candidate.local_release ? 'Prepare this approved workflow version and keep its exact previous published rules available for restoration? Nothing is published yet.' : 'Stage this exact candidate after another current rights and artifact check?', 'btn btn--primary'));
