@@ -23,7 +23,7 @@ catalogue of built features and tools.
 | [Hosted control plane and multi-tenancy](#hosted-control-plane-and-multi-tenancy) | 11 |
 | [Evaluation and benchmarks](#evaluation-and-benchmarks) | prose |
 | [Observability and reliability](#observability-and-reliability) | prose |
-| [UX surfaces](#ux-surfaces) | 50 |
+| [UX surfaces](#ux-surfaces) | 51 |
 | [Packaged governance, evidence and external privacy control planes](#packaged-governance-evidence-and-external-privacy-control-planes) | 4 |
 | [Software development: the code vault](#software-development-the-code-vault) | 2 |
 | [Information-flow control](#information-flow-control) | 1 |
@@ -32,7 +32,7 @@ catalogue of built features and tools.
 | [Distribution and install](#distribution-and-install) | 19 |
 | [Customer workflow completion and readiness](#customer-workflow-completion-and-readiness) | 22 in 24 subsections |
 
-454 entries in 19 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
+455 entries in 19 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
 <!-- toc:end -->
 
 ## Agent kernel and orchestration

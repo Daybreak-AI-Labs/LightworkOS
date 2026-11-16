@@ -8,7 +8,7 @@
   var list = root.querySelector('[data-decision-list]');
   var status = root.querySelector('[data-decision-status]');
 
-  function el(tag, text, cls) {
+  function el(tag, cls, text) {
     var node = document.createElement(tag);
     if (text != null) node.textContent = text;
     if (cls) node.className = cls;
@@ -20,22 +20,22 @@
   }
 
   function card(d) {
-    var item = el('article', null, 'approval-item');
+    var item = el('article', 'approval-item', null);
     item.id = 'decision-' + d.id;
-    var head = el('div', null, 'approval-item__head');
-    var title = el('h3', d.question, 'approval-item__title');
+    var head = el('div', 'approval-item__head', null);
+    var title = el('h3', 'approval-item__title', d.question);
     title.id = 'decision-title-' + d.id;
     item.setAttribute('aria-labelledby', title.id);
     head.appendChild(title);
-    head.appendChild(el('span', d.area_label, 'badge pending'));
+    head.appendChild(el('span', 'badge pending', d.area_label));
     item.appendChild(head);
-    item.appendChild(el('p', 'Lightwork recommends option ' + d.recommended + '. ' + d.reason));
-    item.appendChild(el('p', 'Decide by ' + when(d.expires_at) + '. With no answer by then, the run stops without choosing.', 'muted'));
+    item.appendChild(el('p', null, 'Lightwork recommends option ' + d.recommended + '. ' + d.reason));
+    item.appendChild(el('p', 'muted', 'Decide by ' + when(d.expires_at) + '. With no answer by then, the run stops without choosing.'));
     var form = el('form');
     var set = el('fieldset');
-    set.appendChild(el('legend', 'Options'));
+    set.appendChild(el('legend', null, 'Options'));
     d.options.forEach(function (o) {
-      var row = el('div', null, 'decision-option');
+      var row = el('div', 'decision-option', null);
       var input = el('input');
       input.type = 'radio'; input.name = 'decision-' + d.id; input.value = String(o.number);
       input.id = 'decision-' + d.id + '-option-' + o.number;
@@ -43,25 +43,25 @@
       if (!d.can_answer) input.disabled = true;
       var label = el('label');
       label.htmlFor = input.id;
-      label.appendChild(el('strong', o.number + '. ' + o.label + (o.number === d.recommended ? ' (recommended)' : '')));
-      label.appendChild(el('span', ' ' + o.effect));
+      label.appendChild(el('strong', null, o.number + '. ' + o.label + (o.number === d.recommended ? ' (recommended)' : '')));
+      label.appendChild(el('span', null, ' ' + o.effect));
       row.appendChild(input); row.appendChild(label);
       set.appendChild(row);
     });
     form.appendChild(set);
     var noteId = 'decision-' + d.id + '-note';
-    var noteLabel = el('label', 'Note for the run (optional)');
+    var noteLabel = el('label', null, 'Note for the run (optional)');
     noteLabel.htmlFor = noteId;
     var note = el('textarea');
     note.id = noteId; note.maxLength = 2000; note.rows = 2;
     if (!d.can_answer) note.disabled = true;
     form.appendChild(noteLabel); form.appendChild(note);
-    var actions = el('div', null, 'approval-actions');
-    var send = el('button', 'Send my choice', 'btn');
+    var actions = el('div', 'approval-actions', null);
+    var send = el('button', 'btn', 'Send my choice');
     send.type = 'submit';
     if (!d.can_answer) send.disabled = true;
     actions.appendChild(send);
-    var copilot = el('button', 'Review with Copilot', 'btn btn--ghost');
+    var copilot = el('button', 'btn btn--ghost', 'Review with Copilot');
     copilot.type = 'button';
     copilot.addEventListener('click', function () {
       document.dispatchEvent(new CustomEvent('lightwork:copilot-selection', {detail: {selection: {kind: 'decision', id: d.id}}}));
@@ -72,7 +72,7 @@
     });
     actions.appendChild(copilot);
     form.appendChild(actions);
-    if (!d.can_answer && d.why_not) form.appendChild(el('p', d.why_not, 'muted'));
+    if (!d.can_answer && d.why_not) form.appendChild(el('p', 'muted', d.why_not));
     var said = el('p'); said.setAttribute('role', 'status');
     form.appendChild(said);
     form.addEventListener('submit', async function (event) {

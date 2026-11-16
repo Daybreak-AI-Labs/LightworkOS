@@ -1108,9 +1108,9 @@ def base_registry(
     """
     from .ask_user import ask_user
     from .attachments import list_attachments_tool, read_attachment_tool
-    from .request_decision import request_decision
     from .fs import list_dir, read_file, write_file
     from .repo_map import repo_map
+    from .request_decision import request_decision
     from .shell import shell
     from .str_edit import str_replace_editor
 

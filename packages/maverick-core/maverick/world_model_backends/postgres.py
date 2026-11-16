@@ -37,9 +37,9 @@ from dataclasses import dataclass
 from urllib.parse import quote
 
 from ..approval_checks import POSTGRES_SCHEMA as _APPROVAL_CHECK_SCHEMA_PG
-from ..decision_requests import POSTGRES_SCHEMA as _DECISION_REQUEST_SCHEMA_PG
 from ..attachment_submissions import POSTGRES_SCHEMA as _ATTACHMENT_SUBMISSION_SCHEMA
 from ..deadline_alerts import POSTGRES_SCHEMA as _DEADLINE_ALERT_SCHEMA_PG
+from ..decision_requests import POSTGRES_SCHEMA as _DECISION_REQUEST_SCHEMA_PG
 from ..event_admission import POSTGRES_SCHEMA as _EVENT_ADMISSION_SCHEMA
 from ..event_admission import (
     EventRegistryUnavailable,
