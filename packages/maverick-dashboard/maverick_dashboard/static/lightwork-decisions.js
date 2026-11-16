@@ -61,6 +61,16 @@
     send.type = 'submit';
     if (!d.can_answer) send.disabled = true;
     actions.appendChild(send);
+    var copilot = el('button', 'Review with Copilot', 'btn btn--ghost');
+    copilot.type = 'button';
+    copilot.addEventListener('click', function () {
+      document.dispatchEvent(new CustomEvent('lightwork:copilot-selection', {detail: {selection: {kind: 'decision', id: d.id}}}));
+      var panel = document.getElementById('mv-copilot');
+      var opener = document.getElementById('mv-copilot-fab');
+      if (panel && panel.hidden && opener) opener.click();
+      said.textContent = 'Copilot is reviewing this decision. Your choice still needs your confirmation.';
+    });
+    actions.appendChild(copilot);
     form.appendChild(actions);
     if (!d.can_answer && d.why_not) form.appendChild(el('p', d.why_not, 'muted'));
     var said = el('p'); said.setAttribute('role', 'status');

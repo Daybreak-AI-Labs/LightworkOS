@@ -643,6 +643,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   check and activity-log entries apply. These are offered only once the
   Reviews family is in `[copilot] operation_families` (it is off by
   default); publishing and retiring also need Copilot actions turned on.
+- A run can now stop and ask a person to decide. It offers two to five
+  options, says which it recommends and why, and waits as blocked without
+  spending until someone chooses on the Approvals page, a Slack card, the
+  Copilot or `maverick decisions answer`; then it continues with that choice.
+  Nobody answering in time (`[approval] decision_expiry_hours`, default 72)
+  stops the run without choosing. Upgrading adds world-model migration 55.
+- New `[approval] decision_areas` and `decision_admin_areas` settings (wizard
+  approvals step and Settings > Safety > Approvals) list where a run must ask
+  and which decisions need an administrator. By default governance-control
+  decisions need an administrator other than the person who started the run;
+  turn on `[security] allow_self_approval` on a single-person install. A
+  workspace file can add areas but cannot remove them.
+- `maverick resume` now refuses a run that is still waiting for a decision.
+  Answer it first with `maverick decisions answer <id> <option>`.
 
 ### Fixed
 

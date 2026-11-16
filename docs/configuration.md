@@ -183,6 +183,20 @@ separate_approver       = "when_available"
 # rows older than check_retention_days are pruned a few hundred at a time.
 record_checks           = true
 check_retention_days    = 90
+# Decision requests: a run asks a person to choose between options (with its
+# recommendation and why) and waits, spending nothing, until someone answers
+# on the Approvals page, a Slack card, the Copilot or `maverick decisions
+# answer`. Areas where a run must ask instead of deciding alone (the list is
+# in the model's instructions; nothing detects every such choice by itself):
+decision_areas          = ["security", "workspace_boundaries", "data_erasure_retention",
+                           "spending", "user_facing", "governance"]
+# Decisions in these areas need a workspace administrator; the person who
+# started the run may answer only with [security] allow_self_approval on.
+decision_admin_areas    = ["governance"]
+# An unanswered decision expires after this long and the run stops without
+# choosing an option. A workspace file may add areas or shorten this wait,
+# never remove an area.
+decision_expiry_hours   = 72
 
 [sandbox]
 backend = "local"                   # local | docker | ssh | podman | gvisor | devcontainer | firecracker | kubernetes | modal

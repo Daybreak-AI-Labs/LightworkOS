@@ -5009,6 +5009,21 @@ tested without spawning py-spy.
   has someone other than the requester approve a high/critical action whenever
   another eligible approver exists (`channel_approvals.separate_approver_refusal`,
   enforced in `record_vote` for the dashboard, Slack and Teams).
+- **Decision requests** (`maverick.decision_requests`, tool `request_decision`,
+  table `decision_requests`, migration 55) — a governed run (any goal run,
+  including chat tasks and code-vault feature runs) asks a person to choose between two
+  to five options, with its recommendation and why, and pauses as `blocked`
+  without spending. The owner or a workspace administrator answers on the
+  Approvals page (`/api/v1/decisions`), the Copilot (`reviews.decision_*`), a
+  Slack card or `maverick decisions answer`; areas in `[approval]
+  decision_admin_areas` need an administrator other than the starter unless
+  `allow_self_approval` is on. The run resumes with the choice as a structured
+  record in its brief. An unanswered decision expires
+  (`decision_expiry_hours`) and stops the run without choosing; an unsaved
+  request stops it before it acts. Requests, answers and expiries are audited
+  (`decision_requested`, `decision_answered`, `decision_expired`). A flow agent
+  step's goal pauses the same way, but the flow still counts a paused goal as a
+  failed step attempt; it does not wait for the answer yet.
 - **Web dashboard** — run list, plan-tree, chat at `/chat`,
   [root conversation summaries and shared durable SSE replay](./dashboard-read-models.md)
   (schema 37 root indexes; monotonic heartbeat deadlines), and an approval queue with
