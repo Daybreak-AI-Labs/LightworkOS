@@ -128,10 +128,6 @@ def _short_id_from_digest(
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:32]
 
 
-def _short_id(patch: str, summary: str, evidence_scope: str = "") -> str:
-    return _short_id_from_digest(_patch_sha256(patch), summary, evidence_scope)
-
-
 def _is_lower_hex(value: str, length: int) -> bool:
     return len(value) == length and all(ch in "0123456789abcdef" for ch in value)
 

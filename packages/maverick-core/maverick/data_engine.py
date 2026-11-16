@@ -63,10 +63,6 @@ def _terminal_outcome(ep) -> float | None:
     return None
 
 
-def _episode_role(ep) -> str:
-    return next((s.role for s in ep if s.role), "")
-
-
 def triage(steps, *, failure_threshold: float = 0.5, min_support: int = 8,
            top_k: int = 10, outcome_fn=None) -> list[FailureClass]:
     """Rank candidate actions by observed outcome gaps within recorded contexts.

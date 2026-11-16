@@ -441,14 +441,6 @@ def _local_shield() -> object:
     return Shield(backend=Shield.BACKEND_BUILTIN)
 
 
-def _safe_rule_ids(values: object) -> tuple[str, ...]:
-    if not isinstance(values, Sequence) or isinstance(values, (str, bytes)):
-        raise RuntimeGuardrailsInputError("policy rule identifiers are malformed")
-    if len(values) > MAX_POLICY_ITEMS * MAX_POLICY_ITEMS:
-        raise RuntimeGuardrailsInputError("policy rule identifiers exceed their limit")
-    return tuple(sorted({_rule_token(value, "rule_id") for value in values}))
-
-
 def _safe_control_ids(values: object) -> tuple[str, ...]:
     if not isinstance(values, Sequence) or isinstance(values, (str, bytes)):
         raise RuntimeGuardrailsInputError("policy control identifiers are malformed")

@@ -271,26 +271,6 @@ def _same_origin_url(base_url: str, next_url: str) -> str:
     return resolved
 
 
-def _http_get(url: str, headers: dict | None = None, timeout: float = 15.0) -> Any:
-    """GET ``url`` through the SSRF guard, returning the checked response (an
-    event-source URL is operator config, but a loopback/metadata host would make
-    the poller an SSRF proxy). Shared by the JSON and text fetchers."""
-    try:
-        from .tools._ssrf import BlockedHost, safe_client
-    except Exception as e:  # pragma: no cover -- guard unavailable
-        raise EventSourceError("SSRF guard unavailable") from e
-    try:
-        with safe_client(url, timeout=timeout, require_public=True) as client:
-            resp = client.get(url, headers=headers or {})
-    except BlockedHost as e:
-        raise EventSourceError(f"blocked by SSRF guard: {e}") from e
-    except Exception as e:
-        raise EventSourceError(f"fetch failed: {type(e).__name__}: {e}") from e
-    if getattr(resp, "status_code", 200) >= 400:
-        raise EventSourceError(f"source returned HTTP {resp.status_code}")
-    return resp
-
-
 def _http_read_bytes(
     url: str,
     headers: dict | None = None,
