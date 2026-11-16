@@ -35,9 +35,11 @@ def _keypair():
     return private, public_hex, key_id
 
 
-def _evidence(*, tenant_id: str = "alpha") -> tr.TrainingRunEvidence:
+def _evidence(
+    *, tenant_id: str = "alpha", run_id: str = "privacy-scorer-run-0001",
+) -> tr.TrainingRunEvidence:
     return tr.TrainingRunEvidence(
-        run_id="privacy-scorer-run-0001",
+        run_id=run_id,
         tenant_id=tenant_id,
         started_at="2026-07-23T11:00:00Z",
         completed_at="2026-07-23T12:00:00Z",
@@ -141,9 +143,9 @@ def _approval(
     )
 
 
-def _issue():
+def _issue(run_id: str = "privacy-scorer-run-0001"):
     approver_private, approver_public, approver_key_id = _keypair()
-    evidence = _evidence()
+    evidence = _evidence(run_id=run_id)
     approval = _approval(evidence, approver_private, approver_key_id)
     with patch.object(
         tr,
@@ -749,7 +751,7 @@ def test_receipt_never_contains_raw_prompts_outputs_or_examples():
 def test_verified_read_proves_membership_in_the_complete_receipt_chain():
     with tenant_scope(tenant="alpha"):
         first, first_trust = _issue()
-        second, second_trust = _issue()
+        second, second_trust = _issue("privacy-scorer-run-0002")
         receipt_trust = {
             **first_trust["receipt"],
             **second_trust["receipt"],
@@ -815,7 +817,7 @@ def test_server_training_trust_fails_closed_when_a_registry_is_empty(
 def test_verified_read_refuses_a_valid_row_detached_from_its_chain(tamper):
     with tenant_scope(tenant="alpha"):
         _first, first_trust = _issue()
-        second, second_trust = _issue()
+        second, second_trust = _issue("privacy-scorer-run-0002")
         receipt_trust = {
             **first_trust["receipt"],
             **second_trust["receipt"],
@@ -923,7 +925,7 @@ def test_receipt_self_check_failure_removes_only_its_new_row(monkeypatch, failur
                 patcher.setattr(os, "fsync", fail_once)
                 message = "signer refused"
             with pytest.raises(tr.TrainingReceiptError, match=message):
-                _issue()
+                _issue("privacy-scorer-run-0002")
         assert path.read_bytes() == before
         assert tr.read_verified_training_receipt(
             first.receipt["receipt_id"], trusted_receipt_pubkeys=trust["receipt"],
@@ -943,5 +945,26 @@ def test_receipt_issuance_refuses_to_exceed_read_limits(monkeypatch, boundary):
             monkeypatch.setattr(tr, "MAX_RECEIPT_STORE_BYTES",
                                 len(before) + (64 if boundary == "pending_bytes" else 0))
         with pytest.raises(tr.TrainingReceiptError, match="storage boundary"):
-            _issue()
+            _issue("privacy-scorer-run-0002")
         assert path.read_bytes() == before
+
+
+def test_a_run_gets_one_receipt():
+    """A second receipt for the same run, or for the same approved subject,
+    would let two signed records disagree about one training run."""
+    with tenant_scope(tenant="alpha"):
+        _issue()
+        path = tr.receipts_path()
+        before = path.read_bytes()
+        with pytest.raises(tr.TrainingReceiptError, match="already exists"):
+            _issue()  # the same evidence, approved again
+        approver_private, approver_public, approver_key_id = _keypair()
+        changed = replace(_evidence(), dataset_sha256=_digest("another-dataset"))
+        approval = _approval(changed, approver_private, approver_key_id)
+        with patch.object(tr, "_server_training_approver_registry",
+                          return_value={approver_key_id: approver_public}):
+            with pytest.raises(tr.TrainingReceiptError, match="already exists"):
+                tr.issue_training_receipt(changed, approval)  # the same run, other evidence
+        assert path.read_bytes() == before
+        other, _trust = _issue("privacy-scorer-run-0002")
+        assert other.receipt["evidence"]["run_id"] == "privacy-scorer-run-0002"
