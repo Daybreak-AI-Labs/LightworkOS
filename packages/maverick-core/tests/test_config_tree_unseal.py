@@ -108,3 +108,51 @@ def test_corrupted_member_refuses_entire_overlay_and_next_read_can_recover(tmp_p
         "first": "authenticated-value", "second": "authenticated-value",
     }
     assert str(overlay) not in config.config_source_errors()
+
+
+def test_unreadable_secret_drops_its_section_not_the_other_dashboard_settings(tmp_path):
+    """One credential that cannot be opened used to drop the whole dashboard
+    overlay, which put back every limit the dashboard had tightened."""
+    (tmp_path / "config.toml").write_text(
+        '[capabilities]\ncode_exec = true\n[providers.openai]\napi_key = "installer-key"\n'  # pragma: allowlist secret
+        '[webhooks]\noutbound = ["https://installer.example"]\n',
+        encoding="utf-8")
+    good = _seal("authenticated-value")
+    blob = bytearray(base64.b64decode(good.partition(":")[2]))
+    blob[-1] ^= 1
+    corrupt = "MVKAR1:" + base64.b64encode(blob).decode("ascii")
+    resets = ('[_dashboard_resets.hooks]\npath = ["webhooks", "outbound"]\nkeep = []\n'
+              'entries = false\npreserve_tables = false\nremove_value = true\n'
+              '[_dashboard_resets.caps]\npath = ["capabilities", "browser"]\nkeep = []\n'
+              'entries = false\npreserve_tables = false\nremove_value = true\n')
+    overlay = tmp_path / config.DASHBOARD_OVERRIDES_BASENAME
+    overlay.write_text(
+        '[capabilities]\ncode_exec = false\n[sandbox]\nbackend = "docker"\n'
+        f'[providers.openai]\nbase_url = "https://proxy.example"\napi_key = "{corrupt}"\n'
+        f'[webhooks]\nsecret = "{corrupt}"\n[channels.slack]\nbot_token = "{good}"\n' + resets,
+        encoding="utf-8")
+    config.reset_config_cache()
+
+    loaded = config.load_config()
+    assert config.get_capabilities()["code_exec"] is False  # the dashboard's limit holds
+    assert config.get_sandbox()["backend"] == "docker"
+    # ...so a workspace still cannot loosen it while the overlay is in this state.
+    merged, ignored, _fixed = config._tighten_tenant(
+        config.load_global_config(), {"capabilities": {"code_exec": True}})
+    assert merged["capabilities"]["code_exec"] is False and ignored == ["capabilities.code_exec"]
+    assert loaded["channels"]["slack"]["bot_token"] == "authenticated-value"
+    # A section with an unreadable secret is ignored as a unit, with its reset
+    # marker: the installer's own values stay, and its key is never paired
+    # with the dashboard's address.
+    assert loaded["providers"]["openai"] == {"api_key": "installer-key"}  # pragma: allowlist secret
+    assert loaded["webhooks"] == {"outbound": ["https://installer.example"]}
+    assert str(overlay) in config.config_source_errors()  # still reported
+    assert config._UNSEALING.get() is False
+    assert crypto_at_rest._FORCE_DEPLOYMENT_KEY.get() is False
+
+    overlay.write_text(overlay.read_text(encoding="utf-8").replace(corrupt, good), encoding="utf-8")
+    config.reset_config_cache()
+    assert config.load_config()["providers"]["openai"] == {
+        "base_url": "https://proxy.example", "api_key": "authenticated-value"}  # pragma: allowlist secret
+    assert "outbound" not in config.load_config()["webhooks"]
+    assert str(overlay) not in config.config_source_errors()

@@ -487,6 +487,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A schedule is now paused when a worker stops during the last attempt of a
   run and the next run was not queued. Before, the schedule stayed active
   but never ran again. Review the paused schedule, then resume it.
+- When one saved secret in the dashboard's settings cannot be opened, only
+  the settings section that holds it is ignored. Before, every dashboard
+  setting was ignored, which put back limits you had tightened there. Health
+  still reports the file. Save that secret again to clear the warning.
 
 ### Fixed
 

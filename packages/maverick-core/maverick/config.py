@@ -478,6 +478,37 @@ def _unseal_config_tree(value: object) -> object:
         _UNSEALING.reset(token)
 
 
+def _readable_overlay_sections(tree: dict) -> tuple[dict, list[str]]:
+    """The dashboard overlay without the top-level sections that cannot be
+    opened, and the names of those sections.
+
+    A section is all or nothing: its other values belong to the secret that
+    failed (a provider's address to its key, a channel's switch to its token),
+    so keeping them would pair them with values from another source. Its reset
+    markers go with it, so the installer's own values for that section stay in
+    force. Every other section is kept. The limits the dashboard sets are
+    plain values in sections of their own; dropping the whole overlay for one
+    bad credential put all of them back to the installer's values.
+    """
+    from .config_resets import METADATA
+
+    kept: dict = {}
+    dropped: list[str] = []
+    for name, value in tree.items():
+        try:
+            kept[name] = _unseal_config_tree(value)
+        except Exception:
+            dropped.append(name)
+    resets = kept.get(METADATA)
+    if dropped and isinstance(resets, dict):
+        kept[METADATA] = {
+            identifier: spec for identifier, spec in resets.items()
+            if not (isinstance(spec, dict) and isinstance(spec.get("path"), list)
+                    and spec["path"][:1] and spec["path"][0] in dropped)
+        }
+    return kept, dropped
+
+
 def _is_tenant_config_path(path: Path) -> bool:
     from .paths import maverick_home
     try:
@@ -507,24 +538,28 @@ def _load_config_file(path: Path, *, interpolate: bool = True) -> dict:
     if path.name == DASHBOARD_OVERRIDES_BASENAME:
         key = str(path)
         since = _toml_gen.get(key, 0)
+        partial = False
         try:
             unsealed = _unseal_config_tree(loaded)
         except Exception as exc:
             # An undecryptable sealed overlay value (e.g. after a
             # MAVERICK_ENCRYPTION_KEY rotation leaves dashboard-config.toml
             # sealed under the old key) must NOT crash every config read.
-            # Fail soft exactly like a corrupt-TOML source: record the error so
+            # Fail soft like a corrupt-TOML source: record the error so
             # config_source_errors() surfaces it (health goes red and security
-            # callers fail closed), and drop the overlay so callers fall back to
-            # base/env config instead of load_config() raising process-wide.
+            # callers fail closed), and ignore the sections that cannot be
+            # opened so those fall back to base/env config instead of
+            # load_config() raising process-wide. The readable sections stay:
+            # they hold the limits the dashboard set.
             with _toml_lock:
                 _record_source_error(key, f"{type(exc).__name__}: {exc}", _unseal_errors)
+            unsealed, dropped = _readable_overlay_sections(loaded)
+            partial = True
             logging.getLogger(__name__).warning(
-                "dashboard overlay %s could not be decrypted; dropping it "
-                "(rotate keys / re-save provider settings to restore): %s",
-                path, exc,
+                "dashboard overlay %s could not be decrypted; ignoring its "
+                "section(s) %s (rotate keys / re-save those settings to restore): %s",
+                path, ", ".join(sorted(dropped)) or "(none)", exc,
             )
-            return {}
         try:
             from .config_resets import _specs
             for _ in _specs(unsealed):
@@ -543,7 +578,7 @@ def _load_config_file(path: Path, *, interpolate: bool = True) -> dict:
         # complete read clears a decryption error (a recursive one returns the
         # tokens unopened), only while the tree it opened is still the cached
         # one, and only if no error was recorded while it was being opened.
-        if not _UNSEALING.get():
+        if not partial and not _UNSEALING.get():
             with _toml_lock:
                 cached = _toml_cache.get(key)
                 if cached is not None and cached[2] is raw and _toml_gen.get(key, 0) == since:

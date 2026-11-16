@@ -154,13 +154,16 @@ def test_a_request_still_reads_policy_errors_variables_and_the_key_live(tmp_path
 
     try:
         assert TestClient(app, base_url="http://127.0.0.1").get("/x").json() == {
-            "key": [None, "sk-test-not-a-real-key"],  # pragma: allowlist secret
+            # The read that met the failed key read tries each section once
+            # more, so it already has the key; the next read opens it again.
+            "key": ["sk-test-not-a-real-key", "sk-test-not-a-real-key"],  # pragma: allowlist secret
             "value": ["one", "two"],
             "budget": 7.0,
             "errors": [str(tmp_path / "config.toml")],
         }
     finally:
         config.reset_config_cache()
+    assert len(calls) >= 3  # the failed read was not kept: the second read asked again
 
 
 def test_each_gate_reads_the_configuration_once_and_sees_a_policy_saved_before_it(tmp_path, monkeypatch):
