@@ -238,6 +238,10 @@ def _restore_process_logging():
         handler.filters[:] = handler_filters[id(handler)]
     logging.disable(disabled)
 
+# Module name -> (parent name, attribute) for maverick submodules, else ().
+_SUBMODULE_SPLIT: dict[str, tuple[str, ...]] = {}
+
+
 @pytest.fixture(autouse=True)
 def _fail_the_test_that_forks_a_module():
     """Fail the test that leaves a package attribute pointing at a module copy.
@@ -256,13 +260,17 @@ def _fail_the_test_that_forks_a_module():
     yield
     forked = []
     for name, module in list(sys.modules.items()):
-        if module is None or "." not in name or not name.startswith("maverick"):
+        split = _SUBMODULE_SPLIT.get(name)
+        if split is None:  # a name's split never changes; work it out once
+            split = _SUBMODULE_SPLIT[name] = (
+                name.rpartition(".")[::2]
+                if "." in name and name.startswith("maverick") else ())
+        if module is None or not split:
             continue
-        parent_name, _, child = name.rpartition(".")
-        parent = sys.modules.get(parent_name)
+        parent = sys.modules.get(split[0])
         if parent is None:
             continue
-        bound = getattr(parent, child, None)
+        bound = getattr(parent, split[1], None)
         if isinstance(bound, types.ModuleType) and bound is not module:
             forked.append(name)
     if forked:
@@ -304,11 +312,14 @@ def _rebind_path_helpers_imported_under_a_test_replacement():
             if not name.startswith("_") and isinstance(value, types.FunctionType)
             and value.__module__ == "maverick.paths"})
     yield
+    helpers = _REAL_PATH_HELPERS.keys()
     for name, module in list(sys.modules.items()):
         if module is None or not name.startswith("maverick"):
             continue
         namespace = vars(module)
-        for helper, real in _REAL_PATH_HELPERS.items():
+        # Only the helper names this module holds; the rest would be skipped.
+        for helper in helpers & namespace.keys():
+            real = _REAL_PATH_HELPERS[helper]
             bound = namespace.get(helper)
             if (bound is None or bound is real or not callable(bound)
                     or str(getattr(bound, "__module__", "")).startswith("maverick")):
