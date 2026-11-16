@@ -28,7 +28,7 @@ from ..audit.errors import AuditRefused
 from ..budget import BudgetExceeded
 from ..killswitch import Halted
 from .continuation_frame import ContinuationFrame
-from .execution_trace import node_scope
+from .execution_trace import child_scope, node_scope
 from .expressions import (
     _CREDENTIAL_REPAIR,
     _FN_CALL,
@@ -138,7 +138,7 @@ class _Ctx:
         # Nested graphs have their own id space. Each lane of a parallel step is
         # a different graph, so it gets its own prefix; the passes of a loop
         # repeat one graph and share theirs.
-        return f"{self.scope}{self.at}/" + (f"{lane}/" if lane else "")
+        return child_scope(self.scope, self.at, lane)
 
     def nested(self, slot: str = "body", lane: str = "") -> _Ctx:
         # A copy that cannot pause (foreach body / subflow run straight). Shares

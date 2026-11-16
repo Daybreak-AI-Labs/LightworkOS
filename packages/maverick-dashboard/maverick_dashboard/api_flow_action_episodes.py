@@ -173,6 +173,7 @@ def _enrollment_info(request: Request, flow_id: str, run_id: str):
     from maverick.flow import store
     from maverick.flow.action_episodes import TEACHING_FAMILY, capture_plan, teaching_capture_plan
     from maverick.flow.approvals import paused_operation_binding
+    from maverick.flow.execution_trace import trace_key
     from maverick.learning_guard import learning_write_allowed
 
     # The dashboard execution-approval binding also hashes runtime authority.
@@ -208,7 +209,7 @@ def _enrollment_info(request: Request, flow_id: str, run_id: str):
             planned_steps = len(plan)
         if (run.status != "paused_approval" or run.cursor != pinned.start
                 or pinned.nodes[pinned.start].kind != "approval"
-                or any(node_id in run.nodes for node_id, _tool in plan)):
+                or any(trace_key(node_id) in run.nodes for node_id, _tool in plan)):
             raise RecordConflict("capture requires the initial approval before actions")
         if service.authorize(ctx, "flow.episode.enroll", flow_id) is not True:
             raise PermissionError("capture enrollment authority changed")

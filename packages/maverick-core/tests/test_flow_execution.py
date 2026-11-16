@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from maverick.automation_import import ir as iir
 from maverick.automation_import.to_flow import to_flow
-from maverick.flow import evolve, execution, node_outcomes
+from maverick.flow import evolve, execution, execution_trace, node_outcomes
 from maverick.flow.ir import NODE_ACTION, NODE_AGENT, NODE_APPROVAL, Flow, FlowNode
 
 
@@ -247,6 +247,40 @@ class TestExecution:
         assert run.nodes["par/0/a"]["outcome"] == 1.0 and run.nodes["par/1/a"]["outcome"] == 0.6
         stats = node_outcomes.stats("fNest")
         assert "a" not in stats and stats["fe/a"]["n"] == 3 and stats["par/1/a"]["mean"] == 0.6
+
+    def test_a_top_level_id_with_a_slash_never_shares_a_key_with_a_nested_step(
+            self, tmp_path, monkeypatch):
+        # Node ids are free text. A top-level step named "loop/a" and a step "a"
+        # inside a loop named "loop" are two steps: two trace entries, two outcome
+        # keys, and the rewrite proposal for the top-level one reads only its own.
+        _patch_home(tmp_path, monkeypatch)
+        body = Flow(id="body", name="b", start="a", nodes={
+            "a": FlowNode(id="a", kind=NODE_AGENT, brief="inner {{item}}")})
+        f = Flow(id="fSlash", name="f", start="loop/a", nodes={
+            "loop/a": FlowNode(id="loop/a", kind=NODE_AGENT, brief="outer", next="odd~id"),
+            "odd~id": FlowNode(id="odd~id", kind=NODE_AGENT, brief="outer", next="loop"),
+            "loop": FlowNode(id="loop", kind="foreach", items="rows", var="item", body=body)})
+        assert f.validate() == []
+        run = execution.execute(
+            f, agent_runner=lambda brief, d: ("ok", 0.6 if brief == "outer" else 1.0),
+            action_runner=lambda t, p, d: ("", None), data={"rows": [1, 2, 3]})
+        assert run.status == "completed"
+        outer, inner = execution_trace.trace_key("loop/a"), "loop/a"
+        assert outer != inner
+        assert run.nodes[outer]["outcome"] == 0.6 and run.nodes[inner]["outcome"] == 1.0
+        stats = node_outcomes.stats("fSlash")
+        assert stats[outer] == {"n": 1, "mean": 0.6, "kind": NODE_AGENT}
+        assert stats[inner]["n"] == 3 and stats[inner]["mean"] == 1.0
+        # Each key reads back as the path it was built from; a plain id is itself.
+        assert execution_trace.trace_path(outer) == ["loop/a"]
+        assert execution_trace.trace_path(inner) == ["loop", "a"]
+        assert execution_trace.trace_path(execution_trace.trace_key("odd~id")) == ["odd~id"]
+        assert execution_trace.trace_key("n0") == "n0"
+        # The proposal pass reads the top-level step's own evidence (3 nested
+        # successes must not make it look reliable).
+        assert evolve.propose(f, min_support=1) == []
+        assert [p.node_id for p in evolve.propose(f, min_support=1, stats={
+            outer: {"n": 30, "mean": 1.0, "kind": NODE_AGENT}})] == ["loop/a"]
 
     def test_run_trace_survives_pause_and_resume(self, tmp_path, monkeypatch):
         _patch_home(tmp_path, monkeypatch)

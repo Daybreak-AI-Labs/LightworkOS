@@ -19,6 +19,7 @@ import copy
 from dataclasses import dataclass
 
 from . import node_outcomes
+from .execution_trace import trace_key
 from .ir import (
     LEARNED_OPERATOR_SCHEMA,
     NODE_ACTION,
@@ -65,7 +66,7 @@ def _infer_tool(flow_id: str, node_id: str) -> str:
     off, too few runs, or mixed tools. Never raises."""
     try:
         from . import node_tools
-        return node_tools.dominant_tool(flow_id, node_id) or ""
+        return node_tools.dominant_tool(flow_id, trace_key(node_id)) or ""
     except Exception:  # pragma: no cover -- inference is best-effort
         return ""
 
@@ -79,7 +80,7 @@ def propose(flow: Flow, *, min_support: int = _DEFAULT_MIN_SUPPORT,
     node_stats = stats if stats is not None else node_outcomes.stats(flow.id)
     out: list[NodeProposal] = []
     for node_id, node in flow.nodes.items():
-        s = node_stats.get(node_id)
+        s = node_stats.get(trace_key(node_id))      # the key this top-level step is recorded under
         if not s or s["n"] < min_support:
             continue
         mean = s["mean"]
@@ -331,19 +332,19 @@ def measure(
         before = [
             value
             for _ts, value in node_outcomes.series(
-                flow_id, node_id, cohort=before_revision,
+                flow_id, trace_key(node_id), cohort=before_revision,
             )
         ]
         after = [
             value
             for _ts, value in node_outcomes.series(
-                flow_id, node_id, cohort=after_revision,
+                flow_id, trace_key(node_id), cohort=after_revision,
             )
         ]
     else:
         if since_ts is None:
             raise ValueError("measurement needs explicit before/after revisions")
-        rows = series if series is not None else node_outcomes.series(flow_id, node_id)
+        rows = series if series is not None else node_outcomes.series(flow_id, trace_key(node_id))
         before = [v for ts, v in rows if ts < since_ts]
         after = [v for ts, v in rows if ts >= since_ts]
     bmean, amean = _mean(before), _mean(after)

@@ -29,3 +29,12 @@ test("paused cursor and completed outcomes render consistently", () => {
   assert.equal(view.runBadge("c", null, state), "✓");
   assert.equal(view.runClass("missing", null, state), "");
 });
+
+test("a run key escapes the separator inside one step id, like the runner", () => {
+  // A top-level step named "loop/a" is not the step "a" inside "loop".
+  assert.equal(view.traceKey("loop/a"), "loop~sa");
+  assert.equal(view.traceKey("odd~id"), "odd~~id");
+  assert.equal(view.traceKey("n0"), "n0");
+  assert.equal(view.traceKey("loop") + "/" + view.traceKey("a"), "loop/a");
+});
+
