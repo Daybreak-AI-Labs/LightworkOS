@@ -151,6 +151,8 @@ UNSAFE_ACTION_TOOLS = frozenset({
     "list_attachments",
     "view_image",
     "view_video",
+    # Paid model calls charged to a run budget, which a direct action lacks.
+    "vertex",
     "transcribe_audio",
     "speak",
     "spreadsheet",

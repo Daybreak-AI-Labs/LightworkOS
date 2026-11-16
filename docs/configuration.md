@@ -130,6 +130,12 @@ task_limits_enabled = true
 # max_output_tokens = 200000
 strict_pricing      = true
 
+[context]
+# Longest reply one model call may return, in tokens. The hold taken before
+# each call covers it, and the vertex tool sends it as Vertex's output limit.
+# Unset, it scales with the model's context window (at least 4096).
+# max_output_tokens = 8192
+
 [contact_centre]
 # Where a human handoff goes outside Lightwork when a person takes over a
 # conversation. Off by default: nothing is sent and no outbox is kept.

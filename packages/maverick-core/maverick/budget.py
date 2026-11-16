@@ -982,6 +982,67 @@ def _operator_rate_quote(model: str) -> ModelPrice | None:
     )
 
 
+# Rate-card version of the safety ceiling charged for a model a tool calls
+# itself (the ``vertex`` tool) when the route has no usable price.
+_UNPRICED_MODEL_CEILING = "unpriced-model-ceiling-v1"
+
+
+def metered_tool_quote(model: str) -> ModelPrice:
+    """The price for a paid model call that a tool makes itself.
+
+    The operator's rate for the exact route, else a tracked price for it, else
+    the safety ceiling. Such a call is charged whatever the route: with no
+    usable price it takes the ceiling instead of passing the spending limit as
+    free, and the cost line names the fix.
+    """
+    try:
+        return _lookup_price_quote(model, estimate_only=False)
+    except UnpricedModelError:
+        pass
+    if model not in _UNPRICED_WARNED:
+        _UNPRICED_WARNED.add(model)
+        log.warning(
+            "%s has no price set, so Lightwork charges a safety ceiling of "
+            "$%.2f/$%.2f per million tokens. Set its price in Settings > Models, "
+            "under Prices for the models you use.",
+            model, *_SELF_HOSTED_PUBLIC_CEILING,
+        )
+    return _estimate_policy_price(
+        model,
+        _SELF_HOSTED_PUBLIC_CEILING,
+        source="maverick://pricing-policy/unpriced-model-ceiling",
+        confidence=0.0,
+        version=_UNPRICED_MODEL_CEILING,
+        evidence_id=_UNPRICED_MODEL_CEILING,
+        pricing_basis="Safety ceiling for a model with no price set",
+        applicability=(
+            "Spend-limit estimate for a route with no price; the provider's "
+            "invoice remains authoritative."
+        ),
+    )
+
+
+def record_tool_tokens(
+    budget: Budget, quote: ModelPrice, in_tok: int, out_tok: int, *, estimated: bool,
+) -> TokenCharge:
+    """Charge one tool-made model call at the price it was admitted at.
+
+    ``quote`` comes from :func:`metered_tool_quote`. ``estimated`` marks token
+    counts taken from text length because the reply reported none. Raises as
+    :meth:`Budget.record_tokens` does; a cap error carries the recorded charge.
+    """
+    with _attempt_price_scope(lambda _budget, _model: quote):
+        try:
+            charge = budget.record_tokens(in_tok, out_tok, model=quote.model_id)
+        except BudgetExceeded as exc:
+            if estimated and getattr(exc, "token_charge", None) is not None:
+                budget.mark_usage_estimated()
+            raise
+    if estimated:
+        budget.mark_usage_estimated()
+    return charge
+
+
 def _lookup_price(
     model: str | None,
     *,
@@ -1467,18 +1528,24 @@ class Budget:
             }
 
     def _ceiling_note(self) -> str:
-        """Plain words when a self-hosted safety ceiling priced any spend."""
-        models = sorted(
-            model for model, evidence in dict(self.pricing_evidence).items()
-            if evidence.get("rate_card_version") == "self-hosted-public-ceiling-v1"
-        )
-        if not models:
-            return ""
-        return (
-            f". Spend for {', '.join(models)} used the safety ceiling because "
-            "Lightwork cannot tell that its server is private. Set its price or "
-            "mark it free (price_per_mtok in its [providers] table)"
-        )
+        """Plain words when a safety ceiling priced any spend."""
+        priced_by: dict[object, list[str]] = {}
+        for model, evidence in sorted(dict(self.pricing_evidence).items()):
+            priced_by.setdefault(evidence.get("rate_card_version"), []).append(model)
+        note = ""
+        if models := priced_by.get("self-hosted-public-ceiling-v1"):
+            note += (
+                f". Spend for {', '.join(models)} used the safety ceiling because "
+                "Lightwork cannot tell that its server is private. Set its price or "
+                "mark it free (price_per_mtok in its [providers] table)"
+            )
+        if models := priced_by.get(_UNPRICED_MODEL_CEILING):
+            note += (
+                f". Spend for {', '.join(models)} used the safety ceiling because "
+                "it has no price set. Set the model's price in Settings > Models, "
+                "under Prices for the models you use"
+            )
+        return note
 
     def mark_usage_estimated(self) -> None:
         """Record that one call's token counts were estimated, not reported."""
