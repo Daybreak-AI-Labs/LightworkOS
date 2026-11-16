@@ -248,6 +248,46 @@ def test_reimport_updates_its_own_schedule_and_keeps_a_pause(tmp_path, monkeypat
     assert len(list_definitions(queue)) == 2
 
 
+def test_reimport_keeps_a_persons_edits_until_the_source_changes(tmp_path, monkeypatch):
+    from maverick.job_queue import JobQueue
+    from maverick.schedule_definitions import change_definition, list_definitions
+
+    monkeypatch.setattr("maverick.catalog_trust.shield_scan", lambda *args, **kwargs: None)
+    monkeypatch.setattr("maverick.templates.save_user_template", lambda *args, **kwargs: None)
+    queue = JobQueue(tmp_path / "jobs.db")
+
+    def imported(step, name="report", cron="0 9 * * *"):
+        return ImportedAutomation("manual", "1", name, ImportedTrigger(kind="schedule", cron=cron),
+                                  steps=[ImportedStep(name=step)])
+
+    materialize(imported("Send the report"), queue=queue)
+    first = list_definitions(queue)[0]
+    change_definition(queue, first["definition_id"], expected_revision=first["revision"], state="active",
+                      actor="user:a", cron="0 17 * * *", zone="America/New_York", title="Evening report")
+
+    # The source did not change: the person's time, zone and title are theirs.
+    same = materialize(imported("Send the report"), queue=queue)
+    kept = list_definitions(queue)[0]
+    assert (kept["cron"], kept["zone"], kept["title"]) == ("0 17 * * *", "America/New_York", "Evening report")
+    assert same.schedule is None and any("were kept" in note for note in same.notes)
+    assert kept["revision"] == first["revision"] + 1          # only the person's own edit
+
+    # The source changed: the schedule follows it, and the time and its zone reset together.
+    changed = materialize(imported("Send the summary", cron="30 8 * * *"), queue=queue)
+    now = list_definitions(queue)[0]
+    assert (now["cron"], now["zone"]) == ("30 8 * * *", "")
+    assert now["title"].startswith("report") and changed.schedule["updated"]
+    assert any("were replaced" in note for note in changed.notes)
+    pending = queue.list(status="pending")
+    assert len(pending) == 1 and "Send the summary" in pending[0].payload["text"]
+    assert "__tz__" not in pending[0].payload
+
+    # Another export's workflow that happens to share the id is a different workflow.
+    other = materialize(imported("Chase invoices", name="invoices"), queue=queue)
+    assert other.schedule and not other.schedule.get("updated")
+    assert len(list_definitions(queue)) == 2
+
+
 def test_workato_action_output_pill_is_not_read_as_trigger_data():
     def imported(pill, *, action_alias="f00dbabe", trigger_alias=None):
         tree = {"provider": "salesforce", "name": "new_record", "block": [

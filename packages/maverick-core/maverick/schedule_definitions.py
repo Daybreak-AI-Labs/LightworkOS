@@ -183,8 +183,13 @@ def change_definition(queue, identity, *, expected_revision, state, actor,
             payload["__tz__"] = zone
         if title is not None:
             payload["title"] = title
-        # A re-import replaces what future runs do (the task text and its limits).
-        payload.update(payload_updates or {})
+        # A re-import replaces what future runs do (the task text and its
+        # limits); a value of None removes the key.
+        for key, value in (payload_updates or {}).items():
+            if value is None:
+                payload.pop(key, None)
+            else:
+                payload[key] = value
         next_run(payload["__cron__"], after=now, tz=payload.get("__tz__", ""))
         _record_version(connection, row, payload=payload, state=state, actor=actor, rationale=rationale, now=now)
         # Preserve admitted execution and uncertain retries. Cancel only future,

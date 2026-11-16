@@ -11,6 +11,8 @@ imported automations appear in the Automations history automatically.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -29,13 +31,31 @@ class MaterializeResult:
     notes: list[str] = field(default_factory=list)
 
 
+# What an import itself sets on the schedule it creates. Their digest is kept
+# with the schedule, so a re-import can tell "the source changed" from "a
+# person changed this schedule here".
+_IMPORTED_KEYS = ("text", "title", "__cron__", "max_dollars", "max_wall_seconds",
+                  "owner", "channel", "user_id", "imported_from")
+
+
+def _import_digest(payload: dict[str, Any]) -> str:
+    values = {key: payload.get(key) for key in _IMPORTED_KEYS}
+    return hashlib.sha256(json.dumps(values, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+
+
 def _activate_schedule(queue: Any, payload: dict[str, Any], result: MaterializeResult,
                        notes: list[str]) -> None:
-    """Create this import's schedule, or bring the one it made earlier up to date."""
+    """Create this import's schedule, or bring the one it made earlier up to date.
+
+    The schedule follows the source only when the source changed since the
+    last import. Until then a person's own changes to it (time, zone, title)
+    are kept, and so is a pause.
+    """
     from ..schedule_definitions import change_definition, imported_definition
     from ..scheduler import CronError, schedule_cron
 
     cron = payload["__cron__"]
+    digest = payload["import_digest"] = _import_digest(payload)
     try:
         current = imported_definition(queue, payload["imported_from"], owner=payload.get("owner", ""))
         if current is None:
@@ -43,25 +63,39 @@ def _activate_schedule(queue: Any, payload: dict[str, Any], result: MaterializeR
             result.schedule = {"job_id": job_id, "run_at": run_at, "cron": cron,
                                "schedule_id": payload["schedule_id"]}
             return
+        stored = current["payload"]
         paused = current["state"] == "paused"
-        same = all(current["payload"].get(key) == value
-                   for key, value in payload.items() if key != "schedule_id")
-        if same and (paused or current["next_run"] or current["running"]):
+        # An import sets no time zone, so a zone is always a person's choice.
+        edited = _import_digest(stored) != stored.get("import_digest") or bool(stored.get("__tz__"))
+        updates = None
+        if stored.get("import_digest") != digest:
+            # The time and its zone belong together: a new source time read in
+            # the person's old zone would be a time nobody chose.
+            updates = {**{key: payload.get(key) for key in _IMPORTED_KEYS},
+                       "import_digest": digest, "__tz__": None}
+        elif paused or current["next_run"] or current["running"]:
             notes.append(f"schedule already {'exists and is paused' if paused else 'active'} "
-                         f"(job {current['id']}); not duplicated")
+                         f"(job {current['id']}); not duplicated"
+                         + ("; the workflow did not change, so changes made to this "
+                            "schedule in Lightwork were kept" if edited else ""))
             return
-        # Future runs follow the re-imported workflow. A run already admitted
-        # keeps the text it started with, and a person's pause is kept.
+        # Future runs follow the definition. A run already admitted keeps the
+        # text it started with.
         changed = change_definition(
             queue, current["definition_id"], expected_revision=current["revision"],
             state="paused" if paused else "active", actor=payload.get("owner") or "import",
-            rationale="Workflow imported again",
-            payload_updates={key: value for key, value in payload.items() if key != "schedule_id"},
+            rationale="Workflow imported again", payload_updates=updates,
         )
-        result.schedule = {"job_id": changed["id"], "run_at": changed["next_run"], "cron": cron,
-                           "schedule_id": changed["schedule_id"], "updated": True}
-        notes.append("schedule updated to match the re-imported workflow"
-                     + ("; it is still paused" if paused else ""))
+        result.schedule = {"job_id": changed["id"], "run_at": changed["next_run"],
+                           "cron": changed["cron"], "schedule_id": changed["schedule_id"],
+                           "updated": True}
+        if updates is None:
+            notes.append("schedule had no upcoming run and is scheduled again")
+        else:
+            notes.append("schedule updated to match the re-imported workflow"
+                         + ("; it is still paused" if paused else "")
+                         + ("; changes made to this schedule in Lightwork (title, time or "
+                            "time zone) were replaced" if edited else ""))
     except CronError as e:
         notes.append(f"could not create schedule from cron {cron!r}: {e}")
     except (KeyError, ValueError) as e:

@@ -345,9 +345,11 @@ class ImportedAutomation:
         """The mark a schedule created from this automation carries.
 
         A re-import finds its own schedule by this mark and updates it. The
-        source id survives a rename at the source; without one the template
-        slug is the only stable identity."""
-        return f"{self.source}:{self.source_id or self.template_name()}"
+        template slug is the identity, as it is for the saved template: a
+        source id alone is not unique (two exports can both hold a workflow
+        numbered ``1``), and the slug carries the name and a hash of the id.
+        A workflow renamed at the source is therefore a new one here."""
+        return f"{self.source}:{self.template_name()}"
 
     def payload_fields(self) -> list[str]:
         """The trigger-payload field names this automation reads (see the

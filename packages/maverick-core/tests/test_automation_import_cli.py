@@ -102,7 +102,7 @@ def test_reimport_with_activate_schedules_does_not_duplicate_the_cron_job(tmp_pa
     assert any("updated" in n for n in updated["notes"])
     jobs = list(job_queue.JobQueue().iter_pending("start_goal"))
     assert len(jobs) == 1 and "Send the nightly digest" in jobs[0].payload["text"]
-    assert jobs[0].payload["imported_from"] == "n8n:7"
+    assert jobs[0].payload["imported_from"].startswith("n8n:n8n-nightly-")
 
 
 def test_reimport_leaves_a_schedule_it_did_not_create_unchanged(tmp_path, monkeypatch):
