@@ -127,7 +127,53 @@ shares world-model rows and enables database-enforced tenant isolation, but it
 does not share every flow, A2A, audit, learning, and policy store. Keep one
 dashboard/serve replica and scale remote workers separately — see
 [`deploy/postgres/README.md`](https://github.com/Daybreak-AI-Labs/LightworkOS/blob/main/deploy/postgres/README.md). Row-level security
-(`MAVERICK_PG_RLS=1`) enforces the tenant boundary in the database itself.
+(`MAVERICK_PG_RLS=1`) adds a database-side check of the tenant boundary on the
+tables that carry a tenant column; "What row-level security covers" below says
+what that includes and what it does not.
+
+### Records saved before workspaces were used
+
+On Postgres every workspace shares the same tables. A record saved while no
+workspace was active has no workspace (`tenant_id IS NULL`). In compatibility
+mode, which is strict isolation off, **every workspace reads those records**
+next to its own. This holds with at-rest encryption on as well: encryption
+protects the stored bytes, and the row filter decides who may read a record.
+A value sealed for one workspace still cannot be opened by another.
+
+`maverick doctor` and Installation health warn when such records exist and a
+workspace exists or is active. To end the sharing:
+
+```
+maverick tenant backfill --tenant <id> --dry-run   # how many records?
+maverick tenant backfill --tenant <id>             # give them to one workspace
+```
+
+Then turn on strict isolation (`MAVERICK_STRICT_TENANT_ISOLATION=1`, or "Hide
+records with no workspace" in Settings). Nothing warns on SQLite (one file per
+workspace), under strict isolation, or when no such record exists. The doctor
+counts goals, facts and their history, conversations, approvals and projects,
+the records every workspace reads. The backfill reports more rows, because it
+also assigns message markers, receipts and event rows that no other workspace
+reads.
+
+What to expect from the backfill:
+
+- **Writes wait while it runs.** It re-seals each encrypted value for the
+  workspace it goes to, and no new goal, fact, conversation turn or event can
+  be saved until it finishes. Run it in a quiet period, or stop Lightwork
+  first. The dry run reports how many encrypted values there are; allow about
+  one minute for every 500,000 (100,000 took about 4 seconds on a test
+  machine). Reads are not held up.
+- **It is all or nothing.** It is one transaction. If Lightwork is busy
+  writing for more than 10 seconds, or the database stops it, it says so,
+  changes nothing, and can be run again.
+- **Run it where the encryption key is.** Use the computer that runs
+  Lightwork, with the same encryption settings. If a value cannot be opened,
+  it names the table and row and changes nothing. The cause is the wrong key
+  on this computer, or a value that was saved for another workspace.
+- **Run it before row-level security is on, or as a login that bypasses it.**
+  An ordinary login cannot see records without a workspace once the policies
+  are in force. The backfill says so and stops.
 
 ### Enabling RLS safely (auto-on under enterprise; guided opt-in otherwise)
 
@@ -160,6 +206,35 @@ NULL-tenant rows left), set `[world_model] rls = true` (or `MAVERICK_PG_RLS=1`).
 The installer's advanced step writes this with the same reminder. RLS is
 defense-in-depth: the app-layer `_tenant_scope` predicate already isolates
 tenants NULL-tolerantly, so single-tenant and SQLite installs need none of this.
+
+Run `rls-preflight` before RLS is on. Afterwards the policy hides rows with no
+tenant from the application's own count, so the report shows none even when
+some remain; a superuser still counts them.
+
+#### What row-level security covers
+
+- **Covered:** the 16 tables with a tenant column (`goals`, `facts`,
+  `conversations`, `approvals`, `processed_messages`, `projects`,
+  `fact_history`, `erasure_receipts`, `approval_audit_outbox`,
+  `attachment_submissions`, `event_goal_admissions`, `event_trigger_batches`,
+  `webhook_subscriptions`, `webhook_deliveries`, `deadline_alerts`,
+  `encryption_migrations`). The policy is enabled **and forced**, so it also
+  applies to the role that owns the tables. A statement with no tenant filter
+  cannot read, change or delete another tenant's rows there, or rows with no
+  tenant, and cannot move a row to another tenant.
+- **Not covered:** tables with no tenant column, among them `goal_events`,
+  `artifacts`, `questions`, `episodes`, `signoffs`, `turns`, `messages`,
+  `attachments` and `share_links`. They have no policy. Lightwork scopes them
+  through their parent goal or conversation in its own queries, and nothing in
+  the database stops a query that leaves that filter out.
+- **The login matters.** A superuser or a role with `BYPASSRLS` skips every
+  policy. Lightwork reports such a login in the readiness details and refuses
+  to start with it in enterprise mode. Use a dedicated login that is neither.
+- **The policy trusts a transaction setting.** It compares each row with
+  `maverick.tenant` (or `maverick.workspace`), which Lightwork sets at the
+  start of every transaction. SQL run directly on that connection can set it
+  too. RLS is a second check on Lightwork's own queries, not a boundary
+  against someone who can run SQL as the application's database role.
 
 The webhook and deadline-alert tables (`webhook_subscriptions`,
 `webhook_deliveries`, `deadline_alerts`) store the workspace id as written

@@ -98,8 +98,12 @@ JOB_PREFIXES: dict[str, tuple[str, ...]] = {
     "document-engines": ("packages/maverick-core/", "deploy/docker/"),
     # The deploy image installs every package; its Dockerfile lives under deploy/docker.
     "docker": ("packages/", "apps/installer-cli/", "deploy/docker/", ".dockerignore"),
-    # Live Postgres and pgvector tests of the core, knowledge and dashboard packages.
-    "postgres": ("packages/maverick-core/", "packages/maverick-knowledge/", "packages/maverick-dashboard/"),
+    # Live Postgres and pgvector tests of the core, knowledge and dashboard
+    # packages; the channel delivery store's test imports the channels package.
+    "postgres": (
+        "packages/maverick-core/", "packages/maverick-knowledge/", "packages/maverick-dashboard/",
+        "packages/maverick-channels/",
+    ),
     # OSV/pip-audit/bandit/SBOM over every dependency surface and all Python code.
     "audit": (
         "packages/", "apps/", "benchmarks/", "demo/", "examples/", "rust/", "go/", "sdks/",

@@ -661,6 +661,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   check and activity-log entries apply. These are offered only once the
   Reviews family is in `[copilot] operation_families` (it is off by
   default); publishing and retiring also need Copilot actions turned on.
+- On Postgres with at-rest encryption and strict isolation off, records
+  saved before workspaces were used are shown to every workspace again, as
+  they already are without encryption: facts, goals, goal events, artifacts,
+  questions, episodes, sign-offs, approvals, projects and chat turns no
+  longer show a "withheld" placeholder there. `maverick doctor` and
+  Installation health now warn when such records exist next to a workspace.
+  To stop every workspace reading them, assign them to one workspace with
+  `maverick tenant backfill --tenant <id>` (preview with `--dry-run`), then
+  turn on strict isolation ("Hide records with no workspace" in Settings).
+- `maverick tenant backfill` now re-seals the encrypted values of the
+  records it assigns, so the workspace they go to can read them; before,
+  that workspace saw a "withheld" placeholder. Run it on the computer that
+  runs Lightwork: it stops, changing nothing, if it cannot open a value.
+  Writes to goals, facts, conversations and their events wait while it
+  runs (about 4 seconds for 100,000 encrypted values), so pick a quiet
+  period; if Lightwork is busy writing for more than 10 seconds it stops,
+  changing nothing, and can be run again.
+- `maverick tenant backfill` now stops with an explanation when row-level
+  security is on and its database login cannot see records without a
+  workspace; before, it reported that it assigned 0 rows. A script that
+  runs it that way now gets exit code 2. Run it as a login that bypasses
+  row-level security.
 
 ### Fixed
 

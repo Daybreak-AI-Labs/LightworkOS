@@ -1189,8 +1189,66 @@ jobs:
     # DB-backed tests for the Postgres world-model backend. The default `test`
     # job has no Postgres, so test_postgres_world.py skips there; this job
     # stands up a service + DSN so the backend is actually exercised in CI.
+    #
+    # The files run twice, one pass after the other: in the default test mode,
+    # and in the production security posture (MAVERICK_TEST_SECURE_DEFAULT=1,
+    # which turns at-rest encryption on). Without the second pass, tests that
+    # fail only on an encrypted Postgres store went unnoticed on main.
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 60
+    env:
+      # Every test file that holds a live-Postgres test: one that reads
+      # MAVERICK_PG_DSN / MAVERICK_KNOWLEDGE_DSN from the environment or uses
+      # the postgres_test_dsn fixture. test_select_pr_tests.py fails when such
+      # a file is missing here (test_knowledge.py has its own step below).
+      # test_database_*.py and test_production_runtime_regressions.py need no
+      # server; they pin the database tool's connection handling.
+      POSTGRES_TEST_FILES: >-
+        packages/maverick-core/tests/test_postgres_world.py
+        packages/maverick-core/tests/test_intent_value.py
+        packages/maverick-core/tests/test_database_tool.py
+        packages/maverick-core/tests/test_database_connection_timeouts.py
+        packages/maverick-core/tests/test_database_connection_hosts.py
+        packages/maverick-core/tests/test_production_runtime_regressions.py
+        packages/maverick-core/tests/test_pgvector_isolation_pg.py
+        packages/maverick-core/tests/test_postgres_fact_history.py
+        packages/maverick-core/tests/test_postgres_facts_trust.py
+        packages/maverick-core/tests/test_postgres_governed_records_capacity.py
+        packages/maverick-core/tests/test_postgres_encryption_migrate.py
+        packages/maverick-core/tests/test_consent_storage.py
+        packages/maverick-core/tests/test_a2a_migration_pg.py
+        packages/maverick-core/tests/test_a2a_shared_tasks_pg.py
+        packages/maverick-core/tests/test_approval_checks.py
+        packages/maverick-core/tests/test_attachment_submission_postgres.py
+        packages/maverick-core/tests/test_channel_delivery_postgres.py
+        packages/maverick-core/tests/test_chat_threads.py
+        packages/maverick-core/tests/test_control_plane_authority_pg.py
+        packages/maverick-core/tests/test_deadline_alerts.py
+        packages/maverick-core/tests/test_dispatch_failure_atomic.py
+        packages/maverick-core/tests/test_event_admission_postgres.py
+        packages/maverick-core/tests/test_federation_held_admission.py
+        packages/maverick-core/tests/test_flow_action_choice_lineage_pg.py
+        packages/maverick-core/tests/test_flow_action_choice_teaching_capture_pg.py
+        packages/maverick-core/tests/test_flow_action_episode_review_pg.py
+        packages/maverick-core/tests/test_flow_operator_review_pg.py
+        packages/maverick-core/tests/test_flow_recipe_lineage_pg.py
+        packages/maverick-core/tests/test_flow_thread_context.py
+        packages/maverick-core/tests/test_flow_workflow_memory_pg.py
+        packages/maverick-core/tests/test_flow_workflow_transducer_pg.py
+        packages/maverick-core/tests/test_goal_list_cursor.py
+        packages/maverick-core/tests/test_governed_record_lookup_pg.py
+        packages/maverick-core/tests/test_governed_records_pool_pg.py
+        packages/maverick-core/tests/test_governed_records_rls_pg.py
+        packages/maverick-core/tests/test_learning_store_pg_migration.py
+        packages/maverick-core/tests/test_learning_store_tenant_isolation.py
+        packages/maverick-core/tests/test_pg_rls.py
+        packages/maverick-core/tests/test_postgres_io_deadlines.py
+        packages/maverick-core/tests/test_provider_cap_reservations.py
+        packages/maverick-core/tests/test_query_execution.py
+        packages/maverick-core/tests/test_round5_workspace_tenants.py
+        packages/maverick-dashboard/tests/test_boards_postgres.py
+        packages/maverick-knowledge/tests/test_document_publication.py
+        packages/maverick-knowledge/tests/test_reindex_postgres.py
     services:
       postgres:
         # pgvector image = postgres:16 + the `vector` extension, so the same
@@ -1227,6 +1285,8 @@ jobs:
           # they start (maverick.event_admission), so the live Postgres start
           # boundary tests need the dashboard package importable.
           pip install -e ./packages/maverick-dashboard
+          # The channel delivery store's live test imports the channels package.
+          pip install -e ./packages/maverick-channels
           pip install \
             'psycopg==3.3.8' 'psycopg-binary==3.3.8' \
             'psycopg-pool==3.3.3' 'sqlalchemy==2.0.57'
@@ -1237,33 +1297,28 @@ jobs:
         env:
           MAVERICK_PG_DSN: postgres://maverick:maverick@localhost:5432/maverick_test
         run: >-
-          timeout --verbose --signal=ABRT --kill-after=30s 10m
+          timeout --verbose --signal=ABRT --kill-after=30s 25m
           python -m pytest -vvs --timeout=180 --timeout-method=signal
-          packages/maverick-core/tests/test_postgres_world.py
-          packages/maverick-core/tests/test_intent_value.py
-          packages/maverick-core/tests/test_database_tool.py
-          packages/maverick-core/tests/test_database_connection_timeouts.py
-          packages/maverick-core/tests/test_database_connection_hosts.py
-          packages/maverick-core/tests/test_production_runtime_regressions.py
-          packages/maverick-core/tests/test_pgvector_isolation_pg.py
-          packages/maverick-core/tests/test_postgres_fact_history.py
-          packages/maverick-core/tests/test_postgres_facts_trust.py
-          packages/maverick-core/tests/test_postgres_governed_records_capacity.py
-          packages/maverick-core/tests/test_postgres_encryption_migrate.py
-          packages/maverick-core/tests/test_consent_storage.py
-      - name: Test database connection recovery under secure defaults
+          $POSTGRES_TEST_FILES
+      - name: Test live Postgres backends in the production security posture
         env:
+          MAVERICK_PG_DSN: postgres://maverick:maverick@localhost:5432/maverick_test
           MAVERICK_TEST_SECURE_DEFAULT: "1"
         run: >-
-          timeout --verbose --signal=ABRT --kill-after=30s 5m
-          python -m pytest -vvs --timeout=45 --timeout-method=signal
-          packages/maverick-core/tests/test_database_tool.py
-          packages/maverick-core/tests/test_database_connection_timeouts.py
-          packages/maverick-core/tests/test_database_connection_hosts.py
-          packages/maverick-core/tests/test_production_runtime_regressions.py
+          timeout --verbose --signal=ABRT --kill-after=30s 25m
+          python -m pytest -vvs --timeout=180 --timeout-method=signal
+          $POSTGRES_TEST_FILES
       - name: Test pgvector knowledge store
         env:
           MAVERICK_PG_DSN: postgres://maverick:maverick@localhost:5432/maverick_test
+        run: >-
+          timeout --verbose --signal=ABRT --kill-after=30s 5m
+          python -m pytest -vvs --timeout=180 --timeout-method=signal
+          packages/maverick-knowledge/tests/test_knowledge.py -k PgVectorLive
+      - name: Test pgvector knowledge store in the production security posture
+        env:
+          MAVERICK_PG_DSN: postgres://maverick:maverick@localhost:5432/maverick_test
+          MAVERICK_TEST_SECURE_DEFAULT: "1"
         run: >-
           timeout --verbose --signal=ABRT --kill-after=30s 5m
           python -m pytest -vvs --timeout=180 --timeout-method=signal
