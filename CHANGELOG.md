@@ -633,6 +633,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the provider cannot be reached then, the last answer stays in use. If
   sign-in stops with "misconfigured", copy the issuer exactly as your
   provider shows it; the server log names both values.
+- The dashboard Copilot can now set and remove a model's spending ceiling
+  ("Set a model's spending ceiling" in the Models action family), with the
+  same administrator check, confirmation and activity-log entries as the
+  Settings form. Turn on Copilot actions and the Models family to use it.
+- On the Activity log page the Copilot can now publish a checkpoint, publish
+  one after an erasure (with or without an erasure record), retire one, and
+  check the checkpoints against a receipt you kept. The same administrator
+  check and activity-log entries apply (the Reviews action family).
 
 ### Fixed
 

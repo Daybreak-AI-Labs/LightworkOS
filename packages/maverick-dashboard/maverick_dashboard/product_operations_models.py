@@ -187,6 +187,113 @@ def execute_self_hosted(request, selection, arguments, review, operation_id):
     return Outcome("confirmed", f"{row['label']} is now: {row['state']}.", {"server": row})
 
 
+class ModelPrice(StrictInput):
+    model: str = Field(min_length=1, max_length=128)
+    input_per_mtok: float = Field(ge=0, le=1_000_000, allow_inf_nan=False)
+    output_per_mtok: float = Field(ge=0, le=1_000_000, allow_inf_nan=False)
+    source: str = Field(min_length=1, max_length=300)
+    as_of: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    valid_until: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    confirmed: bool = False
+
+
+class SavedPrice(StrictInput):
+    model: str = Field(min_length=1, max_length=128)
+
+
+def _ceiling(rate: dict) -> str:
+    return (f"Input {money(rate['input_per_mtok'], 4)} and output "
+            f"{money(rate['output_per_mtok'], 4)} per million tokens")
+
+
+def _prices(request) -> dict:
+    """The Settings page's "Prices for the models you use": the same
+    administrator check, the same words for each price status."""
+    from . import admin_pages
+
+    auth.require_global_permission(request, "admin")
+    return {"models_in_use": [{"work": row["label"], "model": row["spec"], "price_status": row["status"]}
+                              for row in admin_pages.model_price_states()],
+            "saved_prices": [{"model": row["spec"], "ceiling": _ceiling(row), "source": row["source"],
+                              "applies_from": row["as_of"], "review_by": row["valid_until"],
+                              "status": "Active" if row["active"] else "Expired: requests stop"}
+                             for row in admin_pages.saved_model_rates()]}
+
+
+def price_snapshot(request, selection):
+    from datetime import datetime, timedelta, timezone
+
+    state = _prices(request)
+    today = datetime.now(timezone.utc).date()
+    stopped = [row["model"] for row in state["models_in_use"]
+               if row["price_status"] == "Will stop before a paid request"]
+    summary = ("Every model in use has a usable price." if not stopped else
+               "These models stop before a paid request until they have a price: "
+               + ", ".join(sorted(set(stopped))) + ".")
+    fields = [{"name": "model", "label": "Exact model, written as provider:model-name", "kind": "text",
+               "value": stopped[0] if stopped else "", "max_length": 128},
+              {"name": "input_per_mtok", "label": "Maximum input price, USD per million tokens",
+               "kind": "number", "value": None},
+              {"name": "output_per_mtok", "label": "Maximum output price, USD per million tokens",
+               "kind": "number", "value": None},
+              {"name": "source", "label": "Where you checked the price (no secrets)", "kind": "text",
+               "value": "", "max_length": 300},
+              {"name": "as_of", "label": "Price applies from (year-month-day)", "kind": "text",
+               "value": today.isoformat(), "max_length": 10},
+              {"name": "valid_until", "label": "Review again by (year-month-day)", "kind": "text",
+               "value": (today + timedelta(days=30)).isoformat(), "max_length": 10},
+              {"name": "confirmed", "kind": "boolean", "value": False,
+               "label": "I checked this model's own USD rate and used a ceiling high enough for our agreement."}]
+    return Snapshot(digest(state), "Current model prices and saved spending ceilings", summary, state, fields=fields)
+
+
+def prepare_price(request, selection, arguments):
+    from . import admin_pages
+
+    spec = admin_pages.model_rate_route(request, arguments["model"], confirmed=arguments["confirmed"])
+    saved = next((row["ceiling"] for row in _prices(request)["saved_prices"] if row["model"] == spec), None)
+    return Preview("Save a spending ceiling for this model. Lightwork uses it to guard spending limits. "
+                   "Your provider's invoice remains the final bill.",
+                   changes=[{"field": f"Spending ceiling for {spec}", "before": saved or "No saved price",
+                             "after": _ceiling(arguments)}])
+
+
+def execute_price(request, selection, arguments, review, operation_id):
+    from . import admin_pages
+
+    done = admin_pages.apply_model_rate(
+        request, arguments["model"], input_per_mtok=arguments["input_per_mtok"],
+        output_per_mtok=arguments["output_per_mtok"], source=arguments["source"],
+        as_of=arguments["as_of"], valid_until=arguments["valid_until"], confirmed=arguments["confirmed"])
+    return Outcome("confirmed", f"The spending ceiling for {done['model']} is saved: {_ceiling(done['price'])}.", done)
+
+
+def remove_price_snapshot(request, selection):
+    state = _prices(request)
+    choices = [{"value": row["model"], "label": f"{row['model']}: {row['ceiling']}"} for row in state["saved_prices"]]
+    return Snapshot(digest(state), "Current model prices and saved spending ceilings",
+                    "Remove a saved spending ceiling. A model left without a usable price stops before a paid request.",
+                    state, fields=[{"name": "model", "label": "Saved price", "kind": "select",
+                                    "value": choices[0]["value"] if choices else "", "choices": choices}],
+                    blocked="" if choices else "No saved spending ceiling to remove.")
+
+
+def prepare_remove_price(request, selection, arguments):
+    row = next((row for row in _prices(request)["saved_prices"] if row["model"] == arguments["model"]), None)
+    if row is None:
+        raise HTTPException(409, "Choose a saved model rate to remove.")
+    return Preview("Remove this saved spending ceiling. The model stops before a paid request unless another price applies.",
+                   changes=[{"field": f"Spending ceiling for {row['model']}", "before": row["ceiling"],
+                             "after": "No saved price"}])
+
+
+def execute_remove_price(request, selection, arguments, review, operation_id):
+    from . import admin_pages
+
+    done = admin_pages.remove_model_rate(request, arguments["model"])
+    return Outcome("confirmed", f"The saved spending ceiling for {done['model']} was removed.", done)
+
+
 def entries():
     pages = ("/settings", "/settings/all")
     return [Adapter("models.provider_status", "Check AI service status", "models", "/settings",
@@ -202,4 +309,12 @@ def entries():
             Adapter("models.self_hosted_price", "Mark a self-hosted server free or charged", "models", "/settings", pages,
                     SelfHostedPrice, self_hosted_snapshot, prepare_self_hosted, execute_self_hosted,
                     aliases=("mark ollama free", "self-hosted model price", "safety ceiling price",
-                             "charge a self-hosted server again"))]
+                             "charge a self-hosted server again")),
+            Adapter("models.price.set", "Set a model's spending ceiling", "models", "/settings#settings-model-prices",
+                    pages, ModelPrice, price_snapshot, prepare_price, execute_price,
+                    aliases=("set a model price", "price a private model", "model has no price",
+                             "save a company rate")),
+            Adapter("models.price.remove", "Remove a model's saved spending ceiling", "models",
+                    "/settings#settings-model-prices", pages, SavedPrice, remove_price_snapshot,
+                    prepare_remove_price, execute_remove_price,
+                    aliases=("remove a model price", "remove a company rate"))]

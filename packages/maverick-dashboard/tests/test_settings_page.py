@@ -168,6 +168,84 @@ def test_copilot_marks_a_self_hosted_server_free_like_the_settings_form(monkeypa
     assert _lookup_price_quote("ollama:llama3").rates != (0.0, 0.0)
 
 
+def test_copilot_sets_and_removes_a_model_price_like_the_settings_form(monkeypatch, tmp_path):
+    """The Copilot operations run the form's own functions: administrators
+    only, the form's confirmation and refusals, an audited write, and the
+    saved price read back."""
+    import maverick.audit as audit_pkg
+    import pytest
+    from fastapi import HTTPException
+    from maverick.audit import writer
+    from maverick.runtime_overrides import model_rate_overrides
+    from maverick_dashboard import auth
+    from maverick_dashboard import product_operations as registry
+    from maverick_dashboard import product_operations_models as ops
+    from starlette.requests import Request
+
+    _prep(monkeypatch, tmp_path)
+    monkeypatch.delenv("MAVERICK_MODEL_OVERRIDE", raising=False)
+    monkeypatch.setenv("MAVERICK_BILLING_STRICT", "true")
+    assert {"models.price.set", "models.price.remove"} <= set(registry.adapters())
+    by_id = {a.id: a for a in ops.entries()}
+    setter, remover = by_id["models.price.set"], by_id["models.price.remove"]
+    seen = []
+    real = writer.audit_event
+    monkeypatch.setattr(audit_pkg, "audit_event",
+                        lambda kind, **row: seen.append({"kind": str(kind), **row}) or real(kind, **row))
+
+    def request():
+        return Request({"type": "http", "method": "POST", "path": "/settings",
+                        "headers": [(b"host", b"127.0.0.1")], "client": ("127.0.0.1", 1)})
+
+    today = datetime.now(timezone.utc).date()
+    spec = "openai_compatible:client-model"
+    price = {"model": spec, "input_per_mtok": 4.0, "output_per_mtok": 12.0, "source": "Contract R1",
+             "as_of": today.isoformat(), "valid_until": (today + timedelta(days=30)).isoformat(),
+             "confirmed": True}
+    assert remover.snapshot(request(), {}).blocked and not setter.snapshot(request(), {}).blocked
+    # The form's refusals: no confirmation, a model with a tracked price, bad dates.
+    for refused, status in ((dict(price, confirmed=False), 400), (dict(price, model="claude-sonnet-4-6"), 409)):
+        with pytest.raises(HTTPException) as error:
+            setter.prepare(request(), {}, refused)
+        assert error.value.status_code == status
+    with pytest.raises(HTTPException) as error:
+        setter.execute(request(), {}, dict(price, valid_until="2020-01-01"), {}, "a" * 32)
+    assert error.value.status_code == 400
+    assert not model_rate_overrides() and not seen
+
+    review = setter.prepare(request(), {}, price)
+    assert review.changes == [{"field": f"Spending ceiling for {spec}", "before": "No saved price",
+                               "after": "Input $4.0000 and output $12.0000 per million tokens"}]
+    done = setter.execute(request(), {}, price, review.native, "b" * 32)
+    assert done.status == "confirmed" and model_rate_overrides()[spec]["source"] == "Contract R1"
+    assert done.details["price"]["input_per_mtok"] == 4.0
+    assert model_rate_overrides()[spec]["approved_by"] == "local administrator"
+    assert [row["phase"] for row in seen if row.get("section") == "model_rates"] == ["prepared", "completed"]
+    assert [row["model"] for row in seen if row.get("action") == "settings_model_rate"] == [spec]
+
+    state = remover.snapshot(request(), {})
+    assert not state.blocked and state.fields[0]["choices"][0]["value"] == spec
+    review = remover.prepare(request(), {}, {"model": spec})
+    assert review.changes[0]["after"] == "No saved price"
+
+    def deny(_request, _permission):
+        raise HTTPException(status_code=403, detail="forbidden")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(auth, "require_global_permission", deny)
+        for call in (lambda: setter.snapshot(request(), {}), lambda: remover.snapshot(request(), {}),
+                     lambda: setter.execute(request(), {}, dict(price, input_per_mtok=9.0), {}, "c" * 32),
+                     lambda: remover.execute(request(), {}, {"model": spec}, {}, "d" * 32)):
+            with pytest.raises(HTTPException) as refused:
+                call()
+            assert refused.value.status_code == 403
+    assert model_rate_overrides()[spec]["input_per_mtok"] == 4.0
+
+    gone = remover.execute(request(), {}, {"model": spec}, review.native, "e" * 32)
+    assert gone.status == "confirmed" and spec not in model_rate_overrides()
+    assert [row["model"] for row in seen if row.get("action") == "settings_model_rate_removed"] == [spec]
+
+
 def test_settings_has_bounded_sections_keyboard_tabs_and_search(monkeypatch, tmp_path):
     _prep(monkeypatch, tmp_path)
     text = _client().get("/settings").text

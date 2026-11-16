@@ -350,17 +350,83 @@ def _retire(target: dict) -> dict:
     return {"retired": True, "day": target["day"]}
 
 
-async def _run(function, *args):
+def run_checked(function, *args):
+    """Run one checkpoint action; its failures are answered in the page's words."""
     from maverick.audit.checkpoints import AuditCheckpointError
 
     try:
-        return await run_in_threadpool(function, *args)
+        return function(*args)
     except HTTPException:
         raise
     except (AuditCheckpointError, ValueError) as exc:
         raise HTTPException(status_code=409, detail=_publish_problem(exc)) from exc
     except (ImportError, OSError, RuntimeError) as exc:
         raise HTTPException(status_code=503, detail="Checkpoints are not available right now.") from exc
+
+
+async def _run(function, *args):
+    return await run_in_threadpool(run_checked, function, *args)
+
+
+#: What the page says after a check. The page script holds the same sentences.
+CHECK_MATCHES = ("The signed checkpoint commitments match the retained prefixes of the activity log. "
+                 "Later entries beyond those prefixes are outside this check.")
+CHECK_KEYS_PINNED = " Every checkpoint is signed with a pinned key."
+CHECK_RECEIPT_MATCHES = " Your kept receipt matches too."
+CHECK_NO_RECEIPT = " Choose a receipt you kept independently to compare checkpoint history through that receipt."
+CHECK_NONE_YET = ("No checkpoints have been published yet. "
+                  "Publish one above to fix the audit history at this point.")
+CHECK_PROBLEMS = "Problems were found:"
+
+
+def check_sentences(result: dict) -> list[str]:
+    """The result of :func:`_verify` in the sentences the page shows."""
+    if result["intact"]:
+        return [CHECK_MATCHES + (CHECK_KEYS_PINNED if result["keys_pinned"] else "")
+                + (CHECK_RECEIPT_MATCHES if result["pinned"] else CHECK_NO_RECEIPT)]
+    if result["none_yet"]:
+        return [CHECK_NONE_YET]
+    return [CHECK_PROBLEMS, *result["problems"]]
+
+
+def publish_change(request: Request, body: PublishIn) -> dict:
+    """Publish one day's checkpoint. One path for the page and the Copilot:
+    a workspace administrator, a day from the list, and the activity-log
+    entry written before anything is published. No entry, nothing published."""
+    require_permission(request, "admin")
+    if not _DAY.fullmatch(body.day):
+        raise HTTPException(status_code=422, detail="Choose a day from the list.")
+    from maverick.authority_effects import authority_effect_fence
+
+    with authority_effect_fence():
+        require_permission(request, "admin")
+        if body.day not in _days():
+            raise HTTPException(status_code=422, detail="Choose a day from the list.")
+        supersede = _latest_digest_for_day(body.day) if body.after_erasure else None
+        # The override has its own entry name, the one a later check and
+        # the command line use, so whoever reviews that day can find it.
+        override = bool(body.after_erasure and body.without_erasure_record)
+        _record(request,
+                "audit_checkpoint_publish_without_erase_record" if override
+                else "audit_checkpoint_publish",
+                day=body.day, after_erasure=body.after_erasure)
+        return _publish(body, supersede)
+
+
+def retire_change(request: Request, body: RetireIn) -> dict:
+    """Retire the checkpoint of a day the record-keeping policy deleted. One
+    path for the page and the Copilot: a workspace administrator, the
+    confirmation, and the activity-log entry written first."""
+    require_permission(request, "admin")
+    if body.confirm is not True:
+        raise HTTPException(status_code=409, detail="Confirm the retirement to continue. Nothing was changed.")
+    from maverick.authority_effects import authority_effect_fence
+
+    with authority_effect_fence():
+        require_permission(request, "admin")
+        target = _retire_target(body.sequence)
+        _record(request, "audit_checkpoint_retire", sequence=body.sequence, day=target["day"])
+        return _retire(target)
 
 
 @router.get("")
@@ -371,25 +437,7 @@ async def overview(request: Request) -> dict:
 
 @router.post("/publish")
 async def publish(request: Request, body: PublishIn) -> dict:
-    require_permission(request, "admin")
-    if not _DAY.fullmatch(body.day):
-        raise HTTPException(status_code=422, detail="Choose a day from the list.")
-    def change():
-        from maverick.authority_effects import authority_effect_fence
-        with authority_effect_fence():
-            require_permission(request, "admin")
-            if body.day not in _days():
-                raise HTTPException(status_code=422, detail="Choose a day from the list.")
-            supersede = _latest_digest_for_day(body.day) if body.after_erasure else None
-            # The override has its own entry name, the one a later check and
-            # the command line use, so whoever reviews that day can find it.
-            override = bool(body.after_erasure and body.without_erasure_record)
-            _record(request,
-                    "audit_checkpoint_publish_without_erase_record" if override
-                    else "audit_checkpoint_publish",
-                    day=body.day, after_erasure=body.after_erasure)
-            return _publish(body, supersede)
-    return await _run(change)
+    return await _run(publish_change, request, body)
 
 
 @router.post("/verify")
@@ -412,17 +460,7 @@ async def receipt(request: Request, sequence: int) -> Response:
 
 @router.post("/retire")
 async def retire(request: Request, body: RetireIn) -> dict:
-    require_permission(request, "admin")
-    if body.confirm is not True:
-        raise HTTPException(status_code=409, detail="Confirm the retirement to continue. Nothing was changed.")
-    def change():
-        from maverick.authority_effects import authority_effect_fence
-        with authority_effect_fence():
-            require_permission(request, "admin")
-            target = _retire_target(body.sequence)
-            _record(request, "audit_checkpoint_retire", sequence=body.sequence, day=target["day"])
-            return _retire(target)
-    return await _run(change)
+    return await _run(retire_change, request, body)
 
 
 # ---- where checkpoints live and which keys sign them (installation-wide) -------
