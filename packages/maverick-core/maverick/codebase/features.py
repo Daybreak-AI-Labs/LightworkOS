@@ -195,6 +195,15 @@ def _runs_on_host(sandbox_factory=None) -> bool:
             _close(box)
 
 
+def _isolation(on_host: bool) -> str:
+    """container | namespace (this computer, each command in its own process
+    and temporary-folder namespace) | host (this computer, marker reap only)."""
+    if not on_host:
+        return "container"
+    from ..sandbox.local import step_namespaces_available
+    return "namespace" if step_namespaces_available() else "host"
+
+
 def container_refusal(sandbox_factory=None) -> str | None:
     """The plain refusal when ``[codebase] require_container`` is on and the
     steps would run on this computer without a container; otherwise None."""
@@ -543,7 +552,7 @@ def propose(world, name: str, title: str, description: str, run: Runner, *,
         "tests": None if tests is None else {k: v for k, v in tests.items() if k != "output"},
         "tests_output": None if tests is None else tests["output"],
         "test_command": bool(repo.test_command), "repair_rounds": rounds,
-        "isolation": "host" if on_host else "container",
+        "isolation": _isolation(on_host),
         "rounds": loop.rounds, "check": check, "stopped": loop.stopped,
         "review": review, "status": "empty" if not changed else "pending",
         "approval_id": None, "created_at": time.time(), "merged_at": None,
@@ -621,8 +630,12 @@ def _approval_detail(p: dict) -> str:
 
 
 _TESTS_GAP = "The repository's tests did not pass or are not configured."
-HOST_LINE = ("These steps ran on this computer without a container, so they were not "
-             "isolated from each other.")
+HOST_LINE = ("These steps ran on this computer without a container or separate processes, "
+             "so they were not isolated from each other.")
+HOST_GAP = "The steps were not isolated from each other on this computer."
+NAMESPACE_LINE = ("Each step ran on this computer with its own processes and its own temporary "
+                  "folder. They still shared its other files and its network, unlike a container.")
+NAMESPACE_GAP = "The steps ran on this computer, not in a container, so they shared its files."
 _UNCHECKED_GAP = "Nobody independently tried to break this change."
 
 
@@ -681,8 +694,9 @@ def evidence(p: dict) -> dict:
     left no blocker open. Proposals saved before repair rounds and the checker
     existed read as not checked."""
     lines, gaps = _tests_evidence(p)
-    if p.get("isolation") == "host":
-        lines.append(HOST_LINE)
+    isolation = p.get("isolation")
+    if isolation in ("host", "namespace"):
+        lines.append(HOST_LINE if isolation == "host" else NAMESPACE_LINE)
     rounds = p.get("repair_rounds")
     if isinstance(rounds, dict):
         lines.append(f"Repair rounds: {rounds.get('used', 0)} of {rounds.get('allowed', 0)} used.")

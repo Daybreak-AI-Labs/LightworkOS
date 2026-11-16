@@ -882,12 +882,15 @@ def _start_sleeper(root, tag):
 
 
 def test_processes_a_test_run_or_a_checker_leave_running_are_stopped(upstream, tmp_path,
-                                                                    private_tmp):
-    """Detached background processes cannot write into the next round's copy:
-    each test run and each checker look stops everything it started."""
+                                                                    private_tmp, monkeypatch):
+    """The fallback where namespaces are unavailable: detached background
+    processes that keep the step's marker cannot write into the next round's
+    copy, because each test run and each checker look stops all of them."""
     import time
 
+    from maverick.sandbox import local
     from maverick.sandbox.local import LocalBackend
+    monkeypatch.setattr(local, "step_namespaces_available", lambda: False)
     probe = ("import os, subprocess, sys\n"
              "if not os.path.exists('fixed.txt'):\n"
              f"    subprocess.Popen([sys.executable, '-c', {SLEEPER.format(root=str(private_tmp), tag='tests')!r}],\n"
@@ -922,9 +925,81 @@ def test_processes_a_test_run_or_a_checker_leave_running_are_stopped(upstream, t
     p = features.propose(world, "pricing", "L", "", run, sandbox_factory=LocalBackend,
                          checker=checker, repair_rounds=2, check_rounds=2)
     assert len(seen) == 3 and len(looks) == 2
-    assert features.HOST_LINE in features.evidence(p)["lines"]   # the card says so
     assert not [f for files in seen for f in files if f.startswith("late_")], seen
     assert not [f for f in p["files"] if f.startswith("late_")]
+    facts = features.evidence(p)                                   # the card says so
+    assert features.HOST_LINE in facts["lines"]
+
+
+ESCAPES = {
+    # a daemon in its own session with an empty environment: no marker to find
+    "envi": ("import subprocess, sys\n"
+             "subprocess.Popen([sys.executable, '-c', S], env={}, start_new_session=True,\n"
+             "                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"),
+    # a daemon that detaches, then re-executes itself with a cleared environment
+    "reexec": ("import os, sys\n"
+               "if os.fork() == 0:\n"
+               "    os.setsid()\n"
+               "    os.execve(sys.executable, [sys.executable, '-c', S], {'PATH': '/usr/bin'})\n"),
+}
+
+
+@pytest.mark.parametrize("how", sorted(ESCAPES))
+def test_a_daemon_that_clears_its_environment_dies_with_its_step(upstream, tmp_path,
+                                                                  private_tmp, how):
+    """Each command of a step runs in its own PID and mount namespace: when it
+    ends, the kernel kills everything it started, whatever its environment,
+    and it never sees the temporary folder holding other rounds' copies."""
+    import time
+
+    from maverick.sandbox import local
+    from maverick.sandbox.local import LocalBackend
+    if not local.step_namespaces_available():
+        pytest.skip("this host does not allow unprivileged user namespaces; "
+                    "the marker fallback is covered by the test above")
+    sleeper = SLEEPER.format(root=str(private_tmp), tag=how)
+    probe = ("import glob, os, sys\n"
+             f"S = {sleeper!r}\n"
+             f"seen = glob.glob({str(private_tmp)!r} + '/lw-*')\n"
+             "open('seen.txt', 'w').write(repr(sorted(os.path.basename(x) for x in seen)))\n"
+             "if not os.path.exists('fixed.txt'):\n"
+             + "".join("    " + line + "\n" for line in ESCAPES[how].splitlines())
+             + "    sys.exit(1)\n")
+    vault.register("pricing", str(upstream), test_command=f"{sys.executable} probe.py")
+    world = WorldModel(tmp_path / "world.db")
+    seen: list = []
+
+    def run(goal_id, work):
+        time.sleep(1.0)                          # long enough for a survivor to write
+        seen.append(sorted(p.name for p in work.iterdir()))
+        (work / "probe.py").write_text(probe)
+        if len(seen) > 1:
+            (work / "fixed.txt").write_text("1\n")
+    p = features.propose(world, "pricing", "E", "", run, sandbox_factory=LocalBackend,
+                         checker=None, repair_rounds=1)
+    assert len(seen) == 2 and not [f for f in seen[1] if f.startswith("late_")], seen
+    assert not [f for f in p["files"] if f.startswith("late_")]
+    assert p["tests"]["passed"] and p["isolation"] == "namespace"
+    facts = features.evidence(p)
+    assert features.NAMESPACE_LINE in facts["lines"]
+    assert features.HOST_LINE not in facts["lines"]
+
+
+def test_a_step_sees_only_its_own_copy_in_the_temporary_folder(tmp_path, private_tmp):
+    from maverick.sandbox import local
+    from maverick.sandbox.local import LocalBackend, contained_step
+    if not local.step_namespaces_available():
+        pytest.skip("this host does not allow unprivileged user namespaces")
+    other = private_tmp / "lw-work-other" / "work"
+    other.mkdir(parents=True)
+    mine = private_tmp / "lw-work-mine"
+    (mine / "work").mkdir(parents=True)
+    with contained_step(mine):
+        out = LocalBackend(workdir=mine / "work").exec(
+            f"ls {private_tmp}; ls {mine}; touch made.txt")
+    assert out.exit_code == 0, out.stderr
+    assert "lw-work-other" not in out.stdout and "lw-work-mine" in out.stdout
+    assert (mine / "work" / "made.txt").exists()          # its own copy is the real one
 
 
 def test_a_container_requirement_refuses_a_run_on_this_computer(upstream, tmp_path, monkeypatch):

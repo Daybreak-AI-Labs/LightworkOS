@@ -241,13 +241,74 @@ _STEPS: dict[str, str] = {}
 _STEPS_LOCK = threading.Lock()
 
 
-def _step_marker(workdir: object) -> str | None:
+def _step_for(workdir: object) -> tuple[str, str] | None:
+    """The contained step (its root folder, its marker) ``workdir`` is in."""
     path = os.path.realpath(str(workdir))
     with _STEPS_LOCK:
         for root, marker in _STEPS.items():
             if path == root or path.startswith(root + os.sep):
-                return marker
+                return root, marker
     return None
+
+
+# Where Linux allows unprivileged user namespaces, each command of a contained
+# step runs in its own user, PID and mount namespace. When the command's first
+# process exits, the kernel kills every process in it, whatever its session or
+# environment (the marker reap cannot find a process that cleared its
+# environment). The temporary folder is replaced by an empty private one with
+# only the step's own folder mounted back, so a command cannot list or reach
+# other rounds' or other proposals' copies. Files elsewhere and the network
+# are shared as before: this is not a container.
+_NS_PRELUDE = r"""set -e
+tmproot=$1 step=$2 wd=$3
+shift 3
+if [ -n "$tmproot" ]; then
+  exec 3<"$step"
+  mount -t tmpfs -o mode=0700 lwstep "$tmproot"
+  mkdir -p "$step"
+  mount --no-canonicalize --bind /proc/self/fd/3 "$step"
+  exec 3<&-
+fi
+cd "$wd"
+exec "$@"
+"""
+_NS_AVAILABLE: list[bool] = []
+
+
+def _in_step_namespace(cmd: str | list[str], root: str, workdir: object) -> list[str]:
+    import shutil
+    import tempfile
+
+    tmproot = os.path.realpath(tempfile.gettempdir())
+    overlay = tmproot if root.startswith(tmproot + os.sep) else ""
+    inner = ["/bin/sh", "-c", cmd] if isinstance(cmd, str) else list(cmd)
+    return [shutil.which("unshare") or "unshare", "--user", "--map-root-user", "--pid",
+            "--fork", "--kill-child", "--mount", "--propagation", "private", "--mount-proc",
+            "/bin/sh", "-c", _NS_PRELUDE, "lw-step", overlay, root, str(workdir), *inner]
+
+
+def step_namespaces_available() -> bool:
+    """Whether contained steps can run in their own namespaces here: Linux,
+    ``unshare`` on PATH and user namespaces allowed. Probed once per process
+    by running the real wrapper (the same detection idea as the document
+    worker's ``unshare -rn`` probe)."""
+    import shutil
+    import tempfile
+
+    if not _NS_AVAILABLE:
+        ok = False
+        if sys.platform.startswith("linux") and shutil.which("unshare"):
+            with tempfile.TemporaryDirectory(prefix="lw-nsprobe-") as probe:
+                root = os.path.realpath(probe)
+                Path(root, "mounted").touch()  # proves the step folder is mounted back
+                try:
+                    ok = subprocess.run(_in_step_namespace(["test", "-f", "mounted"], root, root),
+                                        capture_output=True, timeout=10,
+                                        check=False).returncode == 0
+                except (OSError, subprocess.TimeoutExpired):
+                    ok = False
+        _NS_AVAILABLE.append(ok)
+    return _NS_AVAILABLE[0]
 
 
 @contextmanager
@@ -538,9 +599,11 @@ class LocalBackend:
         effective = self.timeout if timeout is None else timeout
         marker = uuid.uuid4().hex
         child_env = {**_contained(scrub_env()), _RUN_MARKER_ENV: marker}
-        step = _step_marker(self.workdir)
+        step = _step_for(self.workdir)
         if step is not None:
-            child_env[_STEP_MARKER_ENV] = step
+            child_env[_STEP_MARKER_ENV] = step[1]
+            if os.name != "nt" and step_namespaces_available():
+                cmd = _in_step_namespace(cmd, step[0], self.workdir)
         _hide_harness_environ()
 
         windows_creation_flags = (
