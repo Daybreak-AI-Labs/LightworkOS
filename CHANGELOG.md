@@ -486,10 +486,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (the time zone is reset with the time) when it changes; the import note
   and the schedule's history give the replaced time, zone and title. A
   workflow renamed at the source counts as a new one, and the note names the
-  schedule still running under the old name. Workflows that share a name
-  and have no id in one import are scheduled once and never changed by a
-  later import. A schedule made before this release has no mark and is
-  still left unchanged: remove it once, then import again.
+  schedule still running under the old name. A workflow that has no id at
+  the source cannot be told from another with the same name, so its
+  schedule is created once and never changed by a later import. A schedule
+  made before this release has no mark and is still left unchanged: remove
+  it once, then import again.
 - A flow run records a step inside a loop, a parallel lane, a try block or
   a subflow under its container, for example `loop1/n0` or `fanout/1/n0`.
   It no longer shows as, or counts towards, the top-level step with the same
@@ -517,7 +518,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   request and make a new one. "Discard this request" closes a stuck or
   unwanted request that was never published. A published request that
   cannot be settled offers "Close this request" and ends as "Closed after
-  publication". Both are refused while the request is the version in use.
+  publication". Both are refused while the request is the version in use;
+  if its history is also full, publish another version, then close it.
   A request's history holds 128 steps: renewed reviews and repeated failed
   restores stop there, and the request can still be settled and closed.
   The Copilot offers the same retry and discard for taught workflow

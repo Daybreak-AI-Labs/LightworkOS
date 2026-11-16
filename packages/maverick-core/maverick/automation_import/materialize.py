@@ -75,9 +75,9 @@ def _activate_schedule(queue: Any, automation: ImportedAutomation, payload: dict
 
     The schedule follows the source only when the source changed since the
     last import. Until then a person's own changes to it (time, zone, title)
-    are kept, and so is a pause. With ``mark`` off the schedule carries no
-    mark and is only ever created: the caller could not tell this workflow
-    from another one in the same import.
+    are kept, and so is a pause. With ``mark`` off, or for a workflow that
+    has no source id, the schedule carries no mark and is only ever created:
+    this workflow cannot be told from another one with the same name.
     """
     from ..schedule_definitions import change_definition, imported_definitions
     from ..scheduler import CronError, schedule_cron
@@ -85,6 +85,13 @@ def _activate_schedule(queue: Any, automation: ImportedAutomation, payload: dict
     cron = payload["__cron__"]
     try:
         current = None
+        if not automation.source_id:
+            # A mark built from a name alone would also match another workflow
+            # that has the same name, and update its schedule.
+            mark = False
+            notes.append("this workflow has no id at the source, so a later import cannot tell "
+                         "it from another workflow with the same name; an import creates its "
+                         "schedule once and never changes it")
         if mark:
             payload["imported_from"] = automation.import_ref()
             digest = payload["import_digest"] = _import_digest(payload)

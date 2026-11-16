@@ -357,7 +357,9 @@ class ImportedAutomation:
         template slug is the identity, as it is for the saved template: a
         source id alone is not unique (two exports can both hold a workflow
         numbered ``1``), and the slug carries the name and a hash of the id.
-        A workflow renamed at the source is therefore a new one here."""
+        A workflow renamed at the source is therefore a new one here. Without
+        a source id the slug is only the name, which another workflow can
+        share, so no schedule is marked with it."""
         return f"{self.source}:{self.template_name()}"
 
     def payload_fields(self) -> list[str]:

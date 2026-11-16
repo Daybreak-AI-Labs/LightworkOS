@@ -172,6 +172,38 @@ def test_two_workflows_with_one_name_and_no_id_never_overwrite_each_other(tmp_pa
     assert any("different text" in note for note in json.loads(changed.output)[0]["notes"])
 
 
+def test_a_workflow_without_an_id_never_updates_another_imports_schedule(tmp_path, monkeypatch):
+    # Imported alone in a later file, a same-named workflow with no id cannot be
+    # told from the first one, so it must not be taken for a changed version of it.
+    from maverick import job_queue
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / ".maverick"))
+    monkeypatch.setattr(job_queue, "DEFAULT_DB", tmp_path / "jobs.db")
+
+    def run(cron, step):
+        f = tmp_path / "wf.json"
+        f.write_text(json.dumps({"name": "My workflow", "active": True,
+            "nodes": [{"name": "Cron", "type": "n8n-nodes-base.cron", "parameters": {"cronExpression": cron}},
+                      {"name": step, "type": "n8n-nodes-base.set", "parameters": {}}],
+            "connections": {"Cron": {"main": [[{"node": step}]]}}}))
+        result = _run(["import", "run", "n8n", "--from-file", str(f), "--activate-schedules", "--json"])
+        assert result.exit_code == 0, result.output
+        return json.loads(result.output)[0]
+
+    first = run("0 3 * * *", "Send invoices")
+    assert first["schedule"] and any("no id" in note for note in first["notes"])
+    second = run("0 5 * * *", "Back up files")
+    assert second["schedule"] and not second["schedule"].get("updated")
+    jobs = sorted((job.payload["__cron__"], "Send invoices" in job.payload["text"])
+                  for job in job_queue.JobQueue().iter_pending("start_goal"))
+    assert jobs == [("0 3 * * *", True), ("0 5 * * *", False)]
+    assert all("imported_from" not in job.payload for job in job_queue.JobQueue().iter_pending("start_goal"))
+    # The same file again adds nothing.
+    assert run("0 5 * * *", "Back up files")["schedule"] is None
+    assert len(list(job_queue.JobQueue().iter_pending("start_goal"))) == 2
+
+
 def test_untranslatable_n8n_schedule_is_reported_not_silently_dropped(tmp_path):
     good = {"id": "1", "name": "Flow", "active": True,
             "nodes": [{"name": "Hook", "type": "n8n-nodes-base.webhook", "parameters": {}}],

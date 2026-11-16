@@ -87,7 +87,7 @@ def _active_cron_jobs(queue, *, marked: bool = False) -> dict[tuple[str, str], t
     return active
 
 
-_SHARED_NAME = ("another workflow in this import has the same name and no id, so their "
+_SHARED_NAME = ("another workflow in this import has the same name and id, so their "
                 "schedules cannot be told apart later; an import creates this schedule "
                 "once and never changes it")
 
@@ -151,8 +151,9 @@ def import_run_cmd(ctx, source, from_file, dry_run, activate_schedules, as_json)
         queue = JobQueue()  # default queue DB path
         active = _active_cron_jobs(queue)
         every = _active_cron_jobs(queue, marked=True)
-    # Two workflows with one name and no id would share a mark, and each
-    # would then rewrite the other's schedule. They are scheduled unmarked.
+    # Two workflows that share a mark would each rewrite the other's
+    # schedule, and a workflow with no id shares its mark with any other of
+    # the same name, in this import or a later one. They are scheduled unmarked.
     marks = Counter(a.import_ref() for a in automations)
 
     results = []
@@ -161,11 +162,12 @@ def import_run_cmd(ctx, source, from_file, dry_run, activate_schedules, as_json)
         # own. An unmarked look-alike is kept, never duplicated or rewritten;
         # so is any look-alike of a workflow that shares its mark.
         shared = marks[a.import_ref()] > 1
-        existing, note = (_reuse_or_replace(queue, every if shared else active, a)
+        unmarked = shared or not a.source_id
+        existing, note = (_reuse_or_replace(queue, every if unmarked else active, a)
                           if queue is not None else (None, None))
-        res = materialize(a, save=not dry_run, mark_schedule=not shared,
+        res = materialize(a, save=not dry_run, mark_schedule=not unmarked,
                           queue=None if existing is not None else queue)
-        if shared and queue is not None:
+        if shared and a.source_id and queue is not None:
             res.notes.append(_SHARED_NAME)
         if existing is not None:
             res.suggested_trigger = None
