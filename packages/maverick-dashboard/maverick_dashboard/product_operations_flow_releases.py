@@ -38,7 +38,31 @@ def _plain_state(state):
     return {"awaiting_review": "Waiting for independent review", "authorized": "Approved for preparation",
             "staged": "Prepared for publication", "canary": "Published for a controlled trial",
             "active": "Published; execution check passed", "rolled_back": "Previous published rules restored",
-            "denied": "Review declined", "uncertain": "Saved outcome needs checking"}.get(state, "Refresh the saved decision")
+            "denied": "Review declined", "uncertain": "Saved outcome needs checking",
+            "discarded": "Discarded without publishing"}.get(state, "Refresh the saved decision")
+
+
+_STUCK = {"outcome_unknown": "Stuck: the last action stopped before its result was saved",
+          "approval_expired": "Stuck: the approval ran out before the next step"}
+
+
+def _standing(row):
+    """The words the release page shows for this request, stuck ones included."""
+    return _STUCK.get(native.stuck_reason(row)) or _plain_state(row["state"])
+
+
+def _offered(row, action):
+    """Whether the release page offers this decision for the request now."""
+    state, stuck = row["state"], native.stuck_reason(row)
+    if action == "review":
+        return state == "awaiting_review" or stuck == "approval_expired"
+    if action in ("stage", "activate"):
+        return state == {"stage": "authorized", "activate": "staged"}[action] and not stuck
+    if action == "discard":
+        return state in {"authorized", "staged"} | native._UNSETTLED_STATES
+    if action == "reconcile":
+        return stuck == "outcome_unknown"
+    return state in {"canary": {"canary"}, "rollback": {"canary", "active"}}[action]
 
 
 def _result_details(row):
@@ -204,8 +228,6 @@ def proposal_recover(request, _selection, arguments, prepared, _operation):
 
 def decisions_snapshot(request, _selection, *, action):
     tenant, actor, context, _service, rows = _state(request, administrator=action != "status")
-    wanted = {"review": {"awaiting_review"}, "stage": {"authorized"}, "activate": {"staged"},
-              "canary": {"canary"}, "rollback": {"canary", "active"}, "reconcile": {"uncertain"}}
     eligible = []
     details = []
     for row in rows:
@@ -213,12 +235,12 @@ def decisions_snapshot(request, _selection, *, action):
         release = projected.get("local_release")
         if not release:
             continue
-        if action != "status" and (row["state"] not in wanted[action] or actor in {row["requested_by"], row["candidate_principal"]}):
+        if action != "status" and (not _offered(row, action) or actor in {row["requested_by"], row["candidate_principal"]}):
             continue
         if action == "canary" and not release.get("can_assess"):
             continue
         eligible.append(row)
-        details.append({"request": row["candidate_id"], "state": _plain_state(row["state"]),
+        details.append({"request": row["candidate_id"], "state": _standing(row),
                         "workflow": release.get("name", "Selected workflow"), "version": release.get("version"),
                         "observed_runs": release.get("observed_runs", 0), "evidence": release.get("evidence")})
     fields = [] if action == "status" else [{"name": "candidate", "label": "Exact workflow release", "kind": "select", "required": True,
@@ -243,7 +265,8 @@ def decision_prepare(request, _selection, arguments, *, action):
              "stage": "Prepare this exact workflow and retain its previous compatible release.",
              "activate": "Publish this exact approved and prepared rule-only version. New runs will use these rules. The owner must finish a real run before its observed failure rate can be checked.",
              "canary": "Check actual finished runs from this publication. If its acceptance rules fail, Lightwork restores the retained previous rules. This does not establish answer accuracy or business improvement.",
-             "rollback": report["rollback"], "reconcile": "Read the authoritative release and resolve the uncertain action without repeating it."}
+             "rollback": report["rollback"], "reconcile": "Read the authoritative release and resolve the uncertain action without repeating it.",
+             "discard": "Close this release request without publishing it. Lightwork first checks that it is not in use. Nothing is published or restored, and the request cannot be reopened."}
     changes = [{"label": "Workflow release", "after": report["name"] + " · version " + str(report["version"])},
                {"label": "Evidence limit", "after": report["evidence"]}]
     if action == "review":
@@ -287,7 +310,7 @@ def decision_prepare(request, _selection, arguments, *, action):
         changes.append({"label": step["label"], "after": complete_step})
     return Preview(notes[action], changes=changes,
         native={"candidate": row["candidate_id"], "revision": row["revision"], "manifest": row["manifest_sha256"],
-                "event_count": len(row["events"]), "action": action})
+                "event_count": len(row["events"]), "action": action, "stuck": native.stuck_reason(row)})
 
 
 def decision_execute(request, _selection, arguments, prepared, _operation, *, action):
@@ -301,6 +324,8 @@ def decision_execute(request, _selection, arguments, prepared, _operation, *, ac
                  "note": arguments["note"], "evidence_sha256": hashlib.sha256(arguments["note"].encode("utf-8")).hexdigest()}
     elif action == "rollback":
         extra = {"reason_code": "operator_requested"}
+    elif action == "discard":
+        extra = {"reason_code": "stuck_request" if prepared.get("stuck") else "no_longer_wanted"}
     result = _call(lambda: function(tenant, actor, arguments["candidate"], expected_revision=prepared["revision"], **extra))
     return Outcome("confirmed", "The release decision is recorded. " + _plain_state(result["state"]) + ".", _result_details(result))
 
@@ -310,8 +335,9 @@ def decision_recover(request, _selection, arguments, prepared, _operation, *, ac
     row = _call(lambda: service.inspect(tenant, actor, arguments["candidate"]))
     if row["manifest_sha256"] != prepared["manifest"]:
         return None
-    states = {"review": {"authorized", "denied"}, "stage": {"staged"}, "activate": {"canary"},
-              "canary": {"active", "rolled_back"}, "rollback": {"rolled_back"}, "reconcile": {"canary", "rolled_back"}}
+    states = {"review": {"authorized", "staged", "denied"}, "stage": {"staged"}, "activate": {"canary"},
+              "canary": {"active", "rolled_back"}, "rollback": {"rolled_back"}, "reconcile": {"canary", "rolled_back"},
+              "discard": {"discarded"}}
     events = row["events"][prepared["event_count"]:]
     if not any(event.get("actor") == actor and event.get("state") in states[action] for event in events):
         if row["state"] == "uncertain":
@@ -338,7 +364,8 @@ def entries():
         snapshot=proposal_snapshot, prepare=proposal_prepare, execute=proposal_execute, recover=proposal_recover, **common))
     for action, label in (("review", "Review an exact taught workflow release"), ("stage", "Prepare an approved taught workflow"),
                           ("activate", "Publish an approved taught workflow for a controlled trial"), ("canary", "Check actual trial runs of a taught workflow release"),
-                          ("rollback", "Restore the retained taught workflow release"), ("reconcile", "Recover an uncertain taught workflow release")):
+                          ("rollback", "Restore the retained taught workflow release"), ("reconcile", "Recover an uncertain taught workflow release"),
+                          ("discard", "Discard a stuck or unwanted taught workflow release request")):
         result.append(Adapter("learning.release_" + action, label, input_model=ReviewChoice if action == "review" else CandidateChoice,
             snapshot=partial(decisions_snapshot, action=action), prepare=partial(decision_prepare, action=action),
             execute=partial(decision_execute, action=action), recover=partial(decision_recover, action=action), **common))

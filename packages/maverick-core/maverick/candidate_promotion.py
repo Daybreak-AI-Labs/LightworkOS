@@ -14,6 +14,11 @@ holding the installation authority/effect fence.  Adapter failures after a
 durable claim become ``uncertain`` and require reconciliation; they are never
 silently retried. A claim left behind by an interrupted process is reconciled
 the same way.
+
+A candidate whose next step cannot run is reported as stuck (``inspect`` and
+``list`` say why): an unsettled effect is retried with ``reconcile``, an
+approval that ran out with a fresh ``review``. Either can be closed with
+``discard``, which refuses a candidate that is the active artifact.
 """
 from __future__ import annotations
 
@@ -52,7 +57,7 @@ _ACTIONS = frozenset({"review", "stage", "activate", "canary", "rollback", "reco
 _STATES = frozenset({
     "awaiting_review", "not_advancing", "denied", "blocked", "authorized",
     "stage_claimed", "staged", "activation_claimed", "canary", "active",
-    "rollback_claimed", "rolled_back", "uncertain",
+    "rollback_claimed", "rolled_back", "uncertain", "discarded",
 })
 _MAX_RECORDS = 10_000
 _MAX_LIST = 256
@@ -614,6 +619,8 @@ class CandidateDeploymentAdapter(Protocol):
 _UNRESOLVED_STATES = frozenset({
     "uncertain", "stage_claimed", "activation_claimed", "rollback_claimed",
 })
+# States that wait on an approval which can run out before the next step.
+_APPROVAL_STATES = frozenset({"authorized", "staged"})
 
 
 def _event(events: Sequence[Mapping[str, object]], *, state: str, actor: str,
@@ -825,6 +832,29 @@ class CandidatePromotions:
                 "deployment", "block", "revision", "created_at", "updated_at", "events",
             )
         }
+
+    @staticmethod
+    def _stuck(record: Mapping[str, object], now: float) -> str:
+        """Why this candidate cannot take its normal next step, or ``""``.
+
+        ``outcome_unknown``: an action was claimed and never recorded a result;
+        ``reconcile`` reads what happened. ``approval_expired``: the approval
+        ran out before the next step; a fresh ``review`` continues it. Either
+        can be closed with ``discard``. Policy or reviewer-authority drift is
+        not read here (it needs the resolvers); the next step reports it.
+        """
+        if record["state"] in _UNRESOLVED_STATES:
+            return "outcome_unknown"
+        if record["state"] in _APPROVAL_STATES:
+            review = record.get("review")
+            expires = review.get("expires_at") if isinstance(review, dict) else None
+            if (isinstance(expires, bool) or not isinstance(expires, int | float)
+                    or float(expires) <= now):
+                return "approval_expired"
+        return ""
+
+    def _standing(self, record: Mapping[str, object], now: float) -> dict:
+        return {**self._view(record), "stuck": self._stuck(record, now)}
 
     def _record(self, tenant: str, candidate_id: str) -> dict:
         exact_id = _identifier(candidate_id, "candidate_id")
@@ -1088,10 +1118,21 @@ class CandidatePromotions:
             record = self._record(canonical, candidate_id)
             if record["revision"] != expected_revision:
                 raise CandidatePromotionConflict("candidate revision changed")
-            if record["state"] != "awaiting_review":
-                raise CandidatePromotionConflict("candidate is not awaiting review")
             policy = self._policy()
             now = self.store.authoritative_time()
+            # An approval that ran out before the next step left the candidate
+            # with no way forward. A fresh independent review continues it from
+            # where it stood; a current approval is never replaced.
+            renewing = record["state"] in _APPROVAL_STATES
+            if renewing:
+                try:
+                    self._require_current_approval(record, policy, now)
+                except CandidatePromotionDenied:
+                    pass
+                else:
+                    raise CandidatePromotionConflict("candidate approval is still current")
+            elif record["state"] != "awaiting_review":
+                raise CandidatePromotionConflict("candidate is not awaiting review")
             authority = self._authority(canonical, actor, "review", policy, now)
             if actor in {record["requested_by"], record["candidate_principal"]}:
                 raise CandidatePromotionDenied("a candidate cannot approve its own promotion")
@@ -1126,7 +1167,7 @@ class CandidatePromotions:
 
             saved = self._update_state(
                 record,
-                state="authorized" if approve else "denied",
+                state=(str(record["state"]) if renewing else "authorized") if approve else "denied",
                 actor=actor,
                 action="candidate.promotion.review",
                 details={"approved": approve, "decision_sha256": review["decision_sha256"]},
@@ -1138,6 +1179,11 @@ class CandidatePromotions:
                         actor: str, action: str, now: float) -> PromotionAuthority:
         if actor in {record["requested_by"], record["candidate_principal"]}:
             raise CandidatePromotionDenied("a candidate cannot operate its own promotion")
+        self._require_current_approval(record, policy, now)
+        return self._authority(str(record["tenant"]), actor, action, policy, now)
+
+    def _require_current_approval(self, record: Mapping[str, object],
+                                  policy: PromotionPolicy, now: float) -> None:
         review = record.get("review")
         if (
             not isinstance(review, dict)
@@ -1162,7 +1208,6 @@ class CandidatePromotions:
             != reviewer_authority.authorization_sha256
         ):
             raise CandidatePromotionDenied("promotion approval authority changed")
-        return self._authority(str(record["tenant"]), actor, action, policy, now)
 
     def _post_deployment_authority(
         self,
@@ -1646,11 +1691,61 @@ class CandidatePromotions:
             )
             return self._view(saved)
 
+    def discard(
+        self, tenant: str, operator: str, candidate_id: str, *, expected_revision: int,
+        reason_code: str,
+    ) -> dict:
+        """Close a candidate that is not in use, without touching the deployment.
+
+        For a candidate that is stuck (an expired approval, or an action whose
+        outcome could not be settled) or no longer wanted before publication.
+        Once an action has been claimed, a fresh observation must show the
+        candidate is not the active artifact: a live candidate is reconciled
+        and rolled back, never discarded. Nothing is staged, published or
+        restored here, and anything the adapter staged is left in place.
+        """
+        canonical = canonical_tenant_id(tenant)
+        actor = _principal(operator, "promotion operator", named_user=True)
+        reason = _purpose(reason_code, "discard reason_code")
+        with tenant_scope(tenant=canonical), self.effect_fence():
+            record = self._record(canonical, candidate_id)
+            if (record["revision"] != expected_revision
+                    or record["state"] not in _APPROVAL_STATES | _UNRESOLVED_STATES):
+                raise CandidatePromotionConflict("candidate is not at a revision that can be discarded")
+            policy = self._policy()
+            now = self.store.authoritative_time()
+            # The authority that may withdraw a deployment may withdraw a request.
+            self._post_deployment_authority(record, policy, actor, "rollback", now)
+            details: dict[str, object] = {"reason_code": reason, "from_state": record["state"]}
+            if record.get("deployment") is not None:
+                target = self._target(record)
+                observation = self._adapter().observe(canonical, target.target_id)
+                if (
+                    type(observation) is not DeploymentObservation
+                    or observation.tenant != canonical
+                    or observation.target_id != target.target_id
+                ):
+                    raise CandidatePromotionInterrupted("deployment observation is unbound")
+                if observation.active_artifact_sha256 == self._candidate_sha(record):
+                    raise CandidatePromotionConflict(
+                        "candidate is in use; check its outcome and roll it back instead of discarding it"
+                    )
+                details["evidence_sha256"] = observation.evidence_sha256
+            saved = self._update_state(
+                record,
+                state="discarded",
+                actor=actor,
+                action="candidate.promotion.discard",
+                details=details,
+            )
+            return self._standing(saved, now)
+
     def inspect(self, tenant: str, principal: str, candidate_id: str) -> dict:
         canonical = canonical_tenant_id(tenant)
         _principal(principal, "promotion principal", named_user=True)
         with tenant_scope(tenant=canonical):
-            return self._view(self._record(canonical, candidate_id))
+            return self._standing(self._record(canonical, candidate_id),
+                                  self.store.authoritative_time())
 
     def list(self, tenant: str, principal: str, *, limit: int = 100) -> list[dict]:
         canonical = canonical_tenant_id(tenant)
@@ -1664,7 +1759,8 @@ class CandidatePromotions:
                 if row.get("tenant") == canonical
             ]
             rows.sort(key=lambda row: (float(row.get("created_at", 0)), str(row["id"])), reverse=True)
-            return [self._view(row) for row in rows[:limit]]
+            now = self.store.authoritative_time()
+            return [self._standing(row, now) for row in rows[:limit]]
 
 
 __all__ = [

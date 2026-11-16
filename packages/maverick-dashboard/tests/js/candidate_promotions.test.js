@@ -200,6 +200,49 @@ test('actions confirm in the page dialog and failures read as plain sentences', 
   ui.dom.window.close();
 });
 
+test('a stuck request says so and offers a retry and a discard', async () => {
+  const posts = [];
+  let items = [candidate({state:'activation_claimed', stuck:'outcome_unknown', revision:5})];
+  const ui = await fixture(async (url, options) => {
+    if (options.method === 'POST') {
+      posts.push({url, body:JSON.parse(options.body)});
+      return candidate({state:'discarded', stuck:'', revision:6});
+    }
+    return overview({items});
+  });
+  const list = ui.document.getElementById('research-promotions-list');
+  const button = text => [...list.querySelectorAll('button')].find(node => node.textContent === text);
+  assert.equal(list.querySelector('.research-badge').textContent, 'Stuck');
+  assert.match(list.textContent, /The last action stopped before its result was saved/);
+  assert.doesNotMatch(list.textContent, /activation claimed/);
+  button('Retry: check what happened').click();
+  await settle();
+  assert.match(posts[0].url, /\/candidate-1\/reconcile$/);
+  assert.deepEqual(posts[0].body, {context:CONTEXT, confirm:true, expected_revision:5});
+  button('Discard this request').click();
+  await settle();
+  assert.match(posts[1].url, /\/candidate-1\/discard$/);
+  assert.deepEqual(posts[1].body, {context:CONTEXT, confirm:true, expected_revision:5, reason_code:'stuck_request'});
+  assert.match(ui.prompts[1].prompt, /first checks that it is not in use/);
+
+  // An approval that ran out: the retry is a fresh review, and discard is still offered.
+  items = [candidate({state:'staged', stuck:'approval_expired', revision:3})];
+  ui.document.getElementById('research-promotions-refresh').click();
+  await settle();
+  assert.equal(list.querySelector('.research-badge').textContent, 'Stuck');
+  assert.match(list.textContent, /The approval ran out before the next step/);
+  assert.equal(button('Start a limited trial'), undefined);
+  assert.ok(button('Approve exact candidate') && button('Discard this request'));
+
+  // A request that is not stuck can still be withdrawn before it is published.
+  items = [candidate({state:'staged', stuck:'', revision:3}), candidate({candidate_id:'candidate-2', state:'discarded', revision:4})];
+  ui.document.getElementById('research-promotions-refresh').click();
+  await settle();
+  assert.ok(button('Start a limited trial') && button('Discard this request'));
+  assert.match(list.textContent, /Discarded without publishing/);
+  ui.dom.window.close();
+});
+
 test('a refused first load clears the list\'s Loading and says what happened above it', async () => {
   const dom = new JSDOM(html(), {url:'https://lightwork.test/research', runScripts:'outside-only'});
   const document = dom.window.document;

@@ -41,6 +41,8 @@ from .draft_api import context_for
 _ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
 _PURPOSE_PATTERN = r"^[a-z][a-z0-9_.-]{0,63}$"
 _SHA_PATTERN = r"^[a-f0-9]{64}$"
+# An action was started and its result was never saved.
+_UNSETTLED_STATES = frozenset({"uncertain", "stage_claimed", "activation_claimed", "rollback_claimed"})
 _REQUIRED_METHODS = (
     "proposal_options",
     "list",
@@ -52,6 +54,7 @@ _REQUIRED_METHODS = (
     "assess_canary",
     "rollback",
     "reconcile",
+    "discard",
 )
 
 
@@ -190,6 +193,14 @@ def _mapping(value: object) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
 
 
+def stuck_reason(value: Mapping[str, Any]) -> str:
+    """Why a request cannot take its next step: ``outcome_unknown``,
+    ``approval_expired`` or ``""``. The coordinator reports it when it lists
+    or inspects a request; an unsettled action is stuck whoever reports it."""
+    return str(value.get("stuck") or (
+        "outcome_unknown" if value.get("state") in _UNSETTLED_STATES else ""))
+
+
 def _projection(value: Mapping[str, Any]) -> dict[str, Any]:
     """Return the review surface without artifact locations or authority objects."""
 
@@ -253,6 +264,9 @@ def _projection(value: Mapping[str, Any]) -> dict[str, Any]:
         "manifest_sha256": value.get("manifest_sha256"),
         "policy_sha256": value.get("policy_sha256"),
         "state": value.get("state"),
+        # Why the request cannot take its next step ("" when it can): the page
+        # and the Copilot offer a retry and a discard from this one reading.
+        "stuck": stuck_reason(value),
         "revision": value.get("revision"),
         "created_at": value.get("created_at"),
         "updated_at": value.get("updated_at"),
@@ -377,7 +391,7 @@ def _projection(value: Mapping[str, Any]) -> dict[str, Any]:
                                       "evidence": "The current workflow release could not be verified. Refresh before deciding."}
         # The native customer journey needs saved names, versions and decisions;
         # exact commitments remain inside the canonical coordinator's record.
-        result = {key: result[key] for key in ("candidate_id", "requested_by", "candidate_principal", "state",
+        result = {key: result[key] for key in ("candidate_id", "requested_by", "candidate_principal", "state", "stuck",
                   "revision", "created_at", "updated_at", "local_release")}
         result["review"] = {key: review.get(key) for key in ("reviewed_by", "approved", "reason_code", "note", "reviewed_at")} if review else None
         result["block"] = {"detail": block.get("detail")} if block else None
@@ -573,6 +587,24 @@ async def reconcile_promotion(
     candidate_id: CandidatePath, payload: _Reviewed, request: Request, response: Response
 ):
     return await _transition("reconcile", candidate_id, payload, request, response)
+
+
+@router.post("/{candidate_id}/discard")
+async def discard_promotion(
+    candidate_id: CandidatePath,
+    payload: PromotionRollback,
+    request: Request,
+    response: Response,
+):
+    """Close a request that is stuck or no longer wanted; a live one is refused."""
+    return await _transition(
+        "discard",
+        candidate_id,
+        payload,
+        request,
+        response,
+        reason_code=payload.reason_code,
+    )
 
 
 @page_router.get("/static/lightwork-candidate-promotions.js")

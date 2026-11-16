@@ -182,6 +182,9 @@ class Service:
     def reconcile(self, *args, **kwargs):
         return self._transition("reconciled", *args, **kwargs)
 
+    def discard(self, *args, **kwargs):
+        return self._transition("discarded", *args, **kwargs)
+
 
 @pytest.fixture
 def client(monkeypatch):
@@ -365,6 +368,7 @@ def test_browser_cannot_supply_tenant_principal_or_authority(client):
         ("canary", "active", {}),
         ("rollback", "rolled_back", {"reason_code": "operator_requested"}),
         ("reconcile", "reconciled", {}),
+        ("discard", "discarded", {"reason_code": "stuck_request"}),
     ],
 )
 def test_operator_transitions_keep_exact_revision_and_server_identity(
@@ -381,6 +385,15 @@ def test_operator_transitions_keep_exact_revision_and_server_identity(
         "candidate-1",
     )
     assert call[4]["expected_revision"] == 1
+
+
+def test_overview_says_which_requests_are_stuck_and_why(client):
+    customer, service, _ = client
+    service.row = {**_row(state="activation_claimed", revision=4), "stuck": "outcome_unknown"}
+    item = customer.get(BASE).json()["items"][0]
+    assert item["state"] == "activation_claimed" and item["stuck"] == "outcome_unknown"
+    service.row = _row(state="staged", revision=3)       # an older service reports no reason
+    assert customer.get(BASE).json()["items"][0]["stuck"] == ""
 
 
 def test_stale_context_and_non_admin_stop_before_service_effect(client, monkeypatch):

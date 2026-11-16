@@ -110,7 +110,8 @@
   function label(value) {
     const states = {awaiting_review: 'Waiting for independent review', authorized: 'Approved for preparation',
       staged: 'Prepared for publication', canary: 'Published for a controlled trial', active: 'Published; execution check passed',
-      rolled_back: 'Previous published rules restored', uncertain: 'Saved outcome needs checking', denied: 'Review declined'};
+      rolled_back: 'Previous published rules restored', uncertain: 'Saved outcome needs checking', denied: 'Review declined',
+      discarded: 'Discarded without publishing'};
     if (states[value]) return states[value];
     return String(value || 'unknown').replaceAll('_', ' ');
   }
@@ -229,14 +230,37 @@
     return form;
   }
 
+  // A request is stuck when its normal next step cannot run: an action stopped
+  // before its result was saved, or the approval ran out. Each has a retry.
+  const STUCK = {
+    outcome_unknown: 'The last action stopped before its result was saved. Retry reads what happened; nothing is repeated.',
+    approval_expired: 'The approval ran out before the next step. Retry with a fresh independent review, or discard this request.',
+  };
+  const DISCARDABLE = ['authorized', 'staged', 'uncertain', 'stage_claimed', 'activation_claimed', 'rollback_claimed'];
+
+  function discardButton(candidate) {
+    const button = element('button', 'Discard this request', 'btn');
+    button.type = 'button';
+    button.addEventListener('click', () => transition(
+      candidate,
+      'discard',
+      'Discard this request? Lightwork first checks that it is not in use. Nothing is published or restored, and the request cannot be reopened.',
+      {reason_code: candidate.stuck ? 'stuck_request' : 'no_longer_wanted'},
+      button.textContent,
+    ));
+    return button;
+  }
+
   function renderCandidate(candidate, canManage) {
     if (!candidate || !ID.test(String(candidate.candidate_id || '')) ||
         !Number.isInteger(candidate.revision) || candidate.revision < 1) return null;
     const item = element('li', undefined, 'research-item');
     item.appendChild(element('strong', candidate.candidate_id));
-    const badge = element('span', label(candidate.state), 'research-badge');
-    badge.dataset.state = candidate.state || 'unknown';
+    const stuck = Object.hasOwn(STUCK, candidate.stuck) ? candidate.stuck : '';
+    const badge = element('span', stuck ? 'Stuck' : label(candidate.state), 'research-badge');
+    badge.dataset.state = stuck ? 'stuck' : candidate.state || 'unknown';
     item.append(' ', badge);
+    if (stuck) line(item, 'Why it is stuck', STUCK[stuck]);
     line(item, candidate.local_release ? 'Execution readiness' : 'Study',
       candidate.local_release ? 'Successful exact-version practice; independent approval required' : label(candidate.study?.conclusion));
     if (!candidate.local_release) {
@@ -331,11 +355,11 @@
     }
 
     if (!canManage) return item;
-    if (candidate.state === 'awaiting_review') item.appendChild(reviewForm(candidate));
-    if (candidate.state === 'authorized') item.appendChild(actionButton(
+    if (candidate.state === 'awaiting_review' || stuck === 'approval_expired') item.appendChild(reviewForm(candidate));
+    if (candidate.state === 'authorized' && !stuck) item.appendChild(actionButton(
       candidate.local_release ? 'Prepare approved workflow' : 'Stage candidate', candidate, 'stage',
       candidate.local_release ? 'Prepare this approved workflow version and keep its exact previous published rules available for restoration? Nothing is published yet.' : 'Stage this exact candidate after another current rights and artifact check?', 'btn btn--primary'));
-    if (candidate.state === 'staged') item.appendChild(actionButton(
+    if (candidate.state === 'staged' && !stuck) item.appendChild(actionButton(
       candidate.local_release ? 'Publish for a controlled trial' : 'Start a limited trial', candidate, 'activate',
       candidate.local_release ? 'Publish this exact prepared workflow version for a controlled trial? New runs will use these rules. The previous published rules remain available for restoration.' : 'Start this staged candidate as a limited trial? Lightwork will keep the version it can roll back to.', 'btn btn--primary'));
     if (candidate.state === 'canary') {
@@ -351,9 +375,10 @@
       item.appendChild(rollbackForm(candidate));
     }
     if (candidate.state === 'active') item.appendChild(rollbackForm(candidate));
-    if (candidate.state === 'uncertain') item.appendChild(actionButton(
-      candidate.local_release ? 'Check the uncertain saved result' : 'Reconcile uncertain deployment', candidate, 'reconcile',
+    if (stuck === 'outcome_unknown') item.appendChild(actionButton(
+      'Retry: check what happened', candidate, 'reconcile',
       candidate.local_release ? 'Read the actual published rules and saved decision without repeating the uncertain action?' : 'Read the authoritative deployment state without replaying the uncertain action?', 'btn btn--primary'));
+    if (DISCARDABLE.includes(candidate.state)) item.appendChild(discardButton(candidate));
     return item;
   }
 

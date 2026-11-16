@@ -272,3 +272,53 @@ def test_practice_run_picker_finds_a_practice_run_buried_under_real_runs(harness
     assert response.status_code == 200, response.text
     [flow] = response.json()["flows"]
     assert [row["id"] for row in flow["practice_runs"]] == [practice.run_id]
+
+
+def test_copilot_offers_the_same_retry_and_discard_as_the_release_page(monkeypatch):
+    """A stuck release request has the same way out in the Copilot as on the page."""
+    from maverick_dashboard import product_operations_flow_releases as releases
+
+    def row(name, state, stuck=""):
+        return {"candidate_id": name, "state": state, "stuck": stuck, "revision": 4, "events": [],
+                "requested_by": OWNER, "candidate_principal": "agent:candidate", "manifest_sha256": "1" * 64,
+                "manifest": {"target": {"state_schema": "lightwork.rule-only-flow-release.v1"}}}
+
+    rows = [row("waiting", "awaiting_review"), row("ready", "staged"),
+            row("expired", "staged", "approval_expired"), row("claimed", "activation_claimed", "outcome_unknown"),
+            row("uncertain", "uncertain", "outcome_unknown"), row("live", "canary")]
+
+    class Service:
+        calls = []
+
+        def inspect(self, _tenant, _actor, candidate_id):
+            return next(item for item in rows if item["candidate_id"] == candidate_id)
+
+        def discard(self, _tenant, _actor, candidate_id, **kwargs):
+            self.calls.append((candidate_id, kwargs))
+            return {**self.inspect(None, None, candidate_id), "state": "discarded", "stuck": ""}
+
+    service = Service()
+    monkeypatch.setattr(releases, "_state", lambda _request, administrator=False: (
+        TENANT, "user:admin", "c" * 64, service, rows))
+    monkeypatch.setattr(release_module, "release_status", lambda _manifest, **_kwargs: {
+        "name": "Order total", "version": 2, "can_assess": True, "evidence": "Practice only.",
+        "rollback": "Restore the retained rules.", "steps": []})
+
+    def offered(action):
+        snapshot = releases.decisions_snapshot(None, {}, action=action)
+        return {choice["value"] for choice in snapshot.fields[0]["choices"]}
+
+    assert offered("reconcile") == {"claimed", "uncertain"}
+    assert offered("review") == {"waiting", "expired"}       # a fresh review is the retry
+    assert offered("activate") == {"ready"}                  # not the request whose approval ran out
+    assert offered("discard") == {"ready", "expired", "claimed", "uncertain"}
+    status = releases.decisions_snapshot(None, {}, action="status").details["releases"]
+    assert {item["request"]: item["state"] for item in status}["claimed"].startswith("Stuck: the last action stopped")
+    assert {item["request"]: item["state"] for item in status}["expired"].startswith("Stuck: the approval ran out")
+
+    prepared = releases.decision_prepare(None, {}, {"candidate": "expired"}, action="discard")
+    assert "first checks that it is not in use" in prepared.summary
+    outcome = releases.decision_execute(None, {}, {"candidate": "expired"}, prepared.native, None, action="discard")
+    assert service.calls == [("expired", {"expected_revision": 4, "reason_code": "stuck_request"})]
+    assert outcome.status == "confirmed" and "Discarded without publishing" in outcome.message
+    assert "learning.release_discard" in {entry.id for entry in releases.entries()}

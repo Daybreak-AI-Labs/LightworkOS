@@ -500,6 +500,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   read those changes, so approving one changed nothing. A waiting suggestion
   of those kinds is closed when someone applies it or suggests a new change;
   one already applied is listed as changing nothing and can be undone.
+- A release request on the Research page that cannot move on now shows as
+  "Stuck" and says why. If an action stopped before its result was saved,
+  "Retry: check what happened" reads the real state without repeating the
+  action. If the approval ran out before the next step, a release
+  administrator can review it again. "Discard this request" closes a stuck
+  or unwanted request before publication; it is refused while the request is
+  in use. The Copilot offers the same retry and discard for taught workflow
+  releases.
 
 ### Fixed
 

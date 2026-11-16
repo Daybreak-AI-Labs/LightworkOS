@@ -603,3 +603,66 @@ def test_unbound_artifact_authority_rotation_requires_fresh_review(promotion):
         service.stage(TENANT, OPERATOR, "candidate-one", expected_revision=record["revision"])
 
     assert state["calls"] == []
+
+
+def test_expired_approval_is_stuck_until_a_fresh_review_or_a_discard(promotion):
+    service, state = promotion
+    reviewed = _review(service, _request(service))
+    assert service.inspect(TENANT, OPERATOR, "candidate-one")["stuck"] == ""
+    with pytest.raises(CandidatePromotionConflict, match="still current"):
+        _review(service, reviewed)
+
+    # The approval runs out before anyone stages: every next step refused it.
+    service.store.authoritative_time = lambda: float(reviewed["review"]["expires_at"]) + 1
+    assert service.inspect(TENANT, OPERATOR, "candidate-one")["stuck"] == "approval_expired"
+    assert service.list(TENANT, OPERATOR)[0]["stuck"] == "approval_expired"
+    with pytest.raises(CandidatePromotionDenied):
+        service.stage(TENANT, OPERATOR, "candidate-one", expected_revision=reviewed["revision"])
+
+    # Retry: a fresh independent review keeps the request where it was.
+    again = _review(service, reviewed)
+    assert again["state"] == "authorized" and again["revision"] == reviewed["revision"] + 1
+    staged = service.stage(TENANT, OPERATOR, "candidate-one", expected_revision=again["revision"])
+    assert staged["state"] == "staged"
+
+    # Discard: the staged request expires too and is closed without publishing.
+    service.store.authoritative_time = lambda: float(again["review"]["expires_at"]) + 1
+    assert service.inspect(TENANT, OPERATOR, "candidate-one")["stuck"] == "approval_expired"
+    with pytest.raises(CandidatePromotionDenied):
+        service.discard(TENANT, REQUESTER, "candidate-one", expected_revision=staged["revision"],
+                        reason_code="stuck_request")
+    calls = len(state["calls"])
+    discarded = service.discard(TENANT, OPERATOR, "candidate-one",
+                                expected_revision=staged["revision"], reason_code="stuck_request")
+    assert discarded["state"] == "discarded"
+    assert state["calls"][calls:] == ["observe"]            # read only: nothing replayed
+    assert state["active_sha256"] == state["previous_sha256"]
+    assert service.inspect(TENANT, OPERATOR, "candidate-one")["stuck"] == ""
+    with pytest.raises(CandidatePromotionConflict):
+        service.activate(TENANT, OPERATOR, "candidate-one", expected_revision=discarded["revision"])
+
+
+def test_an_interrupted_action_is_stuck_and_a_live_candidate_cannot_be_discarded(promotion):
+    service, state = promotion
+    reviewed = _review(service, _request(service))
+    staged = service.stage(TENANT, OPERATOR, "candidate-one", expected_revision=reviewed["revision"])
+    adapter = service.deployment_adapter
+
+    def interrupted(manifest, stage_receipt):
+        state["active_sha256"] = state["candidate_sha256"]      # the effect landed
+        raise KeyboardInterrupt
+
+    adapter.activate = interrupted
+    with pytest.raises(KeyboardInterrupt):
+        service.activate(TENANT, OPERATOR, "candidate-one", expected_revision=staged["revision"])
+    claimed = service.inspect(TENANT, OPERATOR, "candidate-one")
+    assert claimed["state"] == "activation_claimed" and claimed["stuck"] == "outcome_unknown"
+
+    with pytest.raises(CandidatePromotionConflict, match="in use"):
+        service.discard(TENANT, OPERATOR, "candidate-one",
+                        expected_revision=claimed["revision"], reason_code="stuck_request")
+    assert service.inspect(TENANT, OPERATOR, "candidate-one")["state"] == "activation_claimed"
+    # Retry reads what happened; the live candidate becomes a trial that can be rolled back.
+    assert service.reconcile(
+        TENANT, OPERATOR, "candidate-one", expected_revision=claimed["revision"]
+    )["state"] == "canary"
