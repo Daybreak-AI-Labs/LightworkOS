@@ -699,19 +699,72 @@ def test_the_spending_limit_stops_the_loop_and_the_card_says_so(upstream, tmp_pa
     budget = Budget(max_tool_calls=1)
 
     def spend(work):
-        budget.tool_calls += 5
+        budget.tool_calls = 1                                  # at the cap, not over it
         _failing(work)
+
+    class CostlyTests(_Sandbox):
+        def exec(self, cmd, timeout=None):
+            budget.tool_calls += 1                             # the test run tips it over
+            return super().exec(cmd, timeout)
     run, calls = _rounds(spend)
     checks: list = []
     p = features.propose(world, "pricing", "Discount", "", run, budget=budget,
                          checker=lambda gid, copy: checks.append(gid),
-                         sandbox_factory=_Sandbox, repair_rounds=2)
+                         sandbox_factory=CostlyTests, repair_rounds=2)
     assert len(calls) == 1 and checks == []                  # nothing ran after the cap
     assert p["stopped"] == "budget" and p["check"]["state"] == "skipped"
     assert p["status"] == "pending" and not p["tests"]["passed"]
     card = _card(world, p)
     assert any("spending limit ran out" in line for line in card["parameter_summary"])
     assert any("spending limit" in line for line in card["unresolved_assumptions"])
+
+
+def test_a_round_that_overruns_the_budget_is_never_offered(upstream, tmp_path):
+    """A governed run swallows the budget stop and returns normally; the
+    feature run still sees the spent budget after the round, keeps the last
+    finished version, and says the spending limit stopped it."""
+    from maverick.budget import Budget
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    budget = Budget(max_tool_calls=3)
+
+    def half(work):
+        (work / "half.py").write_text("half = True\n")
+        budget.tool_calls += 10
+        return "Stopped: budget limit reached"
+    run, calls = _rounds(lambda work: (work / "a.py").write_text("a = 1\n"), half)
+    blocker = {"findings": [{"severity": "blocker", "what": "a", "evidence": "read",
+                             "how": "a.py"}], "fixed": []}
+    reviews: list = []
+    p = features.propose(world, "pricing", "A", "", run, budget=budget,
+                         checker=lambda gid, copy: blocker, repair_rounds=1,
+                         reviewer=lambda brief, diff: reviews.append(diff))
+    assert len(calls) == 2 and p["files"] == ["a.py"] and p["stopped"] == "budget"
+    assert reviews == []                                     # no model call after the stop
+    assert any("spending limit ran out" in line for line in _card(world, p)["parameter_summary"])
+
+    budget = Budget(max_tool_calls=3)
+
+    def costly_check(goal_id, copy):
+        budget.tool_calls += 10
+        return "Stopped: budget limit reached. Raise the cap and resume."
+    run, _ = _rounds(lambda work: (work / "b.py").write_text("b = 1\n"))
+    q = features.propose(world, "pricing", "B", "", run, budget=budget, checker=costly_check)
+    assert q["stopped"] == "budget" and q["check"]["state"] == "skipped"
+    lines = features.evidence(q)["lines"]
+    assert not any("could not run" in line for line in lines)
+    assert any("spending limit ran out" in line for line in lines)
+
+    budget = Budget(max_tool_calls=3)
+
+    def first_round_overruns(work):
+        (work / "c.py").write_text("c = 1\n")
+        budget.tool_calls += 10
+    run, calls = _rounds(first_round_overruns)
+    with pytest.raises(vault.VaultError, match="spending limit ran out"):
+        features.propose(world, "pricing", "C", "", run, budget=budget, checker=None)
+    assert world.get_goal(calls[0]["goal_id"]).status == "failed"
+    assert [x["title"] for x in features.list_proposals()] == ["B", "A"]
 
 
 def test_the_checker_cannot_change_the_proposal(upstream, tmp_path):

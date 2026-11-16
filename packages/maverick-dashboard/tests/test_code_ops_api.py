@@ -200,7 +200,7 @@ def test_work_from_a_note_runs_under_the_projects_protection(client, monkeypatch
     monkeypatch.setattr(features, "default_checker",
                         lambda **kwargs: lambda goal_id, copy: seen_policy.append(
                             ifc._RUN_LABELS.get()) or {"findings": [], "fixed": []})
-    monkeypatch.setattr(features, "default_reviewer", lambda: None)
+    monkeypatch.setattr(features, "default_reviewer", lambda **kwargs: None)
     client.post("/api/v1/code/watch/website/start", json={"confirm": True})
     note = _wait(client)["notes"][0]
     audit = _audit(monkeypatch)
@@ -256,7 +256,7 @@ def test_named_note_preserves_identity_and_rechecks_dispatch_authority(
     assert len(queued) == 1 and queued[0][-2:] == ("user:alice", "alice")
     monkeypatch.setattr(features, "default_runner", lambda **kwargs: identities.append(kwargs))
     monkeypatch.setattr(features, "default_checker", lambda **kwargs: identities.append(kwargs))
-    monkeypatch.setattr(features, "default_reviewer", lambda: None)
+    monkeypatch.setattr(features, "default_reviewer", lambda **kwargs: None)
     monkeypatch.setattr(features, "propose", lambda *args, **kwargs: admissions.append(kwargs))
     if revoke_before_dispatch:
         rbac.set_role("user:alice", "viewer")

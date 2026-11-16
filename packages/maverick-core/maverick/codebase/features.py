@@ -34,6 +34,7 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
 
+from ..budget import BudgetExceeded
 from ..file_lock import atomic_write_bytes, cross_process_lock
 from . import vault
 from .vault import VaultError, _git
@@ -306,7 +307,6 @@ class _Loop:
 
     def _afford(self) -> bool:
         """budget.check() before every round; a spent budget stops the loop."""
-        from ..budget import BudgetExceeded
         try:
             self.budget.check()
         except BudgetExceeded:
@@ -324,6 +324,10 @@ class _Loop:
             work = _fresh_copy(self.host, tmp / "work", self.head, self.branch)
             with self._labelled():
                 self.run(goal_id, work)
+            if not self._afford():
+                # A governed run returns normally when it hits the cap; what it
+                # left half done is never committed or offered.
+                raise BudgetExceeded("the spending limit ran out during an author round")
             head = _host_commit(self.host, work, self.head, self.branch,
                                 f"{self.title}\n\nLightwork proposal {self.pid} (goal #{goal_id})")
         bundle, tests = self.bundle, self.tests
@@ -347,7 +351,6 @@ class _Loop:
 
     def _repair(self, kind: str, problem: str) -> bool:
         """A follow-up goal for the author; False when the loop must stop."""
-        from ..budget import BudgetExceeded
         if self.repairs_left <= 0 or not self._afford():
             return False
         self.repairs_left -= 1
@@ -372,7 +375,6 @@ class _Loop:
 
     def _look(self) -> dict | None:
         """One look by the checker on its own copy; None when it did not run."""
-        from ..budget import BudgetExceeded
         if not self._afford():
             return None
         earlier = [f for f in self.check["findings"] if not f["fixed"]]
@@ -396,6 +398,8 @@ class _Loop:
             self.check["error"] = f"it stopped with {type(exc).__name__}"
             _fail_goal(self.world, gid, exc)
             return None
+        if not self._afford():
+            return None  # the look was cut short by the spending limit
         report = _report(out)
         if report is None:
             self.check["error"] = "its report could not be read"
@@ -468,6 +472,18 @@ def loop_settings() -> dict:
     return {k: cfg.get(k, v) for k, v in CODEBASE_LOOP_DEFAULTS.items()}
 
 
+def _review(loop: _Loop, reviewer: Reviewer | None, brief: str, diff: str) -> dict | None:
+    """The advisory diff review, charged to the run's budget; skipped once the
+    budget stopped the run."""
+    if not (reviewer and diff) or loop.stopped or not loop._afford():
+        return None
+    try:
+        return reviewer(brief, diff)
+    except BudgetExceeded:
+        loop.stopped = "budget"
+        return None
+
+
 def propose(world, name: str, title: str, description: str, run: Runner, *,
             reviewer: Reviewer | None = None, checker: Checker | None = None,
             sandbox_factory=None, owner: str = "", budget=None,
@@ -510,9 +526,12 @@ def propose(world, name: str, title: str, description: str, run: Runner, *,
     except BaseException as exc:
         if goal_id is not None:
             _fail_goal(world, goal_id, exc)
+        if isinstance(exc, BudgetExceeded):
+            raise VaultError("the spending limit ran out before the first version was "
+                             "finished; nothing was proposed") from exc
         raise
     diff, files = diff or "", files or []
-    review = reviewer(f"{title}\n\n{description}", diff) if (reviewer and diff) else None
+    review = _review(loop, reviewer, f"{title}\n\n{description}", diff)
     tests = loop.tests
     rounds, check = loop.record()
     proposal = {
@@ -884,14 +903,15 @@ def default_checker(*, budget, user_id: str | None = None,
     return check
 
 
-def default_reviewer() -> Reviewer:
-    """The independent diff reviewer (cross-family where possible)."""
+def default_reviewer(*, budget=None) -> Reviewer:
+    """The independent diff reviewer (cross-family where possible), charged
+    to the feature run's ``budget``."""
     def review(brief: str, diff: str) -> dict:
         import asyncio
 
         from ..llm import LLM
         from ..reviewer import review_diff
-        verdict = asyncio.run(review_diff(brief, diff, LLM()))
+        verdict = asyncio.run(review_diff(brief, diff, LLM(), budget))
         return {"approves": bool(verdict.approves), "confidence": float(verdict.confidence),
                 "blockers": len(verdict.blockers),
                 "comments": [{"path": c.path, "line": c.line, "severity": c.severity,

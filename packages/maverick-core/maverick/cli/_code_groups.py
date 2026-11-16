@@ -96,7 +96,7 @@ def code_feature(name, title, description, max_dollars, no_review, no_check) -> 
     try:
         p = features.propose(world, name, title, description,
                              features.default_runner(budget=budget),
-                             reviewer=None if no_review else features.default_reviewer(),
+                             reviewer=None if no_review else features.default_reviewer(budget=budget),
                              checker=features.default_checker(budget=budget) if check else None,
                              budget=budget)
     except vault.VaultError as exc:

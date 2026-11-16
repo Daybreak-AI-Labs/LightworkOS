@@ -346,7 +346,7 @@ def _run_feature(repo: str, title: str, description: str, max_dollars: float | N
         features.propose(world, repo, title, description,
                          features.default_runner(budget=budget, user_id=user_id,
                                                  allowed_suites=suites),
-                         reviewer=features.default_reviewer(), checker=checker,
+                         reviewer=features.default_reviewer(budget=budget), checker=checker,
                          owner=owner, budget=budget)
     except Exception as exc:  # noqa: BLE001 -- the failed goal carries the outcome
         log.warning("code feature for %s did not finish (%s)", repo, type(exc).__name__)

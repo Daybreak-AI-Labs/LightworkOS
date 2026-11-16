@@ -262,7 +262,7 @@ def test_named_code_runs_keep_execution_owner_and_approval_scope(client, monkeyp
     monkeypatch.setattr(code_actions_api, "_provider_missing", lambda: False)
     monkeypatch.setattr(llm, "LLM", lambda: object())
     monkeypatch.setattr(sandbox, "build_sandbox", lambda workdir: SimpleNamespace(workdir=workdir))
-    monkeypatch.setattr(features, "default_reviewer", lambda: None)
+    monkeypatch.setattr(features, "default_reviewer", lambda **kwargs: None)
     observed = []
 
     budgets = set()
