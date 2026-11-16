@@ -186,6 +186,9 @@ def _run_view_video(args: dict[str, Any], sandbox, *, budget=None) -> str:
     from ..llm import model_for_role
     if "model" in args:
         return "ERROR: the vision model is configured by the operator"
+    if budget is None:
+        # The vision call must be charged to, and stopped by, the run's budget.
+        return "ERROR: video analysis requires an active run budget"
     model = os.environ.get("MAVERICK_VISION_MODEL") or model_for_role("vision")
     try:
         num_frames = int(args.get("num_frames") or _DEFAULT_FRAMES)
