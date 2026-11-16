@@ -191,7 +191,7 @@ def test_a_checkpoint_replaced_after_the_kept_receipt_is_reported(client):
     assert client.post(f"{BASE}/publish", json={"day": DAY, "after_erasure": True}).status_code == 409
 
 
-def test_a_person_is_erased_from_a_day_an_earlier_version_already_erased(client):
+def test_a_person_is_erased_from_a_day_an_earlier_version_already_erased(client, monkeypatch):
     # What an upgrade finds: a checkpointed day, erased once by a version that
     # stored no erasure record, its checkpoint never replaced. The page must
     # still erase a second person and be able to replace the checkpoint.
@@ -214,10 +214,22 @@ def test_a_person_is_erased_from_a_day_an_earlier_version_already_erased(client)
     assert refused.status_code == 409 and "No erasure record" in refused.json()["detail"]
     assert "without an erasure record" in refused.json()["detail"]
     assert not BANNED.search(refused.json()["detail"])
-    replaced = client.post(f"{BASE}/publish", json={
-        "day": DAY, "after_erasure": True, "without_erasure_record": True})
+    # The override is written to the activity log first, under the name a
+    # later check tells the reader to look for. No entry, nothing published.
+    import maverick.audit as audit_pkg
+    override = {"day": DAY, "after_erasure": True, "without_erasure_record": True}
+    with monkeypatch.context() as patch:
+        patch.setattr(audit_pkg, "audit_event", lambda kind, **payload: False)
+        unrecorded = client.post(f"{BASE}/publish", json=override)
+    assert unrecorded.status_code == 503 and "nothing was changed" in unrecorded.json()["detail"]
+    assert client.get(BASE).json()["total"] == 1
+    seen = _recorded(monkeypatch)
+    replaced = client.post(f"{BASE}/publish", json=override)
     assert replaced.status_code == 200 and replaced.json()["sequence"] == 2, replaced.text
+    assert [r["day"] for r in seen
+            if r.get("action") == "audit_checkpoint_publish_without_erase_record"] == [DAY]
     checked = client.post(f"{BASE}/verify", json={"receipt": kept}).json()
+    assert "audit_checkpoint_publish_without_erase_record" in checked["technical"][0]
     assert checked["intact"] is False and "no erasure record" in checked["problems"][0]
     assert client.post(f"{BASE}/verify", json={}).json()["intact"] is True
 

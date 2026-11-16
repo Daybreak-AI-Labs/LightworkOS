@@ -148,16 +148,24 @@ def _pinned() -> list[str] | None:
 
 
 def _record(request: Request, action: str, *, installation: bool = False, **detail: Any) -> None:
-    """One activity-log row naming who asked; refused -> nothing happens."""
+    """One activity-log row naming who asked; no row -> nothing happens.
+
+    A refused write raises and a failed one returns False: both stop the
+    change, so nothing here is done without its entry.
+    """
     from maverick.audit import AuditRefused, audit_event
 
     extra = {"_global": True} if installation else {}
     try:
-        audit_event("control_plane_action", agent="dashboard", action=action,
-                    actor=caller_principal(request) or "local administrator", **extra, **detail)
+        recorded = audit_event("control_plane_action", agent="dashboard", action=action,
+                               actor=caller_principal(request) or "local administrator",
+                               **extra, **detail)
     except AuditRefused as exc:
         raise HTTPException(status_code=503, detail=(
             "This could not be added to the activity log, so nothing was changed.")) from exc
+    if not recorded:
+        raise HTTPException(status_code=503, detail=(
+            "This could not be added to the activity log, so nothing was changed."))
 
 
 def _days() -> list[str]:
@@ -373,8 +381,13 @@ async def publish(request: Request, body: PublishIn) -> dict:
             if body.day not in _days():
                 raise HTTPException(status_code=422, detail="Choose a day from the list.")
             supersede = _latest_digest_for_day(body.day) if body.after_erasure else None
-            _record(request, "audit_checkpoint_publish", day=body.day, after_erasure=body.after_erasure,
-                    without_erasure_record=bool(body.after_erasure and body.without_erasure_record))
+            # The override has its own entry name, the one a later check and
+            # the command line use, so whoever reviews that day can find it.
+            override = bool(body.after_erasure and body.without_erasure_record)
+            _record(request,
+                    "audit_checkpoint_publish_without_erase_record" if override
+                    else "audit_checkpoint_publish",
+                    day=body.day, after_erasure=body.after_erasure)
             return _publish(body, supersede)
     return await _run(change)
 
