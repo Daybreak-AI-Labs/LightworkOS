@@ -723,7 +723,7 @@ def test_a_round_that_overruns_the_budget_is_never_offered(upstream, tmp_path):
     """A governed run swallows the budget stop and returns normally; the
     feature run still sees the spent budget after the round, keeps the last
     finished version, and says the spending limit stopped it."""
-    from maverick.budget import Budget
+    from maverick.budget import Budget, BudgetExceeded
     vault.register("pricing", str(upstream))
     world = WorldModel(tmp_path / "world.db")
     budget = Budget(max_tool_calls=3)
@@ -752,8 +752,24 @@ def test_a_round_that_overruns_the_budget_is_never_offered(upstream, tmp_path):
     q = features.propose(world, "pricing", "B", "", run, budget=budget, checker=costly_check)
     assert q["stopped"] == "budget" and q["check"]["state"] == "skipped"
     lines = features.evidence(q)["lines"]
-    assert not any("could not run" in line for line in lines)
-    assert any("spending limit ran out" in line for line in lines)
+    assert not any("could not run" in line or "check: did not run" in line for line in lines)
+    assert "Independent check: was cut short by the spending limit, so nothing it found " \
+           "was recorded." in lines
+
+    budget = Budget(max_tool_calls=3)
+
+    def costly_review(brief, diff):
+        budget.tool_calls += 10
+        raise BudgetExceeded("tool calls")
+    run, _ = _rounds(lambda work: (work / "d.py").write_text("d = 1\n"))
+    r = features.propose(world, "pricing", "D", "", run, budget=budget, reviewer=costly_review,
+                         checker=lambda gid, copy: {"findings": [], "fixed": []})
+    facts = features.evidence(r)
+    assert r["stopped"] is None and r["review_cut_short"]          # every round ran
+    assert not any("later rounds did not run" in line for line in facts["lines"])
+    assert "Independent review: cut short by the spending limit." in \
+        _card(world, r)["parameter_summary"]
+    assert "The spending limit ran out before the diff review finished." in facts["gaps"]
 
     budget = Budget(max_tool_calls=3)
 
@@ -764,7 +780,7 @@ def test_a_round_that_overruns_the_budget_is_never_offered(upstream, tmp_path):
     with pytest.raises(vault.VaultError, match="spending limit ran out"):
         features.propose(world, "pricing", "C", "", run, budget=budget, checker=None)
     assert world.get_goal(calls[0]["goal_id"]).status == "failed"
-    assert [x["title"] for x in features.list_proposals()] == ["B", "A"]
+    assert [x["title"] for x in features.list_proposals()] == ["D", "B", "A"]
 
 
 def test_the_checker_cannot_change_the_proposal(upstream, tmp_path):

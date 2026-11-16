@@ -304,6 +304,7 @@ class _Loop:
         self.budget, self.check_rounds = budget, check_rounds
         self.repairs_left, self.repair_rounds = repair_rounds, repair_rounds
         self.head, self.bundle, self.tests = base, b"", None
+        self.review_cut_short = False
         self.rounds: list[dict] = []
         self.stopped: str | None = None
         self.check: dict = {"state": "off" if checker is None else "skipped", "runs": 0,
@@ -410,7 +411,8 @@ class _Loop:
             _fail_goal(self.world, gid, exc)
             return None
         if not self._afford():
-            return None  # the look was cut short by the spending limit
+            self.check["cut_short"] = True  # it ran, but its report is not used
+            return None
         report = _report(out)
         if report is None:
             self.check["error"] = "its report could not be read"
@@ -486,12 +488,13 @@ def loop_settings() -> dict:
 def _review(loop: _Loop, reviewer: Reviewer | None, brief: str, diff: str) -> dict | None:
     """The advisory diff review, charged to the run's budget; skipped once the
     budget stopped the run."""
-    if not (reviewer and diff) or loop.stopped or not loop._afford():
+    if not (reviewer and diff) or loop.stopped:
         return None
     try:
+        loop.budget.check()
         return reviewer(brief, diff)
     except BudgetExceeded:
-        loop.stopped = "budget"
+        loop.review_cut_short = True  # every round ran; only the review was cut short
         return None
 
 
@@ -554,6 +557,7 @@ def propose(world, name: str, title: str, description: str, run: Runner, *,
         "test_command": bool(repo.test_command), "repair_rounds": rounds,
         "isolation": _isolation(on_host),
         "rounds": loop.rounds, "check": check, "stopped": loop.stopped,
+        "review_cut_short": loop.review_cut_short,
         "review": review, "status": "empty" if not changed else "pending",
         "approval_id": None, "created_at": time.time(), "merged_at": None,
     }
@@ -662,6 +666,9 @@ def _check_evidence(p: dict) -> tuple[list[str], list[str]]:
     if state == "off":
         when = "for this run" if check.get("off") == "run" else "in settings"
         return [f"Independent check: turned off {when}."], [_UNCHECKED_GAP]
+    if state == "skipped" and check.get("cut_short"):
+        return (["Independent check: was cut short by the spending limit, so nothing it found "
+                 "was recorded."], [_UNCHECKED_GAP])
     if state == "skipped":
         return ["Independent check: did not run because the run stopped early."], [_UNCHECKED_GAP]
     if state == "failed":
@@ -678,6 +685,8 @@ def _check_evidence(p: dict) -> tuple[list[str], list[str]]:
         gaps.append("The independent check did not look at the version you are approving.")
     if check.get("error"):
         lines.append(f"A later check could not run ({check['error']}).")
+    if check.get("cut_short"):
+        lines.append("A later look was cut short by the spending limit.")
     return lines, gaps
 
 
@@ -708,6 +717,8 @@ def evidence(p: dict) -> dict:
     elif stopped:
         lines.append("Stopped early: a repair round failed, so the last tested version is shown.")
         gaps.append("A repair round failed before every round could run.")
+    if p.get("review_cut_short"):
+        gaps.append("The spending limit ran out before the diff review finished.")
     check_lines, check_gaps = _check_evidence(p)
     findings = (p.get("check") or {}).get("findings") or []
     return {"lines": lines + check_lines, "gaps": gaps + check_gaps,
@@ -734,9 +745,11 @@ def _approval_card(p: dict, *, full: bool) -> str:
         lines.append("Independent check findings: "
                      + ", ".join(f"{n} {key}" for key, n in counts.items())
                      + f". Read them with maverick code show {p['id']} or on the Code page.")
-    lines.append("Independent review: " + ("not run" if review is None else
-                                           ("approves" if review.get("approves") else "objects")
-                                           + f" ({review.get('blockers', 0)} blocker(s))"))
+    lines.append("Independent review: " + (
+        "cut short by the spending limit." if review is None and p.get("review_cut_short") else
+        "not run" if review is None else
+        ("approves" if review.get("approves") else "objects")
+        + f" ({review.get('blockers', 0)} blocker(s))"))
     if p.get("diff_truncated"):
         lines.append(f"WARNING: the diff is {p['diff_chars']} characters; review and the stored "
                      f"copy cover only the first {MAX_DIFF_CHARS}. Inspect the branch in full "
