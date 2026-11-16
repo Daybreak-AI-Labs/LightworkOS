@@ -630,6 +630,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ("Set a model's spending ceiling" in the Models action family), with the
   same administrator check, confirmation and activity-log entries as the
   Settings form. Turn on Copilot actions and the Models family to use it.
+- On the Activity log page the Copilot can now publish a checkpoint, publish
+  one after an erasure (with or without an erasure record), retire one, and
+  check the checkpoints against a receipt you kept. The same administrator
+  check and activity-log entries apply (the Reviews action family).
 
 ### Fixed
 
