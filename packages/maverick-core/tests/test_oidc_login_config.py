@@ -257,6 +257,51 @@ def test_discovery_must_name_the_configured_issuer_and_is_read_again_after_an_ho
     assert resolve_endpoints(_full())["token_endpoint"] == "https://idp.example.com/tok2"
 
 
+def test_an_unreachable_provider_after_the_hour_keeps_the_last_checked_endpoints(monkeypatch):
+    """After the hour a failed re-read gave "misconfigured" on every sign-in
+    until the provider's discovery address answered again. The endpoints read
+    last were checked, so they stay in use; a document that does arrive and
+    names another issuer is still refused."""
+    doc = {"issuer": "https://idp.example.com",
+           "authorization_endpoint": "https://idp.example.com/auth",
+           "token_endpoint": "https://idp.example.com/tok"}
+    state = {"down": False, "calls": 0}
+
+    class _Resp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return dict(doc)
+
+    def _get(url, **kwargs):
+        state["calls"] += 1
+        if state["down"]:
+            raise RuntimeError("connection refused")
+        return _Resp()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "get", _get)
+    clock = [1000.0]
+    monkeypatch.setattr(oidc.time, "monotonic", lambda: clock[0])
+    first = resolve_endpoints(_full())
+
+    clock[0] += oidc._DISCOVERY_TTL_SECONDS + 1
+    state["down"] = True
+    assert resolve_endpoints(_full()) == first
+    asked = state["calls"]
+    assert resolve_endpoints(_full()) == first and state["calls"] == asked  # not on every sign-in
+    clock[0] += oidc._DISCOVERY_RETRY_SECONDS + 1
+    assert resolve_endpoints(_full()) == first and state["calls"] == asked + 1
+
+    state["down"] = False
+    doc["issuer"] = "https://other.example.com"
+    clock[0] += oidc._DISCOVERY_RETRY_SECONDS + 1
+    with pytest.raises(OIDCError, match="issuer"):
+        resolve_endpoints(_full())
+
+
 def test_discovery_rejects_non_https_issuer():
     cfg = _full(issuer="http://idp.example.com")
     with pytest.raises(OIDCError):

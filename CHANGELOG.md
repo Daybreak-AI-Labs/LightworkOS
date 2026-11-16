@@ -504,6 +504,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   remembered items; it forgets items that are gone from the source.
 - Company sign-in now checks that the provider's discovery document names
   the issuer you configured, and reads that document again every hour. If
+  the provider cannot be reached then, the last answer stays in use. If
   sign-in stops with "misconfigured", copy the issuer exactly as your
   provider shows it; the server log names both values.
 

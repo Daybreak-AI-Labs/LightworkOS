@@ -305,6 +305,9 @@ def login_enabled(config: OIDCConfig | None = None) -> bool:
 # is followed without a restart. Keyed by issuer so a config change to a new
 # issuer isn't served a stale doc.
 _DISCOVERY_TTL_SECONDS = 3600.0
+# When a re-read after the hour cannot reach the provider, the endpoints read
+# last (they were checked) stay in use and the read is tried again this often.
+_DISCOVERY_RETRY_SECONDS = 60.0
 _DISCOVERY_CACHE: dict[str, tuple[float, dict[str, str]]] = {}
 
 
@@ -312,11 +315,13 @@ def _discover_endpoints(issuer: str, *, timeout: float = 5.0) -> dict[str, str]:
     """GET ``<issuer>/.well-known/openid-configuration`` and return the
     authorization/token endpoints.
 
-    HTTPS-only and short-timeout. Cached per issuer for an hour. Fail-soft in
-    the sense that it never returns a partial/garbage result — any failure
-    (non-https issuer, network error, malformed JSON, a document that names
-    another issuer, missing/non-https endpoints) raises :class:`OIDCError`,
-    which the caller turns into a clean 4xx/5xx without leaking internals.
+    HTTPS-only and short-timeout. Cached per issuer for an hour; if the
+    provider cannot be reached after that, the last answer stays in use.
+    Fail-soft in the sense that it never returns a partial/garbage result —
+    any other failure (non-https issuer, a first read that fails, a document
+    that names another issuer, missing/non-https endpoints) raises
+    :class:`OIDCError`, which the caller turns into a clean 4xx/5xx without
+    leaking internals.
     """
     issuer = (issuer or "").strip()
     if not issuer:
@@ -341,6 +346,16 @@ def _discover_endpoints(issuer: str, *, timeout: float = 5.0) -> dict[str, str]:
     except OIDCError:
         raise
     except Exception as e:  # network, timeout, non-2xx, bad JSON
+        if cached is not None:
+            # No document arrived, so nothing says the endpoints changed.
+            # One that arrives and fails a check below is still refused.
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "OIDC discovery could not be re-read (%s); keeping the endpoints read earlier", e)
+            _DISCOVERY_CACHE[issuer] = (
+                time.monotonic() - _DISCOVERY_TTL_SECONDS + _DISCOVERY_RETRY_SECONDS, cached[1])
+            return cached[1]
         raise OIDCError(f"OIDC discovery failed: {e}") from e
 
     if not isinstance(doc, dict):
