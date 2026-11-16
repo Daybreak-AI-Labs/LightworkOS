@@ -313,8 +313,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   included, is charged an estimate from the text length and marked
   estimated. The spend receipt carries the charge and how it was priced, and
   `[budget.provider_caps] vertex` is now enforced instead of refusing every
-  call. A flow's tool step has no run budget, so `vertex` is refused there:
-  call it from an agent step.
+  call. Before sending, each call holds room for its longest reply: the
+  per-call output allowance model calls use (`[context] max_output_tokens`,
+  or `MAVERICK_AGENT_MAX_TOKENS`; by default scaled from the context window,
+  at least 4096 tokens). A call that cannot fit is not sent. `generate` asks
+  Vertex for at most that many tokens, or the smaller `max_output_tokens`
+  you give it. `predict` cannot limit a custom endpoint's reply, so a longer
+  reply is still charged in full and can pass the limit by that much. A flow
+  cannot use `vertex` as a direct action step, because it has no run budget:
+  saving one is refused, and an older saved flow's `vertex` step stops with
+  "unsafe direct action tool 'vertex'". Call it from an agent step.
 - `oracle` asks for `confirm` when a read hides a second statement in
   Oracle `q'...'` quoting, or after a `show`/`desc` line, a `/` line, a `.`
   line or a blank line. Remove blank lines inside a query to run it as a read.

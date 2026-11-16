@@ -124,6 +124,27 @@ class TestExecution:
 
         assert "unsafe direct action tool 'shell'" in "; ".join(f.validate())
 
+    def test_vertex_is_refused_when_a_flow_is_saved_and_when_an_old_one_runs(
+            self, tmp_path, monkeypatch):
+        # A flow's tool step has no run budget to charge, so `vertex` is
+        # refused at save time. A flow saved before that still loads, and its
+        # vertex step stops with a plain refusal instead of sending.
+        import json
+
+        from maverick.flow import store
+        _patch_home(tmp_path, monkeypatch)
+        f = Flow(id="vx", name="vx", start="a", nodes={
+            "a": FlowNode(id="a", kind=NODE_ACTION, tool="vertex",
+                          params={"args": {"op": "predict"}}, output="o")})
+        assert "unsafe direct action tool 'vertex'" in "; ".join(f.validate())
+        path = store._flows_dir() / "vx.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(f.to_dict()))
+        assert store.load_flow("vx").nodes["a"].tool == "vertex"
+        result, outcome = execution.default_action_runner(world=None)(
+            "vertex", {"args": {"op": "predict"}}, {})
+        assert outcome == 0.0 and result == "ERROR: unsafe direct action tool 'vertex'"
+
     def test_default_action_runner_blocks_unsafe_shell_tool(self):
         run = execution.default_action_runner(world=None)
 
