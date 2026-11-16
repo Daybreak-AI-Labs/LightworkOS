@@ -425,10 +425,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   one is charged now; a server marked free in `config.toml` must be changed
   there. The Copilot cannot make this change yet (nor other price changes).
   The cost line counts calls whose token counts were estimated.
-- Lightwork now remembers which database it last used (`world_backend` in
-  the data folder). If that was Postgres and a settings file cannot be read,
-  it refuses to start and names the file and line instead of opening a local
-  database. Fix the file, or set `MAVERICK_WORLD_BACKEND=sqlite` to use the
+- Once Postgres has been used, Lightwork remembers which database it last
+  used (`world_backend` in the data folder). If that was Postgres and a
+  settings file cannot be read, it refuses to start and names the file and
+  line instead of opening a local database. An install that has only ever
+  used the local database writes no such file. Fix the file, or set `MAVERICK_WORLD_BACKEND=sqlite` to use the
   local database on purpose.
 - Only `sqlite` and `postgres` are accepted for `MAVERICK_WORLD_BACKEND` and
   `[world_model] backend`; any other value now stops start-up with a plain
