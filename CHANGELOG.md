@@ -478,6 +478,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   value is ignored, logged, listed by `maverick doctor` and shown in Settings
   or on the agent page as "Set by your organisation"; the file still loads.
   Remove the looser values from the file to clear the warning.
+- A GitHub comment starts a run only when `/maverick` is a word of its own.
+  A path or link that contains it, such as `packages/maverick-core`, no
+  longer starts one. Write `/maverick` on its own to start a run.
 
 ### Fixed
 

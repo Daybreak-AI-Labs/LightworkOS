@@ -25,6 +25,14 @@ DEFAULT_LABELS = ("maverick", "automate", "ai-fix")
 
 # Slash-command that triggers a run from an issue comment.
 SLASH_TRIGGER = "/maverick"
+# The trigger counts only as a word of its own: at the start of the comment or
+# after white space or an opening quote/bracket, and not continued as a path,
+# a file name or a longer word. A substring match also fired on
+# "packages/maverick-core/foo.py" and on URLs.
+_SLASH_TRIGGER_RE = re.compile(
+    r"""(?<![^\s("'`\[*_])""" + re.escape(SLASH_TRIGGER) + r"(?![\w/-]|\.\w)",
+    re.IGNORECASE,
+)
 
 # A comment author must have write-ish access to trigger a run via the
 # slash command. GitHub's author_association reflects the commenter's
@@ -135,7 +143,7 @@ def parse_webhook(event: str, payload: dict) -> WebhookPayload | None:
     if event == "issue_comment" and action == "created":
         comment_obj = objects["comment"]
         comment = comment_obj.get("body", "") or ""
-        if not isinstance(comment, str) or SLASH_TRIGGER not in comment.lower():
+        if not isinstance(comment, str) or not _SLASH_TRIGGER_RE.search(comment):
             return None
         # Authorization: only repo-privileged commenters may trigger a run.
         # Without this, any public user can comment "/maverick" and spend

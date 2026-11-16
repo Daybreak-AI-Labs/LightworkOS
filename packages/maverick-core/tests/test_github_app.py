@@ -81,6 +81,37 @@ class TestParseWebhook:
         assert out is not None
         assert out.comment_body and SLASH_TRIGGER in out.comment_body.lower()
 
+    def test_slash_trigger_must_be_a_word_of_its_own(self):
+        # The trigger used to be a substring match, so a privileged comment
+        # that only mentioned a path or a URL containing "/maverick" started
+        # a run and spent the operator's budget.
+        def parsed(body):
+            return parse_webhook("issue_comment", {
+                "action": "created",
+                "repository": {"full_name": "octocat/spoon"},
+                "issue": {"number": 7, "title": "x", "body": "y"},
+                "comment": {"body": body, "author_association": "OWNER"},
+                "sender": {"login": "alice"},
+            })
+
+        for body in (
+            "see packages/maverick-core/foo.py",
+            "docs are at https://example.com/maverick",
+            "it lives in ~/maverick-workspace",
+            "run ./maverick doctor",
+            "pass --home=/maverick/data",
+            "edit /maverick.toml",
+        ):
+            assert parsed(body) is None, body
+        for body in (
+            "/maverick please fix",
+            "thanks.\n/MAVERICK",
+            "please run /maverick.",
+            "try `/maverick` on this",
+            "(/maverick, when you have time)",
+        ):
+            assert parsed(body) is not None, body
+
     def test_issue_comment_from_unauthorized_author_returns_none(self):
         # The public (author_association NONE / CONTRIBUTOR / missing) must
         # NOT trigger a run via /maverick even with the slash command --
