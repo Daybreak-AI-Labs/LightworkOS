@@ -446,6 +446,11 @@ SETTINGS: tuple[Setting, ...] = (
       "number", "Safety", 2, "maverick.config", minimum=1, maximum=3, integer=True,
       unit="looks", weaker="lower",
       warning="Fixes to blocking problems may reach you without a second look."),
+    S("codebase", "require_container", "Code changes need a container",
+      "Refuse to build a code change when its tests and checks would run directly on this "
+      "computer. In a container, each step is kept apart from the others.",
+      "toggle", "Safety", False, "maverick.config", weaker=False,
+      warning="Code changes will run directly on this computer again, without a container."),
     S("autonomy", "enable", "Extra checks on uncertain work",
       "When agents disagree or are unsure, double-check the answer and tighten what risky tools may do.",
       "toggle", "Safety", False, "maverick.autonomy", env=("MAVERICK_AUTONOMY_GATE",)),

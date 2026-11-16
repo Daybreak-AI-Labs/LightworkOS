@@ -502,6 +502,11 @@ def _pick_codebase(advanced: dict[str, Any]) -> None:
         advanced["codebase_check_rounds"] = max(1, min(3, _safe_int(_q_text(
             "    How many times may it look? (1-3; a second look confirms fixes)",
             default="2"), default=2)))
+    advanced["codebase_require_container"] = _q_confirm(
+        "    Refuse to build a change unless its steps run in a container? Without one, "
+        "the tests, the checker and the agent share this computer.",
+        default=False,
+    )
 
 
 def _pick_ifc(advanced: dict[str, Any]) -> None:
@@ -3285,6 +3290,8 @@ def _cfg_advanced_memory_and_immune(advanced: dict[str, Any]) -> list[str]:
         lines.append(f"repair_rounds = {int(advanced.get('codebase_repair_rounds', 2))}")
         lines.append(f"checker = {'true' if advanced.get('codebase_checker', True) else 'false'}")
         lines.append(f"check_rounds = {int(advanced.get('codebase_check_rounds', 2))}")
+        if advanced.get("codebase_require_container"):
+            lines.append("require_container = true")
     if advanced.get("ifc_mode"):
         lines.append("")
         lines.append("[ifc]")

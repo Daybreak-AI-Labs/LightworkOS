@@ -31,6 +31,7 @@ import secrets
 import tempfile
 import time
 from collections.abc import Callable
+from contextlib import contextmanager
 from pathlib import Path
 
 from ..file_lock import atomic_write_bytes, cross_process_lock
@@ -107,7 +108,11 @@ def run_tests(repo: vault.Repo, work: Path, sandbox_factory=None) -> dict | None
     if sandbox_factory is None:
         from ..sandbox import build_sandbox
         sandbox_factory = build_sandbox
-    result = sandbox_factory(workdir=str(work)).exec(repo.test_command, timeout=1800)
+    box = sandbox_factory(workdir=str(work))
+    try:
+        result = box.exec(repo.test_command, timeout=1800)
+    finally:
+        _close(box)  # a container backend's leftovers end with the run
     output = (result.stdout or "") + (result.stderr or "")
     return {"command": repo.test_command, "exit_code": result.exit_code,
             "passed": result.exit_code == 0, "output": output[-MAX_TEST_OUTPUT_CHARS:]}
@@ -142,13 +147,59 @@ def _host_commit(host: Path, work: Path, base: str, branch: str, message: str) -
     return commit
 
 
-def _fresh_copy(host: Path, dest: Path, commit: str) -> Path:
-    """A throwaway checkout of exactly ``commit`` with no remote: nothing run in
-    it can reach the host repository, and nothing in it is ever read back."""
+def _fresh_copy(host: Path, dest: Path, commit: str, branch: str | None = None) -> Path:
+    """A checkout of exactly ``commit`` (on ``branch`` when given, else
+    detached) with no remote, so nothing run in it can reach the host
+    repository. Tests and checks never have their copy read back; an author
+    round's copy is read only by ``_host_commit``."""
     _git(["clone", "-q", "--no-hardlinks", "--no-checkout", str(host), str(dest)])
-    _git(["checkout", "-q", "--detach", commit], cwd=dest)
+    _git(["checkout", "-q", *(["-B", branch] if branch else ["--detach"]), commit], cwd=dest)
     _git(["remote", "remove", "origin"], cwd=dest)
     return dest
+
+
+@contextmanager
+def _step(root: Path):
+    """Stop every process the step under ``root`` started when it ends, so
+    nothing it left running can write into a later round's copy."""
+    from ..sandbox.local import contained_step
+    with contained_step(root):
+        yield
+
+
+def _close(box) -> None:
+    close = getattr(box, "close", None)
+    if callable(close):
+        close()
+
+
+CONTAINER_REQUIRED = ("Code changes must run in a container, but this installation runs "
+                      "commands directly on this computer. Set up a container work area, "
+                      "or turn off the container requirement for code changes.")
+
+
+def _runs_on_host(sandbox_factory=None) -> bool:
+    """Whether feature-run steps would run on this computer without a container
+    (the ``local`` backend). A backend that cannot be built here counts as
+    not local: the run itself then fails on the same policy."""
+    from ..sandbox import build_sandbox, fs_is_host_visible
+    with vault.work_dir() as tmp:
+        try:
+            box = (sandbox_factory or build_sandbox)(workdir=str(tmp))
+        except Exception:  # noqa: BLE001 -- the run reports the real error
+            return False
+        try:
+            return fs_is_host_visible(box)
+        finally:
+            _close(box)
+
+
+def container_refusal(sandbox_factory=None) -> str | None:
+    """The plain refusal when ``[codebase] require_container`` is on and the
+    steps would run on this computer without a container; otherwise None."""
+    if loop_settings()["require_container"] and _runs_on_host(sandbox_factory):
+        return CONTAINER_REQUIRED
+    return None
 
 
 def _repair_brief(repo: vault.Repo, title: str, description: str, problem: str) -> str:
@@ -232,11 +283,11 @@ class _Loop:
     runs; tests and checks run on fresh copies of that pinned commit, so their
     side effects never reach the author or the proposal."""
 
-    def __init__(self, world, repo: vault.Repo, host: Path, work: Path, *, base: str,
+    def __init__(self, world, repo: vault.Repo, host: Path, *, base: str,
                  branch: str, pid: str, title: str, description: str, owner: str,
                  run: Runner, checker: Checker | None, sandbox_factory, budget,
                  repair_rounds: int, check_rounds: int) -> None:
-        self.world, self.repo, self.host, self.work = world, repo, host, work
+        self.world, self.repo, self.host = world, repo, host
         self.base, self.branch, self.pid = base, branch, pid
         self.title, self.description, self.owner = title, description, owner
         self.run, self.checker, self.sandbox_factory = run, checker, sandbox_factory
@@ -264,12 +315,17 @@ class _Loop:
         return True
 
     def author(self, goal_id: int, kind: str) -> None:
-        """One author round, then commit, pin and test. State changes only
-        when every step succeeded, so a failed round leaves the last pin."""
-        with self._labelled():
-            self.run(goal_id, self.work)
-        head = _host_commit(self.host, self.work, self.head, self.branch,
-                            f"{self.title}\n\nLightwork proposal {self.pid} (goal #{goal_id})")
+        """One author round, then commit, pin and test. Every round works in a
+        FRESH copy of the pinned head at a new random path, made after the
+        previous step ended and removed once committed, so nothing written
+        between rounds carries over. State changes only when every step
+        succeeded, so a failed round leaves the last pin."""
+        with vault.work_dir() as tmp, _step(tmp):
+            work = _fresh_copy(self.host, tmp / "work", self.head, self.branch)
+            with self._labelled():
+                self.run(goal_id, work)
+            head = _host_commit(self.host, work, self.head, self.branch,
+                                f"{self.title}\n\nLightwork proposal {self.pid} (goal #{goal_id})")
         bundle, tests = self.bundle, self.tests
         if head != self.head:
             # Bundle the pinned commit BEFORE any repository code (tests) runs.
@@ -285,7 +341,7 @@ class _Loop:
     def _test(self, head: str) -> dict | None:
         if not self.repo.test_command or head == self.base:
             return None
-        with vault.work_dir() as tmp:
+        with vault.work_dir() as tmp, _step(tmp):
             copy = _fresh_copy(self.host, tmp / "tests", head)
             return {**run_tests(self.repo, copy, self.sandbox_factory), "commit": head}
 
@@ -328,7 +384,7 @@ class _Loop:
             owner=self.owner, execution_principal=self.owner)
         self.check["goal_ids"].append(gid)
         try:
-            with vault.work_dir() as tmp:
+            with vault.work_dir() as tmp, _step(tmp):
                 copy = _fresh_copy(self.host, tmp / "check", self.head)
                 with self._labelled():
                     out = self.checker(gid, copy)
@@ -422,17 +478,18 @@ def propose(world, name: str, title: str, description: str, run: Runner, *,
     configuration. Round limits default to ``[codebase]``."""
     repo = vault.get(name)
     settings = loop_settings()
+    on_host = _runs_on_host(sandbox_factory)
+    if settings["require_container"] and on_host:
+        raise VaultError(CONTAINER_REQUIRED)
     budget = budget if budget is not None else feature_budget()
     pid = secrets.token_hex(8)
     branch = f"lightwork/{_slug(title)}-{pid[:6]}"
     goal_id = None
     try:
-        with vault.host_repo(name) as host, vault.work_dir() as work_tmp:
+        with vault.host_repo(name) as host:
             base = _git(["rev-parse", "--verify", f"refs/heads/{repo.default_branch}"],
                         git_dir=host).strip()
-            work = vault.clone_work(host, work_tmp / "work", repo.default_branch)
-            _git(["checkout", "-q", "-b", branch], cwd=work)
-            loop = _Loop(world, repo, host, work, base=base, branch=branch, pid=pid,
+            loop = _Loop(world, repo, host, base=base, branch=branch, pid=pid,
                          title=title, description=description, owner=owner, run=run,
                          checker=checker, sandbox_factory=sandbox_factory, budget=budget,
                          repair_rounds=max(0, int(settings["repair_rounds"] if repair_rounds
@@ -465,6 +522,7 @@ def propose(world, name: str, title: str, description: str, run: Runner, *,
         "tests": None if tests is None else {k: v for k, v in tests.items() if k != "output"},
         "tests_output": None if tests is None else tests["output"],
         "test_command": bool(repo.test_command), "repair_rounds": rounds,
+        "isolation": "host" if on_host else "container",
         "rounds": loop.rounds, "check": check, "stopped": loop.stopped,
         "review": review, "status": "empty" if not changed else "pending",
         "approval_id": None, "created_at": time.time(), "merged_at": None,
@@ -542,6 +600,8 @@ def _approval_detail(p: dict) -> str:
 
 
 _TESTS_GAP = "The repository's tests did not pass or are not configured."
+HOST_LINE = ("These steps ran on this computer without a container, so they were not "
+             "isolated from each other.")
 _UNCHECKED_GAP = "Nobody independently tried to break this change."
 
 
@@ -599,6 +659,8 @@ def evidence(p: dict) -> dict:
     left no blocker open. Proposals saved before repair rounds and the checker
     existed read as not checked."""
     lines, gaps = _tests_evidence(p)
+    if p.get("isolation") == "host":
+        lines.append(HOST_LINE)
     rounds = p.get("repair_rounds")
     if isinstance(rounds, dict):
         lines.append(f"Repair rounds: {rounds.get('used', 0)} of {rounds.get('allowed', 0)} used.")

@@ -209,6 +209,10 @@ async def start_feature(request: Request, body: FeatureIn, bg: BackgroundTasks) 
     if _provider_missing():
         raise HTTPException(status_code=503, detail=(
             "Set up an AI provider in Settings before asking Lightwork to build a change."))
+    from maverick.codebase import features
+    refusal = await run_in_threadpool(features.container_refusal)
+    if refusal:
+        raise HTTPException(status_code=409, detail=refusal)
     owner = caller_principal(request) or ""
     user_id = execution_user_id_from_request(request)
     if owner and owner != f"user:{user_id}":

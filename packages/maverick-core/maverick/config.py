@@ -3142,7 +3142,8 @@ def get_fleet_memory() -> dict:
     return {"enable": coerce_bool(cfg.get("enable"), False)}
 
 
-CODEBASE_LOOP_DEFAULTS = {"repair_rounds": 2, "checker": True, "check_rounds": 2}
+CODEBASE_LOOP_DEFAULTS = {"repair_rounds": 2, "checker": True, "check_rounds": 2,
+                          "require_container": False}
 
 
 def get_codebase() -> dict:
@@ -3155,7 +3156,9 @@ def get_codebase() -> dict:
     and checks its change: ``repair_rounds`` (0-5, default 2) follow-up rounds
     for the author after failing tests or checker blockers; ``checker``
     (default on; a malformed value keeps it on) runs the independent checker;
-    ``check_rounds`` (1-3, default 2) bounds how often it looks."""
+    ``check_rounds`` (1-3, default 2) bounds how often it looks.
+    ``require_container`` (default off; a malformed value turns it on) refuses
+    a feature run whose steps would run on this computer without a container."""
     cfg = load_config().get("codebase", {})
     if not isinstance(cfg, dict):
         cfg = {}
@@ -3172,7 +3175,9 @@ def get_codebase() -> dict:
             "default_protect": protect if protect in ("audit", "approve", "block") else "block",
             "repair_rounds": _rounds("repair_rounds", 0, 5),
             "checker": _strict_config_bool(cfg, "checker", True, invalid=True),
-            "check_rounds": _rounds("check_rounds", 1, 3)}
+            "check_rounds": _rounds("check_rounds", 1, 3),
+            "require_container": _strict_config_bool(cfg, "require_container", False,
+                                                     invalid=True)}
 
 
 def get_ifc() -> dict:

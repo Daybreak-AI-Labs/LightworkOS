@@ -187,6 +187,11 @@ def test_start_a_change_runs_the_kernel_swarm_in_the_background(client, monkeypa
                                                    "max_dollars": 5})
     assert r.status_code == 202
     assert calls == [("core", "Add a button", "", 5.0, "", None)]
+    from maverick.codebase import features
+    monkeypatch.setattr(features, "container_refusal", lambda: features.CONTAINER_REQUIRED)
+    r = client.post("/api/v1/code/features", json={"repo": "core", "title": "Again"})
+    assert r.status_code == 409 and "must run in a container" in r.json()["detail"]
+    assert len(calls) == 1                         # refused before anything started
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git is required")

@@ -13,6 +13,8 @@ import sys
 import threading
 import time
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -199,14 +201,15 @@ def _harness_environ_hidden() -> bool:
 _RUN_MARKER_ENV = "MAVERICK_SANDBOX_RUN"
 
 
-def _reap_marked(marker: str) -> None:
+def _reap_marked(marker: str, env: str = _RUN_MARKER_ENV) -> None:
     """Kill processes that still carry this run's marker (Linux ``/proc``).
 
-    Used only when a command timed out or was cancelled; after a normal exit,
-    deliberately detached processes (a server the person started) are kept.
+    Used only when a command timed out or was cancelled, or when a contained
+    step ends (:func:`contained_step`); after a normal exit, deliberately
+    detached processes (a server the person started) are otherwise kept.
 
     Best effort: a child that also clears its environment is not found."""
-    needle = f"{_RUN_MARKER_ENV}={marker}".encode()
+    needle = f"{env}={marker}".encode()
     for _ in range(3):  # a survivor may fork while it is being reaped
         found = False
         try:
@@ -227,6 +230,39 @@ def _reap_marked(marker: str) -> None:
                     pass
         if not found:
             return
+
+
+# A contained step (a code feature run's test run, checker look or author
+# round) can span many commands. Every command a LocalBackend runs inside the
+# step's folder also carries the step's marker, so the step's end stops all
+# it started, detached (setsid) or not, before the next step's folder exists.
+_STEP_MARKER_ENV = "MAVERICK_SANDBOX_STEP"
+_STEPS: dict[str, str] = {}
+_STEPS_LOCK = threading.Lock()
+
+
+def _step_marker(workdir: object) -> str | None:
+    path = os.path.realpath(str(workdir))
+    with _STEPS_LOCK:
+        for root, marker in _STEPS.items():
+            if path == root or path.startswith(root + os.sep):
+                return marker
+    return None
+
+
+@contextmanager
+def contained_step(root: str | Path) -> Iterator[None]:
+    """Stop every process a command under ``root`` started, once the block ends."""
+    marker = uuid.uuid4().hex
+    key = os.path.realpath(str(root))
+    with _STEPS_LOCK:
+        _STEPS[key] = marker
+    try:
+        yield
+    finally:
+        with _STEPS_LOCK:
+            _STEPS.pop(key, None)
+        _reap_marked(marker, _STEP_MARKER_ENV)
 
 
 def _reap_process_group(proc: subprocess.Popen, marker: str | None = None) -> None:
@@ -502,6 +538,9 @@ class LocalBackend:
         effective = self.timeout if timeout is None else timeout
         marker = uuid.uuid4().hex
         child_env = {**_contained(scrub_env()), _RUN_MARKER_ENV: marker}
+        step = _step_marker(self.workdir)
+        if step is not None:
+            child_env[_STEP_MARKER_ENV] = step
         _hide_harness_environ()
 
         windows_creation_flags = (

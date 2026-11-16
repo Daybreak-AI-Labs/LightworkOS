@@ -754,3 +754,130 @@ def test_a_proposal_saved_before_verified_runs_still_loads_and_shows(upstream, t
                         lambda: {"enable": True, "default_protect": "block"})
     out = CliRunner().invoke(main, ["code", "show", old["id"]])
     assert out.exit_code == 0 and "Independent check: not run." in out.output, out.output
+
+
+# -- isolation between rounds: nothing a test run or a checker leaves behind
+#    reaches the next author round or the proposal --
+
+@pytest.fixture
+def private_tmp(tmp_path, monkeypatch):
+    """Working copies live under this test's own temp folder, so a planting
+    probe can find them without touching other tests."""
+    import tempfile
+    root = tmp_path / "t"
+    root.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(root))
+    return root
+
+
+def test_a_test_run_cannot_plant_files_in_the_next_author_round(upstream, tmp_path, private_tmp):
+    probe = (f"import glob, os, sys\n"
+             f"for d in glob.glob({str(private_tmp)!r} + '/lw-work-*/work'):\n"
+             f"    open(os.path.join(d, 'planted.py'), 'w').write('planted = True\\n')\n"
+             f"sys.exit(0 if os.path.exists('fixed.txt') else 1)\n")
+    vault.register("pricing", str(upstream), test_command="python probe.py")
+    world = WorldModel(tmp_path / "world.db")
+
+    def first(work):
+        (work / "probe.py").write_text(probe)
+
+    def second(work):
+        (work / "fixed.txt").write_text("ok\n")
+    run, calls = _rounds(first, second)
+    p = features.propose(world, "pricing", "T", "", run, sandbox_factory=_Sandbox,
+                         repair_rounds=1, checker=None)
+    assert "planted.py" not in calls[1]["files"] and "planted.py" not in p["files"]
+    assert p["tests"]["passed"]
+
+
+def test_a_checker_cannot_plant_files_then_call_the_change_clean(upstream, tmp_path, private_tmp):
+    import glob
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    run, _ = _rounds(lambda work: (work / "a.py").write_text("a = 1\n"))
+    looks: list = []
+
+    def checker(goal_id, copy):
+        looks.append(goal_id)
+        if len(looks) == 1:
+            for d in glob.glob(str(private_tmp) + "/lw-work-*/work"):
+                Path(d, "backdoor.py").write_text("import os  # planted by the checker\n")
+            return {"findings": [{"severity": "blocker", "what": "a is wrong",
+                                  "evidence": "read", "how": "a.py"}], "fixed": []}
+        return {"findings": [], "fixed": ["1.1"]}
+    p = features.propose(world, "pricing", "K", "", run, checker=checker, repair_rounds=1)
+    assert p["files"] == ["a.py"] and "backdoor" not in p["diff"]
+
+
+SLEEPER = ("import glob, pathlib, time\n"
+           "for _ in range(40):\n"
+           "    for d in glob.glob({root!r} + '/lw-work-*/work'):\n"
+           "        pathlib.Path(d, 'late_{tag}.py').write_text('late = True\\n')\n"
+           "    time.sleep(0.1)\n")
+
+
+def _start_sleeper(root, tag):
+    import subprocess as sp
+    sp.Popen([sys.executable, "-c", SLEEPER.format(root=str(root), tag=tag)],
+             start_new_session=True, stdout=sp.DEVNULL, stderr=sp.DEVNULL)
+
+
+def test_processes_a_test_run_or_a_checker_leave_running_are_stopped(upstream, tmp_path,
+                                                                    private_tmp):
+    """Detached background processes cannot write into the next round's copy:
+    each test run and each checker look stops everything it started."""
+    import time
+
+    from maverick.sandbox.local import LocalBackend
+    probe = ("import os, subprocess, sys\n"
+             "if not os.path.exists('fixed.txt'):\n"
+             f"    subprocess.Popen([sys.executable, '-c', {SLEEPER.format(root=str(private_tmp), tag='tests')!r}],\n"
+             "                     start_new_session=True, stdout=subprocess.DEVNULL,\n"
+             "                     stderr=subprocess.DEVNULL)\n"
+             "    sys.exit(1)\n")
+    vault.register("pricing", str(upstream), test_command=f"{sys.executable} probe.py")
+    world = WorldModel(tmp_path / "world.db")
+    seen: list = []
+
+    def edit(n):
+        def apply(work):
+            time.sleep(0.6)                       # long enough for a survivor to write
+            seen.append(sorted(p.name for p in work.iterdir()))
+            (work / "probe.py").write_text(probe)
+            if n:
+                (work / "fixed.txt").write_text(f"{n}\n")
+        return apply
+    run, _ = _rounds(edit(0), edit(1), edit(2))
+    looks: list = []
+
+    def checker(goal_id, copy):
+        looks.append(goal_id)
+        if len(looks) == 1:
+            LocalBackend(workdir=copy).exec(
+                f"{sys.executable} -c 'import subprocess, sys; subprocess.Popen([sys.executable, "
+                f"\"-c\", {SLEEPER.format(root=str(private_tmp), tag='check')!r}], "
+                "start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)'")
+            return {"findings": [{"severity": "blocker", "what": "x", "evidence": "read",
+                                  "how": "x"}], "fixed": []}
+        return {"findings": [], "fixed": ["1.1"]}
+    p = features.propose(world, "pricing", "L", "", run, sandbox_factory=LocalBackend,
+                         checker=checker, repair_rounds=2, check_rounds=2)
+    assert len(seen) == 3 and len(looks) == 2
+    assert features.HOST_LINE in features.evidence(p)["lines"]   # the card says so
+    assert not [f for files in seen for f in files if f.startswith("late_")], seen
+    assert not [f for f in p["files"] if f.startswith("late_")]
+
+
+def test_a_container_requirement_refuses_a_run_on_this_computer(upstream, tmp_path, monkeypatch):
+    from maverick import config
+    from maverick.sandbox.local import LocalBackend
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    monkeypatch.setattr(config, "get_codebase", lambda: {"enable": True, "require_container": True})
+    calls: list = []
+    with pytest.raises(vault.VaultError, match="must run in a container"):
+        features.propose(world, "pricing", "A", "", lambda gid, work: calls.append(gid),
+                         sandbox_factory=LocalBackend)
+    assert calls == [] and features.list_proposals() == []
+    assert features.container_refusal(LocalBackend) == features.CONTAINER_REQUIRED
+    assert features.container_refusal(_Sandbox) is None          # not this computer's shell
