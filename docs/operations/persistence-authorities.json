@@ -184,7 +184,7 @@
     "configuration": 71,
     "read_projection": 25,
     "audit": 24,
-    "transient": 25,
+    "transient": 26,
     "business_records": 21,
     "execution": 46,
     "recovery": 12,
@@ -16204,6 +16204,25 @@
           "sample_path": "tenant_registry.json",
           "recovery_policy": "tenant_registry",
           "disposition": "Preserve current identity history across purge, full/additive restore and failed-transaction rollback. Refuse erasure or rewrite of a current barrier; hold restored authority for current reconciliation, never automatic tenant readmission."
+        }
+      ]
+    },
+    {
+      "path": "packages/maverick-core/maverick/tools/a11y.py",
+      "contract": "transient",
+      "owner": "packages/maverick-core/maverick/tools/a11y.py",
+      "purpose": "Accessibility check tool: a private temporary pa11y browser-launch file, removed when the check ends.",
+      "referenced_store_owners": [],
+      "review": "module purpose and persistence seam read; contract-family classification (not every operation tested)",
+      "governed_namespaces": [],
+      "literal_path_hints": [],
+      "observed_mechanism_markers": {},
+      "source_sites": [
+        {
+          "line": 245,
+          "function": "_run_pa11y",
+          "kind": "write_text",
+          "expression": "config.write_text(json.dumps({...}), encoding='utf-8')"
         }
       ]
     },

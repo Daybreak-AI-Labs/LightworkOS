@@ -17,12 +17,25 @@ Both require the corresponding binary on PATH:
   - axe:    ``npm install -g @axe-core/cli``
 
 Failures are loud (we surface the missing binary + install command).
+
+The page under test chooses what the runner's browser loads next (redirects,
+frames, scripts), so checking the first URL does not bound the browser. Its
+connections go through a loopback proxy that pins each one to a public
+address and asks the destination policy about every host. A sandbox with its
+own network cannot reach that proxy and is refused; one without a network
+needs none. ``MAVERICK_FETCH_ALLOW_PRIVATE=1`` turns the proxy off, as it
+turns off the private-address check.
 """
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import json
 import logging
 import shutil
+import tempfile
+from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 from . import Tool
@@ -82,6 +95,69 @@ def _check_url(url: str) -> str | None:
             "Set MAVERICK_FETCH_ALLOW_PRIVATE=1 to override."
         )
     return None
+
+
+def _policy_denial(url: str) -> str | None:
+    """The organisation and workspace destination policy for the page itself,
+    as every other outbound tool applies it. The proxy applies the same policy
+    to whatever the page loads."""
+    from urllib.parse import urlparse
+
+    from ..enterprise import enterprise_egress_denial
+    from ..tenant.egress import egress_allowed
+
+    deny = enterprise_egress_denial(url, tool="a11y")
+    if deny:
+        return f"ERROR: {deny}"
+    host = (urlparse(url).hostname or "").strip().lower()
+    if not egress_allowed("a11y", host):
+        return (f"ERROR: egress policy blocks a11y from reaching {host!r} "
+                "(see [egress] / [sandbox.tool.a11y]).")
+    return None
+
+
+# Chromium switches (without the leading dashes) that send every connection,
+# loopback included, through the proxy and leave no path around it.
+_PROXY_SWITCHES = (
+    "proxy-bypass-list=<-loopback>",
+    "disable-quic",
+    "force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+)
+
+
+@contextlib.contextmanager
+def _browser_egress(sandbox) -> Iterator[str | None]:
+    """Yield the proxy the runner's browser must use, or ``None`` when it needs
+    none. Raises ``ValueError`` when the browser's network cannot be limited."""
+    from ._ssrf import allow_private
+
+    if allow_private():
+        # The operator has opened private addresses to fetch tools.
+        yield None
+        return
+    from ..sandbox.local import LocalBackend
+
+    if sandbox is not None and type(sandbox) is not LocalBackend:
+        if getattr(sandbox, "allow_network", None) is False:
+            yield None  # no network: nothing to reach
+            return
+        raise ValueError(
+            "this sandbox has its own network, so the checker's browser cannot be "
+            "kept to public sites. Use the local sandbox, or turn off the sandbox's "
+            "network access to check local files.")
+    from ..consent_scanner import _PinnedSocksProxy
+    from ..paths import current_tenant_id_strict, set_tenant
+    from .browser import _proxy_host_policy
+
+    tenant = current_tenant_id_strict()
+    # Proxy workers are separate threads: carry the tenant, nothing else.
+    session = contextvars.Context()
+    session.run(set_tenant, tenant)
+    with _PinnedSocksProxy(
+        authorize_host=lambda host, port: session.copy().run(
+            _proxy_host_policy, tenant, host, port, "a11y"),
+    ) as proxy:
+        yield proxy.server_url
 
 
 def _pin_url(url: str) -> str:
@@ -154,28 +230,40 @@ def _confine_path(sandbox, user_path: str) -> str:
     return str(candidate)
 
 
-def _run_pa11y(target: str, sandbox) -> tuple[int, str, str]:
+def _run_pa11y(target: str, sandbox, *, proxy: str | None = None) -> tuple[int, str, str]:
     from . import sandbox_run
     # `--` ends option parsing so a target beginning with `-` is treated
     # as a path, not an injected pa11y flag (e.g. --config=/tmp/evil.js).
-    code, out, err = sandbox_run(
-        sandbox, ["pa11y", "--reporter", "json", "--", target], timeout=120,
-    )
+    options = ["pa11y", "--reporter", "json"]
+    with contextlib.ExitStack() as cleanup:
+        if proxy:
+            # pa11y takes browser switches only from a config file. The proxy
+            # is used only when the runner is a host process, so a private
+            # host folder is readable by it and out of the workspace's reach.
+            staged = cleanup.enter_context(tempfile.TemporaryDirectory(prefix="maverick-a11y-"))
+            config = Path(staged) / "pa11y.json"
+            config.write_text(json.dumps({"chromeLaunchConfig": {
+                "ignoreHTTPSErrors": True,  # pa11y's own default
+                "args": [f"--proxy-server={proxy}", *(f"--{s}" for s in _PROXY_SWITCHES),
+                         "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1"],
+            }}), encoding="utf-8")
+            options += ["--config", str(config)]
+        code, out, err = sandbox_run(sandbox, [*options, "--", target], timeout=120)
     if code == 124:
         return 124, "", "pa11y TIMEOUT"
     return code, out or "", err or ""
 
 
-def _run_axe(target: str, sandbox) -> tuple[int, str, str]:
+def _run_axe(target: str, sandbox, *, proxy: str | None = None) -> tuple[int, str, str]:
     from . import sandbox_run
     # `--` ends option parsing so a target beginning with `-` is treated as a
     # URL/path, not an injected axe flag (parity with the pa11y path). Options
     # precede `--`; the target is the sole positional after it.
-    code, out, err = sandbox_run(
-        sandbox,
-        ["axe", "--no-reporter", "--save", "/dev/stdout", "--", target],
-        timeout=120,
-    )
+    options = ["axe", "--no-reporter", "--save", "/dev/stdout"]
+    if proxy:
+        # axe splits this list on commas and passes each entry to Chrome.
+        options += ["--chrome-options", ",".join((f"proxy-server={proxy}", *_PROXY_SWITCHES))]
+    code, out, err = sandbox_run(sandbox, [*options, "--", target], timeout=120)
     if code == 124:
         return 124, "", "axe TIMEOUT"
     return code, out or "", err or ""
@@ -228,16 +316,30 @@ def _format_axe(stdout: str, max_issues: int) -> str:
     return "\n".join(lines)
 
 
-def _op_check(target: str, runner: str, max_issues: int, sandbox) -> str:
+def _op_check(target: str, runner: str, max_issues: int, sandbox, *, url: bool = False) -> str:
     err = _ensure_runner(runner)
     if err:
         return err
+    try:
+        with _browser_egress(sandbox) as proxy:
+            if url and proxy:
+                from urllib.parse import urlparse
+                if urlparse(target).port not in (None, 80, 443):
+                    return ("ERROR: a11y checks public sites on ports 80 and 443 only. "
+                            "Set MAVERICK_FETCH_ALLOW_PRIVATE=1 to check another port.")
+            elif url:
+                # No proxy pins the connection: pin the host to a validated
+                # public IP so the headless browser cannot re-resolve/rebind
+                # between the guard and the fetch.
+                target = _pin_url(target)
+            run = _run_axe if runner == "axe" else _run_pa11y
+            code, out, err_out = run(target, sandbox, proxy=proxy)
+    except ValueError as e:
+        return f"ERROR: a11y cannot run here: {e}"
     if runner == "axe":
-        code, out, err_out = _run_axe(target, sandbox)
         if code != 0 and not out:
             return f"ERROR: axe ({code}): {err_out.strip()[:300]}"
         return _format_axe(out, max_issues)
-    code, out, err_out = _run_pa11y(target, sandbox)
     # pa11y returns 2 when issues are found AND has stdout — that's
     # expected, not an error.
     if code not in (0, 2) and not out:
@@ -258,20 +360,17 @@ def _run(args: dict[str, Any], sandbox) -> str:
             url = (args.get("url") or "").strip()
             if not url:
                 return "ERROR: check requires url"
-            bad = _check_url(url)
+            bad = _check_url(url) or _policy_denial(url)
             if bad:
                 return bad
-            # Pin the host to a validated public IP so the headless browser
-            # cannot re-resolve/rebind between the guard and the fetch.
             from ._ssrf import BlockedHost
             try:
-                target = _pin_url(url)
+                return _op_check(url, runner, max_issues, sandbox, url=True)
             except BlockedHost as e:
                 return (
                     f"ERROR: refusing to check {url!r}: {e} (SSRF guard; "
                     "re-resolution returned a non-public address)."
                 )
-            return _op_check(target, runner, max_issues, sandbox)
         if op == "check_html":
             path = (args.get("path") or "").strip()
             if not path:

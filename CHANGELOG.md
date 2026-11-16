@@ -491,6 +491,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   renderer on standard input and the image is written straight into the
   workspace. A Mermaid output name must end with `.svg`, `.png` or `.pdf`,
   and a source over 64 KiB is refused outside the local sandbox.
+- The accessibility checker's browser now connects through a local proxy that
+  refuses internal addresses and applies the destination policy to every
+  host a page loads, and the page itself is checked against that policy. It
+  reaches public sites on ports 80 and 443 only. A container sandbox with
+  network access is refused: use the local sandbox, or turn the sandbox's
+  network off to check local files. `MAVERICK_FETCH_ALLOW_PRIVATE=1` keeps
+  the previous behaviour for local development servers.
 
 ### Fixed
 
