@@ -137,6 +137,32 @@ class TestParseWebhook:
         ):
             assert parsed(body) is not None, body
 
+    def test_only_a_real_code_fence_hides_a_later_request(self):
+        # A line that began with inline ``` code (opened and closed on that
+        # line) was taken for a fence, so a real request below it was ignored.
+        def parsed(body):
+            return parse_webhook("issue_comment", {
+                "action": "created",
+                "repository": {"full_name": "octocat/spoon"},
+                "issue": {"number": 7, "title": "x", "body": "y"},
+                "comment": {"body": body, "author_association": "OWNER"},
+                "sender": {"login": "alice"},
+            })
+
+        for body in (
+            "```ls -la``` shows nothing\n/maverick please fix",
+            "~~~ls~~~ shows nothing\n/maverick please fix",
+            "~~~\n```\nnot a request\n~~~\n/maverick after the block closed",
+            "```text\nlog\n```\n/maverick please fix",
+        ):
+            assert parsed(body) is not None, body
+        for body in (
+            "~~~\n```\n/maverick inside a tilde block\n```\nstill inside",
+            "```\n~~~\n/maverick inside a backtick block\n~~~",
+            "````\n```\n/maverick inside a longer fence\n```\n",
+        ):
+            assert parsed(body) is None, body
+
     def test_issue_comment_from_unauthorized_author_returns_none(self):
         # The public (author_association NONE / CONTRIBUTOR / missing) must
         # NOT trigger a run via /maverick even with the slash command --

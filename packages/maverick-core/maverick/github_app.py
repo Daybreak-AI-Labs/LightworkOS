@@ -35,15 +35,29 @@ _SLASH_TRIGGER_RE = re.compile(
 )
 
 
+_FENCE_RE = re.compile(r"\s*(`{3,}|~{3,})(.*)$")
+
+
 def _own_words(comment: str) -> str:
     """The comment without quoted replies and fenced code. A quoted earlier
-    request, or one shown as an example, is not a request."""
-    kept, fenced = [], False
+    request, or one shown as an example, is not a request.
+
+    A fence opens on a line that is a run of three or more backticks or
+    tildes with at most an info string after it, and closes on a line of only
+    the same character, at least as long. A line that opens and closes inline
+    code with three backticks is ordinary text.
+    """
+    kept: list[str] = []
+    fence = ""  # the run of characters that opened the block we are inside
     for line in comment.splitlines():
-        start = line.lstrip()
-        if start.startswith(("```", "~~~")):
-            fenced = not fenced
-        elif not fenced and not start.startswith(">"):
+        match = _FENCE_RE.match(line)
+        marker, rest = (match.group(1), match.group(2)) if match else ("", "")
+        if fence:
+            if marker[:1] == fence[0] and len(marker) >= len(fence) and not rest.strip():
+                fence = ""
+        elif marker and marker[:3] not in rest:
+            fence = marker
+        elif not line.lstrip().startswith(">"):
             kept.append(line)
     return "\n".join(kept)
 
