@@ -498,6 +498,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   network access is refused: use the local sandbox, or turn the sandbox's
   network off to check local files. `MAVERICK_FETCH_ALLOW_PRIVATE=1` keeps
   the previous behaviour for local development servers.
+- Outbound webhooks now read only the first 4 KiB of a receiver's reply, so
+  a very large reply no longer fills memory. The delivery log still shows
+  the first 200 characters. Nothing to do.
 
 ### Fixed
 

@@ -206,6 +206,11 @@ class NotSent(str):
     failure with no status code may have been received and is not repeated."""
 
 
+# How much of a receiver's reply is read. The log keeps 200 characters; the
+# margin covers multi-byte text.
+_REPLY_READ_BYTES = 4096
+
+
 def _post_result(url: str, body: bytes, headers: dict[str, str],
                  timeout: float) -> tuple[int | None, int, str, str]:
     """POST through the SSRF guard and report ``(status_code, latency_ms,
@@ -238,10 +243,18 @@ def _post_result(url: str, body: bytes, headers: dict[str, str],
         return None, 0, "", NotSent(f"blocked by the address guard: {scrub(str(e))[:120]}")
     started = time.monotonic()
     try:
-        with client:
-            resp = client.post(url, content=body, headers=headers)
+        # The receiver chooses the size of its reply, and only a short start
+        # of it is kept: read that much, then close, whatever is still coming.
+        with client, client.stream("POST", url, content=body, headers=headers) as resp:
+            received = bytearray()
+            for chunk in resp.iter_bytes():
+                received += chunk
+                if len(received) >= _REPLY_READ_BYTES:
+                    break
+            text = bytes(received[:_REPLY_READ_BYTES]).decode(
+                resp.encoding or "utf-8", errors="replace")
         latency = int((time.monotonic() - started) * 1000)
-        snippet = scrub(resp.text[:200])
+        snippet = scrub(text[:200])
         if resp.status_code >= 400:
             log.warning("webhooks: %s returned %d: %s", safe_url, resp.status_code, snippet)
             return resp.status_code, latency, snippet, f"HTTP {resp.status_code}"
