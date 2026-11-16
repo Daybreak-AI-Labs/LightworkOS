@@ -81,6 +81,88 @@ class TestParseWebhook:
         assert out is not None
         assert out.comment_body and SLASH_TRIGGER in out.comment_body.lower()
 
+    def test_slash_trigger_must_be_a_word_of_its_own(self):
+        # The trigger used to be a substring match, so a privileged comment
+        # that only mentioned a path or a URL containing "/maverick" started
+        # a run and spent the operator's budget.
+        def parsed(body):
+            return parse_webhook("issue_comment", {
+                "action": "created",
+                "repository": {"full_name": "octocat/spoon"},
+                "issue": {"number": 7, "title": "x", "body": "y"},
+                "comment": {"body": body, "author_association": "OWNER"},
+                "sender": {"login": "alice"},
+            })
+
+        for body in (
+            "see packages/maverick-core/foo.py",
+            "docs are at https://example.com/maverick",
+            "it lives in ~/maverick-workspace",
+            "run ./maverick doctor",
+            "pass --home=/maverick/data",
+            "edit /maverick.toml",
+        ):
+            assert parsed(body) is None, body
+        for body in (
+            "/maverick please fix",
+            "thanks.\n/MAVERICK",
+            "please run /maverick.",
+            "try `/maverick` on this",
+            "(/maverick, when you have time)",
+        ):
+            assert parsed(body) is not None, body
+
+    def test_slash_trigger_in_a_quoted_reply_or_code_block_is_not_a_request(self):
+        # Quoting an earlier "/maverick" comment in a reply, or showing it in
+        # a code example, started another run.
+        def parsed(body):
+            return parse_webhook("issue_comment", {
+                "action": "created",
+                "repository": {"full_name": "octocat/spoon"},
+                "issue": {"number": 7, "title": "x", "body": "y"},
+                "comment": {"body": body, "author_association": "OWNER"},
+                "sender": {"login": "alice"},
+            })
+
+        for body in (
+            "> /maverick please fix\n\nthat run looked wrong to me",
+            "you can write:\n```\n/maverick fix the tests\n```\nto start one",
+            "~~~text\n/maverick\n~~~",
+            "```\n/maverick in a block that never closes",
+        ):
+            assert parsed(body) is None, body
+        for body in (
+            "> the build is red\n\n/maverick please fix",
+            "```\nTraceback ...\n```\n/maverick look at this error",
+        ):
+            assert parsed(body) is not None, body
+
+    def test_only_a_real_code_fence_hides_a_later_request(self):
+        # A line that began with inline ``` code (opened and closed on that
+        # line) was taken for a fence, so a real request below it was ignored.
+        def parsed(body):
+            return parse_webhook("issue_comment", {
+                "action": "created",
+                "repository": {"full_name": "octocat/spoon"},
+                "issue": {"number": 7, "title": "x", "body": "y"},
+                "comment": {"body": body, "author_association": "OWNER"},
+                "sender": {"login": "alice"},
+            })
+
+        for body in (
+            "```ls -la``` shows nothing\n/maverick please fix",
+            "~~~ls~~~ shows nothing\n/maverick please fix",
+            "~~~\n```\nnot a request\n~~~\n/maverick after the block closed",
+            "```text\nlog\n```\n/maverick please fix",
+        ):
+            assert parsed(body) is not None, body
+        for body in (
+            "~~~\n```\n/maverick inside a tilde block\n```\nstill inside",
+            "```\n~~~\n/maverick inside a backtick block\n~~~",
+            "````\n```\n/maverick inside a longer fence\n```\n",
+        ):
+            assert parsed(body) is None, body
+
     def test_issue_comment_from_unauthorized_author_returns_none(self):
         # The public (author_association NONE / CONTRIBUTOR / missing) must
         # NOT trigger a run via /maverick even with the slash command --

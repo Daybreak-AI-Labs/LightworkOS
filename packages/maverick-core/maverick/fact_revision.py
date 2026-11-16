@@ -1,6 +1,8 @@
 """Optimistic concurrency contract for current facts on every backend."""
 from __future__ import annotations
 
+from urllib.parse import quote, unquote
+
 
 class FactConflict(ValueError):
     """The fact changed after the caller read it; the draft was not written."""
@@ -9,6 +11,26 @@ class FactConflict(ValueError):
 def is_private_fact_key(key: str) -> bool:
     """Reserved agent/user namespaces are not shared business facts."""
     return key.casefold().startswith(("goal:", "user:"))
+
+
+def subject_fact_prefix(token: str) -> str:
+    """The ``user:<channel>:<user>:`` key prefix of one export or erase subject.
+
+    ``token`` must be the two percent-quoted parts the callers build
+    (``quote(channel, safe="") + ":" + quote(user, safe="")``). Anything else
+    is refused: a single part (``sms``) is a prefix of every person on that
+    channel, and a raw colon makes ``sms:alice:ops`` both Alice's ``ops:...``
+    facts and the facts of the user ``alice:ops``. Returns ``""`` for no token.
+    """
+    if not token:
+        return ""
+    parts = token.split(":")
+    if len(parts) != 2 or any(part != quote(unquote(part), safe="") for part in parts):
+        raise ValueError(
+            "a personal-fact token must name one person as <channel>:<user>, "
+            "each part percent-quoted"
+        )
+    return f"user:{token}:"
 
 
 def check_expected_revision(expected: int | None, actual: int) -> None:

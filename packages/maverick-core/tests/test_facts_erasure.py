@@ -8,28 +8,54 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 
 def test_facts_matching_requires_user_scoped_key_prefix(tmp_path):
     from maverick.world_model import WorldModel
     w = WorldModel(tmp_path / "world.db")
-    w.upsert_fact("user:u123:phone", "+1555")       # explicit subject scope
+    w.upsert_fact("user:sms:u123:phone", "+1555")   # explicit subject scope
     w.upsert_fact("u123_phone", "+1555")            # legacy substring in key
     w.upsert_fact("note", "owner is u123")          # legacy substring in value
     w.upsert_fact("office", "123 Main St")          # unrelated
-    assert w.facts_matching("u123") == {"user:u123:phone": "+1555"}
+    assert w.facts_matching("sms:u123") == {"user:sms:u123:phone": "+1555"}
+    w.close()
+
+
+def test_fact_subject_token_must_name_exactly_one_person(tmp_path, monkeypatch):
+    """The key prefix decides whose facts are exported and erased. A token
+    that is not the two quoted parts ``<channel>:<user>`` either covers many
+    people (``sms``) or is ambiguous (``sms:alice:ops``), so it is refused."""
+    monkeypatch.setenv("MAVERICK_TEMPORAL_MEMORY", "1")
+    from maverick.cli import _fact_subject_token
+    from maverick.world_model import WorldModel
+
+    w = WorldModel(tmp_path / "world.db")
+    alice = "user:sms:alice:email"
+    alice_ops = "user:" + _fact_subject_token("sms", "alice:ops") + ":email"
+    w.upsert_fact(alice, "a@x.com")
+    w.upsert_fact(alice_ops, "ops@x.com")
+    assert w.facts_matching(_fact_subject_token("sms", "alice")) == {alice: "a@x.com"}
+    for bad in ("sms", "alice", "sms:alice:ops", "sms:+1", "sms:a b", "sms:a%3ab"):
+        for call in (w.facts_matching, w.delete_facts_matching, w.fact_history_matching):
+            with pytest.raises(ValueError, match="one person"):
+                call(bad)
+    assert set(w.get_facts()) == {alice, alice_ops}
+    assert w.delete_facts_matching(_fact_subject_token("sms", "alice:ops")) == [alice_ops]
+    assert set(w.get_facts()) == {alice}
     w.close()
 
 
 def test_delete_facts_matching_returns_keys_and_keeps_others(tmp_path):
     from maverick.world_model import WorldModel
     w = WorldModel(tmp_path / "world.db")
-    w.upsert_fact("user:u123:phone", "+1555")
-    w.upsert_fact("user:u123:note", "owner is u123")
+    w.upsert_fact("user:sms:u123:phone", "+1555")
+    w.upsert_fact("user:sms:u123:note", "owner is u123")
     w.upsert_fact("u123_phone", "+1555")
     w.upsert_fact("note", "owner is u123")
     w.upsert_fact("office", "123 Main St")
-    removed = w.delete_facts_matching("u123")
-    assert removed == ["user:u123:note", "user:u123:phone"]   # sorted
+    removed = w.delete_facts_matching("sms:u123")
+    assert removed == ["user:sms:u123:note", "user:sms:u123:phone"]   # sorted
     assert set(w.get_facts()) == {"u123_phone", "note", "office"}
     # Empty token is a no-op (never nukes the whole table).
     assert w.delete_facts_matching("") == []
@@ -50,9 +76,9 @@ def test_short_user_id_does_not_match_unrelated_fact_substrings(tmp_path):
     w.upsert_fact("api_token", "SECRET-999")
     w.upsert_fact("team_password", "do-not-disclose")
     w.upsert_fact("incident_note", "call alice")
-    w.upsert_fact("user:a:preference", "ok")
-    assert w.facts_matching("a") == {"user:a:preference": "ok"}
-    assert w.delete_facts_matching("a") == ["user:a:preference"]
+    w.upsert_fact("user:a:a:preference", "ok")
+    assert w.facts_matching("a:a") == {"user:a:a:preference": "ok"}
+    assert w.delete_facts_matching("a:a") == ["user:a:a:preference"]
     assert set(w.get_facts()) == {"api_token", "team_password", "incident_note"}
     w.close()
 

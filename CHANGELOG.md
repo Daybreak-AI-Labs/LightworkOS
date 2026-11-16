@@ -590,6 +590,42 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   went, including what to do when earlier labels for a task cannot be read.
   It needs the page's audit permission and the `reviews` control family in
   `[copilot] operation_families`; it reads the record and changes nothing.
+- A GitHub comment starts a run only when `/maverick` is a word of its own.
+  A path or link that contains it, such as `packages/maverick-core`, no
+  longer starts one, and neither does one in a quoted reply (a line that
+  starts with `>`) or a fenced code block. Indented code, HTML comments and
+  quote lines without a `>` are read as before. Write `/maverick` on its
+  own to start a run.
+- On Postgres, the time allowed to undo an approval now starts when the
+  decision reaches the signed audit log, as it already did on SQLite. It
+  used to start at the vote, so a slow audit log shortened it. Nothing to do.
+- A schedule is now paused when a worker stops during the last attempt of a
+  run and the next run was not queued. Before, the schedule stayed active
+  but never ran again. Review the paused schedule, then resume it.
+- When a saved secret in the dashboard's settings cannot be opened, the
+  settings made in the dashboard are on hold until the file can be opened,
+  except stricter safety choices, which stay in force. Before, those were
+  ignored too, which put back limits you had tightened there. A sandbox
+  that was set up in the dashboard may not start until then. Health and
+  `maverick doctor` say so. Save that secret again, or restore the key, to
+  clear the warning.
+- A workspace's `config.toml` can no longer let people approve their own
+  requests (`[security] allow_self_approval`) or run sandbox work as user 0
+  (`[sandbox] run_as_user`). The looser value is ignored and listed by
+  `maverick doctor`, like other workspace settings that loosen policy.
+- Automations that watch new Salesforce records or ServiceNow tickets now
+  work on lists with more than 5,000 items: each check reads the newest
+  5,000. In such a list, a record saved with an earlier creation date is
+  not reported. A source that was refused for its size starts again by
+  itself and reports the items it missed, if fewer than 5,000 arrived
+  meanwhile; with more, it is refused with a message that asks you to review
+  the source again. A source also no longer stops for good after 20,000
+  remembered items; it forgets items that are gone from the source.
+- Company sign-in now checks that the provider's discovery document names
+  the issuer you configured, and reads that document again every hour. If
+  the provider cannot be reached then, the last answer stays in use. If
+  sign-in stops with "misconfigured", copy the issuer exactly as your
+  provider shows it; the server log names both values.
 
 ### Fixed
 

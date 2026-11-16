@@ -448,25 +448,35 @@ def test_facts_newest_write_order_survives_clock_rollback(
 
 
 def test_facts_matching_is_prefix_scoped(world):
-    world.upsert_fact("user:alice:email", "a@x.com")
-    world.upsert_fact("user:alice:phone", "555")
-    world.upsert_fact("user:bob:email", "b@x.com")
+    world.upsert_fact("user:sms:alice:email", "a@x.com")
+    world.upsert_fact("user:sms:alice:phone", "555")
+    world.upsert_fact("user:sms:alice%3Aops:email", "ops@x.com")
+    world.upsert_fact("user:sms:bob:email", "b@x.com")
     world.upsert_fact("global:tz", "UTC")  # not user-scoped
 
-    assert set(world.facts_matching("alice")) == {"user:alice:email", "user:alice:phone"}
+    assert set(world.facts_matching("sms:alice")) == {
+        "user:sms:alice:email", "user:sms:alice:phone"}
     assert world.facts_matching("") == {}  # empty token matches nothing
+    # A token that is not the two quoted parts <channel>:<user> covers many
+    # people or is ambiguous, so every subject-prefix call refuses it.
+    for bad in ("sms", "alice", "sms:alice:ops", "sms:+1"):
+        for call in (world.facts_matching, world.delete_facts_matching,
+                     world.fact_history_matching):
+            with pytest.raises(ValueError, match="one person"):
+                call(bad)
+    assert "user:sms:alice%3Aops:email" in world.get_facts()
 
 
 def test_delete_facts_matching_scoped(world):
-    world.upsert_fact("user:carol:email", "c@x.com")
-    world.upsert_fact("user:carol:ssn", "secret")
-    world.upsert_fact("user:dave:email", "d@x.com")
+    world.upsert_fact("user:sms:carol:email", "c@x.com")
+    world.upsert_fact("user:sms:carol:ssn", "secret")
+    world.upsert_fact("user:sms:dave:email", "d@x.com")
 
-    deleted = world.delete_facts_matching("carol")
-    assert deleted == ["user:carol:email", "user:carol:ssn"]  # sorted keys
+    deleted = world.delete_facts_matching("sms:carol")
+    assert deleted == ["user:sms:carol:email", "user:sms:carol:ssn"]  # sorted keys
     remaining = world.get_facts()
-    assert "user:carol:email" not in remaining
-    assert remaining.get("user:dave:email") == "d@x.com"  # other users untouched
+    assert "user:sms:carol:email" not in remaining
+    assert remaining.get("user:sms:dave:email") == "d@x.com"  # other users untouched
 
 
 def test_list_goals_filter_and_order(world):
@@ -841,6 +851,22 @@ def test_the_undo_window_closes_at_its_end_even_on_an_equal_clock_reading(world,
     clock["now"] = decided_at + 29.5
     assert world.undo_approval_decision(aid, undone_by="ana", within_seconds=30) == "undone"
     assert world.get_approval(aid).status == "pending"
+
+
+def test_approval_undo_window_starts_when_last_audit_vote_is_delivered(world):
+    # Same rule as the SQLite backend: the decision takes effect when the last
+    # vote reaches the signed audit log, so that is when the undo window
+    # starts. The vote time would use up the window while delivery waits.
+    aid = world.create_approval("wire-funds", risk="high", approvals_required=2, undoable=True)
+    first = world.decide_approval_audited(aid, "approved", decided_by="user:a")
+    final = world.decide_approval_audited(aid, "approved", decided_by="user:b")
+    delivered = final.created_at + 100
+    world.mark_approval_audit_delivered(final.event_id, delivered_at=delivered)
+    assert world.get_approval(aid).status == "pending"
+    world.mark_approval_audit_delivered(first.event_id, delivered_at=delivered + 60)
+    assert world.get_approval(aid).decided_at == delivered + 60
+    world.mark_approval_audit_delivered(first.event_id, delivered_at=delivered + 120)
+    assert world.get_approval(aid).decided_at == delivered + 60
 
 
 def test_decide_approval_rejects_bad_status(world):

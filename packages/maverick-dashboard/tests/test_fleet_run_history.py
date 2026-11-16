@@ -103,8 +103,10 @@ def test_missing_goal_renders_fail_soft(monkeypatch, tmp_path):
 
 def test_authenticated_run_history_hides_other_owner_stale_index(monkeypatch, tmp_path):
     _isolate(monkeypatch, tmp_path)
+    import json
+
     import maverick_dashboard.app as dashboard_app
-    from maverick.fleet import Fleet, record_run, remove_fleet, save_fleet
+    from maverick.fleet import Fleet, record_run, remove_fleet, runs_path, save_fleet
     from maverick.world_model import WorldModel
 
     w = WorldModel(tmp_path / "world.db")
@@ -113,12 +115,14 @@ def test_authenticated_run_history_hides_other_owner_stale_index(monkeypatch, tm
     record_run("acme", "researcher", alice_gid)
     remove_fleet("acme")
 
-    # Simulate an old orphaned run index left by a prior build, then reuse the
-    # same fleet name under a different authenticated owner.
-    record_run("acme", "researcher", alice_gid)
+    # Simulate an old orphaned run index left by a prior build (record_run no
+    # longer writes one for an absent fleet), then reuse the same fleet name
+    # under a different authenticated owner.
+    runs_path("acme").write_text(json.dumps(
+        [{"agent": "researcher", "goal_id": alice_gid, "ts": 1.0}]), encoding="utf-8")
     eve_gid = w.create_goal("Eve onboarding task", owner="user:eve")
-    record_run("acme", "coder", eve_gid)
     save_fleet(Fleet(name="acme", owner="user:eve"))
+    record_run("acme", "coder", eve_gid)
     monkeypatch.setattr(dashboard_app, "goal_owner_filter", lambda request: "user:eve")
 
     r = _client().get("/fleets")

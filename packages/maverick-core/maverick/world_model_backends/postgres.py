@@ -3936,14 +3936,18 @@ class PostgresWorldModel:
         considered (never values, never arbitrary substrings), so GDPR
         export/erase can't disclose or delete unrelated global facts.
         """
-        if not token:
+        from ..fact_revision import subject_fact_prefix
+
+        prefix = subject_fact_prefix(token)
+        if not prefix:
             return {}
-        prefix = f"user:{token}:"
         return {k: v for k, v in self.get_facts().items() if k.startswith(prefix)}
 
     def delete_facts_matching(self, token: str) -> list[str]:
         """Delete user-scoped facts (see :meth:`facts_matching`); return the keys."""
-        prefix = f"user:{token}:" if token else ""
+        from ..fact_revision import subject_fact_prefix
+
+        prefix = subject_fact_prefix(token)
         if not prefix:
             return []
         # A bound compatibility tenant can read legacy NULL rows, so an Art.17
@@ -3986,10 +3990,12 @@ class PostgresWorldModel:
         """All recorded fact versions under ``user:<token>:`` (incl. keys removed
         from the live table) for the GDPR Art.15 export. Empty unless ``[memory]
         temporal`` retained history. Mirrors the SQLite backend."""
-        if not token:
-            return {}
+        from ..fact_revision import subject_fact_prefix
         from ..world_records import FactVersion
-        prefix = f"user:{token}:"
+
+        prefix = subject_fact_prefix(token)
+        if not prefix:
+            return {}
         frag, params = _tenant_scope()
         tenant = _active_tenant()
         compatibility_tenant = (
@@ -4943,17 +4949,18 @@ class PostgresWorldModel:
                 if source is None:
                     raise PermissionError("The original approval task is unavailable")
                 source_guard(source[0], source[1] or "", source[2])
+            # The decision takes effect at delivery, so the undo window starts
+            # here and not at the vote (same rule as the SQLite backend).
+            delivery_time = (
+                float(event[6])
+                if event[6] is not None
+                else float(delivered_at) if delivered_at is not None else time.time()
+            )
             if event[6] is None:
                 cur.execute(
                     "UPDATE approval_audit_outbox SET delivered_at = %s "
                     f"WHERE event_id = %s AND delivered_at IS NULL AND {outbox_scope}",
-                    tuple([
-                        float(delivered_at)
-                        if delivered_at is not None
-                        else time.time(),
-                        str(event_id),
-                        *outbox_params,
-                    ]),
+                    tuple([delivery_time, str(event_id), *outbox_params]),
                 )
 
             approval_id = int(event[1])
@@ -4965,7 +4972,7 @@ class PostgresWorldModel:
             )
             if cur.fetchone() is None:
                 cur.execute(
-                    "SELECT final_status, decided_by, created_at "
+                    "SELECT final_status, decided_by "
                     "FROM approval_audit_outbox "
                     f"WHERE approval_id = %s AND final_status IS NOT NULL "
                     f"AND {outbox_scope} "
@@ -4980,7 +4987,7 @@ class PostgresWorldModel:
                     )
                     values: list = [
                         final[0],
-                        float(final[2]),
+                        delivery_time,
                         final[1],
                         approval_id,
                     ]

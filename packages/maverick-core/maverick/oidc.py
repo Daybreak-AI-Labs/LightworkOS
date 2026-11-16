@@ -36,6 +36,7 @@ actually runs, with an actionable install hint.
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -298,20 +299,27 @@ def login_enabled(config: OIDCConfig | None = None) -> bool:
     return bool(cfg.issuer)
 
 
-# Discovery cache: issuer -> {"authorization_endpoint": ..., "token_endpoint":
-# ...}. The OIDC discovery document is effectively static, so we fetch it once
-# per issuer per process. Keyed by issuer so a config change to a new issuer
-# isn't served a stale doc.
-_DISCOVERY_CACHE: dict[str, dict[str, str]] = {}
+# Discovery cache: issuer -> (read at, {"authorization_endpoint": ...,
+# "token_endpoint": ...}). The OIDC discovery document changes rarely, so it is
+# read once per issuer and kept for an hour: a provider that moves an endpoint
+# is followed without a restart. Keyed by issuer so a config change to a new
+# issuer isn't served a stale doc.
+_DISCOVERY_TTL_SECONDS = 3600.0
+# When a re-read after the hour cannot reach the provider, the endpoints read
+# last (they were checked) stay in use and the read is tried again this often.
+_DISCOVERY_RETRY_SECONDS = 60.0
+_DISCOVERY_CACHE: dict[str, tuple[float, dict[str, str]]] = {}
 
 
 def _discover_endpoints(issuer: str, *, timeout: float = 5.0) -> dict[str, str]:
     """GET ``<issuer>/.well-known/openid-configuration`` and return the
     authorization/token endpoints.
 
-    HTTPS-only and short-timeout. Cached per issuer. Fail-soft in the sense that
-    it never returns a partial/garbage result — any failure (non-https issuer,
-    network error, malformed JSON, missing/non-https endpoints) raises
+    HTTPS-only and short-timeout. Cached per issuer for an hour; if the
+    provider cannot be reached after that, the last answer stays in use.
+    Fail-soft in the sense that it never returns a partial/garbage result —
+    any other failure (non-https issuer, a first read that fails, a document
+    that names another issuer, missing/non-https endpoints) raises
     :class:`OIDCError`, which the caller turns into a clean 4xx/5xx without
     leaking internals.
     """
@@ -319,8 +327,8 @@ def _discover_endpoints(issuer: str, *, timeout: float = 5.0) -> dict[str, str]:
     if not issuer:
         raise OIDCError("OIDC issuer is not configured for discovery")
     cached = _DISCOVERY_CACHE.get(issuer)
-    if cached is not None:
-        return cached
+    if cached is not None and time.monotonic() - cached[0] < _DISCOVERY_TTL_SECONDS:
+        return cached[1]
     if not issuer.lower().startswith("https://"):
         raise OIDCError("OIDC issuer must be https for discovery")
 
@@ -338,10 +346,30 @@ def _discover_endpoints(issuer: str, *, timeout: float = 5.0) -> dict[str, str]:
     except OIDCError:
         raise
     except Exception as e:  # network, timeout, non-2xx, bad JSON
+        if cached is not None:
+            # No document arrived, so nothing says the endpoints changed.
+            # One that arrives and fails a check below is still refused.
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "OIDC discovery could not be re-read (%s); keeping the endpoints read earlier", e)
+            _DISCOVERY_CACHE[issuer] = (
+                time.monotonic() - _DISCOVERY_TTL_SECONDS + _DISCOVERY_RETRY_SECONDS, cached[1])
+            return cached[1]
         raise OIDCError(f"OIDC discovery failed: {e}") from e
 
     if not isinstance(doc, dict):
         raise OIDCError("OIDC discovery document is not a JSON object")
+    # OpenID Connect Discovery 1.0, section 4.3: the document's issuer must be
+    # the issuer it was fetched for. Otherwise a document served for another
+    # party would choose where the browser and the client secret are sent. A
+    # trailing slash is not a difference (a common way to write the same one).
+    stated = str(doc.get("issuer", "") or "").strip()
+    if not stated or stated.rstrip("/") != issuer.rstrip("/"):
+        raise OIDCError(
+            f"the sign-in provider's discovery document names the issuer {stated or '(none)'!r}, "
+            f"not the configured issuer {issuer!r}; set the issuer exactly as the provider shows it"
+        )
     authorization_endpoint = str(doc.get("authorization_endpoint", "") or "").strip()
     token_endpoint = str(doc.get("token_endpoint", "") or "").strip()
     # The endpoints we will redirect a browser to / POST a client secret to must
@@ -356,7 +384,7 @@ def _discover_endpoints(issuer: str, *, timeout: float = 5.0) -> dict[str, str]:
         "authorization_endpoint": authorization_endpoint,
         "token_endpoint": token_endpoint,
     }
-    _DISCOVERY_CACHE[issuer] = resolved
+    _DISCOVERY_CACHE[issuer] = (time.monotonic(), resolved)
     return resolved
 
 

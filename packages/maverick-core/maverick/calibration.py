@@ -35,6 +35,7 @@ import math
 import os
 import threading
 import time
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -527,6 +528,15 @@ def _load_verdict(path: Path | None = None) -> dict | None:
     return verdict if isinstance(verdict, dict) else None
 
 
+# The arm the learning-proof harness chose for the run in this context
+# (``learning_proof.forced_freeze``): True is the frozen control arm, False the
+# live arm, None no harness. A context variable, not the process environment:
+# other tasks and tenants in the same process must not change arm with it.
+# A thread the run starts itself sees it only if it is given a copy of the
+# context (``asyncio.to_thread`` does that).
+FORCED_FREEZE: ContextVar[bool | None] = ContextVar("maverick_learning_forced_freeze", default=None)
+
+
 def learning_frozen(
     *, verdict_path: Path | None = None, config: dict | None = None,
 ) -> bool:
@@ -539,21 +549,28 @@ def learning_frozen(
     The verdict is resolved per-tenant: a freeze raised by one tenant's drifting
     verifier does not freeze learning for other tenants.
 
-    ``MAVERICK_LEARNING_FROZEN`` is a hard override used by the learning-proof
-    A/B harness to force a clean control arm independent of verifier drift:
+    ``MAVERICK_LEARNING_FROZEN`` is a hard process-wide override an operator
+    sets to collect the two arms of a learning-proof A/B by hand:
     ``1/true/on`` forces frozen (no learning), ``0/false/off`` forces unfrozen,
-    anything else falls through to the calibration logic below.
+    anything else falls through to the calibration logic below. The harness
+    itself uses ``FORCED_FREEZE`` for its own run: its frozen arm is frozen
+    whatever the verdict, and its live arm skips the variable but is still
+    frozen by a drift verdict.
 
     ``config`` lets a caller that already loaded config reuse that snapshot
     for the ``[calibration]`` lookup; only forwarded when actually given one,
     so the many existing ``_settings`` test doubles (zero-argument) keep
     working when this is called the old, plain way.
     """
-    override = os.environ.get("MAVERICK_LEARNING_FROZEN", "").strip().lower()
-    if override in {"1", "true", "yes", "on"}:
+    forced = FORCED_FREEZE.get()
+    if forced is True:
         return True
-    if override in {"0", "false", "no", "off"}:
-        return False
+    if forced is None:
+        override = os.environ.get("MAVERICK_LEARNING_FROZEN", "").strip().lower()
+        if override in {"1", "true", "yes", "on"}:
+            return True
+        if override in {"0", "false", "no", "off"}:
+            return False
     s = _settings() if config is None else _settings(config=config)
     if not s["enforce"]:
         return False

@@ -16,7 +16,11 @@ auditor cannot attack is not a strong claim.
 This gate keeps the property: a new ``registry.run(...)`` outside the sanctioned
 sites fails the build, so the next dispatch site cannot be added ungated by
 accident. It is deliberately a structural check rather than a grep -- a grep for
-``.run(`` matches hundreds of unrelated calls.
+``.run(`` matches hundreds of unrelated calls. A direct ``<tool>.fn(...)`` call
+skips the registry altogether, so it counts as a dispatch too; the reviewed
+ones are listed in ``DIRECT_FN_REVIEWED`` with the calls each review covered. A handler taken into a variable and called later is not seen, and
+neither is a call written inside source text that runs in a child process (the
+two known ones are on record in the same list).
 
 CLI: ``python -m maverick.dispatch_contract --ci``.
 
@@ -70,6 +74,54 @@ LITERAL_EXEMPT = {
 #: reject every in-process registry rather than protect anything.
 UNREACHABLE_EXEMPT = {
     "packages/maverick-core/maverick/workflow.py": ("Workflow", "run"),
+}
+
+
+#: Direct ``<tool>.fn(...)`` calls, reviewed one by one and keyed by file and
+#: enclosing function, so a new direct call elsewhere in the same file still
+#: fails. Each entry is ``(expected, reason)``. ``expected`` lists the calls
+#: the review covered in that function, each as its receiver expression
+#: (``tool.fn``), in sorted order: one more, one fewer or a different one
+#: fails the gate until it is reviewed. The reason says why the call may skip
+#: ``ToolRegistry.run``.
+#:
+#: Two calls sit inside source text that is run in a child process, where this
+#: scan cannot see them. They are on record under the function name
+#: ``<source text>`` with ``expected`` set to the line itself (a string); the
+#: gate fails if the file no longer contains it, so the entry cannot go stale.
+_QUALIFICATION = ("plugin qualification: runs the candidate's handler once with the "
+                  "reviewed practice input, inside the reviewed container")
+DIRECT_FN_REVIEWED: dict[tuple[str, str], tuple[tuple[str, ...] | str, str]] = {
+    ("packages/maverick-core/maverick/governed_tools.py", "_fn"): (
+        ("tool.fn", "tool.fn"), "the governed connector wrapper: it is the registered handler and "
+           "calls the wrapped handler after its own preview, approval and "
+           "receipt steps"),
+    ("packages/maverick-core/maverick/tools/_lazy.py", "__call__"): (
+        ("self.resolve().fn",), "the lazy tool's own handler: the registry calls it, and it forwards "
+           "to the tool it builds on first use"),
+    ("packages/maverick-core/maverick/sandbox/plugin_contracts.py", "execute"): (("tool.fn",), _QUALIFICATION),
+    ("packages/maverick-core/maverick/sandbox/plugin_contracts.py", "execute_node"): (("tool.fn",), _QUALIFICATION),
+    ("packages/maverick-core/maverick/sandbox/plugin_contracts.py", "execute_grpc"): (("tool.fn",), _QUALIFICATION),
+    ("packages/maverick-core/maverick/proof_guarantees.py",
+     "claim_fleet_can_read_but_not_write"): (
+        ("tools['billdotcom_read'].fn",), "a self-check with fixed arguments: it asks a read-only seat to "
+           "write and requires the refusal"),
+    # Not gated like a real call. ToolRegistry.speculate_reads applies the
+    # access list, the MCP binding and the ambient-credential check, and the
+    # agent skips speculation under a capability, but there is no Shield scan,
+    # stop check, replay check or audit row. Opt-in, side-effect-free reads
+    # only. Listed so the gap is on record here, not so it reads as closed.
+    ("packages/maverick-core/maverick/speculative_tools.py", "_call_tool"): (
+        ("tool.fn",), "KNOWN GAP: opt-in pre-run of repeat reads outside the governed "
+           "dispatch; partial checks only (see the comment above)"),
+    ("packages/maverick-core/maverick/self_learning.py", "<source text>"): (
+        "_result = _tool.fn(_args)",
+        "not scanned: source text run in a child process. It is the generated "
+        "tool's own handler; the registered tool starts that child in the sandbox"),
+    ("packages/maverick-core/maverick/plugin_isolation.py", "<source text>"): (
+        "result = fn().fn(args)",
+        "not scanned: source text run in a child process. It is the isolated "
+        "plugin's own handler; the registered proxy tool starts that child"),
 }
 
 
@@ -174,18 +226,24 @@ def scan_file(path: Path) -> list[dict]:
         if not isinstance(n, ast.Call):
             continue
         f = n.func
-        if not (isinstance(f, ast.Attribute) and f.attr == "run"):
+        if not (isinstance(f, ast.Attribute) and f.attr in ("run", "fn")):
             continue
         recv = f.value
         name = recv.id if isinstance(recv, ast.Name) else (
             recv.attr if isinstance(recv, ast.Attribute) else "")
-        if name not in REGISTRY_NAMES:
+        # ``.run`` is a common method name, so it counts only on a registry.
+        # ``.fn`` is the tool handler itself: calling it on any receiver skips
+        # the registry and every gate in it, so every such call is a dispatch.
+        if f.attr == "run" and name not in REGISTRY_NAMES:
             continue
         literal = None
-        if n.args and isinstance(n.args[0], ast.Constant):
+        if f.attr == "run" and n.args and isinstance(n.args[0], ast.Constant):
             literal = n.args[0].value
-        gated = any(position < (n.lineno, n.col_offset) for position in gates.get(owners[n], ()))
-        out.append({"file": rel, "line": n.lineno, "recv": name,
+        owner = owners[n]
+        gated = any(position < (n.lineno, n.col_offset) for position in gates.get(owner, ()))
+        out.append({"file": rel, "line": n.lineno, "recv": name or "<expression>",
+                    "kind": f.attr, "call": ast.unparse(f),
+                    "function": getattr(owner, "name", "<lambda>") if owner else "<module>",
                     "literal": literal, "gated": gated})
     return out
 
@@ -217,10 +275,43 @@ def _scan_uncached(roots: tuple[str, ...]) -> tuple[list[dict], int]:
     return hits, inspected
 
 
+def _fn_calls(hits: list[dict]) -> dict[tuple[str, str], tuple[str, ...]]:
+    """The direct ``.fn(`` calls each (file, function) holds, as sorted
+    receiver expressions."""
+    calls: dict[tuple[str, str], list[str]] = {}
+    for h in hits:
+        if h.get("kind") == "fn":
+            calls.setdefault((h["file"], h["function"]), []).append(h["call"])
+    return {key: tuple(sorted(found)) for key, found in calls.items()}
+
+
+def stale_fn_reviews(hits: list[dict]) -> list[str]:
+    """Reviewed direct-handler exceptions that no longer match a call."""
+    seen = _fn_calls(hits)
+    stale = []
+    for (rel, function), (expected, _reason) in sorted(DIRECT_FN_REVIEWED.items()):
+        if isinstance(expected, str):  # a call inside child-process source text
+            try:
+                present = expected in (REPO_ROOT / rel).read_text(encoding="utf-8")
+            except OSError:
+                present = False
+        else:
+            present = (rel, function) in seen
+        if not present:
+            stale.append(f"{rel}: {function}")
+    return stale
+
+
 def violations(hits: list[dict]) -> list[dict]:
     out = []
+    calls = _fn_calls(hits)
     for h in hits:
         if h["file"] in SANCTIONED:
+            continue
+        key = (h["file"], h.get("function"))
+        # A review covers the calls it lists, not every later or different
+        # one in the same function.
+        if h.get("kind") == "fn" and DIRECT_FN_REVIEWED.get(key, (None, ""))[0] == calls.get(key):
             continue
         if (h["file"], h["literal"]) in LITERAL_EXEMPT:
             continue
@@ -261,6 +352,13 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {s}", file=sys.stderr)
         return 1 if args.ci else 0
 
+    if stale_reviews := stale_fn_reviews(hits):
+        print("dispatch-contract: a reviewed direct handler call no longer "
+              "exists; remove it from DIRECT_FN_REVIEWED:", file=sys.stderr)
+        for s in stale_reviews:
+            print(f"  {s}", file=sys.stderr)
+        return 1 if args.ci else 0
+
     bad = violations(hits)
     print(f"dispatch-contract: {inspected} files inspected, {len(hits)} "
           f"dispatch site(s), {len(bad)} unsanctioned, "
@@ -271,13 +369,18 @@ def main(argv: list[str] | None = None) -> int:
     print("\ndispatch-contract: tool dispatch outside an authorization gate:",
           file=sys.stderr)
     for h in bad:
-        print(f"  {h['file']}:{h['line']}  {h['recv']}.run(...)", file=sys.stderr)
+        print(f"  {h['file']}:{h['line']}  {h['recv']}.{h.get('kind', 'run')}(...)",
+              file=sys.stderr)
     print("\nRoute it through maverick.tool_authz.authorize(tool, params, "
           "origin=...) first, which applies the agent-independent gate subset "
           "AND records the dispatch on the signed chain. Without that record "
           "the attestation's policy_envelope claim is unfalsifiable for this "
           "path. If the tool name is a fixed literal that cannot be steered, "
-          "add it to LITERAL_EXEMPT with the literal.", file=sys.stderr)
+          "add it to LITERAL_EXEMPT with the literal. A direct handler call "
+          "(.fn) that has been reviewed goes in DIRECT_FN_REVIEWED with its "
+          "reason and the calls it covers in that function; a function "
+          "already listed there is reported again when those calls change.",
+          file=sys.stderr)
     return 1 if args.ci else 0
 
 

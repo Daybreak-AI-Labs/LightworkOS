@@ -759,15 +759,38 @@ class JobQueue:
         forever; the rest go back to 'pending' with ``run_at = now`` so
         they're immediately eligible. ``attempts`` is preserved (not reset)
         so the cap is reached. Returns the number of rows transitioned.
+
+        A recurring job that is failed here without its next occurrence armed
+        has its schedule paused in the same transaction. Otherwise the schedule
+        would stay "active" with nothing queued and never run again.
         """
+        from .schedule_definitions import pause_unarmed
+
         n = now if now is not None else time.time()
         cutoff = n - float(lease_seconds)
-        with self._lock, self._conn() as c:
+        with self._transaction() as c:
+            unarmed = c.execute(
+                "SELECT * FROM jobs WHERE status='running' AND updated_at <= ? "
+                "AND attempts >= ? AND recurrence_id IS NOT NULL",
+                (cutoff, max_attempts),
+            ).fetchall()
             failed = c.execute(
                 "UPDATE jobs SET status='failed', last_error=?, updated_at=? "
                 "WHERE status='running' AND updated_at <= ? AND attempts >= ?",
                 ("lease expired (worker presumed crashed)", n, cutoff, max_attempts),
             ).rowcount
+            for row in unarmed:
+                try:
+                    paused = pause_unarmed(c, row, now=n)
+                except (ValueError, TypeError, AttributeError):
+                    # Unreadable saved data (raised before anything is written)
+                    # must not stop every other stale job from being reclaimed.
+                    log.warning("job queue: schedule %s of failed job %s is unreadable; "
+                                "it was not paused", row["recurrence_id"], row["id"])
+                    continue
+                if paused:
+                    log.warning("job queue: schedule %s paused; its last attempt "
+                                "ended with no next occurrence", row["recurrence_id"])
             requeued = c.execute(
                 "UPDATE jobs SET status='pending', run_at=?, updated_at=? "
                 "WHERE status='running' AND updated_at <= ? AND attempts < ?",
