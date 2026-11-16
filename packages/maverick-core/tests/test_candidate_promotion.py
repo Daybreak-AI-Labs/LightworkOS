@@ -736,14 +736,16 @@ def test_a_full_history_on_a_live_release_can_still_be_settled_and_closed(promot
         except CandidatePromotionConflict as exc:
             refused = str(exc)
             break
-    assert refused is not None and "history is full" in refused and "close" in refused
+    # The restore refusal and the close refusal name the same way out.
+    way_out = "publish another version directly, then close this request"
+    assert refused is not None and "history is full" in refused and way_out in refused
     full = service.inspect(TENANT, OPERATOR, "candidate-one")
     # No restore was claimed without room for its result inside the cap; only
     # the outcome (reconcile) went past it, and the list still loads.
     claims = [event["sequence"] for event in full["events"] if event["state"] == "rollback_claimed"]
     assert full["state"] == "canary" and max(claims) <= 127 and len(full["events"]) <= 130
     assert service.list(TENANT, OPERATOR)[0]["can_discard"] is True
-    with pytest.raises(CandidatePromotionConflict, match="in use"):
+    with pytest.raises(CandidatePromotionConflict, match=way_out):
         service.discard(TENANT, OPERATOR, "candidate-one", expected_revision=full["revision"],
                         reason_code="stuck_request")
     state["active_sha256"] = _sha("published-directly")
@@ -791,3 +793,25 @@ def test_repeated_reviews_stop_before_the_history_can_no_longer_be_read(promotio
     assert service.list(TENANT, OPERATOR)[0]["stuck"] == "approval_expired"
     assert service.discard(TENANT, OPERATOR, "candidate-one", expected_revision=current["revision"],
                            reason_code="stuck_request")["state"] == "discarded"
+
+
+def test_an_activation_that_may_have_landed_is_never_recorded_as_never_published(promotion):
+    service, state = promotion
+    reviewed = _review(service, _request(service))
+    staged = service.stage(TENANT, OPERATOR, "candidate-one", expected_revision=reviewed["revision"])
+
+    def interrupted(manifest, stage_receipt):
+        state["active_sha256"] = state["candidate_sha256"]      # it went live; the result was lost
+        raise KeyboardInterrupt
+
+    service.deployment_adapter.activate = interrupted
+    with pytest.raises(KeyboardInterrupt):
+        service.activate(TENANT, OPERATOR, "candidate-one", expected_revision=staged["revision"])
+    claimed = service.inspect(TENANT, OPERATOR, "candidate-one")
+    assert claimed["state"] == "activation_claimed" and claimed["published"] is True
+
+    state["active_sha256"] = _sha("published-directly")         # then another version replaced it
+    closed = service.discard(TENANT, OPERATOR, "candidate-one",
+                             expected_revision=claimed["revision"], reason_code="stuck_request")
+    assert closed["state"] == "closed" and closed["events"][-1]["details"]["published"] is True
+

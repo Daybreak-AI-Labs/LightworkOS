@@ -633,6 +633,7 @@ _LIVE_STATES = frozenset({"canary", "active"})
 # closed, and a record is never written that cannot be read back.
 _MAX_EVENTS = 128
 _MAX_STORED_EVENTS = _MAX_EVENTS + 8
+_FULL_AND_LIVE = "publish another version directly, then close this request"
 _ROOM_AFTER = {
     "candidate.promotion.review": 8,
     "candidate.promotion.stage-claim": 6,
@@ -894,8 +895,13 @@ class CandidatePromotions:
 
     @staticmethod
     def _published(record: Mapping[str, object]) -> bool:
-        """Whether the candidate was ever the published artifact."""
-        return any(event.get("state") == "canary" for event in record["events"])  # type: ignore[union-attr]
+        """Whether the candidate was, or may have been, the published artifact.
+
+        A claimed activation counts: its effect can land and lose its result,
+        and such a request must never be recorded as never published.
+        """
+        return any(event.get("state") in {"canary", "activation_claimed"}
+                   for event in record["events"])  # type: ignore[union-attr]
 
     def _can_discard(self, record: Mapping[str, object], policy: PromotionPolicy | None) -> bool:
         """Whether ``discard`` is the way out of the candidate's current state.
@@ -910,9 +916,13 @@ class CandidatePromotions:
         if state == "awaiting_review":
             return self._policy_replaced(record, policy)
         if state in _LIVE_STATES:
-            room = 1 + _ROOM_AFTER["candidate.promotion.rollback-claim"]
-            return len(record["events"]) + room > _MAX_EVENTS  # type: ignore[arg-type]
+            return self._no_room_to_restore(record)
         return state in _APPROVAL_STATES | _UNRESOLVED_STATES
+
+    @staticmethod
+    def _no_room_to_restore(record: Mapping[str, object]) -> bool:
+        room = 1 + _ROOM_AFTER["candidate.promotion.rollback-claim"]
+        return len(record["events"]) + room > _MAX_EVENTS  # type: ignore[arg-type]
 
     def _standing(self, record: Mapping[str, object], policy: PromotionPolicy | None,
                   now: float) -> dict:
@@ -1101,7 +1111,8 @@ class CandidatePromotions:
                 "discard it and make a new request"
                 if action == "candidate.promotion.review" else
                 "this request's history is full, so this step cannot be recorded; "
-                "close the request once it is no longer in use"
+                + (_FULL_AND_LIVE if record["state"] in _LIVE_STATES else
+                   "discard it and make a new request")
             )
         now = self.store.authoritative_time()
 
@@ -1822,6 +1833,11 @@ class CandidatePromotions:
                     raise CandidatePromotionInterrupted("deployment observation is unbound")
                 if observation.active_artifact_sha256 == self._candidate_sha(record):
                     raise CandidatePromotionConflict(
+                        # With no room left to record a restore, the restore
+                        # refusal and this one name the same way out.
+                        "this request is the version in use and its history is full; "
+                        + _FULL_AND_LIVE
+                        if record["state"] in _LIVE_STATES and self._no_room_to_restore(record) else
                         "candidate is in use; check its outcome and roll it back instead of closing it"
                     )
                 details["evidence_sha256"] = observation.evidence_sha256
