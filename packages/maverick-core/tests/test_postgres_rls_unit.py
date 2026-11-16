@@ -50,8 +50,7 @@ class TemporalDeleteCursor(RecordingCursor):
 
 class FactTrustSnapshotCursor(RecordingCursor):
     def fetchall(self):
-        # key, value, trust tier, and the row's tenant (NULL: a legacy row).
-        return [("risk:vendor", "external value", 0, None)]
+        return [("risk:vendor", "external value", 0)]
 
 
 class EmptyFactCursor(RecordingCursor):
@@ -274,7 +273,7 @@ def test_fact_value_and_trust_share_one_snapshot(monkeypatch):
     assert tx_count == 1
     assert len(cur.calls) == 1
     sql, params = cur.calls[0]
-    assert "SELECT key, value, trust_tier, tenant_id FROM (" in sql
+    assert "SELECT key, value, trust_tier FROM (" in sql
     assert "FROM facts" in sql
     assert "ORDER BY write_seq DESC" in sql
     assert params == ()
@@ -667,8 +666,7 @@ def test_list_goals_omits_domain_and_project_id_predicates_when_unset(monkeypatc
     world.list_goals()
 
     sql, params = cur.calls[0]
-    # The last selected column says whether the row is a legacy no-tenant row.
-    assert "domain, project_id, tenant_id IS NULL FROM goals" in sql
+    assert "domain, project_id FROM goals" in sql
     assert "domain = %s" not in sql
     assert "project_id = %s" not in sql
     assert params == ()
@@ -688,9 +686,7 @@ def test_list_goals_can_exclude_unbound_legacy_rows(monkeypatch):
     monkeypatch.setattr(postgres, "_strict_tenant_isolation", lambda: False)
     world.list_goals(owner="user:alice", strict_tenant=True)
     sql, params = cur.calls[0]
-    # Only the filter matters: the select list names tenant_id IS NULL as a column.
-    where = sql.split(" WHERE ", 1)[1]
-    assert "tenant_id = %s" in where and "tenant_id IS NULL" not in where
+    assert "tenant_id = %s" in sql and "tenant_id IS NULL" not in sql
     assert params == ("user:alice", "tenant-a")
 
 
