@@ -480,3 +480,48 @@ def test_a_fresh_owner_workspace_lists_every_starter_team(tmp_path, monkeypatch)
     finally:
         governed_records._reset_process_authority_pin_for_testing()
         config.reset_config_cache()
+
+
+def test_postgres_catalog_and_fixture_preview_do_not_use_durable_service(web, monkeypatch):
+    from maverick import governed_records
+
+    client, state = web
+    # Use the real deployment selector without a database connection.
+    monkeypatch.setenv("MAVERICK_WORLD_BACKEND", "postgres")
+    monkeypatch.setenv("MAVERICK_PG_DSN", "postgresql://example.invalid/test")
+
+    def no_store(_request):
+        pytest.fail("read-only preview opened the durable starter-team service")
+
+    monkeypatch.setattr(native, "service", no_store)
+    catalog = client.get(BASE)
+    assert catalog.status_code == 200
+    assert catalog.json()["preview_only"] is True
+    assert catalog.json()["setups"] == []
+    result = client.get(BASE + "/preview/order_management")
+    assert result.status_code == 200
+    value = result.json()
+    assert value["mode"] == "synthetic_preview" and value["saved"] is False
+    team = starter_team_checks.get_team("order_management")
+    assert sorted(row["id"] for row in value["output"]["findings"]) == sorted(team["sample"]["expected_findings"])
+    assert client.get(BASE + "/preview/order_management").json() == value
+
+    state["context"] = replace(state["context"], tenant="starter-api-b")
+    state["denied"].add("order_management")
+    assert client.get(BASE + "/preview/order_management").status_code == 403
+    assert "order_management" not in {row["id"] for row in client.get(BASE).json()["teams"]}
+
+    def unavailable():
+        raise governed_records.GovernedRecordBackendError("configuration unavailable")
+
+    monkeypatch.setattr(governed_records, "deployment_backend_kind", unavailable)
+    assert client.get(BASE).status_code == 503
+    assert client.get(BASE + "/preview/order_management").status_code == 503
+
+
+def test_local_backend_retains_reviewed_workflow_without_unsaved_preview(web):
+    client, _ = web
+    assert "preview_only" not in client.get(BASE).json()
+    assert client.get(BASE + "/preview/order_management").status_code == 404
+    saved, _ = _save(client)
+    assert client.get(BASE).json()["setups"][0]["id"] == saved["id"]

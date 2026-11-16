@@ -1715,6 +1715,11 @@ class _BackendAuthorityToken:
     pool_timeout_seconds: float = 5
 
 
+def deployment_backend_kind() -> str:
+    """Return the configured persistence kind without opening a record store."""
+    return _selection().kind
+
+
 def _backend_authority_token(selection: _BackendSelection) -> _BackendAuthorityToken:
     digest = (
         hashlib.sha256(selection.dsn.encode("utf-8")).hexdigest()

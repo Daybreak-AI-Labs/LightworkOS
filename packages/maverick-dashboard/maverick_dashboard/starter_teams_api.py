@@ -374,8 +374,38 @@ def _origin(request):
 
 @router.get("")
 def read_catalog(request: Request):
-    return _response(call(lambda: {"teams": available_catalog(request), "setups": service(request).list_setups(),
-                                  "context": digest(context(request).binding()), "notice": NOTICE}))
+    def read():
+        from maverick.governed_records import deployment_backend_kind
+
+        teams = available_catalog(request)
+        preview_only = deployment_backend_kind() == "postgres"
+        result = {"teams": teams, "setups": [] if preview_only else service(request).list_setups(),
+                  "context": digest(context(request).binding()), "notice": NOTICE}
+        if preview_only:
+            result["preview_only"] = True
+        return result
+    return _response(call(read))
+
+
+@router.get("/preview/{team_id}")
+def preview_fixture(request: Request, team_id: str):
+    """Evaluate a bundled synthetic fixture without any durable setup or case."""
+    def read():
+        from maverick.governed_records import deployment_backend_kind
+        from maverick.starter_team_checks import evaluate, get_team
+
+        context(request)
+        if deployment_backend_kind() != "postgres":
+            raise HTTPException(404, "Use the reviewed sample workflow for this deployment.")
+        team = get_team(team_id)
+        require_team(request, team)
+        sample = team["sample"]
+        output = evaluate(team["id"], sample["tables"], as_of=sample["as_of"])
+        if (sorted(item["id"] for item in output["findings"]) != sorted(sample["expected_findings"])
+                or any(item["kind"] == "input_exception" for item in output["findings"])):
+            raise HTTPException(503, "The bundled fixture did not match its expected checks. Nothing was saved.")
+        return {"mode": "synthetic_preview", "saved": False, "output": output}
+    return _response(call(read))
 
 
 @router.get("/setups/{setup_id}/cases")
