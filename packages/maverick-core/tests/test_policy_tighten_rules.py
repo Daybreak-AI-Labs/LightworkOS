@@ -74,6 +74,8 @@ CASES = {
     "sandbox.firecracker_strict": _prot(True),
     **{f"sandbox.{name}": _perm(False) for name in (
         "allow_network", "allow_root", "reuse_container", "cross_run_pool")},
+    # User 0 is root: a workspace may leave it, never choose it.
+    "sandbox.run_as_user": dict(os=0, s=1000, ol=1000, l=0, us=2000, ul=0),
     "sandbox.pids_limit": dict(os=256, s=128, l=1024, us=256, ul=1000000),
     "sandbox.memory": dict(os="2g", s="1g", l="8g", us="2g", ul="16g"),
     "sandbox.memory_mb": dict(os=2048, s=1024, l=4096, us=1024),
@@ -96,6 +98,7 @@ CASES = {
     "security.tool_risk": dict(os={"web_search": "medium"}, s={"web_search": "high"},
                                l={"web_search": "low"}, us={"read_file": "high"}, ul={"shell": "low"}),
     "security.auto_fix": _perm(False),
+    "security.allow_self_approval": _perm(False),
     "security.isolate_parsers": _prot(False),
     "security.secure_defaults": _prot(True),
 }
@@ -190,6 +193,33 @@ def consumer(tmp_path, monkeypatch):
             monkeypatch.delenv("MAVERICK_TENANT")
 
     return run
+
+
+def test_a_workspace_cannot_turn_on_self_approval_or_run_as_root(consumer, monkeypatch):
+    """Neither key had a rule, so a workspace file could let people approve
+    their own requests and run sandbox pods as root."""
+    from maverick import config
+    from maverick.safety.dual_control import allow_self_approval
+
+    monkeypatch.delenv("MAVERICK_ALLOW_SELF_APPROVAL", raising=False)
+
+    def ask():
+        return allow_self_approval(), int(config.load_config().get("sandbox", {}).get("run_as_user", 1000))
+
+    loose = "[security]\nallow_self_approval = true\n[sandbox]\nrun_as_user = 0\n"
+    strict = "[security]\nallow_self_approval = false\n[sandbox]\nrun_as_user = 1000\n"
+    for org in ("", strict):
+        result, ignored = consumer(org, loose, ask)
+        assert result == (False, 1000)
+        assert {"security.allow_self_approval", "sandbox.run_as_user"} <= ignored
+    # A value that the sandbox would read as user 0 is refused in any spelling.
+    for spelling in ('"0"', "0.5", "false"):
+        result, ignored = consumer("", f"[sandbox]\nrun_as_user = {spelling}\n", ask)
+        assert result == (False, 1000) and "sandbox.run_as_user" in ignored, spelling
+    result, ignored = consumer(loose, strict, ask)  # stricter than the organisation: applies
+    assert result == (False, 1000) and not ignored
+    result, ignored = consumer("", "[sandbox]\nrun_as_user = 2000\n", ask)  # another ordinary user
+    assert result == (False, 2000) and not ignored
 
 
 def _deny_above():

@@ -493,9 +493,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - When a saved secret in the dashboard's settings cannot be opened, the
   settings made in the dashboard are on hold until the file can be opened,
   except stricter safety choices, which stay in force. Before, those were
-  ignored too, which put back limits you had tightened there. Health and
+  ignored too, which put back limits you had tightened there. A sandbox
+  that was set up in the dashboard may not start until then. Health and
   `maverick doctor` say so. Save that secret again, or restore the key, to
   clear the warning.
+- A workspace's `config.toml` can no longer let people approve their own
+  requests (`[security] allow_self_approval`) or run sandbox work as user 0
+  (`[sandbox] run_as_user`). The looser value is ignored and listed by
+  `maverick doctor`, like other workspace settings that loosen policy.
 - Automations that watch new Salesforce records or ServiceNow tickets now
   work on lists with more than 5,000 items: each check reads the newest
   5,000. In such a list, a record saved with an earlier creation date is

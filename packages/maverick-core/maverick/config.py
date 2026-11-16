@@ -483,7 +483,8 @@ _UNOPENED = object()
 # Ends the error recorded for a dashboard overlay that was only partly opened.
 # ``operator_preflight`` (``maverick doctor``, Installation health) repeats it.
 DASHBOARD_ON_HOLD = ("Settings made in the dashboard are on hold until this file can be opened, "
-                     "except stricter safety choices, which stay in force.")
+                     "except stricter safety choices, which stay in force. "
+                     "A sandbox that was set up there may not start until then.")
 
 
 def _open_leaves(value: object) -> object:
@@ -514,10 +515,13 @@ def _stricter_policy_only(tree: dict) -> dict:
     sandbox, security): a raised spending cap or a switched-on feature from a
     file that cannot be fully read does not apply, as when the whole file was
     ignored. A policy section loses the values that cannot be opened, and each
-    remaining value applies only where the tenant rule would let it over the
+    remaining value applies only where its tenant rule would let it over the
     settings file underneath: a stricter value such as ``profile = "strict"``
     stays in force, a permission or a looser limit waits until the file can be
-    read again. Reset markers wait too, so the file underneath is unchanged.
+    read again. A key with no such rule has no stricter direction to show (an
+    image, an address, a working folder), so it waits too; a sandbox that
+    needs it then fails to start, which is the safe side of this state. Reset
+    markers wait as well, so the file underneath is unchanged.
     """
     from .policy_tighten import TENANT_RULES, merge_tenant_section
 
@@ -527,7 +531,7 @@ def _stricter_policy_only(tree: dict) -> dict:
         section, base = tree.get(name), under.get(name, {})
         if not isinstance(section, dict) or not isinstance(base, dict):
             continue
-        section = _open_leaves(section)
+        section = _open_leaves({key: value for key, value in section.items() if key in TENANT_RULES[name]})
         merged, _ignored, _fixed = merge_tenant_section(name, base, section, _deep_merge_config)
         held[name] = {key: merged[key] for key in section if key in merged}
     return held

@@ -382,7 +382,32 @@ def consent_mode(upper: object, lower: object) -> tuple[Any, bool]:
     return (upper, True) if looser else (lower, False)
 
 
+def _uid(value: object) -> int:
+    """The user number as the Kubernetes sandbox reads it (``int(value)``)."""
+    try:
+        return int(value)  # type: ignore[call-overload]
+    except (TypeError, ValueError) as exc:
+        raise ValueError("expected a user number") from exc
+
+
+def run_as_user(upper: object, lower: object) -> tuple[Any, bool]:
+    """``[sandbox] run_as_user``: user 0 is root. A lower layer may leave 0
+    and may name another ordinary user, but may not choose 0, in any spelling
+    the sandbox would read as 0 (``"0"``, ``0.5``, ``false``)."""
+    from .policy_tighten import Incomparable
+
+    chosen = _uid(lower)
+    try:
+        current = _uid(upper)
+    except ValueError as exc:  # the sandbox cannot start with it either
+        raise Incomparable("the organisation's user number cannot be read") from exc
+    if chosen == 0 and current != 0:
+        return upper, True
+    return lower, False
+
+
 MERGES = {
+    "sandbox.run_as_user": run_as_user,
     "safety.consent_mode": consent_mode,
     **SCALARS,
     "governance.deny_above": thresholds("deny_above"),

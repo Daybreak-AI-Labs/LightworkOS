@@ -187,7 +187,7 @@ def test_settings_grants_are_on_hold_while_the_dashboard_file_cannot_be_opened(t
     loaded = config.load_config()
     granted = {k: v for k, v in config.get_capabilities().items() if k != "deferred_tools"}
     assert not any(granted.values()), granted  # no permission from Settings applies
-    assert loaded["sandbox"] == {"backend": "firecracker", "provider": "e2b"}  # stricter and plain values stay
+    assert loaded["sandbox"] == {"backend": "firecracker"}  # the stricter choice stays; the rest waits
     assert loaded["safety"] == {"profile": "strict"}  # the looser scan_output choice is on hold too
     check, _cfg = _config_state()
     assert check.status == "blocked" and overlay.name in check.detail
@@ -215,7 +215,7 @@ def test_one_damaged_secret_in_safety_keeps_its_stricter_plain_values(tmp_path):
     config.reset_config_cache()
 
     loaded = config.load_config()
-    assert loaded["safety"] == {"profile": "strict", "screenshot_key": "a-saved-secret"}
+    assert loaded["safety"] == {"profile": "strict"}  # the readable screenshot_key waits with the rest
     assert config.get_sandbox()["backend"] == "docker"  # the looser choice from Settings is on hold
     assert config.get_capabilities()["browser"] is False
     assert str(overlay) in config.config_source_errors()
@@ -249,3 +249,33 @@ def test_a_raised_budget_cap_waits_until_the_dashboard_file_can_be_opened(tmp_pa
     loaded = config.load_config()
     assert loaded["budget"]["max_dollars"] == 500.0 and loaded["features"] == {"savings": True}
     assert str(overlay) not in config.config_source_errors()
+
+
+def test_policy_settings_without_a_rule_wait_with_the_rest_of_an_unreadable_file(tmp_path):
+    """In the policy sections a setting with no stricter direction still
+    applied from a partly unreadable file, so self-approval and "run as user
+    0" stayed on while every other permission waited."""
+    (tmp_path / "config.toml").write_text('[sandbox]\nbackend = "docker"\n', encoding="utf-8")
+    good = _seal("a-saved-secret")
+    blob = bytearray(base64.b64decode(good.partition(":")[2]))
+    blob[-1] ^= 1
+    damaged = "MVKAR1:" + base64.b64encode(blob).decode("ascii")
+    overlay = tmp_path / config.DASHBOARD_OVERRIDES_BASENAME
+    overlay.write_text(
+        "[security]\nallow_self_approval = true\nisolate_parsers = true\n"
+        '[sandbox]\nrun_as_user = 0\nimage = "example/image"\nworkdir = "/srv/work"\nrequire_container = true\n'
+        f'provider = "e2b"\napi_key = "{good}"\n'
+        "[capabilities]\ndeferred_tools = false\n"
+        f'[safety]\nprofile = "strict"\nreceipt_key = "{damaged}"\n', encoding="utf-8")
+    config.reset_config_cache()
+
+    loaded = config.load_config()
+    assert loaded["security"] == {"isolate_parsers": True}  # only what a rule shows to be stricter
+    assert loaded["sandbox"] == {"backend": "docker", "require_container": True}
+    assert loaded["safety"] == {"profile": "strict"} and loaded.get("capabilities", {}) == {}
+    assert "sandbox" in config.config_source_errors()[str(overlay)].lower()  # says a sandbox may not start
+
+    overlay.write_text(overlay.read_text(encoding="utf-8").replace(damaged, good), encoding="utf-8")
+    config.reset_config_cache()
+    loaded = config.load_config()
+    assert loaded["security"]["allow_self_approval"] is True and loaded["sandbox"]["image"] == "example/image"
