@@ -639,6 +639,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   records it assigns, so the workspace they go to can read them; before,
   that workspace saw a "withheld" placeholder. Run it on the computer that
   runs Lightwork: it stops, changing nothing, if it cannot open a value.
+  Writes to goals, facts, conversations and their events wait while it
+  runs (about 4 seconds for 100,000 encrypted values), so pick a quiet
+  period; if Lightwork is busy writing for more than 10 seconds it stops,
+  changing nothing, and can be run again.
+- `maverick tenant backfill` now stops with an explanation when row-level
+  security is on and its database login cannot see records without a
+  workspace; before, it reported that it assigned 0 rows. A script that
+  runs it that way now gets exit code 2. Run it as a login that bypasses
+  row-level security.
 
 ### Fixed
 

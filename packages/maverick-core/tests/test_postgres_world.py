@@ -1681,6 +1681,13 @@ def test_rls_readiness_and_startup_for_a_login_the_policies_apply_to(rls_login, 
     assert report["ready"] is rls_login.owner
     with psycopg.connect(rls_login.admin, autocommit=True) as conn:
         assert pg_rls.preflight(conn)["tables"]["goals"]["null_tenant_rows"] == 1
+        assert pg_rls.backfill(conn, "rls_alpha", dry_run=True)["goals"] == 1
+    # The backfill cannot see those rows as this login either. It says so,
+    # instead of reporting that it assigned nothing.
+    with psycopg.connect(rls_login.dsn) as conn:
+        for dry_run in (True, False):
+            with pytest.raises(ValueError, match="cannot see records that have no workspace"):
+                pg_rls.backfill(conn, "rls_alpha", dry_run=dry_run)
 
     # Enterprise mode turns row-level security on by itself and checks first.
     monkeypatch.delenv("MAVERICK_PG_RLS")

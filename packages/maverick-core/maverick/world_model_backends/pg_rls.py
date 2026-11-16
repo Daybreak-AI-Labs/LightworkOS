@@ -160,7 +160,84 @@ def _existing(cur, tables) -> list[str]:
     return found
 
 
-def _reseal_legacy_values(cur, tenant_id: str, *, dry_run: bool) -> None:
+#: Values read from the server, opened and written back per round trip.
+_RESEAL_BATCH = 1000
+#: How long the backfill waits for the writers of the sealed tables to finish.
+#: It then stops with nothing changed: a lock request left waiting holds up
+#: every later write to those tables, behind however long a transaction runs.
+_LOCK_TIMEOUT_SECONDS = 10
+
+
+class BackfillReport(dict):
+    """``{table: rows assigned}``; ``encrypted_values`` is how many sealed
+    values were re-sealed (in a dry run: would be)."""
+
+    encrypted_values: int = 0
+
+
+def _open_legacy_value(value: str, context: str, tenant: str, keys: dict) -> str | None:
+    """Plaintext of a value sealed with the empty binding, to be re-sealed;
+    ``None`` when it already opens for ``tenant``. Raises
+    ``EncryptionUnavailable`` when neither binding opens it.
+
+    The row has no tenant, so an unbound writer sealed it: the empty binding
+    is the expected one and is tried first."""
+    from .. import crypto_at_rest
+    from ..paths import tenant_scope
+
+    try:
+        with crypto_at_rest.unbound_row_scope():
+            return crypto_at_rest.unseal_bound_from_str(value, context, keys)
+    except crypto_at_rest.EncryptionUnavailable:
+        with tenant_scope(tenant=tenant):
+            crypto_at_rest.unseal_bound_from_str(value, context, keys)
+        return None
+
+
+def _reseal_column(conn, table: str, column: str, tenant: str, keys: dict, *,
+                   dry_run: bool) -> tuple[int, list[str]]:
+    """Re-seal one column's legacy values; return how many, and the rows whose
+    value could not be opened. Rows are read through a server-side cursor and
+    written back a batch at a time, so memory does not grow with the table."""
+    from ..crypto_at_rest import _BOUND_STR_PREFIX, EncryptionUnavailable, seal_bound_to_str
+    from ..encryption_migrate import bound_context
+    from ..paths import tenant_scope
+
+    key = "goal_id" if table == "signoffs" else "id"
+    context = bound_context(table, column)
+    done, stuck = 0, []
+    # WITH HOLD only for a dry run on an autocommit connection, which has no
+    # transaction for the cursor to live in.
+    reader = conn.cursor(name=f"maverick_backfill_{table}_{column}",
+                         withhold=bool(getattr(conn, "autocommit", False)))
+    writer = conn.cursor()
+    try:
+        reader.execute(f"SELECT {key}, {column} FROM {table} "
+                       f"WHERE {column} LIKE '{_BOUND_STR_PREFIX}%' AND {_sealed_legacy_scope(table)}")
+        while rows := reader.fetchmany(_RESEAL_BATCH):
+            batch = []
+            for row_key, value in rows:
+                try:
+                    plain = _open_legacy_value(value, context, tenant, keys)
+                except EncryptionUnavailable:
+                    stuck.append(f"{table}.{column}, {key} {row_key}")
+                    continue
+                if plain is not None:
+                    batch.append((plain, row_key))
+            done += len(batch)
+            if batch and not dry_run and not stuck:
+                with tenant_scope(tenant=tenant):
+                    sealed = [(seal_bound_to_str(plain, context, bind_tenant=True,
+                                                 key_cache=keys), row_key)
+                              for plain, row_key in batch]
+                writer.executemany(f"UPDATE {table} SET {column} = %s WHERE {key} = %s", sealed)
+    finally:
+        reader.close()
+        writer.close()
+    return done, stuck
+
+
+def _reseal_legacy_values(conn, tenant_id: str, *, dry_run: bool) -> int:
     """Re-seal the encrypted values of legacy rows for the tenant they go to.
 
     An unbound writer sealed them with the empty tenant binding. Once the row
@@ -168,63 +245,80 @@ def _reseal_legacy_values(cur, tenant_id: str, *, dry_run: bool) -> None:
     only, so without this the assigned records would read as withheld. A value
     that already opens for the tenant is left alone; plaintext and the older
     unbound format need no binding. A bound value that neither binding opens
-    means this process lacks the key that sealed it (or the value belongs to
-    another tenant): the backfill stops rather than assign a record its new
-    owner could never read.
+    was sealed with a key this process lacks, or for another tenant: the
+    backfill stops rather than assign a record its new owner could never read.
+
+    Returns the number of values re-sealed (in a dry run: that would be).
+    Writers of the sealed tables wait from here until the caller commits.
     """
-    from ..crypto_at_rest import (
-        _BOUND_STR_PREFIX,
-        EncryptionUnavailable,
-        seal_bound_to_str,
-        unbound_row_scope,
-        unseal_bound_from_str,
-    )
-    from ..encryption_migrate import _SEALED_COLUMNS, bound_context
-    from ..paths import canonical_tenant_id, tenant_scope
+    from ..encryption_migrate import _SEALED_COLUMNS
+    from ..paths import canonical_tenant_id
 
     tenant = canonical_tenant_id(tenant_id.strip())
+    cur = conn.cursor()
     tables = _existing(cur, sorted({table for table, _ in _SEALED_COLUMNS}))
     if not dry_run and tables:
         # No unbound writer may add a legacy row between this pass and the
-        # assignment below (the same lock `maverick encryption migrate` takes).
+        # assignment that follows (the same lock `maverick encryption migrate`
+        # takes). The timeout also bounds the row locks of that assignment.
         locked = sorted({*tables, *_existing(cur, ("conversations",))})
+        cur.execute(f"SET LOCAL lock_timeout = '{int(_LOCK_TIMEOUT_SECONDS)}s'")
         cur.execute("LOCK TABLE " + ", ".join(locked) + " IN SHARE ROW EXCLUSIVE MODE")
-    stuck: list[str] = []
+    keys: dict = {}
+    done, stuck = 0, []
     for table, column in _SEALED_COLUMNS:
-        if table not in tables:
-            continue
-        key = "goal_id" if table == "signoffs" else "id"
-        cur.execute(f"SELECT {key}, {column} FROM {table} "
-                    f"WHERE {column} LIKE '{_BOUND_STR_PREFIX}%' AND {_sealed_legacy_scope(table)}")
-        context = bound_context(table, column)
-        for row_key, value in cur.fetchall():
-            try:
-                with tenant_scope(tenant=tenant):
-                    unseal_bound_from_str(value, context)
-                continue
-            except EncryptionUnavailable:
-                pass
-            try:
-                with unbound_row_scope():
-                    plain = unseal_bound_from_str(value, context)
-            except EncryptionUnavailable:
-                stuck.append(f"{table}.{column}")
-                continue
-            if dry_run:
-                continue
-            with tenant_scope(tenant=tenant):
-                sealed = seal_bound_to_str(plain, context, bind_tenant=True)
-            cur.execute(f"UPDATE {table} SET {column} = %s WHERE {key} = %s", (sealed, row_key))
+        if table in tables:
+            count, failed = _reseal_column(conn, table, column, tenant, keys, dry_run=dry_run)
+            done += count
+            stuck += failed
     if stuck:
         raise ValueError(
             f"{len(stuck)} encrypted value(s) in records without a workspace cannot be "
-            f"opened with the encryption key on this computer (first: {stuck[0]}). "
-            "No rows were reassigned. Run this command on the computer that runs "
-            "Lightwork, with the same encryption settings."
+            f"opened (first: {stuck[0]}). Either the encryption key on this computer is "
+            "not the one Lightwork uses, or the value was saved for another workspace. "
+            "No rows were reassigned. If it is the key, run this command on the computer "
+            "that runs Lightwork, with the same encryption settings."
         )
+    return done
 
 
-def backfill(conn, tenant_id: str, *, dry_run: bool = False) -> dict[str, int]:
+def _policies_hide_legacy_rows(cur) -> bool:
+    """True when row policies apply to this login on a table backfill assigns.
+
+    The policies show a row only to its own tenant, so this login sees no
+    legacy row: it could assign none and would count none."""
+    cur.execute(
+        "SELECT NOT (r.rolsuper OR r.rolbypassrls) AND EXISTS ("
+        "SELECT 1 FROM pg_class c WHERE c.oid = ANY(SELECT to_regclass(t) FROM unnest(%s::text[]) t) "
+        "AND c.relrowsecurity "
+        "AND (c.relforcerowsecurity OR pg_get_userbyid(c.relowner) <> r.rolname)) "
+        "FROM pg_roles r WHERE r.rolname = current_user",
+        (list(_PREFLIGHT_TABLES),),
+    )
+    row = cur.fetchone()
+    return bool(row) and row[0] is True
+
+
+def database_error_message(exc: BaseException) -> str | None:
+    """Plain words for a database error that stopped :func:`backfill`, or
+    ``None`` when ``exc`` is not one. The backfill is one transaction, so
+    whatever stopped it, nothing was changed."""
+    if not hasattr(exc, "sqlstate"):
+        return None
+    state = getattr(exc, "sqlstate", None)
+    if state == "55P03":
+        why = (f"Lightwork was busy writing to these records for more than "
+               f"{int(_LOCK_TIMEOUT_SECONDS)} seconds, so the backfill did not start.")
+    elif state == "40P01":
+        why = "The database stopped the backfill because it collided with other work."
+    else:
+        detail = str(exc).strip().splitlines()[0] if str(exc).strip() else type(exc).__name__
+        why = f"The database stopped the backfill ({detail})."
+    return (f"{why} Nothing was changed. You can run it again: pick a quiet period, "
+            "or stop Lightwork first.")
+
+
+def backfill(conn, tenant_id: str, *, dry_run: bool = False) -> BackfillReport:
     """Assign legacy NULL-tenant rows and empty-tenant event rows to a tenant.
 
     So forcing RLS scopes those pre-tenancy rows to ``tenant_id`` instead of
@@ -234,16 +328,25 @@ def backfill(conn, tenant_id: str, *, dry_run: bool = False) -> dict[str, int]:
     batches and receipts are never merged or discarded to make it succeed.
     Encrypted values of the assigned rows are re-sealed for ``tenant_id`` in
     the same transaction (:func:`_reseal_legacy_values`); a value this process
-    cannot open stops the backfill, in a dry run too.
+    cannot open stops the backfill, in a dry run too. Writers of the sealed
+    tables wait while it runs. A login that row policies apply to cannot see
+    legacy rows and is refused, rather than told that none were assigned.
     """
     if not str(tenant_id or "").strip():
         raise ValueError("backfill requires a non-empty tenant id")
     if not dry_run and getattr(conn, "autocommit", False):
         raise ValueError("backfill requires a connection with autocommit disabled")
     cur = conn.cursor()
-    report: dict[str, int] = {}
+    report = BackfillReport()
     try:
-        _reseal_legacy_values(cur, tenant_id, dry_run=dry_run)
+        if _policies_hide_legacy_rows(cur):
+            raise ValueError(
+                "Row-level security is on, and this database login cannot see records "
+                "that have no workspace. It can neither assign them nor tell whether any "
+                "remain. Nothing was changed. Run the backfill with a login that bypasses "
+                "row-level security (a superuser or a BYPASSRLS role)."
+            )
+        report.encrypted_values = _reseal_legacy_values(conn, tenant_id, dry_run=dry_run)
         for t in _PREFLIGHT_TABLES:
             cur.execute("SELECT to_regclass(%s)", (t,))
             if cur.fetchone()[0] is None:
@@ -262,7 +365,10 @@ def backfill(conn, tenant_id: str, *, dry_run: bool = False) -> dict[str, int]:
             conn.commit()
     except Exception as exc:
         if not dry_run:
-            conn.rollback()
+            try:
+                conn.rollback()
+            except Exception:  # a dropped connection has nothing left to roll back
+                pass
         if getattr(exc, "sqlstate", None) == "23505":
             raise ValueError(
                 "legacy tenant records conflict with the destination tenant; "
@@ -285,15 +391,23 @@ def _named_workspace_known() -> bool:
     return bool(current_tenant_id_strict()) or bool(list_tenants())
 
 
+#: The tables whose legacy rows a tenant's reads include in compatibility
+#: mode (``postgres._tenant_scope``), and so the ones the doctor counts. The
+#: other tables backfill assigns (message markers, receipts, the approval
+#: outbox, event and webhook rows) are read by exact tenant only.
+_SHARED_LEGACY_TABLES = ("goals", "facts", "fact_history", "conversations", "approvals", "projects")
+
+
 def shared_legacy_rows(world) -> dict[str, Any] | None:
     """Legacy rows that every workspace reads in compatibility mode.
 
     The finding behind the ``maverick doctor`` warning, or ``None`` when there
     is nothing to warn about: strict isolation is on, no row lacks a workspace,
     or no named workspace exists (none is active, the roster lists none and the
-    store holds no row of one). It uses the tables and the predicate of
-    :func:`backfill`, so ``rows`` is what ``maverick tenant backfill --dry-run``
-    reports, counted up to :data:`_LEGACY_COUNT_CAP` per table (``capped``).
+    store holds no row of one). It uses the predicate of :func:`backfill` on
+    :data:`_SHARED_LEGACY_TABLES`, counted up to :data:`_LEGACY_COUNT_CAP` per
+    table (``capped``). ``maverick tenant backfill --dry-run`` reports more
+    rows: it also assigns rows no other workspace reads.
 
     One statement, marked as a deployment-wide read; it counts rows and selects
     no record content. Under forced row-level security a login the policies
@@ -306,7 +420,7 @@ def shared_legacy_rows(world) -> dict[str, Any] | None:
     counts = ", ".join(
         f"(SELECT count(*) FROM (SELECT 1 FROM {t} WHERE {_legacy_scope(t)} "
         f"LIMIT {_LEGACY_COUNT_CAP}) s)"
-        for t in _PREFLIGHT_TABLES
+        for t in _SHARED_LEGACY_TABLES
     )
     named = " OR ".join(
         f"EXISTS (SELECT 1 FROM {t} WHERE {_column(t)} > '')" for t in _PREFLIGHT_TABLES
@@ -318,4 +432,5 @@ def shared_legacy_rows(world) -> dict[str, Any] | None:
     return {"rows": sum(found), "capped": _LEGACY_COUNT_CAP in found}
 
 
-__all__ = ["resolve_dsn", "connect", "preflight", "backfill", "shared_legacy_rows"]
+__all__ = ["resolve_dsn", "connect", "preflight", "backfill", "shared_legacy_rows",
+           "database_error_message", "BackfillReport"]

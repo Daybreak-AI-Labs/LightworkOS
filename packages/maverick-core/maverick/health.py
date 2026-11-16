@@ -638,7 +638,8 @@ def _check_workspace_records(world) -> None:
          f"{'has' if one else 'have'} no workspace, so every workspace can read "
          f"{'it' if one else 'them'}",
          fix="Assign such records to one workspace: maverick tenant backfill --tenant <id> "
-             "(preview with --dry-run). Then turn on strict isolation: "
+             "(preview with --dry-run). Writes wait while it runs, so pick a quiet "
+             "period. Then turn on strict isolation: "
              "MAVERICK_STRICT_TENANT_ISOLATION=1, or \"Hide records with no workspace\" "
              "in Settings.")
 

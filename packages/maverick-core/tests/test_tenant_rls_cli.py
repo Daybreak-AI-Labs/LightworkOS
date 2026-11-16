@@ -79,3 +79,50 @@ def test_backfill_no_dsn_errors():
     res = CliRunner().invoke(main, ["tenant", "backfill", "--tenant", "acme"])
     assert res.exit_code == 2
     assert "no Postgres DSN" in res.output
+
+
+def test_backfill_says_writes_wait_and_how_long_it_may_take(monkeypatch):
+    """The backfill holds back writes to the records it re-seals. The help,
+    the preview and the real run each say so, and the preview gives the count
+    of encrypted values and a rough duration."""
+    class Report(dict):
+        encrypted_values = 250_000
+
+    monkeypatch.setattr(pg_rls, "resolve_dsn", lambda dsn=None: "x")
+    monkeypatch.setattr(pg_rls, "connect", lambda *a, **k: _Conn())
+    monkeypatch.setattr(pg_rls, "backfill", lambda conn, tid, dry_run=False: Report(goals=3))
+    runner = CliRunner()
+    help_text = " ".join(runner.invoke(main, ["tenant", "backfill", "--help"]).output.split())
+    assert "wait while it runs" in help_text and "quiet period" in help_text
+    preview = runner.invoke(main, ["tenant", "backfill", "--tenant", "acme", "--dry-run"]).output
+    assert "250,000 encrypted value(s) would be re-sealed" in preview
+    assert "about 1 minute" in preview and "wait while it runs" in preview
+    real = runner.invoke(main, ["tenant", "backfill", "--tenant", "acme"]).output
+    assert real.index("wait until this finishes") < real.index("assigned 3 row(s)")
+    assert "250,000 encrypted value(s) re-sealed" in real
+
+
+@pytest.mark.parametrize("sqlstate, words", [
+    ("55P03", "busy writing"), ("40P01", "collided with other work"), (None, "stopped the backfill")])
+def test_backfill_database_error_is_reported_in_plain_words(monkeypatch, sqlstate, words):
+    """A lock timeout, a deadlock or a dropped connection is not a traceback:
+    the command says that nothing was changed and that it can run again."""
+    class DatabaseError(Exception):
+        pass
+
+    def stopped(conn, tid, dry_run=False):
+        error = DatabaseError("canceling statement due to lock timeout")
+        error.sqlstate = sqlstate
+        raise error
+
+    monkeypatch.setattr(pg_rls, "resolve_dsn", lambda dsn=None: "x")
+    monkeypatch.setattr(pg_rls, "connect", lambda *a, **k: _Conn())
+    monkeypatch.setattr(pg_rls, "backfill", stopped)
+    res = CliRunner().invoke(main, ["tenant", "backfill", "--tenant", "acme"])
+    assert res.exit_code == 2 and res.exception.__class__ is SystemExit, res.output
+    assert words in res.output and "Nothing was changed" in res.output
+    assert "run it again" in res.output and "Traceback" not in res.output
+    # Anything that is not a database error is still raised as it was.
+    monkeypatch.setattr(pg_rls, "backfill", lambda *a, **k: (_ for _ in ()).throw(KeyError("bug")))
+    assert isinstance(CliRunner().invoke(main, ["tenant", "backfill", "--tenant", "acme"]).exception,
+                      KeyError)

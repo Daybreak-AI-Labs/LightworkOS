@@ -149,11 +149,31 @@ maverick tenant backfill --tenant <id>             # give them to one workspace
 ```
 
 Then turn on strict isolation (`MAVERICK_STRICT_TENANT_ISOLATION=1`, or "Hide
-records with no workspace" in Settings). Run the backfill on the computer that
-runs Lightwork, with the same encryption settings: it re-seals each encrypted
-value for the workspace it goes to, and it stops without changing anything if
-it cannot open one. Nothing warns on SQLite (one file per workspace), under
-strict isolation, or when no such record exists.
+records with no workspace" in Settings). Nothing warns on SQLite (one file per
+workspace), under strict isolation, or when no such record exists. The doctor
+counts goals, facts and their history, conversations, approvals and projects,
+the records every workspace reads. The backfill reports more rows, because it
+also assigns message markers, receipts and event rows that no other workspace
+reads.
+
+What to expect from the backfill:
+
+- **Writes wait while it runs.** It re-seals each encrypted value for the
+  workspace it goes to, and no new goal, fact, conversation turn or event can
+  be saved until it finishes. Run it in a quiet period, or stop Lightwork
+  first. The dry run reports how many encrypted values there are; allow about
+  one minute for every 500,000 (100,000 took about 4 seconds on a test
+  machine). Reads are not held up.
+- **It is all or nothing.** It is one transaction. If Lightwork is busy
+  writing for more than 10 seconds, or the database stops it, it says so,
+  changes nothing, and can be run again.
+- **Run it where the encryption key is.** Use the computer that runs
+  Lightwork, with the same encryption settings. If a value cannot be opened,
+  it names the table and row and changes nothing. The cause is the wrong key
+  on this computer, or a value that was saved for another workspace.
+- **Run it before row-level security is on, or as a login that bypasses it.**
+  An ordinary login cannot see records without a workspace once the policies
+  are in force. The backfill says so and stops.
 
 ### Enabling RLS safely (auto-on under enterprise; guided opt-in otherwise)
 

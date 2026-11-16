@@ -1093,7 +1093,8 @@ def _bound_aad(tenant: str | None, context: str) -> bytes:
 
 
 def seal_bound(plaintext: bytes, context: str, *, portable: bool = False,
-               bind_tenant: bool = True) -> bytes:
+               bind_tenant: bool = True,
+               key_cache: dict[tuple, tuple] | None = None) -> bytes:
     """Seal bound to the current tenant AND ``context``.
 
     A blob copied to another tenant, another record or another field fails GCM
@@ -1107,30 +1108,45 @@ def seal_bound(plaintext: bytes, context: str, *, portable: bool = False,
     ``bind_tenant=False`` binds the context only (kind ``D``): for a store
     whose identity is the file itself (a per-tenant SQLite world), the
     request's tenant context is not part of the value's identity, and reads
-    from another context must still open it."""
+    from another context must still open it.
+
+    ``key_cache`` lets a batch writer resolve the key once per tenant instead
+    of once per value (a config read and a key-file read each time). Use one
+    cache for one batch only: it holds key material, and a key rotated or a
+    per-tenant setting changed meanwhile is not seen."""
     if not _have_crypto():
         raise EncryptionUnavailable("at-rest encryption needs 'cryptography'")
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
     from .paths import current_tenant_id_strict
     fleet = _FORCE_EXTERNAL_FLEET_KEY.get()
-    tenant_key = not (portable or _FORCE_DEPLOYMENT_KEY.get() or fleet) and per_tenant_at_rest()
-    tenant = current_tenant_id_strict() if bind_tenant or tenant_key else None
-    if tenant_key:
-        from .tenant.kms import tenant_dek
-        kind, keyid, key = b"T", bytes(_KEYID_BYTES), tenant_dek(tenant)
-    else:
-        active = None if fleet else _active_keyring_key()
-        if active is not None:
-            key, keyid = active
+    forced = _FORCE_DEPLOYMENT_KEY.get()
+    cache_key = None
+    if key_cache is not None:
+        cache_key = ("seal", portable, bind_tenant, fleet, forced, current_tenant_id_strict())
+    resolved = key_cache.get(cache_key) if key_cache is not None else None
+    if resolved is None:
+        tenant_key = not (portable or forced or fleet) and per_tenant_at_rest()
+        tenant = current_tenant_id_strict() if bind_tenant or tenant_key else None
+        if tenant_key:
+            from .tenant.kms import tenant_dek
+            kind, keyid, key = b"T", bytes(_KEYID_BYTES), tenant_dek(tenant)
         else:
-            key = _admitted_shared_key() if fleet else _load_or_create_key()
-            keyid = _key_fingerprint(key)
-        kind = b"K" if bind_tenant else b"D"
-    if kind == b"D":
-        tenant = None
+            active = None if fleet else _active_keyring_key()
+            if active is not None:
+                key, keyid = active
+            else:
+                key = _admitted_shared_key() if fleet else _load_or_create_key()
+                keyid = _key_fingerprint(key)
+            kind = b"K" if bind_tenant else b"D"
+        if kind == b"D":
+            tenant = None
+        resolved = (kind, keyid, AESGCM(key), tenant)
+        if key_cache is not None:
+            key_cache[cache_key] = resolved
+    kind, keyid, cipher, tenant = resolved
     nonce = secrets.token_bytes(_NONCE_BYTES)
-    ct = AESGCM(key).encrypt(nonce, plaintext, _bound_aad(tenant, context))
+    ct = cipher.encrypt(nonce, plaintext, _bound_aad(tenant, context))
     return _BOUND_MAGIC + kind + keyid + nonce + ct
 
 
@@ -1300,13 +1316,14 @@ def bound_str_context(s: object) -> str | None:
     return parsed[0] if parsed else None
 
 
-def seal_bound_to_str(text: str, context: str, *, bind_tenant: bool = True) -> str:
+def seal_bound_to_str(text: str, context: str, *, bind_tenant: bool = True,
+                      key_cache: dict[tuple, tuple] | None = None) -> str:
     """Seal ``text`` bound to ``context`` (``table.column``) and, unless
     ``bind_tenant`` is False, the current tenant, as a TEXT-column token. See
     :func:`seal_bound`."""
     if not isinstance(context, str) or not _CONTEXT_RE.fullmatch(context):
         raise ValueError("seal context must look like 'table.column'")
-    blob = seal_bound(text.encode("utf-8"), context, bind_tenant=bind_tenant)
+    blob = seal_bound(text.encode("utf-8"), context, bind_tenant=bind_tenant, key_cache=key_cache)
     return _BOUND_STR_PREFIX + context + ":" + base64.b64encode(blob).decode("ascii")
 
 

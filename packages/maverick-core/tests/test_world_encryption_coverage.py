@@ -349,6 +349,40 @@ def test_sqlite_tokens_ignore_the_request_tenant_and_postgres_tokens_bind_it(mon
 
 
 @requires_crypto
+def test_batch_seal_resolves_the_key_once_per_tenant_and_keeps_the_binding(monkeypatch):
+    """A batch writer passes one cache: the key is resolved once per tenant,
+    not once per value, and each value is still bound to the tenant that was
+    active when it was sealed."""
+    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
+    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
+    from maverick import paths
+
+    loads = []
+    real = car._load_or_create_key
+    monkeypatch.setattr(car, "_load_or_create_key", lambda: loads.append(1) or real())
+    cache: dict = {}
+    sealed = {}
+    for tenant in ("acme", "beta", "acme"):
+        token = paths._TENANT.set(tenant)
+        try:
+            sealed[tenant] = [car.seal_bound_to_str(f"{tenant} {n}", "facts.value", key_cache=cache)
+                              for n in range(3)]
+        finally:
+            paths._TENANT.reset(token)
+    assert len(loads) == 2 and len(cache) == 2
+    assert len(set(sealed["acme"])) == 3  # a fresh nonce for every value
+    for tenant, other in (("acme", "beta"), ("beta", "acme")):
+        token = paths._TENANT.set(tenant)
+        try:
+            assert [car.unseal_bound_from_str(v, "facts.value") for v in sealed[tenant]] == [
+                f"{tenant} {n}" for n in range(3)]
+            with pytest.raises(car.EncryptionUnavailable):
+                car.unseal_bound_from_str(sealed[other][0], "facts.value")
+        finally:
+            paths._TENANT.reset(token)
+
+
+@requires_crypto
 def test_postgres_legacy_null_tenant_row_opens_with_its_own_unbound_binding(monkeypatch):
     """A legacy row (``tenant_id IS NULL``) was sealed with no tenant bound.
     A compatibility read under a tenant opens it with that empty binding,
