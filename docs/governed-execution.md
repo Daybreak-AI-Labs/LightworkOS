@@ -179,8 +179,9 @@ propose ──▶ pending ──(human approval)──▶ apply ──▶ applie
 
 **`propose(observation, *, goal_id=None, proposed_by="")`** takes
 `{failure, target, name, change, rationale}`. `target` is a closed set —
-`prompt`, `skill`, `memory` — so a proposal cannot widen its own blast radius
-by naming a new one. Every free-text field is bounded (2000 characters),
+only `prompt`, the standing instructions the agent reads — so a proposal
+cannot widen its own blast radius by naming a new one. (`skill` and `memory`
+were accepted once but nothing read them; they are refused.) Every free-text field is bounded (2000 characters),
 screened for injection tripwires, and secret-redacted before storage. **A
 tripwire hit refuses the whole proposal**: quarantining it would keep
 attacker-authored text in a queue whose only exit is "write this into the
@@ -412,7 +413,8 @@ Every refusal below is deliberate and leaves the system in a defined state.
 | `no sandbox available for the repl kernel: …` | `build_sandbox` failed (backend policy, missing daemon) | Fix `[sandbox]`; under enterprise mode `local` is refused by policy |
 | `the statement driver produced no result` (on `stderr`, `ok=False`) | The driver never wrote its result file — timeout, killed process, or no `python3` in the image | Raise `max_seconds`, or use an image with a Python interpreter and a shared workdir |
 | `harness self-refinement is off` | `[harness_refine] enable` is false | Set it (or `MAVERICK_HARNESS_REFINE=1`); `revert` keeps working while off |
-| `unknown refinement target '…'` | Target outside `prompt` / `skill` / `memory` | Use one of the three; the set is closed by design |
+| `unknown refinement target '…'` | Target other than `prompt` | Use `prompt`; the set is closed by design |
+| `skill and memory refinements are no longer offered …` | A `skill` or `memory` target: nothing ever read those, so applying one changed nothing | Propose a `prompt` refinement; a saved one of those kinds is closed, not applied |
 | `refinement name '…' must be 1-96 characters` | Name outside `[A-Za-z0-9][A-Za-z0-9._-]*` | Rename the artifact the refinement targets |
 | `observation field '…' is required` / `is N characters; the ceiling is 2000` | Empty or oversized field | Supply all five fields; trim to the bound |
 | `observation field '…' tripped the injection screen` | The observation came from a run an attacker may have influenced | Refused, not quarantined — nothing is stored; investigate the source run |

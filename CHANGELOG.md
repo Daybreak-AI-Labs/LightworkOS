@@ -494,6 +494,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `[mcp_sidecar.oauth]`) is now refused when the settings are read. Nothing
   could complete that sign-in, so such a server only ever failed to start.
   Use `grant_type = "client_credentials"`, or a static `auth_token`.
+- Suggested instruction changes can target standing instructions only. The
+  "A named procedure" and "Something it remembers" choices (`--target skill`
+  and `--target memory` in `maverick refine propose`) are removed: nothing
+  read those changes, so approving one changed nothing. A waiting suggestion
+  of those kinds is closed when someone applies it or suggests a new change;
+  one already applied is listed as changing nothing and can be undone.
 
 ### Fixed
 
