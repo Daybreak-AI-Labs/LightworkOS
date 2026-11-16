@@ -28,6 +28,15 @@ from the request and reply text length and marked estimated. The same charge
 settles the provider spend receipt for ``vertex``, so a
 ``[budget.provider_caps] vertex`` cap is enforced. A caller with no run budget
 is refused before anything is sent.
+
+The hold taken before a request covers its largest possible reply, as model
+calls' holds do, so a call that could not fit the run budget or the vertex cap
+is not sent. The output allowance is the per-call one model calls use
+(``[context] max_output_tokens`` / ``MAVERICK_AGENT_MAX_TOKENS``, else scaled
+from the context window). ``generate`` sends it as
+``generationConfig.maxOutputTokens``, or the caller's ``max_output_tokens`` when
+smaller. ``predict`` cannot limit a custom endpoint's reply, so it holds the
+same allowance, and a reply longer than that is still charged in full.
 """
 from __future__ import annotations
 
@@ -62,6 +71,9 @@ _SCHEMA: dict[str, Any] = {
             "Vertex model id to call (generate). Required; when [access] "
             "allowed_models is set it must list vertex:<model id>.")},
         "prompt": {"type": "string"},
+        "max_output_tokens": {"type": "integer", "minimum": 1, "description": (
+            "Longest reply to allow, in tokens (generate). Optional; never above "
+            "the configured per-call output allowance.")},
         "endpoint_id": {"type": "string", "description": "deployed endpoint id (predict)."},
         "instances": {"type": "array", "description": "predict instances."},
     },
@@ -98,6 +110,16 @@ def _price_route(name: str) -> str | None:
     if len(route) > 256 or any(ord(c) < 32 or ord(c) == 127 for c in route):
         return None
     return route
+
+
+def _output_allowance(route: str) -> int:
+    """The per-call output allowance model calls use, for ``route``."""
+    from ..context_scaling import LEGACY_MAX_OUTPUT_TOKENS, max_output_tokens
+
+    try:
+        return max(1, int(max_output_tokens(route)))
+    except Exception:  # sizing never blocks a call; fall back to the floor
+        return LEGACY_MAX_OUTPUT_TOKENS
 
 
 def _estimated_tokens(text: str) -> int:
@@ -149,9 +171,11 @@ def _charge(budget, quote, response, sent: str) -> dict[str, Any]:
     return {"charge": charge, "estimated": estimated, "stop": stop}
 
 
-def _post(url: str, body: dict, category: str, *, budget, price_route: str):
+def _post(url: str, body: dict, category: str, *, budget, price_route: str,
+          output_tokens: int):
     """One paid Vertex request, charged to the run budget and to the provider
-    spend receipt at the same price."""
+    spend receipt at the same price. ``output_tokens`` is the longest reply
+    the hold covers."""
     if budget is None:
         raise RuntimeError(
             "Vertex calls are charged to a run's spending limit, and this call has "
@@ -162,9 +186,10 @@ def _post(url: str, body: dict, category: str, *, budget, price_route: str):
     budget.check()
     quote = metered_tool_quote(price_route)
     sent = json.dumps(body, default=str)
-    # The reply's size is unknown before the call, so the hold covers the
-    # request; the reply is charged when it arrives.
-    projected = _estimated_tokens(sent) * quote.input_per_mtok / 1_000_000
+    # Hold the request plus its longest allowed reply, as model calls do; the
+    # reply's real usage is charged when it arrives.
+    projected = (_estimated_tokens(sent) * quote.input_per_mtok
+                 + output_tokens * quote.output_per_mtok) / 1_000_000
     outcome: dict[str, Any] = {}
 
     def send():
@@ -191,9 +216,13 @@ def _post(url: str, body: dict, category: str, *, budget, price_route: str):
     return response
 
 
-def _op_generate(model: str, prompt: str, budget) -> str:
+def _op_generate(model: str, prompt: str, budget, requested_output=None) -> str:
     if not prompt:
         return "ERROR: generate requires prompt"
+    if requested_output is not None and (
+            isinstance(requested_output, bool) or not isinstance(requested_output, int)
+            or requested_output < 1):
+        return "ERROR: max_output_tokens must be a whole number of at least 1"
     if not model:
         return "ERROR: generate requires model (the Vertex model id to call)"
     from ..llm import ModelNotAllowedError, require_model_allowed
@@ -206,8 +235,13 @@ def _op_generate(model: str, prompt: str, budget) -> str:
     if seg is None or price_route is None:
         return "ERROR: generate requires a valid model"
     url = f"{_base()}/publishers/google/models/{seg}:generateContent"
-    body = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
-    r = _post(url, body, "generation", budget=budget, price_route=price_route)
+    output_tokens = _output_allowance(price_route)
+    if requested_output is not None:
+        output_tokens = min(output_tokens, requested_output)
+    body = {"contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "generationConfig": {"maxOutputTokens": output_tokens}}
+    r = _post(url, body, "generation", budget=budget, price_route=price_route,
+              output_tokens=output_tokens)
     try:
         data = r.json()
     except ValueError:
@@ -230,7 +264,8 @@ def _op_predict(endpoint_id: str, instances: list, budget) -> str:
     if seg is None or price_route is None:
         return "ERROR: predict requires a valid endpoint_id"
     url = f"{_base()}/endpoints/{seg}:predict"
-    r = _post(url, {"instances": instances}, "inference", budget=budget, price_route=price_route)
+    r = _post(url, {"instances": instances}, "inference", budget=budget,
+              price_route=price_route, output_tokens=_output_allowance(price_route))
     try:
         data = r.json()
     except ValueError:
@@ -270,7 +305,8 @@ def _run(args: dict[str, Any], *, budget=None) -> str:
     try:
         if op == "generate":
             return _op_generate((args.get("model") or "").strip(),
-                                (args.get("prompt") or "").strip(), budget)
+                                (args.get("prompt") or "").strip(), budget,
+                                args.get("max_output_tokens"))
         if op == "predict":
             return _op_predict((args.get("endpoint_id") or "").strip(), instances, budget)
     except (ProviderAccountingUnavailable, ProviderCapExceeded, BudgetExceeded,

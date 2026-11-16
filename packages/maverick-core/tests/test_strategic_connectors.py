@@ -233,6 +233,8 @@ def _vertex(monkeypatch, body, *, budget=None, status=200):
     """A vertex tool bound to a run budget, with a fake Vertex endpoint."""
     monkeypatch.setenv("VERTEX_ACCESS_TOKEN", "t")
     monkeypatch.setenv("VERTEX_PROJECT", "proj")
+    # The output allowance each call holds; small, so a hold fits these runs.
+    monkeypatch.setenv("MAVERICK_AGENT_MAX_TOKENS", "1000")
     post = MagicMock(return_value=_resp(status, body))
     _fake_httpx(monkeypatch, post=post)
     from maverick.budget import Budget
@@ -441,6 +443,63 @@ def test_vertex_spending_cap_is_enforced_from_the_charges(monkeypatch, tmp_path)
     with pytest.raises(ProviderCapExceeded):
         tool.fn({"op": "predict", "endpoint_id": "7", "instances": [1]})
     assert post.call_count == 2
+
+
+def test_vertex_holds_its_largest_reply_before_sending(monkeypatch, tmp_path):
+    # The hold covers the longest reply a call may return, so a call whose
+    # largest reply would not fit is never sent. generate asks for at most the
+    # output allowance ([context] max_output_tokens) or the caller's smaller
+    # limit; predict cannot limit its reply, so it holds the same allowance.
+    from maverick.budget import Budget, BudgetExceeded
+    _vertex_ledger(monkeypatch, tmp_path)
+    tool, post, _budget = _vertex(monkeypatch, _generated(), budget=Budget(max_dollars=1.0))
+    monkeypatch.setenv("MAVERICK_AGENT_MAX_TOKENS", "20000")  # $1.00 at the ceiling
+    for args in ({"op": "generate", "model": "m", "prompt": "hi"},
+                 {"op": "predict", "endpoint_id": "7", "instances": [1]}):
+        with pytest.raises(BudgetExceeded):
+            tool.fn(args)
+    assert post.call_count == 0
+    assert tool.fn({"op": "generate", "model": "m", "prompt": "hi", "max_output_tokens": 1000}) == "ok"
+    assert post.call_args.kwargs["json"]["generationConfig"] == {"maxOutputTokens": 1000}
+    with pytest.raises(BudgetExceeded):  # 50000 is cut to the allowance: no fit
+        tool.fn({"op": "generate", "model": "m", "prompt": "hi", "max_output_tokens": 50000})
+    assert post.call_count == 1
+    assert tool.fn({"op": "generate", "model": "m", "prompt": "hi",
+                    "max_output_tokens": "lots"}).startswith("ERROR")
+
+
+@pytest.mark.parametrize("limit", ["run", "provider_cap"])
+def test_vertex_parallel_calls_cannot_pass_the_spending_limits(monkeypatch, tmp_path, limit):
+    # Four generate calls at once, each replying with all it asked for: only
+    # the calls whose largest reply fits are sent, so neither the run limit
+    # nor the vertex cap is passed.
+    import concurrent.futures
+    import time
+
+    from maverick.budget import Budget, BudgetExceeded
+    from maverick.provider_cost_cap import ProviderCapExceeded
+    cap = _vertex_ledger(monkeypatch, tmp_path,
+                         caps={"vertex": 1.0} if limit == "provider_cap" else None)
+    tool, post, budget = _vertex(
+        monkeypatch, _generated(),
+        budget=Budget(max_dollars=1.0) if limit == "run" else None)
+    monkeypatch.setenv("MAVERICK_AGENT_MAX_TOKENS", "8192")  # $0.41 at the ceiling
+
+    def reply(url, *, json, **_kw):
+        time.sleep(0.2)
+        wanted = json["generationConfig"]["maxOutputTokens"]
+        return _resp(200, _generated(promptTokenCount=10, candidatesTokenCount=wanted))
+
+    post.side_effect = reply
+    with cap.work_item_scope("goal:VX-3"), concurrent.futures.ThreadPoolExecutor(4) as pool:
+        calls = [pool.submit(tool.fn, {"op": "generate", "model": "m", "prompt": "hi"})
+                 for _ in range(4)]
+        refused = [c for c in calls
+                   if isinstance(c.exception(), (BudgetExceeded, ProviderCapExceeded))]
+    assert post.call_count == 2 and len(refused) == 2
+    assert budget.dollars <= 1.0
+    if limit == "provider_cap":
+        assert cap.check("vertex").spent == pytest.approx(budget.dollars)
 
 
 def test_vertex_ids_cannot_leave_their_path_segment(monkeypatch):
