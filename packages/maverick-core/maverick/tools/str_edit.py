@@ -119,11 +119,16 @@ def _write_charged(sandbox, target: Path, content: str, goal_id) -> None:
     to this editor cannot step around the cap. Raises ``ValueError`` when the
     write would cross it.
     """
-    from ..file_quota import check_and_add
-    ok, msg = check_and_add(len(content.encode("utf-8", "replace")), goal_id=goal_id)
+    from ..file_quota import check_and_add, refund
+    charged = len(content.encode("utf-8", "replace"))
+    ok, msg = check_and_add(charged, goal_id=goal_id)
     if not ok:
         raise ValueError(msg)
-    write_text_contained(sandbox, target, content)
+    try:
+        write_text_contained(sandbox, target, content)
+    except (ValueError, PermissionError, OSError):
+        refund(charged, goal_id=goal_id)  # the write did not complete
+        raise
 
 
 def _cmd_create(sandbox, target: Path, args: dict, goal_id="default") -> str:

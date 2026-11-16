@@ -501,6 +501,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Outbound webhooks now read only the first 4 KiB of a receiver's reply, so
   a very large reply no longer fills memory. The delivery log still shows
   the first 200 characters. Nothing to do.
+- With `[limits] file_write_quota_mb` set, a file write or edit that fails
+  no longer counts against the run's quota. Nothing to do.
 
 ### Fixed
 
