@@ -63,6 +63,11 @@ class _FakeGcp:
         return types.SimpleNamespace(plaintext=pt)
 
 
+class InvalidRequest(Exception):
+    """Stands in for ``hvac.exceptions.InvalidRequest``: Vault's HTTP 400, which
+    is how transit answers a ciphertext it cannot open under the given context."""
+
+
 class _FakeVault:
     class _Transit:
         def encrypt_data(self, name, mount_point, plaintext, context):
@@ -73,7 +78,11 @@ class _FakeVault:
         def decrypt_data(self, name, mount_point, ciphertext, context):
             aad = context.encode()
             ct = base64.b64decode(ciphertext.split("vault:v1:", 1)[1])
-            return {"data": {"plaintext": base64.b64encode(_dec(ct, aad)).decode()}}
+            try:
+                opened = _dec(ct, aad)
+            except InvalidTag as e:
+                raise InvalidRequest("cipher: message authentication failed") from e
+            return {"data": {"plaintext": base64.b64encode(opened).decode()}}
 
     def __init__(self):
         self.secrets = types.SimpleNamespace(transit=self._Transit())
@@ -100,7 +109,8 @@ def test_wrap_unwrap_round_trip(make):
 def test_context_binding_enforced(make):
     kms = make()
     wrapped = kms.wrap(b"\x42" * 32, context=b"tenant:acme")
-    with pytest.raises(InvalidTag):  # wrong context -> AEAD auth failure
+    # wrong context -> AEAD auth failure (Vault reports it as an invalid request)
+    with pytest.raises((InvalidTag, InvalidRequest)):
         kms.unwrap(wrapped, context=b"tenant:evil")
 
 
@@ -119,6 +129,32 @@ def test_wrong_provider_magic_rejected(make):
     kms = make()
     with pytest.raises(EncryptionUnavailable):
         kms.unwrap(b"NOT-OUR-MAGIC" + b"x" * 40, context=b"c")
+
+
+def test_vault_server_error_during_the_key_check_is_not_a_pass():
+    """Only Vault's own "invalid request" answer shows that the other context
+    was refused. A sealed, busy or failing Vault says nothing about the key."""
+
+    class VaultDown(Exception):  # hvac's 503; its 429 and 500 are plain exceptions too
+        pass
+
+    class _NotDerivedThenDown(_FakeVault):
+        class _Transit(_FakeVault._Transit):
+            calls = 0
+
+            def encrypt_data(self, name, mount_point, plaintext, context):
+                return super().encrypt_data(name, mount_point, plaintext, "")
+
+            def decrypt_data(self, name, mount_point, ciphertext, context):
+                type(self).calls += 1
+                if type(self).calls % 2 == 0:  # the check's wrong-context call
+                    raise VaultDown("503 sealed")
+                return super().decrypt_data(name, mount_point, ciphertext, "")
+
+    kms = kms_backends.VaultTransitKMS(key_id="k", client=_NotDerivedThenDown())
+    for _attempt in range(2):  # and the failed check is not remembered as a pass
+        with pytest.raises(EncryptionUnavailable, match="could not check"):
+            kms.wrap(b"\x42" * 32, context=b"tenant:acme")
 
 
 def test_vault_key_that_ignores_the_context_cannot_wrap_but_still_unwraps(caplog):

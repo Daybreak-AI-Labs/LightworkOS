@@ -161,6 +161,17 @@ _VAULT_NOT_DERIVED = (
     "rotate to it.")
 
 
+def _vault_invalid_request(err: Exception) -> bool:
+    """Whether ``err`` is Vault's own "invalid request" answer (HTTP 400), which
+    is how transit refuses a ciphertext under the wrong context. hvac raises it
+    as ``InvalidRequest``; it is matched by name (or by a status code, as for
+    Azure above) so hvac is not imported here. Any other failure (403, 429,
+    5xx, a sealed or unreachable Vault) is not that answer."""
+    if getattr(err, "status_code", None) == 400:
+        return True
+    return any(cls.__name__ == "InvalidRequest" for cls in type(err).__mro__)
+
+
 class VaultTransitKMS:
     """KEK in HashiCorp Vault's transit engine. The tenant context is passed as
     the transit ``context`` (the transit key must be created with
@@ -229,12 +240,13 @@ class VaultTransitKMS:
                 transit.decrypt_data(
                     name=self.key_id, mount_point=self.mount, ciphertext=sealed,
                     context=_ctx_b64(b"maverick-derived-check:b"))
-            except OSError:
-                raise  # Vault unreachable: no answer either way
-            except Exception:
-                self._context_bound = True  # the other context was refused
-            else:
-                self._context_bound = False
+            except Exception as e:
+                if not _vault_invalid_request(e):
+                    raise  # sealed, busy, failing or unreachable: no answer either way
+                # The other context was refused. An answer reached through an
+                # error is not kept: the next call asks Vault again.
+                return True
+            self._context_bound = False
         return self._context_bound
 
     def wrap(self, dek: bytes, *, context: bytes | None = None) -> bytes:
