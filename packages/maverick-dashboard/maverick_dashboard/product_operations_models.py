@@ -140,6 +140,53 @@ def execute_cancel(request, selection, arguments, review, operation_id):
     return Outcome("confirmed", "The test's stop request was saved. No paid request was retried.", {"check": model_tests.public(row)})
 
 
+class SelfHostedPrice(StrictInput):
+    provider: str = Field(pattern=r"^(ollama|vllm|tgi)$")
+    free: bool
+    confirmed: bool = False
+
+
+def self_hosted_snapshot(request, selection):
+    """The Settings page's "Mark a self-hosted server free" form: the same
+    administrator check, the same words for how each server is charged."""
+    from . import admin_pages
+
+    auth.require_global_permission(request, "admin")
+    rows = admin_pages.self_hosted_states()
+    summary = "How each self-hosted server is charged now. " + "; ".join(
+        f"{row['label']}: {row['state']}" for row in rows) + "."
+    fields = [{"name": "provider", "label": "Server", "kind": "select", "value": rows[0]["provider"],
+               "choices": [{"value": row["provider"], "label": row["label"]} for row in rows]},
+              {"name": "free", "label": "Free: it charges nothing. Turn off to charge it again.",
+               "kind": "boolean", "value": True},
+              {"name": "confirmed", "kind": "boolean", "value": False,
+               "label": "Needed to mark it free: I run this server, or I checked that it charges nothing."}]
+    return Snapshot(digest(rows), "Current self-hosted server prices", summary, {"servers": rows}, fields=fields)
+
+
+def prepare_self_hosted(request, selection, arguments):
+    from . import admin_pages
+
+    state = self_hosted_snapshot(request, selection)
+    if arguments["free"] and not arguments["confirmed"]:
+        raise HTTPException(400, admin_pages.SELF_HOSTED_CONFIRM)
+    row = next(row for row in state.details["servers"] if row["provider"] == arguments["provider"])
+    after = "Marked free" if arguments["free"] else "Charged again"
+    summary = ("Stop charging this server's use against spending limits." if arguments["free"]
+               else "Charge this server's use against spending limits again.")
+    return Preview(summary, changes=[{"field": f"Charge for {row['label']}", "before": row["state"], "after": after}])
+
+
+def execute_self_hosted(request, selection, arguments, review, operation_id):
+    from . import admin_pages
+
+    if arguments["free"] and not arguments["confirmed"]:
+        raise HTTPException(400, admin_pages.SELF_HOSTED_CONFIRM)
+    admin_pages.apply_self_hosted_free(request, arguments["provider"], arguments["free"])
+    row = next(row for row in admin_pages.self_hosted_states() if row["provider"] == arguments["provider"])
+    return Outcome("confirmed", f"{row['label']} is now: {row['state']}.", {"server": row})
+
+
 def entries():
     pages = ("/settings", "/settings/all")
     return [Adapter("models.provider_status", "Check AI service status", "models", "/settings",
@@ -151,4 +198,8 @@ def entries():
             Adapter("models.test", "Run a bounded model test", "models", "/settings", pages, TestInput, test_snapshot, prepare_test, execute_test, recover_test),
             Adapter("models.test.history", "Check model test results", "models", "/settings", pages, EmptyInput, history_snapshot,
                     lambda request, selection, args: Preview("Original model test receipts", native=history_snapshot(request, selection).details)),
-            Adapter("models.test.cancel", "Stop a model test", "models", "/settings", pages, CancelInput, cancel_snapshot, prepare_cancel, execute_cancel)]
+            Adapter("models.test.cancel", "Stop a model test", "models", "/settings", pages, CancelInput, cancel_snapshot, prepare_cancel, execute_cancel),
+            Adapter("models.self_hosted_price", "Mark a self-hosted server free or charged", "models", "/settings", pages,
+                    SelfHostedPrice, self_hosted_snapshot, prepare_self_hosted, execute_self_hosted,
+                    aliases=("mark ollama free", "self-hosted model price", "safety ceiling price",
+                             "charge a self-hosted server again"))]

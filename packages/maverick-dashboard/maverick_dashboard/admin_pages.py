@@ -163,13 +163,6 @@ def _settings_response(request: Request, saved: str = "", *, notice: str = "",
                        "Tracked price" if quote.verified else "Estimate only"),
             "ready": quote is not None,
         })
-    from maverick.budget import self_hosted_price_state
-    state_words = {"marked_free": "Marked free", "private": "Free: private address",
-                   "priced": "Charged at your set price", "ceiling": "Safety ceiling"}
-    self_hosted_states = [
-        {"label": label, "state": state_words[self_hosted_price_state(name)]}
-        for name, label in (("ollama", "Ollama"), ("vllm", "vLLM"), ("tgi", "Hugging Face TGI"))
-    ]
     today = datetime.now(timezone.utc).date()
     operator_rates = [
         {"spec": spec, **rate, "active": rate["valid_until"] >= today.isoformat()}
@@ -293,7 +286,7 @@ def _settings_response(request: Request, saved: str = "", *, notice: str = "",
         "role_models": role_models,
         "route_prices": route_prices,
         "operator_rates": operator_rates,
-        "self_hosted_states": self_hosted_states,
+        "self_hosted_states": self_hosted_states(),
         "price_today": today.isoformat(),
         "price_review_until": (today + timedelta(days=30)).isoformat(),
         "model_options": model_options,
@@ -422,24 +415,36 @@ async def settings_set_model_rate(request: Request) -> RedirectResponse:
     return RedirectResponse("/settings?saved=model_rate#settings-model-prices", status_code=303)
 
 
-@router.post("/settings/models/self-hosted-free")
-async def settings_self_hosted_free(request: Request) -> RedirectResponse:
-    """Mark an Ollama, vLLM or TGI server free, or charge it again."""
-    _app()._require_same_origin(request)
+SELF_HOSTED_LABELS = {"ollama": "Ollama", "vllm": "vLLM", "tgi": "Hugging Face TGI"}
+SELF_HOSTED_STATE_WORDS = {"marked_free": "Marked free", "private": "Free: private address",
+                           "priced": "Charged at your set price", "ceiling": "Safety ceiling"}
+SELF_HOSTED_CONFIRM = "Confirm that you run this server or that it charges nothing."
+
+
+def self_hosted_states() -> list[dict[str, str]]:
+    """How each self-hosted server is charged now, in the page's words."""
+    from maverick.budget import self_hosted_price_state
+
+    return [{"provider": name, "label": label,
+             "state": SELF_HOSTED_STATE_WORDS[self_hosted_price_state(name)]}
+            for name, label in SELF_HOSTED_LABELS.items()]
+
+
+def apply_self_hosted_free(request: Request, name: str, free: bool) -> dict:
+    """Mark an Ollama, vLLM or TGI server free, or charge it again.
+
+    One path for the Settings form and the Copilot: an installation
+    administrator only, an audited write, then a read-back of the price in
+    effect so a change another settings file overrides is refused, not
+    reported as done.
+    """
     auth.require_global_permission(request, "admin")
     from maverick.config import config_path, get_provider_config
 
     from . import settings_store
 
-    form = await request.form()
-    name = str(form.get("provider", ""))
-    free = form.get("free") == "on"
     if name not in settings_store.SELF_HOSTED_PROVIDERS:
         raise HTTPException(status_code=400, detail="Choose Ollama, vLLM or TGI.")
-    if free and form.get("confirm") != "on":
-        raise HTTPException(status_code=400, detail=(
-            "Confirm that you run this server or that it charges nothing."
-        ))
 
     def effective_free() -> bool:
         return get_provider_config(name).get("price_per_mtok") == "free"
@@ -457,8 +462,8 @@ async def settings_self_hosted_free(request: Request) -> RedirectResponse:
 
     try:
         with _setting_write(request, "providers", name, audit_value):
-            await run_in_threadpool(settings_store.set_self_hosted_free, name, free)
-        if await run_in_threadpool(effective_free) != free:
+            settings_store.set_self_hosted_free(name, free)
+        if effective_free() != free:
             raise HTTPException(status_code=409, detail=(
                 "Another settings file sets this server's price, so this change has no "
                 f"effect. Edit [providers.{name}] price_per_mtok there."
@@ -468,6 +473,22 @@ async def settings_self_hosted_free(request: Request) -> RedirectResponse:
             "The change could not be confirmed. Refresh Settings and Activity before retrying."
         )) from exc
     _admin_audit(request, "settings_self_hosted_free", provider=name, free=free)
+    return {"provider": name, "free": free}
+
+
+@router.post("/settings/models/self-hosted-free")
+async def settings_self_hosted_free(request: Request) -> RedirectResponse:
+    """Mark an Ollama, vLLM or TGI server free, or charge it again."""
+    _app()._require_same_origin(request)
+    auth.require_global_permission(request, "admin")
+    form = await request.form()
+    name = str(form.get("provider", ""))
+    free = form.get("free") == "on"
+    if name not in SELF_HOSTED_LABELS:
+        raise HTTPException(status_code=400, detail="Choose Ollama, vLLM or TGI.")
+    if free and form.get("confirm") != "on":
+        raise HTTPException(status_code=400, detail=SELF_HOSTED_CONFIRM)
+    await run_in_threadpool(apply_self_hosted_free, request, name, free)
     return RedirectResponse("/settings?saved=model_rate#settings-model-prices", status_code=303)
 
 

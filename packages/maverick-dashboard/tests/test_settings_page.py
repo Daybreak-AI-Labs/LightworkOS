@@ -117,6 +117,57 @@ def test_admin_can_mark_a_self_hosted_server_free(monkeypatch, tmp_path):
     assert _lookup_price_quote("ollama:llama3").rates == (0.0, 0.0)
 
 
+def test_copilot_marks_a_self_hosted_server_free_like_the_settings_form(monkeypatch, tmp_path):
+    """The Copilot operation runs the form's own function: administrators
+    only, the same confirmation, and the price in effect read back."""
+    import pytest
+    from fastapi import HTTPException
+    from maverick.budget import _lookup_price_quote
+    from maverick.config import config_path
+    from maverick_dashboard import auth
+    from maverick_dashboard import product_operations as registry
+    from maverick_dashboard import product_operations_models as ops
+    from starlette.requests import Request
+
+    _prep(monkeypatch, tmp_path)
+    config_path().parent.mkdir(parents=True, exist_ok=True)
+    config_path().write_text('[providers.ollama]\nbase_url = "https://gpu.example.org"\n',
+                             encoding="utf-8")
+    assert "models.self_hosted_price" in registry.adapters()
+    adapter = {a.id: a for a in ops.entries()}["models.self_hosted_price"]
+
+    def request():
+        return Request({"type": "http", "method": "POST", "path": "/settings",
+                        "headers": [(b"host", b"127.0.0.1")], "client": ("127.0.0.1", 1)})
+
+    state = adapter.snapshot(request(), {})
+    assert "Ollama: Safety ceiling" in state.summary and not state.blocked
+    free = {"provider": "ollama", "free": True, "confirmed": True}
+    with pytest.raises(HTTPException) as unconfirmed:
+        adapter.prepare(request(), {}, dict(free, confirmed=False))
+    assert unconfirmed.value.status_code == 400
+    review = adapter.prepare(request(), {}, free)
+    assert review.changes == [{"field": "Charge for Ollama", "before": "Safety ceiling",
+                               "after": "Marked free"}]
+    done = adapter.execute(request(), {}, free, review.native, "a" * 32)
+    assert done.status == "confirmed" and done.details["server"]["state"] == "Marked free"
+    assert _lookup_price_quote("ollama:llama3").rates == (0.0, 0.0)
+    again = {"provider": "ollama", "free": False, "confirmed": False}
+    assert adapter.execute(request(), {}, again, {}, "b" * 32).details["server"]["state"] == "Safety ceiling"
+    assert _lookup_price_quote("ollama:llama3").rates != (0.0, 0.0)
+
+    def deny(_request, _permission):
+        raise HTTPException(status_code=403, detail="forbidden")
+
+    monkeypatch.setattr(auth, "require_global_permission", deny)
+    for call in (lambda: adapter.snapshot(request(), {}),
+                 lambda: adapter.execute(request(), {}, free, {}, "c" * 32)):
+        with pytest.raises(HTTPException) as refused:
+            call()
+        assert refused.value.status_code == 403
+    assert _lookup_price_quote("ollama:llama3").rates != (0.0, 0.0)
+
+
 def test_settings_has_bounded_sections_keyboard_tabs_and_search(monkeypatch, tmp_path):
     _prep(monkeypatch, tmp_path)
     text = _client().get("/settings").text
