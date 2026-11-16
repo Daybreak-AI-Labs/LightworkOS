@@ -295,6 +295,15 @@ TENANT_RULES: dict[str, dict[str, tuple]] = {
         "isolate_parsers": ("protection", False, (), None),
         "secure_defaults": ("protection", True, (), None),
     },
+    # maverick.config.get_codebase; the defaults mirror CODEBASE_LOOP_DEFAULTS.
+    # An unreadable protection mode is read as "block".
+    "codebase": {
+        "default_protect": ("rank", "block", ("block", "approve", "audit"), "block"),
+        "checker": ("protection", True, (), None),
+        "require_container": ("protection", False, (), None),
+        "repair_rounds": ("minimum", 2, (), None),
+        "check_rounds": ("minimum", 2, (), None),
+    },
 }
 
 _ACL_RULES = {key: TENANT_RULES["security"][key] for key in ("allowed_tools", "denied_tools", "max_risk")}
