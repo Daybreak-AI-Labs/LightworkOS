@@ -69,16 +69,26 @@ maverick code export payments ./payments   # plaintext clone for the owner
    untracked or ignored do not carry over either). The new files are
    committed and pinned again, and the tests run again on a fresh copy. This
    repeats up to `[codebase] repair_rounds` times (default 2). Each author
-   round, test run and checker look is a contained step: on the `local`
-   backend, every process it started is stopped when it ends, detached or
-   not (best effort, Linux `/proc`), before the next copy exists.
+   round, test run and checker look is a contained step. On the `local`
+   backend, where Linux allows user namespaces, each command of a step runs
+   in its own user, PID and mount namespace (`unshare --user
+   --map-root-user --pid --fork --kill-child --mount --mount-proc`): when it
+   ends, the kernel stops everything it started, whatever its environment,
+   and it sees an empty private temporary folder with only its own copy
+   mounted in, so it cannot reach other rounds' or proposals' copies. Files
+   elsewhere and the network are shared, so this is not a container. It
+   costs about 30 ms per command. Where namespaces are unavailable (macOS,
+   Windows, hosts that forbid them), each command carries a step marker and
+   the step's end stops every process still carrying it (best effort, Linux
+   `/proc`; a process that clears its environment escapes).
 5. **The independent checker** (`[codebase] checker`, on by default). A
    separate goal with a fresh context gets the request and its own throwaway
    copy of the pinned commit, where `git diff <base> HEAD` shows the change.
    It never sees the author's goal, transcript or reasoning: its run denies
    the tools that read past goals or shared memory (`recall_past_goals`,
-   `memory`, `kv_memory`, `spend_report`) and recalls no prior goals into its
-   brief. It runs in the
+   `memory`, `kv_memory`, `spend_report`), recalls no prior goals and gets
+   no experience guidance in its brief. Its task keeps only finding counts
+   as its result, and its result is not sent in webhooks. It runs in the
    sandbox under the same `code:<repo>` label and protection mode as the
    author. Its copy has no remote, and nothing in it is read back, so it
    cannot push, merge or change the proposal. It reports findings: severity
@@ -110,10 +120,15 @@ maverick code export payments ./payments   # plaintext clone for the owner
    run. The card gives finding counts by severity and status only; the
    finding text, which can quote code, is in `maverick code show` and the
    administrator-only Code page panel. On the `local` backend it also says
-   "These steps ran on this computer without a container, so they were not
-   isolated from each other." Its "unresolved assumptions" list every gap: tests failing or not
-   configured, the checker turned off, unable to run or not looking at the
-   final version, blockers still open, or the budget running out. It never
+   either "Each step ran on this computer with its own processes and its own
+   temporary folder. They still shared its other files and its network,
+   unlike a container." or, without namespaces, "These steps ran on this
+   computer without a container or separate processes, so they were not
+   isolated from each other." Its "unresolved assumptions" list every gap:
+   tests failing or not configured, the checker turned off, unable to run or
+   not looking at the final version, blockers still open, the budget running
+   out or cutting the check or the diff review short, or the steps running
+   on this computer rather than in a container. It never
    calls a change checked when one of these holds. It also warns when the
    diff is too large to store whole. The card can be approved in the
    dashboard's approvals queue for 7 days; after that the proposal shows
