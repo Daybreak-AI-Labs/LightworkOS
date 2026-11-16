@@ -34,6 +34,20 @@ _SLASH_TRIGGER_RE = re.compile(
     re.IGNORECASE,
 )
 
+
+def _own_words(comment: str) -> str:
+    """The comment without quoted replies and fenced code. A quoted earlier
+    request, or one shown as an example, is not a request."""
+    kept, fenced = [], False
+    for line in comment.splitlines():
+        start = line.lstrip()
+        if start.startswith(("```", "~~~")):
+            fenced = not fenced
+        elif not fenced and not start.startswith(">"):
+            kept.append(line)
+    return "\n".join(kept)
+
+
 # A comment author must have write-ish access to trigger a run via the
 # slash command. GitHub's author_association reflects the commenter's
 # relationship to the repo; anything below COLLABORATOR (CONTRIBUTOR,
@@ -143,7 +157,7 @@ def parse_webhook(event: str, payload: dict) -> WebhookPayload | None:
     if event == "issue_comment" and action == "created":
         comment_obj = objects["comment"]
         comment = comment_obj.get("body", "") or ""
-        if not isinstance(comment, str) or not _SLASH_TRIGGER_RE.search(comment):
+        if not isinstance(comment, str) or not _SLASH_TRIGGER_RE.search(_own_words(comment)):
             return None
         # Authorization: only repo-privileged commenters may trigger a run.
         # Without this, any public user can comment "/maverick" and spend

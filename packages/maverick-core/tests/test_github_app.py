@@ -112,6 +112,31 @@ class TestParseWebhook:
         ):
             assert parsed(body) is not None, body
 
+    def test_slash_trigger_in_a_quoted_reply_or_code_block_is_not_a_request(self):
+        # Quoting an earlier "/maverick" comment in a reply, or showing it in
+        # a code example, started another run.
+        def parsed(body):
+            return parse_webhook("issue_comment", {
+                "action": "created",
+                "repository": {"full_name": "octocat/spoon"},
+                "issue": {"number": 7, "title": "x", "body": "y"},
+                "comment": {"body": body, "author_association": "OWNER"},
+                "sender": {"login": "alice"},
+            })
+
+        for body in (
+            "> /maverick please fix\n\nthat run looked wrong to me",
+            "you can write:\n```\n/maverick fix the tests\n```\nto start one",
+            "~~~text\n/maverick\n~~~",
+            "```\n/maverick in a block that never closes",
+        ):
+            assert parsed(body) is None, body
+        for body in (
+            "> the build is red\n\n/maverick please fix",
+            "```\nTraceback ...\n```\n/maverick look at this error",
+        ):
+            assert parsed(body) is not None, body
+
     def test_issue_comment_from_unauthorized_author_returns_none(self):
         # The public (author_association NONE / CONTRIBUTOR / missing) must
         # NOT trigger a run via /maverick even with the slash command --

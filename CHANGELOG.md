@@ -480,7 +480,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Remove the looser values from the file to clear the warning.
 - A GitHub comment starts a run only when `/maverick` is a word of its own.
   A path or link that contains it, such as `packages/maverick-core`, no
-  longer starts one. Write `/maverick` on its own to start a run.
+  longer starts one, and neither does one in a quoted reply or a code
+  block. Write `/maverick` on its own to start a run.
 - On Postgres, the time allowed to undo an approval now starts when the
   decision reaches the signed audit log, as it already did on SQLite. It
   used to start at the vote, so a slow audit log shortened it. Nothing to do.
