@@ -699,6 +699,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   steps were kept apart, and lists it as not fully checked. To refuse such
   runs, turn on `[codebase] require_container` in Settings. A workspace can
   no longer weaken the `[codebase]` checks in its own config file.
+- A code checker's finding can now carry a command that shows the problem.
+  Lightwork re-runs it on a fresh copy and marks the finding confirmed, or
+  not reproduced and read only. After a repair it re-runs confirmed ones to
+  decide "fixed" itself. Set how many it re-runs per look with `[codebase]
+  max_repros` (default 5); each re-run counts as one tool call.
+- `[codebase] checkers` (1-3, default 1) sets how many independent checkers
+  look at each change, and `checker_models` picks one model for each. Each
+  extra checker is one more agent run per look. The approval card names
+  each checker's model and flags it when all share the author's kind.
+- `[codebase] checker_image` runs the checkers and their re-runs in a
+  container image. `deploy/checker/` builds one with Python 3.11 and 3.12,
+  PostgreSQL 16 and a Playwright browser. If the image cannot be used, the
+  check says "could not run"; it never runs on this computer instead.
 
 ### Fixed
 

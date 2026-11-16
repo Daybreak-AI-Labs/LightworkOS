@@ -5431,6 +5431,11 @@ tested without spawning py-spy.
   tests go back to the author (`[codebase] repair_rounds`); an independent
   checker with a fresh context runs the change on its own copy and reports
   findings, whose blockers go back to the author (`checker`, `check_rounds`);
+  Lightwork re-runs each finding's `repro` command on a fresh copy to confirm
+  it, and confirmed ones again after a repair (`max_repros`); several
+  independent checkers, one model each (`checkers`, `checker_models`), and
+  an optional checker container with PostgreSQL and a browser
+  (`checker_image`, `deploy/checker/`);
   every round charges one budget; the independent reviewer reads the diff; the
   sealed proposal records what was and was not checked
   (`features.evidence`) and waits for a `codebase_merge` approval before any

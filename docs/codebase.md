@@ -108,16 +108,57 @@ maverick code export payments ./payments   # plaintext clone for the owner
    `reviewer` role (`[models] reviewer`), so it can differ from the
    author's; when both share a provider family and
    `[verification] cross_family_model` is set, that model is used instead.
-6. **One budget.** Every author and checker round charges one budget for the
+6. **Lightwork re-runs what a checker says it ran.** A finding may carry a
+   `repro`: one command whose non-zero exit shows the problem, plus up to
+   three `probe_files` (relative paths inside the copy, 20 KB each, never
+   `..` or under `.git`; a link in the copy that points outside is refused
+   too). After each look Lightwork itself runs each repro on a fresh copy of
+   the pinned commit, with the probe files written first, through the same
+   sandbox, contained step and network policy as the tests, for at most 10
+   minutes. The probe files never reach the proposal. A non-zero exit makes
+   the finding `confirmed` ("Lightwork re-ran it"). Exit zero, a timeout or a
+   work area that could not be set up makes it `not reproduced`, shown as
+   read only; its severity stays, so a person decides. After each author
+   repair every confirmed repro runs again on the new commit: exit zero is
+   "fixed: Lightwork re-ran it", anything else stays open, whatever the
+   checker's `fixed` list says. Findings without a confirmed repro keep the
+   checker's word, labelled as such ("fixed: the checker's word"). Each
+   re-run calls `budget.check()` first and counts as one tool call; at most
+   `[codebase] max_repros` (default 5) run per look, and the rest say
+   "not re-run".
+7. **Several independent checkers.** `[codebase] checkers` (1-3, default 1)
+   checkers look at each version. Each is its own fresh-context run on its
+   own copy and its brief lists only its own earlier findings, never
+   another's. Each finding records which checker found it, and a blocker
+   from any checker blocks. `[codebase] checker_models` names one model per
+   checker; where it is empty or short, the rule above applies. The card
+   names each checker's model and whether it shares the author's provider
+   family. When every checker does, it adds the gap "Every checker used the
+   same kind of model as the author, so they may share its blind spots."
+   Each extra checker adds one agent run per look, plus the repairs its
+   blockers cause.
+8. **A checker container.** With `[codebase] checker_image` set, checker
+   runs and repro re-runs use the Docker backend (Podman when `[sandbox]
+   backend = "podman"`) with that image and the rest of `[sandbox]`
+   (network, memory, user), instead of the configured backend. The tests
+   still run on the configured backend. Before the first look Lightwork
+   runs a command that does nothing in the image; if that fails (no Docker,
+   a missing image, a database that would not start), the check reads
+   "could not run" with the reason. It never falls back to this computer.
+   `deploy/checker/` builds an image with Python 3.11 and 3.12, git,
+   PostgreSQL 16 and Chromium with Playwright; see its README for the
+   database variables (`MAVERICK_PG_DSN`, `DATABASE_URL`, `PGHOST` and the
+   rest).
+9. **One budget.** Every author and checker round charges one budget for the
    feature run (`--max-dollars`, else `[budget]` and the per-goal defaults).
    `budget.check()` runs before and after each round (a governed run returns
    normally when it hits its cap); when it runs out, the loop stops, a round
    that overran is not committed, and the last pinned, tested version is
    proposed. If the first round overran, nothing is proposed. The diff
    reviewer is charged to the same budget and skipped after a stop.
-7. The independent reviewer reads the diff of that pinned commit. It uses a
+10. The independent reviewer reads the diff of that pinned commit. It uses a
    cross-family model where possible.
-8. The sealed proposal (diff, tests, rounds, findings, review, branch bundle)
+11. The sealed proposal (diff, tests, rounds, findings, review, branch bundle)
    parks a `codebase_merge` approval: a structured approval card committing
    to the repository, branch, base and approved head. The card states in
    plain words what was and was not checked: whether the tests passed on the
@@ -144,12 +185,12 @@ maverick code export payments ./payments   # plaintext clone for the owner
    produces an `empty` proposal and no approval. Proposals saved before
    repair rounds and the checker existed still load; they read as not
    independently checked.
-9. `merge` and `push` require that approval to be an approved `codebase_merge`
+12. `merge` and `push` require that approval to be an approved `codebase_merge`
    for this repository. Both verify the branch is the approved commit. Merges
    are `--no-ff`, so each is one reviewable commit. A merge that no longer
    applies cleanly leaves the vault untouched and marks the proposal
    `conflict`.
-10. `sync` fetches upstream as `upstream/*` and never overwrites vault work:
+13. `sync` fetches upstream as `upstream/*` and never overwrites vault work:
    - a branch behind upstream fast-forwards;
    - a branch ahead of upstream (approved merges not pushed yet) is kept;
    - a diverged default branch has upstream merged in, and a conflict changes
@@ -176,17 +217,26 @@ default_protect = "block"  # block | approve | audit for runs over vaulted code
 repair_rounds = 2          # 0-5 more author runs after failing tests or blockers
 checker = true             # the independent checker (one agent run per look)
 check_rounds = 2           # 1-3 looks; a second look confirms blocker fixes
+checkers = 1               # 1-3 independent checkers per look
+checker_models = []        # one model per checker; empty: the reviewer rule
+checker_image = ""         # e.g. "lightwork-checker:1" (deploy/checker)
+max_repros = 5             # 0-20 findings Lightwork re-runs per look
 require_container = false  # true: refuse feature runs on the local backend
 ```
 
 A workspace's own `config.toml` may only tighten these: turn the checker
-and `require_container` on, raise the rounds, or choose a stricter
-`default_protect`.
+and `require_container` on, raise the rounds, `checkers` or `max_repros`, or
+choose a stricter `default_protect`. `checker_image` and `checker_models`
+stay the organisation's choice; a workspace may set them only where the
+organisation has not.
 
 At the defaults a feature run makes at most five agent runs instead of one:
 the author's first run, two repair rounds and two checker looks. All of them
-share one spending limit. `maverick code feature --no-check` skips the
-checker for one run.
+share one spending limit. Each extra checker adds one agent run per look (at
+`checkers = 3` and two looks, four more runs), plus the repairs its
+blockers cause. Repro re-runs are commands, not agent runs: at most
+`max_repros` per look, each one tool call. `maverick code feature
+--no-check` skips the checkers for one run.
 
 ## Limits
 
