@@ -81,13 +81,16 @@ def _config_state() -> tuple[Check, dict[str, Any] | None]:
             None,
         )
     if errors:
+        from .config import DASHBOARD_ON_HOLD
+
         names = ", ".join(sorted(Path(item).name for item in errors))
+        held = any(str(message).endswith(DASHBOARD_ON_HOLD) for message in errors.values())
         return (
             Check(
                 "config",
                 "Configuration",
                 "blocked",
-                f"Active configuration is unreadable or invalid: {names}.",
+                f"Active configuration is unreadable or invalid: {names}." + (f" {DASHBOARD_ON_HOLD}" if held else ""),
                 "maverick config-lint",
             ),
             None,

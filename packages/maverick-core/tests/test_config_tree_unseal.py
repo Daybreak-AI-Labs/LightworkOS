@@ -156,3 +156,64 @@ def test_unreadable_secret_drops_its_section_not_the_other_dashboard_settings(tm
         "base_url": "https://proxy.example", "api_key": "authenticated-value"}  # pragma: allowlist secret
     assert "outbound" not in config.load_config()["webhooks"]
     assert str(overlay) not in config.config_source_errors()
+
+
+def test_settings_grants_are_on_hold_while_the_dashboard_file_cannot_be_opened(tmp_path, monkeypatch):
+    """With the at-rest key replaced, the sections that hold a secret were
+    dropped while the permissions in a plain section stayed on. Code execution
+    was then on with the sandbox and safety choices meant to contain it gone."""
+    import secrets
+
+    from maverick.operator_preflight import _config_state
+
+    (tmp_path / "config.toml").write_text("[budget]\nmax_dollars = 50.0\n", encoding="utf-8")
+    sealed = _seal("a-saved-secret")
+    overlay = tmp_path / config.DASHBOARD_OVERRIDES_BASENAME
+    overlay.write_text(
+        "[capabilities]\ncode_exec = true\ncomputer_use = true\nbrowser = true\n"
+        f'[sandbox]\nbackend = "firecracker"\nprovider = "e2b"\napi_key = "{sealed}"\nallow_network = true\n'
+        f'[safety]\nprofile = "strict"\nscan_output = false\nreceipt_key = "{sealed}"\n'
+        '[_dashboard_resets.caps]\npath = ["capabilities", "enforce"]\nkeep = []\n'
+        "entries = false\npreserve_tables = false\nremove_value = true\n",
+        encoding="utf-8")
+    config.reset_config_cache()
+    assert config.get_capabilities()["code_exec"] is True  # readable: everything applies
+    assert config.load_config()["sandbox"]["allow_network"] is True
+
+    monkeypatch.setenv("MAVERICK_ENCRYPTION_KEY", base64.b64encode(secrets.token_bytes(32)).decode())
+    config.reset_config_cache()
+    loaded = config.load_config()
+    granted = {k: v for k, v in config.get_capabilities().items() if k != "deferred_tools"}
+    assert not any(granted.values()), granted  # no permission from Settings applies
+    assert loaded["sandbox"] == {"backend": "firecracker", "provider": "e2b"}  # stricter and plain values stay
+    assert loaded["safety"] == {"profile": "strict"}  # the looser scan_output choice is on hold too
+    check, _cfg = _config_state()
+    assert check.status == "blocked" and overlay.name in check.detail
+    assert "on hold" in check.detail and "on hold" in config.config_source_errors()[str(overlay)]
+
+    monkeypatch.delenv("MAVERICK_ENCRYPTION_KEY")
+    config.reset_config_cache()
+    assert config.get_capabilities()["code_exec"] is True
+    assert str(overlay) not in config.config_source_errors()
+
+
+def test_one_damaged_secret_in_safety_keeps_its_stricter_plain_values(tmp_path):
+    """A single damaged ``safety.receipt_key`` used to put ``profile`` back to
+    the installer's looser value."""
+    (tmp_path / "config.toml").write_text(
+        '[safety]\nprofile = "permissive"\n[sandbox]\nbackend = "docker"\n', encoding="utf-8")
+    good = _seal("a-saved-secret")
+    blob = bytearray(base64.b64decode(good.partition(":")[2]))
+    blob[-1] ^= 1
+    damaged = "MVKAR1:" + base64.b64encode(blob).decode("ascii")
+    overlay = tmp_path / config.DASHBOARD_OVERRIDES_BASENAME
+    overlay.write_text(
+        f'[safety]\nprofile = "strict"\nreceipt_key = "{damaged}"\nscreenshot_key = "{good}"\n'
+        '[sandbox]\nbackend = "local"\n[capabilities]\nbrowser = true\n', encoding="utf-8")
+    config.reset_config_cache()
+
+    loaded = config.load_config()
+    assert loaded["safety"] == {"profile": "strict", "screenshot_key": "a-saved-secret"}
+    assert config.get_sandbox()["backend"] == "docker"  # the looser choice from Settings is on hold
+    assert config.get_capabilities()["browser"] is False
+    assert str(overlay) in config.config_source_errors()
