@@ -956,6 +956,16 @@ def collect_model_risk_evidence(*, actor: str) -> list[dict[str, Any]]:
     return imported
 
 
+def _partial_controls(node: dict[str, Any]) -> list[str]:
+    """Control ids a node says it supports only in part. ``attributes`` is
+    free-form, so anything that is not a usable id is left out."""
+    values = (node.get("attributes") or {}).get("partial_controls")
+    if not isinstance(values, list):
+        return []
+    return [value for value in values
+            if isinstance(value, str) and 0 < len(value.strip()) <= 128]
+
+
 def render_pack(*, required_controls=None) -> dict[str, Any]:
     nodes = sorted(
         (
@@ -964,8 +974,13 @@ def render_pack(*, required_controls=None) -> dict[str, Any]:
         ),
         key=lambda row: str(row.get("id") or ""),
     )
+    # With no list given, every control the graph speaks about is required: the
+    # ones a node supports and the ones a node supports only in part. Leaving
+    # the second kind out reported full coverage for a control with no full
+    # evidence, and showed it neither as missing nor as partial.
     controls = required_controls if required_controls is not None else sorted({
-        control for node in nodes for control in node.get("controls", [])
+        control for node in nodes
+        for control in (*node.get("controls", []), *_partial_controls(node))
     })
     # Derive coverage from the exact authority-revalidated node snapshot being
     # signed.  A second graph/source read here could otherwise produce a pack

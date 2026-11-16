@@ -545,6 +545,51 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   restores stop there, and the request can still be settled and closed.
   The Copilot offers the same retry and discard for taught workflow
   releases.
+- A person's Operating Record now reads that person's approvals from the
+  store directly, so older approvals no longer drop out when other people
+  have thousands of newer ones. Nothing to do; totals for one person can rise.
+- A HashiCorp Vault transit key that was not created with `derived=true` no
+  longer wraps new workspace keys, because such a key does not keep
+  workspaces apart; existing data still opens and a warning is logged. Create
+  a transit key with `derived=true` and rotate to it. The check runs when a
+  key is first wrapped or opened and needs encrypt and decrypt on the key.
+- The AI governance page now says when its Needs attention check could not
+  read every record, instead of reporting that nothing needs attention.
+  Press Refresh to check again.
+- The diagram tool now works in container sandboxes: the source goes to the
+  renderer on standard input and the image is written in the workspace, under
+  a temporary name that is moved into place when the render succeeds. A
+  source over 64 KiB is refused outside the local sandbox.
+- The accessibility checker's browser now connects through a local proxy that
+  refuses internal addresses and applies the destination policy to every
+  host a page loads, and the page itself is checked against that policy. It
+  reaches public sites on ports 80 and 443 only. A container sandbox with
+  network access is refused: use the local sandbox, or turn the sandbox's
+  network off to check local files. `MAVERICK_FETCH_ALLOW_PRIVATE=1` keeps
+  the previous behaviour for local development servers. With the proxy, a
+  workspace `pa11y.json` is honoured for `standard`, `ignore`, `timeout`,
+  `wait`, `hideElements`, `rootElement`, `includeNotices`, `includeWarnings`,
+  `level`, `threshold`, `rules`, `viewport`, `userAgent`, the `axe` and
+  `htmlcs` runners, and the browser switches `--no-sandbox`,
+  `--disable-setuid-sandbox`, `--disable-dev-shm-usage` and `--disable-gpu`;
+  `actions`, `headers` and other browser settings are not used.
+- Outbound webhooks now read only the first 4 KiB of a receiver's reply, so
+  a very large reply no longer fills memory. The delivery log still shows
+  the first 200 characters. Nothing to do.
+- With `[limits] file_write_quota_mb` set, a file write or edit that fails
+  no longer counts against the run's quota. Nothing to do.
+- `view_video` and `wasm_run` now work in container sandboxes: commands get
+  workspace-relative paths, video frames are staged in a hidden folder in
+  the workspace and removed afterwards, and the programs are looked for in
+  the sandbox, not on the host. A WebAssembly module now sees a granted
+  folder under its workspace-relative name (`data`), not its host path.
+- `view_video` now refuses to run without an active run budget, as
+  `view_image` does, so its vision call is always charged and capped. Code
+  that builds the tool directly must pass the run's budget.
+- On the Safety monitoring page the Copilot can now show where sensitive data
+  went, including what to do when earlier labels for a task cannot be read.
+  It needs the page's audit permission and the `reviews` control family in
+  `[copilot] operation_families`; it reads the record and changes nothing.
 
 ### Fixed
 

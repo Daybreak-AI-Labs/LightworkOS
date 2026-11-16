@@ -90,6 +90,11 @@ class OffHostSigningRequiredError(AuditRefused):
     """
 
 
+# A key directory for the calling thread only (the in-process proof probe).
+# Assigning ``KEY_DIR`` instead would move every thread's audit writes to it.
+_KEY_DIR_OVERRIDE = threading.local()
+
+
 def _key_dir() -> Path:
     """The active audit signing-key directory.
 
@@ -97,6 +102,9 @@ def _key_dir() -> Path:
     routes through the tenant-aware path helper so each tenant gets its own key
     chain while the no-tenant default is the legacy ``~/.maverick/audit/keys``.
     """
+    scoped = getattr(_KEY_DIR_OVERRIDE, "path", None)
+    if scoped is not None:
+        return scoped
     if KEY_DIR is not _LEGACY_KEY_DIR:
         return KEY_DIR
     from ..paths import data_dir

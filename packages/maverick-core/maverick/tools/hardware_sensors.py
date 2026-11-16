@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import importlib
 import sys
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -52,21 +53,28 @@ def _safe_import_path(entry: str) -> bool:
         return True
 
 
-def _psutil() -> Any | None:
-    cached = sys.modules.get("psutil")
-    if cached is not None:
-        if _path_in_cwd(getattr(cached, "__file__", None)):
-            return None
-        return cached
+# The tool is parallel-safe, so two calls can look psutil up at once. Without
+# this lock the second saves the first's stripped import path as "original"
+# and restores it last, leaving the process without those entries for good.
+_PSUTIL_IMPORT_LOCK = threading.Lock()
 
-    original_path = list(sys.path)
-    try:
-        sys.path = [entry for entry in original_path if _safe_import_path(entry)]
-        psutil = importlib.import_module("psutil")
-    except ImportError:
-        return None
-    finally:
-        sys.path = original_path
+
+def _psutil() -> Any | None:
+    with _PSUTIL_IMPORT_LOCK:
+        cached = sys.modules.get("psutil")
+        if cached is not None:
+            if _path_in_cwd(getattr(cached, "__file__", None)):
+                return None
+            return cached
+
+        original_path = list(sys.path)
+        try:
+            sys.path = [entry for entry in original_path if _safe_import_path(entry)]
+            psutil = importlib.import_module("psutil")
+        except ImportError:
+            return None
+        finally:
+            sys.path = original_path
 
     if _path_in_cwd(getattr(psutil, "__file__", None)):
         return None

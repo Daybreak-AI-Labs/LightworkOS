@@ -193,7 +193,7 @@ _BROWSER_INPUT_SCHEMA: dict[str, Any] = {
 }
 
 
-def _proxy_host_policy(tenant: str | None, host: str, port: int) -> bool:
+def _proxy_host_policy(tenant: str | None, host: str, port: int, tool: str = "browser") -> bool:
     """Apply the originating session's hostname policy in the proxy thread."""
     from ..config import single_read
     from ..enterprise import egress_permitted
@@ -205,7 +205,7 @@ def _proxy_host_policy(tenant: str | None, host: str, port: int) -> bool:
     # Do not retain a request's cached configuration past that request.
     with single_read(fresh=True):
         return egress_permitted(f"{scheme}://{authority}:{port}/") and egress_allowed(
-            "browser", host, tenant=tenant,
+            tool, host, tenant=tenant,
         )
 
 

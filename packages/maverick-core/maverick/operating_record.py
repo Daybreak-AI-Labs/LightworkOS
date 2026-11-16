@@ -103,14 +103,18 @@ def _approval_records(
     world: Any, *, limit: int, owner: str | None = None,
 ) -> list[DecisionRecord]:
     out: list[DecisionRecord] = []
-    # list_approvals has no owner column filter in SQL, so an owner-scoped call
-    # must over-fetch: a plain limit=limit truncates to the newest rows across
-    # ALL principals before the Python owner filter runs, silently dropping
-    # alice's older approvals when total volume exceeds the limit. Over-fetch a
-    # wide cap when scoped, then filter + truncate to limit in Python below.
+    # An owner-scoped call asks the store for that person's rows, so the limit
+    # applies after the person filter. A world without that reader (a wrapper
+    # or an older store) has no owner filter in SQL and must over-fetch: a
+    # plain limit=limit truncates to the newest rows across ALL principals
+    # before the Python owner filter below runs.
+    scoped = None if owner is None else getattr(world, "list_approvals_for_owner", None)
     fetch = limit if owner is None else max(limit * 10, 5000)
     try:
-        approvals = world.list_approvals(limit=fetch)
+        if scoped is not None:
+            approvals = scoped(owner, limit=limit)
+        else:
+            approvals = world.list_approvals(limit=fetch)
     except Exception as e:  # pragma: no cover -- older DBs lack the API
         log.debug("operating_record: approval read failed: %s", e)
         return out

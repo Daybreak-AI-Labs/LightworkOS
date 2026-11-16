@@ -146,3 +146,42 @@ def test_local_key_generation_warns_about_weak_custody(monkeypatch, tmp_path, ca
         for m in warnings
     ), warnings
     assert any(signing._SIGNING_KEY_ENV in m for m in warnings), warnings
+
+
+def test_proof_probe_keeps_its_scratch_key_folder_off_other_threads(
+    monkeypatch, tmp_path
+):
+    """A concurrent audit write must keep signing with the real key folder."""
+    pytest.importorskip("cryptography")
+    import threading
+
+    from maverick import proof_guarantees as pg
+    from maverick.audit import signing
+
+    monkeypatch.delenv(signing._SIGNING_KEY_ENV, raising=False)
+    monkeypatch.delenv(signing._KMS_WRAPPED_KEY_ENV, raising=False)
+    monkeypatch.setattr(
+        signing, "_INJECTED_KEYPAIR_CACHE", signing._INJECTED_KEYPAIR_UNREAD
+    )
+    real_keys = tmp_path / "real-keys"
+    monkeypatch.setattr(signing, "KEY_DIR", real_keys)
+    monkeypatch.setattr(signing, "require_offhost_signing", lambda: False)
+
+    seen_elsewhere: list = []
+    seen_by_probe: list = []
+    real_write = signing.AuditSigner.write
+
+    def _write(self, record):
+        seen_by_probe.append(signing._key_dir())
+        other = threading.Thread(target=lambda: seen_elsewhere.append(signing._key_dir()))
+        other.start()
+        other.join()
+        return real_write(self, record)
+
+    monkeypatch.setattr(signing.AuditSigner, "write", _write)
+
+    assert "caught" in pg.claim_audit_is_tamper_evident()
+    assert seen_by_probe and all(path != real_keys for path in seen_by_probe)
+    assert seen_elsewhere and all(path == real_keys for path in seen_elsewhere)
+    assert signing._key_dir() == real_keys
+    assert not real_keys.exists()

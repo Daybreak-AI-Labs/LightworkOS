@@ -2361,6 +2361,29 @@ class PostgresWorldModel:
             rows = cur.fetchall()
         return [_dec_approval_row(r) for r in rows]
 
+    def list_approvals_for_owner(self, owner: str, limit: int = 500) -> list:
+        """The SQLite twin's person filter: applied in SQL before ``limit``,
+        inside the same tenant scope as :meth:`list_approvals`."""
+        frag, params = _tenant_scope()
+        p: list = list(params)
+        if owner:
+            where = [frag, "%s IN (requested_by, claimed_by, decided_by)"]
+            p.append(owner)
+        else:
+            where = [frag, "(requested_by IS NULL OR requested_by = '')"]
+        sql = (
+            "SELECT id, action, risk, scope, detail, provenance, status, "
+            "requested_at, decided_at, claimed_by, claimed_at, decided_by, "
+            "approvals_required, requested_by, goal_id, department, undo_hold "
+            "FROM approvals WHERE " + " AND ".join(where)
+            + " ORDER BY requested_at DESC, id DESC LIMIT %s"
+        )
+        p.append(max(1, int(limit)))
+        with self._tx() as cur:
+            cur.execute(sql, tuple(p))
+            rows = cur.fetchall()
+        return [_dec_approval_row(r) for r in rows]
+
     def approvals_requested_between(self, since: float, until: float) -> list:
         """The SQLite twin's window read: same bounds, same order, same
         tenant scope as :meth:`list_approvals`."""

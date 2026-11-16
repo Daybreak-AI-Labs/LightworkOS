@@ -1573,6 +1573,32 @@ def test_list_approvals_newest_first(world, monkeypatch):
     assert [row.id for row in world.list_approvals(limit=1)] == [a2]
 
 
+def test_list_approvals_for_owner_filters_before_the_limit(world):
+    import uuid
+
+    from maverick.paths import tenant_scope
+
+    alice, bob = f"user:alice-{uuid.uuid4().hex[:8]}", f"user:bob-{uuid.uuid4().hex[:8]}"
+    tenant = f"t-{uuid.uuid4().hex[:8]}"
+    old = world.create_approval("old transfer", requested_by=alice)
+    newer = [world.create_approval(f"newer-{i}", requested_by=bob) for i in range(3)]
+    world.decide_approval(newer[0], "approved", decided_by=alice)
+    with tenant_scope(tenant=tenant):
+        other_workspace = world.create_approval("elsewhere", requested_by=alice)
+
+    # Requested, claimed or decided by the person, newest first, and the limit
+    # applies after the person filter; another workspace's rows stay out.
+    assert [a.id for a in world.list_approvals_for_owner(alice, limit=5)] == [newer[0], old]
+    assert [a.id for a in world.list_approvals_for_owner(alice, limit=1)] == [newer[0]]
+    assert [a.id for a in world.list_approvals_for_owner(bob)] == newer[::-1]
+    unowned = world.create_approval("nobody asked")
+    nobody = world.list_approvals_for_owner("", limit=20)
+    assert unowned in [a.id for a in nobody]
+    assert not any(a.requested_by for a in nobody)
+    with tenant_scope(tenant=tenant):
+        assert other_workspace in [a.id for a in world.list_approvals_for_owner(alice)]
+
+
 def test_release_processed_message_allows_retry(world):
     import uuid
     ext = uuid.uuid4().hex

@@ -6,17 +6,22 @@ for analysis. Provider-agnostic: it builds Anthropic-format image blocks
 (the providers' adapters translate to OpenAI / Gemini vision schemas) and
 dispatches via the configured vision model.
 
-Frame extraction reuses the local ffmpeg/ffprobe binaries (the same media
-convention as ``ffmpeg_tool``); input paths are confined to the sandbox
-workspace. The heavy lifting lives in small helpers (``_probe_duration``,
-``_extract_frames``, ``_transcribe_track``) so tests can mock the binary
-calls and the LLM.
+Frame extraction runs ffmpeg/ffprobe through the sandbox; input paths are
+confined to the sandbox workspace. A container sandbox mounts the workspace
+at its own root, so every path given to a command is workspace-relative and
+the frames are staged in a private folder inside the workspace. The agent can
+write there too, so staged files are read back without following links and
+only from inside the workspace. The heavy lifting lives in small helpers
+(``_probe_duration``, ``_extract_frames``, ``_transcribe_track``) so tests
+can mock the binary calls and the LLM.
 """
 from __future__ import annotations
 
 import base64
 import logging
 import os
+import shutil
+import stat
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -32,6 +37,8 @@ log = logging.getLogger(__name__)
 _MAX_FRAMES = 20
 _DEFAULT_FRAMES = 8
 _FRAME_WIDTH = 512  # downscale frames to bound vision token cost
+_MAX_FRAME_BYTES = 5 * 1024 * 1024
+_MAX_AUDIO_BYTES = 256 * 1024 * 1024
 
 
 _VIEW_VIDEO_INPUT_SCHEMA: dict[str, Any] = {
@@ -79,6 +86,63 @@ def _evenly_spaced(duration: float, n: int) -> list[float]:
     return [duration * (i + 0.5) / n for i in range(n)]
 
 
+def _runs_on_host(sandbox) -> bool:
+    """Whether the sandbox runs commands as host processes (the local backend)."""
+    from ..sandbox.local import LocalBackend
+
+    return type(sandbox) is LocalBackend
+
+
+def _relative(sandbox, path: Path) -> str:
+    """``path`` as a command inside the sandbox names it: relative to the
+    workspace, with a prefix so a name beginning with '-' is not an option.
+
+    The one path outside the workspace is the private staging folder used when
+    commands run on this machine and the workspace cannot be written."""
+    resolved, workdir = path.resolve(), Path(sandbox.workdir).resolve()
+    if not resolved.is_relative_to(workdir):
+        return str(resolved)
+    return "./" + resolved.relative_to(workdir).as_posix()
+
+
+def _open_staged(sandbox, path: Path, limit: int):
+    """Open a file a sandboxed command wrote into the staging folder, or None.
+
+    The staging folder is inside the workspace, which the agent can write to.
+    Neither the folder nor the file may be a link when it is opened, the file
+    must be a regular file with one name and a sane size, and what was opened
+    must still be inside the workspace."""
+    from .fs import _fd_real_path, _open_contained
+
+    workdir = Path(sandbox.workdir).resolve()
+    if not path.parent.resolve().is_relative_to(workdir):
+        workdir = path.parent.resolve()  # the private folder outside the workspace
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
+    try:
+        if os.open in os.supports_dir_fd and hasattr(os, "O_NOFOLLOW"):
+            folder = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                fd = os.open(path.name, flags | os.O_NOFOLLOW, dir_fd=folder)
+            finally:
+                os.close(folder)
+            real = _fd_real_path(fd)
+            if real is not None and not real.is_relative_to(workdir):
+                os.close(fd)
+                return None
+        else:
+            fd = _open_contained(workdir, path, flags)
+    except (OSError, ValueError):
+        return None
+    handle = os.fdopen(fd, "rb")
+    info = os.fstat(handle.fileno())
+    # One name only: a hard link would be a second name for a file elsewhere.
+    if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+            or not 0 < info.st_size <= limit):
+        handle.close()
+        return None
+    return handle
+
+
 def _extract_frames(src: str, timestamps: list[float], tmpdir: str, sandbox) -> list[tuple[float, bytes]]:
     """Grab one downscaled JPEG per timestamp. Returns (ts, jpeg_bytes) pairs."""
     frames: list[tuple[float, bytes]] = []
@@ -88,11 +152,13 @@ def _extract_frames(src: str, timestamps: list[float], tmpdir: str, sandbox) -> 
             sandbox,
             ["ffmpeg", "-y", "-ss", f"{ts:.3f}", "-i", src,
              "-frames:v", "1", "-vf", f"scale={_FRAME_WIDTH}:-1",
-             "-f", "image2", str(out)],
+             "-f", "image2", _relative(sandbox, out)],
             timeout=60,
         )
-        if code == 0 and out.exists() and out.stat().st_size > 0:
-            frames.append((ts, out.read_bytes()))
+        staged = _open_staged(sandbox, out, _MAX_FRAME_BYTES) if code == 0 else None
+        if staged is not None:
+            with staged:
+                frames.append((ts, staged.read(_MAX_FRAME_BYTES)))
     return frames
 
 
@@ -101,15 +167,22 @@ def _transcribe_track(src: str, tmpdir: str, sandbox) -> str | None:
     audio = Path(tmpdir) / "audio.mp3"
     code, _o, _e = _run_cmd(
         sandbox,
-        ["ffmpeg", "-y", "-i", src, "-vn", "-b:a", "128k", str(audio)],
+        ["ffmpeg", "-y", "-i", src, "-vn", "-b:a", "128k", _relative(sandbox, audio)],
         timeout=300,
     )
-    if code != 0 or not audio.exists():
+    staged = _open_staged(sandbox, audio, _MAX_AUDIO_BYTES) if code == 0 else None
+    if staged is None:
         return None
     from ..tool_results import tool_result_failed
     from .voice import _run_transcribe_internal
 
-    text = _run_transcribe_internal({"source": str(audio)})
+    # The transcriber reads a path and may send the file to a speech service.
+    # Give it a private copy, not a workspace path the agent could swap.
+    with staged, tempfile.TemporaryDirectory(prefix="maverick-view-video-") as private:
+        copy = Path(private) / "audio.mp3"
+        with open(copy, "wb") as target:
+            shutil.copyfileobj(staged, target)
+        text = _run_transcribe_internal({"source": str(copy)})
     if not text or tool_result_failed(text):
         return None
     return text
@@ -123,6 +196,9 @@ def _run_view_video(args: dict[str, Any], sandbox, *, budget=None) -> str:
     from ..llm import model_for_role
     if "model" in args:
         return "ERROR: the vision model is configured by the operator"
+    if budget is None:
+        # The vision call must be charged to, and stopped by, the run's budget.
+        return "ERROR: video analysis requires an active run budget"
     model = os.environ.get("MAVERICK_VISION_MODEL") or model_for_role("vision")
     try:
         num_frames = int(args.get("num_frames") or _DEFAULT_FRAMES)
@@ -131,27 +207,43 @@ def _run_view_video(args: dict[str, Any], sandbox, *, budget=None) -> str:
     num_frames = max(1, min(num_frames, _MAX_FRAMES))
     transcribe = bool(args.get("transcribe"))
 
-    err = _need("ffmpeg") or _need("ffprobe")
+    # The programs must be where the commands run: on this machine for the
+    # local sandbox (or none), inside the sandbox otherwise.
+    on_host = sandbox is None or _runs_on_host(sandbox)
+    err = (_need("ffmpeg") or _need("ffprobe")) if on_host else None
     if err:
         return err
 
     try:
-        src = _safe_path(sandbox, source)
+        host_src = Path(_safe_path(sandbox, source))
     except ValueError as e:
         return f"ERROR: {e}"
-    if not Path(src).is_file():
+    if not host_src.is_file():
         return f"ERROR: video file not found: {source!r}"
+    src = _relative(sandbox, host_src)
 
     duration = _probe_duration(src, sandbox)
     if not duration or duration <= 0:
-        return f"ERROR: could not probe video duration for {source!r}"
+        hint = "" if on_host else "; check that ffmpeg and ffprobe are installed in the sandbox"
+        return f"ERROR: could not probe video duration for {source!r}{hint}"
 
     timestamps = _evenly_spaced(duration, num_frames)
-    with tempfile.TemporaryDirectory(prefix="maverick-view-video-") as tmp:
+    try:
+        tmp = tempfile.mkdtemp(prefix=".mvk-view-video-", dir=Path(sandbox.workdir).resolve())
+    except OSError as e:
+        if not on_host:
+            return f"ERROR: could not prepare a folder for the video frames: {e}"
+        # Commands run on this machine, so a workspace that cannot be written
+        # (read-only, full) can still be served from a private folder.
+        tmp = tempfile.mkdtemp(prefix="maverick-view-video-")
+    try:
         frames = _extract_frames(src, timestamps, tmp, sandbox)
         if not frames:
             return f"ERROR: ffmpeg extracted no frames from {source!r}"
         transcript = _transcribe_track(src, tmp, sandbox) if transcribe else None
+    finally:
+        # Never leave the staged frames and audio in the workspace.
+        shutil.rmtree(tmp, ignore_errors=True)
 
     # Anthropic format -- providers' adapters translate to OpenAI / Gemini.
     content: list[dict[str, Any]] = []

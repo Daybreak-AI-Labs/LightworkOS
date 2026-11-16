@@ -7000,7 +7000,8 @@ async def governance_workspace_page(request: Request) -> HTMLResponse:
     try:
         attention = await run_in_threadpool(governance_alerts.digest)
     except Exception:
-        attention = {"attention_count": 0, "sections": {}}
+        # Not an all-clear: the page says the check could not be completed.
+        attention = {"attention_count": 0, "sections": {}, "complete": False}
 
     # Pickers so nobody has to paste raw MAA-/MRI- ids: the governed asset
     # inventory and recorded assurance incidents, both fail-soft and bounded.

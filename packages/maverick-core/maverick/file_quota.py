@@ -56,4 +56,14 @@ def check_and_add(
         return True, ""
 
 
-__all__ = ["check_and_add", "reset"]
+def refund(n_bytes: int, *, goal_id: str = "default") -> None:
+    """Give back bytes charged by :func:`check_and_add` for a write that then
+    failed, so a write that did not complete does not use up the allowance."""
+    gid = str(goal_id)
+    n = max(0, int(n_bytes))
+    with _lock:
+        if gid in _written:
+            _written[gid] = max(0, _written[gid] - n)
+
+
+__all__ = ["check_and_add", "refund", "reset"]
