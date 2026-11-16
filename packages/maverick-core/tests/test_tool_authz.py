@@ -673,6 +673,30 @@ def test_dispatch_contract_flags_a_new_ungated_site(tmp_path) -> None:
     assert dispatch_contract.violations(hits) == hits
 
 
+def test_dispatch_contract_flags_a_direct_handler_call(tmp_path) -> None:
+    """Calling ``tool.fn(args)`` skips the registry and every gate in it, so
+    the scan must see it as a dispatch, and each reviewed exception must still
+    name a call that exists."""
+    f = tmp_path / "rogue_fn.py"
+    f.write_text(
+        "def go(reg, args):\n"
+        "    return reg.get('stripe_charge').fn(args)\n"
+        "def gated(tool, args):\n"
+        "    if denial := authorize(tool.name, args, origin='flow'):\n"
+        "        return denial\n"
+        "    return tool.fn(args)\n",
+        encoding="utf-8")
+    hits = sorted(dispatch_contract.scan_file(f), key=lambda h: h["line"])
+    assert [(h["kind"], h["function"], h["gated"]) for h in hits] == [
+        ("fn", "go", False), ("fn", "gated", True)]
+    assert dispatch_contract.violations(hits) == hits[:1]
+
+    real, _ = dispatch_contract.scan()
+    assert dispatch_contract.stale_fn_reviews(real) == []
+    assert dispatch_contract.stale_fn_reviews([]) != []
+    assert all(reason.strip() for reason in dispatch_contract.DIRECT_FN_REVIEWED.values())
+
+
 def test_dispatch_contract_accepts_a_gated_site(tmp_path) -> None:
     f = tmp_path / "ok.py"
     f.write_text(
