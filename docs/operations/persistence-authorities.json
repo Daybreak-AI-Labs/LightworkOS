@@ -184,7 +184,7 @@
     "configuration": 71,
     "read_projection": 25,
     "audit": 24,
-    "transient": 26,
+    "transient": 25,
     "business_records": 21,
     "execution": 46,
     "recovery": 12,
@@ -16329,25 +16329,6 @@
           "function": "_check_config_dir",
           "kind": "data_dir",
           "expression": "data_dir()"
-        }
-      ]
-    },
-    {
-      "path": "packages/maverick-core/maverick/tools/diagram_tool.py",
-      "contract": "transient",
-      "owner": "packages/maverick-core/maverick/tools/diagram_tool.py",
-      "purpose": "Diagramming tool: render Graphviz DOT or Mermaid source to an image.",
-      "referenced_store_owners": [],
-      "review": "module purpose and persistence seam read; contract-family classification (not every operation tested)",
-      "governed_namespaces": [],
-      "literal_path_hints": [],
-      "observed_mechanism_markers": {},
-      "source_sites": [
-        {
-          "line": 59,
-          "function": "_run",
-          "kind": "write_text",
-          "expression": "infile.write_text(source, encoding='utf-8')"
         }
       ]
     },
