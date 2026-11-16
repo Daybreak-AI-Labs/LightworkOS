@@ -1418,10 +1418,6 @@ def review_and_promote(
     return promoted
 
 
-def _distinct_pack_count(*, path: Path | None = None) -> int:
-    return len({o.pack for o in load_outcomes(path=path)}) or 1
-
-
 # --------------------------------------------------------------------------
 # application: fold promoted guidance into a generator's system prompt
 # --------------------------------------------------------------------------

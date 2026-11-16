@@ -91,6 +91,7 @@ async def test_when_turned_on_a_person_decides_before_a_flagged_task_starts(
     tmp_path, fake_llm, make_llm_response, monkeypatch, vote, started,
 ):
     monkeypatch.setenv("MAVERICK_GOAL_RISK_REQUIRE_HUMAN", "high")
+    monkeypatch.setenv("MAVERICK_APPROVAL_UNDO_GRACE_SECONDS", "0")
     stop = threading.Event()
     thread = _decide_when_parked(tmp_path / "world.db", vote, stop)
     fake_llm.scripted = _script(make_llm_response)

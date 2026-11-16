@@ -1370,7 +1370,7 @@ class FederationService:
 
     def delegate_goal(
         self, payload: dict[str, Any], *, peer_address: str = "",
-    ) -> dict[str, Any]:  # noqa: C901
+    ) -> dict[str, Any]:
         corr, correlation_error = self._validated_correlation(payload)
         peer = self._authenticate(payload)
         if peer is None:

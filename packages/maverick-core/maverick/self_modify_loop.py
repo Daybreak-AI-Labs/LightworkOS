@@ -82,11 +82,6 @@ _MAX_PROPOSER_SYSTEM_CHARS = 24_000
 _MAX_MODEL_RESPONSE_CHARS = 512_000
 
 
-def _null_proposer(parent, surface) -> Proposal | None:
-    """Offline default: propose nothing (the loop is inert without a real one)."""
-    return None
-
-
 # --- the live-model proposer (Gap 1) -----------------------------------------
 
 _PROPOSER_SYSTEM = (

@@ -150,14 +150,6 @@ def reset_goal_context(tokens: dict[str, Any] | None) -> None:
                 var.set(None)
 
 
-def clear_goal_context() -> None:
-    """Null all context vars. Back-compat for callers that don't hold tokens;
-    prefer set_goal_context()/reset_goal_context() to avoid cross-goal leaks."""
-    _goal_id_var.set(None)
-    _conversation_id_var.set(None)
-    _channel_var.set(None)
-
-
 def current_goal_id() -> int | None:
     """The goal id bound to the current async/sync task, or None outside a goal.
 

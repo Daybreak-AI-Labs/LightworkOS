@@ -3851,7 +3851,7 @@ class DiscoveryService:
         *,
         actor: str,
         require_feature: bool = True,
-    ) -> dict[str, Any]:  # noqa: C901 - one fail-closed transaction narrative
+    ) -> dict[str, Any]:  # one fail-closed transaction narrative
         if require_feature:
             require_enabled()
         operator = _required_text(actor, "actor", 256)

@@ -1136,7 +1136,7 @@ class DynamicRiskService:
         projection["stale_reasons"] = reasons
         return projection
 
-    def score_asset(  # noqa: C901 - explicit formula and attribution boundary
+    def score_asset(  # explicit formula and attribution boundary
         self,
         asset_id: str,
         *,

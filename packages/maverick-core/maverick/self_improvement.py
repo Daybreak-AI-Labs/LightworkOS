@@ -2431,10 +2431,6 @@ class PromotionLedger:
             records[rec.id] = rec
         return records
 
-    def _read_journal_locked(self) -> tuple[dict[str, PromotionRecord], str]:
-        records, _transactions, head = self._read_journal_state_locked()
-        return records, head
-
     def _read_journal_state_locked(self, *, repair_tail: bool = False) -> tuple[
         dict[str, PromotionRecord], dict[str, PromotionTransaction], str,
     ]:

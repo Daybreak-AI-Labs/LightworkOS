@@ -176,7 +176,7 @@ _WITH = {
 }
 
 
-def _sample(setting, tmp_path):  # noqa: C901 - one branch per control
+def _sample(setting, tmp_path):  # one branch per control
     control = setting.control
     if control == "toggle":
         return not setting.default
@@ -295,7 +295,7 @@ def test_every_access_row_saves_reads_back_and_resets(setting, tmp_path, monkeyp
         assert row["source"] in {"default", "installer"}
 
 
-def _invalid(setting, tmp_path):  # noqa: C901 - one branch per control
+def _invalid(setting, tmp_path):  # one branch per control
     control = setting.control
     if control == "toggle":
         return "yes"

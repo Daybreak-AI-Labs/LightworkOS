@@ -500,16 +500,6 @@ def build_redlined_docx(
 FILL_COLOR = "FF0000"
 
 
-def _styled_run(text: str, *, red: bool = False, bold: bool = False) -> str:
-    props = ""
-    if red or bold:
-        props = ("<w:rPr>" + ("<w:b/>" if bold else "")
-                 + (f'<w:color w:val="{FILL_COLOR}"/>' if red else "")
-                 + "</w:rPr>")
-    return (f"<w:r>{props}<w:t xml:space=\"preserve\">{_esc(text)}</w:t>"
-            "</w:r>")
-
-
 # ---- styled report package -------------------------------------------------
 # Generated deliverables (risk analyses, notice cross-checks, our-paper
 # drafts) ship as designed documents, not bare paragraphs: a real styles part

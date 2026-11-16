@@ -91,26 +91,6 @@ def exchange_code(token_url: str, client_id: str, code: str, redirect_uri: str, 
     return resp
 
 
-def _summarise_tokens(resp: dict) -> str:
-    keys = [k for k in ("access_token", "id_token", "refresh_token",
-                        "token_type", "expires_in", "scope") if k in resp]
-    out = [f"token exchange ok; fields: {', '.join(keys)}"]
-    if resp.get("id_token"):
-        try:
-            import jwt
-            claims = jwt.decode(resp["id_token"], options={"verify_signature": False})
-            who = claims.get("email") or claims.get("sub") or "?"
-            # The signature is NOT verified here (no issuer JWKS), so this is a
-            # decode-only preview, not an authenticated identity. Label it so a
-            # caller never treats it as a verified principal.
-            out.append(f"id_token subject (UNVERIFIED — signature not checked): {who}")
-        except ImportError:
-            out.append("(install maverick-agent[oidc] to decode the id_token)")
-        except Exception:  # pragma: no cover -- malformed token
-            out.append("(id_token present but could not be decoded)")
-    return "\n".join(out)
-
-
 def _run(args: dict) -> str:
     op = args.get("op")
     try:

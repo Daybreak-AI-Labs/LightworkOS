@@ -309,14 +309,6 @@ def load_goal_events(
     return events, proof
 
 
-def _iter_events_for_goal(
-    goal_id: int,
-    files: Iterable[Path] | None = None,
-) -> Iterator[dict]:
-    events, _proof = load_goal_events(goal_id, files)
-    yield from events
-
-
 def _kind_class(kind: str) -> str:
     value = (kind or "").lower()
     if "error" in value or "fail" in value or "halt" in value:

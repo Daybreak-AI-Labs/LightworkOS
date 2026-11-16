@@ -684,7 +684,7 @@ def translate(sql: str, params: object = ()) -> _Plan:
     return plan
 
 
-def _translate(sql: str, params: object, *, in_trigger: bool = False) -> _Plan:  # noqa: C901
+def _translate(sql: str, params: object, *, in_trigger: bool = False) -> _Plan:
     tokens = _tokens(sql)
     code = _code(tokens)
     while code and tokens[code[-1]].kind == "op" and tokens[code[-1]].text == ";":
@@ -1023,7 +1023,7 @@ class PostgresConsentConnection:
         except Exception as exc:  # noqa: BLE001 - redact driver diagnostics
             raise _mapped_error(exc) from None
 
-    def _execute_plan(self, plan: _Plan, params: object) -> Cursor:  # noqa: C901
+    def _execute_plan(self, plan: _Plan, params: object) -> Cursor:
         if plan.kind == "noop":
             return Cursor([])
         if plan.kind == "begin":

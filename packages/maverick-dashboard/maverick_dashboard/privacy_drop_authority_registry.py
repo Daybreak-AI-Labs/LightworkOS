@@ -1160,7 +1160,7 @@ class DROPAuthorityRegistry:
             raise DROPManagementConflict("DROP outcome evidence changed")
         return evidence
 
-    def verify_integrity(self) -> bool:  # noqa: C901 - closed registry audit
+    def verify_integrity(self) -> bool:  # closed registry audit
         try:
             self._gate()
             with self._connect() as connection:
