@@ -60,6 +60,9 @@ def test_consent_dashboard_mode_blocks_until_decided(tmp_path, monkeypatch):
     monkeypatch.setenv("MAVERICK_CONSENT_MODE", "dashboard")
     # Speed up the poll loop's deadline; the decider runs well within it.
     monkeypatch.setenv("MAVERICK_CONSENT_DASHBOARD_TIMEOUT", "10")
+    # The decision is acted on once its undo window closes; a one-second
+    # window keeps that wait without spending the 30-second default.
+    monkeypatch.setenv("MAVERICK_APPROVAL_UNDO_GRACE_SECONDS", "1")
 
     db = tmp_path / ".maverick" / "world.db"
     from maverick import world_model
@@ -94,6 +97,7 @@ def test_consent_dashboard_mode_denied(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("MAVERICK_CONSENT_MODE", "dashboard")
     monkeypatch.setenv("MAVERICK_CONSENT_DASHBOARD_TIMEOUT", "10")
+    monkeypatch.setenv("MAVERICK_APPROVAL_UNDO_GRACE_SECONDS", "1")  # see above
     db = tmp_path / ".maverick" / "world.db"
     from maverick import world_model
     monkeypatch.setattr(world_model, "DEFAULT_DB", db)
