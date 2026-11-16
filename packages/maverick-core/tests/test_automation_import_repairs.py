@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 from maverick.automation_import import make, n8n, power_automate, workato
-from maverick.automation_import.ir import ImportedAutomation, ImportedTrigger
+from maverick.automation_import.ir import ImportedAutomation, ImportedStep, ImportedTrigger
 from maverick.automation_import.materialize import materialize
 from maverick.automation_import.to_flow import to_flow_with_report
 from maverick.flow.expressions import eval_condition
@@ -204,10 +204,48 @@ def test_imported_schedule_carries_explicit_run_budgets(monkeypatch):
     monkeypatch.setattr("maverick.templates.save_user_template", lambda *args, **kwargs: None)
     monkeypatch.setattr("maverick.scheduler.schedule_cron", lambda queue, cron, kind, payload:
                         (captured.append(payload) or "job", 123))
+    monkeypatch.setattr("maverick.schedule_definitions.imported_definition", lambda *args, **kwargs: None)
     automation = ImportedAutomation("manual", "1", "budget", ImportedTrigger(kind="schedule", cron="0 9 * * *"))
     materialize(automation, queue=object(), budget_dollars=0.5, budget_wall_seconds=30)
     assert captured[0]["max_dollars"] == 0.5
     assert captured[0]["max_wall_seconds"] == 30
+
+
+def test_reimport_updates_its_own_schedule_and_keeps_a_pause(tmp_path, monkeypatch):
+    from maverick.job_queue import JobQueue
+    from maverick.schedule_definitions import change_definition, list_definitions
+
+    monkeypatch.setattr("maverick.catalog_trust.shield_scan", lambda *args, **kwargs: None)
+    monkeypatch.setattr("maverick.templates.save_user_template", lambda *args, **kwargs: None)
+    queue = JobQueue(tmp_path / "jobs.db")
+
+    def imported(step):
+        return ImportedAutomation("manual", "42", "report", ImportedTrigger(kind="schedule", cron="0 9 * * *"),
+                                  steps=[ImportedStep(name=step)])
+
+    first = materialize(imported("Send the report"), queue=queue, owner="user:a")
+    again = materialize(imported("Send the report"), queue=queue, owner="user:a")
+    assert again.schedule is None and any("not duplicated" in note for note in again.notes)
+    assert len(queue.list(status="pending")) == 1
+
+    changed = materialize(imported("Send the summary"), queue=queue, owner="user:a")
+    definition = list_definitions(queue, owner="user:a")
+    assert len(definition) == 1 and definition[0]["revision"] == 2
+    assert changed.schedule["updated"] and changed.schedule["schedule_id"] == first.schedule["schedule_id"]
+    pending = queue.list(status="pending")
+    assert len(pending) == 1 and "Send the summary" in pending[0].payload["text"]
+
+    # A person's pause is kept: the text is updated, and nothing is scheduled.
+    change_definition(queue, definition[0]["definition_id"], expected_revision=2, state="paused",
+                      owner="user:a", actor="user:a")
+    paused = materialize(imported("Send the digest"), queue=queue, owner="user:a")
+    assert any("paused" in note for note in paused.notes)
+    assert queue.list(status="pending") == []
+    assert list_definitions(queue, owner="user:a")[0]["state"] == "paused"
+
+    # Another person's import of the same workflow gets its own schedule.
+    materialize(imported("Send the digest"), queue=queue, owner="user:b")
+    assert len(list_definitions(queue)) == 2
 
 
 def test_workato_action_output_pill_is_not_read_as_trigger_data():

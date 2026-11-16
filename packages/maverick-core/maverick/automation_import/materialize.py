@@ -29,6 +29,45 @@ class MaterializeResult:
     notes: list[str] = field(default_factory=list)
 
 
+def _activate_schedule(queue: Any, payload: dict[str, Any], result: MaterializeResult,
+                       notes: list[str]) -> None:
+    """Create this import's schedule, or bring the one it made earlier up to date."""
+    from ..schedule_definitions import change_definition, imported_definition
+    from ..scheduler import CronError, schedule_cron
+
+    cron = payload["__cron__"]
+    try:
+        current = imported_definition(queue, payload["imported_from"], owner=payload.get("owner", ""))
+        if current is None:
+            job_id, run_at = schedule_cron(queue, cron, "start_goal", payload)
+            result.schedule = {"job_id": job_id, "run_at": run_at, "cron": cron,
+                               "schedule_id": payload["schedule_id"]}
+            return
+        paused = current["state"] == "paused"
+        same = all(current["payload"].get(key) == value
+                   for key, value in payload.items() if key != "schedule_id")
+        if same and (paused or current["next_run"] or current["running"]):
+            notes.append(f"schedule already {'exists and is paused' if paused else 'active'} "
+                         f"(job {current['id']}); not duplicated")
+            return
+        # Future runs follow the re-imported workflow. A run already admitted
+        # keeps the text it started with, and a person's pause is kept.
+        changed = change_definition(
+            queue, current["definition_id"], expected_revision=current["revision"],
+            state="paused" if paused else "active", actor=payload.get("owner") or "import",
+            rationale="Workflow imported again",
+            payload_updates={key: value for key, value in payload.items() if key != "schedule_id"},
+        )
+        result.schedule = {"job_id": changed["id"], "run_at": changed["next_run"], "cron": cron,
+                           "schedule_id": changed["schedule_id"], "updated": True}
+        notes.append("schedule updated to match the re-imported workflow"
+                     + ("; it is still paused" if paused else ""))
+    except CronError as e:
+        notes.append(f"could not create schedule from cron {cron!r}: {e}")
+    except (KeyError, ValueError) as e:
+        notes.append(f"schedule was not updated: {e}")
+
+
 def materialize(
     automation: ImportedAutomation,
     *,
@@ -109,7 +148,6 @@ def materialize(
         elif trig.cron and queue is not None and save:
             from uuid import uuid4
 
-            from ..scheduler import CronError, schedule_cron
             # Match the dashboard /api/v1/schedules payload exactly: the worker's
             # start_goal handler mints a fresh goal from "text" on every fire and
             # requires it to be non-empty (a {"template": ...} payload would fail
@@ -117,12 +155,14 @@ def materialize(
             # the dashboard does, and carry a schedule_id for run provenance.
             # Authenticated callers may also pass owner/channel/user_id to match
             # the normal dashboard schedule path and avoid falling back to local.
-            schedule_id = uuid4().hex
             payload = {
                 "text": body,
                 "title": title[:200],
                 "__cron__": trig.cron,
-                "schedule_id": schedule_id,
+                "schedule_id": uuid4().hex,
+                # The import's own mark: a re-import updates this schedule
+                # instead of adding a second one or leaving stale text running.
+                "imported_from": automation.import_ref(),
             }
             if budget_dollars is not None:
                 payload["max_dollars"] = budget_dollars
@@ -137,14 +177,7 @@ def materialize(
                 if channel_value:
                     payload["channel"] = channel_value
                 payload["user_id"] = user_id_value
-            try:
-                job_id, run_at = schedule_cron(queue, trig.cron, "start_goal", payload)
-                result.schedule = {
-                    "job_id": job_id, "run_at": run_at, "cron": trig.cron,
-                    "schedule_id": schedule_id,
-                }
-            except CronError as e:
-                notes.append(f"could not create schedule from cron {trig.cron!r}: {e}")
+            _activate_schedule(queue, payload, result, notes)
         elif trig.cron:
             result.suggested_trigger = {"kind": "schedule", "cron": trig.cron, "template": tname}
             notes.append("schedule recovered; pass a queue (or use the dashboard) to activate it")

@@ -111,6 +111,23 @@ def list_definitions(queue, *, owner=None):
                 if owner is None or json.loads(row["payload"]).get("owner", "") == owner]
 
 
+def imported_definition(queue, imported_from, *, owner=""):
+    """The schedule an imported automation created earlier, with its stored payload.
+
+    Matched by the import's own mark, never by a title or text that another
+    schedule could share. A retired schedule keeps its history and is not reused.
+    """
+    with queue._conn() as connection:
+        rows = connection.execute(
+            "SELECT * FROM schedule_definitions WHERE state!='retired' ORDER BY created_at DESC,id"
+        ).fetchall()
+        for row in rows:
+            payload = json.loads(row["payload"])
+            if payload.get("imported_from") == imported_from and payload.get("owner", "") == owner:
+                return {**public_definition(connection, row), "payload": payload}
+    return None
+
+
 def _record_version(connection, row, *, payload, state, actor, rationale, now):
     revision = row["revision"] + 1
     encoded = json.dumps(payload, sort_keys=True)
@@ -139,7 +156,8 @@ def _future_occurrence(queue, connection, row, payload, now):
 
 
 def change_definition(queue, identity, *, expected_revision, state, actor,
-                      owner=None, cron=None, zone=None, title=None, rationale="Reviewed schedule change"):
+                      owner=None, cron=None, zone=None, title=None, rationale="Reviewed schedule change",
+                      payload_updates=None):
     from .scheduler import next_run, require_zone
     from .task_file_recovery import mutation_gate
 
@@ -165,6 +183,8 @@ def change_definition(queue, identity, *, expected_revision, state, actor,
             payload["__tz__"] = zone
         if title is not None:
             payload["title"] = title
+        # A re-import replaces what future runs do (the task text and its limits).
+        payload.update(payload_updates or {})
         next_run(payload["__cron__"], after=now, tz=payload.get("__tz__", ""))
         _record_version(connection, row, payload=payload, state=state, actor=actor, rationale=rationale, now=now)
         # Preserve admitted execution and uncertain retries. Cancel only future,

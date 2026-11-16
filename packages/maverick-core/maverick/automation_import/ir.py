@@ -341,6 +341,14 @@ class ImportedAutomation:
             return f"{base}-{suffix}"
         return base
 
+    def import_ref(self) -> str:
+        """The mark a schedule created from this automation carries.
+
+        A re-import finds its own schedule by this mark and updates it. The
+        source id survives a rename at the source; without one the template
+        slug is the only stable identity."""
+        return f"{self.source}:{self.source_id or self.template_name()}"
+
     def payload_fields(self) -> list[str]:
         """The trigger-payload field names this automation reads (see the
         module-level :func:`payload_fields`)."""

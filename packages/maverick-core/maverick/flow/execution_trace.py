@@ -3,11 +3,36 @@ from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any
 
 from . import node_outcomes
 from .ir import FlowNode
+
+# Where the running chain sits inside the flow: "" for the flow's own steps,
+# "<container id>/" (repeated per level, with the lane number under a parallel
+# step) for a nested body, branch or subflow. Nested graphs have their own id
+# space, so a bare id would record a nested step as the top-level step that
+# happens to share it. A ContextVar so the runner's telemetry contract stays
+# ``on_node(node, status, outcome)``; parallel lanes run in a copied context.
+_scope: ContextVar[str] = ContextVar("_flow_node_scope", default="")
+
+
+@contextmanager
+def node_scope(scope: str) -> Iterator[None]:
+    """Trace the steps run inside this block under ``scope``."""
+    token = _scope.set(scope)
+    try:
+        yield
+    finally:
+        _scope.reset(token)
+
+
+def scoped_id(node_id: str) -> str:
+    """``node_id`` qualified by the nesting it is running in; unchanged at top level."""
+    return _scope.get() + node_id
 
 
 class ExecutionTrace:
@@ -31,19 +56,21 @@ class ExecutionTrace:
             return fn(*args)
         finally:
             elapsed = time.perf_counter() - start
+            key = scoped_id(node_id)
             with self._lock:
-                self._durations[node_id] = self._durations.get(node_id, 0.0) + elapsed
+                self._durations[key] = self._durations.get(key, 0.0) + elapsed
 
     def on_node(self, node: FlowNode, status: str, outcome: float | None) -> None:
         if self.execution_guard is not None:
             self.execution_guard()
+        key = scoped_id(node.id)
         with self._lock:
             entry: dict = {"status": status, "outcome": outcome}
-            if node.id in self._durations:
-                entry["seconds"] = round(self._durations[node.id], 3)
-            self.states[node.id] = entry
+            if key in self._durations:
+                entry["seconds"] = round(self._durations[key], 3)
+            self.states[key] = entry
         if outcome is not None and self.record_outcomes:
             node_outcomes.record(
-                self.flow_id, node.id, node.kind, outcome,
+                self.flow_id, key, node.kind, outcome,
                 revision=self.revision, cohort=self.cohort,
             )

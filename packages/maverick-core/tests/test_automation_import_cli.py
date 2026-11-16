@@ -90,15 +90,47 @@ def test_reimport_with_activate_schedules_does_not_duplicate_the_cron_job(tmp_pa
     assert any("not duplicated" in n for n in again["notes"])
     assert len(list(job_queue.JobQueue().iter_pending("start_goal"))) == 1
 
-    # A changed automation is not silently "already active": the job (which
-    # may not be the import's own) is left alone and the note says the text differs.
+    # A changed automation updates the schedule this import created: the job
+    # carries the import's mark, so it is known to be the import's own.
     wf["nodes"][1]["name"] = "Send the nightly digest"
     f.write_text(json.dumps(wf))
     changed = _run(args)
     assert changed.exit_code == 0, changed.output
-    assert any("different text" in n for n in json.loads(changed.output)[0]["notes"])
+    updated = json.loads(changed.output)[0]
+    assert updated["schedule"]["updated"] is True
+    assert updated["schedule"]["schedule_id"] == json.loads(first.output)[0]["schedule"]["schedule_id"]
+    assert any("updated" in n for n in updated["notes"])
     jobs = list(job_queue.JobQueue().iter_pending("start_goal"))
-    assert len(jobs) == 1 and "Send the nightly digest" not in jobs[0].payload["text"]
+    assert len(jobs) == 1 and "Send the nightly digest" in jobs[0].payload["text"]
+    assert jobs[0].payload["imported_from"] == "n8n:7"
+
+
+def test_reimport_leaves_a_schedule_it_did_not_create_unchanged(tmp_path, monkeypatch):
+    # A schedule made before imports were marked (or by hand) with the same
+    # title and cron may not be the import's own, so it is never rewritten.
+    from maverick import job_queue
+    from maverick.automation_import import get_importer
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / ".maverick"))
+    monkeypatch.setattr(job_queue, "DEFAULT_DB", tmp_path / "jobs.db")
+    wf = {"id": "7", "name": "Nightly", "active": True,
+          "nodes": [{"name": "Cron", "type": "n8n-nodes-base.cron",
+                     "parameters": {"cronExpression": "0 3 * * *"}},
+                    {"name": "Do", "type": "n8n-nodes-base.set", "parameters": {}}],
+          "connections": {"Cron": {"main": [[{"node": "Do"}]]}}}
+    title, _body = get_importer("n8n").translate(wf).render()
+    job_queue.JobQueue().enqueue(
+        "start_goal", {"text": "older text", "title": title[:200], "__cron__": "0 3 * * *"})
+    f = tmp_path / "wf.json"
+    f.write_text(json.dumps(wf))
+
+    result = _run(["import", "run", "n8n", "--from-file", str(f), "--activate-schedules", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert any("different text" in n for n in json.loads(result.output)[0]["notes"])
+    jobs = list(job_queue.JobQueue().iter_pending("start_goal"))
+    assert len(jobs) == 1 and jobs[0].payload["text"] == "older text"
 
 
 def test_untranslatable_n8n_schedule_is_reported_not_silently_dropped(tmp_path):

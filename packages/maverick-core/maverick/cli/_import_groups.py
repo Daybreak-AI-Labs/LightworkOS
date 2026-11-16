@@ -70,25 +70,29 @@ def _load_raws(from_file: str | None, source: str) -> list[dict]:
 
 
 def _active_cron_jobs(queue) -> dict[tuple[str, str], tuple[int, str]]:
-    """``(title, cron) -> (job id, goal text)`` for pending or running cron goal jobs."""
+    """``(title, cron) -> (job id, goal text)`` for unmarked cron goal jobs.
+
+    A job that carries ``imported_from`` is an import's own schedule;
+    ``materialize`` finds and updates it, so it is not listed here.
+    """
     active: dict[tuple[str, str], tuple[int, str]] = {}
     for job in queue.iter_pending("start_goal", include_running=True):
         payload = job.payload if isinstance(job.payload, dict) else {}
         cron = payload.get("__cron__")
-        if cron:
+        if cron and not payload.get("imported_from"):
             active.setdefault((str(payload.get("title") or ""), str(cron)),
                               (job.id, str(payload.get("text") or "")))
     return active
 
 
 def _reuse_or_replace(queue, active, automation) -> tuple[int | None, str | None]:
-    """Decide what to do with an already-scheduled copy of ``automation``.
+    """Decide what to do with an unmarked schedule that looks like ``automation``.
 
-    Returns ``(job id to keep, note)``. Each activation mints a new schedule,
-    so a matching job is kept rather than duplicated. Import jobs carry no
-    marker that tells them apart from a dashboard or ``schedule`` job with
-    the same title and cron, so a job whose text differs is never cancelled
-    here: it is left, and the note says so.
+    Returns ``(job id to keep, note)``. Schedules made before imports marked
+    their jobs cannot be told apart from a dashboard or ``schedule`` job with
+    the same title and cron, so a matching job is kept rather than duplicated
+    and one whose text differs is never changed here: it is left, and the
+    note says so.
     """
     title, body = automation.render()
     found = active.get((title[:200], automation.trigger.cron or ""))
@@ -141,8 +145,8 @@ def import_run_cmd(ctx, source, from_file, dry_run, activate_schedules, as_json)
 
     results = []
     for a in automations:
-        # Each activation mints a new schedule, so a repeated import would
-        # enqueue a second copy of every recurring job.
+        # materialize updates the schedule an earlier import marked as its
+        # own. An unmarked look-alike is kept, never duplicated or rewritten.
         existing, note = (_reuse_or_replace(queue, active, a) if queue is not None
                           else (None, None))
         res = materialize(a, save=not dry_run,
@@ -167,7 +171,8 @@ def import_run_cmd(ctx, source, from_file, dry_run, activate_schedules, as_json)
     for r in results:
         click.echo(f"  • {r['name']}  →  template '{r['template']}' (trigger: {r['trigger']})")
         if r["schedule"]:
-            click.echo(f"      schedule created: cron {r['schedule']['cron']}")
+            verb = "updated" if r["schedule"].get("updated") else "created"
+            click.echo(f"      schedule {verb}: cron {r['schedule']['cron']}")
         elif r["suggested_trigger"]:
             click.echo(f"      next: wire {r['suggested_trigger']['kind']} trigger")
         for note in r["notes"]:

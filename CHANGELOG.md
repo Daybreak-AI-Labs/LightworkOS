@@ -478,6 +478,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   value is ignored, logged, listed by `maverick doctor` and shown in Settings
   or on the agent page as "Set by your organisation"; the file still loads.
   Remove the looser values from the file to clear the warning.
+- `maverick import run --activate-schedules` now marks the schedule it
+  creates. Importing the same workflow again updates that schedule's task
+  text, title and timing instead of leaving the old text running; a paused
+  schedule stays paused. A schedule made before this release has no mark and
+  is still left unchanged: remove it once, then import again.
+- A flow run records a step inside a loop, a parallel lane, a try block or
+  a subflow under its container, for example `loop1/n0` or `fanout/1/n0`.
+  It no longer shows as, or counts towards, the top-level step with the same
+  id. Outcomes recorded earlier keep their old ids.
 
 ### Fixed
 
