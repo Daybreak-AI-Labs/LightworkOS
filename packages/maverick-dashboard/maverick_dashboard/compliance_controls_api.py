@@ -621,6 +621,7 @@ _CLOSURE_STEP_LABELS = {
     "audit_scrub": "earlier activity records",
     "audit_reanchor": "the activity record's tamper seal",
     "audit_record": "the note that this erasure happened",
+    "audit_erase_record": "the erasure record kept for the activity record's checkpoints",
     "knowledge": "stored knowledge about the person",
     "residual data": "the check that nothing remains",
     "verification": "the check that nothing remains",

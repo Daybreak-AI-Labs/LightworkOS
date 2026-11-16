@@ -412,10 +412,11 @@ def _rewrite_summary(
 
 
 def _report_rewrites(rewrites: list[dict], on_rewrite) -> None:
-    """Hand each rewritten day to ``on_rewrite``, after its lock is released.
+    """Hand each rewritten day to ``on_rewrite``, after its day lock is released.
 
-    The caller stores the erase record there. A failure is logged and never
-    undoes or blocks the erasure.
+    The caller stores the erase record there, and reports to its own caller
+    when it cannot. A failure that escapes it is logged here and never undoes
+    the erasure or keeps a lock.
     """
     if on_rewrite is None:
         return
@@ -426,6 +427,46 @@ def _report_rewrites(rewrites: list[dict], on_rewrite) -> None:
         except Exception as e:
             log.warning("audit erase: could not record the rewrite of %s: %s",
                         summary.get("day"), e)
+
+
+#: Sidecar name of the lock that orders erasures of one audit folder.
+_ERASE_RECORDS_LOCK = ".erase-records"
+
+
+def _erase_file(
+    path: Path,
+    channel: str,
+    user_id: str,
+    *,
+    delete: bool,
+    strict: bool,
+    checks: _Checks,
+    on_rewrite,
+) -> tuple[int, int]:
+    """Erase the subject from one file and store its erase record, as one step.
+
+    The next erasure of the same day compares the day with its checkpoint and
+    finds it changed; only this erasure's stored record explains that. So no
+    other erasure of this audit folder may start between this one's rewrite
+    and the storing of its record. A lock of its own orders them. It is taken
+    before the day lock and held until ``on_rewrite`` returns or raises.
+
+    The day lock is not what is held across the store: the audit writer takes
+    it for every append, the store writes the world model, and an append made
+    while the world model is being written must never wait on an erasure that
+    waits on the world model. The order is always this lock, then the day
+    lock (and under it the anchor ledger and checkpoint folders), then, with
+    the day lock released, the world model. Nothing else takes this lock.
+    """
+    rewrites: list[dict] = []
+    with cross_process_lock(path.parent / _ERASE_RECORDS_LOCK):
+        try:
+            return _process_file(
+                path, channel, user_id, delete=delete, strict=strict,
+                rewrites=rewrites, checks=checks,
+            )
+        finally:
+            _report_rewrites(rewrites, on_rewrite)
 
 
 def _process_file(
@@ -614,19 +655,8 @@ def scrub_user(
         return 0, 0
     checks = _Checks(erase_records, tuple(Path(folder) for folder in checkpoint_dirs))
     for path in sorted(audit_dir.glob("*.ndjson")):
-        rewrites: list[dict] = []
-        try:
-            m, w = _process_file(
-                path,
-                channel,
-                user_id,
-                delete=False,
-                strict=strict,
-                rewrites=rewrites,
-                checks=checks,
-            )
-        finally:
-            _report_rewrites(rewrites, on_rewrite)
+        m, w = _erase_file(path, channel, user_id, delete=False, strict=strict,
+                           checks=checks, on_rewrite=on_rewrite)
         total_matched += m
         total_scanned += w
     if total_matched:
@@ -721,15 +751,10 @@ def delete_user(
     total_scanned = 0
     if not audit_dir.exists():
         return 0, 0
+    checks = _Checks(erase_records, tuple(Path(folder) for folder in checkpoint_dirs))
     for path in sorted(audit_dir.glob("*.ndjson")):
-        rewrites: list[dict] = []
-        try:
-            m, w = _process_file(
-                path, channel, user_id, delete=True, rewrites=rewrites,
-                checks=_Checks(erase_records, tuple(Path(folder) for folder in checkpoint_dirs)),
-            )
-        finally:
-            _report_rewrites(rewrites, on_rewrite)
+        m, w = _erase_file(path, channel, user_id, delete=True, strict=False,
+                           checks=checks, on_rewrite=on_rewrite)
         total_matched += m
         total_scanned += w
     if total_matched:
