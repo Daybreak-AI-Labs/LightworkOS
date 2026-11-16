@@ -854,19 +854,25 @@ def default_checker(*, budget, user_id: str | None = None,
                     allowed_suites: frozenset[str] | None = None) -> Checker:
     """The independent checker: a separate governed run with a fresh context,
     whose sandbox is its own throwaway copy of the pinned commit, charged to
-    the feature run's ``budget``."""
+    the feature run's ``budget``. Its run is a fresh context
+    (:func:`maverick.tools.fresh_context_run`): no tool that reads past goals
+    or shared memory, and no prior goals recalled into its brief."""
     def check(goal_id: int, copy: Path) -> object:
+        from .. import orchestrator
         from ..llm import LLM
-        from ..orchestrator import run_goal_sync
         from ..sandbox import build_sandbox
+        from ..tools import fresh_context_run
         from ..world_model import close_world_if_owned, open_world
         world = open_world()
+        box = build_sandbox(workdir=str(copy))
         try:
-            return run_goal_sync(LLM(), world, budget, goal_id,
-                                 sandbox=build_sandbox(workdir=str(copy)), user_id=user_id,
-                                 allowed_suites=allowed_suites,
-                                 orchestrator_model_override=checker_model())
+            with fresh_context_run():
+                return orchestrator.run_goal_sync(LLM(), world, budget, goal_id, sandbox=box,
+                                                  user_id=user_id,
+                                                  allowed_suites=allowed_suites,
+                                                  orchestrator_model_override=checker_model())
         finally:
+            _close(box)
             close_world_if_owned(world)
     return check
 

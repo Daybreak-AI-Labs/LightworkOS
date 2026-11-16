@@ -881,3 +881,35 @@ def test_a_container_requirement_refuses_a_run_on_this_computer(upstream, tmp_pa
     assert calls == [] and features.list_proposals() == []
     assert features.container_refusal(LocalBackend) == features.CONTAINER_REQUIRED
     assert features.container_refusal(_Sandbox) is None          # not this computer's shell
+
+
+def test_the_checker_cannot_read_past_goals_or_memory(tmp_path, monkeypatch):
+    """The checker's run is a fresh context: the tools that read past goals or
+    other runs' memory are denied, and prior goals are not recalled into its
+    brief, so it cannot reach the author's reasoning that way."""
+    from types import SimpleNamespace
+
+    from maverick import orchestrator, tools
+    from maverick.sandbox.local import LocalBackend
+    seen = {}
+
+    def fake_run(llm, world, budget, goal_id, **kwargs):
+        seen["fresh"] = tools.fresh_context()
+        return '{"findings": []}'
+    monkeypatch.setattr(orchestrator, "run_goal_sync", fake_run)
+    monkeypatch.setattr("maverick.llm.LLM", lambda *a, **k: object())
+    monkeypatch.setattr("maverick.sandbox.build_sandbox", lambda **k: None)
+    monkeypatch.setattr("maverick.world_model.open_world", lambda *a, **k: None)
+    monkeypatch.setattr("maverick.world_model.close_world_if_owned", lambda world: None)
+    monkeypatch.setattr(features, "checker_model", lambda: "anthropic:checker")
+    features.default_checker(budget=None)(1, tmp_path)
+    assert seen["fresh"] is True and tools.fresh_context() is False
+    world = WorldModel(tmp_path / "w.db")
+    with tools.fresh_context_run():
+        reg = tools.base_registry(world, LocalBackend(workdir=tmp_path))
+    assert {"recall_past_goals", "memory", "kv_memory"} <= tools.PAST_WORK_TOOLS
+    assert not any(reg._acl_allows(name) for name in tools.PAST_WORK_TOOLS)
+    monkeypatch.setenv("MAVERICK_AUTO_RECALL", "1")
+    goal = SimpleNamespace(id=2, title="Add a discount", description="", owner="")
+    with tools.fresh_context_run():
+        assert orchestrator._maybe_recall_prior_work(world, goal, None) is None

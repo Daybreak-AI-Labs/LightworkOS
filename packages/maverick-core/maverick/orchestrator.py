@@ -674,7 +674,10 @@ def _maybe_recall_prior_work(world, goal, shield) -> str | None:
     Tunables: ``MAVERICK_AUTO_RECALL_K`` (default 3); min similarity 0.10.
     """
     from .env_setting import env_or_config
+    from .tools import fresh_context
 
+    if fresh_context():  # e.g. the code checker: never recall the author's goals
+        return None
     if (env_or_config("MAVERICK_AUTO_RECALL", "context", "auto_recall") or "").strip().lower() not in {
         "1", "true", "yes", "on",
     }:
@@ -1120,7 +1123,8 @@ async def _apply_brief_enrichments(
     # or there are no similar prior failures.
     with _enrich("reflexion recall"):
         from . import reflexion
-        if reflexion.enabled():
+        from .tools import fresh_context
+        if reflexion.enabled() and not fresh_context():
             recalled = reflexion.recall(
                 f"{goal.title}\n{goal.description or ''}",
                 channel=channel,
