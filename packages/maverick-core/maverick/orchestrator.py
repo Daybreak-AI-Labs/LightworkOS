@@ -1358,12 +1358,14 @@ async def _build_orchestrator_brief(
     # this block the whole propose/approve/apply loop writes a store nothing
     # consumes, so an operator's approval would change nothing.
     refine_block = _brief_refinements_block(shield)
+    decision_block = _brief_decisions_block(world, goal_id, shield)
 
     brief = (
         f"Top-level goal: {goal.title}\n"
         f"Description: {description}\n"
         f"{history_block}"
-        f"{qa_block}\n"
+        f"{qa_block}"
+        f"{decision_block}\n"
         f"{refine_block}"
         # Facts are writable from untrusted sources (the agent's own kv_memory
         # set, the dashboard set_fact endpoint, MCP), so a fact value can be a
@@ -2255,6 +2257,55 @@ def _handle_root_error(*, result: Any, world: WorldModel, goal: Any, goal_id: in
 
 
 
+def _brief_decisions_block(world: Any, goal_id: int, shield: Any) -> str:
+    """The areas that always need a person, and the decisions people made for
+    this run, as structured records (never a free-text answer to reinterpret)."""
+    from . import decision_requests
+
+    try:
+        rules = "\n" + decision_requests.rules_text() + "\n"
+    except Exception:  # pragma: no cover -- never block a run on this
+        rules = ""
+    made = decision_requests.brief_block(
+        world, goal_id,
+        clean=lambda text, limit: _sanitize_persisted_prompt_text(
+            text, shield=shield, max_chars=limit),
+    )
+    return rules + made
+
+
+def _settle_decision_result(*, result: Any, world: WorldModel, goal_id: int,
+                            lifecycle: _RunLifecycle) -> str | None:
+    """A run waiting on a person's decision, or stopped because its decision
+    request could not be saved. ``None`` for every other result."""
+    from . import decision_requests
+
+    if result.error and result.stop_kind == decision_requests.STOP_KIND:
+        lifecycle.end_episode("decision not recorded", "interrupted")
+        world.set_goal_status(goal_id, "blocked", result=decision_requests.STOP_MESSAGE)
+        _fire_webhook("goal_finished", {"goal_id": goal_id, "status": "blocked",
+                                        "result": decision_requests.STOP_MESSAGE})
+        return decision_requests.STOP_MESSAGE
+    if not result.blocked_on_user:
+        return None
+    waiting = decision_requests.open_for_goal(world, goal_id)
+    if not waiting:
+        return None
+    lifecycle.end_episode("blocked awaiting a decision", "interrupted")
+    text = decision_requests.waiting_text(waiting)
+    world.set_goal_status(goal_id, "blocked", result=text)
+    _fire_webhook("goal_waiting", {
+        "goal_id": goal_id, "status": "blocked", "waiting_for": "decision",
+        "open_decision_count": len(waiting),
+    })
+    lines = [f"  #{d.id}: {d.question}" for d in waiting]
+    return (
+        f"Paused: {text}\n" + "\n".join(lines)
+        + "\n\nAnswer on the Approvals page, in the chat card, or with: "
+        "maverick decisions answer <id> <option number>"
+    )
+
+
 def _handle_root_result(*, result: Any, world: WorldModel, goal: Any, goal_id: int,
                         budget: Budget, blackboard: Blackboard, shield: Any,
                         channel: str | None, user_id: str | None, domain: str | None,
@@ -2271,6 +2322,10 @@ def _handle_root_result(*, result: Any, world: WorldModel, goal: Any, goal_id: i
         lifecycle.end_episode("cancelled", "interrupted")
         return "Stopped: this goal was cancelled."
 
+    settled = _settle_decision_result(result=result, world=world, goal_id=goal_id,
+                                      lifecycle=lifecycle)
+    if settled is not None:
+        return settled
     if result.blocked_on_user:
         lifecycle.end_episode("blocked awaiting user", "interrupted")
         world.set_goal_status(goal_id, "blocked")

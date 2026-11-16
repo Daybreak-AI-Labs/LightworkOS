@@ -597,7 +597,7 @@ class ToolRegistry:
         priority = (
             [self.META_TOOL]
             + list(reversed(self._activation_order))
-            + ["ask_user", "spawn_subagent", "spawn_swarm", "spawn_specialist",
+            + ["ask_user", "request_decision", "spawn_subagent", "spawn_swarm", "spawn_specialist",
                "list_specialists", "send_to_agent", "recv_from_agent",
                "delegate_to_agent", "knowledge_search"]
             + sorted(CORE_TOOL_NAMES)
@@ -836,7 +836,7 @@ CORE_TOOL_NAMES = frozenset({
     # repo understanding
     "repo_map", "dep_graph",
     # interaction + attachments
-    "ask_user", "list_attachments", "read_attachment",
+    "ask_user", "request_decision", "list_attachments", "read_attachment",
     # web / docs / media basics
     "http_fetch", "web_search", "read_pdf", "view_image",
     # memory + run introspection
@@ -1108,6 +1108,7 @@ def base_registry(
     """
     from .ask_user import ask_user
     from .attachments import list_attachments_tool, read_attachment_tool
+    from .request_decision import request_decision
     from .fs import list_dir, read_file, write_file
     from .repo_map import repo_map
     from .shell import shell
@@ -1128,6 +1129,7 @@ def base_registry(
     _register_local_workspace_tool(reg, sandbox, list_dir, has_local_workdir)
     reg.register(shell(sandbox))
     reg.register(ask_user(world, goal_id=goal_id))
+    reg.register(request_decision(world, goal_id=goal_id))
     reg.register(list_attachments_tool(world, goal_id))
     from ..tool_result_artifacts import read_tool_result
 

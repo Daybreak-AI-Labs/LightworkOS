@@ -37,6 +37,7 @@ from dataclasses import dataclass
 from urllib.parse import quote
 
 from ..approval_checks import POSTGRES_SCHEMA as _APPROVAL_CHECK_SCHEMA_PG
+from ..decision_requests import POSTGRES_SCHEMA as _DECISION_REQUEST_SCHEMA_PG
 from ..attachment_submissions import POSTGRES_SCHEMA as _ATTACHMENT_SUBMISSION_SCHEMA
 from ..deadline_alerts import POSTGRES_SCHEMA as _DEADLINE_ALERT_SCHEMA_PG
 from ..event_admission import POSTGRES_SCHEMA as _EVENT_ADMISSION_SCHEMA
@@ -775,6 +776,9 @@ MIGRATIONS.append((53, [
 
 # v54: heartbeats get their own liveness timestamp (mirrors SQLite v54).
 MIGRATIONS.append((54, ["ALTER TABLE goals ADD COLUMN IF NOT EXISTS heartbeat_at DOUBLE PRECISION"]))
+
+# v55: decision requests, scoped through their goal like questions (mirrors SQLite v55).
+MIGRATIONS.append((55, _DECISION_REQUEST_SCHEMA_PG))
 
 _PG_SCHEMA_VERSION = MIGRATIONS[-1][0]
 
@@ -5750,6 +5754,7 @@ class PostgresWorldModel:
                     "messages",
                     "processed_messages",
                     "questions",
+                    "decision_requests",
                     "share_links",
                     "signoffs",
                 ):

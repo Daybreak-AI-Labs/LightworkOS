@@ -31,6 +31,7 @@ from typing import Any
 from .approval_checks import SQLITE_SCHEMA as _APPROVAL_CHECK_SCHEMA
 from .attachment_submissions import SQLITE_SCHEMA as _ATTACHMENT_SUBMISSION_SCHEMA
 from .deadline_alerts import SQLITE_SCHEMA as _DEADLINE_ALERT_SCHEMA
+from .decision_requests import SQLITE_SCHEMA as _DECISION_REQUEST_SCHEMA
 from .event_admission import SQLITE_SCHEMA as _EVENT_ADMISSION_SCHEMA
 from .event_admission import (
     EventRegistryUnavailable,
@@ -72,7 +73,7 @@ log = logging.getLogger(__name__)
 # intentional override from the untouched compatibility constant.
 _INITIAL_DEFAULT_DB = data_dir("world.db")
 DEFAULT_DB = _INITIAL_DEFAULT_DB
-SCHEMA_VERSION = 54
+SCHEMA_VERSION = 55
 DEFAULT_BUSY_TIMEOUT_MS = 5000
 WAL_SWITCH_BUSY_TIMEOUT_MS = 50
 WAL_SWITCH_RETRY_SECONDS = 5.0
@@ -461,6 +462,9 @@ def _bootstrap_schema(conn: sqlite3.Connection) -> str:
 
 
 MIGRATIONS: dict[int, list[str]] = {
+    # v55: a run's question for a person with options and a recommendation
+    # (maverick.decision_requests). Rows are scoped through their goal.
+    55: _DECISION_REQUEST_SCHEMA,
     # v54: a running goal's liveness heartbeat has its own timestamp, so it no
     # longer changes ``updated_at``, the version a reviewed Stop or edit binds.
     54: ["ALTER TABLE goals ADD COLUMN heartbeat_at REAL"],
@@ -5004,6 +5008,7 @@ class WorldModel:
                         "messages",
                         "processed_messages",
                         "questions",
+                        "decision_requests",
                         "share_links",
                         "signoffs",
                         *(("checkpoints",) if checkpoints else ()),

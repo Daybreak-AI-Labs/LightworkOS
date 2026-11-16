@@ -86,7 +86,7 @@ def test_core_tool_names_per_role():
     kernel = CORE_TOOL_NAMES - {"apply_patch", "ast_edit", "preview_diff", "repo_map", "dep_graph"}
     for core in (orch, coder, researcher, worker):
         assert kernel <= core
-        assert 30 <= len(core) <= 45, sorted(core)
+        assert 30 <= len(core) <= 46, sorted(core)
     assert orch >= CORE_TOOL_NAMES and coder >= CORE_TOOL_NAMES
     assert {"spawn_subagent", "spawn_swarm", "spawn_specialist", "list_specialists"} <= orch
     assert {"apply_patch", "repo_map", "dep_graph", "preview_diff"} <= coder
@@ -101,7 +101,7 @@ def test_core_exposure_is_role_aware_and_lean(ctx, monkeypatch):
     _config(monkeypatch)
     by_role = {r: _offered(_agent(ctx, r)) for r in ("orchestrator", "worker", "researcher", "coder")}
     for role, names in by_role.items():
-        assert len(names) <= 45, (role, sorted(names))
+        assert len(names) <= 46, (role, sorted(names))
         assert "find_tools" in names
         assert {"read_file", "write_file", "shell", "ask_user", "http_fetch",
                 "kv_memory", "spawn_subagent"} <= names, role
