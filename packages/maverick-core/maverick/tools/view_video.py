@@ -95,8 +95,14 @@ def _runs_on_host(sandbox) -> bool:
 
 def _relative(sandbox, path: Path) -> str:
     """``path`` as a command inside the sandbox names it: relative to the
-    workspace, with a prefix so a name beginning with '-' is not an option."""
-    return "./" + path.resolve().relative_to(Path(sandbox.workdir).resolve()).as_posix()
+    workspace, with a prefix so a name beginning with '-' is not an option.
+
+    The one path outside the workspace is the private staging folder used when
+    commands run on this machine and the workspace cannot be written."""
+    resolved, workdir = path.resolve(), Path(sandbox.workdir).resolve()
+    if not resolved.is_relative_to(workdir):
+        return str(resolved)
+    return "./" + resolved.relative_to(workdir).as_posix()
 
 
 def _open_staged(sandbox, path: Path, limit: int):
@@ -109,6 +115,8 @@ def _open_staged(sandbox, path: Path, limit: int):
     from .fs import _fd_real_path, _open_contained
 
     workdir = Path(sandbox.workdir).resolve()
+    if not path.parent.resolve().is_relative_to(workdir):
+        workdir = path.parent.resolve()  # the private folder outside the workspace
     flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
     try:
         if os.open in os.supports_dir_fd and hasattr(os, "O_NOFOLLOW"):
@@ -223,7 +231,11 @@ def _run_view_video(args: dict[str, Any], sandbox, *, budget=None) -> str:
     try:
         tmp = tempfile.mkdtemp(prefix=".mvk-view-video-", dir=Path(sandbox.workdir).resolve())
     except OSError as e:
-        return f"ERROR: could not prepare a folder for the video frames: {e}"
+        if not on_host:
+            return f"ERROR: could not prepare a folder for the video frames: {e}"
+        # Commands run on this machine, so a workspace that cannot be written
+        # (read-only, full) can still be served from a private folder.
+        tmp = tempfile.mkdtemp(prefix="maverick-view-video-")
     try:
         frames = _extract_frames(src, timestamps, tmp, sandbox)
         if not frames:

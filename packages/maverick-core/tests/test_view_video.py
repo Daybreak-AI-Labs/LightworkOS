@@ -295,3 +295,47 @@ def test_view_video_refuses_model_override_and_propagates_stop_signals(monkeypat
     monkeypatch.setattr(_FakeLLM, "complete", _over)
     with pytest.raises(BudgetExceeded):
         tool.fn({"source": str(vid)})
+
+
+def test_view_video_still_works_when_the_workspace_cannot_be_written(monkeypatch, tmp_path):
+    """Frames are staged in the workspace so a container can write them. With
+    the local sandbox the commands run on this machine, so a workspace that
+    cannot be written falls back to a private folder outside it."""
+    import tempfile
+
+    from maverick.sandbox.local import LocalBackend
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / "v.mp4").write_bytes(b"\x00")
+    real_mkdtemp = tempfile.mkdtemp
+    staged: list[Path] = []
+
+    def _read_only(*args, **kwargs):
+        if kwargs.get("dir") is not None:
+            raise PermissionError(30, "Read-only file system")
+        staged.append(Path(real_mkdtemp(*args, **kwargs)))
+        return str(staged[-1])
+
+    def _host(sandbox, cmd, *, timeout=600.0):
+        if cmd[0] == "ffprobe":
+            return (0, "5.0", "")
+        Path(cmd[-1]).write_bytes(b"\xff\xd8jpeg")  # an absolute path, as on the host
+        return (0, "", "")
+
+    monkeypatch.setattr(tempfile, "mkdtemp", _read_only)
+    monkeypatch.setattr(vv, "_need", lambda b: None)
+    monkeypatch.setattr(vv, "_run_cmd", _host)
+    monkeypatch.setattr("maverick.llm.LLM", _FakeLLM)
+
+    out = view_video(LocalBackend(workdir=workspace), budget=_budget()).fn(
+        {"source": "v.mp4", "num_frames": 2})
+    assert out == "a cat plays the piano, then jumps down"
+    assert len([b for b in _FakeLLM.last_messages[0]["content"] if b.get("type") == "image"]) == 2
+    assert staged and not staged[0].exists()
+    assert not staged[0].resolve().is_relative_to(workspace.resolve())
+
+    # A container cannot see a folder outside the workspace: say so.
+    out = view_video(SimpleNamespace(workdir=str(workspace)), budget=_budget()).fn(
+        {"source": "v.mp4"})
+    assert out.startswith("ERROR") and "folder for the video frames" in out
