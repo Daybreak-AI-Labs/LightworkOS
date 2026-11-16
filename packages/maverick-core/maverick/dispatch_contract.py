@@ -18,8 +18,10 @@ sites fails the build, so the next dispatch site cannot be added ungated by
 accident. It is deliberately a structural check rather than a grep -- a grep for
 ``.run(`` matches hundreds of unrelated calls. A direct ``<tool>.fn(...)`` call
 skips the registry altogether, so it counts as a dispatch too; the reviewed
-ones are listed in ``DIRECT_FN_REVIEWED``. A handler taken into a variable and
-called later is not seen.
+ones are listed in ``DIRECT_FN_REVIEWED`` with the number of calls each review
+covered. A handler taken into a variable and called later is not seen, and
+neither is a call written inside source text that runs in a child process (the
+two known ones are on record in the same list).
 
 CLI: ``python -m maverick.dispatch_contract --ci``.
 
@@ -78,36 +80,48 @@ UNREACHABLE_EXEMPT = {
 
 #: Direct ``<tool>.fn(...)`` calls, reviewed one by one and keyed by file and
 #: enclosing function, so a new direct call elsewhere in the same file still
-#: fails. The reason says why the call may skip ``ToolRegistry.run``.
-DIRECT_FN_REVIEWED: dict[tuple[str, str], str] = {
-    ("packages/maverick-core/maverick/governed_tools.py", "_fn"):
-        "the governed connector wrapper: it is the registered handler and "
-        "calls the wrapped handler after its own preview, approval and "
-        "receipt steps",
-    ("packages/maverick-core/maverick/tools/_lazy.py", "__call__"):
-        "the lazy tool's own handler: the registry calls it, and it forwards "
-        "to the tool it builds on first use",
-    ("packages/maverick-core/maverick/sandbox/plugin_contracts.py", "execute"):
-        "plugin qualification: runs the candidate's handler once with the "
-        "reviewed practice input, inside the reviewed container",
-    ("packages/maverick-core/maverick/sandbox/plugin_contracts.py", "execute_node"):
-        "plugin qualification: runs the candidate's handler once with the "
-        "reviewed practice input, inside the reviewed container",
-    ("packages/maverick-core/maverick/sandbox/plugin_contracts.py", "execute_grpc"):
-        "plugin qualification: runs the candidate's handler once with the "
-        "reviewed practice input, inside the reviewed container",
+#: fails. Each entry is ``(expected, reason)``. ``expected`` is the number of
+#: ``.fn(`` calls the review covered in that function: one more (or one fewer)
+#: fails the gate until it is reviewed. The reason says why the call may skip
+#: ``ToolRegistry.run``.
+#:
+#: Two calls sit inside source text that is run in a child process, where this
+#: scan cannot see them. They are on record under the function name
+#: ``<source text>`` with ``expected`` set to the line itself; the gate fails
+#: if the file no longer contains it, so the entry cannot go stale.
+_QUALIFICATION = ("plugin qualification: runs the candidate's handler once with the "
+                  "reviewed practice input, inside the reviewed container")
+DIRECT_FN_REVIEWED: dict[tuple[str, str], tuple[int | str, str]] = {
+    ("packages/maverick-core/maverick/governed_tools.py", "_fn"): (
+        2, "the governed connector wrapper: it is the registered handler and "
+           "calls the wrapped handler after its own preview, approval and "
+           "receipt steps"),
+    ("packages/maverick-core/maverick/tools/_lazy.py", "__call__"): (
+        1, "the lazy tool's own handler: the registry calls it, and it forwards "
+           "to the tool it builds on first use"),
+    ("packages/maverick-core/maverick/sandbox/plugin_contracts.py", "execute"): (1, _QUALIFICATION),
+    ("packages/maverick-core/maverick/sandbox/plugin_contracts.py", "execute_node"): (1, _QUALIFICATION),
+    ("packages/maverick-core/maverick/sandbox/plugin_contracts.py", "execute_grpc"): (1, _QUALIFICATION),
     ("packages/maverick-core/maverick/proof_guarantees.py",
-     "claim_fleet_can_read_but_not_write"):
-        "a self-check with fixed arguments: it asks a read-only seat to "
-        "write and requires the refusal",
+     "claim_fleet_can_read_but_not_write"): (
+        1, "a self-check with fixed arguments: it asks a read-only seat to "
+           "write and requires the refusal"),
     # Not gated like a real call. ToolRegistry.speculate_reads applies the
     # access list, the MCP binding and the ambient-credential check, and the
     # agent skips speculation under a capability, but there is no Shield scan,
     # stop check, replay check or audit row. Opt-in, side-effect-free reads
     # only. Listed so the gap is on record here, not so it reads as closed.
-    ("packages/maverick-core/maverick/speculative_tools.py", "_call_tool"):
-        "KNOWN GAP: opt-in pre-run of repeat reads outside the governed "
-        "dispatch; partial checks only (see the comment above)",
+    ("packages/maverick-core/maverick/speculative_tools.py", "_call_tool"): (
+        1, "KNOWN GAP: opt-in pre-run of repeat reads outside the governed "
+           "dispatch; partial checks only (see the comment above)"),
+    ("packages/maverick-core/maverick/self_learning.py", "<source text>"): (
+        "_result = _tool.fn(_args)",
+        "not scanned: source text run in a child process. It is the generated "
+        "tool's own handler; the registered tool starts that child in the sandbox"),
+    ("packages/maverick-core/maverick/plugin_isolation.py", "<source text>"): (
+        "result = fn().fn(args)",
+        "not scanned: source text run in a child process. It is the isolated "
+        "plugin's own handler; the registered proxy tool starts that child"),
 }
 
 
@@ -261,19 +275,43 @@ def _scan_uncached(roots: tuple[str, ...]) -> tuple[list[dict], int]:
     return hits, inspected
 
 
+def _fn_calls(hits: list[dict]) -> dict[tuple[str, str], int]:
+    """How many direct ``.fn(`` calls each (file, function) holds."""
+    counts: dict[tuple[str, str], int] = {}
+    for h in hits:
+        if h.get("kind") == "fn":
+            key = (h["file"], h["function"])
+            counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
 def stale_fn_reviews(hits: list[dict]) -> list[str]:
     """Reviewed direct-handler exceptions that no longer match a call."""
-    seen = {(h["file"], h["function"]) for h in hits if h.get("kind") == "fn"}
-    return [f"{rel}: {function}" for rel, function in sorted(DIRECT_FN_REVIEWED)
-            if (rel, function) not in seen]
+    seen = _fn_calls(hits)
+    stale = []
+    for (rel, function), (expected, _reason) in sorted(DIRECT_FN_REVIEWED.items()):
+        if isinstance(expected, str):  # a call inside child-process source text
+            try:
+                present = expected in (REPO_ROOT / rel).read_text(encoding="utf-8")
+            except OSError:
+                present = False
+        else:
+            present = (rel, function) in seen
+        if not present:
+            stale.append(f"{rel}: {function}")
+    return stale
 
 
 def violations(hits: list[dict]) -> list[dict]:
     out = []
+    calls = _fn_calls(hits)
     for h in hits:
         if h["file"] in SANCTIONED:
             continue
-        if h.get("kind") == "fn" and (h["file"], h.get("function")) in DIRECT_FN_REVIEWED:
+        key = (h["file"], h.get("function"))
+        # A review covers the calls it counted, not every later one in the
+        # same function.
+        if h.get("kind") == "fn" and DIRECT_FN_REVIEWED.get(key, (None, ""))[0] == calls.get(key):
             continue
         if (h["file"], h["literal"]) in LITERAL_EXEMPT:
             continue
@@ -340,7 +378,9 @@ def main(argv: list[str] | None = None) -> int:
           "path. If the tool name is a fixed literal that cannot be steered, "
           "add it to LITERAL_EXEMPT with the literal. A direct handler call "
           "(.fn) that has been reviewed goes in DIRECT_FN_REVIEWED with its "
-          "reason.", file=sys.stderr)
+          "reason and the number of such calls in that function; a function "
+          "already listed there is reported again when that number changes.",
+          file=sys.stderr)
     return 1 if args.ci else 0
 
 

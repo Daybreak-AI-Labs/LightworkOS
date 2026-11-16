@@ -694,7 +694,40 @@ def test_dispatch_contract_flags_a_direct_handler_call(tmp_path) -> None:
     real, _ = dispatch_contract.scan()
     assert dispatch_contract.stale_fn_reviews(real) == []
     assert dispatch_contract.stale_fn_reviews([]) != []
-    assert all(reason.strip() for reason in dispatch_contract.DIRECT_FN_REVIEWED.values())
+    assert all(reason.strip() for _expected, reason in dispatch_contract.DIRECT_FN_REVIEWED.values())
+
+
+def test_a_new_direct_call_inside_a_reviewed_function_is_not_hidden(tmp_path, monkeypatch) -> None:
+    """A review covered every ``.fn(`` call in the named function, present or
+    future. It now covers a counted number of calls, and the two calls written
+    inside child-process source text are on record with the text itself."""
+    monkeypatch.setattr(dispatch_contract, "REPO_ROOT", tmp_path)
+    f = tmp_path / "wrapper.py"
+    one = "def go(tool, args):\n    return tool.fn(args)\n"
+    f.write_text(one, encoding="utf-8")
+    reviewed = {("wrapper.py", "go"): (1, "the registered wrapper")}
+    monkeypatch.setattr(dispatch_contract, "DIRECT_FN_REVIEWED", reviewed)
+    hits = dispatch_contract.scan_file(f)
+    assert dispatch_contract.violations(hits) == []
+    f.write_text(one + "    tool.fn({})\n", encoding="utf-8")
+    hits = dispatch_contract.scan_file(f)
+    assert len(dispatch_contract.violations(hits)) == 2
+
+    script = tmp_path / "child.py"
+    script.write_text('SOURCE = """\nresult = tool.fn(args)\n"""\n', encoding="utf-8")
+    reviewed[("child.py", "<source text>")] = ("result = tool.fn(args)", "not scanned")
+    assert dispatch_contract.scan_file(script) == []  # a string, so the scan cannot see it
+    assert dispatch_contract.stale_fn_reviews(hits) == []
+    script.write_text('SOURCE = ""\n', encoding="utf-8")
+    assert dispatch_contract.stale_fn_reviews(hits) == ["child.py: <source text>"]
+
+    monkeypatch.undo()
+    real, _ = dispatch_contract.scan()
+    assert dispatch_contract.violations(real) == [] and dispatch_contract.stale_fn_reviews(real) == []
+    unscanned = [key[0] for key, (expected, _why) in dispatch_contract.DIRECT_FN_REVIEWED.items()
+                 if isinstance(expected, str)]
+    assert sorted(unscanned) == ["packages/maverick-core/maverick/plugin_isolation.py",
+                                 "packages/maverick-core/maverick/self_learning.py"]
 
 
 def test_dispatch_contract_accepts_a_gated_site(tmp_path) -> None:
