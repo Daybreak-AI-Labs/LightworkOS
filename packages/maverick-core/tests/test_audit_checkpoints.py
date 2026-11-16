@@ -715,6 +715,30 @@ def test_erasure_supersession_is_reported_until_the_verifier_retains_it(isolated
     retained = {"minimum_sequence": 2, "minimum_digest": _digest(supersession)}
     assert verify_checkpoints(audit_dir, checkpoint_dir, erase_records=erase_records, **retained) == []
 
+    # Replaced again by the key holder: the first replacement still shows its
+    # erasure, and the one that can be compared with the log shows none.
+    _rewrite_as_key_holder(audit_dir, day_file)
+    publish_checkpoint(
+        audit_dir,
+        checkpoint_dir,
+        day=day,
+        supersedes_checkpoint_sha256=retained["minimum_digest"],
+        lifecycle_reason="gdpr_reanchor",
+        allow_missing_erase_record=True,
+    )
+    found = verify_checkpoints(audit_dir, checkpoint_dir, erase_records=erase_records, **pin)
+    assert [(item.sequence, item.reason) for item in found] == [
+        (2, "superseded_after_pin"),
+        (3, "superseded_without_erase_record"),
+    ]
+    # With its erase record gone, the first one can no longer be judged at all.
+    found = verify_checkpoints(audit_dir, checkpoint_dir, erase_records=lambda day: [], **pin)
+    assert [(item.sequence, item.reason) for item in found] == [
+        (2, "superseded_then_replaced"),
+        (3, "superseded_without_erase_record"),
+    ]
+    assert "again" in found[0].detail and "could not be read" not in found[0].detail
+
 
 def test_an_earlier_erasure_record_does_not_back_a_later_rewrite(isolated_audit):
     # An erase record matches a day that still holds the rows the erasure
@@ -770,6 +794,36 @@ def test_an_earlier_erasure_record_does_not_back_a_later_rewrite(isolated_audit)
     assert [(item.sequence, item.reason) for item in found] == [
         (4, "superseded_without_erase_record")
     ]
+
+
+def test_a_day_retired_after_the_retained_sequence_is_reported(isolated_audit):
+    # Deleting a pinned day, recording a retention purge and retiring its
+    # checkpoint are all signed with the same key as the log.
+    audit_dir, checkpoint_dir = isolated_audit
+    day = "2000-01-01"
+    day_file, pinned = _checkpointed_closed_day(audit_dir, checkpoint_dir)
+    pin = {"minimum_sequence": 1, "minimum_digest": _digest(pinned)}
+    record = json.loads(pinned.read_text(encoding="utf-8"))
+
+    day_file.unlink()
+    assert record_retention_purge(
+        audit_dir,
+        [{"day": day, "row_count": record["row_count"], "tip_hash": record["tip_hash"]}],
+    )
+    retirement = retire_checkpoint(
+        audit_dir,
+        checkpoint_dir,
+        supersedes_checkpoint_sha256=pin["minimum_digest"],
+        lifecycle_reason="retention_purge",
+    )
+
+    assert verify_checkpoints(audit_dir, checkpoint_dir) == []
+    found = verify_checkpoints(audit_dir, checkpoint_dir, **pin)
+    assert [(item.sequence, item.reason) for item in found] == [(2, "retired_after_pin")]
+    assert day in found[0].detail
+    assert verify_checkpoints(
+        audit_dir, checkpoint_dir, minimum_sequence=2, minimum_digest=_digest(retirement),
+    ) == []
 
 
 def test_retention_requires_signed_retirement_instead_of_false_clean(

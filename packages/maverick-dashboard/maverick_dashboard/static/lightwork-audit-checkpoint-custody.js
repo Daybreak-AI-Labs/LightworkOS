@@ -142,7 +142,9 @@
       checkpoint_missing:'Local checkpoint history is missing.', checkpoint_store_invalid:'The local checkpoint history could not be trusted.',
       superseded_after_pin:'A day\'s checkpoint was replaced after the newest independent copy. An erasure record is on file for it. Check that erasure, then keep a new independent copy.',
       superseded_without_erase_record:'A day\'s checkpoint was replaced after the newest independent copy, and no erasure record is on file for it. Compare that day\'s log with a copy kept somewhere else.',
-      superseded_erase_record_unchecked:'A day\'s checkpoint was replaced after the newest independent copy. The erasure records could not be read, so check again.'};
+      superseded_erase_record_unchecked:'A day\'s checkpoint was replaced after the newest independent copy. The erasure records could not be read, so check again.',
+      superseded_then_replaced:'A day\'s checkpoint was replaced more than once after the newest independent copy. Only the newest replacement can still be compared with the log.',
+      retired_after_pin:'A day\'s checkpoint was retired after the newest independent copy, and that day\'s log is gone. Check that your record-keeping policy deleted it, then keep a new independent copy.'};
     view.append(node('p', value.verified ? 'The current signed checkpoint history matches independently retained Amazon history.' : value.reason ||
       (value.problems || []).map(code => problems[code] || 'A signed history or lifecycle commitment did not match.').join(' ')));
     if (value.remote_sequence) view.append(node('p', `Newest independent checkpoint: ${value.remote_sequence}. Locked until ${new Date(value.retained_until).toLocaleString()}.`));

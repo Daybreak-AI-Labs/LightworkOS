@@ -893,13 +893,14 @@ def _supersession_report(
                 f"erase record {backing.get('erasure_id')} erased "
                 f"{backing.get('rows_erased')} of {backing.get('rows_before')} rows")
     if hashes is None:
-        return ("superseded_erase_record_unchecked",
-                "it was replaced again since, so its erase record cannot be matched to the log")
+        return ("superseded_then_replaced",
+                "the day was replaced or retired again since, so this record can no longer "
+                "be compared with the log; the later record is reported too")
     return ("superseded_without_erase_record",
             "no stored erase record matches it: only the signing key vouches for the change")
 
 
-def _supersessions_after_pin(
+def _lifecycle_after_pin(
     chain: list[_ChainEntry],
     *,
     pinned_sequence: int,
@@ -907,15 +908,17 @@ def _supersessions_after_pin(
     latest_era: Mapping[str, int],
     erase_records: EraseRecords | None,
 ) -> list[CheckpointBreak]:
-    """Report each day given a new era after the externally retained sequence.
+    """Report each day replaced or retired after the externally retained sequence.
 
-    The retained record no longer speaks for that day, so the result is never
-    "verified" until the verifier has looked at the change and retains a
-    newer sequence. Each report says whether a stored erase record, issued
-    after the last record the verifier retained for that day, backs it.
+    A supersession and a retirement are both signed with the key that signs
+    the log, and both end what the retained record says about a day. So the
+    result is never "verified" until the verifier has looked at each one and
+    retains a newer sequence. A supersession also says whether a stored erase
+    record, issued after the last record retained for that day, backs it.
     """
     breaks: list[CheckpointBreak] = []
     newest = int(chain[-1].record["checkpoint_sequence"])
+    retain = f"Review it, then retain sequence {newest} and its digest."
     retained: dict[str, _ChainEntry] = {}
     for entry in chain:
         record = entry.record
@@ -923,6 +926,13 @@ def _supersessions_after_pin(
         day = str(record["day"])
         if sequence <= pinned_sequence:
             retained[day] = entry
+            continue
+        if record["record_type"] == "retirement":
+            breaks.append(CheckpointBreak(
+                sequence, "retired_after_pin",
+                f"{day} was retired (sequence {sequence}) after retained sequence "
+                f"{pinned_sequence}: its day-file is gone and a signed retention record "
+                f"is the only account of it. {retain}"))
             continue
         if record["record_type"] != "supersession":
             continue
@@ -940,7 +950,7 @@ def _supersessions_after_pin(
         advice = (
             "Compare the day with a copy kept elsewhere."
             if reason == "superseded_without_erase_record"
-            else f"Review it, then retain sequence {newest} and its digest."
+            else retain
         )
         breaks.append(CheckpointBreak(
             sequence, reason,
@@ -1293,11 +1303,14 @@ def verify_checkpoints(  # noqa: C901 - forensic checks remain linear and explic
     ``minimum_sequence`` and ``minimum_digest`` must be retained outside the
     checkpoint store. Together they detect both rollback and a signed fork.
 
-    With ``minimum_sequence``, a supersession published after it is reported:
-    the retained record no longer speaks for that day. The reason is
+    With ``minimum_sequence``, a supersession or retirement published after it
+    is reported: the retained record no longer speaks for that day. A
+    retirement is ``retired_after_pin``. A supersession is
     ``superseded_after_pin`` when ``erase_records`` finds a stored erase
-    record for it, ``superseded_without_erase_record`` when it finds none and
-    ``superseded_erase_record_unchecked`` when they could not be looked up.
+    record for it, ``superseded_without_erase_record`` when it finds none,
+    ``superseded_erase_record_unchecked`` when they could not be looked up and
+    ``superseded_then_replaced`` when the day changed again afterwards and no
+    record names it exactly.
     """
     try:
         audit, checkpoints = _resolved_directories(audit_dir, checkpoint_dir)
@@ -1379,7 +1392,7 @@ def verify_checkpoints(  # noqa: C901 - forensic checks remain linear and explic
 
     breaks: list[CheckpointBreak] = []
     if minimum_sequence is not None:
-        breaks.extend(_supersessions_after_pin(
+        breaks.extend(_lifecycle_after_pin(
             chain, pinned_sequence=minimum_sequence, snapshots=snapshots,
             latest_era=latest_era, erase_records=erase_records,
         ))

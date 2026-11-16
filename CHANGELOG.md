@@ -483,9 +483,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   added after the anchor, and `maverick audit verify` then reported that
   day as changed for good. Nothing to do.
 - Checking audit checkpoints against a kept receipt or `--minimum-sequence`
-  now fails for any day whose checkpoint was replaced after it, naming the
-  day and the erasure behind it. Review the erasure, then keep the newest
-  receipt. Replacing a checkpoint after an erasure needs the erase record
+  now fails for any day whose checkpoint was replaced or retired after it,
+  naming the day and, for a replacement, the erasure behind it. Review it,
+  then keep the newest receipt; a scheduled check must do so after each
+  retention purge. Replacing a checkpoint after an erasure needs the erase record
   that `maverick erase` now stores; for a day erased before this version,
   publish from the command line with `--without-erase-record`.
 - `maverick erase` after a signing-key rotation no longer re-signs audit

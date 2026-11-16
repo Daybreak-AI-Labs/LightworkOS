@@ -81,9 +81,11 @@ _BREAK_TEXT = {
     "trusted_minimum_invalid": "That receipt file could not be used.",
 }
 
-#: A day whose checkpoint was replaced after the kept receipt; ``{day}`` is
-#: filled in. The receipt no longer covers that day until a newer one is kept.
-_SUPERSEDED_TEXT = {
+#: A day whose checkpoint was replaced or retired after the kept receipt;
+#: ``{day}`` is filled in. The receipt no longer covers that day until a
+#: newer one is kept. An erasure record shows that an erasure of that day was
+#: recorded here; it does not show who asked for it.
+_AFTER_RECEIPT_TEXT = {
     "superseded_after_pin": "The checkpoint for {day} was replaced after your kept receipt. An erasure "
                             "record is on file for that day. Check that erasure, then keep a receipt "
                             "for the newest checkpoint.",
@@ -93,6 +95,12 @@ _SUPERSEDED_TEXT = {
     "superseded_erase_record_unchecked": "The checkpoint for {day} was replaced after your kept receipt. "
                                          "The erasure records could not be read, so try the "
                                          "check again.",
+    "superseded_then_replaced": "The checkpoint for {day} was replaced more than once after your kept "
+                                "receipt. Only the newest replacement can still be compared with the "
+                                "log. It is listed here too.",
+    "retired_after_pin": "The checkpoint for {day} was retired after your kept receipt, and that day's log "
+                         "is gone. Check that your record-keeping policy deleted it, then keep a "
+                         "receipt for the newest checkpoint.",
 }
 
 
@@ -282,9 +290,9 @@ def _verify(body: VerifyIn) -> dict:
     problems: list[str] = []
     for item in breaks[:50]:
         text = _BREAK_TEXT.get(item.reason)
-        if item.reason in _SUPERSEDED_TEXT:
+        if item.reason in _AFTER_RECEIPT_TEXT:
             day = str(item.detail)[:10]  # the detail starts with the day
-            text = _SUPERSEDED_TEXT[item.reason].format(day=day if _DAY.fullmatch(day) else "one day")
+            text = _AFTER_RECEIPT_TEXT[item.reason].format(day=day if _DAY.fullmatch(day) else "one day")
         if text is None:
             text = (f"Checkpoint {item.sequence}: the activity log for that day no longer matches it."
                     if item.sequence else "A checkpoint does not match the activity log.")

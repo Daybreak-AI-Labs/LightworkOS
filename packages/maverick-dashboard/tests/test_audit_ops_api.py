@@ -182,6 +182,30 @@ def test_a_checkpoint_replaced_after_the_kept_receipt_is_reported(client):
     assert client.post(f"{BASE}/verify", json={"receipt": newer}).json()["intact"] is True
 
 
+def test_a_day_retired_after_the_kept_receipt_is_reported(client):
+    from maverick.audit.checkpoints import list_checkpoints, retire_checkpoint
+    from maverick.audit.signing import record_retention_purge
+    from maverick_dashboard import audit_ops_api
+
+    day_file = _write_day()
+    assert client.post(f"{BASE}/publish", json={"day": DAY}).status_code == 200
+    kept = client.get(f"{BASE}/1/receipt").text
+    published = list_checkpoints(audit_ops_api._checkpoint_dir())[0]
+    tip = json.loads(day_file.read_text(encoding="utf-8").splitlines()[-1])["hash"]
+    day_file.unlink()
+    assert record_retention_purge(
+        day_file.parent, [{"day": DAY, "row_count": published["row_count"], "tip_hash": tip}])
+    retire_checkpoint(day_file.parent, audit_ops_api._checkpoint_dir(),
+                      supersedes_checkpoint_sha256=published["sha256"],
+                      lifecycle_reason="retention_purge")
+
+    assert client.post(f"{BASE}/verify", json={}).json()["intact"] is True
+    checked = client.post(f"{BASE}/verify", json={"receipt": kept}).json()
+    assert checked["intact"] is False and len(checked["problems"]) == 1
+    assert DAY in checked["problems"][0] and "retired after your kept receipt" in checked["problems"][0]
+    assert not BANNED.search(checked["problems"][0])
+
+
 def test_bad_input_is_refused_before_anything_happens(client, monkeypatch):
     _write_day()
     seen = _recorded(monkeypatch)

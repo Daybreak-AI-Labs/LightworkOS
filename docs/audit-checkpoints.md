@@ -55,11 +55,16 @@ The minimum sequence detects rollback; the digest detects a signed fork at the
 externally retained sequence.
 
 A retained sequence also fixes what "verified" means for each day it covers.
-A supersession (see below) starts a new era for a day and is signed with the
-same key as the log, so whoever holds that key could otherwise replace a
+A supersession starts a new era for a day and a retirement ends its
+comparison with the log (see below). Both are signed with the same key as
+the log, so whoever holds that key could otherwise replace or drop a
 commitment you had already retained. With `--minimum-sequence`, verification
-therefore fails for every supersession published after that sequence and
-names the day:
+therefore fails for every supersession and retirement published after that
+sequence and names the day:
+
+- `retired_after_pin`: the day-file is gone and its checkpoint was retired.
+  Check that your retention policy was due to delete that day, then retain
+  the newest sequence and digest.
 
 - `superseded_after_pin`: an erase record stored by the erasure backs the
   change. The line gives its erasure id and how many rows it erased. Compare
@@ -68,13 +73,16 @@ names the day:
 - `superseded_without_erase_record`: no stored erase record matches the day
   as it is now. Only the signing key vouches for the change, so compare the
   day with a copy kept elsewhere before you retain anything newer.
-- `superseded_erase_record_unchecked`: the erase records could not be read,
-  or the day was replaced again since and only its newest replacement can
-  still be compared with the log. Run the check where the world model is
-  available.
+- `superseded_erase_record_unchecked`: the erase records could not be read.
+  Run the check where the world model is available.
+- `superseded_then_replaced`: the day was replaced or retired again
+  afterwards, so this record can no longer be compared with the log. The
+  later record is reported on its own line; judge the day by that one.
 
 Without `--minimum-sequence` there is no retained point to compare with, and
-supersessions are checked only for their signed lifecycle evidence, as before.
+supersessions and retirements are checked only for their signed lifecycle
+evidence, as before. A scheduled check that keeps an old sequence will fail
+after each retention purge until it retains a newer one.
 
 Verification never creates a lock file, changes a mode or ACL, or writes to the
 audit or checkpoint store. It can run against read-only media. All commitments
