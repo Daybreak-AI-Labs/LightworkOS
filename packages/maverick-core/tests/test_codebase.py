@@ -972,3 +972,26 @@ def test_the_checker_cannot_read_past_goals_or_memory(tmp_path, monkeypatch):
     goal = SimpleNamespace(id=2, title="Add a discount", description="", owner="")
     with tools.fresh_context_run():
         assert orchestrator._maybe_recall_prior_work(world, goal, None) is None
+
+
+def test_an_unreadable_checker_report_keeps_the_work(upstream, tmp_path):
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    run, _ = _rounds(lambda work: (work / "a.py").write_text("a = 1\n"))
+    p = features.propose(world, "pricing", "R", "", run,
+                         checker=lambda gid, copy: '{"a":' + "[" * 40000)
+    assert p["check"]["state"] == "failed" and "could not be read" in p["check"]["error"]
+    assert [q["id"] for q in features.list_proposals()] == [p["id"]]
+
+
+def test_the_card_says_whether_the_checker_was_off_for_this_run_or_in_settings(
+        upstream, tmp_path, monkeypatch):
+    from maverick import config
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    run, _ = _rounds(lambda work: (work / "a.py").write_text("a = 1\n"))
+    p = features.propose(world, "pricing", "Skipped once", "", run, checker=None)
+    assert "Independent check: turned off for this run." in features.evidence(p)["lines"]
+    monkeypatch.setattr(config, "get_codebase", lambda: {"enable": True, "checker": False})
+    q = features.propose(world, "pricing", "Off", "", run, checker=None)
+    assert "Independent check: turned off in settings." in features.evidence(q)["lines"]

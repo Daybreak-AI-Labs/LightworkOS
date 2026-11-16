@@ -260,7 +260,7 @@ def _report(out: object) -> dict | None:
         if ch == "{":
             try:
                 obj, _ = decoder.raw_decode(text, i)
-            except ValueError:
+            except (ValueError, RecursionError):  # deep nesting reads as unreadable
                 continue
             if isinstance(obj, dict) and isinstance(obj.get("findings"), list):
                 found = obj
@@ -298,6 +298,8 @@ class _Loop:
         self.rounds: list[dict] = []
         self.stopped: str | None = None
         self.check: dict = {"state": "off" if checker is None else "skipped", "runs": 0,
+                            "off": None if checker is not None else
+                            "settings" if not loop_settings()["checker"] else "run",
                             "max_runs": check_rounds, "commit": None, "error": None,
                             "goal_ids": [], "findings": []}
 
@@ -645,7 +647,8 @@ def _check_evidence(p: dict) -> tuple[list[str], list[str]]:
         return ["Independent check: not run."], [_UNCHECKED_GAP]
     state, lines, gaps = check.get("state"), [], []
     if state == "off":
-        return ["Independent check: turned off in settings."], [_UNCHECKED_GAP]
+        when = "for this run" if check.get("off") == "run" else "in settings"
+        return [f"Independent check: turned off {when}."], [_UNCHECKED_GAP]
     if state == "skipped":
         return ["Independent check: did not run because the run stopped early."], [_UNCHECKED_GAP]
     if state == "failed":

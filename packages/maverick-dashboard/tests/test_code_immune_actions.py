@@ -209,7 +209,7 @@ def test_merge_waits_for_the_approval_then_merges(client, monkeypatch, tmp_path)
     detail = client.get(f"/api/v1/code/proposals/{pid}").json()
     assert detail["status"] == "pending" and detail["files"] == ["a.py"]
     assert "VALUE = 2" in detail["changes"]
-    assert "Independent check: turned off in settings." in detail["checks"]["lines"]
+    assert "Independent check: turned off for this run." in detail["checks"]["lines"]
     assert "Nobody independently tried to break this change." in detail["checks"]["gaps"]
     # The kernel's gate: no merge and no push without an approved approval.
     r = client.post(f"/api/v1/code/proposals/{pid}/merge")
