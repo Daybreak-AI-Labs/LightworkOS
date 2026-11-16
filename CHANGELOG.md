@@ -484,6 +484,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   workspaces apart; existing data still opens and a warning is logged. Create
   a transit key with `derived=true` and rotate to it. The check runs when a
   key is first wrapped or opened and needs encrypt and decrypt on the key.
+- The AI governance page now says when its Needs attention check could not
+  read every record, instead of reporting that nothing needs attention.
+  Press Refresh to check again.
 
 ### Fixed
 

@@ -439,6 +439,38 @@ def test_art43_route_lifecycle_through_the_api_and_page():
     assert "data-route-change=" in page.text
 
 
+def test_page_says_when_the_alert_check_was_incomplete(monkeypatch):
+    """A check that failed, or skipped a section, must not read as all clear."""
+    from maverick import governance_alerts
+
+    # The all-clear sentence as the server writes it (the page script holds a
+    # shorter copy for the Refresh button).
+    _ALL_CLEAR = "right now. Items appear here when a control fails or a review is due."
+    _GAP = 'role="status">Some alerts could not be checked'
+
+    def _boom():
+        raise RuntimeError("store unavailable")
+
+    monkeypatch.setattr(governance_alerts, "digest", _boom)
+    failed = client.get("/security/governance")
+    assert failed.status_code == 200
+    assert _GAP in failed.text
+    assert _ALL_CLEAR not in failed.text
+
+    monkeypatch.setattr(governance_alerts, "digest", lambda: {
+        "attention_count": 0, "complete": False,
+        "sections": {"vendors": {"enabled": False, "error": "unavailable"}}})
+    partial = client.get("/security/governance")
+    assert _GAP in partial.text
+    assert _ALL_CLEAR not in partial.text
+
+    monkeypatch.setattr(governance_alerts, "digest", lambda: {
+        "attention_count": 0, "complete": True, "sections": {}})
+    clear = client.get("/security/governance")
+    assert _GAP not in clear.text
+    assert _ALL_CLEAR in clear.text
+
+
 # ---------------------------------------------------------------------------
 # Role boundaries: a viewer reads, never writes
 # ---------------------------------------------------------------------------
