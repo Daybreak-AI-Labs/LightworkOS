@@ -142,6 +142,11 @@ def measure_lift(
     testable without a live agent. Each task is run once per arm, in order, so a
     deterministic ``run``/``score`` yields a deterministic result.
 
+    The arm is carried in this context only, not in the process environment.
+    A ``run`` that starts a subprocess must pass the arm on itself (for
+    example by setting ``MAVERICK_LEARNING_FROZEN`` for that child); nothing
+    calls it that way today. A thread needs a copy of the context.
+
     Every control run comes before any treatment run: freezing stops learning
     writes but not recall, so a control run after a live one could use what
     the live arm had just learned and understate the lift.
