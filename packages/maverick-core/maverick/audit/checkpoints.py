@@ -882,27 +882,29 @@ def _backing_erase_record(
 
 
 def _erasures_text(erase_records: EraseRecords, backing: Mapping, *, superseded: str) -> str:
-    """What the erase records behind one supersession say, all of them.
+    """What the erase records behind one supersession say.
 
-    A day erased more than once before its checkpoint was replaced has one
-    record for each erasure. Each lists the replaced checkpoint, the later
-    ones by carrying the first one's list on, so the verifier is told about
-    every erasure and not only the newest.
+    The newest record matches the day as it is, so its count is stated. A day
+    erased more than once before its checkpoint was replaced has an earlier
+    record for each erasure, each listing the replaced checkpoint. Those are
+    named so the verifier can look each one up, but not added up: an earlier
+    erasure may no longer be in effect (the day restored from a backup since),
+    and the day as it is does not show how many rows it still accounts for.
     """
     last = _instant(backing.get("issued_at"))
-    behind = [
-        record for record in erase_records(str(backing.get("day")))
+    earlier = [
+        str(record.get("erasure_id")) for record in erase_records(str(backing.get("day")))
         if superseded in (record.get("checkpoints") or ())
         and (stamp := _instant(record.get("issued_at"))) is not None
-        and last is not None and stamp <= last
-    ] or [backing]
-    if len(behind) == 1:
-        return (f"erase record {backing.get('erasure_id')} says "
-                f"{backing.get('rows_erased')} of {backing.get('rows_before')} rows were erased")
-    total = sum(int(record.get("rows_erased") or 0) for record in behind)
-    names = ", ".join(str(record.get("erasure_id")) for record in behind)
-    return (f"{len(behind)} erase records ({names}) say {total} of "
-            f"{behind[0].get('rows_before')} rows were erased")
+        and last is not None and stamp < last
+    ]
+    text = (f"erase record {backing.get('erasure_id')} says "
+            f"{backing.get('rows_erased')} of {backing.get('rows_before')} rows were erased")
+    if not earlier:
+        return text
+    are = "record is" if len(earlier) == 1 else "records are"
+    return (f"{text}; {len(earlier)} earlier erase {are} also on file for this day "
+            f"({', '.join(earlier)})")
 
 
 def _supersession_report(

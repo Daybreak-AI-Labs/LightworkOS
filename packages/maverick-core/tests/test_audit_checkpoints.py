@@ -773,8 +773,48 @@ def test_every_erasure_behind_a_replaced_checkpoint_is_reported(isolated_audit):
         minimum_sequence=1, minimum_digest=pinned,
     )
     assert found.reason == "superseded_after_pin"
-    assert "2 erase records" in found.detail and "2 of 3 rows" in found.detail
-    assert "1" * 32 in found.detail and "2" * 32 in found.detail
+    # The newest record speaks for itself; the earlier one is named, not summed.
+    assert f"erase record {'2' * 32} says 1 of 3 rows" in found.detail
+    assert f"1 earlier erase record is also on file for this day ({'1' * 32})" in found.detail
+
+
+def test_an_erasure_undone_by_a_restore_is_not_counted_as_still_in_effect(isolated_audit):
+    from maverick.audit.erase import scrub_user
+
+    audit_dir, checkpoint_dir = isolated_audit
+    day = "2000-01-01"
+    day_file = audit_dir / f"{day}.ndjson"
+    signer = AuditSigner(day_file)
+    for person in ("alice", "bob"):
+        assert signer.write({"kind": "tool_call", "channel": "slack", "user_id": person})
+    assert signer.write({"kind": "tool_call", "index": 2})
+    assert ensure_anchors(audit_dir) == 1
+    pinned = _digest(publish_checkpoint(audit_dir, checkpoint_dir, day=day))
+    original = day_file.read_bytes()
+    _erased, store_erase_record, erase_records = _erase_record_store()
+    erase = {"audit_dir": audit_dir, "on_rewrite": store_erase_record,
+             "erase_records": erase_records, "checkpoint_dirs": [checkpoint_dir]}
+
+    assert scrub_user("slack", "alice", **erase)[0] == 1
+    day_file.write_bytes(original)  # as a backup restore does: alice is back
+    signing.reanchor_day_after_erase(audit_dir, day_file)
+    assert scrub_user("slack", "bob", **erase)[0] == 1
+    publish_checkpoint(
+        audit_dir,
+        checkpoint_dir,
+        day=day,
+        supersedes_checkpoint_sha256=pinned,
+        lifecycle_reason="gdpr_reanchor",
+        erase_records=erase_records,
+    )
+
+    (found,) = verify_checkpoints(
+        audit_dir, checkpoint_dir, erase_records=erase_records,
+        minimum_sequence=1, minimum_digest=pinned,
+    )
+    assert "alice" in day_file.read_text(encoding="utf-8")
+    assert "says 1 of 3 rows were erased" in found.detail
+    assert "2 of 3" not in found.detail and "1 earlier erase record" in found.detail
 
 
 @pytest.mark.parametrize("told", [True, False])

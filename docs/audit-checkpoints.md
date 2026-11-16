@@ -68,7 +68,9 @@ sequence and names the day:
   (`maverick audit checkpoint retire` prints them).
 
 - `superseded_after_pin`: a stored erase record matches the change. The
-  line gives the erasure id and row count of every erasure behind it. Match that
+  line gives its erasure id and row count, and the ids of any earlier
+  erasures of that day on file (not their rows: an earlier erasure may have
+  been undone by a restore since). Match that
   id against an erasure request you know about, then retain the newest
   sequence and digest; the check is clean again from there. The record is
   not proof on its own (see "What an erase record proves").
