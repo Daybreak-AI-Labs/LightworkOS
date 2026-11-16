@@ -331,6 +331,21 @@ def test_copilot_offers_the_same_retry_and_discard_as_the_release_page(monkeypat
     assert service.calls == [("expired", {"expected_revision": 4, "reason_code": "stuck_request"})]
     assert outcome.status == "confirmed" and "Discarded without publishing" in outcome.message
 
+    # A request that was already uncertain when the person reviewed the action is
+    # exactly what retry and close are for: neither is held back as "unconfirmed".
+    for action in ("reconcile", "discard"):
+        ready = releases.decision_prepare(None, {}, {"candidate": "uncertain"}, action=action)
+        assert releases.decision_recover(None, {}, {"candidate": "uncertain"}, ready.native, None,
+                                         action=action) is None
+    # An action whose own result became uncertain after the review is still unconfirmed.
+    ready = releases.decision_prepare(None, {}, {"candidate": "live"}, action="rollback")
+    live = next(item for item in rows if item["candidate_id"] == "live")
+    live.update(state="uncertain", events=[{"actor": "user:admin", "state": "rollback_claimed"},
+                                           {"actor": "user:admin", "state": "uncertain"}])
+    unconfirmed = releases.decision_recover(None, {}, {"candidate": "live"}, ready.native, None,
+                                            action="rollback")
+    assert unconfirmed.status == "unconfirmed"
+
     # A published request is closed with words that say it was published.
     service.discard = lambda _tenant, _actor, candidate_id, **kwargs: {
         **service.inspect(None, None, candidate_id), "state": "closed", "stuck": ""}

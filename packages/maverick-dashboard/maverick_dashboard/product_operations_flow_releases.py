@@ -345,7 +345,10 @@ def decision_recover(request, _selection, arguments, prepared, _operation, *, ac
               "discard": {"discarded", "closed"}}
     events = row["events"][prepared["event_count"]:]
     if not any(event.get("actor") == actor and event.get("state") in states[action] for event in events):
-        if row["state"] == "uncertain":
+        # Unconfirmed means this action's own result became uncertain after the
+        # review. A request that was already uncertain then is what retry and
+        # close are for, so they go on to run.
+        if row["state"] == "uncertain" and any(event.get("state") == "uncertain" for event in events):
             return Outcome("unconfirmed", "The release outcome needs reconciliation. Inspect release decisions; no action was repeated.",
                            {"open": {"label": "Open release decisions", "href": "/research#research-promotions"}})
         return None
