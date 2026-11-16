@@ -1063,6 +1063,12 @@ def test_the_checker_cannot_read_past_goals_or_memory(tmp_path, monkeypatch):
     goal = SimpleNamespace(id=2, title="Add a discount", description="", owner="")
     with tools.fresh_context_run():
         assert orchestrator._maybe_recall_prior_work(world, goal, None) is None
+    # nor the outcomes of similar earlier goals (experience guidance)
+    from maverick import experience
+    monkeypatch.setattr(experience, "recall", lambda *a, **k: "2 similar goals succeeded")
+    assert orchestrator._maybe_experience_guidance(world, goal, None)
+    with tools.fresh_context_run():
+        assert orchestrator._maybe_experience_guidance(world, goal, None) is None
 
 
 def test_an_unreadable_checker_report_keeps_the_work(upstream, tmp_path):

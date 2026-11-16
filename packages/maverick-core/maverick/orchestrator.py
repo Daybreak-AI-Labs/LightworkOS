@@ -1039,6 +1039,22 @@ def _brief_facts_block(world: WorldModel, goal_id: int, shield: Any | None) -> s
     return facts_block
 
 
+def _maybe_experience_guidance(world, goal, shield) -> str | None:
+    """Outcomes of similar prior goals, or None for a fresh-context run (the
+    code checker), which must not learn how the author's goal went."""
+    from .tools import fresh_context
+
+    if fresh_context():
+        return None
+    from . import experience
+    return experience.recall(
+        world,
+        f"{goal.title}\n{goal.description or ''}",
+        shield=shield,
+        owner=str(getattr(goal, "owner", "") or ""),
+    )
+
+
 async def _apply_brief_enrichments(
     brief: str, *, llm: LLM, world: WorldModel, budget: Budget,
     blackboard: Blackboard, goal: Any, conversation_id: int | None,
@@ -1079,13 +1095,7 @@ async def _apply_brief_enrichments(
     # brief on outcomes of similar prior goals (how many succeeded/failed).
     # No-op when explicitly disabled or no useful history exists; fail-open.
     with _enrich("experience guidance"):
-        from . import experience
-        _exp = experience.recall(
-            world,
-            f"{goal.title}\n{goal.description or ''}",
-            shield=shield,
-            owner=str(getattr(goal, "owner", "") or ""),
-        )
+        _exp = _maybe_experience_guidance(world, goal, shield)
         if _exp:
             brief = brief + "\n\n" + _exp
 
