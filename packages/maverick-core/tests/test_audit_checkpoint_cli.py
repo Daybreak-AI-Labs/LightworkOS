@@ -211,3 +211,67 @@ def test_erase_then_new_checkpoint_fails_an_older_pin_until_it_is_retained(
         "--minimum-sequence", "2", "--minimum-digest", digest(2),
     ])
     assert retained.exit_code == 0, retained.output
+
+
+def test_publishing_without_an_erase_record_is_recorded_first(tmp_path, monkeypatch):
+    import json
+
+    import maverick.audit as audit_pkg
+    from maverick.audit import AuditRefused
+    from maverick.audit.erase import scrub_user
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setenv("MAVERICK_AUDIT_SIGN", "1")
+    monkeypatch.setattr(signing, "KEY_DIR", signing._LEGACY_KEY_DIR)
+    from maverick.paths import data_dir
+
+    day = "2000-01-01"
+    audit_dir = data_dir("audit")
+    closed = signing.AuditSigner(audit_dir / f"{day}.ndjson")
+    assert closed.write({"kind": "tool_call", "channel": "telegram", "user_id": "alice"})
+    assert closed.write({"kind": "tool_call", "tool": "read"})
+    assert signing.ensure_anchors(audit_dir) == 1
+    checkpoints = tmp_path / "external-checkpoints"
+    runner = CliRunner()
+    base = ["--checkpoint-dir", str(checkpoints)]
+    from maverick.world_model import WorldModel
+
+    WorldModel(tmp_path / "world.db").close()  # the installation's, with no erase records
+    cli = ["--db", str(tmp_path / "world.db"), "audit", "checkpoint"]
+    assert runner.invoke(main, [*cli, "publish", "--day", day, *base]).exit_code == 0
+    pinned = hashlib.sha256(next(checkpoints.glob("*.ndjson")).read_bytes()).hexdigest()
+    # An erasure from before erase records existed: the day changed, no record.
+    assert scrub_user("telegram", "alice", audit_dir=audit_dir)[0] == 1
+    override = [
+        *cli, "publish", "--day", day, *base, "--supersede-digest", pinned,
+        "--lifecycle-reason", "gdpr_reanchor", "--without-erase-record",
+    ]
+
+    def refuse(kind, **payload):
+        raise AuditRefused("refused")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(audit_pkg, "audit_event", refuse)
+        refused = runner.invoke(main, override)
+    assert refused.exit_code != 0 and "nothing was published" in refused.output
+    assert len(list(checkpoints.glob("audit-checkpoint-*.ndjson"))) == 1
+
+    published = runner.invoke(main, override)
+    assert published.exit_code == 0, published.output
+    rows = [
+        json.loads(line)
+        for path in audit_dir.glob("*.ndjson")
+        for line in path.read_text(encoding="utf-8").splitlines()
+    ]
+    (trace,) = [row for row in rows
+                if row.get("action") == "audit_checkpoint_publish_without_erase_record"]
+    assert trace["kind"] == "control_plane_action" and trace["actor"].startswith("cli")
+    assert (trace["day"], trace["replaces_sequence"], trace["sequence"]) == (day, 1, 2)
+
+    stale = runner.invoke(main, [
+        *cli, "verify", *base, "--minimum-sequence", "1", "--minimum-digest", pinned,
+    ])
+    assert stale.exit_code == 1, stale.output
+    assert "superseded_without_erase_record" in stale.output
+    assert "published without" in stale.output

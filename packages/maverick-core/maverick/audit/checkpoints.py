@@ -897,7 +897,9 @@ def _supersession_report(
                 "the day was replaced or retired again since, so this record can no longer "
                 "be compared with the log; the later record is reported too")
     return ("superseded_without_erase_record",
-            "no stored erase record matches it: only the signing key vouches for the change")
+            "it was published without an erase record: by the --without-erase-record "
+            "override, which leaves an audit_checkpoint_publish_without_erase_record "
+            "entry in the activity log, by an earlier version, or with the signing key alone")
 
 
 def _lifecycle_after_pin(

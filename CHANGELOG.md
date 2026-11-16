@@ -486,9 +486,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   now fails for any day whose checkpoint was replaced or retired after it,
   naming the day and, for a replacement, the erasure behind it. Review it,
   then keep the newest receipt; a scheduled check must do so after each
-  retention purge. Replacing a checkpoint after an erasure needs the erase record
-  that `maverick erase` now stores; for a day erased before this version,
-  publish from the command line with `--without-erase-record`.
+  retention purge. Replacing a checkpoint after an erasure needs the erase
+  record that `maverick erase` now stores; for a day erased before this
+  version, publish from the command line with `--without-erase-record`,
+  which is written to the activity log first.
 - `maverick erase` now refuses, before deleting anything, when an audit day
   holding the person no longer matches its published checkpoint and no
   earlier erasure's record explains why. A day erased before this version

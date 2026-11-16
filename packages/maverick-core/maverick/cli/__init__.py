@@ -7406,6 +7406,44 @@ def _existing_world(ctx):
     return open_world(ctx.obj["db"])
 
 
+def _record_publish_without_erase_record(
+    checkpoint_dir: Path, day: str | None, supersede_digest: str, pubkey: tuple[str, ...],
+) -> None:
+    """Write the activity-log entry for an override, before it is used.
+
+    Who asked, for which day, which checkpoint is replaced and which one is
+    about to be published. No entry, no publish: the override must not be
+    usable without a trace.
+    """
+    from ..audit import AuditRefused, audit_event
+    from ..audit.checkpoints import AuditCheckpointError, list_checkpoints
+    from ._agent_control_plane_groups import _actor
+
+    try:
+        chain = list_checkpoints(checkpoint_dir, trusted_pubkeys=pubkey or None)
+    except (AuditCheckpointError, ImportError, OSError, RuntimeError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    replaced = next((item for item in chain if item["sha256"] == supersede_digest), None)
+    if replaced is None:
+        return  # nothing to replace: publication refuses this digest itself
+    try:
+        recorded = audit_event(
+            "control_plane_action", agent="cli",
+            action="audit_checkpoint_publish_without_erase_record", actor=_actor(),
+            day=day or replaced["day"], replaces_sequence=replaced["sequence"],
+            sequence=len(chain) + 1,
+            checkpoint_folder=str(checkpoint_dir),
+        )
+    except AuditRefused as exc:
+        raise click.ClickException(
+            "this could not be added to the activity log, so nothing was published"
+        ) from exc
+    if not recorded:
+        raise click.ClickException(
+            "this could not be added to the activity log, so nothing was published"
+        )
+
+
 @audit_checkpoint.command("publish")
 @click.option(
     "--checkpoint-dir",
@@ -7437,8 +7475,9 @@ def _existing_world(ctx):
     "--without-erase-record",
     is_flag=True,
     help=(
-        "Supersede a day erased before erase records were stored. A later "
-        "verify against an older retained sequence reports it."
+        "Supersede a day erased before erase records were stored. Recorded "
+        "in the activity log first; a later verify against an older retained "
+        "sequence reports it."
     ),
 )
 @click.pass_context
@@ -7457,6 +7496,8 @@ def audit_checkpoint_publish(
     from ..paths import data_dir
 
     _require_day_opt(day)
+    if without_erase_record and supersede_digest:
+        _record_publish_without_erase_record(checkpoint_dir, day, supersede_digest, pubkey)
     try:
         path = publish_checkpoint(
             data_dir("audit"),
