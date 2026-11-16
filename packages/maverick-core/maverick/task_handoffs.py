@@ -38,20 +38,30 @@ def lineage(world, goal_id):
     return _row_receipt(world, goal_id, "handoff_lineage")
 
 
+def tenant_reader(world, execute=None):
+    """Rows for a statement that names its tenant boundary with a marker: read
+    through the caller's open transaction when it passed ``execute``, else
+    through the world."""
+    if execute is None:
+        return world.tenant_query
+    return lambda sql, args: execute(*world.tenant_sql(sql, args)).fetchall()
+
+
 def closure(world, goal_id, *, execute=None, decode=None):
     """Return lineage metadata only. Descendants cannot reopen closed work."""
     store = SubmissionStore(world)
-    query = (lambda sql, args: execute(sql, args).fetchall()) if execute else world.query
+    query = tenant_reader(world, execute)
     decode = decode or store.open
     current, seen = goal_id, set()
     while current is not None:
         if current in seen or len(seen) >= 100:
             raise GoalMutationConflict("Task ancestry is unavailable. Review the task map before starting.")
         seen.add(current)
-        rows = query("SELECT receipt FROM goal_mutation_receipts WHERE goal_id=? AND kind='handoff_closed' LIMIT 1", (current,))
+        rows = query("SELECT receipt FROM goal_mutation_receipts WHERE goal_id=? AND {tenant_goal:goal_id} "
+                     "AND kind='handoff_closed' LIMIT 1", (current,))
         if rows:
             return json.loads(decode(rows[0][0]))
-        rows = query("SELECT parent_id FROM goals WHERE id=?", (current,))
+        rows = query("SELECT parent_id FROM goals WHERE id=? AND {tenant:tenant_id}", (current,))
         current = rows[0][0] if rows else None
     return None
 

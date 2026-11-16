@@ -45,14 +45,15 @@ def require_ai_open(world, goal_id, *, execute=None, decode=None):
     """Physical admission reads exact original hold pointers, including moved tasks."""
     from .attachment_submissions import SubmissionStore
     store = SubmissionStore(world)
-    query = (lambda sql, args: execute(sql, args).fetchall()) if execute else world.query
+    from .task_handoffs import tenant_reader
+    query = tenant_reader(world, execute)
     decode = decode or store.open
     current, seen = int(goal_id), set()
     while current is not None:
         if current in seen or len(seen) >= 100:
             raise GoalMutationConflict("The conversation's current human handoff could not be checked.")
         seen.add(current)
-        identity = query("SELECT id,owner,created_at FROM goals WHERE id=?", (current,))
+        identity = query("SELECT id,owner,created_at FROM goals WHERE id=? AND {tenant:tenant_id}", (current,))
         if identity:
             identifier = "CI-" + digest({"root": identity[0][0], "owner": identity[0][1], "created_at": identity[0][2]})[:32]
             native = inbox.STORE.get(identifier)
@@ -61,7 +62,8 @@ def require_ai_open(world, goal_id, *, execute=None, decode=None):
                 session = human.get("sessions", {}).get(human.get("current"))
                 if session and (session.get("state") in HELD or native.get("_audit_pending")):
                     raise GoalMutationConflict("A human handoff holds this conversation. Read its original outcome or separately review hand-back.")
-        rows = query("SELECT receipt FROM goal_mutation_receipts WHERE goal_id=? AND kind='human_conversation_hold'", (current,))
+        rows = query("SELECT receipt FROM goal_mutation_receipts WHERE goal_id=? AND {tenant_goal:goal_id} "
+                     "AND kind='human_conversation_hold'", (current,))
         for (raw,) in rows:
             pointer = json.loads(decode(raw))
             record = inbox.STORE.get(pointer["record"])
@@ -69,7 +71,7 @@ def require_ai_open(world, goal_id, *, execute=None, decode=None):
             session = value.get("human", {}).get("sessions", {}).get(pointer["session"])
             if session is None or session.get("state") in HELD or record.get("_audit_pending"):
                 raise GoalMutationConflict("A human handoff holds this conversation. Read its original outcome or separately review hand-back; earlier AI work will not restart automatically.")
-        parents = query("SELECT parent_id FROM goals WHERE id=?", (current,))
+        parents = query("SELECT parent_id FROM goals WHERE id=? AND {tenant:tenant_id}", (current,))
         current = parents[0][0] if parents else None
 
 
