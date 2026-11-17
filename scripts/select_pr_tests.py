@@ -120,6 +120,8 @@ JOB_PREFIXES: dict[str, tuple[str, ...]] = {
     "harness-overhead": ("packages/maverick-core/", "packages/maverick-shield/"),
     # Windows Job Object containment of the local sandbox backend.
     "windows-process-containment": ("packages/maverick-core/",),
+    # The core tests that need Torch, FastEmbed or Playwright.
+    "optional-heavy": ("packages/maverick-core/",),
 }
 
 
