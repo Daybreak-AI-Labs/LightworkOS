@@ -4,7 +4,7 @@
   const $ = id => document.getElementById(id);
   const base = '/api/v1/starter-teams';
   let teams = [], setups = [], token = null, busy = false, opener = null, historyGeneration = 0, accountContext = null;
-  let editedTeam = null, inputSetup = null;
+  let editedTeam = null, inputSetup = null, previewOnly = false, previewGeneration = 0;
   const element = (tag, text, className) => { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; if (className) node.className = className; return node; };
   const pretty = value => Array.isArray(value) ? value.join('\n') : typeof value === 'object' ? Object.entries(value || {}).map(([key, item]) => key + ': ' + item).join('\n') : String(value);
   const selectedTeam = () => teams.find(team => team.id === $('st-team').value);
@@ -31,6 +31,7 @@
   }
   function showTeam() {
     const team = selectedTeam(), host = $('st-details'); host.replaceChildren();
+    previewGeneration++; $('st-preview-result').replaceChildren(); $('st-preview-submit').disabled = !team;
     if (!team) return;
     host.appendChild(element('p', team.summary)); host.appendChild(element('h3', 'Finished work'));
     host.appendChild(element('p', team.deliverable));
@@ -136,6 +137,17 @@
       const value = await api('');
       if (accountContext && accountContext !== value.context) { $('st-owner').value = ''; $('st-scope').value = ''; token = null; remember(); editedTeam = null; inputSetup = null; $('st-input-tables').replaceChildren(); $('st-review').close(); }
       accountContext = value.context; teams = value.teams; setups = value.setups;
+      previewOnly = value.preview_only === true;
+      $('st-preview-panel').hidden = !previewOnly;
+      ['st-setup-panel', 'st-saved-panel', 'st-history-panel', 'starter-team-schedules'].forEach(id => { $(id).hidden = previewOnly; });
+      if (previewOnly) {
+        historyGeneration++;
+        $('st-inputs-section').hidden = true;
+        $('st-review').close();
+        chooseOptions($('st-team'), teams.map(team => [team.id, team.title]), $('st-team').value, 'No permitted teams');
+        showTeam(); message(teams.length + ' teams available to preview.');
+        return;
+      }
       let target = preferred || $('st-saved').value;
       const hash = window.location.hash;
       if (!preferred && hash.startsWith('#setup-')) target = hash.slice(7);
@@ -149,12 +161,12 @@
     } catch (error) { teams = []; setups = []; $('st-details').replaceChildren(); $('st-history').replaceChildren(); $('st-inputs-section').hidden = true; chooseOptions($('st-team'), [], '', 'Unavailable'); chooseOptions($('st-saved'), [], '', 'Unavailable'); message(error.message); }
   }
   async function review(action, arguments_) {
-    if (busy || token) return; busy = true; opener = document.activeElement; message('Preparing the review…');
+    if (previewOnly || busy || token) return; busy = true; opener = document.activeElement; message('Preparing the review…');
     try { const result = await api('/review', {action, arguments: arguments_, expected_context: accountContext}); token = result.token; const content = $('st-review-content'); content.replaceChildren(); Object.entries(result.preview).forEach(([key, value]) => content.append(element('dt', key), element('dd', pretty(value)))); $('st-review-message').textContent = ''; $('st-original').hidden = true; $('st-confirm').disabled = false; $('st-review').showModal(); message('Review the scope and consequences before confirming.'); }
     catch (error) { message(error.message); } finally { busy = false; }
   }
   async function confirm(recovery) {
-    if (busy || !token) return; busy = true; $('st-confirm').disabled = true; $('st-original').disabled = true; remember();
+    if (previewOnly || busy || !token) return; busy = true; $('st-confirm').disabled = true; $('st-original').disabled = true; remember();
     try {
       const result = await api(recovery ? '/original' : '/confirm', {token, confirmed: !recovery});
       if (result.status === 'unconfirmed') { $('st-review-message').textContent = result.message; return; }
@@ -163,6 +175,20 @@
     } catch (error) { $('st-review-message').textContent = error.message + ' Check the original result before trying again.'; $('st-original').hidden = false; }
     finally { busy = false; $('st-original').disabled = false; }
   }
+  $('st-preview-submit').addEventListener('click', async () => {
+    const team = selectedTeam();
+    if (!previewOnly || !team) return;
+    const generation = ++previewGeneration, host = $('st-preview-result');
+    host.replaceChildren(element('p', 'Checking the bundled synthetic sample…'));
+    try {
+      const value = await api('/preview/' + encodeURIComponent(team.id));
+      if (generation !== previewGeneration) return;
+      host.replaceChildren();
+      renderCase({id: 'synthetic-preview', mode: 'sample', status: 'synthetic preview, not saved', output: value.output}, host);
+    } catch (error) {
+      if (generation === previewGeneration) host.replaceChildren(element('p', error.message));
+    }
+  });
   $('st-team').addEventListener('change', showTeam); $('st-saved').addEventListener('change', showSaved);
   $('st-setup-form').addEventListener('submit', event => { event.preventDefault(); if (selectedTeam()) review('setup', {team_id: selectedTeam().id, owner_label: $('st-owner').value, scope: $('st-scope').value, cadence: $('st-cadence').value, max_rows: Number($('st-limit').value)}); });
   $('st-sample').addEventListener('click', () => { const setup = selectedSetup(); if (setup) review('sample', {setup_id: setup.id}); });

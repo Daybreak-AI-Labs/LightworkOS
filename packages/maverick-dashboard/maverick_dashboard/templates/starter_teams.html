@@ -33,8 +33,13 @@
     <label for="st-team">Business function</label>
     <select class="select" id="st-team"><option value="">Loading…</option></select>
     <div id="st-details"></div>
+    <div id="st-preview-panel" hidden>
+      <p>This deployment supports unsaved synthetic previews only. Saved work, imports, specialists, and schedules are unavailable here.</p>
+      <button id="st-preview-submit" class="btn" type="button">Preview bundled sample</button>
+      <div id="st-preview-result" aria-live="polite"></div>
+    </div>
   </section>
-  <section class="panel" aria-labelledby="st-setup-title">
+  <section id="st-setup-panel" class="panel" aria-labelledby="st-setup-title">
     <h2 id="st-setup-title">Review your setup</h2>
     <p>You own the saved setup in this workspace. Name the person responsible for reviewing the work and define the records in scope.</p>
     <form id="st-setup-form" class="st-fields">
@@ -46,7 +51,7 @@
     </form>
   </section>
 </div>
-<section class="panel" aria-labelledby="st-saved-title">
+<section id="st-saved-panel" class="panel" aria-labelledby="st-saved-title">
   <h2 id="st-saved-title">Your saved teams</h2>
   <label for="st-saved">Saved setup</label><select class="select" id="st-saved"><option value="">No saved teams yet</option></select>
   <p id="st-saved-state"></p>
@@ -61,7 +66,7 @@
     <div><button type="submit" class="btn" id="st-inputs-review">Review record checks</button></div>
   </form>
 </section>
-<section class="panel" aria-labelledby="st-history-title"><h2 id="st-history-title">Saved results</h2><div id="st-history"><p>Choose a saved team to see its results.</p></div></section>
+<section id="st-history-panel" class="panel" aria-labelledby="st-history-title"><h2 id="st-history-title">Saved results</h2><div id="st-history"><p>Choose a saved team to see its results.</p></div></section>
 {% include "_starter_team_schedules.html" %}
 <dialog id="st-review" class="st-dialog" aria-labelledby="st-review-title">
   <h2 id="st-review-title">Review the planned work</h2><dl id="st-review-content"></dl>
