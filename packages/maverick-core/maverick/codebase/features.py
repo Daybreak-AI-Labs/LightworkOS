@@ -1372,16 +1372,6 @@ def _run_gone(p: dict) -> bool:
     return now != (p.get("boot_id"), p.get("process_start"))
 
 
-def run_live(pid: str) -> bool:
-    """Whether change ``pid`` is being built right now (its record says
-    running, and the process building it is still there)."""
-    try:
-        p = find(pid)
-    except VaultError:
-        return False
-    return p.get("status") == "running" and not _run_gone(p)
-
-
 def _end_run(world, pid: str, record: dict | None) -> None:
     """A change that raised: its record reads stopped, and nothing it queued starts."""
     _close_queued(world, pid)

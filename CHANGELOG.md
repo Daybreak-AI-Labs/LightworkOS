@@ -954,6 +954,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   $0 price for a count (message, image, page, character) makes only the
   calls counted in it free; other calls to that service are charged as
   before.
+- A task an agent started inside a code change now runs only inside that
+  code change. `maverick resume`, Resume, the Copilot, the queue and recovery
+  refuse it and say to start a new code change.
 
 ### Fixed
 
