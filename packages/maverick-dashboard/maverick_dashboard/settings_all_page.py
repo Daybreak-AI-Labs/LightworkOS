@@ -727,35 +727,40 @@ def _note_unreadable_containment(row: dict[str, Any]) -> None:
         row.update(value=None, locked=True, value_text=current["message"])
 
 
-def _organisation_fixed(setting: catalog.Setting, layers: dict[str, Any]) -> bool:
-    """The workspace overlay tried to loosen a policy value, or set one only
-    the organisation sets; the kernel ignores that value
-    (:mod:`maverick.policy_tighten`)."""
+_LOOSER_IGNORED = "Your organisation's value applies. This workspace's looser value is ignored."
+_ORGANISATION_ONLY = "Set only by your organisation. This workspace's value is ignored."
+
+
+def _organisation_fixed(setting: catalog.Setting, layers: dict[str, Any]) -> str:
+    """Why the kernel ignores this workspace overlay value, else "": it is
+    looser than the organisation's, or only the organisation sets it
+    (:mod:`maverick.policy_tighten`). ``maverick doctor`` gives the same two
+    reasons."""
     from maverick import config
     from maverick.policy_tighten import ORGANISATION_KEYS, TENANT_RULES, merge_tenant_section
 
     if len(setting.path) != 2 or (setting.section not in TENANT_RULES
                                   and setting.key not in ORGANISATION_KEYS.get(setting.section, ())):
-        return False
+        return ""
     present, value = catalog.lookup(layers.get("tenant") or {}, setting.path)
     if not present:
-        return False
+        return ""
     if setting.section not in TENANT_RULES:
-        return True
+        return _ORGANISATION_ONLY
     organisation = config.load_global_config()
     section = organisation.get(setting.section) or {}
     if not isinstance(section, dict):
-        return True
+        return _ORGANISATION_ONLY
     _, ignored, fixed = merge_tenant_section(
         setting.section, section, {setting.key: value},
         infrastructure=config.workspace_infrastructure(organisation))
-    return bool(ignored or fixed)
+    return _ORGANISATION_ONLY if fixed else _LOOSER_IGNORED if ignored else ""
 
 
 def _row(setting: catalog.Setting, layers: dict[str, Any]) -> dict[str, Any]:
     state = _resolve(setting, layers)
-    if _organisation_fixed(setting, layers):
-        state = {**state, "source_text": "Set by your organisation"}
+    if reason := _organisation_fixed(setting, layers):
+        state = {**state, "source_text": reason}
     value = state["value"]
     setting = _resolved(setting, value if state["known"] else None, full=False)
     row: dict[str, Any] = {

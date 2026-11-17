@@ -690,14 +690,16 @@ def test_a_workspace_value_looser_than_the_organisation_shows_who_set_it(tmp_pat
             "tools.fetch_allow_private"}}
 
     shown = rows()
-    assert shown["safety.scan_input"]["source_text"] == "Set by your organisation"
-    assert shown["safety.scan_output"]["source_text"] != "Set by your organisation"
+    # Each ignored workspace value says why: looser than the organisation's,
+    # or a setting only the organisation sets (doctor gives the same reasons).
+    assert shown["safety.scan_input"]["source_text"] == "Your organisation's value applies. This workspace's looser value is ignored."
+    assert shown["safety.scan_output"]["source_text"] not in {"Your organisation's value applies. This workspace's looser value is ignored.", "Set only by your organisation. This workspace's value is ignored."}
     assert config.get_safety()["scan_input"] is True
     # A key with no rule is only the organisation's to set, unless the
     # organisation lets workspaces name their own servers.
-    assert shown["sandbox.kubeconfig"]["source_text"] == "Set by your organisation"
-    assert shown["capabilities.deferred_tools"]["source_text"] == "Set by your organisation"
-    assert shown["tools.fetch_allow_private"]["source_text"] == "Set by your organisation"
+    assert shown["sandbox.kubeconfig"]["source_text"] == "Set only by your organisation. This workspace's value is ignored."
+    assert shown["capabilities.deferred_tools"]["source_text"] == "Set only by your organisation. This workspace's value is ignored."
+    assert shown["tools.fetch_allow_private"]["source_text"] == "Set only by your organisation. This workspace's value is ignored."
     assert shown["capabilities.deferred_tools"]["value"] is True is config.get_capabilities()["deferred_tools"]
     assert catalog.BY_ID["sandbox.workspace_infrastructure"].default is False
     (home / "config.toml").write_text("[safety]\nscan_input = true\nscan_output = true\n"
@@ -705,7 +707,7 @@ def test_a_workspace_value_looser_than_the_organisation_shows_who_set_it(tmp_pat
     config.reset_config_cache()
     # Even then a cluster settings file stays the organisation's: it can name
     # a program this computer runs.
-    assert rows()["sandbox.kubeconfig"]["source_text"] == "Set by your organisation"
+    assert rows()["sandbox.kubeconfig"]["source_text"] == "Set only by your organisation. This workspace's value is ignored."
     assert "kubeconfig" not in config.load_config()["sandbox"]
     assert catalog.BY_ID["sandbox.workspace_hosts"].default == []
     shape = re.compile(catalog.BY_ID["sandbox.workspace_hosts"].pattern)

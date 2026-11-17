@@ -328,6 +328,7 @@ def _settings_response(request: Request, saved: str = "", *, notice: str = "",
         "features": cfg_state["features"],
         "budget": budget_override(),
         "default_budget": DEFAULT_MAX_DOLLARS,
+        "standard_task_limits": _standard_task_limits(),
         "task_limits_enabled": (task_limits_override() if task_limits_override() is not None
                                 else (load_config().get("budget") or {}).get("task_limits_enabled", True)),
         "discovery_locked": bool(__import__("os").environ.get("MAVERICK_MODEL_DISCOVERY", "").strip()),
@@ -340,6 +341,19 @@ def _settings_response(request: Request, saved: str = "", *, notice: str = "",
         "saved_section": saved_section,
         "notice": notice,
     }, status_code=status_code)
+
+
+def _standard_task_limits() -> dict | None:
+    """The amount and time a task stops at under the standard limits."""
+    from maverick import runner
+    try:
+        dollars, seconds = runner.configured_max_dollars(), runner.configured_max_wall_seconds()
+    except ValueError:
+        return None
+    if dollars is None and seconds is None:
+        return None
+    minutes = None if seconds is None else (f"{seconds / 60:g} minutes" if seconds % 60 == 0 else f"{seconds:g} seconds")
+    return {"dollars": dollars, "time": minutes}
 
 
 @router.post("/settings/models")

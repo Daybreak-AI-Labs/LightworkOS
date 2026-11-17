@@ -184,6 +184,15 @@ class GovernedRecordBackendError(RuntimeError):
     """A governed-record backend cannot preserve its persistence contract."""
 
 
+# Shared records rely on row-level security, which these logins skip.
+PRIVILEGED_LOGIN_REFUSAL = (
+    "This Postgres login is a superuser or has BYPASSRLS, which skips row-level security. "
+    "Lightwork's shared records refuse such a login, so tasks cannot start. "
+    "Connect with a login that is neither, for example "
+    "CREATE ROLE maverick_app LOGIN NOSUPERUSER NOBYPASSRLS, and make it the owner of the tables."
+)
+
+
 class GovernedRecordCapacityError(GovernedRecordBackendError):
     """A bounded governed namespace has no admission slot for a new identity."""
 
@@ -943,8 +952,10 @@ class PostgresGovernedRecordBackend:
             "SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname=current_user"
         )
         role = cur.fetchone()
-        if not role or bool(role[0]) or bool(role[1]):
+        if not role:
             return "incompatible"
+        if bool(role[0]) or bool(role[1]):
+            return "privileged_login"
         cur.execute(
             "SELECT to_regclass(current_schema() || '.governed_records')"
         )
@@ -1040,6 +1051,8 @@ class PostgresGovernedRecordBackend:
             if initial == "ready":
                 self._schema_ready = True
                 return
+            if initial == "privileged_login":
+                raise GovernedRecordBackendError(PRIVILEGED_LOGIN_REFUSAL)
             if initial == "incompatible":
                 raise GovernedRecordBackendError(
                     "shared governed-record schema is incompatible"

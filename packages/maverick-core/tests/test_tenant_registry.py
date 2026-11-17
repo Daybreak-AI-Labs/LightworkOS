@@ -519,3 +519,54 @@ def test_purge_refuses_a_workspace_under_legal_hold(tmp_path):
         tr.delete_tenant("held", purge=True)
     assert (root / "kept.txt").read_text(encoding="utf-8") == "held"
     assert tr.get_tenant("held") is not None
+
+
+# Field finding: after owner setup the dashboard worked in the owner's
+# workspace (tenants/local/world.db) while the CLI wrote ~/.maverick/world.db,
+# so a CLI run never appeared in the dashboard and Spend showed $0.00.
+def _owner_workspace():
+    from maverick.billing import SELF_HOSTED_PLAN
+    return tr.create_tenant("local", plan=SELF_HOSTED_PLAN, display_name="My workspace", allocate_suffix=True)
+
+
+def test_owner_workspace_is_the_sole_self_hosted_workspace():
+    assert tr.owner_workspace_id() is None
+    rec = _owner_workspace()
+    assert tr.owner_workspace_id() == rec.id
+
+
+@pytest.mark.parametrize("setup", ["second", "other_plan", "env"])
+def test_no_owner_workspace_when_the_choice_is_not_unambiguous(monkeypatch, setup):
+    if setup == "second":
+        _owner_workspace()
+        tr.create_tenant("acme")
+    elif setup == "other_plan":
+        tr.create_tenant("acme")
+    else:
+        _owner_workspace()
+        monkeypatch.setenv("MAVERICK_TENANT", "elsewhere")
+    assert tr.owner_workspace_id() is None
+
+
+def test_cli_uses_the_owner_workspace_database_and_deployment_key(tmp_path, monkeypatch):
+    from maverick import cli, crypto_at_rest
+
+    rec = _owner_workspace()
+    opened = []
+    monkeypatch.setattr(cli, "open_world", lambda path: opened.append(path) or (_ for _ in ()).throw(SystemExit(0)))
+    result = CliRunner().invoke(main, ["status"])
+    assert result.exit_code == 0, result.output
+    assert opened == [tmp_path / "tenants" / rec.id / "world.db"]
+    # The workspace is chosen as the dashboard chooses it, so values sealed by
+    # either one open in the other: the deployment key stays at the root.
+    assert crypto_at_rest._key_path() == tmp_path / "keys" / "at_rest.key"
+
+
+def test_cli_workspace_adoption_ends_with_the_command(monkeypatch):
+    from maverick import cli
+    from maverick.paths import explicit_tenant_id
+
+    _owner_workspace()
+    monkeypatch.setattr(cli, "open_world", lambda path: (_ for _ in ()).throw(SystemExit(0)))
+    CliRunner().invoke(main, ["status"])
+    assert explicit_tenant_id() is None

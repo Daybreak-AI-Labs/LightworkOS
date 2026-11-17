@@ -183,3 +183,14 @@ def test_copilot_restart_uses_same_admission_receipt(resume_env, monkeypatch):
     replay = actions.recover(request, selection, args, reviewed.native, "b" * 32)
     assert replay.status == "replayed" and replay.background is None
     assert len(world.query("SELECT * FROM goal_mutation_receipts WHERE kind='resume'")) == 1
+
+
+def test_restart_review_warns_that_finished_paid_work_runs_again(resume_env, monkeypatch):
+    """Copilot and the stop page show this consequence before Confirm restart."""
+    monkeypatch.delenv("MAVERICK_DURABLE", raising=False)
+    client, world, goal_id, _calls = resume_env
+    episode = world.start_episode(goal_id)
+    world.end_episode(episode, "stopped", "interrupted", cost_dollars=2.59)
+    review = client.get(f"/api/v1/goals/{goal_id}/resume-review").json()
+    assert "from the beginning" in review["consequence"]
+    assert "$2.59" in review["consequence"]

@@ -178,6 +178,31 @@
       aria-label="{{ ut('Extra details for the agent (optional)') }}"
       placeholder="{{ ut('Context, constraints, links, or acceptance criteria.') }}"
     >{{ prefill_description or '' }}</textarea>
+    {% set limit_cap = task_limit_ceilings or {} %}
+    <fieldset class="composer__limits" data-task-limits
+              data-dollars="{{ '' if goal_max_dollars is none else '%.2f'|format(goal_max_dollars) }}"
+              data-minutes="{{ '' if goal_max_wall_seconds is none else '%g'|format(goal_max_wall_seconds / 60) }}">
+      <legend>{{ ui('Limits for this task (optional)') }}</legend>
+      <label for="composer-max-dollars">{{ ui('Spending limit (US dollars)') }}
+        <input id="composer-max-dollars" class="input" type="number" name="max_dollars" min="0.01" step="0.01" inputmode="decimal"
+               {% if limit_cap.max_dollars is defined %}max="{{ '%.2f'|format(limit_cap.max_dollars) }}"{% endif %}
+               placeholder="{% if goal_max_dollars is not none %}{{ ut('Up to {amount}', amount=goal_max_dollars | money) }}{% endif %}"
+               aria-describedby="composer-limit-help composer-limit-effective">
+      </label>
+      <label for="composer-max-minutes">{{ ui('Time limit (minutes)') }}
+        <input id="composer-max-minutes" class="input" type="number" name="max_minutes" min="1" step="1" inputmode="numeric"
+               {% if limit_cap.max_wall_seconds is defined %}max="{{ '%g'|format(limit_cap.max_wall_seconds / 60) }}"{% endif %}
+               placeholder="{% if goal_max_wall_seconds is not none %}{{ ut('Up to {minutes} minutes', minutes='%g'|format(goal_max_wall_seconds / 60)) }}{% endif %}"
+               aria-describedby="composer-limit-help composer-limit-effective">
+      </label>
+      <p class="muted" id="composer-limit-help">{{ ui('Leave a field empty to use the workspace limit.') }}{% if limit_cap.max_dollars is defined %} {{ ui('The most you can set is {amount} and {minutes} minutes.', amount=limit_cap.max_dollars | money, minutes='%g'|format(limit_cap.max_wall_seconds / 60)) }}{% endif %}</p>
+      <p class="muted" id="composer-limit-effective" role="status" aria-live="polite">
+        {%- if goal_max_dollars is not none and goal_max_wall_seconds is not none %}{{ ui('This task stops at {amount} or {minutes} minutes, whichever comes first.', amount=goal_max_dollars | money, minutes='%g'|format(goal_max_wall_seconds / 60)) }}
+        {%- elif goal_max_dollars is not none %}{{ ui('This task stops at {amount}.', amount=goal_max_dollars | money) }}
+        {%- elif goal_max_wall_seconds is not none %}{{ ui('This task stops after {minutes} minutes.', minutes='%g'|format(goal_max_wall_seconds / 60)) }}
+        {%- else %}{{ ui('This task has no spending or time limit.') }}{% endif -%}
+      </p>
+    </fieldset>
     {% if director_profiles %}
     <label class="composer__director" for="director-profile">{{ ui('How much it may do on its own') }}
       <select id="director-profile" name="director_profile" class="select" aria-describedby="director-profile-help">
@@ -267,6 +292,23 @@
       if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229) return;
       event.preventDefault(); field.form.requestSubmit();
     });
+  })();
+  (function () {
+    // Show the limit this task will stop at as the person types their own.
+    var box = document.querySelector('[data-task-limits]');
+    if (!box) return;
+    var dollars = box.querySelector('[name="max_dollars"]'), minutes = box.querySelector('[name="max_minutes"]');
+    var note = document.getElementById('composer-limit-effective');
+    function lower(raw, fallback) { var value = Number(raw); return raw.trim() && isFinite(value) && value > 0 && (fallback === '' || value <= Number(fallback)) ? value : (fallback === '' ? null : Number(fallback)); }
+    function update() {
+      var amount = lower(dollars.value, box.dataset.dollars), time = lower(minutes.value, box.dataset.minutes);
+      var money = amount === null ? '' : (window.mvMoney ? window.mvMoney(amount) : '$' + amount.toFixed(2));
+      if (amount !== null && time !== null) chatCopy(note, 'This task stops at {amount} or {minutes} minutes, whichever comes first.', {amount: money, minutes: String(time)});
+      else if (amount !== null) chatCopy(note, 'This task stops at {amount}.', {amount: money});
+      else if (time !== null) chatCopy(note, 'This task stops after {minutes} minutes.', {minutes: String(time)});
+      else chatCopy(note, 'This task has no spending or time limit.');
+    }
+    dollars.addEventListener('input', update); minutes.addEventListener('input', update);
   })();
   (function () {
     var choice = document.getElementById('chat-specialist');

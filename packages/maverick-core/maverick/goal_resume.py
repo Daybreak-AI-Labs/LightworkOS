@@ -8,6 +8,34 @@ from .goal_mutations import GoalMutationConflict, _fingerprint, _receipt, _recor
 from .task_execution_guard import lease
 
 
+def respend_notice(world, goal_id) -> str:
+    """What a resume will spend again, said before it starts; "" when nothing.
+
+    With durable execution on, a resume continues from the saved transcript,
+    so finished tool calls are not repeated. Without a saved checkpoint the
+    resumed attempt starts a new conversation: the model re-plans and calls
+    tools again, and nothing outside that transcript holds complete results
+    to reuse. The goal-event mirror is redacted and bounded, and paid tools
+    that send messages must never be replayed from a store. So the honest
+    remedy is to say it, with the last attempt's spend.
+    """
+    from . import checkpoint
+
+    try:
+        if checkpoint.enabled() and checkpoint.Checkpointer(world).orchestrator_for(goal_id) is not None:
+            return ""
+        episodes = world.list_episodes(goal_id=goal_id, limit=1)
+    except Exception:  # an unreadable history is not evidence of no spend
+        return ("Resuming may start this task again from the beginning. "
+                "Finished steps, including paid searches and other paid services, may run and be charged again.")
+    spent = float(episodes[0].cost_dollars or 0.0) if episodes else 0.0
+    if spent <= 0:
+        return ""
+    return ("Resuming starts this task again from the beginning. Finished steps run again, "
+            "including paid searches and other paid services. "
+            f"The last attempt spent ${spent:.2f}; expect to spend about that much again before new progress.")
+
+
 def fingerprint(expected_updated_at, expected_owner, max_dollars):
     return _fingerprint({"expected_updated_at": expected_updated_at, "expected_owner": expected_owner,
                          "max_dollars": max_dollars})
