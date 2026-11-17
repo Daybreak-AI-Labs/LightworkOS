@@ -307,6 +307,8 @@ TENANT_RULES: dict[str, dict[str, tuple]] = {
         "max_repros": ("minimum", 5, (), None),
         "checker_models": _consumer("codebase.checker_models", []),
         "checker_image": _consumer("codebase.checker_image", ""),
+        "protected_checker_model": _consumer("codebase.protected_checker_model", ""),
+        "allow_self_changes": _consumer("codebase.allow_self_changes", False),
     },
 }
 

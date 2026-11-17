@@ -1968,3 +1968,24 @@ def test_protected_path_patterns_are_checked_and_matched(upstream, monkeypatch):
     assert vault.get("pricing").protected_paths == (".github", "app.py")
     out = run(main, ["code", "set", "pricing", "--protected-path", ""])
     assert out.exit_code == 0 and "protected paths: (none)" in out.output
+
+
+def test_the_factory_settings_are_read_strictly(tmp_path, monkeypatch):
+    from maverick import config
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    monkeypatch.delenv("MAVERICK_CONFIG", raising=False)
+
+    def read(text):
+        (tmp_path / "config.toml").write_text(text, encoding="utf-8")
+        config.reset_config_cache()
+        got = config.get_codebase()
+        return got["allow_self_changes"], got["protected_checker_model"]
+    try:
+        assert read("") == (False, "")
+        assert read('[codebase]\nallow_self_changes = true\nprotected_checker_model = " openai:m "\n') \
+            == (True, "openai:m")
+        assert read('[codebase]\nallow_self_changes = "yes"\n') == (False, "")   # not a real switch
+        config.dashboard_overrides_path().write_text("[broken\n", encoding="utf-8")
+        assert read("[codebase]\nallow_self_changes = true\n")[0] is False  # a source is unreadable
+    finally:
+        config.reset_config_cache()
