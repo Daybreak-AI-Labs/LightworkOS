@@ -265,3 +265,29 @@ def test_approvals_requested_between_is_the_python_window_filter(wm, monkeypatch
     in_window = [a for a in everything if a.requested_at == 200.0]
     assert [a.id for a in wm.approvals_requested_between(200.0, 200.0)] == [a.id for a in in_window]
     assert decoded == [len(in_window)]
+
+
+def test_one_person_spelt_any_way_counts_once_in_every_count(wm, monkeypatch):
+    """Case, full-width letters and compatibility ligatures never make one
+    person two approvers, nor someone other than the requester; the review
+    the Copilot seals counts people the same way as the vote it guards."""
+    from maverick.approval_vote_review import approval_review_identity, require_locked_vote_review
+
+    monkeypatch.delenv("MAVERICK_ALLOW_SELF_APPROVAL", raising=False)
+    key = dual_control.person_key
+    assert key("user:ＳＡＭ") == key(" user:Sam ") == key("user:sam")
+    assert key("user:ﬁona") == key("user:fiona")             # the "fi" ligature
+    aid = wm.create_approval("shell", risk="high", approvals_required=3, requested_by="user:sam")
+    assert wm.decide_approval(aid, "approved", decided_by="user:ＳＡＭ") is False
+    for spelling in ("user:Bob", "user:bob", "user:Ｂｏｂ"):    # e.g. votes from before the upgrade
+        assert wm.decide_approval(aid, "approved", decided_by=spelling)
+    state = wm.approval_state(aid)
+    assert state["status"] == "pending" and state["approved_count"] == 1
+    approval = wm.get_approval(aid)
+    event_id = wm.approval_audit_event_id(aid, "denied", "user:carol")
+    review = {"actor": "user:carol", "approval_id": aid, "status": "denied", "event_id": event_id,
+              "identity": approval_review_identity(approval), "content_owner": "",
+              "state": state, "binding": None}
+    require_locked_vote_review(approval, review, status="denied", actor="user:carol",
+                               event_id=event_id, approvers=state["approvers"],
+                               audit_pending=state["audit_pending_count"], content_owner="")

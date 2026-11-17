@@ -79,7 +79,10 @@ def _approvals(world, principal: str, *, can_decide: bool, now: float,
             if department and suites is not None and department not in suites:
                 continue
             state = world.approval_state(row.id) or {}
-            if state.get("status") != "pending" or principal in (state.get("approvers") or []):
+            from .safety.dual_control import includes_person
+
+            if state.get("status") != "pending" or includes_person(state.get("approvers") or [],
+                                                                   principal):
                 continue
         elif not mine:
             continue
