@@ -220,9 +220,128 @@ variable "db_username" {
 
 variable "encryption_key_digest" {
   description = "SHA-256 identity of the shared at-rest key, supplied by the deployment operator."
-  type      = string
+  type        = string
   validation {
     condition     = can(regex("^sha256:[0-9a-f]{64}$", var.encryption_key_digest))
     error_message = "encryption_key_digest must be sha256: followed by the lowercase digest of the decoded at-rest key."
   }
+}
+
+# ---- Alarms (alarms.tf) ----
+# Every alarm notifies the <project>-<environment>-alarms SNS topic. The
+# defaults suit the reference sizing (1 vCPU / 2 GB task, db.t4g.micro);
+# README.md, "Alarms", explains each choice.
+
+variable "alarm_email" {
+  description = "Email address subscribed to the alarm topic. AWS sends a confirmation email to it, and no alarm is delivered until the recipient confirms. Empty creates the topic without a subscription (subscribe a pager or chat integration to it instead)."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.alarm_email == "" || can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", var.alarm_email))
+    error_message = "alarm_email must be empty or a single email address."
+  }
+}
+
+variable "alarm_alb_5xx_count" {
+  description = "Load-balancer-generated 5xx responses (502/503/504) per 5 minutes that, sustained for two windows in a row, raise the ALB 5xx alarm."
+  type        = number
+  default     = 20
+}
+
+variable "alarm_target_5xx_percent" {
+  description = "Share of requests (%) the app answers with a 5xx, sustained for two 5-minute windows, that raises the target 5xx rate alarm. Windows with fewer than 20 requests never alarm."
+  type        = number
+  default     = 5
+}
+
+variable "alarm_target_response_p95_seconds" {
+  description = "p95 target response time (seconds), sustained for 15 minutes, that raises the slow-response alarm. Healthy dashboard pages answer well under a second; the state-volume throttling incident pushed signed-in pages to several seconds. Streaming (SSE) responses count only until their headers, so long-running chats do not inflate it."
+  type        = number
+  default     = 2
+}
+
+variable "alarm_ecs_cpu_percent" {
+  description = "App task CPU utilisation (%), sustained for 15 minutes, that raises the ECS CPU alarm."
+  type        = number
+  default     = 80
+}
+
+variable "alarm_ecs_memory_percent" {
+  description = "App task memory utilisation (%), sustained for 15 minutes, that raises the ECS memory alarm. The container is killed at 100%."
+  type        = number
+  default     = 80
+}
+
+variable "alarm_efs_burst_credit_low_gib" {
+  description = "EFS burst credit balance (GiB) below which the burst-credit alarm fires (bursting throughput mode only). A small file system holds at most about 2.1 TiB of credits and sits there while it stays under its baseline, so falling below half means it has been draining for a sustained period."
+  type        = number
+  default     = 1024
+}
+
+variable "alarm_efs_io_limit_percent" {
+  description = "EFS PercentIOLimit (General Purpose performance mode I/O limit, %), sustained for 15 minutes, that raises the EFS I/O limit alarm."
+  type        = number
+  default     = 90
+}
+
+variable "alarm_efs_throughput_percent" {
+  description = "Metered EFS throughput as a share of PermittedThroughput (%), sustained for 15 minutes, that raises the throughput-utilisation alarm. Works in every throughput mode."
+  type        = number
+  default     = 80
+}
+
+variable "alarm_rds_cpu_percent" {
+  description = "Database CPU utilisation (%), sustained for 15 minutes, that raises the RDS CPU alarm."
+  type        = number
+  default     = 80
+}
+
+variable "alarm_rds_free_storage_low_gib" {
+  description = "Free database storage (GiB) below which the RDS storage alarm fires. 2 GiB is 10% of the default 20 GB allocation, where RDS storage autoscaling also acts."
+  type        = number
+  default     = 2
+}
+
+variable "alarm_rds_freeable_memory_low_mib" {
+  description = "Freeable database memory (MiB), sustained for 15 minutes, below which the RDS memory alarm fires. 100 MiB is about a tenth of a db.t4g.micro; raise it with a larger instance class."
+  type        = number
+  default     = 100
+}
+
+variable "alarm_rds_cpu_credit_low" {
+  description = "CPU credit balance below which the RDS CPU-credit alarm fires. Created only for burstable (db.t*) classes; a db.t4g.micro holds at most 288 credits."
+  type        = number
+  default     = 30
+}
+
+variable "alarm_rds_connections_high" {
+  description = "Open database connections above which the RDS connections alarm fires. Postgres max_connections scales with instance memory and is under 100 on a db.t4g.micro; raise this with a larger instance class."
+  type        = number
+  default     = 60
+}
+
+# ---- Optional WAF (waf.tf) ----
+
+variable "enable_waf" {
+  description = "Create an AWS WAF web ACL (AWS managed Common, Known bad inputs and IP reputation rule groups plus a per-client rate limit) and associate it with the load balancer. Off by default because AWS WAF is billed per web ACL, per rule and per million requests; see AWS WAF pricing."
+  type        = bool
+  default     = false
+}
+
+variable "waf_rate_limit" {
+  description = "Requests per client IP in any 5-minute window above which the WAF blocks that client until its rate falls back under the limit. Behind Cloudflare (restrict_ingress_to_cloudflare) the client IP is read from the CF-Connecting-IP header."
+  type        = number
+  default     = 2000
+
+  validation {
+    condition     = var.waf_rate_limit >= 10 && var.waf_rate_limit <= 2000000000
+    error_message = "waf_rate_limit must be between 10 and 2,000,000,000 (the AWS WAF range)."
+  }
+}
+
+variable "waf_common_rule_count_overrides" {
+  description = "Extra rules in the AWS managed Common rule set to count instead of block, e.g. [\"CrossSiteScripting_BODY\"] if chat posts that contain code are blocked. SizeRestrictions_BODY is always counted (waf.tf)."
+  type        = list(string)
+  default     = []
 }
