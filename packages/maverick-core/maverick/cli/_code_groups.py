@@ -160,6 +160,10 @@ def code_feature(name, title, description, max_dollars, no_review, no_check) -> 
         _fail(exc)
     finally:
         world.close()
+    if p["status"] == "decision":
+        click.echo(f"proposal {p['id']}: stopped, waiting for a person's decision")
+        _echo_evidence(p)
+        return
     if p["status"] == "empty":
         click.echo(f"proposal {p['id']}: the swarm made no change")
         return

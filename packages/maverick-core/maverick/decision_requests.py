@@ -646,7 +646,8 @@ def answer(world, decision_id: int, option: int, *, actor: str, is_admin: bool,
     recorded = recorded_as or actor or "unknown"
     threads = ChatThreads(world)
     store = threads.store
-    resumable = resume_kwargs(world.get_goal(current.goal_id)) is not None
+    resumable = (resume_kwargs(world.get_goal(current.goal_id)) is not None
+                 and not _feature_step(current.goal_id, world))
     resume = False
     waiting = 0
     try:
@@ -1079,6 +1080,25 @@ NOBODY_RESTARTS = ("Another system started this run, so no person can restart it
                    "The answer is saved for the record.")
 
 
+#: A step of a code change (``maverick.codebase.features.ORIGIN_KIND``): it ran
+#: in a private copy of the code that no longer exists, so an answer never
+#: restarts it; the person starts a new code change instead.
+_FEATURE_ORIGIN = "codebase_feature"
+FEATURE_RESTARTS = ("This was a step of a code change, so it does not continue by itself. "
+                    "Start a new code change to use your answer.")
+
+
+def _feature_step(goal_id: int, world) -> bool:
+    try:
+        rows = world.tenant_query(
+            "SELECT o.kind FROM goal_origins o WHERE o.goal_id = ? AND {tenant_goal:o.goal_id}",
+            (int(goal_id),))
+    except Exception:  # noqa: BLE001 -- unknown origin: never restart it
+        log.debug("goal origin unreadable", exc_info=True)
+        return True
+    return any(str(row[0]) == _FEATURE_ORIGIN for row in rows)
+
+
 def _started_by_system(goal, world) -> bool:
     if str(getattr(goal, "execution_principal", "") or "") == _A2A_PRINCIPAL:
         return True
@@ -1099,6 +1119,8 @@ def restart_note(goal, world=None) -> str:
     access key): who can, decided from the run's records (its origin, or the
     A2A capability), never from the shape of its principal. ``""`` for a run
     that restarts by itself."""
+    if goal is not None and world is not None and _feature_step(goal.id, world):
+        return FEATURE_RESTARTS
     if goal is None or resume_kwargs(goal) is not None:
         return ""
     return NOBODY_RESTARTS if _started_by_system(goal, world) else STARTER_RESTARTS

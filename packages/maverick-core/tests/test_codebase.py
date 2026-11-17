@@ -2193,3 +2193,71 @@ def test_every_chat_channel_needs_two_distinct_people_never_an_agent(upstream, t
     with pytest.raises(ChannelApprovalRefused):
         record_vote(world, plain["approval_id"], "approved", "agent:helper")
     record_vote(world, plain["approval_id"], "approved", "operator")
+
+
+# -- a feature-run step that asks a person to decide --
+
+def _ask(world, goal_id, question):
+    from maverick import decision_requests
+    world.set_goal_status(goal_id, "blocked")
+    return decision_requests.request(
+        world, goal_id, question=question, area="security", recommended=1,
+        reason="It changes who can sign in.",
+        options=[{"label": "Keep it", "effect": "Nothing changes."},
+                 {"label": "Change it", "effect": "Sign-in changes."}])
+
+
+def test_an_author_that_asks_for_a_decision_stops_the_run(upstream, tmp_path, monkeypatch):
+    from maverick import decision_requests
+    from maverick.budget import Budget
+    monkeypatch.setattr(decision_requests, "_announce", lambda world, decision: None)
+    vault.register("pricing", str(upstream), test_command="python -m pytest -q")
+    world = WorldModel(tmp_path / "world.db")
+    budget = Budget(max_tool_calls=10)
+    asked = {}
+
+    def author(goal_id, work):
+        _passing(work)
+        budget.record_tool_call()
+        asked["d"] = _ask(world, goal_id, "May the change turn off sign-in checks?")
+    checks = []
+    p = features.propose(world, "pricing", "Discount", "", author, sandbox_factory=_Sandbox,
+                         checker=lambda gid, copy: checks.append(gid) or {"findings": []},
+                         owner="user:starter", budget=budget)
+    d = asked["d"]
+    assert p["status"] == "decision" and p["approval_id"] is None and checks == []
+    assert p["head"] == p["base"] and p["files"] == []        # its half-done round never committed
+    assert budget.tool_calls == 1                              # what it spent stays charged
+    facts = features.evidence(p)
+    assert facts["lines"][0] == ("Waiting for a person's decision: “May the change turn off "
+                                 "sign-in checks?”. Answer it on the Approvals page or with "
+                                 f"maverick decisions answer {d.id}, then start a new code change.")
+    assert features.DECISION_GAP in facts["gaps"]
+    assert features.status(world, features.find(p["id"])) == "decision"
+    with pytest.raises(vault.VaultError, match="wait for a person's decision"):
+        features.request_approval(world, features.find(p["id"]))
+    assert world.get_goal(d.goal_id).status == "blocked"      # not failed: it can be answered
+    # The answer is saved, but it never restarts the step outside its private copy.
+    outcome = decision_requests.answer(world, d.id, 2, actor="user:starter", is_admin=True)
+    assert outcome["resume"] is False and outcome["next"] == "manual"
+    assert outcome["restart"] == decision_requests.FEATURE_RESTARTS
+    assert world.get_goal(d.goal_id).status == "blocked"
+
+
+def test_a_checker_that_asks_for_a_decision_could_not_run(upstream, tmp_path, monkeypatch):
+    from maverick import decision_requests
+    monkeypatch.setattr(decision_requests, "_announce", lambda world, decision: None)
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    run, _ = _rounds(_passing)
+
+    def checker(gid, copy):
+        _ask(world, gid, "Should I report the pricing rule as a problem?")
+        return {"findings": []}                               # never read as a clean look
+    p = features.propose(world, "pricing", "Discount", "", run, checker=checker)
+    assert p["status"] == "decision" and p["approval_id"] is None
+    assert p["check"]["state"] == "failed" and p["check"]["error"] == features.ASKED_REASON
+    lines = features.evidence(p)["lines"]
+    assert lines[0].startswith("Waiting for a person's decision: “Should I report the pricing")
+    assert f"Independent check: could not run ({features.ASKED_REASON})." in lines
+    assert features.summary(world)["proposals"][0]["check"] == "failed"
