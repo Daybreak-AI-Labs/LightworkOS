@@ -760,6 +760,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   security hides records that have no workspace. The table owner now counts
   them with FORCE lifted in a rolled-back transaction; a login that cannot
   see them reports NOT COUNTED. Each report says how it counted.
+- The `database` tool now refuses an address that names Lightwork's own
+  Postgres records database (same host, port and database as the world
+  DSN), from `DATABASE_URL` or from an agent. Use a separate database; only
+  the organisation can allow it, with `[tools] database_allow_world_database`.
 
 ### Fixed
 

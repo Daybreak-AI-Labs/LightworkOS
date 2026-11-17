@@ -724,6 +724,12 @@ def _safety(S, C) -> tuple:
           "maverick.tools.database_tool", subgroup="Tool access",
           env=("MAVERICK_DATABASE_ALLOW_URL_ARG",), weaker=True,
           warning="Agents will be able to connect to any database they can reach."),
+        S("tools", "database_allow_world_database", "Let the database tool open Lightwork's records",
+          "The database tool may connect to Lightwork's own shared records database. Only the "
+          "organisation can allow this, and a workspace's settings cannot.", "toggle",
+          "Security", False, "maverick.tools.database_tool", subgroup="Tool access",
+          env=("MAVERICK_DATABASE_ALLOW_WORLD_DATABASE",), weaker=True,
+          warning="A query through the tool could read or change every workspace's records."),
         S("egress", "deny", "Addresses no tool may reach",
           "Tools and connections refuse these addresses. A star matches any part of a name; "
           "a single star blocks everything not allowed below.", "list", "Security", [],

@@ -23,6 +23,13 @@ local database file (including this deployment's own world.db).
 ``DATABASE_URL`` is operator-set, so it bypasses the model-URL opt-in. An active
 capability host grant still limits its destinations.
 
+Neither may name Lightwork's own Postgres world database (the same host, port
+and database as the world DSN): its row policies trust a session setting that
+any SQL on the connection can change. Only the organisation can allow it, with
+``MAVERICK_DATABASE_ALLOW_WORLD_DATABASE=1`` or ``[tools]
+database_allow_world_database = true`` in its own settings, never a
+workspace's.
+
 ops:
   - query(sql, url, limit, confirm)
 """
@@ -36,7 +43,7 @@ import math
 import os
 import re
 from typing import Any
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from .._envparse import coerce_bool, is_truthy
 from ..connector_attempts import CONTROL_ERRORS
@@ -206,6 +213,93 @@ def _model_supplied_url_denial(url: str, allow_hosts: tuple[str, ...]) -> str | 
             "operator-set connection instead."
         )
     return None
+
+
+_WORLD_DATABASE_DENIAL = (
+    "⚠ DENIED: this address is Lightwork's own records database. A query there could reach "
+    "every workspace's records, because its row protection trusts a setting any query can "
+    "change. Use a separate database, or ask your organisation to allow it with [tools] "
+    "database_allow_world_database. The tool was not executed."
+)
+_LOCAL_HOSTS = frozenset({"", "localhost", "127.0.0.1", "::1"})
+
+
+def _world_database_allowed() -> bool:
+    """The organisation's switch: the environment or the organisation's own
+    settings, never a workspace overlay. Unreadable settings refuse."""
+    env = os.environ.get("MAVERICK_DATABASE_ALLOW_WORLD_DATABASE", "").strip()
+    if env:
+        return is_truthy(env)
+    try:
+        from ..config import config_source_errors, load_global_config
+        if config_source_errors(include_tenant=True):
+            return False
+        return coerce_bool((load_global_config() or {}).get("tools", {}).get(
+            "database_allow_world_database"))
+    except Exception:  # noqa: BLE001 -- unreadable settings keep the refusal
+        return False
+
+
+def _endpoint_host(host: str) -> str:
+    host = host.strip().strip("[]").lower()
+    return "local" if host in _LOCAL_HOSTS or host.startswith("/") else host
+
+
+def _postgres_params(dsn: str) -> dict[str, str] | None:
+    """libpq parameters of a Postgres URL (any SQLAlchemy driver suffix) or
+    key=value DSN; ``None`` for another kind of database."""
+    if "://" not in dsn:
+        from psycopg.conninfo import conninfo_to_dict
+        return {k: str(v) for k, v in conninfo_to_dict(dsn).items() if v is not None}
+    split = urlsplit(dsn)
+    if split.scheme.split("+", 1)[0].lower() not in {"postgresql", "postgres"}:
+        return None
+    params = {k.lower(): v[-1] for k, v in parse_qs(split.query, keep_blank_values=True).items()}
+    authority = split.netloc.rsplit("@", 1)[-1]
+    hosts, ports = [], []
+    for item in authority.split(",") if authority else ():
+        part = urlsplit("//" + item)
+        hosts.append(part.hostname or "")
+        ports.append(str(part.port or ""))
+    params.setdefault("host", ",".join(hosts))
+    params.setdefault("port", ",".join(ports))
+    params.setdefault("dbname", unquote(split.path.lstrip("/")))
+    params.setdefault("user", unquote(split.username or ""))
+    return params
+
+
+def _postgres_endpoints(dsn: str) -> set[tuple[str, str, str]]:
+    """``(host, port, database)`` for each server a Postgres DSN may reach."""
+    params = _postgres_params(dsn)
+    if params is None:
+        return set()
+    database = params.get("dbname") or params.get("user") or ""
+    ports = [p.strip() or "5432" for p in params.get("port", "").split(",")]
+    found = set()
+    for key in ("host", "hostaddr"):
+        for i, host in enumerate(params.get(key, "").split(",")):
+            # No host at all is libpq's local socket.
+            if host.strip() or (key == "host" and i == 0):
+                found.add((_endpoint_host(host), ports[min(i, len(ports) - 1)], database))
+    return found
+
+
+def _world_database_denial(url: str) -> str | None:
+    """Refuse a URL that names the Postgres world database, unless the
+    organisation allows it. A URL that cannot be parsed is refused too."""
+    from ..world_model_backends.pg_rls import resolve_dsn
+
+    world = resolve_dsn()
+    if not world or _world_database_allowed():
+        return None
+    try:
+        target = _postgres_endpoints(url)
+        if not target:
+            return None
+        world_endpoints = _postgres_endpoints(world)
+    except Exception:  # noqa: BLE001 -- an unreadable address is not opened
+        return _WORLD_DATABASE_DENIAL
+    return _WORLD_DATABASE_DENIAL if target & world_endpoints else None
 
 
 def _denial(host: str) -> str:
@@ -506,7 +600,7 @@ def _op_query(sql: str, url_arg: str, limit: int, confirm: bool,
         denial = _model_supplied_url_denial(url_arg, allow_hosts)
         if denial:
             return denial
-    denial = _host_denial(url, allow_hosts)
+    denial = _world_database_denial(url) or _host_denial(url, allow_hosts)
     if denial:
         return denial
     try:

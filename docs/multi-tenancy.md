@@ -257,6 +257,15 @@ COUNTED" and is never READY.
   start of every transaction. SQL run directly on that connection can set it
   too. RLS is a second check on Lightwork's own queries, not a boundary
   against someone who can run SQL as the application's database role.
+  No default path runs a caller's SQL on that connection. The `database`
+  tool could, if `DATABASE_URL` or an agent's address named the world
+  database, so it refuses an address with the same host, port and database
+  as the world DSN. Only the organisation can lift that, with
+  `[tools] database_allow_world_database = true` in its own settings or
+  `MAVERICK_DATABASE_ALLOW_WORLD_DATABASE=1`; a workspace's settings cannot.
+  If you lift it, give the tool a separate read-only login. The check compares
+  the address as written, so a different name for the same server is not
+  caught.
 
 The webhook and deadline-alert tables (`webhook_subscriptions`,
 `webhook_deliveries`, `deadline_alerts`) store the workspace id as written

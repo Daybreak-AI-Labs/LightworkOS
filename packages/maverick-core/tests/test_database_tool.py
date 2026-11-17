@@ -433,3 +433,37 @@ def test_model_supplied_sqlite_reproduction_now_denied(monkeypatch, tmp_path):
 
     assert "DENIED" in out
     assert "top-secret" not in out
+
+
+def test_world_database_is_refused_unless_the_organisation_allows_it(monkeypatch, tmp_path):
+    # The world database's row policies trust a session setting any SQL on the
+    # connection can change, so the tool must not open it: neither through
+    # DATABASE_URL nor through a model-supplied url, whatever the driver,
+    # spelling of localhost or form of the world DSN. A workspace's own
+    # settings file cannot allow it; only the organisation's can.
+    from maverick.tools.database_tool import database_tool
+
+    monkeypatch.setenv("MAVERICK_PG_DSN", "host=localhost port=5433 dbname=lightwork user=app")
+    monkeypatch.delenv("MAVERICK_DATABASE_ALLOW_WORLD_DATABASE", raising=False)
+    monkeypatch.setenv("MAVERICK_DATABASE_ALLOW_URL_ARG", "1")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://reader:pw@127.0.0.1:5433/lightwork")
+
+    def run(url=""):
+        return database_tool().fn({"op": "query", "sql": "SELECT 1", "url": url})
+
+    assert "DENIED" in run() and "records database" in run()
+    assert "DENIED" in run("postgres://other@localhost:5433/lightwork?sslmode=disable")
+    # Another database on the same server, or another server, is not refused.
+    for elsewhere in ("postgresql+psycopg://u:p@127.0.0.1:5433/reports",
+                      "postgresql+psycopg://u:p@127.0.0.1:1/lightwork"):
+        assert "DENIED" not in run(elsewhere)
+    # A workspace overlay cannot allow it; the organisation's switch can.
+    from maverick.paths import maverick_home
+
+    tenant_dir = maverick_home() / "tenants" / "acme"
+    tenant_dir.mkdir(parents=True)
+    (tenant_dir / "config.toml").write_text("[tools]\ndatabase_allow_world_database = true\n")
+    monkeypatch.setenv("MAVERICK_TENANT", "acme")
+    assert "DENIED" in run()
+    monkeypatch.setenv("MAVERICK_DATABASE_ALLOW_WORLD_DATABASE", "1")
+    assert "DENIED" not in run()  # it now tries to connect

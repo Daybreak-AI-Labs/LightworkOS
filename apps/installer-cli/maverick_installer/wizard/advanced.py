@@ -1706,6 +1706,13 @@ def _pick_data_protection_toggles() -> dict[str, Any]:
             "Off by default; leave off for SQLite or single-tenant installs.",
             default=False,
         ),
+        "database_allow_world_database": _q_confirm(
+            "Let the database tool open Lightwork's own shared Postgres records database? "
+            "A query there could read or change every workspace's records, because the "
+            "row protection trusts a setting any query can change. Leave off unless you "
+            "use a separate read-only login for it.",
+            default=False,
+        ),
         "copilot_operation_families": [
             "commitments" if value == "Promise reviews" else value
             for value in _q_checkbox(
@@ -3627,6 +3634,8 @@ def _cfg_advanced_runtime_and_tools(advanced: dict[str, Any], providers: list[st
         tool_lines.append("hardware_sensors = true")
     if advanced.get("credential_connectors"):
         tool_lines.append("credential_connectors = true")
+    if advanced.get("database_allow_world_database"):
+        tool_lines.append("database_allow_world_database = true")
     if tool_lines:
         lines.append("")
         lines.append("[tools]")
