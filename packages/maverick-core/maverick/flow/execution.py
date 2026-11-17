@@ -291,17 +291,19 @@ def execute(flow: Flow, *, agent_runner: AgentRunner, action_runner: ActionRunne
         else flow.max_dollars
     )
     spend_lock = threading.Lock()
+    # Dollars paid tool steps hold while they run, seen by the agent gate too.
+    tool_held = [0.0]
     if record_outcomes:
         if run_budget_limit and run_budget_limit > 0:
             # Aggregate per-run spend ceiling: a wide parallel / long foreach can't
             # fan out unbounded cost (per-node budget alone doesn't bound the COUNT).
             agent_runner = _budget_gated(agent_runner, run_budget_limit, agent_budget_dollars, spent,
-                                         spend_lock)
+                                         spend_lock, tool_held)
         else:
             agent_runner = _spend_tracked(agent_runner, agent_budget_dollars, spent, spend_lock)
     # Paid tool calls in a tool step are charged to what is left of the run's
     # allowance, and count toward the run's spend.
-    action_runner = _tool_spend_metered(action_runner, run_budget_limit, spent, spend_lock)
+    action_runner = _tool_spend_metered(action_runner, run_budget_limit, spent, spend_lock, tool_held)
 
     # Write a "running" state before executing so a long run is distinguishable
     # from a stuck "queued" one on the dashboard (a fresh, non-resume run only).

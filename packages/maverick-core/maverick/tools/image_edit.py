@@ -114,26 +114,16 @@ def _model_for(op: str) -> str | None:
 def _predict(model: str, inp: dict[str, Any], wait: bool, budget=None) -> str:
     """Create a prediction (and optionally poll), via replicate_tool's
     auth + request helpers so the HTTP shape and the charge stay in one place."""
-    from .replicate_tool import _fmt_prediction, _resolve_version, run_prediction
+    from .replicate_tool import _resolve_version, prediction_reply, run_prediction
 
     version = _resolve_version(model)
     if not version:
         return f"ERROR: could not resolve version for model {model!r}"
-    code, data, final, poll_error = run_prediction(version, inp, wait, budget,
-                                                   label="Hosted image edit")
-    if code >= 400 or not isinstance(data, dict):
-        return f"ERROR: predict ({code}): {data}"
-    pid = data.get("id")
-    if not wait:
-        return (
-            f"created prediction {pid} (status={data.get('status')}); "
-            "poll with replicate predict_get"
-        )
-    if poll_error:
-        return poll_error
-    if final is not None:
-        return _fmt_prediction(final)
-    return f"prediction {pid} still running after 90s; use replicate predict_get to poll"
+    run = run_prediction(version, inp, wait, budget, label="Hosted image edit")
+    if run.code >= 400 or not isinstance(run.created, dict):
+        return f"ERROR: predict ({run.code}): {run.created}"
+    return prediction_reply(run, poll_hint="use replicate predict_get to poll",
+                            created_hint="; poll with replicate predict_get")
 
 
 # ---------- remote ops ----------

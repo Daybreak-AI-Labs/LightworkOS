@@ -116,11 +116,15 @@ _PASS_THROUGH = (*STOP_SIGNALS, PaidCallRefused)
 _HOSTED_STOPS = (PaidCallRefused, BudgetExceeded, ProviderCapExceeded)
 
 
-def _paid(service: str, label: str, send, **metering):
-    """Send one hosted request, charged to the run budget when there is one."""
+def _paid(service: str, label: str, send, *, audio: Path | None = None, **metering):
+    """Send one hosted request, charged to the run budget when there is one.
+    ``audio`` is a recording being transcribed; its length bounds are read
+    only on this charged path, never for a caller outside a run."""
     budget = _PAID_BUDGET.get()
     if budget is _UNMETERED:
         return send()
+    if audio is not None:
+        metering.update(_stt_metering(audio))
     return charged_call(service, send, budget=budget, label=label, **metering)
 
 
@@ -134,20 +138,25 @@ def _audio_seconds(resp) -> dict[str, float | None]:
     return {"second": None}
 
 
-def _stt_units(audio_path: Path) -> dict[str, float]:
-    """One request, and the audio length read from the file's header when it
-    states one, so a per-second hold is what the call can cost."""
-    from ._audio_length import audio_seconds
+def _stt_metering(audio_path: Path) -> dict[str, Any]:
+    """How a hosted transcription is held and charged: one request; at most
+    the seconds the file's size allows (a header can be faked, so it never
+    sets the hold); and the header's length, within that bound, only when
+    the reply reports no seconds."""
+    from ._audio_length import audio_seconds, max_audio_seconds
 
-    units: dict[str, float] = {"request": 1}
+    metering: dict[str, Any] = {"units": {"request": 1}}
     try:
         with _open_audio(audio_path) as f:
-            seconds = audio_seconds(f, os.fstat(f.fileno()).st_size)
-    except OSError:
-        seconds = None
-    if seconds is not None and seconds > 0:
-        units["second"] = seconds
-    return units
+            size = os.fstat(f.fileno()).st_size
+            stated = audio_seconds(f, size)
+    except Exception:  # an unreadable file is sent and charged as unknown
+        return metering
+    bound = max_audio_seconds(size)
+    metering["unit_bound"] = {"second": bound}
+    if stated is not None and 0 < stated <= bound:
+        metering["fallback"] = {"second": stated}
+    return metering
 
 
 def _open_audio(audio_path: Path):
@@ -201,7 +210,7 @@ def _whisper_openai(audio_path: Path, language: str | None) -> str | None:
                 kwargs["language"] = language
             resp = _paid("openai_whisper", "OpenAI speech-to-text",
                          lambda: client.audio.transcriptions.create(**kwargs),
-                         units=_stt_units(audio_path), measure=_audio_seconds)
+                         audio=audio_path, measure=_audio_seconds)
         return getattr(resp, "text", None) or str(resp)
     except _PASS_THROUGH:
         raise
@@ -238,7 +247,7 @@ def _whisper_groq(audio_path: Path, language: str | None) -> str | None:
                 kwargs["language"] = language
             resp = _paid("groq_whisper", "Groq speech-to-text",
                          lambda: client.audio.transcriptions.create(**kwargs),
-                         units=_stt_units(audio_path), measure=_audio_seconds)
+                         audio=audio_path, measure=_audio_seconds)
         return getattr(resp, "text", None) or str(resp)
     except _PASS_THROUGH:
         raise

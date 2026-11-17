@@ -158,27 +158,29 @@ def test_replicate_priced_per_second_cannot_spend_past_the_limit(monkeypatch):
     assert budget.dollars == pytest.approx(0.15) and budget._reserved == 0
 
 
-def test_replicate_per_second_runs_waiting_and_is_cancelled_at_its_deadline(monkeypatch):
-    # Priced per second, a prediction asked not to wait is still waited for,
-    # so its time can be measured and limited. One that is still running at
-    # the deadline is cancelled, not left billing. With no time reported, it
-    # is charged the full amount held for it, and the cost line says why.
+def _replicate_clock(monkeypatch, price=None):
     import os
 
-    import pytest
     from maverick import config
-    from maverick.budget import DEFAULT_MAX_UNMETERED_HOLD_DOLLARS
 
     home = os.environ["MAVERICK_HOME"]
     os.makedirs(home, exist_ok=True)
     with open(os.path.join(home, "config.toml"), "w", encoding="utf-8") as f:
-        f.write('[budget.tool_prices]\nreplicate = { dollars = 0.001, per = "second" }\n')
+        if price is not None:
+            f.write(f'[budget.tool_prices]\nreplicate = {{ dollars = {price}, per = "second" }}\n')
     config.reset_config_cache()
     monkeypatch.setenv("REPLICATE_API_TOKEN", "r8_xx")
     import maverick.tools.replicate_tool as rt
     clock = {"now": 1000.0}
     monkeypatch.setattr(rt.time, "time", lambda: clock["now"])
     monkeypatch.setattr(rt.time, "sleep", lambda s: clock.__setitem__("now", clock["now"] + s))
+    return rt, clock
+
+
+def test_replicate_with_no_per_second_price_is_never_cancelled_by_the_poll_window(monkeypatch):
+    # Charged per call, a long prediction keeps running when the 90-second
+    # poll ends: the reply says so, and nothing is cancelled.
+    rt, clock = _replicate_clock(monkeypatch)
     posts = []
 
     def get(url, **_kw):
@@ -186,16 +188,38 @@ def test_replicate_per_second_runs_waiting_and_is_cancelled_at_its_deadline(monk
             return _resp(200, {"latest_version": {"id": "v1"}})
         return _resp(200, {"id": "p1", "status": "processing"})
 
-    def post(url, **_kw):
-        posts.append(url)
-        return _resp(201, {"id": "p1", "status": "starting"})
+    _fake_httpx(monkeypatch, get=MagicMock(side_effect=get),
+                post=MagicMock(side_effect=lambda url, **_kw: posts.append(url) or _resp(201, {"id": "p1"})))
+    out = rt.replicate_tool(budget=Budget()).fn({"op": "run", "model": "o/m", "input": {}, "wait": True})
+    assert "still running after 90s" in out
+    assert not any(url.endswith("/cancel") for url in posts)
 
-    _fake_httpx(monkeypatch, get=MagicMock(side_effect=get), post=MagicMock(side_effect=post))
-    budget = Budget(max_dollars=5.0)
+
+def test_replicate_per_second_is_cancelled_at_its_hold_and_settles_a_slow_cancel(monkeypatch):
+    # Priced per second, a prediction asked not to wait is waited for, and the
+    # reply says so. It is cancelled at its spending hold, the reply gives that
+    # real final state, and a cancel that takes a while is still settled from
+    # the seconds Replicate reports, not the whole hold.
+    import pytest
+
+    rt, clock = _replicate_clock(monkeypatch, price=0.01)
+    posts, polls_after_cancel = [], []
+
+    def get(url, **_kw):
+        if url.endswith("/models/o/m"):
+            return _resp(200, {"latest_version": {"id": "v1"}})
+        if any(u.endswith("/cancel") for u in posts):
+            polls_after_cancel.append(clock["now"])
+            if len(polls_after_cancel) < 6:
+                return _resp(200, {"id": "p1", "status": "processing"})
+            return _resp(200, {"id": "p1", "status": "canceled", "metrics": {"predict_time": 19.5}})
+        return _resp(200, {"id": "p1", "status": "processing"})
+
+    _fake_httpx(monkeypatch, get=MagicMock(side_effect=get),
+                post=MagicMock(side_effect=lambda url, **_kw: posts.append(url) or _resp(201, {"id": "p1"})))
+    budget = Budget(max_dollars=0.2)
     out = rt.replicate_tool(budget=budget).fn({"op": "run", "model": "o/m", "input": {}})
-    assert "p1" in out and posts[-1].endswith("/predictions/p1/cancel")
-    assert clock["now"] - 1000.0 <= 94  # cancelled at 90 s, then three short reads
-    assert budget.dollars == pytest.approx(DEFAULT_MAX_UNMETERED_HOLD_DOLLARS)
-    summary = budget.summary()
-    assert "Replicate did not report its real usage" in summary
-    assert "full amount held" in summary and "Prices for paid tool services" in summary
+    assert posts[-1].endswith("/predictions/p1/cancel")
+    assert "Waited for the result" in out and "priced per second" in out
+    assert "cancelled at the spending hold after 20 s" in out and "canceled" in out
+    assert budget.dollars == pytest.approx(0.195)

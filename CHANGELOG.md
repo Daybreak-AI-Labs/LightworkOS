@@ -718,18 +718,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `whatsapp_business` is charged per message, though `messenger` on the
   same Meta address is free.
 - A call whose price is known before it is sent is stopped if it would pass
-  the limit. Speech-to-text priced per second holds the audio's length,
-  read from the file first. Another call priced per second or per terabyte
-  holds the smaller of what the run has left and `[budget]
-  max_unmetered_hold_dollars` (default $1.00, in All settings and the
-  wizard; a workspace may only raise it), so other calls keep running.
-  BigQuery is told to stop at that hold. Replicate priced per second is
-  always waited for and cancelled at that hold or its 90-second deadline;
-  it may still run for the few seconds Replicate takes to stop. A call
-  with no limit can still cost more than it held, and the run stops right
-  after it. If the reply does not report the seconds or terabytes used,
-  the full hold is charged and the cost line says so; price such a service
-  per request to be charged per call instead.
+  the limit. Speech-to-text priced per second holds what the file's size
+  allows at the lowest speech bitrate (a header's stated length is never
+  trusted for this) and is charged the seconds the service reports. Another
+  call priced per second or per terabyte holds the smaller of what the run
+  has left and `[budget] max_unmetered_hold_dollars` (default $1.00, in All
+  settings and the wizard; a workspace may only raise it), so other calls
+  keep running. BigQuery is told to stop at that hold. Replicate priced per
+  second is always waited for, and the reply says so; it is cancelled when
+  it reaches its hold, the reply gives its final state, and Replicate's
+  reported seconds settle the charge even if the cancel is slow. Unpriced
+  or priced per call, Replicate is never cancelled: a prediction still
+  running after 90 seconds is reported as still running. A call with no
+  limit can still cost more than it held, and the run stops right after
+  it. If the reply does not report the seconds or terabytes used, the full
+  hold is charged and the cost line says so; price such a service per
+  request to be charged per call instead.
 - GPU rentals (`runpod`, `vast_ai`, `lambda_labs_cloud`, `coreweave`,
   `voltage_park`, `paperspace_gradient`) start machines billed by the hour.
   The limit sees only the per-call charge, never those hours.

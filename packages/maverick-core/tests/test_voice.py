@@ -652,5 +652,76 @@ def test_hosted_speech_to_text_holds_the_audio_length_and_reads_usage_seconds(mo
     monkeypatch.setitem(sys.modules, "openai", fake)
     tool = voice_mod.transcribe_audio(NS(workdir=str(tmp_path)), budget=budget)
     assert "twelve seconds" in tool.fn({"source": "a.wav", "backend": "openai"})
-    assert held == [pytest.approx(0.0012)]
+    # The hold is what the file's size allows at the lowest speech bitrate.
+    size = (tmp_path / "a.wav").stat().st_size
+    assert held == [pytest.approx(size * 8 / 6000 * 0.0001)]
     assert budget.dollars == pytest.approx(0.0012)
+
+
+def _float32_wav(path, seconds: int, *, claimed_seconds: int | None = None) -> None:
+    """A WAV in IEEE-float format (tag 3), which the wave module refuses.
+    ``claimed_seconds`` writes a data-chunk size smaller than the data."""
+    import struct
+
+    rate = 8000
+    data = b"\0\0\0\0" * rate * seconds
+    claimed = len(data) if claimed_seconds is None else 4 * rate * claimed_seconds
+    fmt = struct.pack("<HHIIHH", 3, 1, rate, rate * 4, 4, 32)
+    body = b"WAVE" + b"fmt " + struct.pack("<I", len(fmt)) + fmt + b"data" + struct.pack("<I", claimed) + data
+    path.write_bytes(b"RIFF" + struct.pack("<I", len(body)) + body)
+
+
+def _fake_openai(monkeypatch, create):
+    import sys
+    import types
+    from types import SimpleNamespace as NS
+
+    class _OpenAI:
+        def __init__(self, **_kw):
+            self.audio = NS(transcriptions=NS(create=create))
+
+    fake = types.ModuleType("openai")
+    fake.OpenAI = _OpenAI
+    monkeypatch.setitem(sys.modules, "openai", fake)
+
+
+def test_audio_headers_never_crash_or_shrink_the_hold(monkeypatch, tmp_path):
+    # A float32 WAV still transcribes for a caller outside a run; a malformed
+    # MP3 does not crash the length reader; and a header claiming 1 second
+    # over 600 seconds of audio cannot shrink the hold below its real cost.
+    import io
+    from types import SimpleNamespace as NS
+
+    import pytest
+    from maverick import config
+    from maverick.budget import Budget
+    from maverick.tools._audio_length import audio_seconds
+    from openai.types.audio import Transcription
+
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    _float32_wav(tmp_path / "f.wav", 2)
+    _fake_openai(monkeypatch, lambda **_kw: Transcription.model_validate({"text": "float words"}))
+    assert "float words" in voice_mod._run_transcribe_internal(
+        {"source": str(tmp_path / "f.wav"), "backend": "openai"})
+    bad_mp3 = b"\xff\xfb\xf0\x00" + b"\0" * 64  # bitrate index 15
+    assert audio_seconds(io.BytesIO(bad_mp3), len(bad_mp3)) is None
+    assert audio_seconds(io.BytesIO(b"fLaC"), 4) is None
+
+    (tmp_path / "config.toml").write_text(
+        '[budget.tool_prices]\nopenai_whisper = { dollars = 0.0001, per = "second" }\n',
+        encoding="utf-8")
+    config.reset_config_cache()
+    _float32_wav(tmp_path / "long.wav", 600, claimed_seconds=1)
+    budget = Budget(max_dollars=2.0)
+    held = []
+
+    def create(**_kw):
+        held.append(budget._reserved)
+        return Transcription.model_validate({"text": "long", "usage": {"type": "duration", "seconds": 600}})
+
+    _fake_openai(monkeypatch, create)
+    tool = voice_mod.transcribe_audio(NS(workdir=str(tmp_path)), budget=budget)
+    assert "long" in tool.fn({"source": "long.wav", "backend": "openai"})
+    assert held[0] >= 600 * 0.0001
+    assert budget.dollars == pytest.approx(0.06)

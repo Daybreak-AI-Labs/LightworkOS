@@ -21,7 +21,7 @@ class _MeteredAgentResult(tuple):
 
 
 def _budget_gated(agent_runner: AgentRunner, cap: float, per_call: float, spent: list,
-                  lock=None) -> AgentRunner:
+                  lock=None, held: list | None = None) -> AgentRunner:
     """Wrap an agent runner with a per-RUN aggregate spend ceiling. Each agent
     node is reserved at its worst-case per-node budget (``per_call``) against a
     shared, lock-guarded total; once the next reservation would exceed ``cap`` the
@@ -37,18 +37,21 @@ def _budget_gated(agent_runner: AgentRunner, cap: float, per_call: float, spent:
     refusal is a control stop, with no business result or learning outcome."""
     import threading
     lock = lock or threading.Lock()
+    # What paid tool steps hold right now (shared with _tool_spend_metered):
+    # an agent node may not be given money a tool call already holds.
+    held = held if held is not None else [0.0]
 
     @wraps(agent_runner, updated=())
     def run(brief: str, data: dict, **kw) -> tuple:
         with lock:
             if getattr(agent_runner, "_meters_usage", False):
-                remaining = cap - spent[0]
+                remaining = cap - spent[0] - held[0]
                 if remaining <= 0:
                     raise FlowBudgetExceeded(f"flow spending allowance reached (${cap:g}) before dispatch")
                 result = agent_runner(brief, data, allowance=remaining, **kw)
                 spent[0] += result.dollars
                 return result
-            if spent[0] + per_call > cap:
+            if spent[0] + held[0] + per_call > cap:
                 raise FlowBudgetExceeded(f"flow spending allowance reached (${cap:g}) before dispatch")
             spent[0] += per_call
         return agent_runner(brief, data, **kw)
@@ -153,7 +156,7 @@ def _flow_step_budget_class():
 
 
 def _tool_spend_metered(action_runner: Callable, cap: float | None, spent: list,
-                        lock=None) -> Callable:
+                        lock=None, held: list | None = None) -> Callable:
     """Give each tool step a run budget drawn from the flow's allowance, so a
     paid tool can run inside the flow's limit, and add what it charges to the
     run's total. ``lock`` (shared with the agent gate) is taken only while a
@@ -164,7 +167,7 @@ def _tool_spend_metered(action_runner: Callable, cap: float | None, spent: list,
     from ..budget import BudgetExceeded
     lock = lock or threading.Lock()
     step_budget = _flow_step_budget_class()
-    held = [0.0]
+    held = held if held is not None else [0.0]
     limit = cap if cap and cap > 0 else None
 
     @wraps(action_runner, updated=())

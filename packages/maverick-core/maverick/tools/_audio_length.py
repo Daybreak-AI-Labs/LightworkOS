@@ -1,7 +1,9 @@
-"""Audio length read from a file's own header, before it is sent anywhere.
+"""Audio length read from a file, before it is sent anywhere.
 
-A hosted speech-to-text service priced per second is held for the audio's
-length (``voice``), so the hold is what the call can cost. Only the formats
+A header can be wrong or faked, so it never sets a spending hold: the hold
+comes from :func:`max_audio_seconds`, an upper bound from the file size. A
+header length only fills in a charge when the provider reports none, and only
+within that bound (``voice``). Only the formats
 whose header states the length, or lets it be worked out, are read: WAV,
 FLAC, MP4/M4A, Ogg (Vorbis or Opus) and MP3 (from its Xing/Info/VBRI frame,
 else its bitrate). Anything else gives ``None``.
@@ -14,8 +16,19 @@ from typing import BinaryIO
 _MAX_SCAN = 1 << 20  # header search limit (1 MiB)
 
 
+# The lowest practical speech bitrate (Opus's minimum, 6 kbit/s): no real
+# recording of a given size plays longer than this allows.
+_MIN_SPEECH_BITS_PER_SECOND = 6_000
+
+
+def max_audio_seconds(size: int) -> float:
+    """The longest a recording of ``size`` bytes can play, whatever it claims."""
+    return max(0, size) * 8 / _MIN_SPEECH_BITS_PER_SECOND
+
+
 def audio_seconds(stream: BinaryIO, size: int) -> float | None:
-    """The audio length in seconds, or ``None`` when the header does not say."""
+    """The length the header states, in seconds, or ``None`` when it does not
+    say or cannot be read. Any parsing failure counts as unknown."""
     try:
         head = stream.read(64)
         stream.seek(0)
@@ -29,7 +42,7 @@ def audio_seconds(stream: BinaryIO, size: int) -> float | None:
             return _ogg(stream, size)
         if head[:3] == b"ID3" or (len(head) > 1 and head[0] == 0xFF and head[1] & 0xE0 == 0xE0):
             return _mp3(stream, size)
-    except (OSError, ValueError, struct.error, ZeroDivisionError):
+    except Exception:  # a malformed or unusual header is simply unknown
         return None
     return None
 

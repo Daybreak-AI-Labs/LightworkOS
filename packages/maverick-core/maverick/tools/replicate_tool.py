@@ -25,7 +25,7 @@ import json
 import logging
 import os
 import time
-from typing import Any
+from typing import Any, NamedTuple
 
 from ..governed_http import guarded_sender as _governed_sender
 from . import Tool, as_bool, safe_path_segment
@@ -101,11 +101,24 @@ def _resolve_version(model: str) -> str | None:
     return results[0].get("id") if results else None
 
 
-def _measured(result) -> dict[str, float | None]:
+class PredictionRun(NamedTuple):
+    """One prediction as :func:`run_prediction` saw it. ``final`` is its last
+    state when polled to an end; ``note`` says, in plain words, that it was
+    waited for to measure its cost or cancelled at its spending hold."""
+
+    code: int
+    created: Any
+    final: dict | None
+    poll_error: str | None
+    note: str
+    waited: bool
+
+
+def _measured(run: PredictionRun) -> dict[str, float | None]:
     """What one prediction used, from its final state when it was polled."""
-    code, created, final, _error = result
-    if code >= 400 or not isinstance(created, dict):
+    if run.code >= 400 or not isinstance(run.created, dict):
         return {"request": 0, "image": 0, "second": 0}
+    final = run.final
     if not isinstance(final, dict):
         return {}
     metrics = final.get("metrics") if isinstance(final.get("metrics"), dict) else {}
@@ -126,48 +139,79 @@ def _priced_per_second() -> bool:
         return False  # charged_call refuses the call with the reason
 
 
-def run_prediction(version: str, inp: dict, wait: bool, budget, *, label: str = "Replicate"):
-    """Create one prediction and, with ``wait``, poll it for up to ~90s.
+_CANCEL_GRACE_SECONDS = 30
 
-    One paid call charged to ``budget``. Priced per second, a prediction is
-    always waited for, so its time can be measured and limited: it is
-    cancelled when it reaches the seconds its hold pays for or the 90-second
-    deadline, whichever is first. The poll wakes at that moment, so the
-    overshoot is Replicate's own time to stop. Returns ``(code, created,
-    final, poll_error)``: ``final`` is the finished prediction, or ``None``
-    when not waiting, still running or the poll failed (``poll_error`` says
-    how).
+
+def run_prediction(version: str, inp: dict, wait: bool, budget, *,
+                   label: str = "Replicate") -> PredictionRun:
+    """Create one prediction and, with ``wait``, poll it.
+
+    One paid call charged to ``budget``. Priced per second, the prediction is
+    always waited for, so its time can be measured, and it is cancelled once
+    it has run the seconds its spending hold pays for; Replicate's reported
+    seconds settle the charge, even when the cancel takes a while. Otherwise
+    it is polled for up to 90 seconds and never cancelled: a longer one keeps
+    running and is reported as still running.
     """
-    wait = wait or _priced_per_second()
+    per_second = _priced_per_second()
+    waited = wait or per_second
+    notes = ([f"Waited for the result to measure its cost, because {label} is priced per "
+              "second."] if per_second and not wait else [])
 
     def send(max_units):
         code, data = _post("/predictions", {"version": version, "input": inp})
-        if code >= 400 or not isinstance(data, dict) or not wait:
-            return code, data, None, None
+        if code >= 400 or not isinstance(data, dict) or not waited:
+            return PredictionRun(code, data, None, None, " ".join(notes), waited)
+        pid = data.get("id")
         started = time.time()
-        stop_at = started + (90 if max_units is None else min(90, max_units))
-        cancelled_polls = None
-        while cancelled_polls is None or cancelled_polls < 3:
-            c2, p2 = _get(f"/predictions/{data.get('id')}")
+        stop_at = started + max_units if per_second and max_units is not None else None
+        end = stop_at if stop_at is not None else started + 90
+        while True:
+            c2, p2 = _get(f"/predictions/{pid}")
             if c2 >= 400 or not isinstance(p2, dict):
-                return code, data, None, f"ERROR: poll ({c2}): {p2}"
+                return PredictionRun(code, data, None, f"ERROR: poll ({c2}): {p2}", " ".join(notes), waited)
             if p2.get("status") in ("succeeded", "failed", "canceled"):
-                return code, data, p2, None
+                return PredictionRun(code, data, p2, None, " ".join(notes), waited)
             now = time.time()
-            if cancelled_polls is None and now >= stop_at:
-                # The hold or the deadline is reached: stop the prediction so
-                # it does not keep billing, then read its final state.
-                _post(f"/predictions/{data.get('id')}/cancel", {})
-                cancelled_polls = 0
-            if cancelled_polls is None:
-                time.sleep(min(2.0, max(0.5, stop_at - now)))
-            else:
-                cancelled_polls += 1
-                time.sleep(1.0)
-        return code, data, None, None
+            if now >= end:
+                break
+            time.sleep(min(2.0, max(0.5, end - now)))
+        if stop_at is None:
+            return PredictionRun(code, data, None, None, " ".join(notes), waited)
+        # The spending hold is reached: stop the prediction, then read its
+        # reported seconds, which settle the charge.
+        _post(f"/predictions/{pid}/cancel", {})
+        notes.append(f"It was cancelled at the spending hold after {round(time.time() - started)} s.")
+        grace_end = time.time() + _CANCEL_GRACE_SECONDS
+        while time.time() < grace_end:
+            time.sleep(1.0)
+            c2, p2 = _get(f"/predictions/{pid}")
+            if c2 < 400 and isinstance(p2, dict) and p2.get("status") in ("succeeded", "failed", "canceled"):
+                return PredictionRun(code, data, p2, None, " ".join(notes), waited)
+        notes.append("Replicate has not confirmed that it stopped.")
+        return PredictionRun(code, data, None, None, " ".join(notes), waited)
 
     return charged_call("replicate", send, budget=budget, label=label,
                         units={"request": 1}, measure=_measured, bounded=True)
+
+
+def prediction_reply(run: PredictionRun, *, poll_hint: str, created_hint: str = "") -> str:
+    """The plain reply for one prediction: its real final state, or that it
+    is still running, after any note on waiting or cancelling."""
+    data = run.created
+    if run.code >= 400 or not isinstance(data, dict):
+        return f"ERROR: run ({run.code}): {data}"
+    pid = data.get("id")
+    lead = f"{run.note}\n" if run.note else ""
+    if not run.waited:
+        return f"created prediction {pid} (status={data.get('status')}){created_hint}"
+    if run.poll_error:
+        return lead + run.poll_error
+    if run.final is not None:
+        return lead + _fmt_prediction(run.final)
+    if "cancelled" in run.note:
+        return lead + f"prediction {pid}: {poll_hint}"
+    return lead + f"prediction {pid} still running after 90s; {poll_hint}"
 
 
 def _fmt_prediction(p: dict) -> str:
@@ -196,18 +240,8 @@ def _op_run(args: dict, budget=None) -> str:
     version = _resolve_version(model)
     if not version:
         return f"ERROR: could not resolve version for model {model!r}"
-    wait = as_bool(args.get("wait"))
-    code, data, final, poll_error = run_prediction(version, inp, wait, budget)
-    if code >= 400 or not isinstance(data, dict):
-        return f"ERROR: run ({code}): {data}"
-    pid = data.get("id")
-    if not wait:
-        return f"created prediction {pid} (status={data.get('status')})"
-    if poll_error:
-        return poll_error
-    if final is not None:
-        return _fmt_prediction(final)
-    return f"prediction {pid} still running after 90s; use predict_get to poll"
+    run = run_prediction(version, inp, as_bool(args.get("wait")), budget)
+    return prediction_reply(run, poll_hint="use predict_get to poll")
 
 
 def _op_predict_get(args: dict) -> str:

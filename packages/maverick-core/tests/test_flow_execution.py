@@ -810,3 +810,25 @@ def test_capped_flow_free_tool_steps_run_side_by_side_and_name_the_limit():
         _tool_spend_metered(org_limited, None, [0.0], threading.Lock())("paid", {}, {})
     assert "organisation daily spending limit" in str(stopped.value)
     assert "flow spending allowance" not in str(stopped.value)
+
+
+def test_flow_agent_gate_leaves_out_what_tool_steps_hold():
+    # A paid tool step holding part of the flow's allowance leaves an agent
+    # node starting at the same moment only the rest, so the flow cannot
+    # spend its allowance twice.
+    import threading
+
+    import pytest
+    from maverick.flow.budgeting import _budget_gated, _MeteredAgentResult
+
+    allowances = []
+
+    def agent(brief, data, allowance=None):
+        allowances.append(allowance)
+        return _MeteredAgentResult("ok", 1.0, 0.0)
+
+    agent._meters_usage = True
+    held = [0.8]
+    gated = _budget_gated(agent, 1.0, 5.0, [0.0], threading.Lock(), held=held)
+    gated("brief", {})
+    assert allowances == [pytest.approx(0.2)]

@@ -66,6 +66,8 @@ def charged_call(
     units: dict[str, float] | None = None,
     measure: Callable[[Any], dict[str, float | None]] | None = None,
     bounded: bool = False,
+    unit_bound: dict[str, float] | None = None,
+    fallback: dict[str, float] | None = None,
     category: str = "inference",
     operation_id: str | None = None,
     attempt_no: int | None = None,
@@ -83,6 +85,9 @@ def charged_call(
     it may cost: the smaller of what the run has left and ``[budget]
     max_unmetered_hold_dollars``. With ``bounded``, ``send`` is called with
     the most units that fit in that hold, for a service that accepts a limit.
+    ``unit_bound`` caps the units a call can use (the seconds a file's size
+    allows), so the hold is no more than that costs. ``fallback`` fills in
+    units the reply does not report (a header's length within that bound).
     The charge is settled to the real cost, or to the full hold when the
     reply never reports the units. Returns what ``send`` returned.
     """
@@ -108,6 +113,9 @@ def charged_call(
         except ToolPricesUnavailable as exc:
             raise PaidCallRefused(str(exc)) from exc
         projected = bound if remaining is None else min(remaining, bound)
+        limit = (unit_bound or {}).get(price.unit)
+        if limit is not None:
+            projected = min(projected, limit * price.dollars_per_unit)
         if price.dollars_per_unit > 0:
             max_units = projected / price.dollars_per_unit
     outcome: dict[str, Any] = {}
@@ -120,6 +128,8 @@ def charged_call(
             outcome["charge"] = None
             return result
         used.update({unit: amount for unit, amount in measured.items() if amount is not None})
+        for unit, amount in (fallback or {}).items():
+            used.setdefault(unit, amount)
         dollars, charged_as_priced = price.cost(used)
         # The priced unit never came back: charge everything held (all the
         # run had left), so the run stops on its limit rather than guess low.
