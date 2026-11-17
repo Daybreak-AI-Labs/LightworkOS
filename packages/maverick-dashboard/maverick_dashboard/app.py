@@ -14078,10 +14078,14 @@ def errors_page(request: Request, goal_id: int) -> HTMLResponse:
         raise HTTPException(status_code=404, detail="no such goal")
     assert_goal_access(request, g)
     errors = [e for e in w.goal_events(goal_id, limit=10_000) if e.kind == "error"]
+    from maverick.stop_reasons import stop_payload
+
+    # A refusal (evidence check, setup, limits) records no error event; its
+    # plain reason and fix still belong on this tab.
     return templates.TemplateResponse(
         request,
         "errors.html",
-        {"goal": g, "errors": errors},
+        {"goal": g, "errors": errors, "stop": stop_payload(g.status, g.result)},
     )
 
 

@@ -265,6 +265,99 @@ _RULES: tuple[tuple[str, re.Pattern[str], str, str, str | None, str | None], ...
     ),
 )
 
+#: Plain cause, fix and route for each AI evidence gateway refusal code
+#: (``ai_evidence_gateway.delivery_refusal_code``). The orchestrator stores
+#: ``evidence_gateway:<not_ready|withheld>:<code>: <detail>`` on the goal.
+_ASSURANCE = ("/security/assurance", "Open AI assurance")
+_WORKSPACES = ("/workspaces", "Open Workspaces")
+EVIDENCE_CAUSES: dict[str, tuple[str, str, str, str]] = {
+    "demo_and_real_mixed": (
+        "This workspace holds sample (demo) evidence rules and real ones, which must be kept apart.",
+        "An administrator must create a separate workspace for real work on the Workspaces page. "
+        "Run the task there.",
+        *_WORKSPACES,
+    ),
+    "no_workspace": (
+        "The AI evidence check is on, but this work has no workspace to record evidence in.",
+        "An administrator must choose or create a workspace on the Workspaces page. "
+        "Then run the task again.",
+        *_WORKSPACES,
+    ),
+    "written_answers_not_allowed": (
+        "This workspace's evidence rule for task answers does not allow written answers.",
+        "An administrator must allow written answers in the workspace's default evidence rule "
+        "on AI assurance.",
+        *_ASSURANCE,
+    ),
+    "fixed_request": (
+        "This workspace's evidence rule for task answers is tied to one fixed request, "
+        "so other tasks can't match it.",
+        "An administrator must remove the request binding from the default evidence rule "
+        "on AI assurance.",
+        *_ASSURANCE,
+    ),
+    "fixed_model": (
+        "This workspace's evidence rule for task answers is tied to a different AI model "
+        "than the one used.",
+        "An administrator must bind the default evidence rule to the model in use, "
+        "or remove that binding.",
+        *_ASSURANCE,
+    ),
+    "receipt_limit": (
+        "This workspace has reached its limit of saved evidence receipts.",
+        "An administrator must raise Evidence receipts kept in Settings. Then run the task again.",
+        "/settings/all?id=evidence_gateway.receipt_max_total", "Review evidence limits",
+    ),
+    "records_unreadable": (
+        "This workspace's evidence records could not be read safely.",
+        "An administrator must check the evidence records on AI assurance before tasks "
+        "can finish here.",
+        *_ASSURANCE,
+    ),
+    "other": (
+        "The AI evidence check refused to record this answer.",
+        "An administrator must review this workspace's evidence setup on AI assurance. "
+        "Then run the task again.",
+        *_ASSURANCE,
+    ),
+}
+_EVIDENCE_STOP = re.compile(r"^evidence_gateway:(not_ready|withheld):([a-z_]+)\b")
+# Goals withheld before the cause code was stored carry only the gateway text.
+_LEGACY_EVIDENCE_WITHHELD = re.compile(r"^AI evidence gateway withheld the generated output\.")
+_LEGACY_MIXED = re.compile(r"separate tenant namespaces|already mixes synthetic and production")
+_EVIDENCE_LEADS = {
+    "not_ready": (
+        "evidence_setup",
+        "This task didn't start because this workspace can't record AI evidence for its answer. "
+        "No work was started and nothing was spent.",
+    ),
+    "withheld": (
+        "evidence_withheld",
+        "Lightwork finished this task but held back the answer, because this workspace "
+        "can't record AI evidence for it.",
+    ),
+}
+
+
+def evidence_cause(code: str) -> tuple[str, str, str, str]:
+    """Plain cause, fix, link and link label for an evidence refusal code."""
+    return EVIDENCE_CAUSES.get(code, EVIDENCE_CAUSES["other"])
+
+
+def _evidence_stop(text: str, technical: str) -> StopReason | None:
+    match = _EVIDENCE_STOP.match(text)
+    if match:
+        stage, code = match.groups()
+    elif _LEGACY_EVIDENCE_WITHHELD.match(text):
+        stage = "withheld"
+        code = "demo_and_real_mixed" if _LEGACY_MIXED.search(text) else "other"
+    else:
+        return None
+    kind, lead = _EVIDENCE_LEADS[stage]
+    cause, action, link, label = evidence_cause(code)
+    return StopReason(kind, f"{lead} {cause}", action, link, label, technical)
+
+
 # Text a person should never have to read: identifiers, paths, code.
 _TECHNICAL = _rx(r"\b\w+(Error|Exception)\b", r"Traceback", r"'[^' ]+'", r"\"[^\" ]+\"",
                  r"(^|[\s(])/[\w.-]+/", r"[A-Za-z]:\\", r"\btenant\b", r"\bprincipal\b",
@@ -289,6 +382,9 @@ def explain_stop(raw: str | None, *, status: str | None = None) -> StopReason:
     technical = _bounded(text, RAW_TEXT_LIMIT)
     if not text:
         return StopReason("other", _GENERIC_MESSAGE, _GENERIC_ACTION)
+    evidence = _evidence_stop(text, technical)
+    if evidence is not None:
+        return evidence
     for kind, pattern, message, action, link, label in _RULES:
         if pattern.search(text):
             return StopReason(kind, message, action, link, label, technical)

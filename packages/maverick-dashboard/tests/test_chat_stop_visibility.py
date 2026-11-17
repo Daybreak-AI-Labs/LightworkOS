@@ -70,3 +70,23 @@ def test_stopped_prior_turn_is_sanitized_in_page_and_paged_history(chat_env):
     assistant = next(turn for turn in history.json()["turns"] if turn["role"] == "assistant")
     assert assistant["stop"]["kind"] == "workspace_paused"
     assert "workspace is paused" in assistant["content"].lower()
+
+
+def test_evidence_withhold_names_the_cause_on_the_task_page_and_api(chat_env):
+    client, world = chat_env
+    goal_id = world.create_goal("Draft an agenda for a 30-minute team meeting", "")
+    world.set_goal_status(goal_id, "blocked", result=(
+        "evidence_gateway:withheld:demo_and_real_mixed: AI evidence gateway withheld the "
+        "generated output. Operator action is required: synthetic demo and production AI "
+        "evidence policies require separate tenant namespaces"))
+
+    page = client.get(f"/chat/goal/{goal_id}")
+    assert page.status_code == 200
+    assert "Something went wrong inside Lightwork" not in page.text
+    assert "held back the answer" in page.text
+    assert 'id="halt-action-link" href="/workspaces"' in page.text
+
+    events = client.get(f"/api/v1/goals/{goal_id}/events").json()
+    assert events["reason_code"] == "evidence_withheld"
+    assert events["stop"]["kind"] == "evidence_withheld"
+    assert "Workspaces page" in events["stop"]["action"]

@@ -249,6 +249,22 @@ is refused when the active tenant already contains non-demo gateway evidence;
 use an empty, dedicated demo tenant. Demo evidence also forces the readiness
 gap `synthetic_demo_data_present`.
 
+Tasks run in a demo tenant are delivered under a `default` policy that the
+gateway labels synthetic, because the tenant's permanent mode is synthetic. A
+production policy is never created there, and those receipts never count as
+production evidence.
+
+## Task pre-flight
+
+Before any model work, each task checks whether the gateway would hold back its
+answer: no tenant scope, a legacy tenant that mixes demo and production
+policies, a `default` policy without text, or a `default` policy bound to one
+context digest. Such a task stops with "No work was started", the cause and the
+fix. The check is read-only; the delivery itself still fails closed. Model
+bindings and receipt capacity are checked only at delivery. `maverick doctor`,
+the cockpit's next step and Copilot ("Can tasks run in this workspace?") report
+the same finding.
+
 ## Benchmark evidence
 
 The cockpit links the

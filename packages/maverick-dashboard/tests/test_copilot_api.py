@@ -1033,3 +1033,51 @@ def test_flow_run_detail_checks_owner_and_path_before_showing_state(client, monk
     assert "private connector output" not in answer.text
     mismatch = client.get("/api/v1/copilot/context", params={"page": f"/flows/other/runs/{run_id}"})
     assert mismatch.status_code == 404
+
+
+def test_live_evidence_answer_names_the_workspace_problem_and_fix(client, monkeypatch):
+    from maverick import ai_evidence_gateway as gateway
+    from maverick_dashboard import api
+    from maverick_dashboard import copilot_live_state as live
+
+    monkeypatch.setattr(live.auth, "require_permission", lambda _request, _permission: None)
+    monkeypatch.setattr(api, "_copilot_model_route_status", lambda: pytest.fail("live records went to the provider route"))
+    monkeypatch.setattr(gateway, "enabled", lambda: True)
+    monkeypatch.setattr(gateway, "delivery_preflight",
+                        lambda: {"code": "demo_and_real_mixed", "detail": "mixed"})
+    result = client.post("/api/v1/copilot", json={
+        "message": "Can tasks run in this workspace?", "page": "/overview"}).json()
+    assert result["mode"] == "live" and result["source"] == "AI evidence check"
+    assert "sample (demo) evidence rules" in result["reply"]
+    assert result["action_link"]["href"] == "/workspaces"
+
+    monkeypatch.setattr(gateway, "delivery_preflight", lambda: None)
+    ready = client.post("/api/v1/copilot", json={
+        "message": "Is the evidence check ready?", "page": "/security/assurance"}).json()
+    assert ready["mode"] == "live" and "can record task answers" in ready["reply"]
+
+
+def test_live_failure_answer_explains_a_withheld_evidence_task(client, monkeypatch):
+    from maverick_dashboard import api, goal_waiting
+    from maverick_dashboard import app as dashboard_app
+    from maverick_dashboard import copilot_live_state as live
+
+    goal = SimpleNamespace(id=7, owner="alice", title="Draft an agenda", status="blocked",
+                           result=("evidence_gateway:withheld:demo_and_real_mixed: AI evidence "
+                                   "gateway withheld the generated output."),
+                           updated_at=9, domain="")
+
+    class World:
+        def get_goal(self, identifier):
+            return goal if identifier == 7 else None
+
+    monkeypatch.setattr(dashboard_app, "_world", lambda: World())
+    monkeypatch.setattr(live.auth, "require_permission", lambda _request, _permission: None)
+    monkeypatch.setattr(live.auth, "assert_goal_access", lambda _request, _row: None)
+    monkeypatch.setattr(goal_waiting, "open_question_ids", lambda _world, _goal: [])
+    monkeypatch.setattr(api, "_copilot_model_route_status", lambda: pytest.fail("live records went to the provider route"))
+    result = client.post("/api/v1/copilot", json={
+        "message": "Why did my task stop?", "page": "/chat/goal/7"}).json()
+    assert "held back the answer" in result["reply"]
+    assert "Workspaces page" in result["reply"]
+    assert "Something went wrong" not in result["reply"]

@@ -34,6 +34,11 @@ _CODE_CHECKS = re.compile(
     r"(?:show|list) (?:my |the )?proposed code changes|"
     r"(?:were|are|was) (?:my |the )?(?:proposed )?code changes? checked)(?: please)?\Z"
 )
+_EVIDENCE = re.compile(
+    r"(?:can tasks (?:run|finish) (?:here|in this workspace)|"
+    r"is (?:the |this workspace's )?(?:ai )?evidence (?:check|gateway|setup) (?:ready|working|blocking tasks)|"
+    r"why are (?:my |all )?tasks (?:held back|withheld)(?: in this workspace)?)(?: please)?\Z"
+)
 _EXPLICIT_TASK = re.compile(r"\b(?:goal|task|run)\s*#?(\d{1,18})\b")
 _PAGE_TASK = re.compile(r"^/(?:chat/goal|goals|tasks)/(\d{1,18})(?:/|$)")
 _DECISIONS = frozenset({"approval", "signoff", "assessment", "project_review", "vendor_reconciliation"})
@@ -54,6 +59,8 @@ def intent(message: str) -> str | None:
         return "task_find"
     if _CODE_CHECKS.fullmatch(normalized):
         return "code_checks"
+    if _EVIDENCE.fullmatch(normalized):
+        return "evidence_readiness"
     return None
 
 
@@ -241,6 +248,26 @@ def _task_failure(request, message: str, page: str, selected_goal_id: int | None
     return _answer(reply, href, "Open task progress", "Task progress")
 
 
+def _evidence_readiness(request):
+    """Whether this workspace's AI evidence setup lets task answers through."""
+    from maverick import ai_evidence_gateway as gateway
+    from maverick.stop_reasons import evidence_cause
+
+    auth.require_permission(request, "view")
+    source, href, label = "AI evidence check", "/security/assurance", "Open AI assurance"
+    if not gateway.enabled():
+        return _answer(f"Checked {_checked_at()}. The AI evidence check is off, so it does not hold back task answers.",
+                       href, label, source)
+    found = gateway.delivery_preflight()
+    if found is None:
+        return _answer(f"Checked this workspace {_checked_at()}. Its AI evidence setup can record task answers. "
+                       "A model binding or a full receipt store can still hold one back; AI assurance shows both.",
+                       href, label, source)
+    cause, fix, link, link_label = evidence_cause(found["code"])
+    return _answer(f"Checked this workspace {_checked_at()}. New tasks here will not start. {cause} {fix}",
+                   link, link_label, source)
+
+
 def _find_tasks(request, message: str):
     from .app import _world
 
@@ -279,6 +306,8 @@ def answer(request, message: str, page: str, selected_goal_id: int | None) -> di
             value = _find_tasks(request, message)
         elif selected == "code_checks":
             value = _code_checks(request)
+        elif selected == "evidence_readiness":
+            value = _evidence_readiness(request)
         else:
             value = _task_failure(request, message, page, selected_goal_id)
     except HTTPException:

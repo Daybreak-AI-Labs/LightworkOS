@@ -1712,6 +1712,35 @@ def _evidence_ready_goal_output(
     return str(delivery["delivered_text"])
 
 
+def _evidence_preflight_refusal(world: Any, goal_id: int) -> str | None:
+    """Refuse a goal whose answer the evidence gateway would withhold.
+
+    Runs before any model call, so a workspace whose evidence setup refuses
+    every delivery stops at the start instead of after paid work. Only a
+    definite, read-only finding refuses; if the check itself cannot run, the
+    goal proceeds and the fail-closed delivery check at the end still applies.
+    """
+    from .ai_evidence import delivery as gateway
+
+    try:
+        found = gateway.preflight()
+    except Exception:
+        log.warning("evidence pre-flight unavailable for goal #%s", goal_id, exc_info=True)
+        return None
+    if found is None:
+        return None
+    from .stop_reasons import explain_stop
+
+    reason = f"evidence_gateway:not_ready:{found['code']}: {found['detail']}"
+    world.set_goal_status(goal_id, "blocked", result=reason)
+    _fire_webhook("goal_finished", {
+        "goal_id": goal_id, "status": "blocked", "result": reason,
+    })
+    stop = explain_stop(reason)
+    log.warning("goal #%s not started: %s", goal_id, reason)
+    return f"{stop.message}\n{stop.action}"
+
+
 def _goal_already_ran(world: Any, goal_id: int) -> bool:
     """Whether a run of this task is already on record (so it was let through).
 
@@ -2498,12 +2527,15 @@ def _prepare_goal_output(*, result: Any, shield: Any, world: WorldModel,
 
             if not isinstance(exc, gateway.EvidenceGatewayError):
                 raise
+            # The code prefix lets stop_reasons name the cause and the fix;
+            # a configuration refusal is "blocked", not an agent failure.
             refusal = (
+                f"evidence_gateway:withheld:{gateway.refusal_code(exc)}: "
                 "AI evidence gateway withheld the generated output. "
                 "Operator action is required: "
                 f"{_safe_exception_text(exc, fallback='evidence review failed')}"
             )
-            lifecycle.end_episode(refusal, "failure")
+            lifecycle.end_episode(refusal, "blocked")
             world.set_goal_status(goal_id, "blocked", result=refusal)
             _fire_webhook(
                 "goal_finished",
@@ -2852,6 +2884,9 @@ async def _run_goal_impl(  # noqa: C901  -- core goal-execution loop
     limit_refusal = _check_start_limits(world, budget, goal_id, principal)
     if limit_refusal:
         return limit_refusal
+    evidence_refusal = _evidence_preflight_refusal(world, goal_id)
+    if evidence_refusal:
+        return evidence_refusal
 
     # Bind trace context so every log line emitted in this task is
     # automatically tagged with goal_id (+ conversation_id when set). Capture

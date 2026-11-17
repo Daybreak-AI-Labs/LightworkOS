@@ -1461,6 +1461,122 @@ def test_demo_seed_refuses_to_mix_with_live_tenant_evidence(monkeypatch):
         gateway.seed_demo()
 
 
+def test_demo_workspace_provisions_a_synthetic_default_policy_for_task_answers(monkeypatch):
+    # The live failure: tasks in a seeded demo workspace provisioned a
+    # production "default" policy, which the synthetic workspace refused.
+    _enable(monkeypatch, "demo-workspace")
+    gateway.seed_demo(actor="demo-admin")
+
+    delivered = gateway.deliver_text(
+        "A real task answer.",
+        input_text="Draft an agenda.",
+        conversation_id="goal:1",
+        idempotency_key="goal:1:output",
+        actor="orchestrator",
+    )
+
+    assert gateway.DEFAULT_DISCLOSURE_TEXT in delivered["delivered_text"]
+    default = gateway.get_policy("default")
+    assert default["metadata"] == {"demo": True, "network_access": False, "synthetic": True}
+    # The workspace still reports demo-only evidence, and the demo stays replayable.
+    assert "synthetic_demo_data_present" in gateway.summary()["readiness"]["gaps"]
+    assert gateway.seed_demo(actor="demo-admin")["idempotent_replay"] is True
+
+
+def test_production_workspace_default_policy_is_unchanged(monkeypatch):
+    _enable(monkeypatch, "production-workspace")
+    gateway.deliver_text(
+        "A real task answer.",
+        input_text="Draft an agenda.",
+        conversation_id="goal:1",
+        idempotency_key="goal:1:output",
+        actor="orchestrator",
+    )
+    assert gateway.get_policy("default")["metadata"] == {}
+    with pytest.raises(gateway.EvidenceGatewayStateError, match="empty or dedicated demo tenant"):
+        gateway.seed_demo()
+
+
+def test_delivery_preflight_is_quiet_when_tasks_can_deliver(monkeypatch):
+    monkeypatch.setenv("MAVERICK_EVIDENCE_GATEWAY", "0")
+    assert gateway.delivery_preflight() is None
+    _enable(monkeypatch, "fresh-workspace")
+    assert gateway.delivery_preflight() is None
+    # A read-only check: it neither provisions a policy nor claims a mode.
+    assert gateway.get_policy("default") is None
+    assert gateway._POLICY_MODES.get(gateway._stable_id("AIM", "tenant-policy-mode")) is None
+    gateway.seed_demo()
+    assert gateway.delivery_preflight() is None
+    assert gateway.summary()["task_delivery"] == {"blocked": False, "code": None}
+
+
+def test_delivery_preflight_names_a_mixed_demo_and_real_workspace(monkeypatch):
+    _enable(monkeypatch, "legacy-mixed-workspace")
+    # A workspace from before the permanent mode record held both kinds.
+    with monkeypatch.context() as legacy:
+        legacy.setattr(gateway, "_claim_policy_tenant_mode", lambda **_kw: None)
+        _policy(policy_id="demo-policy", metadata={"synthetic": True})
+        _policy(policy_id="real-policy")
+
+    refusal = gateway.delivery_preflight()
+    assert refusal is not None and refusal["code"] == "demo_and_real_mixed"
+    with pytest.raises(gateway.EvidenceGatewayStateError) as exc:
+        gateway.deliver_text("answer", input_text="q", conversation_id="c",
+                             idempotency_key="k", actor="orchestrator")
+    assert gateway.delivery_refusal_code(exc.value) == "demo_and_real_mixed"
+
+
+def test_delivery_preflight_names_a_default_policy_bound_to_one_request(monkeypatch):
+    _enable(monkeypatch, "bound-workspace")
+    gateway.upsert_policy("default", actor="policy-admin",
+                          context_sha256=_sha("one fixed request"))
+    refusal = gateway.delivery_preflight()
+    assert refusal is not None and refusal["code"] == "fixed_request"
+    # The cockpit summary flags it before anyone submits a task.
+    assert gateway.summary()["task_delivery"] == {"blocked": True, "code": "fixed_request"}
+    with pytest.raises(gateway.EvidenceGatewayStateError) as exc:
+        gateway.deliver_text("answer", input_text="q", conversation_id="c",
+                             idempotency_key="k", actor="orchestrator",
+                             context_sha256=_sha("another request"))
+    assert gateway.delivery_refusal_code(exc.value) == "fixed_request"
+
+
+def test_delivery_preflight_names_a_policy_without_written_answers(monkeypatch):
+    _enable(monkeypatch, "image-only-workspace")
+    gateway.upsert_policy(
+        "default", actor="policy-admin", supported_modalities=("image",),
+        require_interaction_disclosure=False, require_machine_readable_marking=False,
+    )
+    refusal = gateway.delivery_preflight()
+    assert refusal is not None and refusal["code"] == "written_answers_not_allowed"
+
+
+def test_delivery_preflight_names_a_missing_workspace(monkeypatch):
+    monkeypatch.setenv("MAVERICK_EVIDENCE_GATEWAY", "1")
+    monkeypatch.delenv("MAVERICK_CLIENT_ID", raising=False)
+    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
+    from maverick import client
+
+    client.reset_client_cache()
+    refusal = gateway.delivery_preflight()
+    assert refusal is not None and refusal["code"] == "no_workspace"
+    assert gateway.delivery_refusal_code(
+        gateway.EvidenceGatewayStateError(
+            "AI evidence gateway records require an explicit tenant scope"
+        )
+    ) == "no_workspace"
+
+
+@pytest.mark.parametrize(("message", "code"), [
+    ("model digest does not match the current evidence policy", "fixed_model"),
+    ("AI evidence receipt capacity has been reached; delivery is withheld", "receipt_limit"),
+    ("AI evidence policy tenant already mixes synthetic and production authority", "demo_and_real_mixed"),
+    ("signed evidence identity is duplicated", "other"),
+])
+def test_delivery_refusal_code_names_known_gateway_refusals(message, code):
+    assert gateway.delivery_refusal_code(gateway.EvidenceGatewayStateError(message)) == code
+
+
 def test_segmented_receipts_cross_link_and_cursor_snapshot_is_stable(monkeypatch):
     _enable(monkeypatch)
     monkeypatch.setenv("MAVERICK_EVIDENCE_RECEIPT_SEGMENT_ROWS", "2")

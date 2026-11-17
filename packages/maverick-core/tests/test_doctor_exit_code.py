@@ -75,3 +75,40 @@ def test_doctor_does_not_look_for_records_without_a_workspace_on_sqlite(monkeypa
     monkeypatch.setattr(h, "_row", lambda *a, **k: rows.append(a))
     h._check_world_db()
     assert [r[1] for r in rows] == ["world-db"] and rows[0][0] == h.GREEN
+
+
+def test_doctor_flags_a_workspace_whose_task_answers_would_be_held_back(monkeypatch, capsys):
+    from maverick import ai_evidence_gateway as gateway
+    from maverick.tenant import registry
+
+    workspaces = [registry.TenantRecord(id="demo-risk", display_name="Synthetic Demo - Model Risk"),
+                  registry.TenantRecord(id="sales")]
+    monkeypatch.setattr(gateway, "enabled", lambda: True)
+    monkeypatch.setattr(registry, "list_tenants", lambda: workspaces)
+
+    def preflight():
+        from maverick.paths import current_tenant_id_strict
+
+        if current_tenant_id_strict() == "demo-risk":
+            return {"code": "demo_and_real_mixed", "detail": "mixed"}
+        return None
+
+    monkeypatch.setattr(gateway, "delivery_preflight", preflight)
+    h._FAILURES.clear()
+    h._check_evidence_gateway()
+    out = capsys.readouterr().out
+    assert "Synthetic Demo - Model Risk" in out
+    assert "sample (demo) evidence rules" in out
+    assert "Workspaces page" in out
+    assert "sales" not in out
+    assert len(h._FAILURES) == 1
+
+
+def test_doctor_evidence_row_is_quiet_when_the_gateway_is_off(monkeypatch, capsys):
+    from maverick import ai_evidence_gateway as gateway
+
+    monkeypatch.setattr(gateway, "enabled", lambda: False)
+    h._FAILURES.clear()
+    h._check_evidence_gateway()
+    assert capsys.readouterr().out == ""
+    assert h._FAILURES == []

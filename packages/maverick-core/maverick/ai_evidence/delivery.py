@@ -18,6 +18,16 @@ def enabled() -> bool:
     return _gateway.enabled()
 
 
+def preflight() -> dict[str, str] | None:
+    """Read-only prediction of a configuration refusal of goal delivery."""
+    return _gateway.delivery_preflight()
+
+
+def refusal_code(exc: BaseException) -> str:
+    """Stable cause code for a delivery refusal."""
+    return _gateway.delivery_refusal_code(exc)
+
+
 def deliver_text(
     generated_text: str,
     *,
@@ -68,4 +78,7 @@ def record_regulatory_impact(
     )
 
 
-__all__ = ["EvidenceGatewayError", "deliver_text", "enabled", "record_regulatory_impact"]
+__all__ = [
+    "EvidenceGatewayError", "deliver_text", "enabled", "preflight",
+    "record_regulatory_impact", "refusal_code",
+]

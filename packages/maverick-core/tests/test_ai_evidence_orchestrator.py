@@ -228,3 +228,114 @@ def test_output_seam_retry_deduplicates_and_tenants_remain_isolated(
         receipt_ids.append(rows[0]["receipt_id"])
 
     assert receipt_ids[0] != receipt_ids[1]
+
+
+def _run(fake_llm, world, goal_id, tmp_path, budget=None):
+    return orchestrator.run_goal(
+        llm=fake_llm,
+        world=world,
+        budget=budget or Budget(max_dollars=1.0),
+        goal_id=goal_id,
+        sandbox=LocalBackend(workdir=tmp_path),
+        max_depth=1,
+        channel="dashboard",
+        conversation_id=31,
+    )
+
+
+@pytest.mark.asyncio
+async def test_task_in_a_seeded_demo_workspace_is_delivered(
+    tmp_path: Path,
+    monkeypatch,
+    fake_llm,
+    make_llm_response,
+):
+    """The owner's live failure: an administrator loaded the synthetic demo
+    into a dedicated workspace, then every task there ran, spent money and
+    was withheld with "require separate tenant namespaces"."""
+    _bind_gateway(monkeypatch, "synthetic-demo-model-risk")
+    gateway.seed_demo(actor="demo-admin")
+    fake_llm.scripted = _final_script(make_llm_response)
+    world = WorldModel(path=tmp_path / "world.db")
+    goal_id = world.create_goal("Draft an agenda for a 30-minute team meeting", "")
+
+    output = await _run(fake_llm, world, goal_id, tmp_path)
+
+    goal = world.get_goal(goal_id)
+    assert goal.status == "done", goal.result
+    assert "the answer is 42" in output
+    assert gateway.DEFAULT_DISCLOSURE_TEXT in output
+    assert gateway.get_policy("default")["metadata"]["synthetic"] is True
+
+
+@pytest.mark.asyncio
+async def test_end_of_run_withhold_names_the_cause_and_the_fix(
+    tmp_path: Path,
+    monkeypatch,
+    fake_llm,
+    make_llm_response,
+):
+    from maverick.stop_reasons import stop_payload
+
+    _bind_gateway(monkeypatch, "withheld-tenant")
+
+    def refuse(*args, **kwargs):
+        raise gateway.EvidenceGatewayStateError(
+            "synthetic demo and production AI evidence policies require "
+            "separate tenant namespaces"
+        )
+
+    monkeypatch.setattr(gateway, "upsert_policy", refuse)
+    fake_llm.scripted = _final_script(make_llm_response)
+    world = WorldModel(path=tmp_path / "world.db")
+    goal_id = world.create_goal("compute the answer", "trivial")
+
+    await _run(fake_llm, world, goal_id, tmp_path)
+
+    goal = world.get_goal(goal_id)
+    assert goal.status == "blocked"
+    stop = stop_payload(goal.status, goal.result, include_technical=True)
+    assert stop["kind"] == "evidence_withheld"
+    assert "Something went wrong" not in stop["message"]
+    assert "demo" in stop["message"] and "Workspaces" in stop["action"]
+    assert stop["link"] == "/workspaces"
+    assert "separate tenant namespaces" in stop["technical"]
+    assert "the answer is 42" not in str(goal.result)
+    # A configuration refusal, not an agent failure.
+    episodes = world.list_episodes(limit=5, goal_id=goal_id)
+    assert episodes and episodes[0].outcome == "blocked"
+
+
+@pytest.mark.asyncio
+async def test_preflight_refuses_before_any_model_call_or_spend(
+    tmp_path: Path,
+    monkeypatch,
+    fake_llm,
+    make_llm_response,
+):
+    from maverick.stop_reasons import stop_payload
+
+    _bind_gateway(monkeypatch, "bound-tenant")
+    gateway.upsert_policy(
+        "default",
+        actor="test-policy-admin",
+        context_sha256=hashlib.sha256(b"one fixed request").hexdigest(),
+    )
+    fake_llm.scripted = _final_script(make_llm_response)
+    world = WorldModel(path=tmp_path / "world.db")
+    goal_id = world.create_goal("compute the answer", "trivial")
+    budget = Budget(max_dollars=1.0)
+
+    output = await _run(fake_llm, world, goal_id, tmp_path, budget)
+
+    assert fake_llm.calls == []
+    assert budget.dollars == 0 and budget.input_tokens == 0
+    assert world.list_episodes(limit=5, goal_id=goal_id) == []
+    goal = world.get_goal(goal_id)
+    assert goal.status == "blocked"
+    stop = stop_payload(goal.status, goal.result)
+    assert stop["kind"] == "evidence_setup"
+    assert "No work was started" in stop["message"]
+    assert "fixed request" in stop["message"]
+    assert stop["message"] in output
+    assert gateway._receipt_ledger().state().total_receipts == 0

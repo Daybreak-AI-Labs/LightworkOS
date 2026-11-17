@@ -54,3 +54,25 @@ def test_errors_page_unknown_goal_is_404(monkeypatch, tmp_path):
     _isolate(monkeypatch, tmp_path)
     r = _client().get("/goals/999999/errors")
     assert r.status_code == 404
+
+
+EVIDENCE_WITHHELD = (
+    "evidence_gateway:withheld:demo_and_real_mixed: AI evidence gateway withheld the "
+    "generated output. Operator action is required: synthetic demo and production AI "
+    "evidence policies require separate tenant namespaces"
+)
+
+
+def test_errors_page_explains_why_a_stopped_task_stopped(monkeypatch, tmp_path):
+    # The live failure: a withheld task showed "No problems recorded".
+    _isolate(monkeypatch, tmp_path)
+    w, gid = _new_goal("Draft an agenda")
+    w.set_goal_status(gid, "blocked", result=EVIDENCE_WITHHELD)
+    w.close()
+
+    body = _client().get(f"/goals/{gid}/errors").text
+    assert "No problems recorded" not in body
+    assert "held back the answer" in body
+    assert "sample (demo) evidence rules" in body
+    assert 'href="/workspaces"' in body
+    assert "Something went wrong" not in body
