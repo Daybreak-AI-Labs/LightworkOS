@@ -8,6 +8,7 @@ the company's git host until a person approves the change.
 maverick code add payments https://git.example.com/acme/payments.git \
   --test "python -m pytest -q" --token-env ACME_GIT_TOKEN
 maverick code set payments --quick-test "./scripts/quick-tests.sh {changed}" --gate "ruff check ."
+maverick code set payments --protected-path .github --protected-path "src/billing/**"
 maverick code feature payments "Add refund reasons" -d "Store a reason code on every refund"
 maverick code proposals            # pending | approved | rejected | merged; gaps
 maverick code show <id>            # what was checked, diff, test output, review
@@ -215,12 +216,131 @@ maverick code export payments ./payments   # plaintext clone for the owner
    are `--no-ff`, so each is one reviewable commit. A merge that no longer
    applies cleanly leaves the vault untouched and marks the proposal
    `conflict`.
-13. `sync` fetches upstream as `upstream/*` and never overwrites vault work:
+13. **A run that asks a person to decide.** When an author round or a
+   checker stops to ask a person (the `request_decision` tool), the
+   feature run stops at once. The
+   paused round is not committed and nothing is offered for approval: the
+   proposal's status is `decision`, and the card, `maverick code feature`,
+   the Code page and Copilot show the question and say to answer it on the
+   Approvals page or with `maverick decisions answer ID`. A checker that
+   asked reads "could not run", never clean. What was spent stays charged.
+   The answer is saved but never restarts that step, whose private copy of
+   the code is gone: start a new code change instead.
+14. `sync` fetches upstream as `upstream/*` and never overwrites vault work:
    - a branch behind upstream fast-forwards;
    - a branch ahead of upstream (approved merges not pushed yet) is kept;
    - a diverged default branch has upstream merged in, and a conflict changes
      nothing;
    - new upstream branches and tags are added.
+
+## Protected changes
+
+Some paths are more dangerous than others. Each project has a list of
+**protected paths**, glob patterns relative to its root: `*` and `?` stay
+within one folder, `**` crosses folders, a pattern that names a folder
+covers everything under it, and case is ignored. Set them with `maverick
+code set NAME --protected-path PATTERN` (repeat it; `--protected-path ""`
+clears the list) or with **Test commands and protected paths** on the Code
+page. Like the test commands, only an administrator changes them, the
+change is audited, and a workspace changes only its own projects. Projects
+added before protected paths existed have none.
+
+A change is **protected** when any path it changes matches, counting both
+sides of a rename (moving a file into or out of a protected folder both
+count). Protection is decided once, when the run finishes, with the
+patterns in force then. A protected change differs in three ways:
+
+1. **The card says so first.** Its first lines say the change is protected,
+   list the matching paths (the first 10) and say who must approve.
+2. **A second, cross-family checker.** After the normal checkers, one more
+   independent checker looks at the final version: a fresh-context run on
+   its own copy, with Lightwork re-running its repros as above, charged to
+   the same budget. Its model is `[codebase] protected_checker_model`
+   (organisation-only). Its provider family must differ from the author's
+   and from every normal checker's. If it is unset, shares a family, cannot
+   be compared, or did not look at the final version (the spending limit, an
+   error), the change **cannot be approved**: the card, the Code page
+   (`Cannot be approved`) and Copilot say exactly why, and `maverick code
+   renew` refuses with the same sentence. Its open blockers are gaps.
+3. **Two people approve, neither the person who started the run.** The
+   `codebase_merge` approval needs two distinct approvers
+   (`approvals_required = 2`, the existing quorum), and the person who
+   started the run is its requester, so the existing rules refuse that
+   person's vote on every surface, whatever `[approval] separate_approver`
+   or `[security] allow_self_approval` say. `merge` and `push` (push uses
+   the same approval) check again that two different people signed in with
+   their own accounts approved, not the starter. A run started from the
+   command line has no Lightwork identity, so any two people may approve it.
+
+Who may vote, on every surface (the Approvals page, Copilot, Slack, Teams,
+email; there is no approval vote over MCP, gRPC, flows or automations, and
+auto-approve rules act on tool calls, never on a parked approval):
+
+- an agent never approves a code change, protected or not;
+- an API key (an automation) never approves a code change;
+- Copilot can explain a protected change but not approve it: the person
+  approves it on the Approvals page;
+- a protected change takes only people signed in with their own account,
+  so the shared no-sign-in "operator" identity never counts;
+- one person voting twice, or on two channels, counts once.
+
+Other changes keep one approval, exactly as before. Proposals saved before
+protected paths existed load as not protected.
+
+## Running Lightwork's own factory
+
+Lightwork can be pointed at its own repository, but the factory must not
+change the Lightwork that runs it without people.
+
+**Detection.** A project is the running installation's own repository when
+the installed `maverick` package is imported from a git checkout (an
+editable or source install; a wheel in `site-packages` never counts, even
+inside a checkout's virtual environment) and that checkout is the
+project's source path, has a remote at the same address (scheme, user, port
+and `.git` ignored), or shares a first commit with the vaulted default
+branch (a mirror, a fork or another address of the same history).
+
+**Refused by default.** Feature runs on such a project are refused:
+"Run the factory from a separate installation pinned to a released
+version." `[codebase] allow_self_changes = true` (organisation-only, off by
+default, and off when its value is not a real switch or a configuration
+file cannot be read) lets them run. Every such proposal is then protected,
+the whole repository.
+
+**The recommended set-up** is a separate installation:
+
+```bash
+python3 -m venv ~/lightwork-factory
+~/lightwork-factory/bin/pip install maverick-core==<released version>
+export MAVERICK_HOME=~/.lightwork-factory      # its own config, vault and world
+maverick code add lightwork https://github.com/<org>/LightworkOS.git --test "..."
+```
+
+Protected paths that fit this repository (documentation, not built in):
+
+```bash
+maverick code set lightwork \
+  --protected-path packages/maverick-core/maverick/budget.py \
+  --protected-path packages/maverick-core/maverick/sandbox \
+  --protected-path packages/maverick-core/maverick/audit \
+  --protected-path packages/maverick-core/maverick/governance.py \
+  --protected-path packages/maverick-core/maverick/policy_tighten.py \
+  --protected-path packages/maverick-core/maverick/_tighten_consumers.py \
+  --protected-path packages/maverick-core/maverick/safety \
+  --protected-path packages/maverick-core/maverick/channel_approvals.py \
+  --protected-path packages/maverick-core/maverick/approval_cards.py \
+  --protected-path packages/maverick-core/maverick/codebase \
+  --protected-path packages/maverick-core/maverick/migrations.lock.json \
+  --protected-path packages/maverick-core/maverick/evaluator_anchors.lock.json \
+  --protected-path .github \
+  --protected-path CLAUDE.md \
+  --protected-path scripts/check_attribution.py
+```
+
+Set `[codebase] protected_checker_model` to a model of a different family
+from the author's and the checkers', and make sure at least two people
+other than the one who starts runs can approve: every change to those
+paths needs both of them.
 
 ## Test tiers
 
@@ -322,13 +442,16 @@ checker_models = []        # one model per checker; empty: the reviewer rule
 checker_image = ""         # e.g. "lightwork-checker:1" (deploy/checker)
 max_repros = 5             # 0-20 findings Lightwork re-runs per look
 require_container = false  # true: refuse feature runs on the local backend
+protected_checker_model = ""  # the second checker for protected changes
+allow_self_changes = false # true: allow runs on Lightwork's own repository
 ```
 
 A workspace's own `config.toml` may only tighten these: turn the checker
 and `require_container` on, raise the rounds, `checkers` or `max_repros`, or
-choose a stricter `default_protect`. `checker_image` and `checker_models`
-are the organisation's alone: a workspace file that sets them is ignored
-and reported.
+choose a stricter `default_protect`. `checker_image`, `checker_models`,
+`protected_checker_model` and `allow_self_changes` are the organisation's
+alone: a workspace file that sets them is ignored and reported. Settings >
+Safety has a row for each, and the setup wizard asks for them.
 
 At the defaults a feature run makes at most five agent runs instead of one:
 the author's first run, two repair rounds and two checker looks. All of them

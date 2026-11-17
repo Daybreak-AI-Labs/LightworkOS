@@ -748,6 +748,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   checkpoints are on, so steps it already finished (including a subagent's
   side effects) may run again. Turn on `[durable] enabled` to continue where
   it stopped; the answer's confirmation says so.
+- Code projects have protected paths (`maverick code set --protected-path`,
+  or the test commands dialog on the Code page). A change that touches one,
+  counting both sides of a rename, needs a second checker from a different
+  model family (`[codebase] protected_checker_model`) and two different
+  people to approve, never the person who started it. Without that checker
+  the change cannot be approved. Set the model and the paths you care about.
+- No agent, API key or automation can approve a code change any more, and
+  Copilot cannot approve a protected one: approve those on the Approvals page.
+- Feature runs on the repository the running Lightwork was installed from
+  are refused. Run the factory from a separate installation pinned to a
+  released version, or set `[codebase] allow_self_changes = true`; each such
+  change is then protected.
+- A code change whose run stops to ask a person to decide now stops at once
+  with the status "decision" and is never offered for approval. Answer the
+  decision, then start a new code change: the answer does not restart it.
 
 ### Fixed
 
