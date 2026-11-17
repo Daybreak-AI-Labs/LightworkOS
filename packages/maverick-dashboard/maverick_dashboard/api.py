@@ -4161,6 +4161,8 @@ def _binder_payload(days: int = 90) -> dict:
     listed = w.approvals_requested_between(cutoff, now)
     # One batched read of the quorum state for the window, not three queries
     # per approval (2,400 ms for 2,000 approvals before).
+    from maverick.safety.dual_control import includes_person
+
     states = w.approval_states(listed)
     for approval in listed:
         state = states.get(approval.id) or {}
@@ -4180,7 +4182,7 @@ def _binder_payload(days: int = 90) -> dict:
                 "approvers": approvers,
                 # The person who asked approved their own request.
                 "self_approved": bool(approval.status == "approved" and approval.requested_by
-                                      and approval.requested_by in approvers),
+                                      and includes_person(approvers, approval.requested_by)),
                 "audit_pending_count": int(state.get("audit_pending_count") or 0),
                 "effective": bool(state.get("effective")),
             }
@@ -12506,6 +12508,9 @@ def _decide_approval(request: Request, approval_id: int, payload: dict, status: 
     _require_settings_decider(request, world, approval_id, who, approving=approving)
     from . import agent_publish_bypass
     agent_publish_bypass.require_decider(request, world.get_approval(approval_id), who, approving=approving)
+    from .approval_decisions import require_code_decider
+    require_code_decider(request, world.get_approval(approval_id), approving=approving,
+                         copilot=reviewed is not None)
     from .approval_queue_operations import guard, require_review
 
     vote_guard = reviewed
@@ -12786,7 +12791,9 @@ def approval_state(request: Request, approval_id: int) -> dict:
     # someone else must (the separate-approver rule for a high-risk request,
     # or two-person approval without self-approval); the note says why.
     note = own_request_note(world, approval, who) if own else ""
-    return {**st, "your_approval_recorded": who in st.get("approvers", []),
+    from maverick.safety.dual_control import includes_person
+
+    return {**st, "your_approval_recorded": includes_person(st.get("approvers", []), who),
             "requested_by_you": own, "self_approval_counts": not note,
             "own_request_note": note}
 

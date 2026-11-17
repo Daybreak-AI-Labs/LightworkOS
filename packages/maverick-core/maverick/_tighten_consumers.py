@@ -407,9 +407,11 @@ def run_as_user(upper: object, lower: object) -> tuple[Any, bool]:
 
 
 def organisation_only(upper: object, lower: object) -> tuple[Any, bool]:
-    """``[codebase] checker_image`` and ``checker_models``: which image runs the
-    checks (and so decides every re-run's result) and which models check. Only
-    the organisation sets them; a lower layer's different value is ignored."""
+    """``[codebase] checker_image``, ``checker_models``,
+    ``protected_checker_model`` and ``allow_self_changes``: which image runs
+    the checks (and so decides every re-run's result), which models check, and
+    whether the factory may change the Lightwork that runs it. Only the
+    organisation sets them; a lower layer's different value is ignored."""
     return upper, lower != upper
 
 
@@ -436,6 +438,8 @@ def tool_prices(upper: object, lower: object) -> tuple[Any, bool]:
 MERGES = {
     "codebase.checker_image": organisation_only,
     "codebase.checker_models": organisation_only,
+    "codebase.protected_checker_model": organisation_only,
+    "codebase.allow_self_changes": organisation_only,
     "budget.tool_prices": tool_prices,
     "sandbox.run_as_user": run_as_user,
     "safety.consent_mode": consent_mode,

@@ -129,6 +129,28 @@ def allow_self_approval() -> bool:
     return bool(v)
 
 
+def person_key(principal: object) -> str:
+    """One person's identity for quorum counting and the requester bar:
+    Unicode compatibility-normalised (NFKC: full-width letters, ligatures),
+    case folded and whitespace collapsed, so ``user:Alice``, ``user:alice``
+    and ``user:Ａｌｉｃｅ`` are one person (never two votes, never "someone else")."""
+    import unicodedata
+
+    text = unicodedata.normalize("NFKC", str(principal or "")).casefold()
+    return " ".join(unicodedata.normalize("NFKC", text).split())
+
+
+def distinct_people(principals) -> int:
+    """How many different people (by :func:`person_key`) are in ``principals``."""
+    return len({key for key in map(person_key, principals) if key})
+
+
+def includes_person(principals, who: object) -> bool:
+    """Whether ``who`` (by :func:`person_key`) is among ``principals``."""
+    key = person_key(who)
+    return bool(key) and any(person_key(p) == key for p in principals or ())
+
+
 SEPARATE_APPROVER_MODES = CHOICE_SETTINGS["approval.separate_approver"].options
 _SEPARATE_APPROVER_RISKS = frozenset({"high", "critical"})
 
@@ -172,5 +194,7 @@ def separate_approver_applies(risk: str | None, approvals_required: object = 1) 
             and _coerce_int(approvals_required, 1) <= 1)
 
 
-__all__ = ["SEPARATE_APPROVER_MODES", "allow_self_approval", "required_approvals",
+__all__ = ["SEPARATE_APPROVER_MODES", "allow_self_approval", "distinct_people",
+           "includes_person", "person_key",
+           "required_approvals",
            "separate_approver_applies", "separate_approver_mode"]

@@ -65,10 +65,11 @@ def month_start(now: float, time_zone: str) -> float:
 def _approvals(world, principal: str, *, can_decide: bool, now: float,
                suites: frozenset[str] | None = None) -> list[dict[str, Any]]:
     from .channel_approvals import card_content
+    from .safety.dual_control import includes_person
 
     rows = []
     for row in world.pending_approvals()[:500]:
-        mine = row.requested_by == principal
+        mine = includes_person([row.requested_by], principal)
         if can_decide and not mine:
             # The queue the person may decide: not claimed by somebody else,
             # not already voted on by them, and within their departments
@@ -79,7 +80,8 @@ def _approvals(world, principal: str, *, can_decide: bool, now: float,
             if department and suites is not None and department not in suites:
                 continue
             state = world.approval_state(row.id) or {}
-            if state.get("status") != "pending" or principal in (state.get("approvers") or []):
+            if state.get("status") != "pending" or includes_person(state.get("approvers") or [],
+                                                                   principal):
                 continue
         elif not mine:
             continue

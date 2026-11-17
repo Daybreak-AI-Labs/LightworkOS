@@ -32,7 +32,8 @@ def _check(args: dict[str, Any]) -> str:
     for a in approvals:
         if not isinstance(a, dict):
             continue
-        who = str(a.get("approver") or "").strip().lower()
+        from ..safety.dual_control import person_key
+        who = person_key(a.get("approver"))
         if not who or who in approvers:
             continue
         approvers.add(who)

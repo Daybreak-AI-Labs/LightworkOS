@@ -51,6 +51,7 @@ from ..goal_mutations import SCHEMA as _GOAL_MUTATION_SCHEMA
 from ..learning_store_pg_schema import LEARNING_TENANT_MIGRATION
 from ..metadata_history import POSTGRES_INDEXES as _HISTORY_INDEXES
 from ..personal_alert_revisions import POSTGRES_MIGRATION as _PERSONAL_ALERT_MIGRATION
+from ..safety.dual_control import distinct_people, person_key
 from ..webhook_subscriptions import POSTGRES_SCHEMA as _WEBHOOK_SUBSCRIPTION_SCHEMA_PG
 
 log = logging.getLogger(__name__)
@@ -4899,7 +4900,7 @@ class PostgresWorldModel:
                 required > 1
                 and status == "approved"
                 and requested_by
-                and approver == requested_by
+                and person_key(approver) == person_key(requested_by)
             ):
                 from ..safety.dual_control import allow_self_approval
 
@@ -4975,11 +4976,11 @@ class PostgresWorldModel:
                     final_status = "denied"
                 else:
                     cur.execute(
-                        "SELECT COUNT(*) FROM approval_signoffs "
+                        "SELECT approver FROM approval_signoffs "
                         "WHERE approval_id = %s AND decision = 'approved'",
                         (int(approval_id),),
                     )
-                    if int(cur.fetchone()[0]) >= required:
+                    if distinct_people(row[0] for row in cur.fetchall()) >= required:
                         final_status = "approved"
 
             cur.execute(
@@ -5156,7 +5157,7 @@ class PostgresWorldModel:
         if not approver:
             return False
         if (status == "approved" and appr.requested_by
-                and approver == appr.requested_by):
+                and person_key(approver) == person_key(appr.requested_by)):
             from ..safety.dual_control import allow_self_approval
             if not allow_self_approval():
                 return False
@@ -5198,11 +5199,11 @@ class PostgresWorldModel:
                 cur.execute(upd, tuple(up + (params if frag else [])))
                 return True
             cur.execute(
-                "SELECT COUNT(*) FROM approval_signoffs "
+                "SELECT approver FROM approval_signoffs "
                 "WHERE approval_id = %s AND decision = 'approved'",
                 (approval_id,),
             )
-            approved = int(cur.fetchone()[0])
+            approved = distinct_people(row[0] for row in cur.fetchall())
             if approved >= required:
                 up[0] = "approved"
                 cur.execute(upd, tuple(up + (params if frag else [])))

@@ -41,7 +41,12 @@ def _tier_options(func):
                      help="Tests that need services; run only in [codebase] checker_image."),
     )):
         func = option(func)
-    return func
+    return click.option(
+        "--protected-path", "protected_paths", multiple=True,
+        help="A path pattern whose change needs a second checker and two people to approve "
+             "(repeat for more; * stays in a folder, ** crosses folders, a folder covers "
+             "everything under it). Giving any replaces the list; --protected-path \"\" "
+             "clears it.")(func)
 
 
 @code_group.command("add")
@@ -55,7 +60,7 @@ def _tier_options(func):
 @click.option("--token-env", default=None,
               help="Environment variable holding the remote credential (never stored).")
 def code_add(name, source, branch, test_command, quick_test_command, gate_command,
-             heavy_test_command, protect, token_env) -> None:
+             heavy_test_command, protected_paths, protect, token_env) -> None:
     """Import SOURCE (a git URL or local path) into the vault as NAME."""
     vault = _guard()
     from ..config import get_codebase
@@ -64,7 +69,7 @@ def code_add(name, source, branch, test_command, quick_test_command, gate_comman
                               quick_test_command=quick_test_command, gate_command=gate_command,
                               heavy_test_command=heavy_test_command,
                               protect=protect or get_codebase()["default_protect"],
-                              token_env=token_env)
+                              token_env=token_env, protected_paths=protected_paths)
     except vault.VaultError as exc:
         _fail(exc)
     click.echo(f"vaulted {repo.name} ({repo.default_branch} @ {repo.head[:12]}, "
@@ -74,20 +79,27 @@ def code_add(name, source, branch, test_command, quick_test_command, gate_comman
 @code_group.command("set")
 @click.argument("name")
 @_tier_options
-def code_set(name, **commands) -> None:
-    """Change NAME's test commands; an empty value ("") clears one."""
+def code_set(name, protected_paths, **commands) -> None:
+    """Change NAME's test commands or protected paths; an empty value ("") clears one."""
     vault = _guard()
     given = {k: v for k, v in commands.items() if v is not None}
-    if not given:
-        raise click.UsageError("give at least one of --test, --quick-test, --gate, --heavy-test")
+    if not given and not protected_paths:
+        raise click.UsageError("give at least one of --test, --quick-test, --gate, --heavy-test, "
+                               "--protected-path")
     try:
-        repo = vault.set_commands(name, **given)
+        vault.check_commands(given)  # both checked before either changes
+        vault.check_protected_paths(protected_paths)
+        repo = vault.set_commands(name, **given) if given else vault.get(name)
+        if protected_paths:
+            repo = vault.set_protected_paths(name, protected_paths)
     except vault.VaultError as exc:
         _fail(exc)
     for key, label in (("quick_test_command", "quick"), ("test_command", "full"),
                        ("gate_command", "gate"), ("heavy_test_command", "heavy")):
         value = getattr(repo, key)
         click.echo(f"  {label:6} {_strip_terminal_control(value) if value else '(not set)'}")
+    click.echo("  protected paths: " + (", ".join(_strip_terminal_control(p)
+                                                 for p in repo.protected_paths) or "(none)"))
 
 
 @code_group.command("list")
@@ -99,7 +111,8 @@ def code_list() -> None:
                    f"tests={'yes' if r.test_command else 'no'}"
                    + "".join(f"  {label}=yes" for key, label in (
                        ("quick_test_command", "quick"), ("gate_command", "gate"),
-                       ("heavy_test_command", "heavy")) if getattr(r, key)))
+                       ("heavy_test_command", "heavy")) if getattr(r, key))
+                   + (f"  protected={len(r.protected_paths)}" if r.protected_paths else ""))
 
 
 @code_group.command("sync")
@@ -141,16 +154,22 @@ def code_feature(name, title, description, max_dollars, no_review, no_check) -> 
                              features.default_runner(budget=budget),
                              reviewer=None if no_review else features.default_reviewer(budget=budget),
                              checker=features.default_checkers(budget=budget) if check else None,
+                             protected_checker=features.default_protected_checker(budget=budget),
                              budget=budget)
     except vault.VaultError as exc:
         _fail(exc)
     finally:
         world.close()
+    if p["status"] == "decision":
+        click.echo(f"proposal {p['id']}: stopped, waiting for a person's decision")
+        _echo_evidence(p)
+        return
     if p["status"] == "empty":
         click.echo(f"proposal {p['id']}: the swarm made no change")
         return
+    refusal = features.protected_refusal(p)
     click.echo(f"proposal {p['id']} on {p['branch']}: {len(p['files'])} file(s); "
-               f"awaiting approval #{p['approval_id']}")
+               + (refusal or f"awaiting approval #{p['approval_id']}"))
     _echo_evidence(p)
 
 

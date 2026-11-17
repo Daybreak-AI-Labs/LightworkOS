@@ -112,7 +112,9 @@ def _waiting_on(request: Request, world, principal: str, row: dict, *, can_decid
     approval = world.get_approval(int(row["id"]))
     if approval is None:
         return "others"
-    own = bool(principal) and approval.requested_by == principal
+    from maverick.safety.dual_control import includes_person
+
+    own = includes_person([approval.requested_by], principal)
     if not can_decide or not can_read_approval(request, approval, world):
         if own:
             return "others"

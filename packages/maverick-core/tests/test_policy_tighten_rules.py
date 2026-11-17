@@ -134,6 +134,11 @@ CASES = {
                                    ul="other:1"),
     "codebase.checker_models": dict(os=["model-a"], s=["model-a"], l=["model-b"],
                                     ul=["model-b"]),
+    # The second checker for protected paths, and whether the factory may change
+    # the Lightwork that runs it, are the organisation's alone too.
+    "codebase.protected_checker_model": dict(os="openai:m", s="openai:m", l="gemini:g",
+                                             ul="gemini:g"),
+    "codebase.allow_self_changes": dict(os=False, s=False, l=True, ul=True),
 }
 
 

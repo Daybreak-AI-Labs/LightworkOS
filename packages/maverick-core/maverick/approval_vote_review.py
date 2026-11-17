@@ -44,10 +44,12 @@ def require_locked_vote_review(approval, review: dict, *, status: str, actor: st
     confers no role, employee-content or settings authority.
     """
     from .channel_approvals import ChannelApprovalRefused, require_current_card
+    from .safety.dual_control import distinct_people
 
     state = None if approval is None else {
         "status": approval.status, "approvals_required": max(1, int(approval.approvals_required or 1)),
-        "approved_count": len(approvers), "approvers": approvers,
+        # The same people count approval_state gives (world_model._approval_state_view).
+        "approved_count": distinct_people(approvers), "approvers": approvers,
         "requested_by": approval.requested_by, "audit_pending_count": audit_pending,
         "effective": approval.status != "pending",
     }

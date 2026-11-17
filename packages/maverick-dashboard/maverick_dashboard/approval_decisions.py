@@ -49,6 +49,26 @@ class ApprovalDecisionRefused(ChannelApprovalRefused):
         super().__init__(reason, detail, status_code=status_code)
 
 
+CODE_KEY_REFUSED = ("A person must approve a code change on the Approvals page. A key or an "
+                    "automation cannot approve one.")
+CODE_COPILOT_REFUSED = "Approve a protected code change yourself on the Approvals page."
+
+
+def require_code_decider(request, approval, *, approving: bool, copilot: bool) -> None:
+    """A code change is approved by a person, never by an API key (an
+    automation); a protected one also never through Copilot."""
+    if not approving or approval is None or approval.action != "codebase_merge":
+        return
+    from maverick.channel_approvals import CODE_PROTECTED_PROVENANCE
+
+    from . import auth
+
+    if auth.api_key_permissions(request) is not None:
+        raise HTTPException(status_code=403, detail=CODE_KEY_REFUSED)
+    if copilot and approval.provenance == CODE_PROTECTED_PROVENANCE:
+        raise HTTPException(status_code=403, detail=CODE_COPILOT_REFUSED)
+
+
 def _refused(exc: ChannelApprovalRefused) -> ApprovalDecisionRefused:
     if isinstance(exc, ApprovalDecisionRefused):
         return exc

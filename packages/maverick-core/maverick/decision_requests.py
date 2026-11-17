@@ -646,7 +646,11 @@ def answer(world, decision_id: int, option: int, *, actor: str, is_admin: bool,
     recorded = recorded_as or actor or "unknown"
     threads = ChatThreads(world)
     store = threads.store
-    resumable = resume_kwargs(world.get_goal(current.goal_id)) is not None
+    try:
+        feature = _feature_step(current.goal_id, world)
+    except Exception as exc:  # noqa: BLE001 -- never guess where the run came from
+        raise DecisionRefused("unavailable", FEATURE_UNKNOWN) from exc
+    resumable = resume_kwargs(world.get_goal(current.goal_id)) is not None and not feature
     resume = False
     waiting = 0
     try:
@@ -695,13 +699,23 @@ def answer(world, decision_id: int, option: int, *, actor: str, is_admin: bool,
                  "manual" if not int(waiting) and not resumable else "waiting")
     outcome: dict[str, Any] = {"decision": decided, "resume": resume, "next": following}
     if following == "manual":
-        outcome["restart"] = restart_note(world.get_goal(current.goal_id), world) or STARTER_RESTARTS
-        goal = world.get_goal(current.goal_id)
-        if goal is not None and goal.status == "blocked":
-            world.set_goal_status(current.goal_id, "blocked", result=(
-                f"The decision “{current.question}” was answered: “{label}”. Your answer was "
-                f"saved. {outcome['restart']}"))
+        outcome["restart"] = _manual_restart(world, current, label, feature=feature)
     return outcome
+
+
+def _manual_restart(world, current: Decision, label: str, *, feature: bool) -> str:
+    """After the last answer of a run Lightwork does not restart: who can."""
+    if feature:
+        # A code change's step ran in a private copy that is gone: it stops here.
+        world.set_goal_status(current.goal_id, "cancelled", result=FEATURE_RESTARTS)
+        return FEATURE_RESTARTS
+    restart = restart_note(world.get_goal(current.goal_id), world) or STARTER_RESTARTS
+    goal = world.get_goal(current.goal_id)
+    if goal is not None and goal.status == "blocked":
+        world.set_goal_status(current.goal_id, "blocked", result=(
+            f"The decision “{current.question}” was answered: “{label}”. Your answer was "
+            f"saved. {restart}"))
+    return restart
 
 
 _NEXT_TEXT = {
@@ -1034,6 +1048,9 @@ def resume_refusal(world, goal_id: int, *, now: float | None = None) -> str:
     own decision, or a decision of a goal below it, is still open must wait
     for a person's answer, never for a Resume or a clarification answer."""
     expire_due(world, now=now, goal_id=goal_id)
+    refused = feature_start_refusal(world, goal_id)
+    if refused:
+        return refused
     try:
         waiting = open_for_tree(world, goal_id)
     except Exception:  # noqa: BLE001 -- unknown is not "nothing waits": fail closed
@@ -1079,6 +1096,84 @@ NOBODY_RESTARTS = ("Another system started this run, so no person can restart it
                    "The answer is saved for the record.")
 
 
+#: A step of a code change (``maverick.codebase.features.ORIGIN_KIND``): it ran
+#: in a private copy of the code that no longer exists, so an answer never
+#: restarts it; the person starts a new code change instead.
+_FEATURE_ORIGIN = "codebase_feature"
+FEATURE_RESTARTS = ("This was a step of a code change, so it does not continue by itself. "
+                    "Start a new code change to use your answer.")
+
+
+FEATURE_UNKNOWN = ("Lightwork could not check where this run came from, so your answer was "
+                   "not saved. Try again in a moment.")
+FEATURE_UNKNOWN_RESTART = ("Lightwork could not check where this run came from, so it was not "
+                           "restarted. Try again in a moment.")
+
+
+#: The goals a code change's own loop is running right now (set by
+#: ``maverick.codebase.features`` around each round and check): only there may
+#: a goal marked as a code-change step start.
+FEATURE_LOOP: contextvars.ContextVar[frozenset[int]] = contextvars.ContextVar(
+    "decision_feature_loop", default=frozenset())
+
+
+def _feature_rows(goal_id: int, world) -> list[tuple[int, str, str, str]]:
+    """(goal, origin kind, origin ref, status) for this goal and every goal
+    above it. Raises when the records cannot be read."""
+    rows = world.tenant_query(
+        "WITH RECURSIVE up(id) AS (SELECT CAST(? AS INTEGER) UNION SELECT g.parent_id "
+        "FROM goals g JOIN up u ON g.id = u.id WHERE g.parent_id IS NOT NULL) "
+        "SELECT up.id, o.kind, o.ref, g.status FROM up JOIN goals g ON g.id = up.id "
+        "LEFT JOIN goal_origins o ON o.goal_id = up.id WHERE {tenant_goal:up.id}",
+        (int(goal_id),))
+    return [(int(r[0]), str(r[1] or ""), str(r[2] or ""), str(r[3] or "")) for r in rows]
+
+
+def _feature_marks(goal_id: int, world) -> tuple[list[int], set[int]]:
+    """(this goal and the goals above it, those marked as code-change steps)."""
+    rows = _feature_rows(goal_id, world)
+    return [r[0] for r in rows], {r[0] for r in rows if r[1] == _FEATURE_ORIGIN}
+
+
+def _change_live(rows: list[tuple[int, str, str, str]]) -> bool:
+    """Whether a marked step above is running right now in a change that is
+    still being built (its record says running, in a live process)."""
+    from .codebase.features import run_live
+
+    return any(kind == _FEATURE_ORIGIN and status == "active" and run_live(ref)
+               for _goal, kind, ref, status in rows)
+
+
+def _feature_step(goal_id: int, world) -> bool:
+    """Whether this goal, or a goal above it, is a step of a code change."""
+    return bool(_feature_marks(goal_id, world)[1])
+
+
+def feature_start_refusal(world, goal_id: int) -> str:
+    """Why a code change's step may not start here, or ``""``.
+
+    Every step is marked when the code change creates it, before it runs.
+    Inside the change's own loop it starts. Anywhere else (a resume, a chat
+    restart, the supervisor, an answered decision) a marked goal never starts
+    again, and a goal an agent created below one starts only if it never ran
+    and its change is still being built, by a step that is running now: once
+    the change ends, its private copy of the code is gone."""
+    try:
+        rows = _feature_rows(goal_id, world)
+        chain = [r[0] for r in rows]
+        marked = {r[0] for r in rows if r[1] == _FEATURE_ORIGIN}
+        if not marked or FEATURE_LOOP.get() & set(chain):
+            return ""
+        if int(goal_id) in marked:
+            return FEATURE_RESTARTS
+        if world.list_episodes(limit=1, goal_id=int(goal_id)) or not _change_live(rows):
+            return FEATURE_RESTARTS
+        return ""
+    except Exception:  # noqa: BLE001 -- unknown is not "an ordinary run": fail closed
+        log.warning("goal origin lookup failed before a restart", exc_info=True)
+        return FEATURE_UNKNOWN_RESTART
+
+
 def _started_by_system(goal, world) -> bool:
     if str(getattr(goal, "execution_principal", "") or "") == _A2A_PRINCIPAL:
         return True
@@ -1099,6 +1194,11 @@ def restart_note(goal, world=None) -> str:
     access key): who can, decided from the run's records (its origin, or the
     A2A capability), never from the shape of its principal. ``""`` for a run
     that restarts by itself."""
+    try:
+        if goal is not None and world is not None and _feature_step(goal.id, world):
+            return FEATURE_RESTARTS
+    except Exception:  # noqa: BLE001 -- the ordinary sentence; answer() refuses on its own
+        log.debug("goal origin unreadable", exc_info=True)
     if goal is None or resume_kwargs(goal) is not None:
         return ""
     return NOBODY_RESTARTS if _started_by_system(goal, world) else STARTER_RESTARTS

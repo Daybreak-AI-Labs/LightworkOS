@@ -345,7 +345,10 @@ def _approval_source(world, principal, approval_allowed):
             state = world.approval_state(row.id)
             if not state or state["status"] != "pending":
                 continue
-            if principal and (principal in state["approvers"] or row.requested_by == principal):
+            from maverick.safety.dual_control import includes_person
+
+            if principal and (includes_person(state["approvers"], principal)
+                              or includes_person([row.requested_by], principal)):
                 continue
             items.append(_item("approval", row.id, str(row.action).replace("_", " "),
                 href=f"/approvals#approval-{row.id}", owner=row.claimed_by,

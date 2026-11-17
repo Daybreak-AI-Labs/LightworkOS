@@ -110,7 +110,10 @@ def _projection(request, actor: str, *, world=None) -> tuple[list[dict], list[di
             if approval.department and suites is not None and approval.department not in suites:
                 continue
             state = world.approval_state(approval.id)
-            if not state or state["status"] != "pending" or actor in state["approvers"] or approval.requested_by == actor:
+            from maverick.safety.dual_control import includes_person
+
+            if (not state or state["status"] != "pending" or includes_person(state["approvers"], actor)
+                    or includes_person([approval.requested_by], actor)):
                 continue
             sources.append({"ref": f"approval:{approval.id}", "version": str(approval.requested_at),
                             "category": "needs-decision", "title": "Assigned approval", "label": "Needs your decision",

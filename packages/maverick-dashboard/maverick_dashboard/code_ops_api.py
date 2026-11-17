@@ -280,6 +280,10 @@ async def watch_note_start(name: str, note_id: str, body: ConfirmIn, request: Re
     if await run_in_threadpool(_provider_missing):
         raise HTTPException(503, "Set up an AI provider in Settings before asking Lightwork to "
                                  "work on a note.")
+    from maverick.codebase import features
+    refusal = await run_in_threadpool(features.self_change_refusal, name)
+    if refusal:
+        raise HTTPException(409, refusal)
     owner = caller_principal(request) or ""
     user_id = execution_user_id_from_request(request)
     if owner and owner != f"user:{user_id}":

@@ -477,6 +477,16 @@ SETTINGS: tuple[Setting, ...] = (
       "computer. In a container, each step is kept apart from the others.",
       "toggle", "Safety", False, "maverick.config", weaker=False,
       warning="Code changes will run directly on this computer again, without a container."),
+    S("codebase", "protected_checker_model", "Second checker for protected code",
+      "A change to a protected path, or to Lightwork itself, gets one more check by this model. "
+      "It must be a different kind of model from the author's and the other checkers'.",
+      "select", "Safety", "", "maverick.config", choices_from="models", weaker="change",
+      warning="Without a different kind of model here, protected code changes cannot be approved."),
+    S("codebase", "allow_self_changes", "Let Lightwork change its own code",
+      "Allow code changes to the project this Lightwork was installed from. Each one needs a "
+      "second checker and two people to approve it.",
+      "toggle", "Safety", False, "maverick.config", weaker=True,
+      warning="Agents will be able to propose changes to the Lightwork that runs them."),
     S("autonomy", "enable", "Extra checks on uncertain work",
       "When agents disagree or are unsure, double-check the answer and tighten what risky tools may do.",
       "toggle", "Safety", False, "maverick.autonomy", env=("MAVERICK_AUTONOMY_GATE",)),

@@ -58,6 +58,13 @@ class Repo:
     quick_test_command: str | None = None
     gate_command: str | None = None
     heavy_test_command: str | None = None
+    # Protected paths (records saved before them load with none): glob
+    # patterns for the paths whose change needs a second checker and two
+    # people to approve it (see :func:`protected_matches`).
+    protected_paths: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "protected_paths", tuple(self.protected_paths or ()))
 
 
 COMMANDS = ("test_command", "quick_test_command", "gate_command", "heavy_test_command")
@@ -68,6 +75,11 @@ MAX_COMMAND_CHARS = 2000
 # separator, and no bidirectional override or isolate that could make a
 # command read differently from what runs.
 _NOT_PLAIN = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029\u202a-\u202e\u2066-\u2069]")
+MAX_PROTECTED_PATHS = 100
+MAX_PATTERN_CHARS = 300
+PROTECTED_RULES = (f"protected paths: at most {MAX_PROTECTED_PATHS} patterns of plain text, each "
+                   f"at most {MAX_PATTERN_CHARS} characters, relative to the repository, with / "
+                   "between folders and never ..")
 
 
 def enabled() -> bool:
@@ -231,6 +243,61 @@ def check_commands(given: dict[str, str | None]) -> dict[str, str | None]:
     return out
 
 
+def check_protected_paths(given: object) -> tuple[str, ...]:
+    """Checked protected-path patterns, blank ones dropped and repeats removed.
+
+    A pattern is relative to the repository root (a leading ``/`` or ``./``
+    is dropped). ``*`` and ``?`` stay within one folder, ``**`` crosses
+    folders, and a pattern that names a folder covers everything under it."""
+    if given is None:
+        return ()
+    if isinstance(given, str) or not isinstance(given, (list, tuple)):
+        raise VaultError(PROTECTED_RULES)
+    out: list[str] = []
+    for raw in given:
+        if not isinstance(raw, str) or _NOT_PLAIN.search(raw):
+            raise VaultError(PROTECTED_RULES)
+        value = raw.strip(" ")
+        while value.startswith(("/", "./")):
+            value = value[2:] if value.startswith("./") else value[1:]
+        value = value.rstrip("/")
+        if not value:
+            continue
+        if (len(value) > MAX_PATTERN_CHARS or "\\" in value
+                or set(value.split("/")) & {"", ".", ".."}):
+            raise VaultError(PROTECTED_RULES)
+        if value not in out:
+            out.append(value)
+    if len(out) > MAX_PROTECTED_PATHS:
+        raise VaultError(PROTECTED_RULES)
+    return tuple(out)
+
+
+def _pattern(pattern: str) -> re.Pattern[str]:
+    parts, i = [], 0
+    while i < len(pattern):
+        if pattern.startswith("**/", i):
+            parts.append("(?:.*/)?")
+            i += 3
+        elif pattern.startswith("**", i):
+            parts.append(".*")
+            i += 2
+        else:
+            ch = pattern[i]
+            parts.append("[^/]*" if ch == "*" else "[^/]" if ch == "?" else re.escape(ch))
+            i += 1
+    # A folder covers everything under it. Case is ignored, so a change on a
+    # case-insensitive disk cannot slip past a pattern.
+    return re.compile("".join(parts) + "(?:/.*)?", re.IGNORECASE | re.DOTALL)
+
+
+def protected_matches(patterns: tuple[str, ...] | list[str], paths: list[str]) -> list[str]:
+    """The changed ``paths`` that match any protected-path pattern, sorted.
+    Callers pass both sides of a rename (``git diff --no-renames``)."""
+    compiled = [_pattern(p) for p in patterns]
+    return sorted({path for path in paths if any(c.fullmatch(path) for c in compiled)})
+
+
 def _quoted_placeholder(command: str) -> bool:
     """Whether ``{changed}`` appears inside single or double quotes (where the
     shell would expand what the quoted paths contain)."""
@@ -252,7 +319,8 @@ def register(name: str, source: str, *, default_branch: str | None = None,
              test_command: str | None = None, protect: str = "block",
              token_env: str | None = None, timeout: int = _GIT_TIMEOUT,
              quick_test_command: str | None = None, gate_command: str | None = None,
-             heavy_test_command: str | None = None) -> Repo:
+             heavy_test_command: str | None = None,
+             protected_paths: list[str] | tuple[str, ...] = ()) -> Repo:
     """Import a repository (every branch and tag) into the vault.
 
     ``timeout`` bounds each network step (the dashboard uses a short one)."""
@@ -264,6 +332,7 @@ def register(name: str, source: str, *, default_branch: str | None = None,
                           "quick_test_command": quick_test_command,
                           "gate_command": gate_command,
                           "heavy_test_command": heavy_test_command})
+    protected = check_protected_paths(protected_paths)
     source = _check_source(source)
     with cross_process_lock(_registry_path(), strict=True):
         if name in _load():
@@ -280,7 +349,7 @@ def register(name: str, source: str, *, default_branch: str | None = None,
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
         repo = Repo(name, source, branch, protect=protect, token_env=token_env, head=head,
-                    updated_at=time.time(), **commands)
+                    updated_at=time.time(), protected_paths=protected, **commands)
         registry = _load()
         registry[name] = asdict(repo)
         _save(registry)
@@ -313,6 +382,11 @@ def set_commands(name: str, **commands: str | None) -> Repo:
     ``quick_test_command``, ``gate_command``, ``heavy_test_command``); a blank
     value clears one. Only the named commands change."""
     return update_registry(name, **check_commands(commands))
+
+
+def set_protected_paths(name: str, patterns: list[str] | tuple[str, ...]) -> Repo:
+    """Replace a repository's protected-path patterns (empty clears them)."""
+    return update_registry(name, protected_paths=list(check_protected_paths(patterns)))
 
 
 @contextmanager
@@ -439,6 +513,7 @@ def export(name: str, dest: Path) -> Path:
     return dest
 
 
-__all__ = ["COMMANDS", "PROTECT", "Repo", "VaultError", "check_commands", "checkout", "clone_work",
-           "commit_back", "enabled", "export", "get", "host_repo", "list_repos", "register",
-           "set_commands", "sync", "update_registry"]
+__all__ = ["COMMANDS", "PROTECT", "Repo", "VaultError", "check_commands", "check_protected_paths",
+           "checkout", "clone_work", "commit_back", "enabled", "export", "get", "host_repo",
+           "list_repos", "protected_matches", "register", "set_commands", "set_protected_paths",
+           "sync", "update_registry"]

@@ -1264,13 +1264,26 @@ def _single_approver(approval, approvers: list[str]) -> list[str]:
     return approvers
 
 
+def _same_person(a: object, b: object) -> bool:
+    from .safety.dual_control import person_key
+
+    return bool(person_key(a)) and person_key(a) == person_key(b)
+
+
+def _people(rows) -> int:
+    """Distinct people among approver rows (one person spelt two ways is one)."""
+    from .safety.dual_control import distinct_people
+
+    return distinct_people(row[0] for row in rows)
+
+
 def _approval_state_view(approval, approvers: list[str], audit_pending: int) -> dict:
     """The operator/UI quorum view of one approval (shared by the per-id and
     the batched readers so both return the same shape and values)."""
     return {
         "status": approval.status,
         "approvals_required": max(1, int(approval.approvals_required or 1)),
-        "approved_count": len(approvers),
+        "approved_count": _people([a] for a in approvers),
         "approvers": approvers,
         "requested_by": approval.requested_by,
         "audit_pending_count": audit_pending,
@@ -4160,7 +4173,7 @@ class WorldModel:
                 required > 1
                 and status == "approved"
                 and requested_by
-                and approver == requested_by
+                and _same_person(approver, requested_by)
             ):
                 from .safety.dual_control import allow_self_approval
 
@@ -4240,11 +4253,11 @@ class WorldModel:
                 if status == "denied":
                     final_status = "denied"
                 else:
-                    approved = conn.execute(
-                        "SELECT COUNT(*) FROM approval_signoffs "
+                    approved = _people(conn.execute(
+                        "SELECT approver FROM approval_signoffs "
                         "WHERE approval_id = ? AND decision = 'approved'",
                         (int(approval_id),),
-                    ).fetchone()[0]
+                    ).fetchall())
                     if approved >= required:
                         final_status = "approved"
 
@@ -4412,7 +4425,7 @@ class WorldModel:
         if not approver:
             return False   # distinctness needs an attributed approver
         if (status == "approved" and appr.requested_by
-                and approver == appr.requested_by):
+                and _same_person(approver, appr.requested_by)):
             from .safety.dual_control import allow_self_approval
             if not allow_self_approval():
                 return False   # segregation of duties: no self-approval
@@ -4450,11 +4463,11 @@ class WorldModel:
                     (now, approver, approval_id),
                 )
                 return True
-            approved = conn.execute(
-                "SELECT COUNT(*) FROM approval_signoffs "
+            approved = _people(conn.execute(
+                "SELECT approver FROM approval_signoffs "
                 "WHERE approval_id = ? AND decision = 'approved'",
                 (approval_id,),
-            ).fetchone()[0]
+            ).fetchall())
             if approved >= required:
                 conn.execute(
                     "UPDATE approvals SET status = 'approved', decided_at = ?, "
