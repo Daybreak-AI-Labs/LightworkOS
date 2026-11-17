@@ -48,6 +48,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from ..budget import BudgetExceeded
+from ..channel_approvals import CODE_PROTECTED_PROVENANCE
 from ..file_lock import atomic_write_bytes, cross_process_lock
 from . import vault
 from .vault import VaultError, _git
@@ -59,7 +60,7 @@ MAX_FINDINGS = 20
 MAX_PROTECTED_LISTED = 200
 # A protected proposal's approval: two distinct people, neither the person who
 # started the feature run (channel_approvals.ALWAYS_SEPARATE_PROVENANCES).
-PROTECTED_PROVENANCE = "codebase.protected"
+PROTECTED_PROVENANCE = CODE_PROTECTED_PROVENANCE
 PROTECTED_APPROVALS = 2
 MAX_REPRO_CHARS = 2_000
 MAX_PROBE_FILES = 3

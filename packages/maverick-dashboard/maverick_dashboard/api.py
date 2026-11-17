@@ -12496,6 +12496,9 @@ def _decide_approval(request: Request, approval_id: int, payload: dict, status: 
     _require_settings_decider(request, world, approval_id, who, approving=approving)
     from . import agent_publish_bypass
     agent_publish_bypass.require_decider(request, world.get_approval(approval_id), who, approving=approving)
+    from .approval_decisions import require_code_decider
+    require_code_decider(request, world.get_approval(approval_id), approving=approving,
+                         copilot=reviewed is not None)
     from .approval_queue_operations import guard, require_review
 
     vote_guard = reviewed

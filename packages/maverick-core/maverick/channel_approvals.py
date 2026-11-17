@@ -65,9 +65,12 @@ _RISK_LABELS = {
 # dashboard (settings_quorum enforces who may decide); a chat channel cannot
 # prove that role, so it never decides them.
 SETTINGS_PROVENANCE = "settings_quorum"
-# Publishing changed instructions without a passing test run (the dashboard's agent_publish_bypass.PROVENANCE): the
-# person who asked may never approve it, on any surface and whatever [approval] separate_approver says.
-ALWAYS_SEPARATE_PROVENANCES = frozenset({"agent_publish.bypass.four_eyes.v1"})
+# Publishing changed instructions without a passing test run (the dashboard's agent_publish_bypass.PROVENANCE)
+# and a code change to a protected path (maverick.codebase.features.PROTECTED_PROVENANCE): the person who asked
+# may never approve it, on any surface, whatever [approval] separate_approver says or how many approve it.
+CODE_PROTECTED_PROVENANCE = "codebase.protected"
+ALWAYS_SEPARATE_PROVENANCES = frozenset({"agent_publish.bypass.four_eyes.v1", CODE_PROTECTED_PROVENANCE})
+CODE_PERSON_ONLY = "Only a person signed in with their own account can approve a code change."
 
 # The HTTP status each refusal maps to when a surface speaks HTTP.
 _STATUS_CODES: dict[str, int] = {
@@ -445,12 +448,11 @@ def separate_approver_refusal(world: Any, approval: Any, who: str) -> str:
         return ""
     from .safety.dual_control import separate_approver_applies, separate_approver_mode
 
-    if not separate_approver_applies(getattr(approval, "risk", ""),
-                                     getattr(approval, "approvals_required", 1)):
+    always = getattr(approval, "provenance", None) in ALWAYS_SEPARATE_PROVENANCES
+    if not always and not separate_approver_applies(getattr(approval, "risk", ""),
+                                                    getattr(approval, "approvals_required", 1)):
         return ""
-    mode = separate_approver_mode()
-    if getattr(approval, "provenance", None) in ALWAYS_SEPARATE_PROVENANCES:
-        mode = "always"
+    mode = "always" if always else separate_approver_mode()
     if mode == "never":
         return ""
     if mode == "when_available" and not other_approver_available(world, approval, requester):
@@ -458,8 +460,24 @@ def separate_approver_refusal(world: Any, approval: Any, who: str) -> str:
     return _SEPARATE_APPROVER_WORDS.get(mode, _SEPARATE_APPROVER_WORDS["always"])
 
 
+def code_vote_refusal(approval: Any, who: str) -> str:
+    """Why ``who`` may not approve a code change (``codebase_merge``), or ``""``.
+
+    An agent never approves one; a protected one (two people approve it)
+    takes only people signed in with their own account."""
+    if getattr(approval, "action", None) != "codebase_merge":
+        return ""
+    who = " ".join(str(who or "").split())
+    if who.startswith("agent:") or (
+            getattr(approval, "provenance", None) == CODE_PROTECTED_PROVENANCE
+            and not (who.startswith("user:") and len(who) > len("user:"))):
+        return CODE_PERSON_ONLY
+    return ""
+
+
 def require_separate_approver(world: Any, approval_id: int, who: str) -> None:
-    """Refuse the requester's own approval when someone else must give it.
+    """Refuse the requester's own approval when someone else must give it,
+    and a code change's approval from anyone but a person.
 
     Surfaces call this before they record the confirmation step, and
     :func:`record_vote` calls it again before the vote. A retry of a vote that
@@ -467,6 +485,9 @@ def require_separate_approver(world: Any, approval_id: int, who: str) -> None:
     approval = world.get_approval(int(approval_id))
     if approval is None or approval.status != "pending":
         return  # the decision path answers "already decided"
+    refusal = code_vote_refusal(approval, who)
+    if refusal:
+        raise ChannelApprovalRefused("not_permitted", refusal)
     refusal = separate_approver_refusal(world, approval, who)
     if refusal and world.get_approval_audit_event(
             world.approval_audit_event_id(int(approval_id), "approved", who)) is None:

@@ -488,3 +488,88 @@ def test_people_list_is_for_administrators_and_the_active_workspace(client, monk
     _as(monkeypatch, "auditor")
     body = client.get("/api/v1/immune/choices").json()
     assert body["people"] == []
+
+
+# -- a protected code change: two people, on the Approvals page --
+
+def _protected_change(monkeypatch, tmp_path):
+    from maverick.codebase import features, vault
+    from maverick_dashboard import app as dash_app
+    _code_on(monkeypatch)
+    monkeypatch.setattr(features, "_author_model", lambda: "anthropic:author")
+    vault.register("core", str(_source_repo(tmp_path)), protected_paths=["a.py"])
+    second = lambda gid, copy: {"findings": []}  # noqa: E731
+    second.model = "openai:second"
+    world = dash_app._world()
+    p = features.propose(world, "core", "Change the value", "",
+                         lambda gid, work: (work / "a.py").write_text("VALUE = 2\n"),
+                         protected_checker=second, owner="user:starter")
+    return world, p
+
+
+def _person(monkeypatch, principal, *, key=False):
+    from maverick_dashboard import api, auth, content_access
+    monkeypatch.setattr(auth, "role_for_principal", lambda p: "admin")
+    monkeypatch.setattr(auth, "global_role_for_principal", lambda p: "admin")
+    monkeypatch.setattr(auth, "caller_principal", lambda request: principal)
+    monkeypatch.setattr(auth, "_authorization_principal", lambda request: principal)
+    monkeypatch.setattr(api, "_supervisor", lambda request: principal)
+    monkeypatch.setattr(content_access, "can_read_approval", lambda *a, **k: True)
+    monkeypatch.setattr(auth, "api_key_permissions",
+                        lambda request: frozenset({"view", "operate", "admin"}) if key else None)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
+def test_a_protected_change_is_approved_by_two_people_not_a_key_or_the_starter(client, monkeypatch,
+                                                                              tmp_path):
+    from maverick.approval_cards import decode_approval_detail
+    from maverick.codebase import features
+    from maverick_dashboard import approval_authority, approval_decisions
+    world, p = _protected_change(monkeypatch, tmp_path)
+    aid = p["approval_id"]
+    binding = decode_approval_detail(world.get_approval(aid).detail)["binding_sha256"]
+
+    def approve(who, **kw):
+        _person(monkeypatch, who, **kw)
+        return client.post(f"/api/v1/approvals/{aid}/approve", json={"acknowledged": True},
+                           headers={"X-Lightwork-Approval-Binding": binding})
+    r = approve("user:starter")
+    assert r.status_code == 403 and r.json()["detail"] == \
+        "You asked for this, so someone else must approve it."
+    monkeypatch.setattr(approval_authority, "require_approval_authority", lambda *a, **k: None)
+    r = approve("user:alice", key=True)                        # an automation's key
+    assert r.status_code == 403 and r.json()["detail"] == approval_decisions.CODE_KEY_REFUSED
+    assert approve("user:alice").status_code in (202, 204)
+    assert approve("user:alice").status_code in (202, 204, 409)   # once, not twice
+    assert features.status(world, features.find(p["id"])) == "pending"
+    r = client.post(f"/api/v1/code/proposals/{p['id']}/merge")
+    assert r.status_code == 409 and "waiting for a person" in r.json()["detail"]
+    assert approve("user:bob").status_code in (202, 204)
+    assert features.status(world, features.find(p["id"])) == "approved"
+    assert client.post(f"/api/v1/code/proposals/{p['id']}/merge").json()["merged"] is True
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
+def test_copilot_cannot_approve_a_protected_code_change(client, monkeypatch, tmp_path):
+    from fastapi import HTTPException
+    from maverick_dashboard import api, approval_authority, approval_decisions
+    from maverick_dashboard import approval_queue_operations as native
+    from maverick_dashboard import product_operations_approvals as copilot
+    world, p = _protected_change(monkeypatch, tmp_path)
+    aid = p["approval_id"]
+    row = world.get_approval(aid)
+    monkeypatch.setattr(native, "owned", lambda request, approval_id, status=None: (world, row))
+    monkeypatch.setattr(native, "actor", lambda request: "user:alice")
+    monkeypatch.setattr(native, "public", lambda world, row, who: {})
+    monkeypatch.setattr(native, "revision", lambda world, row, who: "r1")
+    state = copilot.snapshot(object(), {"kind": "approval", "id": aid}, status="approved")
+    assert state.blocked == approval_decisions.CODE_COPILOT_REFUSED
+    # The vote Copilot would record is refused at the shared decision too.
+    _person(monkeypatch, "user:alice")
+    monkeypatch.setattr(approval_authority, "require_approval_authority", lambda *a, **k: None)
+    with pytest.raises(HTTPException) as refused:
+        api._decide_approval(object(), aid, {"acknowledged": True}, "approved",
+                             binding="b", reviewed={"binding": "b"})
+    assert refused.value.status_code == 403
+    assert refused.value.detail == approval_decisions.CODE_COPILOT_REFUSED
+    assert world.get_approval(aid).status == "pending"

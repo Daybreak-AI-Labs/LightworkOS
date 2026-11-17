@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from fastapi import HTTPException
 from maverick.approval_cards import digest
-from maverick.channel_approvals import card_content
+from maverick.channel_approvals import CODE_PROTECTED_PROVENANCE, card_content
 from pydantic import Field
 
 from . import approval_queue_operations as native
@@ -44,6 +44,11 @@ def snapshot(request, selection, *, status=None):
             blocked = "Your decision is already recorded. Read its original decision."
         elif status == "approved" and card["status"] != "current":
             blocked = "This request needs a fresh verified review before it can be approved. You may still reject it."
+        elif (status == "approved" and row.action == "codebase_merge"
+              and row.provenance == CODE_PROTECTED_PROVENANCE):
+            from .approval_decisions import CODE_COPILOT_REFUSED
+
+            blocked = CODE_COPILOT_REFUSED
         elif status == "approved" and row.approvals_required > 1 and row.requested_by == who:
             from maverick.safety.dual_control import allow_self_approval
 

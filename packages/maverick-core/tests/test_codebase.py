@@ -2151,3 +2151,45 @@ def test_a_protected_change_needs_two_distinct_people_never_the_starter(upstream
     assert features.status(world, features.find(p["id"])) == "approved"
     assert features.merge(world, p["id"])["status"] == "merged"
     assert features.push(world, p["id"]) == p["branch"]
+
+
+def test_every_chat_channel_needs_two_distinct_people_never_an_agent(upstream, tmp_path,
+                                                                     monkeypatch):
+    """Slack, Teams and email decide through decide_from_channel, and the
+    Approvals page and Copilot through record_vote: one shared vote path."""
+    import maverick.audit as audit
+    from maverick.approval_cards import decode_approval_detail
+    from maverick.channel_approvals import (
+        CODE_PERSON_ONLY,
+        ChannelApprovalRefused,
+        decide_from_channel,
+        record_vote,
+    )
+    monkeypatch.setattr(audit, "record", lambda kind, **fields: True)
+    monkeypatch.delenv("MAVERICK_ALLOW_SELF_APPROVAL", raising=False)
+    world, p = _protected_proposal(upstream, tmp_path, monkeypatch)
+    aid = p["approval_id"]
+    binding = decode_approval_detail(world.get_approval(aid).detail)["binding_sha256"]
+
+    def vote(who, channel):
+        return decide_from_channel(world, aid, "approved", principal=who, channel=channel,
+                                   binding=binding, confirmed=True, acknowledged=True)
+    for channel in ("slack", "teams", "email"):
+        with pytest.raises(ChannelApprovalRefused) as refused:
+            vote("user:starter", channel)                       # the person who started it
+        assert refused.value.reason == "separate_approver"
+    for who in ("agent:helper", "operator"):                    # an agent, or no named person
+        with pytest.raises(ChannelApprovalRefused) as refused:
+            record_vote(world, aid, "approved", who)
+        assert refused.value.message == CODE_PERSON_ONLY
+    assert vote("user:alice", "slack")["status"] == "pending"
+    assert vote("user:alice", "teams")["approved_count"] == 1   # one person twice counts once
+    assert features.status(world, features.find(p["id"])) == "pending"
+    assert vote("user:bob", "email")["status"] == "approved"
+    assert features.merge(world, p["id"])["status"] == "merged"
+    # An ordinary code change keeps one approval, but never an agent's.
+    run, _ = _rounds(lambda work: (work / "notes.md").write_text("idea\n"))
+    plain = features.propose(world, "pricing", "Notes", "", run, owner="user:starter")
+    with pytest.raises(ChannelApprovalRefused):
+        record_vote(world, plain["approval_id"], "approved", "agent:helper")
+    record_vote(world, plain["approval_id"], "approved", "operator")
