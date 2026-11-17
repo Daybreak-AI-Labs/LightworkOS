@@ -111,21 +111,33 @@ maverick code export payments ./payments   # plaintext clone for the owner
 6. **Lightwork re-runs what a checker says it ran.** A finding may carry a
    `repro`: one command whose non-zero exit shows the problem, plus up to
    three `probe_files` (relative paths inside the copy, 20 KB each, never
-   `..` or under `.git`; a link in the copy that points outside is refused
-   too). After each look Lightwork itself runs each repro on a fresh copy of
-   the pinned commit, with the probe files written first, through the same
-   sandbox, contained step and network policy as the tests, for at most 10
-   minutes. The probe files never reach the proposal. A non-zero exit makes
-   the finding `confirmed` ("Lightwork re-ran it"). Exit zero, a timeout or a
-   work area that could not be set up makes it `not reproduced`, shown as
-   read only; its severity stays, so a person decides. After each author
-   repair every confirmed repro runs again on the new commit: exit zero is
-   "fixed: Lightwork re-ran it", anything else stays open, whatever the
-   checker's `fixed` list says. Findings without a confirmed repro keep the
-   checker's word, labelled as such ("fixed: the checker's word"). Each
-   re-run calls `budget.check()` first and counts as one tool call; at most
-   `[codebase] max_repros` (default 5) run per look, and the rest say
-   "not re-run".
+   `..` or under `.git`, and never through a link in the copy). A repro is
+   a command a model wrote and nobody approved, so Lightwork runs it only
+   when the steps run in a container (a container backend, or the checker
+   image below). Otherwise the finding says "not re-run: the steps do not
+   run in a container", keeps the checker's word, and the card lists it as
+   a gap. In a container, after each look Lightwork runs each repro on a
+   fresh copy of the pinned commit, with the probe files written first,
+   through the same sandbox, contained step and network policy as the
+   tests, for at most 10 minutes. The probe files never reach the proposal.
+   A non-zero exit makes the finding `confirmed`. Exit zero or a timeout
+   makes it `not reproduced`, shown as read only. A refused probe file or a
+   work area that could not be set up makes it `not run`, and it is not
+   counted as re-run. Its severity stays either way, so a person decides.
+   After each author repair every confirmed repro runs again on the new
+   commit: exit zero is "fixed: its repro command passed on the repaired
+   version (the author saw the command)". The author did see the command,
+   so it could make the command pass without fixing the problem. The
+   checker's next brief therefore lists the finding again and asks it to
+   confirm the fix: with its id in `fixed` the card adds "a later look
+   confirmed it"; with its id in `still_open` the finding stays open and
+   the card shows both facts. Until a later look confirms it, the card has
+   the gap "N blocker(s) passed their repro command after a repair, but no
+   later look confirmed the fix", and the change never reads as clean.
+   Findings without a confirmed repro keep the checker's word, labelled
+   "fixed: the checker's word". Each re-run calls `budget.check()` first
+   and counts as one tool call; at most `[codebase] max_repros` (default 5)
+   run per look, and the rest say "not re-run".
 7. **Several independent checkers.** `[codebase] checkers` (1-3, default 1)
    checkers look at each version. Each is its own fresh-context run on its
    own copy and its brief lists only its own earlier findings, never
@@ -138,17 +150,24 @@ maverick code export payments ./payments   # plaintext clone for the owner
    Each extra checker adds one agent run per look, plus the repairs its
    blockers cause.
 8. **A checker container.** With `[codebase] checker_image` set, checker
-   runs and repro re-runs use the Docker backend (Podman when `[sandbox]
-   backend = "podman"`) with that image and the rest of `[sandbox]`
-   (network, memory, user), instead of the configured backend. The tests
-   still run on the configured backend. Before the first look Lightwork
-   runs a command that does nothing in the image; if that fails (no Docker,
-   a missing image, a database that would not start), the check reads
-   "could not run" with the reason. It never falls back to this computer.
-   `deploy/checker/` builds an image with Python 3.11 and 3.12, git,
-   PostgreSQL 16 and Chromium with Playwright; see its README for the
-   database variables (`MAVERICK_PG_DSN`, `DATABASE_URL`, `PGHOST` and the
-   rest).
+   runs and repro re-runs use that image instead of the configured work
+   area, with the rest of `[sandbox]` (network, memory, user). The image
+   never lowers isolation: the `local` and `docker` work areas run it on
+   Docker, `gvisor` on Docker with gVisor's runtime, and `podman` on Podman.
+   Any other work area (firecracker, kubernetes, ssh and the rest) cannot
+   carry an image this way, so the check reads "could not run". The image
+   is never pulled (`--pull never`): a missing one reads "could not run"
+   with the command an administrator runs to build or pull it. Only the
+   organisation sets the image, because it decides every re-run's result.
+   On a root host the image runs as its ordinary user (`1000:1000`) and
+   each throwaway copy is handed to that user; the copies stay inside a
+   folder only root can open. The tests still run on the configured
+   backend. Before the first look Lightwork runs a command that does
+   nothing in the image; if that fails, the check reads "could not run"
+   with the reason. It never falls back to this computer. `deploy/checker/`
+   builds an image with Python 3.11 and 3.12, git, PostgreSQL 16 and
+   Chromium with Playwright; see its README for the database variables
+   (`MAVERICK_PG_DSN`, `DATABASE_URL`, `PGHOST` and the rest).
 9. **One budget.** Every author and checker round charges one budget for the
    feature run (`--max-dollars`, else `[budget]` and the per-goal defaults).
    `budget.check()` runs before and after each round (a governed run returns
@@ -227,8 +246,8 @@ require_container = false  # true: refuse feature runs on the local backend
 A workspace's own `config.toml` may only tighten these: turn the checker
 and `require_container` on, raise the rounds, `checkers` or `max_repros`, or
 choose a stricter `default_protect`. `checker_image` and `checker_models`
-stay the organisation's choice; a workspace may set them only where the
-organisation has not.
+are the organisation's alone: a workspace file that sets them is ignored
+and reported.
 
 At the defaults a feature run makes at most five agent runs instead of one:
 the author's first run, two repair rounds and two checker looks. All of them

@@ -712,6 +712,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   container image. `deploy/checker/` builds one with Python 3.11 and 3.12,
   PostgreSQL 16 and a Playwright browser. If the image cannot be used, the
   check says "could not run"; it never runs on this computer instead.
+  Lightwork never pulls the image and never lowers your work area's
+  isolation for it; only the organisation's config may set it. Re-runs
+  happen only when the steps run in a container, and a fix that only
+  makes the re-run pass waits for a later look to confirm it.
 
 ### Fixed
 

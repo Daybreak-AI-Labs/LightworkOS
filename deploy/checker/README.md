@@ -29,11 +29,16 @@ docker build -t lightwork-checker:1 deploy/checker
 checker_image = "lightwork-checker:1"
 ```
 
-Checks and repro re-runs then use the Docker backend with this image
-(Podman when `[sandbox] backend = "podman"`), with the rest of `[sandbox]`:
-no network unless `allow_network` is on, the memory cap, and your own user.
-If the image cannot be used, the check is reported as "could not run" with
-the reason. It never runs on this computer instead.
+Checks and repro re-runs then run in this image instead of the configured
+work area: on Docker for the `local` and `docker` work areas, on Docker
+with gVisor's runtime for `gvisor`, and on Podman for `podman`. Any other
+work area cannot carry the image, so the check says it could not run. The
+rest of `[sandbox]` still applies: no network unless `allow_network` is on,
+and the memory cap. Lightwork never pulls the image: build it (or pull it)
+on the computer that runs the checks first. If the image cannot be used,
+the check is reported as "could not run" with the reason. It never runs on
+this computer instead. Only the organisation's own config sets
+`checker_image`; a workspace cannot.
 
 Behind a proxy that inspects TLS, pass a certificate bundle that includes
 the proxy's certificate while building. It is used for the build only and
@@ -55,10 +60,10 @@ The image sets these, so a repository's tests find the database:
 
 ## Limits
 
-- PostgreSQL does not run as root. Run Lightwork as an ordinary user: the
-  container then runs as your user and group. Run as root, the entrypoint
-  stops with exit code 97 before the command, and the check says it could
-  not run.
+- PostgreSQL does not run as root. When Lightwork itself runs as root, it
+  runs the image as the image's ordinary user (`1000:1000`) and hands each
+  throwaway copy to that user. Started some other way as root, the
+  entrypoint stops with exit code 97 before the command.
 - Exit code 97 always means the image's own setup failed, so Lightwork does
   not read it as the repro's result.
 - Only the headless browser is installed: Playwright's default headless
