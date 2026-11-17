@@ -73,7 +73,7 @@ log = logging.getLogger(__name__)
 # intentional override from the untouched compatibility constant.
 _INITIAL_DEFAULT_DB = data_dir("world.db")
 DEFAULT_DB = _INITIAL_DEFAULT_DB
-SCHEMA_VERSION = 55
+SCHEMA_VERSION = 56
 DEFAULT_BUSY_TIMEOUT_MS = 5000
 WAL_SWITCH_BUSY_TIMEOUT_MS = 50
 WAL_SWITCH_RETRY_SECONDS = 5.0
@@ -462,6 +462,10 @@ def _bootstrap_schema(conn: sqlite3.Connection) -> str:
 
 
 MIGRATIONS: dict[int, list[str]] = {
+    # v56: Postgres row policies for the tables that had none. SQLite has no
+    # row-level security (each workspace has its own file); this keeps the
+    # two schema heads aligned.
+    56: [],
     # v55: a run's question for a person with options and a recommendation
     # (maverick.decision_requests). Rows are scoped through their goal.
     55: _DECISION_REQUEST_SCHEMA,

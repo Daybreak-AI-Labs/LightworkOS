@@ -208,6 +208,26 @@ _NOT_SHARED = ("This installation keeps its records on this computer, not in a s
                "is nothing to check.")
 
 
+_NOT_COUNTED_HERE = ("Not counted on this page. Run maverick tenant rls-preflight on the server "
+                     "to count these")
+
+
+def _separation_state(info: dict) -> str:
+    legacy = int(info.get("null_tenant_rows") or 0) + int(info.get("empty_tenant_rows") or 0)
+    if info.get("missing"):
+        return "Not created yet"
+    if not info.get("owned_by_current_role"):
+        return "Lightwork's database account can't protect these"
+    reason = info.get("not_counted")
+    if reason == "busy":
+        return "Couldn't be counted because the table was busy. Try again later"
+    if info.get("null_tenant_rows") is None:
+        return _NOT_COUNTED_HERE
+    if legacy:
+        return f"{legacy:,} older entr{'ies' if legacy != 1 else 'y'} not assigned to a workspace"
+    return "Ready"
+
+
 def _database_separation() -> dict[str, Any]:
     from maverick.world_model_backends import pg_rls
     dsn = pg_rls.resolve_dsn(None)
@@ -222,21 +242,21 @@ def _database_separation() -> dict[str, Any]:
         return {"shared_database": True, "ready": False, "rows": [], "technical": [],
                 "summary": "Lightwork could not reach the shared database. Ask your IT team to check it."}
     try:
-        report = pg_rls.preflight(conn)
+        # A page view never lifts a policy to count: that would queue every
+        # other query on the table behind it.
+        report = pg_rls.preflight(conn, lift_force=False)
     finally:
         conn.close()
-    rows = []
-    for table, info in report["tables"].items():
-        legacy = int(info.get("null_tenant_rows") or 0) + int(info.get("empty_tenant_rows") or 0)
-        if info.get("missing"):
-            state = "Not created yet"
-        elif not info.get("owned_by_current_role"):
-            state = "Lightwork's database account can't protect these"
-        elif legacy:
-            state = f"{legacy:,} older entr{'ies' if legacy != 1 else 'y'} not assigned to a workspace"
-        else:
-            state = "Ready"
-        rows.append({"records": _words(table), "state": state, "ok": state == "Ready"})
+    rows = [{"records": _words(table), "state": state, "ok": state == "Ready"}
+            for table, info in report["tables"].items() for state in [_separation_state(info)]]
+    for table, info in (report.get("orphans") or {}).items():
+        if info.get("rows") is None and info.get("not_counted") != "hidden":
+            rows.append({"records": _words(table), "ok": False, "state": _NOT_COUNTED_HERE})
+        elif info.get("rows"):
+            n = int(info["rows"])
+            rows.append({"records": _words(table), "ok": False,
+                         "state": f"{n:,} entr{'ies' if n != 1 else 'y'} that belong to no "
+                                  f"{_words(info.get('parent')).lower()} row, so no workspace can see them"})
     waiting = sum(1 for row in rows if not row["ok"])
     summary = ("The shared database is ready to keep every workspace's records separate."
                if report["ready"] else
@@ -711,6 +731,15 @@ def _backfill_rows(report: dict[str, int]) -> list[dict[str, Any]]:
     return [{"records": _words(table), "count": int(count)} for table, count in sorted(report.items())]
 
 
+def _kept(report: dict[str, int]) -> tuple[list[dict[str, Any]], str]:
+    """Records left without a workspace because the workspace has its own."""
+    kept = [{"records": _words(table), "keys": [_bounded(k, 120) for k in keys[:51]]}
+            for table, keys in sorted((getattr(report, "skipped", None) or {}).items())]
+    note = (" Some older records were left as they are, because the workspace already has its own "
+            "under the same name." if kept else "")
+    return kept, note
+
+
 @router.post("/older-records/preview")
 async def older_records_preview(body: WorkspaceIn, request: Request) -> dict:
     _mutation(request)  # opens a database transaction (rolled back)
@@ -724,9 +753,10 @@ async def older_records_preview(body: WorkspaceIn, request: Request) -> dict:
     except Exception as exc:  # noqa: BLE001 -- connection errors can quote the address
         raise HTTPException(503, "Lightwork could not reach the shared database. Ask your IT team.") from exc
     total = sum(report.values())
-    return {"total": total, "rows": _backfill_rows(report),
+    kept, note = _kept(report)
+    return {"total": total, "rows": _backfill_rows(report), "kept": kept,
             "summary": (f"{total:,} older record{'s' if total != 1 else ''} would be assigned to this workspace."
-                        if total else "There are no older records to assign.")}
+                        if total else "There are no older records to assign.") + note}
 
 
 @router.post("/older-records/assign")
@@ -739,12 +769,16 @@ async def older_records_assign(body: WorkspaceIn, request: Request) -> dict:
     def work() -> dict[str, Any]:
         report = _backfill(workspace, False)
         total = sum(report.values())
-        return {"total": total, "rows": _backfill_rows(report),
-                "summary": f"Assigned {total:,} older record{'s' if total != 1 else ''} to the workspace."}
+        kept, note = _kept(report)
+        return {"total": total, "rows": _backfill_rows(report), "kept": kept,
+                "summary": f"Assigned {total:,} older record{'s' if total != 1 else ''} to the workspace."
+                           + note}
 
     def failure(exc: BaseException) -> str:
         if isinstance(exc, HTTPException):
             return str(exc.detail)
+        if isinstance(exc, ValueError):  # the backfill's own refusal, naming the table and key
+            return _bounded(str(exc), 600)
         if isinstance(exc, ImportError):
             return "The database driver isn't installed with this copy of Lightwork."
         return "The older records could not be assigned. Nothing was changed; ask your IT team to check the database."

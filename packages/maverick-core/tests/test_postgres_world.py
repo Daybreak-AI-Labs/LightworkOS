@@ -1534,19 +1534,49 @@ def test_rls_lets_a_tenant_with_an_encoded_id_use_its_workspace_rows(monkeypatch
 # every row policy. These tests run the product as a login that is neither a
 # superuser nor BYPASSRLS, once as the owner of the tables and once not.
 
-#: World tables with no row policy. None has a tenant column: the product
-#: scopes them through their parent goal or conversation in the SQL it writes
-#: (or, for ``halt`` and the provider ledgers, they are deployment-wide).
-#: Row-level security does NOT filter them. A new table gets a policy
-#: (``_RLS_TABLES``) or a deliberate place in this list.
-_TABLES_WITHOUT_ROW_POLICY = frozenset({
-    "approval_checks", "approval_signoffs", "artifacts", "attachments", "decision_requests", "episodes",
-    "goal_events", "goal_mutation_receipts", "goal_origins", "halt", "harness_addenda",
-    "harness_corpus", "harness_line_meta", "harness_transfer_tried", "messages",
-    "provider_cap_receipts", "provider_operation_attempt_backfill",
-    "provider_operation_attempts", "provider_spend", "questions", "rate_events",
-    "schema_migrations", "share_links", "signoffs", "turns",
+#: World tables that hold no workspace's data, so they carry no row policy.
+#: Every other table must have the forced ``mvk_tenant_isolation`` policy; a
+#: new table gets one (``_RLS_TABLES`` or ``_RLS_CHILD_TABLES``) or a reasoned
+#: place here.
+_GLOBAL_TABLES = frozenset({
+    "halt",                                  # the deployment-wide emergency stop
+    "provider_spend",                        # deployment-wide provider spend ceiling
+    "provider_cap_receipts",                 # receipts behind that ceiling
+    "provider_operation_attempts",           # provider call attempts counted against it
+    "provider_operation_attempt_backfill",   # a one-row "backfill done" marker
+    "rate_events",                           # dashboard rate-limit buckets, keyed by client
+    "schema_migrations",                     # the migration ledger
 })
+#: Tables other stores create on first use in the same database. They hold
+#: workspace data but are not world tables, so the world's policies do not
+#: cover them.
+_OWN_POLICY_TABLES = frozenset({
+    "governed_records",   # its backend installs and forces its own tenant policy
+})
+_KNOWN_GAPS = frozenset({
+    "mvk_vectors",        # vector memory (maverick.vector_store.pgvector_store): no row policy yet
+    "knowledge_chunks",   # knowledge store (maverick_knowledge.store): no row policy yet
+})
+
+
+def _create_other_stores(admin_dsn, login_dsn):
+    """Create the tables other stores make on first use, where this server can."""
+    import psycopg
+    from maverick.governed_records import PostgresGovernedRecordBackend
+
+    with psycopg.connect(admin_dsn, autocommit=True) as admin:
+        role = admin.execute("SELECT %s::text", (psycopg.conninfo.conninfo_to_dict(login_dsn)["user"],)
+                             ).fetchone()[0]
+        admin.execute(psycopg.sql.SQL("GRANT CREATE ON SCHEMA public TO {}").format(
+            psycopg.sql.Identifier(role)))
+        vector = admin.execute("SELECT 1 FROM pg_available_extensions WHERE name = 'vector'").fetchone()
+    PostgresGovernedRecordBackend("inventory", "inv", dsn=login_dsn)._ensure_schema()
+    if vector:
+        from maverick.vector_store.pgvector_store import PgVectorStore
+        from maverick_knowledge.store import PgVectorStore as KnowledgeStore
+
+        PgVectorStore(dsn=admin_dsn)
+        KnowledgeStore(admin_dsn, dim=3)
 
 
 @pytest.fixture(params=["not_owner", "owner"])
@@ -1672,18 +1702,30 @@ def test_rls_holds_for_a_login_the_policies_apply_to(rls_login):
 
 def test_rls_readiness_and_startup_for_a_login_the_policies_apply_to(rls_login, monkeypatch):
     """What `maverick tenant rls-preflight` and start-up report once the
-    policies are forced and rows with no workspace remain. The login cannot
-    count those rows any more, so readiness shows none; start-up does not
-    refuse, in enterprise mode either. A superuser is refused there."""
+    policies are forced and rows with no workspace remain. The owner counts
+    them with FORCE lifted in a transaction it rolls back; a login that does
+    not own the tables cannot see them and says so. Neither reports READY
+    while they remain. Start-up does not refuse, in enterprise mode either.
+    A superuser is refused there."""
     import psycopg
     from maverick.world_model_backends import pg_rls, postgres
     from maverick.world_model_backends.postgres import PostgresWorldModel
 
+    def forced():
+        with psycopg.connect(rls_login.admin, autocommit=True) as admin:
+            return admin.execute("SELECT relforcerowsecurity FROM pg_class "
+                                 "WHERE oid = 'goals'::regclass").fetchone()[0]
+
     with psycopg.connect(rls_login.dsn, autocommit=True) as conn:
         report = pg_rls.preflight(conn)
     assert {info["owned_by_current_role"] for info in report["tables"].values()} == {rls_login.owner}
-    assert report["tables"]["goals"]["null_tenant_rows"] == 0
-    assert report["ready"] is rls_login.owner
+    goals = report["tables"]["goals"]
+    if rls_login.owner:
+        assert (goals["counted_by"], goals["null_tenant_rows"]) == ("owner_no_force", 1)
+    else:
+        assert (goals["counted_by"], goals["null_tenant_rows"]) == (None, None)
+    assert report["ready"] is False
+    assert forced() is True  # the count changed nothing
     with psycopg.connect(rls_login.admin, autocommit=True) as conn:
         assert pg_rls.preflight(conn)["tables"]["goals"]["null_tenant_rows"] == 1
         assert pg_rls.backfill(conn, "rls_alpha", dry_run=True)["goals"] == 1
@@ -1702,45 +1744,340 @@ def test_rls_readiness_and_startup_for_a_login_the_policies_apply_to(rls_login, 
     with pytest.raises(RuntimeError, match="superuser, which bypasses row-level security"):
         PostgresWorldModel(dsn=rls_login.admin)
 
+    # Once nothing is hidden, the owner's check is READY.
+    with psycopg.connect(rls_login.admin) as conn:
+        pg_rls.backfill(conn, "rls_alpha")
+    with psycopg.connect(rls_login.dsn, autocommit=True) as conn:
+        report = pg_rls.preflight(conn)
+    assert report["tables"]["goals"]["null_tenant_rows"] == (0 if rls_login.owner else None)
+    assert report["ready"] is rls_login.owner
 
-def test_rls_does_not_filter_tables_that_have_no_tenant_column(rls_login):
-    """What row-level security does NOT do. Events, artifacts, questions,
-    turns and the other child tables have no tenant column and no row policy.
-    The product keeps them apart through their parent row, in the SQL it
-    writes. A raw statement without that predicate reads and changes every
-    workspace's rows there. The policies also key on a transaction setting,
-    which any SQL on the connection can set: they guard against a missed
-    predicate in the product, not against hostile SQL."""
+
+def test_rls_preflight_never_waits_long_and_reports_orphaned_rows(rls_login):
+    """Lifting FORCE to count queues an exclusive lock that every later query
+    on the table waits behind, so the owner's count gives up on a busy table
+    after a fifth of a second and says so; a page view never lifts it. Rows
+    whose task or approval is gone are hidden from every workspace: they are
+    reported, and the check is not READY until they are dealt with."""
+    import time
+
     import psycopg
-    from maverick.paths import tenant_scope
-    from maverick.world_model_backends.postgres import _RLS_TABLES, PostgresWorldModel
+    from maverick.world_model_backends import pg_rls
+
+    if not rls_login.owner:
+        pytest.skip("only the owner lifts FORCE to count")
+    with psycopg.connect(rls_login.admin) as conn:
+        pg_rls.backfill(conn, "rls_alpha")
+    with psycopg.connect(rls_login.admin) as holder, \
+            psycopg.connect(rls_login.dsn, autocommit=True) as conn:
+        holder.execute("SELECT count(*) FROM goals")  # an open transaction reading goals
+        started = time.monotonic()
+        report = pg_rls.preflight(conn)
+        assert time.monotonic() - started < 5
+        holder.rollback()
+    goals = report["tables"]["goals"]
+    assert (goals["null_tenant_rows"], goals["not_counted"]) == (None, "busy")
+    assert report["ready"] is False
+    with psycopg.connect(rls_login.dsn, autocommit=True) as conn:
+        viewed = pg_rls.preflight(conn, lift_force=False)
+    assert viewed["tables"]["goals"]["not_counted"] == "skipped" and viewed["ready"] is False
 
     with psycopg.connect(rls_login.admin, autocommit=True) as admin:
-        forced = dict(admin.execute(
-            "SELECT c.relname, c.relrowsecurity AND c.relforcerowsecurity FROM pg_class c "
-            "JOIN pg_namespace n ON n.oid = c.relnamespace "
-            "WHERE n.nspname = 'public' AND c.relkind = 'r'").fetchall())
-    assert {table for table, on in forced.items() if on} == set(_RLS_TABLES)
-    assert {table for table, on in forced.items() if not on} == _TABLES_WITHOUT_ROW_POLICY
+        admin.execute("INSERT INTO questions(goal_id, question, asked_at) VALUES(NULL, 'q', 0)")
+        admin.execute("INSERT INTO approval_signoffs(approval_id, approver, decision, decided_at) "
+                      "VALUES(999999, 'ana', 'approve', 0)")
+    with psycopg.connect(rls_login.dsn, autocommit=True) as conn:
+        report = pg_rls.preflight(conn)
+    assert {t: i["rows"] for t, i in report["orphans"].items() if i["rows"]} == {
+        "questions": 1, "approval_signoffs": 1}
+    assert report["ready"] is False
+    with psycopg.connect(rls_login.admin, autocommit=True) as admin:
+        admin.execute("DELETE FROM questions WHERE goal_id IS NULL")
+        admin.execute("DELETE FROM approval_signoffs WHERE approval_id = 999999")
+    with psycopg.connect(rls_login.dsn, autocommit=True) as conn:
+        assert pg_rls.preflight(conn)["ready"] is True
 
-    with PostgresWorldModel(dsn=rls_login.dsn) as world:
-        goals = {}
-        for tenant in ("rls_alpha", "rls_beta"):
-            with tenant_scope(tenant=tenant):
-                goals[tenant] = world.create_goal(f"{tenant} goal")
-                world.append_event(goals[tenant], "agent", "note", f"{tenant} event")
-        beta = goals["rls_beta"]
-        with tenant_scope(tenant="rls_alpha"):
-            # The product's own read applies the parent predicate.
-            assert world.goal_events(beta) == []
-            assert len(world.goal_events(goals["rls_alpha"])) == 1
-            # Raw SQL is not filtered: both workspaces' events and the early one.
-            assert _raw(world, "SELECT count(*) FROM goal_events") == [(3,)]
-            assert _raw(world, "UPDATE goal_events SET kind = kind WHERE goal_id = %s", (beta,)) == 1
+
+def _seed_workspace_rows(admin, tenant):
+    """One row of ``tenant`` in every table a child policy or a new tenant
+    column policy covers, written by a login the policies do not apply to."""
+    now = 1800000000.0
+    goal = admin.execute(
+        "INSERT INTO goals(title, created_at, updated_at, tenant_id) "
+        "VALUES(%s, %s, %s, %s) RETURNING id", (f"{tenant} goal", now, now, tenant)).fetchone()[0]
+    approval = admin.execute(
+        "INSERT INTO approvals(action, requested_at, tenant_id) VALUES('send', %s, %s) "
+        "RETURNING id", (now, tenant)).fetchone()[0]
+    conversation = admin.execute(
+        "INSERT INTO conversations(channel, user_id, created_at, last_seen, tenant_id) "
+        "VALUES('web', %s, %s, %s, %s) RETURNING id", (tenant, now, now, tenant)).fetchone()[0]
+    for statement, params in (
+        ("INSERT INTO approval_signoffs(approval_id, approver, decision, decided_at) "
+         "VALUES(%s, 'ana', 'approve', %s)", (approval, now)),
+        ("INSERT INTO artifacts(goal_id, created_at) VALUES(%s, %s)", (goal, now)),
+        ("INSERT INTO attachments(goal_id, filename, mime, size_bytes, sha256, path, created_at) "
+         "VALUES(%s, 'a.txt', 'text/plain', 1, 'x', 'p', %s)", (goal, now)),
+        ("INSERT INTO decision_requests(goal_id, area, question, options, recommended, reason, "
+         "created_at, expires_at) VALUES(%s, 'a', 'q', '[]', 0, 'r', %s, %s)", (goal, now, now)),
+        ("INSERT INTO episodes(goal_id, started_at) VALUES(%s, %s)", (goal, now)),
+        ("INSERT INTO goal_events(goal_id, agent, kind, content, ts) "
+         "VALUES(%s, 'agent', 'note', 'c', %s)", (goal, now)),
+        ("INSERT INTO goal_mutation_receipts(goal_id, kind, operation_id, actor, request_hash, "
+         "receipt, created_at) VALUES(%s, 'edit', %s, 'ana', 'h', 'r', %s)", (goal, tenant, now)),
+        ("INSERT INTO goal_origins(goal_id, kind, ref, created_at) VALUES(%s, 'manual', %s, %s)",
+         (goal, tenant, now)),
+        ("INSERT INTO messages(goal_id, role, content, ts) VALUES(%s, 'user', 'c', %s)", (goal, now)),
+        ("INSERT INTO questions(goal_id, question, asked_at) VALUES(%s, 'q', %s)", (goal, now)),
+        ("INSERT INTO share_links(goal_id, token_sha256, created_at) VALUES(%s, %s, %s)",
+         (goal, tenant, now)),
+        ("INSERT INTO signoffs(goal_id, decision, created_at) VALUES(%s, 'certify', %s)", (goal, now)),
+        ("INSERT INTO turns(conversation_id, role, content, ts) VALUES(%s, 'user', 'c', %s)",
+         (conversation, now)),
+        ("INSERT INTO approval_checks(id, workspace, checked_at, outcome) "
+         "VALUES(%s, %s, %s, 'allowed')", (tenant, tenant, now)),
+        ("INSERT INTO harness_addenda(key, block, updated_at, tenant_id) VALUES('k', 'b', %s, %s)",
+         (now, tenant)),
+        ("INSERT INTO harness_corpus(kind, key, seq, row, tenant_id) VALUES('live', 'k', 0, 'r', %s)",
+         (tenant,)),
+        ("INSERT INTO harness_line_meta(line_id, record, updated_at, tenant_id) "
+         "VALUES('l', 'r', %s, %s)", (now, tenant)),
+        ("INSERT INTO harness_transfer_tried(line_id, ts, tenant_id) VALUES('l', %s, %s)",
+         (now, tenant)),
+    ):
+        admin.execute(statement, params)
+    return SimpleNamespace(goal=goal, conversation=conversation)
+
+
+def _newly_covered_tables():
+    from maverick.world_model_backends.postgres import (
+        _RLS_CHILD_TABLES,
+        _RLS_RAW_TENANT_TABLES,
+        _RLS_STAMPED_TABLES,
+    )
+
+    return ("approval_checks", *_RLS_RAW_TENANT_TABLES, *_RLS_STAMPED_TABLES, *_RLS_CHILD_TABLES)
+
+
+def _assert_each_workspace_sees_only_its_own(world, seeded):
+    """Raw SQL that names no workspace, in each workspace's scope, finds
+    exactly that workspace's one row in every newly covered table."""
+    import psycopg
+    from maverick.paths import tenant_scope
+
+    for tenant, other in (("rls_alpha", "rls_beta"), ("rls_beta", "rls_alpha")):
+        mine, theirs = seeded[tenant], seeded[other]
+        with tenant_scope(tenant=tenant):
+            for table in _newly_covered_tables():
+                assert _raw(world, f"SELECT count(*) FROM {table}") == [(1,)], (tenant, table)
+                assert _raw(world, f"DELETE FROM {table} WHERE false") == 0
+            assert _raw(world, "SELECT goal_id, tenant_id FROM goal_events") == [(mine.goal, tenant)]
+            assert _raw(world, "UPDATE goal_events SET kind = kind WHERE goal_id = %s",
+                        (theirs.goal,)) == 0
+            # Nor can it write a row under the other workspace's goal, or a
+            # turn in its own conversation that names the other's goal.
+            for statement, params in (
+                ("INSERT INTO goal_events(goal_id, agent, kind, content, ts) "
+                 "VALUES(%s, 'agent', 'note', 'planted', 0)", (theirs.goal,)),
+                ("INSERT INTO turns(conversation_id, goal_id, role, content, ts) "
+                 "VALUES(%s, %s, 'user', 'planted', 0)", (mine.conversation, theirs.goal)),
+            ):
+                with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                    _raw(world, statement, params)
+            # The copied tenant is taken from the goal, never from the writer.
             with world._tx() as cur:
-                cur.execute("SELECT set_config('maverick.tenant', 'rls_beta', true)")
-                cur.execute("SELECT id FROM goals")
-                assert cur.fetchall() == [(beta,)]
+                cur.execute("INSERT INTO goal_events(goal_id, agent, kind, content, ts, tenant_id) "
+                            "VALUES(%s, 'agent', 'note', 'stamped', 0, %s) RETURNING tenant_id",
+                            (mine.goal, other))
+                assert cur.fetchone() == (tenant,)
+                cur.execute("DELETE FROM goal_events WHERE content = 'stamped'")
+    for table in _newly_covered_tables():
+        assert _raw(world, f"SELECT count(*) FROM {table}") == [(0,)], table
+
+
+def test_every_table_with_workspace_data_has_a_forced_row_policy(rls_login):
+    """Every table in the live schema either has the forced tenant policy or
+    is on the commented list of deployment-wide tables, and raw SQL with no
+    workspace predicate sees only the bound workspace's rows in each table
+    the policies newly cover. The policies key on a transaction setting that
+    any SQL on the connection can set: they guard against a missed predicate
+    in the product, not against hostile SQL (see docs/multi-tenancy.md)."""
+    import psycopg
+    from maverick.world_model_backends.postgres import PostgresWorldModel
+
+    _create_other_stores(rls_login.admin, rls_login.dsn)
+    with psycopg.connect(rls_login.admin, autocommit=True) as admin:
+        tables = {row[0] for row in admin.execute(
+            "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p')").fetchall()}
+        own = dict(admin.execute(
+            "SELECT c.relname, c.relforcerowsecurity AND EXISTS (SELECT 1 FROM pg_policy p "
+            "WHERE p.polrelid = c.oid) FROM pg_class c WHERE c.relname = ANY(%s)",
+            (list(_OWN_POLICY_TABLES),)).fetchall())
+        seeded = {tenant: _seed_workspace_rows(admin, tenant) for tenant in ("rls_alpha", "rls_beta")}
+    assert tables >= _GLOBAL_TABLES | _OWN_POLICY_TABLES
+    assert all(own.values()), own
+    with PostgresWorldModel(dsn=rls_login.dsn) as world:
+        unprotected = sorted(t for t in tables - _GLOBAL_TABLES - _OWN_POLICY_TABLES - _KNOWN_GAPS
+                             if not world._rls_policy_is_active(t))
+        assert unprotected == [], "a table with workspace data has no forced row policy"
+        _assert_each_workspace_sees_only_its_own(world, seeded)
+
+
+def test_v56_fills_the_event_tenant_copy_only_where_row_level_security_is_on(rls_login, monkeypatch):
+    """Without row-level security the upgrade only adds the column and the
+    triggers: existing events are not rewritten. Turning it on fills the copy
+    in short batches before the policy that reads it is installed."""
+    import psycopg
+    from maverick.world_model_backends import postgres as pg
+
+    if not rls_login.owner:
+        pytest.skip("the owner turns row-level security on")
+    with psycopg.connect(rls_login.admin, autocommit=True) as admin:
+        for table in (*pg._RLS_TABLES, *pg._RLS_CHILD_TABLES):  # back to a store without it
+            admin.execute(f"DROP POLICY IF EXISTS mvk_tenant_isolation ON {table}")
+            admin.execute(f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY")
+            admin.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")
+        for table in pg._RLS_STAMPED_TABLES:
+            admin.execute(f"DROP INDEX IF EXISTS idx_pg_{table}_tenant")
+        goal = admin.execute("INSERT INTO goals(title, created_at, updated_at, tenant_id) "
+                             "VALUES('g', 0, 0, 'rls_alpha') RETURNING id").fetchone()[0]
+        for number in range(5):
+            admin.execute("INSERT INTO goal_events(goal_id, agent, kind, content, ts) "
+                          "VALUES(%s, 'agent', 'note', %s, 0)", (goal, str(number)))
+        # What v55 left: events with no copy. Re-running v56 without RLS fills nothing.
+        admin.execute("ALTER TABLE goal_events DISABLE TRIGGER goal_events_goal_tenant")
+        admin.execute("UPDATE goal_events SET tenant_id = NULL")
+        admin.execute("ALTER TABLE goal_events ENABLE TRIGGER goal_events_goal_tenant")
+        with admin.cursor() as cur:
+            for statement in dict(pg.MIGRATIONS)[56]:
+                cur.execute(statement)
+        assert admin.execute("SELECT count(*) FROM goal_events WHERE tenant_id IS NULL"
+                             ).fetchone() == (6,)  # 5 here and the fixture's early event
+        assert admin.execute("SELECT to_regclass('idx_pg_goal_events_tenant')").fetchone() == (None,)
+    batches = []
+    real = pg.PostgresWorldModel._fill_stamped_batch
+    monkeypatch.setattr(pg, "_STAMP_FILL_BATCH", 2)
+    monkeypatch.setattr(pg.PostgresWorldModel, "_fill_stamped_batch",
+                        lambda self, table, low, high: batches.append(table) or real(self, table, low, high))
+    monkeypatch.setenv("MAVERICK_PG_RLS", "1")
+    with pg.PostgresWorldModel(dsn=rls_login.dsn) as world:
+        assert world._rls_policy_is_active("goal_events")
+    assert batches.count("goal_events") >= 3
+    with psycopg.connect(rls_login.admin, autocommit=True) as admin:
+        assert admin.execute("SELECT count(*) FROM goal_events e JOIN goals g ON g.id = e.goal_id "
+                             "WHERE e.tenant_id IS DISTINCT FROM g.tenant_id").fetchone() == (0,)
+        assert admin.execute("SELECT count(*) FROM goal_events WHERE goal_id = %s AND tenant_id = "
+                             "'rls_alpha'", (goal,)).fetchone() == (5,)
+        assert admin.execute("SELECT to_regclass('idx_pg_goal_events_tenant')").fetchone() != (None,)
+
+
+def test_v56_adds_row_policies_to_a_database_already_enforcing_them(postgres_test_dsn, monkeypatch):
+    """A database at v55 with row-level security on and rows of two
+    workspaces: the upgrade, run by the non-superuser owner without turning
+    row-level security on in that process, installs the new policies. An
+    ordinary login then starts with it on and sees only its own rows."""
+    import psycopg
+    from maverick.world_model_backends import postgres as pg
+    from psycopg import sql
+    from psycopg.conninfo import make_conninfo
+
+    roles = {name: "mvk_v56_" + name + uuid.uuid4().hex[:8] for name in ("owner", "app")}
+    password = uuid.uuid4().hex
+    with psycopg.connect(postgres_test_dsn, autocommit=True) as admin:
+        for role in roles.values():
+            admin.execute(sql.SQL("CREATE ROLE {} LOGIN PASSWORD {} NOSUPERUSER NOBYPASSRLS "
+                                  "NOCREATEDB NOCREATEROLE").format(sql.Identifier(role),
+                                                                     sql.Literal(password)))
+        admin.execute(sql.SQL("GRANT USAGE, CREATE ON SCHEMA public TO {}").format(
+            sql.Identifier(roles["owner"])))
+        admin.execute(sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(sql.Identifier(roles["app"])))
+    owner, app = (make_conninfo(postgres_test_dsn, user=roles[name], password=password)
+                  for name in ("owner", "app"))
+    try:
+        with monkeypatch.context() as v55:
+            v55.setattr(pg, "MIGRATIONS", [m for m in pg.MIGRATIONS if m[0] <= 55])
+            v55.setattr(pg, "_PG_SCHEMA_VERSION", 55)
+            v55.setattr(pg, "_RLS_TABLES", tuple(t for t in pg._RLS_TABLES
+                                                if t not in _newly_covered_tables()))
+            v55.setattr(pg, "_RLS_CHILD_TABLES", {})
+            v55.setattr(pg, "_RLS_STAMPED_TABLES", ())
+            v55.setenv("MAVERICK_PG_RLS", "1")
+            with pg.PostgresWorldModel(dsn=owner) as old:
+                assert old.schema_version == 55
+                assert not old._rls_policy_is_active("goal_events")
+        with psycopg.connect(postgres_test_dsn, autocommit=True) as admin:
+            seeded = {t: _seed_workspace_rows(admin, t) for t in ("rls_alpha", "rls_beta")}
+            legacy = admin.execute("INSERT INTO goals(title, created_at, updated_at) "
+                                   "VALUES('before workspaces', 0, 0) RETURNING id").fetchone()[0]
+            admin.execute("INSERT INTO goal_events(goal_id, agent, kind, content, ts) "
+                          "VALUES(%s, 'agent', 'note', 'early', 0)", (legacy,))
+            for statement in ("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {}",
+                              "GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO {}"):
+                admin.execute(sql.SQL(statement).format(sql.Identifier(roles["app"])))
+        monkeypatch.setenv("MAVERICK_PG_RLS", "0")
+        with pg.PostgresWorldModel(dsn=owner) as upgraded:
+            assert upgraded.schema_version == 56
+            assert all(upgraded._rls_policy_is_active(t) for t in _newly_covered_tables())
+        with psycopg.connect(postgres_test_dsn, autocommit=True) as admin:
+            # Existing events and episodes took their goal's workspace.
+            assert admin.execute(
+                "SELECT count(*) FROM goal_events e JOIN goals g ON g.id = e.goal_id "
+                "WHERE e.tenant_id IS DISTINCT FROM g.tenant_id").fetchone() == (0,)
+        monkeypatch.setenv("MAVERICK_PG_RLS", "1")
+        with pg.PostgresWorldModel(dsn=app) as world:
+            _assert_each_workspace_sees_only_its_own(world, seeded)
+            # A backfilled goal brings its events with it.
+            with psycopg.connect(postgres_test_dsn) as admin:
+                from maverick.world_model_backends import pg_rls
+                pg_rls.backfill(admin, "rls_alpha")
+            from maverick.paths import tenant_scope
+            with tenant_scope(tenant="rls_alpha"):
+                assert _raw(world, "SELECT content FROM goal_events WHERE goal_id = %s",
+                            (legacy,)) == [("early",)]
+    finally:
+        with psycopg.connect(postgres_test_dsn, autocommit=True) as admin:
+            for role in roles.values():
+                admin.execute(sql.SQL("REASSIGN OWNED BY {} TO CURRENT_USER").format(sql.Identifier(role)))
+                admin.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(role)))
+                admin.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(role)))
+
+
+def test_a_pending_migration_as_a_login_that_does_not_own_the_tables_says_what_to_do(rls_login):
+    """Starting a newer version as a login that does not own the tables
+    explains how to finish the update instead of printing a traceback."""
+    import psycopg
+
+    if rls_login.owner:
+        pytest.skip("the owner can run the update")
+    from maverick.world_model_backends.postgres import PostgresWorldModel
+
+    with psycopg.connect(rls_login.admin, autocommit=True) as admin:
+        admin.execute("DELETE FROM schema_migrations WHERE version = 56")
+    with pytest.raises(RuntimeError, match="does not own") as raised:
+        PostgresWorldModel(dsn=rls_login.dsn)
+    assert "Start Lightwork once as the owner of the tables" in str(raised.value)
+    assert "Traceback" not in str(raised.value) and "psycopg" not in str(raised.value)
+
+
+def test_erasure_blocked_by_a_row_another_workspace_owns_says_so(rls_login):
+    """A turn in one workspace's conversation that names another's task (it
+    predates the policy that refuses it) stops that task's erasure. The
+    erasure changes nothing and says why, instead of a database error."""
+    import psycopg
+    from maverick.paths import tenant_scope
+    from maverick.world_model_backends.postgres import ErasureBlocked, PostgresWorldModel
+
+    with psycopg.connect(rls_login.admin, autocommit=True) as admin:
+        seeded = {tenant: _seed_workspace_rows(admin, tenant) for tenant in ("rls_alpha", "rls_beta")}
+        admin.execute("UPDATE turns SET goal_id = %s WHERE conversation_id = %s",
+                      (seeded["rls_beta"].goal, seeded["rls_beta"].conversation))
+        admin.execute("INSERT INTO turns(conversation_id, goal_id, role, content, ts) "
+                      "VALUES(%s, %s, 'user', 'stray', 0)",
+                      (seeded["rls_alpha"].conversation, seeded["rls_beta"].goal))
+    with PostgresWorldModel(dsn=rls_login.dsn) as world, tenant_scope(tenant="rls_beta"):
+        with pytest.raises(ErasureBlocked, match="Nothing was erased.*in turns"):
+            world.erase_conversations([seeded["rls_beta"].conversation])
+        assert world.get_goal(seeded["rls_beta"].goal) is not None
 
 
 # --- Backend parity (SQLite v13 -> v20 catch-up) -----------------------------

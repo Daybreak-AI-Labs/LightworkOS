@@ -48,6 +48,47 @@ def test_preflight_reports_ownership_and_legacy_rows(monkeypatch):
     assert "NOT READY" in res.output
 
 
+def test_preflight_says_how_it_counted_and_what_it_could_not(monkeypatch):
+    monkeypatch.setattr(pg_rls, "resolve_dsn", lambda dsn=None: "x")
+    monkeypatch.setattr(pg_rls, "connect", lambda *a, **k: _Conn())
+    monkeypatch.setattr(pg_rls, "preflight", lambda conn: {
+        "role": "app",
+        "tables": {"goals": {"owner": "app", "owned_by_current_role": True,
+                             "null_tenant_rows": 0, "empty_tenant_rows": 0,
+                             "counted_by": "owner_no_force"},
+                   "facts": {"owner": "dba", "owned_by_current_role": False,
+                             "null_tenant_rows": None, "empty_tenant_rows": None,
+                             "counted_by": None}},
+        "ready": False,
+    })
+    res = CliRunner().invoke(main, ["tenant", "rls-preflight"])
+    assert res.exit_code == 0, res.output
+    assert "counted as: " + pg_rls.COUNT_METHODS["owner_no_force"] in res.output
+    assert "facts: NOT owned (owner=dba), NOT COUNTED" in res.output
+    assert "Some tables were not counted" in res.output
+    assert "NOT READY" in res.output
+
+
+def test_preflight_names_a_busy_table_without_blaming_the_login(monkeypatch):
+    monkeypatch.setattr(pg_rls, "resolve_dsn", lambda dsn=None: "x")
+    monkeypatch.setattr(pg_rls, "connect", lambda *a, **k: _Conn())
+    monkeypatch.setattr(pg_rls, "preflight", lambda conn: {
+        "role": "app",
+        "tables": {"goals": {"owner": "app", "owned_by_current_role": True,
+                             "null_tenant_rows": None, "empty_tenant_rows": None,
+                             "counted_by": None, "not_counted": "busy"}},
+        "orphans": {"questions": {"rows": 3, "parent": "goals", "counted_by": "owner",
+                                  "not_counted": None}},
+        "ready": False,
+    })
+    res = CliRunner().invoke(main, ["tenant", "rls-preflight"])
+    assert "goals: owned, could not count: the table was busy" in res.output
+    assert "hides" not in res.output and "Run this check as the table owner" not in res.output
+    assert "Run the check again" in res.output
+    assert "questions: 3 row(s) with no goals row" in res.output
+    assert "orphaned rows no workspace can see" in res.output
+
+
 def test_preflight_ready_says_ready(monkeypatch):
     monkeypatch.setattr(pg_rls, "resolve_dsn", lambda dsn=None: "x")
     monkeypatch.setattr(pg_rls, "connect", lambda *a, **k: _Conn())
@@ -67,6 +108,18 @@ def test_backfill_reports_assigned_rows(monkeypatch):
     res = CliRunner().invoke(main, ["tenant", "backfill", "--tenant", "acme"])
     assert res.exit_code == 0, res.output
     assert "assigned 5 row(s) to tenant 'acme'" in res.output
+
+
+def test_backfill_lists_records_left_without_a_workspace(monkeypatch):
+    report = pg_rls.BackfillReport(goals=1, harness_addenda=0)
+    report.skipped = {"harness_addenda": ["model-x"]}
+    monkeypatch.setattr(pg_rls, "resolve_dsn", lambda dsn=None: "x")
+    monkeypatch.setattr(pg_rls, "connect", lambda *a, **k: _Conn())
+    monkeypatch.setattr(pg_rls, "backfill", lambda conn, tid, dry_run=False: report)
+    res = CliRunner().invoke(main, ["tenant", "backfill", "--tenant", "acme"])
+    assert res.exit_code == 0, res.output
+    assert "harness_addenda: left without a workspace, because 'acme' already has its own: " \
+           "model-x" in res.output
 
 
 def test_backfill_requires_tenant():

@@ -23,6 +23,13 @@ local database file (including this deployment's own world.db).
 ``DATABASE_URL`` is operator-set, so it bypasses the model-URL opt-in. An active
 capability host grant still limits its destinations.
 
+Neither may name Lightwork's own Postgres world database (the same host, port
+and database as the world DSN): its row policies trust a session setting that
+any SQL on the connection can change. Only the organisation can allow it, with
+``MAVERICK_DATABASE_ALLOW_WORLD_DATABASE=1`` or ``[tools]
+database_allow_world_database = true`` in its own settings, never a
+workspace's.
+
 ops:
   - query(sql, url, limit, confirm)
 """
@@ -30,13 +37,14 @@ from __future__ import annotations
 
 import contextlib
 import fnmatch
+import functools
 import ipaddress
 import logging
 import math
 import os
 import re
 from typing import Any
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from .._envparse import coerce_bool, is_truthy
 from ..connector_attempts import CONTROL_ERRORS
@@ -206,6 +214,237 @@ def _model_supplied_url_denial(url: str, allow_hosts: tuple[str, ...]) -> str | 
             "operator-set connection instead."
         )
     return None
+
+
+_WORLD_DATABASE_DENIAL = (
+    "⚠ DENIED: this address is Lightwork's own records database. A query there could reach "
+    "every workspace's records, because its row protection trusts a setting any query can "
+    "change. Use a separate database, or ask your organisation to allow it with [tools] "
+    "database_allow_world_database. The tool was not executed."
+)
+_UNCOMPARABLE_DENIAL = (
+    "⚠ DENIED: Lightwork cannot tell whether this address names its own records database, "
+    "because a service definition it cannot read decides the server. Give the address its own "
+    "host and database, or ask your organisation to allow it with [tools] "
+    "database_allow_world_database. The tool was not executed."
+)
+# libpq's environment defaults, which complete an address that leaves a part out.
+_PG_ENV_DEFAULTS = (("host", "PGHOST"), ("hostaddr", "PGHOSTADDR"), ("port", "PGPORT"),
+                    ("dbname", "PGDATABASE"), ("user", "PGUSER"))
+
+
+class _Uncomparable(ValueError):
+    """The address takes its server from a service definition this check
+    cannot read, so it cannot be told apart from the world database."""
+
+
+def _world_database_allowed() -> bool:
+    """The organisation's switch: the environment or the organisation's own
+    settings, never a workspace overlay. Unreadable settings refuse."""
+    env = os.environ.get("MAVERICK_DATABASE_ALLOW_WORLD_DATABASE", "").strip()
+    if env:
+        return is_truthy(env)
+    try:
+        from ..config import config_source_errors, load_global_config
+        if config_source_errors(include_tenant=True):
+            return False
+        return coerce_bool((load_global_config() or {}).get("tools", {}).get(
+            "database_allow_world_database"))
+    except Exception:  # noqa: BLE001 -- unreadable settings keep the refusal
+        return False
+
+
+_SHORT_IPV4 = re.compile(r"(0x[0-9a-f]+|[0-9]+)(\.(0x[0-9a-f]+|[0-9]+)){0,3}")
+
+
+def _own_names() -> set[str]:
+    import socket
+
+    name = socket.gethostname().strip().rstrip(".").lower()
+    return {name, name.split(".", 1)[0]} - {""}
+
+
+def _proc_addresses() -> set[str]:
+    """Every address assigned to this computer, where Linux lists them."""
+    found: set[str] = set()
+    with contextlib.suppress(OSError):
+        previous = ""
+        with open("/proc/net/fib_trie", encoding="ascii") as trie:
+            for line in trie:
+                if "/32 host LOCAL" in line:
+                    found.add(previous.rsplit(" ", 1)[-1])
+                previous = line.strip()
+    with contextlib.suppress(OSError, ValueError):
+        with open("/proc/net/if_inet6", encoding="ascii") as inet6:
+            for line in inet6:
+                found.add(str(ipaddress.IPv6Address(int(line.split()[0], 16))))
+    return found
+
+
+#: Longest wait for the host-name lookup in :func:`_own_addresses`.
+_OWN_LOOKUP_SECONDS = 1.0
+
+
+@functools.lru_cache(maxsize=1)
+def _own_addresses() -> frozenset[str]:
+    """This computer's own addresses, loopback or not, looked up once per
+    process. The host-name lookup runs in a helper thread and is given up
+    after :data:`_OWN_LOOKUP_SECONDS`, so a slow resolver costs one short
+    wait, not one per query."""
+    import socket
+    import threading
+
+    found = set(_proc_addresses())
+    resolved: list[str] = []
+
+    def lookup() -> None:
+        with contextlib.suppress(OSError, UnicodeError):
+            resolved.extend(str(info[4][0]).split("%", 1)[0]
+                            for info in socket.getaddrinfo(socket.gethostname(), None))
+
+    worker = threading.Thread(target=lookup, name="maverick-own-addresses", daemon=True)
+    worker.start()
+    worker.join(_OWN_LOOKUP_SECONDS)
+    return frozenset(found | set(resolved))
+
+
+def _ip(host: str):
+    try:
+        return ipaddress.ip_address(host.split("%", 1)[0])
+    except ValueError:
+        if not _SHORT_IPV4.fullmatch(host):
+            return None
+    import socket
+
+    try:  # 127.1, 2130706433, 0x7f.1: the forms libpq's resolver accepts
+        return ipaddress.IPv4Address(socket.inet_aton(host))
+    except OSError:
+        return None
+
+
+def _endpoint_host(host: str) -> str:
+    """``local`` for every way of naming this computer: no host or a socket
+    path (percent-encoded too), ``localhost``, a loopback or unspecified
+    address in any form (``127.0.0.0/8`` and its short forms such as
+    ``127.1``, ``0.0.0.0``, ``::1``, ``::ffff:127.0.0.1``), its host name
+    and its own other addresses."""
+    host = unquote(host).strip().strip("[]").rstrip(".").lower()
+    if not host or host.startswith(("/", "@")) or host == "localhost" or host.endswith(".localhost"):
+        return "local"
+    ip = _ip(host)
+    if ip is None:
+        return "local" if host in _own_names() else host
+    ip = getattr(ip, "ipv4_mapped", None) or ip
+    if ip.is_loopback or ip.is_unspecified or str(ip) in _own_addresses():
+        return "local"
+    return str(ip)
+
+
+def _service_params(name: str) -> dict[str, str] | None:
+    """The parameters of service ``name`` from the files libpq reads (the
+    user's, then the system's), or ``None`` when none defines it."""
+    import configparser
+
+    user = os.environ.get("PGSERVICEFILE") or os.path.expanduser("~/.pg_service.conf")
+    sysconf = os.environ.get("PGSYSCONFDIR")
+    system = ([os.path.join(sysconf, "pg_service.conf")] if sysconf else
+              ["/etc/postgresql-common/pg_service.conf", "/etc/pg_service.conf"])
+    for path in (user, *system):
+        parser = configparser.ConfigParser(interpolation=None, strict=False)
+        parser.optionxform = str  # type: ignore[assignment,method-assign]
+        try:
+            if parser.read(path, encoding="utf-8") and parser.has_section(name):
+                return {k.lower(): v.strip() for k, v in parser.items(name)}
+        except (configparser.Error, OSError, UnicodeError):
+            continue
+    return None
+
+
+def _complete_from_environment(params: dict[str, str]) -> dict[str, str]:
+    """Fill what libpq would: a service definition (``service=`` or
+    ``PGSERVICE``) first, read from the service files, then PG* variables.
+    A service that cannot be read leaves the server unknown without a host or
+    database (refused as uncomparable), and any port without a port."""
+    service = params.get("service") or os.environ.get("PGSERVICE", "")
+    if service:
+        defined = _service_params(service)
+        if defined is None:
+            if not (params.get("host") or params.get("hostaddr")) or not params.get("dbname"):
+                raise _Uncomparable("service")
+            if not params.get("port"):
+                params["port"] = "*"
+        else:
+            for key, value in defined.items():
+                if not params.get(key):
+                    params[key] = value
+    for key, env in _PG_ENV_DEFAULTS:
+        if not params.get(key):
+            params[key] = os.environ.get(env, "")
+    if not params.get("user"):
+        import getpass
+        with contextlib.suppress(Exception):
+            params["user"] = getpass.getuser()
+    return params
+
+
+def _postgres_params(dsn: str) -> dict[str, str] | None:
+    """libpq parameters of a Postgres URL (any SQLAlchemy driver suffix) or
+    key=value DSN; ``None`` for another kind of database."""
+    if "://" not in dsn:
+        from psycopg.conninfo import conninfo_to_dict
+        return {k: str(v) for k, v in conninfo_to_dict(dsn).items() if v is not None}
+    split = urlsplit(dsn)
+    if split.scheme.split("+", 1)[0].lower() not in {"postgresql", "postgres"}:
+        return None
+    params = {k.lower(): v[-1] for k, v in parse_qs(split.query, keep_blank_values=True).items()}
+    authority = split.netloc.rsplit("@", 1)[-1]
+    hosts, ports = [], []
+    for item in authority.split(",") if authority else ():
+        part = urlsplit("//" + item)
+        hosts.append(part.hostname or "")
+        ports.append(str(part.port or ""))
+    params.setdefault("host", ",".join(hosts))
+    params.setdefault("port", ",".join(ports))
+    params.setdefault("dbname", unquote(split.path.lstrip("/")))
+    params.setdefault("user", unquote(split.username or ""))
+    return params
+
+
+def _postgres_endpoints(dsn: str) -> set[tuple[str, str, str]]:
+    """``(host, port, database)`` for each server a Postgres DSN may reach."""
+    params = _postgres_params(dsn)
+    if params is None:
+        return set()
+    params = _complete_from_environment(params)
+    database = params.get("dbname") or params.get("user") or ""
+    ports = [p.strip() or "5432" for p in params.get("port", "").split(",")]
+    found = set()
+    for key in ("host", "hostaddr"):
+        for i, host in enumerate(params.get(key, "").split(",")):
+            # No host at all is libpq's local socket.
+            if host.strip() or (key == "host" and i == 0):
+                found.add((_endpoint_host(host), ports[min(i, len(ports) - 1)], database))
+    return found
+
+
+def _world_database_denial(url: str) -> str | None:
+    """Refuse a URL that names the Postgres world database, unless the
+    organisation allows it. A URL that cannot be parsed is refused too."""
+    from ..world_model_backends.pg_rls import resolve_dsn
+
+    world = resolve_dsn()
+    if not world or _world_database_allowed():
+        return None
+    try:
+        target = _postgres_endpoints(url)
+        if not target:
+            return None
+        world_endpoints = _postgres_endpoints(world)
+    except Exception:  # noqa: BLE001 -- an address that cannot be compared is not opened
+        return _UNCOMPARABLE_DENIAL
+    same = any((host, database) == (w_host, w_database) and (port == w_port or "*" in (port, w_port))
+               for host, port, database in target for w_host, w_port, w_database in world_endpoints)
+    return _WORLD_DATABASE_DENIAL if same else None
 
 
 def _denial(host: str) -> str:
@@ -506,7 +745,7 @@ def _op_query(sql: str, url_arg: str, limit: int, confirm: bool,
         denial = _model_supplied_url_denial(url_arg, allow_hosts)
         if denial:
             return denial
-    denial = _host_denial(url, allow_hosts)
+    denial = _host_denial(url, allow_hosts) or _world_database_denial(url)
     if denial:
         return denial
     try:

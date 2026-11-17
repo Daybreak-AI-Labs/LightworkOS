@@ -149,6 +149,13 @@ def _pg_conn():
                 # memoize a failed or rolled-back initialization.
                 conn.commit()
                 _pg_schema_ready.add(binding)
+        from .world_model_backends.postgres import _rls_enabled, bind_rls_scope
+
+        if _rls_enabled():
+            # The learning tables carry the world's row policies, which match
+            # only rows of the workspace this transaction is bound to.
+            with conn.cursor() as cur:
+                bind_rls_scope(cur)
         yield conn
         conn.commit()
     except BaseException:

@@ -1263,3 +1263,35 @@ def test_receipt_tenant_accepts_the_raw_id_of_an_encoded_tenant(tmp_path, monkey
             PostgresWorldModel._receipt_tenant("acme")
         with pytest.raises(ValueError, match="another tenant"):
             PostgresWorldModel._receipt_tenant("shared")
+
+
+def test_stamped_fill_batch_waits_briefly_for_goals_and_retries_then_stops(monkeypatch):
+    """A fill batch lifts FORCE on goals, which queues an exclusive lock.
+    It waits at most a fifth of a second, retries a busy batch a few times,
+    then stops with a plain message instead of waiting on."""
+    world = PostgresWorldModel.__new__(PostgresWorldModel)
+    statements, attempts = [], []
+
+    class Busy(Exception):
+        sqlstate = "55P03"
+
+    class Cursor:
+        def execute(self, sql, params=None):
+            statements.append(sql)
+            if sql.startswith("ALTER TABLE goals NO FORCE"):
+                raise Busy("lock timeout")
+
+        def fetchall(self):
+            return [("goals",)]
+
+    @contextmanager
+    def busy_tx():
+        attempts.append(1)
+        yield Cursor()
+
+    monkeypatch.setattr(world, "_tx", busy_tx)
+    monkeypatch.setattr(postgres.time, "sleep", lambda seconds: None)
+    with pytest.raises(RuntimeError, match="goals was busy"):
+        world._fill_stamped_batch("goal_events", 0, 10)
+    assert len(attempts) == postgres._STAMP_FILL_ATTEMPTS > 1
+    assert "SET LOCAL lock_timeout = '200ms'" in statements

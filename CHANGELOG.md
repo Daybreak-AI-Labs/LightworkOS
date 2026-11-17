@@ -827,6 +827,37 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Erasure receipts are now issued as `lightwork.erasure-receipt.v3`, which
   also counts a run's decision requests before deletion. Receipts issued as v2
   keep verifying against the stores they listed; nothing needs re-issuing.
+- With Postgres row-level security on, 18 more world tables now have a row
+  policy. Events and episodes carry a copy of their goal's workspace, kept in
+  step by the database; artifacts, questions, turns and the other child
+  tables check their parent goal, approval or conversation; the learning-store
+  and approval-check tables check their workspace column. Database migration
+  56 adds them when Lightwork starts as the table owner, so start once as the
+  owner after upgrading. `maverick tenant backfill` now also assigns
+  learning-store and approval-check records that have no workspace. Vector
+  memory and knowledge-store tables in the same database are not covered yet.
+  Migration 56 copies each event's and episode's workspace (about 10-13
+  microseconds a row) only where RLS is on. With RLS already forced it does
+  so while the tables are locked: allow about two minutes per 10 million
+  rows and upgrade in a quiet window. Turning RLS on later copies them in
+  short batches first.
+- `maverick tenant backfill` no longer stops when a learning record exists
+  both without a workspace and in the target workspace: the workspace keeps
+  its own, the other is left unchanged and listed by table and key. A
+  conflict it still cannot settle names the table and the key.
+- A Postgres database update that the login cannot run because it does not
+  own the tables now says so and changes nothing. Start Lightwork once as the
+  table owner, then again with the usual login.
+- `maverick tenant rls-preflight` no longer reports READY while row-level
+  security hides records that have no workspace. The table owner now counts
+  them with FORCE lifted in a rolled-back transaction, waiting at most 200 ms
+  for a busy table; a login that cannot see them reports NOT COUNTED. Each
+  report says how it counted, and lists orphaned rows (no task or approval)
+  that no workspace can see; delete those before turning RLS on.
+- The `database` tool now refuses an address that names Lightwork's own
+  Postgres records database (same host, port and database as the world
+  DSN), from `DATABASE_URL` or from an agent. Use a separate database; only
+  the organisation can allow it, with `[tools] database_allow_world_database`.
 
 ### Fixed
 
