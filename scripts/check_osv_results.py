@@ -111,6 +111,54 @@ ACCEPTED_RISKS = (
                   "the MCP client library rmcp and schemars pulls it in. Remove this entry when rmcp drops chrono or "
                   "a vulnerability is reported against it.",
     },
+    {
+        "lockfile": "apps/installer-desktop/pnpm-lock.yaml",
+        "package": {"name": "picomatch", "version": "4.0.5", "ecosystem": "npm"},
+        "advisories": frozenset({"GHSA-fc5q-39xc-vjpf"}),
+        "accepted": "2026-11-17",
+        "review_by": "2026-12-17",
+        "reason": "A ReDoS in glob parsing (crafted extglobs such as +(*)) with no fixed release: the "
+                  "advisory lists 4.0.7, the newest version on npm, as last affected. picomatch is "
+                  "build and test tooling here (vite, svelte-check and vitest devDependencies); it matches globs from the project's own "
+                  "configuration, never user input, and the shipped app does not call it. Upgrade and "
+                  "remove this entry when a fixed picomatch is released.",
+    },
+    {
+        "lockfile": "apps/installer-desktop/pnpm-lock.yaml",
+        "package": {"name": "picomatch", "version": "4.0.7", "ecosystem": "npm"},
+        "advisories": frozenset({"GHSA-fc5q-39xc-vjpf"}),
+        "accepted": "2026-11-17",
+        "review_by": "2026-12-17",
+        "reason": "A ReDoS in glob parsing (crafted extglobs such as +(*)) with no fixed release: the "
+                  "advisory lists 4.0.7, the newest version on npm, as last affected. picomatch is "
+                  "build and test tooling here (vite, svelte-check and vitest devDependencies); it matches globs from the project's own "
+                  "configuration, never user input, and the shipped app does not call it. Upgrade and "
+                  "remove this entry when a fixed picomatch is released.",
+    },
+    {
+        "lockfile": "apps/mobile-companion/package-lock.json",
+        "package": {"name": "picomatch", "version": "2.3.2", "ecosystem": "npm"},
+        "advisories": frozenset({"GHSA-fc5q-39xc-vjpf"}),
+        "accepted": "2026-11-17",
+        "review_by": "2026-12-17",
+        "reason": "A ReDoS in glob parsing (crafted extglobs such as +(*)) with no fixed release: the "
+                  "advisory lists 4.0.7, the newest version on npm, as last affected. picomatch is "
+                  "build and test tooling here (the Expo CLI, Metro's file watchers and jest-util); it matches globs from the project's own "
+                  "configuration, never user input, and the shipped app does not call it. Upgrade and "
+                  "remove this entry when a fixed picomatch is released.",
+    },
+    {
+        "lockfile": "apps/mobile-companion/package-lock.json",
+        "package": {"name": "picomatch", "version": "3.0.2", "ecosystem": "npm"},
+        "advisories": frozenset({"GHSA-fc5q-39xc-vjpf"}),
+        "accepted": "2026-11-17",
+        "review_by": "2026-12-17",
+        "reason": "A ReDoS in glob parsing (crafted extglobs such as +(*)) with no fixed release: the "
+                  "advisory lists 4.0.7, the newest version on npm, as last affected. picomatch is "
+                  "build and test tooling here (the Expo CLI, Metro's file watchers and jest-util); it matches globs from the project's own "
+                  "configuration, never user input, and the shipped app does not call it. Upgrade and "
+                  "remove this entry when a fixed picomatch is released.",
+    },
 )
 
 
