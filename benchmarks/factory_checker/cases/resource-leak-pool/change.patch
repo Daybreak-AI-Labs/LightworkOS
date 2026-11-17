@@ -1,0 +1,45 @@
+diff --git a/pool.py b/pool.py
+index cec4943..75fb9ab 100644
+--- a/pool.py
++++ b/pool.py
+@@ -19,9 +19,15 @@ class Pool:
+ 
+ 
+ def with_conn(pool, fn):
+-    """``fn(conn)`` with a pooled connection, always given back."""
+-    conn = pool.acquire()
+-    try:
+-        return fn(conn)
+-    finally:
++    """``fn(conn)`` with a pooled connection; one retry with a fresh
++    connection on ConnectionError."""
++    for attempt in range(2):
++        conn = pool.acquire()
++        try:
++            result = fn(conn)
++        except ConnectionError:
++            if attempt == 1:
++                raise
++            continue
+         pool.release(conn)
++        return result
+diff --git a/pool_test.py b/pool_test.py
+index 75e5dda..e6666c8 100644
+--- a/pool_test.py
++++ b/pool_test.py
+@@ -5,3 +5,15 @@ def test_gives_the_connection_back():
+     pool = Pool(2)
+     assert with_conn(pool, lambda conn: 3) == 3
+     assert pool.available == 2
++
++
++def test_retries_once():
++    pool, calls = Pool(2), []
++
++    def flaky(conn):
++        calls.append(conn)
++        if len(calls) == 1:
++            raise ConnectionError("dropped")
++        return 4
++    assert with_conn(pool, flaky) == 4
++    assert len(calls) == 2

@@ -1,0 +1,12 @@
+{
+  "id": "wrong-unit-session",
+  "title": "Accept a timedelta for session lifetimes",
+  "description": "expires_at() in session.py takes the lifetime in minutes. Let callers pass a datetime.timedelta as well.",
+  "verdict": "defect",
+  "defect": {
+    "kind": "wrong-unit",
+    "file": "session.py",
+    "repro": "python repro.py",
+    "why": "total_seconds() * 1000 adds milliseconds to a time in seconds, so every session now lasts 1000 times longer."
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "id": "resource-leak-pool",
+  "title": "Retry once on a dropped connection",
+  "description": "with_conn() in pool.py should retry fn once with a fresh connection when it raises ConnectionError.",
+  "verdict": "defect",
+  "defect": {
+    "kind": "resource-leak",
+    "file": "pool.py",
+    "repro": "python repro.py",
+    "why": "A connection is only released on success: every ConnectionError or other error keeps one, until the pool is exhausted."
+  }
+}

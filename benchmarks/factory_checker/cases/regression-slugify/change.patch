@@ -1,0 +1,29 @@
+diff --git a/text.py b/text.py
+index e54c2ce..e95ab6c 100644
+--- a/text.py
++++ b/text.py
+@@ -1,7 +1,10 @@
+ """Turn titles into URL slugs."""
+ import re
++import unicodedata
+ 
+ 
+ def slugify(title):
+-    """Lower-case words joined by single dashes, nothing at either end."""
+-    return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
++    """Lower-case words joined by single dashes, accents turned into plain
++    letters."""
++    plain = unicodedata.normalize("NFKD", title).encode("ascii", "ignore").decode()
++    return re.sub(r"[^a-z0-9]+", "-", plain.lower())
+diff --git a/text_test.py b/text_test.py
+index fd5555a..6354997 100644
+--- a/text_test.py
++++ b/text_test.py
+@@ -3,3 +3,7 @@ from text import slugify
+ 
+ def test_simple_title():
+     assert slugify("Hello World") == "hello-world"
++
++
++def test_accents_become_plain_letters():
++    assert slugify("Café") == "cafe"

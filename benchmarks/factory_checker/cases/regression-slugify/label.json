@@ -1,0 +1,12 @@
+{
+  "id": "regression-slugify",
+  "title": "Keep accented letters in slugs",
+  "description": "slugify() in text.py drops accented letters, so 'Caf\u00e9' becomes 'caf'. Turn them into plain letters instead ('cafe').",
+  "verdict": "defect",
+  "defect": {
+    "kind": "regression",
+    "file": "text.py",
+    "repro": "python repro.py",
+    "why": "The rewrite dropped .strip('-'), so a title with punctuation at either end now gives a slug starting or ending with a dash."
+  }
+}

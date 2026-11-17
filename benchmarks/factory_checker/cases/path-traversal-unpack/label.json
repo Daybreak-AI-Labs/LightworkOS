@@ -1,0 +1,12 @@
+{
+  "id": "path-traversal-unpack",
+  "title": "Skip folder entries when unpacking",
+  "description": "extract() in unpack.py fails on entries whose name ends with '/', which some archive tools write for folders. Skip those entries instead.",
+  "verdict": "defect",
+  "defect": {
+    "kind": "path-traversal",
+    "file": "unpack.py",
+    "repro": "python repro.py",
+    "why": "The rewrite dropped the check that a member stays inside dest, so a member named '../evil.txt' is written outside the folder."
+  }
+}

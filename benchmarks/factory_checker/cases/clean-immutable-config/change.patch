@@ -1,0 +1,45 @@
+diff --git a/config.py b/config.py
+index 3383d12..4118af6 100644
+--- a/config.py
++++ b/config.py
+@@ -1,16 +1,16 @@
+ """Settings shared between threads."""
+-import threading
++from types import MappingProxyType
+ 
+ 
+ class Config:
++    """Immutable: with_value() returns a new Config, so threads can share one
++    without a lock."""
++
+     def __init__(self, **values):
+-        self._lock = threading.Lock()
+-        self._values = dict(values)
++        self._values = MappingProxyType(dict(values))
+ 
+     def get(self, key, default=None):
+-        with self._lock:
+-            return self._values.get(key, default)
++        return self._values.get(key, default)
+ 
+-    def set(self, key, value):
+-        with self._lock:
+-            self._values[key] = value
++    def with_value(self, key, value):
++        return Config(**{**self._values, key: value})
+diff --git a/config_test.py b/config_test.py
+index a02b4a0..efaf0ed 100644
+--- a/config_test.py
++++ b/config_test.py
+@@ -1,7 +1,8 @@
+ from config import Config
+ 
+ 
+-def test_get_and_set():
++def test_get_and_with_value():
+     cfg = Config(a=1)
+-    cfg.set("b", 2)
+-    assert cfg.get("a") == 1 and cfg.get("b") == 2 and cfg.get("c", 3) == 3
++    newer = cfg.with_value("b", 2)
++    assert newer.get("a") == 1 and newer.get("b") == 2 and newer.get("c", 3) == 3
++    assert cfg.get("b") is None

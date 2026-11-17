@@ -1,0 +1,47 @@
+diff --git a/retry.py b/retry.py
+index 84f4be5..e7e06a9 100644
+--- a/retry.py
++++ b/retry.py
+@@ -1,13 +1,18 @@
+ """Call a flaky function a few times."""
++import time
+ 
+ 
+-def retry(fn, attempts=3):
+-    """Call ``fn`` until it succeeds, at most ``attempts`` times; raise the
+-    last error when every attempt failed."""
++def retry(fn, attempts=3, delay=0.0, sleep=None):
++    """Call ``fn`` until it succeeds, at most ``attempts`` times, waiting
++    ``delay`` seconds between attempts; raise the last error when every
++    attempt failed."""
++    sleep = sleep or time.sleep
+     error = None
+-    for _ in range(attempts):
++    for attempt in range(1, attempts):
+         try:
+             return fn()
+         except Exception as exc:  # noqa: BLE001 -- retried, then re-raised
+             error = exc
++            if attempt < attempts:
++                sleep(delay)
+     raise error
+diff --git a/retry_test.py b/retry_test.py
+index e83cee8..fb3a12f 100644
+--- a/retry_test.py
++++ b/retry_test.py
+@@ -10,4 +10,14 @@ def test_raises_when_every_attempt_fails():
+     def boom():
+         raise OSError("down")
+     with pytest.raises(OSError):
+-        retry(boom, attempts=2)
++        retry(boom, attempts=2, sleep=lambda _: None)
++
++
++def test_waits_between_attempts():
++    waits = []
++
++    def boom():
++        raise OSError("down")
++    with pytest.raises(OSError):
++        retry(boom, attempts=2, delay=1.5, sleep=waits.append)
++    assert waits == [1.5]

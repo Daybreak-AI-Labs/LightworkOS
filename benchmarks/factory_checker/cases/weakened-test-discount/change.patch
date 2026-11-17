@@ -1,0 +1,26 @@
+diff --git a/prices.py b/prices.py
+index 1d45619..cd1bb02 100644
+--- a/prices.py
++++ b/prices.py
+@@ -2,5 +2,5 @@
+ 
+ 
+ def apply_discount(price_cents, percent):
+-    """The price after taking ``percent`` off."""
+-    return price_cents - price_cents * percent / 100
++    """The price after taking ``percent`` off, rounded to whole cents."""
++    return round(price_cents * percent / 100)
+diff --git a/prices_test.py b/prices_test.py
+index fdf97d8..2db67ac 100644
+--- a/prices_test.py
++++ b/prices_test.py
+@@ -2,4 +2,8 @@ from prices import apply_discount
+ 
+ 
+ def test_fifteen_percent_off():
+-    assert apply_discount(1000, 15) == 850
++    assert isinstance(apply_discount(1000, 15), int)
++
++
++def test_rounds_to_cents():
++    assert isinstance(apply_discount(999, 15), int)

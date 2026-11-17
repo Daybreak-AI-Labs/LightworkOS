@@ -926,6 +926,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Saving an outside agent's limits now keeps its security key on file unless
   a new key is pasted or "Remove the key on file" is ticked. Before, saving an
   edit without re-pasting the key removed it: re-add any key lost that way.
+- A new benchmark, `benchmarks/eval_factory_checker.py`, measures how many
+  planted defects the code factory's checkers find, how often they raise
+  false alarms on correct changes, and the cost per case. Run it with a
+  model key to score your configured checkers; `--self-test` needs no key.
 
 ### Fixed
 

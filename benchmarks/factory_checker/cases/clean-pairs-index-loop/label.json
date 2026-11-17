@@ -1,0 +1,8 @@
+{
+  "id": "clean-pairs-index-loop",
+  "title": "Count increases without copying the list",
+  "description": "increases() in series.py copies the list with values[1:]. Rewrite it with an index loop so large lists are not copied.",
+  "verdict": "clean",
+  "looks_like": "off-by-one",
+  "why": "range(len(values) - 1) visits every adjacent pair exactly once; the - 1 is right because each step reads values[i + 1]."
+}

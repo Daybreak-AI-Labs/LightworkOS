@@ -1,0 +1,12 @@
+{
+  "id": "missing-error-path-limit",
+  "title": "Allow spaces around LIMIT",
+  "description": "read_limit() in limits.py should accept a LIMIT value with spaces around it, like ' 5 '.",
+  "verdict": "defect",
+  "defect": {
+    "kind": "missing-error-path",
+    "file": "limits.py",
+    "repro": "python repro.py",
+    "why": "The rewrite dropped the branch for an unset LIMIT: read_limit({}) now raises KeyError instead of returning DEFAULT_LIMIT."
+  }
+}
