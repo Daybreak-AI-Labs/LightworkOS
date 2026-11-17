@@ -105,6 +105,11 @@ class DockerBackend:
     # closed. In-process filesystem tools enforce the same list at the agent
     # dispatch chokepoint.
     read_only_paths: tuple[str, ...] = ()
+    # ``docker run --pull`` policy; "never" refuses a missing image instead of
+    # fetching it (the code checker's image must already be on this computer).
+    pull: str | None = None
+    # An explicit ``--user`` (uid:gid) instead of the invoking user's.
+    run_as: str | None = None
     pending_cleanup: dict[str, ContainerCleanup] = field(default_factory=dict, init=False, repr=False)
     _pool_lease: BackendLease = field(default_factory=BackendLease, init=False, repr=False, compare=False)
 
@@ -170,8 +175,11 @@ class DockerBackend:
             # pip/npm/pytest, which need no capabilities.
             "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges",
-            *container_user_args(self.allow_root),
+            *(["--user", self.run_as] if getattr(self, "run_as", None)
+              else container_user_args(self.allow_root)),
         ]
+        if getattr(self, "pull", None):
+            flags.extend(["--pull", str(self.pull)])
         # ``_read_only_mounts`` is derived by ``__post_init__``.  Keep this
         # helper tolerant of legacy/unpickled instances (and focused timeout
         # tests) that predate that private cache; the public default is no

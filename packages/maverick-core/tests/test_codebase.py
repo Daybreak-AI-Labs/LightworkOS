@@ -1265,7 +1265,8 @@ def test_a_repro_that_passes_is_not_reproduced_and_reads_as_read_only(upstream, 
 def test_a_confirmed_repro_decides_fixed_whatever_the_checker_says(upstream, tmp_path):
     vault.register("pricing", str(upstream))
     world = WorldModel(tmp_path / "world.db")
-    # The author mends it; the checker never says so. Lightwork's re-run does.
+    # The author mends it; the checker never confirms. Lightwork's re-run says
+    # fixed, but the run is not clean until a later look confirms it.
     run, _ = _rounds(_broken, _mended)
     looks: list = []
 
@@ -1275,8 +1276,12 @@ def test_a_confirmed_repro_decides_fixed_whatever_the_checker_says(upstream, tmp
     p = features.propose(world, "pricing", "Notes", "", run, sandbox_factory=_Sandbox,
                          checker=stubborn, repair_rounds=1, check_rounds=2)
     assert p["check"]["findings"][0]["status"] == "fixed"
-    assert "fixed: Lightwork re-ran it" in _line(p, "1.1")
-    assert features.evidence(p)["gaps"] == ["The repository's tests did not pass or are not configured."]
+    assert ("fixed: its repro command passed on the repaired version (the author saw the "
+            "command); no later look confirmed it") in _line(p, "1.1")
+    assert features.evidence(p)["gaps"] == [
+        "The repository's tests did not pass or are not configured.",
+        features.UNCONFIRMED_GAP.format(n=1)]
+    assert features.summary(world)["proposals"][0]["check"] == "open"
     # The reverse: the checker says fixed, but the repro still fails on the new version.
     run, _ = _rounds(_broken, lambda work: (work / "other.py").write_text("y = 2\n"))
     looks.clear()
@@ -1326,7 +1331,10 @@ def test_a_probe_path_that_leaves_the_copy_is_refused(upstream, tmp_path):
                          checker=lambda gid, copy: {"findings": escapes, "fixed": []},
                          repair_rounds=0, check_rounds=1)
     for f in p["check"]["findings"]:
-        assert f["repro_state"] == "not reproduced" and "path was refused" in f["repro_reason"]
+        assert f["repro_state"] == "not run" and "path was refused" in f["repro_reason"]
+        assert "not run: a probe file path was refused" in _line(p, f["id"])
+    assert ("Lightwork re-ran 0 finding(s) on its own copy of the change: 0 confirmed, "
+            "0 not reproduced. 3 could not be run.") in features.evidence(p)["lines"]
     assert list(outside.iterdir()) == [] and not (tmp_path / "escape.py").exists()
 
 
@@ -1466,3 +1474,175 @@ def test_a_proposal_from_before_repros_and_several_checkers_still_shows(upstream
     assert facts["gaps"] == [] and not any(line.startswith("Checker") for line in facts["lines"])
     assert features.summary(world)["proposals"][0]["check"] == "clean"
     features.request_approval(world, loaded)
+
+
+# -- repair round 1: isolation of the checker image, repros only in a
+#    container, repairs that game a repro, and honest counts --
+
+def _sandbox_config(text):
+    from maverick import config
+    home = Path(__import__("os").environ["MAVERICK_HOME"])
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "config.toml").write_text(text)
+    config.reset_config_cache()
+
+
+def test_a_checker_image_never_weakens_the_configured_work_area(upstream, tmp_path, monkeypatch):
+    from maverick import sandbox
+    from maverick.sandbox import docker
+    monkeypatch.setattr(docker.DockerBackend, "_verify_docker", lambda self: None)
+    monkeypatch.setattr(sandbox, "_validated_gvisor_runtime", lambda value: "runsc")
+    _sandbox_config('[sandbox]\nbackend = "gvisor"\n')
+    box = features.image_sandbox("lw-check:1", str(tmp_path / "w"))
+    flags = box._container_flags()
+    assert box.runtime == "runsc" and flags[flags.index("--runtime") + 1] == "runsc"
+    assert flags[flags.index("--pull") + 1] == "never"           # never fetches an image
+    _sandbox_config('[sandbox]\nbackend = "firecracker"\n')
+    with pytest.raises(RuntimeError, match="cannot run a container image"):
+        features.image_sandbox("lw-check:1", str(tmp_path / "w"))
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    _settings(monkeypatch, checker_image="lw-check:1")
+    looked: list = []
+    run, _ = _rounds(_mended)
+    p = features.propose(world, "pricing", "Notes", "", run, sandbox_factory=_Sandbox,
+                         checker=lambda gid, copy: looked.append(gid))
+    assert looked == [] and p["check"]["state"] == "failed"
+    assert "cannot run a container image" in p["check"]["error"]
+
+
+def test_a_missing_checker_image_is_not_pulled_and_says_how_to_get_it(upstream, tmp_path,
+                                                                      monkeypatch):
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    _settings(monkeypatch, checker_image="lw-check:1")
+
+    class Missing:
+        def exec(self, cmd, timeout=None):
+            return type("R", (), {"stdout": "", "exit_code": 125, "stderr":
+                                  "docker: Error response from daemon: No such image: lw-check:1"})()
+    monkeypatch.setattr(features, "image_sandbox", lambda image, workdir: Missing())
+    run, _ = _rounds(_mended)
+    p = features.propose(world, "pricing", "Notes", "", run,
+                         checker=lambda gid, copy: pytest.fail("the checker ran"))
+    error = p["check"]["error"]
+    assert "lw-check:1 is not on this computer" in error
+    assert "docker build -t lw-check:1 deploy/checker" in error and "docker pull lw-check:1" in error
+
+
+def test_repros_run_only_when_the_steps_run_in_a_container(upstream, tmp_path):
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    ran: list = []
+
+    class OnThisComputer(_Sandbox):
+        host_visible_fs = True
+
+        def exec(self, cmd, timeout=None):
+            ran.append(cmd)
+            return super().exec(cmd, timeout)
+    run, _ = _rounds(_broken)
+    p = features.propose(world, "pricing", "Notes", "", run, sandbox_factory=OnThisComputer,
+                         checker=lambda gid, copy: {"findings": [_blocker()], "fixed": []},
+                         repair_rounds=0, check_rounds=1)
+    f = p["check"]["findings"][0]
+    assert ran == [] and f["repro_state"] == "not re-run" and f["evidence"] == "ran"
+    assert "not re-run: the steps do not run in a container" in _line(p, "1.1")
+    assert features.NO_CONTAINER_REPRO_GAP in features.evidence(p)["gaps"]
+
+
+def test_a_repair_that_only_makes_the_repro_pass_is_not_called_clean(upstream, tmp_path):
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    checks = "import notes\n"
+
+    def broken(work):
+        _broken(work)
+        (work / "check_notes.py").write_text(checks)
+
+    def gamed(work):          # the bug stays; the author empties the check instead
+        (work / "check_notes.py").write_text("assert True\n")
+    repro = {"severity": "blocker", "what": "notes.py divides by zero", "evidence": "ran",
+             "how": "import notes", "repro": "python check_notes.py"}
+    briefs: list = []
+
+    def checker(answer):
+        def look(gid, copy):
+            briefs.append(world.get_goal(gid).description)
+            return {"findings": [repro], "fixed": []} if len(briefs) % 2 else answer
+        return look
+    outcomes = {}
+    for name, answer in (("silent", {"findings": []}),
+                         ("still wrong", {"findings": [], "still_open": ["1.1"]}),
+                         ("confirmed", {"findings": [], "fixed": ["1.1"]})):
+        run, calls = _rounds(broken, gamed)
+        outcomes[name] = features.propose(world, "pricing", name, "", run,
+                                          sandbox_factory=_Sandbox, checker=checker(answer),
+                                          repair_rounds=1, check_rounds=2)
+        assert "python check_notes.py" in world.get_goal(calls[1]["goal_id"]).description
+        assert "1.1" in briefs[-1] and "confirm" in briefs[-1]   # asked to confirm the fix
+    silent, wrong, confirmed = outcomes.values()
+    assert silent["check"]["findings"][0]["status"] == "fixed"
+    assert features.UNCONFIRMED_GAP.format(n=1) in features.evidence(silent)["gaps"]
+    assert wrong["check"]["findings"][0]["status"] == "still open"
+    assert ("still open (its repro command passed on the repaired version, but the checker "
+            "says it is still wrong)") in _line(wrong, "1.1")
+    assert "fixed: its repro command passed on the repaired version (the author saw the " \
+           "command); a later look confirmed it" in _line(confirmed, "1.1")
+    assert not any("blocker" in g for g in features.evidence(confirmed)["gaps"])
+    words = {p["title"]: p["check"] for p in features.summary(world)["proposals"]}
+    assert words == {"silent": "open", "still wrong": "open", "confirmed": "clean"}
+
+
+def test_only_checkers_that_looked_are_listed_with_their_own_errors(upstream, tmp_path):
+    from maverick.budget import BudgetExceeded
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+
+    def stub(model, action):
+        def look(gid, copy):
+            return action()
+        look.model = model
+        return look
+
+    def stop():
+        raise BudgetExceeded("tool calls")
+    clean = {"findings": [], "fixed": []}
+    run, _ = _rounds(_mended)
+    p = features.propose(world, "pricing", "A", "", run, checker=[
+        stub("openai:one", lambda: clean), stub("openai:two", stop),
+        stub("openai:three", lambda: clean)])
+    lines = features.evidence(p)["lines"]
+    assert any(line.startswith("Checker 1 used openai:one") for line in lines)
+    assert not any("Checker 3" in line or "Checker 2 used" in line for line in lines)
+
+    def broken():
+        raise RuntimeError("boom")
+    run, _ = _rounds(_mended)
+    q = features.propose(world, "pricing", "B", "", run, checker=[
+        stub("openai:one", lambda: clean), stub("openai:two", broken)])
+    lines = features.evidence(q)["lines"]
+    assert "Checker 2 could not run (it stopped with RuntimeError)." in lines
+    assert not any("A later check" in line for line in lines)
+
+
+def test_on_a_root_host_the_image_runs_as_an_ordinary_user(tmp_path, monkeypatch):
+    import os
+
+    from maverick.sandbox import docker
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / ".maverick"))
+    monkeypatch.setattr(docker.DockerBackend, "_verify_docker", lambda self: None)
+    monkeypatch.setattr(features, "_host_is_root", lambda: True)
+    box = features.image_sandbox("lw-check:1", str(tmp_path / "w"))
+    flags = box._container_flags()
+    assert flags[flags.index("--user") + 1] == features.IMAGE_USER == "1000:1000"
+    copy = tmp_path / "copy"
+    (copy / "pkg").mkdir(parents=True)
+    (copy / "pkg" / "a.py").write_text("a = 1\n")
+    (copy / "link").symlink_to(tmp_path / "outside")
+    owned: list = []
+    monkeypatch.setattr(os, "lchown", lambda path, uid, gid: owned.append((str(path), uid, gid)))
+    monkeypatch.setattr(os, "chown", lambda *a, **k: pytest.fail("followed a link"))
+    features._give_to_image_user(copy)
+    assert {Path(p).name for p, _, _ in owned} == {"copy", "pkg", "a.py", "link"}
+    assert {(uid, gid) for _, uid, gid in owned} == {(1000, 1000)}

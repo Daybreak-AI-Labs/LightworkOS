@@ -91,8 +91,10 @@ def test_live_code_checks_say_what_was_not_checked_under_admin_access(client, mo
             "head": "c" * 40, "isolation": "container",
             "tests": {"command": "t", "passed": True, "commit": "c" * 40},
             "check": {"state": "ran", "runs": 1, "commit": "c" * 40,
-                      "checkers": [{"n": 1, "model": "m1", "same_family": True},
-                                   {"n": 2, "model": "m2", "same_family": True}],
+                      "checkers": [{"n": 1, "model": "m1", "same_family": True,
+                                    "commit": "c" * 40},
+                                   {"n": 2, "model": "m2", "same_family": True,
+                                    "commit": "c" * 40}],
                       "findings": [{"id": "1.1", "severity": "minor", "status": "not attempted",
                                     "what": "w", "evidence": "ran",
                                     "repro_state": "confirmed"}]}}
