@@ -221,13 +221,13 @@ def _check_anthropic() -> None:
             shown = ", ".join(roles[:4]) + (f" and {len(roles) - 4} more" if len(roles) > 4 else "")
             _row(YELLOW, "anthropic",
                  f"ANTHROPIC_API_KEY not set (another provider is configured); these roles use an Anthropic model: {shown}",
-                 fix="add the key in Lightwork Settings > AI services, or choose other models for those roles")
+                 fix="add the key in Lightwork Settings > Connections > Provider keys, or choose other models for those roles")
             _ATTENTION.append("anthropic")
         elif other:
             _row(GREEN, "anthropic", "no Anthropic key; no role uses an Anthropic model")
         else:
             _row(RED, "anthropic", "ANTHROPIC_API_KEY not set",
-                 fix="open Lightwork Settings > Models to connect an AI service")
+                 fix="add an AI provider key in Lightwork Settings > Connections > Provider keys")
         return
     if not key.startswith("sk-ant-"):
         _row(YELLOW, "anthropic", "key doesn't start with sk-ant-",
@@ -246,7 +246,7 @@ def _check_anthropic() -> None:
         _row(GREEN, "anthropic", "key validated")
     except anthropic.AuthenticationError:
         _row(RED, "anthropic", "API rejected the key",
-             fix="generate a new key at https://console.anthropic.com/settings/keys, then update it in Lightwork Settings > Models")
+             fix="generate a new key at https://console.anthropic.com/settings/keys, then update it in Lightwork Settings > Connections > Provider keys")
     except Exception as e:
         # A real outage (no connection / timeout / 5xx) is RED -- the agent
         # cannot reach the API, so reporting it as a benign YELLOW "skipped"
@@ -282,7 +282,7 @@ def _check_openai() -> None:
         _row(GREEN, "openai", "key validated")
     except AuthenticationError:
         _row(RED, "openai", "API rejected the key",
-             fix="regenerate at https://platform.openai.com/api-keys, then update it in Lightwork Settings > Models")
+             fix="regenerate at https://platform.openai.com/api-keys, then update it in Lightwork Settings > Connections > Provider keys")
     except Exception as e:
         # Real outage (no connection / timeout / 5xx) is RED; everything else
         # stays YELLOW "skipped" -- see _check_anthropic.
