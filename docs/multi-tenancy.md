@@ -211,9 +211,17 @@ Once RLS is on, the policy hides rows with no tenant from an ordinary login,
 so `rls-preflight` counts where they are visible and says how ("counted as"):
 as a superuser or `BYPASSRLS` login; on a table with no policy; or as the
 table owner, lifting `FORCE` for the count inside a transaction that it rolls
-back (it waits at most 5 seconds for writers). A login that does not own the
-tables and does not bypass RLS cannot count them: the report says "NOT
-COUNTED" and is never READY.
+back. Lifting it queues an exclusive lock that other queries on the table wait
+behind, so it waits at most 200 ms and reports a busy table as "could not
+count: the table was busy"; run it again when Lightwork is quiet. The
+dashboard's database check never lifts it and shows such tables as not
+counted. A login that does not own the tables and does not bypass RLS cannot
+count them: the report says "NOT COUNTED" and is never READY.
+
+The check also lists orphaned rows that no workspace can see: questions or
+messages with no task, sign-offs whose approval is gone, and the like. Backfill
+cannot assign them, so delete them (or attach them to a record of the right
+workspace) before turning RLS on; until then the check is not READY.
 
 #### What row-level security covers
 

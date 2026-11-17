@@ -187,11 +187,24 @@ def test_database_separation_never_calls_an_uncounted_table_ready(client, monkey
             pass
     monkeypatch.setattr(pg_rls, "resolve_dsn", lambda dsn=None: "postgres://x")
     monkeypatch.setattr(pg_rls, "connect", lambda *a, **k: Conn())
-    monkeypatch.setattr(pg_rls, "preflight", lambda conn: {"role": "app", "ready": False, "tables": {
-        "goals": {"owner": "app", "owned_by_current_role": True, "null_tenant_rows": None,
-                  "empty_tenant_rows": None, "counted_by": None}}})
-    row, = client.get(BASE + "/database-separation").json()["rows"]
-    assert row["ok"] is False and row["state"].startswith("Couldn't be counted")
+    calls = []
+
+    def preflight(conn, **kwargs):
+        calls.append(kwargs)
+        return {"role": "app", "ready": False, "tables": {
+            "goals": {"owner": "app", "owned_by_current_role": True, "null_tenant_rows": None,
+                      "empty_tenant_rows": None, "counted_by": None, "not_counted": "skipped"},
+            "facts": {"owner": "app", "owned_by_current_role": True, "null_tenant_rows": None,
+                      "empty_tenant_rows": None, "counted_by": None, "not_counted": "busy"}},
+            "orphans": {"questions": {"rows": 2, "parent": "goals", "counted_by": "bypass",
+                                      "not_counted": None}}}
+    monkeypatch.setattr(pg_rls, "preflight", preflight)
+    rows = client.get(BASE + "/database-separation").json()["rows"]
+    assert calls == [{"lift_force": False}]  # a page view never lifts a policy
+    assert [row["ok"] for row in rows] == [False, False, False]
+    assert rows[0]["state"].startswith("Not counted on this page")
+    assert rows[1]["state"].startswith("Couldn't be counted because the table was busy")
+    assert "no workspace can see them" in rows[2]["state"]
 
 
 def test_local_model_plan_explains_missing_setup(client, tmp_path):

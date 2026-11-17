@@ -1718,6 +1718,51 @@ def test_rls_readiness_and_startup_for_a_login_the_policies_apply_to(rls_login, 
     assert report["ready"] is rls_login.owner
 
 
+def test_rls_preflight_never_waits_long_and_reports_orphaned_rows(rls_login):
+    """Lifting FORCE to count queues an exclusive lock that every later query
+    on the table waits behind, so the owner's count gives up on a busy table
+    after a fifth of a second and says so; a page view never lifts it. Rows
+    whose task or approval is gone are hidden from every workspace: they are
+    reported, and the check is not READY until they are dealt with."""
+    import time
+
+    import psycopg
+    from maverick.world_model_backends import pg_rls
+
+    if not rls_login.owner:
+        pytest.skip("only the owner lifts FORCE to count")
+    with psycopg.connect(rls_login.admin) as conn:
+        pg_rls.backfill(conn, "rls_alpha")
+    with psycopg.connect(rls_login.admin) as holder, \
+            psycopg.connect(rls_login.dsn, autocommit=True) as conn:
+        holder.execute("SELECT count(*) FROM goals")  # an open transaction reading goals
+        started = time.monotonic()
+        report = pg_rls.preflight(conn)
+        assert time.monotonic() - started < 5
+        holder.rollback()
+    goals = report["tables"]["goals"]
+    assert (goals["null_tenant_rows"], goals["not_counted"]) == (None, "busy")
+    assert report["ready"] is False
+    with psycopg.connect(rls_login.dsn, autocommit=True) as conn:
+        viewed = pg_rls.preflight(conn, lift_force=False)
+    assert viewed["tables"]["goals"]["not_counted"] == "skipped" and viewed["ready"] is False
+
+    with psycopg.connect(rls_login.admin, autocommit=True) as admin:
+        admin.execute("INSERT INTO questions(goal_id, question, asked_at) VALUES(NULL, 'q', 0)")
+        admin.execute("INSERT INTO approval_signoffs(approval_id, approver, decision, decided_at) "
+                      "VALUES(999999, 'ana', 'approve', 0)")
+    with psycopg.connect(rls_login.dsn, autocommit=True) as conn:
+        report = pg_rls.preflight(conn)
+    assert {t: i["rows"] for t, i in report["orphans"].items() if i["rows"]} == {
+        "questions": 1, "approval_signoffs": 1}
+    assert report["ready"] is False
+    with psycopg.connect(rls_login.admin, autocommit=True) as admin:
+        admin.execute("DELETE FROM questions WHERE goal_id IS NULL")
+        admin.execute("DELETE FROM approval_signoffs WHERE approval_id = 999999")
+    with psycopg.connect(rls_login.dsn, autocommit=True) as conn:
+        assert pg_rls.preflight(conn)["ready"] is True
+
+
 def _seed_workspace_rows(admin, tenant):
     """One row of ``tenant`` in every table a child policy or a new tenant
     column policy covers, written by a login the policies do not apply to."""

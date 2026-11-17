@@ -208,6 +208,26 @@ _NOT_SHARED = ("This installation keeps its records on this computer, not in a s
                "is nothing to check.")
 
 
+_NOT_COUNTED_HERE = ("Not counted on this page. Run maverick tenant rls-preflight on the server "
+                     "to count these")
+
+
+def _separation_state(info: dict) -> str:
+    legacy = int(info.get("null_tenant_rows") or 0) + int(info.get("empty_tenant_rows") or 0)
+    if info.get("missing"):
+        return "Not created yet"
+    if not info.get("owned_by_current_role"):
+        return "Lightwork's database account can't protect these"
+    reason = info.get("not_counted")
+    if reason == "busy":
+        return "Couldn't be counted because the table was busy. Try again later"
+    if info.get("null_tenant_rows") is None:
+        return _NOT_COUNTED_HERE
+    if legacy:
+        return f"{legacy:,} older entr{'ies' if legacy != 1 else 'y'} not assigned to a workspace"
+    return "Ready"
+
+
 def _database_separation() -> dict[str, Any]:
     from maverick.world_model_backends import pg_rls
     dsn = pg_rls.resolve_dsn(None)
@@ -222,23 +242,21 @@ def _database_separation() -> dict[str, Any]:
         return {"shared_database": True, "ready": False, "rows": [], "technical": [],
                 "summary": "Lightwork could not reach the shared database. Ask your IT team to check it."}
     try:
-        report = pg_rls.preflight(conn)
+        # A page view never lifts a policy to count: that would queue every
+        # other query on the table behind it.
+        report = pg_rls.preflight(conn, lift_force=False)
     finally:
         conn.close()
-    rows = []
-    for table, info in report["tables"].items():
-        legacy = int(info.get("null_tenant_rows") or 0) + int(info.get("empty_tenant_rows") or 0)
-        if info.get("missing"):
-            state = "Not created yet"
-        elif not info.get("owned_by_current_role"):
-            state = "Lightwork's database account can't protect these"
-        elif info.get("counted_by", "owner") is None:
-            state = "Couldn't be counted because the database was busy. Try again later"
-        elif legacy:
-            state = f"{legacy:,} older entr{'ies' if legacy != 1 else 'y'} not assigned to a workspace"
-        else:
-            state = "Ready"
-        rows.append({"records": _words(table), "state": state, "ok": state == "Ready"})
+    rows = [{"records": _words(table), "state": state, "ok": state == "Ready"}
+            for table, info in report["tables"].items() for state in [_separation_state(info)]]
+    for table, info in (report.get("orphans") or {}).items():
+        if info.get("rows") is None and info.get("not_counted") != "hidden":
+            rows.append({"records": _words(table), "ok": False, "state": _NOT_COUNTED_HERE})
+        elif info.get("rows"):
+            n = int(info["rows"])
+            rows.append({"records": _words(table), "ok": False,
+                         "state": f"{n:,} entr{'ies' if n != 1 else 'y'} that belong to no "
+                                  f"{_words(info.get('parent')).lower()} row, so no workspace can see them"})
     waiting = sum(1 for row in rows if not row["ok"])
     summary = ("The shared database is ready to keep every workspace's records separate."
                if report["ready"] else

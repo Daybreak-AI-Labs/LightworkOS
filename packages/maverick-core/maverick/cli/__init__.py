@@ -3381,6 +3381,68 @@ def tenant_delete(tenant_id: str, purge: bool, yes: bool) -> None:
         sys.exit(2)
 
 
+def _echo_rls_table(t: str, info: dict) -> str | None:
+    """Print one table's line; return why it was not counted, if it was not."""
+    from ..world_model_backends import pg_rls
+
+    if info.get("missing"):
+        click.echo(f"  {t}: MISSING (run the app once to migrate the schema)")
+        return None
+    own = ("owned" if info["owned_by_current_role"]
+           else f"NOT owned (owner={info['owner']})")
+    if info.get("null_tenant_rows") is None:
+        reason = info.get("not_counted") or "hidden"
+        click.echo(f"  {t}: {own}, {pg_rls.NOT_COUNTED[reason]}")
+        return reason
+    click.echo(f"  {t}: {own}, {info['null_tenant_rows']} legacy NULL-tenant row(s)")
+    if info.get("empty_tenant_rows"):
+        click.echo(f"    {info['empty_tenant_rows']} legacy empty-tenant event row(s)")
+    return None
+
+
+def _echo_rls_orphans(orphans: dict) -> set[str]:
+    from ..world_model_backends import pg_rls
+
+    reasons = set()
+    found = {t: info for t, info in orphans.items() if info.get("rows")}
+    for t, info in orphans.items():
+        if info.get("rows") is None:
+            reason = info.get("not_counted") or "hidden"
+            reasons.add(reason)
+            click.echo(f"  {t} (rows with no parent): {pg_rls.NOT_COUNTED[reason]}")
+    if found:
+        click.echo("orphaned rows no workspace can see (their task, approval or conversation "
+                   "is gone or unset):")
+        for t, info in found.items():
+            click.echo(f"  {t}: {info['rows']} row(s) with no {info['parent']} row")
+        click.echo("Backfill cannot assign them. Delete them, or attach them to a record of "
+                   "the right workspace, before turning row-level security on.")
+    return reasons
+
+
+def _echo_rls_preflight(rep: dict) -> None:
+    from ..world_model_backends import pg_rls
+
+    click.echo(f"role: {rep['role']}")
+    reasons = {_echo_rls_table(t, info) for t, info in rep["tables"].items()} - {None}
+    reasons |= _echo_rls_orphans(rep.get("orphans") or {})
+    methods = {info.get("counted_by") for info in rep["tables"].values()} - {None}
+    for method in sorted(methods):
+        click.echo(f"counted as: {pg_rls.COUNT_METHODS[method]}")
+    if "hidden" in reasons:
+        click.echo("Some tables were not counted. Run this check as the table owner, "
+                   "or as a superuser or BYPASSRLS login.")
+    if "busy" in reasons:
+        click.echo("Some tables were busy and were not counted. Run the check again "
+                   "when Lightwork is quiet.")
+    if rep["ready"]:
+        click.echo("READY: set [world_model] rls = true (or MAVERICK_PG_RLS=1) "
+                   "to enforce database tenant isolation.")
+    else:
+        click.echo("NOT READY: assign unscoped rows with `maverick tenant backfill "
+                   "--tenant <id>` and ensure this role owns every table above.")
+
+
 @tenant.command("rls-preflight")
 @click.option("--dsn", default=None,
               help="Postgres DSN (else MAVERICK_PG_DSN / [world_model] dsn).")
@@ -3407,33 +3469,7 @@ def tenant_rls_preflight(dsn: str | None) -> None:
         rep = pg_rls.preflight(conn)
     finally:
         conn.close()
-    click.echo(f"role: {rep['role']}")
-    for t, info in rep["tables"].items():
-        if info.get("missing"):
-            click.echo(f"  {t}: MISSING (run the app once to migrate the schema)")
-            continue
-        own = ("owned" if info["owned_by_current_role"]
-               else f"NOT owned (owner={info['owner']})")
-        if info.get("null_tenant_rows") is None:
-            click.echo(f"  {t}: {own}, NOT COUNTED: row-level security hides rows "
-                       "from this login")
-            continue
-        click.echo(f"  {t}: {own}, {info['null_tenant_rows']} legacy "
-                   f"NULL-tenant row(s)")
-        if info.get("empty_tenant_rows"):
-            click.echo(f"    {info['empty_tenant_rows']} legacy empty-tenant event row(s)")
-    methods = {info.get("counted_by") for info in rep["tables"].values()} - {None}
-    for method in sorted(methods):
-        click.echo(f"counted as: {pg_rls.COUNT_METHODS[method]}")
-    if any(info.get("null_tenant_rows") is None for info in rep["tables"].values()):
-        click.echo("Some tables were not counted. Run this check as the table owner, "
-                   "or as a superuser or BYPASSRLS login.")
-    if rep["ready"]:
-        click.echo("READY: set [world_model] rls = true (or MAVERICK_PG_RLS=1) "
-                   "to enforce database tenant isolation.")
-    else:
-        click.echo("NOT READY: assign unscoped rows with `maverick tenant backfill "
-                   "--tenant <id>` and ensure this role owns every table above.")
+    _echo_rls_preflight(rep)
 
 
 @tenant.command("backfill")

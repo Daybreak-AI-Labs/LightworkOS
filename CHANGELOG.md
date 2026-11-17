@@ -761,8 +761,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   table owner, then again with the usual login.
 - `maverick tenant rls-preflight` no longer reports READY while row-level
   security hides records that have no workspace. The table owner now counts
-  them with FORCE lifted in a rolled-back transaction; a login that cannot
-  see them reports NOT COUNTED. Each report says how it counted.
+  them with FORCE lifted in a rolled-back transaction, waiting at most 200 ms
+  for a busy table; a login that cannot see them reports NOT COUNTED. Each
+  report says how it counted, and lists orphaned rows (no task or approval)
+  that no workspace can see; delete those before turning RLS on.
 - The `database` tool now refuses an address that names Lightwork's own
   Postgres records database (same host, port and database as the world
   DSN), from `DATABASE_URL` or from an agent. Use a separate database; only
