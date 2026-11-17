@@ -9,6 +9,20 @@ RAW_TENANT = ("over quota: tenant policy unavailable or inactive: "
               "tenant is suspended or unknown: 'owner-browser'")
 
 
+@pytest.mark.parametrize("detail", [
+    "An administrator must review AI evidence recording.",
+    "Operator action is required: the policy for tenant 'fictional' could not be read.",
+])
+def test_evidence_delivery_refusal_is_actionable_without_disclosing_details(detail):
+    raw = "AI evidence gateway withheld the generated output. " + detail
+    stop = explain_stop(raw, status="blocked")
+    assert stop.kind == "evidence_delivery_blocked"
+    assert "evidence checks" in stop.message
+    assert "administrator" in stop.action
+    assert detail not in stop.message + stop.action
+    assert "fictional" not in str(stop.as_dict())
+
+
 def test_tenant_suspended_or_unknown_maps_to_workspaces():
     stop = explain_stop(RAW_TENANT)
     assert stop.kind == "workspace_paused"

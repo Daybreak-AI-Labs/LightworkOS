@@ -28,9 +28,9 @@ test('every orchestrator status has a plain word and the raw value never shows',
   assert.equal(rs.label(''), '');
 });
 
-test('a run that stopped on a broken AI connection reads Stopped, other pauses read Paused', () => {
+test('a run requiring a fix reads Stopped, other pauses read Paused', () => {
   const {rs} = load();
-  for (const kind of ['provider_not_ready', 'provider_connection', 'internal_error', 'unpriced_model']) {
+  for (const kind of ['provider_not_ready', 'provider_connection', 'internal_error', 'unpriced_model', 'evidence_delivery_blocked']) {
     assert.equal(rs.label('blocked', kind), 'Stopped', kind);
   }
   for (const kind of ['spending_limit', 'other', '', undefined]) assert.equal(rs.label('blocked', kind), 'Paused');

@@ -17,6 +17,7 @@ STOPPED_KINDS = frozenset({
     "provider_not_ready", "provider_authentication", "provider_rate_limit",
     "provider_model_not_found", "provider_unavailable", "provider_connection",
     "provider_configuration", "internal_error", "unpriced_model", "process_restart",
+    "evidence_delivery_blocked",
 })
 
 LABELS = {

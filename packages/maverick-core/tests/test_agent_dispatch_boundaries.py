@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 from maverick.agent import Agent, _RunState
 from maverick.blackboard import Blackboard
-from maverick.budget import Budget
+from maverick.budget import Budget, BudgetExceeded
 from maverick.capability import Capability
 from maverick.coding_mode import CodingModeConfig
 from maverick.llm import LLMResponse, ToolCall
@@ -59,6 +59,24 @@ async def test_verifier_uses_guarded_completion(agent, monkeypatch, entry):
     else:
         await agent._record_calibration_sample("answer", SimpleNamespace(all_pass=True))
     assert calls == ["guarded"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("error", "reason"), [
+    (BudgetExceeded("test wall budget"), "verification did not finish within the budget"),
+    (RuntimeError("test verifier unavailable"), "the automated verifier was unavailable"),
+])
+async def test_unfinished_verification_reports_the_actual_category(agent, monkeypatch, error, reason):
+    async def unavailable(*_args, **_kwargs):
+        raise error
+
+    monkeypatch.setattr("maverick.verifier.verify_final", unavailable)
+    monkeypatch.setattr("maverick.agent._risk_proportional_verify_enabled", lambda: False)
+    result = await agent._handle_final(_state(agent), 0, "Fictional answer.")
+    assert result.verifier_confidence == 0.0
+    assert result.verifier_critique == reason
+    assert reason in result.final
+    assert str(error) not in result.final
 
 
 @pytest.mark.asyncio
