@@ -162,7 +162,10 @@ def test_backfill_covers_every_rls_table_with_the_stored_tenant_value():
 
     assert {"projects", "fact_history", "approval_audit_outbox",
             "webhook_subscriptions"} <= set(_PREFLIGHT_TABLES)
-    assert set(_PREFLIGHT_TABLES) == set(_RLS_TABLES) - {"encryption_migrations"}
+    from maverick.world_model_backends.postgres import _RLS_STAMPED_TABLES
+
+    assert set(_PREFLIGHT_TABLES) == set(_RLS_TABLES) - {"encryption_migrations",
+                                                         *_RLS_STAMPED_TABLES}
     conn = _FakeConn("app", _tables("app", nulls=1))
     pg_rls.backfill(conn, "acme:eu")
     assert conn.updated["projects"] == "acme%3Aeu"

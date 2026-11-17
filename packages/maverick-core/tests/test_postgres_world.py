@@ -1765,33 +1765,51 @@ def _seed_workspace_rows(admin, tenant):
          (now, tenant)),
     ):
         admin.execute(statement, params)
-    return goal
+    return SimpleNamespace(goal=goal, conversation=conversation)
 
 
 def _newly_covered_tables():
-    from maverick.world_model_backends.postgres import _RLS_CHILD_TABLES, _RLS_RAW_TENANT_TABLES
+    from maverick.world_model_backends.postgres import (
+        _RLS_CHILD_TABLES,
+        _RLS_RAW_TENANT_TABLES,
+        _RLS_STAMPED_TABLES,
+    )
 
-    return ("approval_checks", *_RLS_RAW_TENANT_TABLES, *_RLS_CHILD_TABLES)
+    return ("approval_checks", *_RLS_RAW_TENANT_TABLES, *_RLS_STAMPED_TABLES, *_RLS_CHILD_TABLES)
 
 
-def _assert_each_workspace_sees_only_its_own(world, goals):
+def _assert_each_workspace_sees_only_its_own(world, seeded):
     """Raw SQL that names no workspace, in each workspace's scope, finds
     exactly that workspace's one row in every newly covered table."""
     import psycopg
     from maverick.paths import tenant_scope
 
     for tenant, other in (("rls_alpha", "rls_beta"), ("rls_beta", "rls_alpha")):
+        mine, theirs = seeded[tenant], seeded[other]
         with tenant_scope(tenant=tenant):
             for table in _newly_covered_tables():
                 assert _raw(world, f"SELECT count(*) FROM {table}") == [(1,)], (tenant, table)
                 assert _raw(world, f"DELETE FROM {table} WHERE false") == 0
-            assert _raw(world, "SELECT goal_id FROM goal_events") == [(goals[tenant],)]
+            assert _raw(world, "SELECT goal_id, tenant_id FROM goal_events") == [(mine.goal, tenant)]
             assert _raw(world, "UPDATE goal_events SET kind = kind WHERE goal_id = %s",
-                        (goals[other],)) == 0
-            # Nor can it write a row under the other workspace's goal.
-            with pytest.raises(psycopg.errors.InsufficientPrivilege):
-                _raw(world, "INSERT INTO goal_events(goal_id, agent, kind, content, ts) "
-                     "VALUES(%s, 'agent', 'note', 'planted', 0)", (goals[other],))
+                        (theirs.goal,)) == 0
+            # Nor can it write a row under the other workspace's goal, or a
+            # turn in its own conversation that names the other's goal.
+            for statement, params in (
+                ("INSERT INTO goal_events(goal_id, agent, kind, content, ts) "
+                 "VALUES(%s, 'agent', 'note', 'planted', 0)", (theirs.goal,)),
+                ("INSERT INTO turns(conversation_id, goal_id, role, content, ts) "
+                 "VALUES(%s, %s, 'user', 'planted', 0)", (mine.conversation, theirs.goal)),
+            ):
+                with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                    _raw(world, statement, params)
+            # The copied tenant is taken from the goal, never from the writer.
+            with world._tx() as cur:
+                cur.execute("INSERT INTO goal_events(goal_id, agent, kind, content, ts, tenant_id) "
+                            "VALUES(%s, 'agent', 'note', 'stamped', 0, %s) RETURNING tenant_id",
+                            (mine.goal, other))
+                assert cur.fetchone() == (tenant,)
+                cur.execute("DELETE FROM goal_events WHERE content = 'stamped'")
     for table in _newly_covered_tables():
         assert _raw(world, f"SELECT count(*) FROM {table}") == [(0,)], table
 
@@ -1810,12 +1828,12 @@ def test_every_table_with_workspace_data_has_a_forced_row_policy(rls_login):
         tables = {row[0] for row in admin.execute(
             "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
             "WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p')").fetchall()}
-        goals = {tenant: _seed_workspace_rows(admin, tenant) for tenant in ("rls_alpha", "rls_beta")}
+        seeded = {tenant: _seed_workspace_rows(admin, tenant) for tenant in ("rls_alpha", "rls_beta")}
     assert tables >= _GLOBAL_TABLES
     with PostgresWorldModel(dsn=rls_login.dsn) as world:
         unprotected = sorted(t for t in tables - _GLOBAL_TABLES if not world._rls_policy_is_active(t))
         assert unprotected == [], "a table with workspace data has no forced row policy"
-        _assert_each_workspace_sees_only_its_own(world, goals)
+        _assert_each_workspace_sees_only_its_own(world, seeded)
 
 
 def test_v56_adds_row_policies_to_a_database_already_enforcing_them(postgres_test_dsn, monkeypatch):
@@ -1852,7 +1870,11 @@ def test_v56_adds_row_policies_to_a_database_already_enforcing_them(postgres_tes
                 assert old.schema_version == 55
                 assert not old._rls_policy_is_active("goal_events")
         with psycopg.connect(postgres_test_dsn, autocommit=True) as admin:
-            goals = {t: _seed_workspace_rows(admin, t) for t in ("rls_alpha", "rls_beta")}
+            seeded = {t: _seed_workspace_rows(admin, t) for t in ("rls_alpha", "rls_beta")}
+            legacy = admin.execute("INSERT INTO goals(title, created_at, updated_at) "
+                                   "VALUES('before workspaces', 0, 0) RETURNING id").fetchone()[0]
+            admin.execute("INSERT INTO goal_events(goal_id, agent, kind, content, ts) "
+                          "VALUES(%s, 'agent', 'note', 'early', 0)", (legacy,))
             for statement in ("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {}",
                               "GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO {}"):
                 admin.execute(sql.SQL(statement).format(sql.Identifier(roles["app"])))
@@ -1860,15 +1882,49 @@ def test_v56_adds_row_policies_to_a_database_already_enforcing_them(postgres_tes
         with pg.PostgresWorldModel(dsn=owner) as upgraded:
             assert upgraded.schema_version == 56
             assert all(upgraded._rls_policy_is_active(t) for t in _newly_covered_tables())
+        with psycopg.connect(postgres_test_dsn, autocommit=True) as admin:
+            # Existing events and episodes took their goal's workspace.
+            assert admin.execute(
+                "SELECT count(*) FROM goal_events e JOIN goals g ON g.id = e.goal_id "
+                "WHERE e.tenant_id IS DISTINCT FROM g.tenant_id").fetchone() == (0,)
         monkeypatch.setenv("MAVERICK_PG_RLS", "1")
         with pg.PostgresWorldModel(dsn=app) as world:
-            _assert_each_workspace_sees_only_its_own(world, goals)
+            _assert_each_workspace_sees_only_its_own(world, seeded)
+            # A backfilled goal brings its events with it.
+            with psycopg.connect(postgres_test_dsn) as admin:
+                from maverick.world_model_backends import pg_rls
+                pg_rls.backfill(admin, "rls_alpha")
+            from maverick.paths import tenant_scope
+            with tenant_scope(tenant="rls_alpha"):
+                assert _raw(world, "SELECT content FROM goal_events WHERE goal_id = %s",
+                            (legacy,)) == [("early",)]
     finally:
         with psycopg.connect(postgres_test_dsn, autocommit=True) as admin:
             for role in roles.values():
                 admin.execute(sql.SQL("REASSIGN OWNED BY {} TO CURRENT_USER").format(sql.Identifier(role)))
                 admin.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(role)))
                 admin.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(role)))
+
+
+def test_erasure_blocked_by_a_row_another_workspace_owns_says_so(rls_login):
+    """A turn in one workspace's conversation that names another's task (it
+    predates the policy that refuses it) stops that task's erasure. The
+    erasure changes nothing and says why, instead of a database error."""
+    import psycopg
+    from maverick.paths import tenant_scope
+    from maverick.world_model_backends.postgres import ErasureBlocked, PostgresWorldModel
+
+    with psycopg.connect(rls_login.admin, autocommit=True) as admin:
+        seeded = {tenant: _seed_workspace_rows(admin, tenant) for tenant in ("rls_alpha", "rls_beta")}
+        admin.execute("UPDATE turns SET goal_id = %s WHERE conversation_id = %s",
+                      (seeded["rls_beta"].goal, seeded["rls_beta"].conversation))
+        admin.execute("INSERT INTO turns(conversation_id, goal_id, role, content, ts) "
+                      "VALUES(%s, %s, 'user', 'stray', 0)",
+                      (seeded["rls_alpha"].conversation, seeded["rls_beta"].goal))
+    with PostgresWorldModel(dsn=rls_login.dsn) as world, tenant_scope(tenant="rls_beta"):
+        with pytest.raises(ErasureBlocked, match="Nothing was erased.*in turns"):
+            world.erase_conversations([seeded["rls_beta"].conversation])
+        assert world.get_goal(seeded["rls_beta"].goal) is not None
 
 
 # --- Backend parity (SQLite v13 -> v20 catch-up) -----------------------------

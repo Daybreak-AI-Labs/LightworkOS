@@ -6549,11 +6549,16 @@ def erase(ctx, channel: str, user: str, yes: bool, checkpoint_dirs: tuple = ()) 
         receipt_error,
     ) = _prepare_erasure_proof(world, conv_ids)
 
-    goal_ids, attachment_paths, removed_turns = _dispatch_backend_erasure(
-        world,
-        conv_ids,
-        erasure_plan,
-    )
+    from ..world_model_backends.postgres import ErasureBlocked
+
+    try:
+        goal_ids, attachment_paths, removed_turns = _dispatch_backend_erasure(
+            world,
+            conv_ids,
+            erasure_plan,
+        )
+    except ErasureBlocked as exc:
+        raise click.ClickException(str(exc)) from exc
 
     # Every store keyed by the subject (files, notes, facts, the AI reply cache,
     # audit lines, knowledge) goes through ONE list of steps, the same one a

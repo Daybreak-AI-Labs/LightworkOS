@@ -748,12 +748,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   checkpoints are on, so steps it already finished (including a subagent's
   side effects) may run again. Turn on `[durable] enabled` to continue where
   it stopped; the answer's confirmation says so.
-- With Postgres row-level security on, every table that holds a workspace's
-  records now has a row policy: events, artifacts, questions, turns and the
-  other child tables check their parent goal, approval or conversation, and
-  the learning-store and approval-check tables check their workspace column.
-  Database migration 56 adds them when Lightwork starts as the table owner;
-  a login that does not own the tables cannot apply it, so start once as the
+- With Postgres row-level security on, 18 more world tables now have a row
+  policy. Events and episodes carry a copy of their goal's workspace, kept in
+  step by the database; artifacts, questions, turns and the other child
+  tables check their parent goal, approval or conversation; the learning-store
+  and approval-check tables check their workspace column. Database migration
+  56 adds them when Lightwork starts as the table owner, so start once as the
   owner after upgrading. `maverick tenant backfill` now also assigns
   learning-store and approval-check records that have no workspace.
 - `maverick tenant rls-preflight` no longer reports READY while row-level

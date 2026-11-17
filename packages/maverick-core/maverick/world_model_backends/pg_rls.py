@@ -33,7 +33,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from .postgres import _RLS_RAW_TENANT_TABLES, _RLS_TABLES, _RLS_TENANT_COLUMN
+from .postgres import _RLS_RAW_TENANT_TABLES, _RLS_STAMPED_TABLES, _RLS_TABLES, _RLS_TENANT_COLUMN
 
 _EMPTY_TENANT_TABLES = ("event_goal_admissions", "event_trigger_batches")
 # Unbound writers stamp the empty string, not NULL, in these tables (the event
@@ -41,8 +41,10 @@ _EMPTY_TENANT_TABLES = ("event_goal_admissions", "event_trigger_batches")
 _EMPTY_SCOPE_TABLES = (*_EMPTY_TENANT_TABLES, *_RLS_TENANT_COLUMN)
 # Every table the RLS policy is forced on, so nothing it would hide goes
 # unreported or un-backfilled. ``encryption_migrations`` is excluded: its scope
-# key is derived from the tenant and is managed by the backend itself.
-_PREFLIGHT_TABLES = tuple(t for t in _RLS_TABLES if t != "encryption_migrations")
+# key is derived from the tenant and is managed by the backend itself. So are
+# events and episodes: their tenant is a copy of their goal's, and follows it.
+_PREFLIGHT_TABLES = tuple(t for t in _RLS_TABLES
+                          if t != "encryption_migrations" and t not in _RLS_STAMPED_TABLES)
 
 
 def _column(table: str) -> str:
