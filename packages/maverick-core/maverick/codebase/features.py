@@ -497,9 +497,11 @@ class _Loop:
         if not self.image:
             return None
         with vault.work_dir() as tmp:
-            self._for_image(tmp)
+            probe = tmp / "probe"  # the private work folder itself stays root-only
+            probe.mkdir()
+            self._for_image(probe)
             try:
-                box = self._box(str(tmp))
+                box = self._box(str(probe))
             except Exception as exc:  # noqa: BLE001 -- reported, never a host run
                 return f"the checker image could not be used: {_safe_label(exc, 160)}"
             try:

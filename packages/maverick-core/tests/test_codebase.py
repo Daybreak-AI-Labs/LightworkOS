@@ -1646,3 +1646,20 @@ def test_on_a_root_host_the_image_runs_as_an_ordinary_user(tmp_path, monkeypatch
     features._give_to_image_user(copy)
     assert {Path(p).name for p, _, _ in owned} == {"copy", "pkg", "a.py", "link"}
     assert {(uid, gid) for _, uid, gid in owned} == {(1000, 1000)}
+
+
+def test_the_image_check_hands_over_a_subfolder_not_the_private_work_folder(monkeypatch):
+    from types import SimpleNamespace
+
+    from maverick.sandbox import ExecResult
+    handed, boxed = [], []
+    monkeypatch.setattr(features, "_host_is_root", lambda: True)
+    monkeypatch.setattr(features, "_give_to_image_user", lambda path: handed.append(Path(path)))
+    box = SimpleNamespace(exec=lambda cmd, timeout: ExecResult(stdout="", stderr="", exit_code=0))
+    loop = SimpleNamespace(image="lw-check:1")
+    loop._for_image = lambda path: features._Loop._for_image(loop, path)
+    loop._box = lambda workdir: boxed.append(Path(workdir)) or box
+    assert features._Loop._image_problem(loop) is None
+    # The private lw-work-* folder stays root-only; only a folder inside it is handed over.
+    assert handed == boxed and len(handed) == 1
+    assert handed[0].parent.name.startswith("lw-work-")
