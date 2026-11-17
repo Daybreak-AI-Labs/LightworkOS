@@ -78,6 +78,7 @@ KNOWN_SCHEMA: dict[str, set[str] | None] = {
         # Prices for paid tool calls and the per-call ceiling (budget.py).
         "tool_prices",
         "unpriced_tool_call_dollars",
+        "max_unmetered_hold_dollars",
     },
     "safety": {
         "profile",

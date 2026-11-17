@@ -489,3 +489,55 @@ def test_every_pay_per_use_and_per_lookup_connector_is_charged(monkeypatch):
     budget = Budget()
     assert "ok" in _tool(paid="all", budget=budget).fn({"op": "get", "path": "/lookup"})
     assert budget.dollars == pytest.approx(DEFAULT_UNPRICED_TOOL_CALL_DOLLARS)
+
+
+def test_a_per_second_connector_holds_a_bounded_amount_not_everything_left(monkeypatch):
+    # A paid call whose units are never reported holds at most
+    # [budget] max_unmetered_hold_dollars, so other calls on the same budget
+    # keep running, and is charged that full hold.
+    import os
+
+    import pytest
+    from maverick import config
+    from maverick.budget import DEFAULT_MAX_UNMETERED_HOLD_DOLLARS, Budget
+
+    home = os.environ["MAVERICK_HOME"]
+    os.makedirs(home, exist_ok=True)
+    with open(os.path.join(home, "config.toml"), "w", encoding="utf-8") as f:
+        f.write('[budget.tool_prices]\nacme = { dollars = 0.01, per = "second" }\n')
+    config.reset_config_cache()
+    _set(monkeypatch)
+    budget = Budget(max_dollars=5.0)
+    held = []
+
+    def request(*_a, **_k):
+        held.append(budget._reserved)
+        budget.release(budget.reserve(0.05))  # a sibling call still fits
+        return _resp(200, {"ok": True})
+
+    _fake_httpx(monkeypatch, request=MagicMock(side_effect=request))
+    out = _tool(paid=True, budget=budget).fn({"op": "post", "path": "/v1/run", "body": {}, "confirm": True})
+    assert "ok" in out and held == [pytest.approx(DEFAULT_MAX_UNMETERED_HOLD_DOLLARS)]
+    assert budget.dollars == pytest.approx(DEFAULT_MAX_UNMETERED_HOLD_DOLLARS)
+
+
+def test_twin_specs_of_a_charged_service_are_charged_alike():
+    # Two connectors for the same service host (such as remove_bg and
+    # removebg) must be charged the same way, so the next twin is caught.
+    import re
+
+    from maverick.tools import enterprise_connectors as ec
+
+    paid, hosts = {}, {}
+    for spec in ec._SPECS:
+        paid[spec["name"]] = bool(spec.get("paid"))
+        match = re.search(r"https://([a-z0-9-]+(?:\.[a-z0-9-]+)+)", spec["description"])
+        if match:
+            hosts.setdefault(match.group(1), []).append(spec["name"])
+    mixed = {host: names for host, names in hosts.items()
+             if len(names) > 1 and len({paid[n] for n in names}) > 1}
+    assert mixed == {}
+    for name in ("removebg", "dialogflow", "amazon_lex", "pdfco", "ilovepdf", "smallpdf"):
+        assert paid[name], name
+    for name in ("luminance", "lexcheck", "floydhub"):
+        assert not paid[name], name

@@ -1548,6 +1548,10 @@ def pick_budget() -> dict[str, Any]:
     # per-call safety ceiling. Settings > Models changes both later.
     budget["unpriced_tool_call_dollars"] = _prompt_positive_dollars(
         "  Charge per paid tool call with no price set, in USD", default="0.10")
+    # A paid call priced per second or per terabyte holds at most this while
+    # it runs, and is charged it in full if it never reports its usage.
+    budget["max_unmetered_hold_dollars"] = _prompt_positive_dollars(
+        "  Most to hold while a paid call of unknown length runs, in USD", default="1.00")
     tool_prices = _pick_tool_prices(budget["unpriced_tool_call_dollars"])
     if tool_prices:
         budget["tool_prices"] = tool_prices
@@ -1605,7 +1609,7 @@ def _pick_tool_prices(ceiling: float) -> dict[str, dict[str, Any]]:
 
     while True:
         raw = _q_text("  Prices for paid tool services, search first, as service=USD/unit separated "
-                      "by commas (for example tavily=0.008/request, deepl=0.00002/character). "
+                      "by commas (for example tavily=PRICE/request, where PRICE is your rate in USD). "
                       f"Unpriced, each search counts ${ceiling:.2f}. Leave blank to set them "
                       "later in Settings",
                       default="")

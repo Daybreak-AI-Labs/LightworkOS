@@ -811,7 +811,8 @@ def test_dynamics_create_needs_confirm(monkeypatch):
 
 def test_bigquery_is_charged_by_terabytes_scanned_within_what_is_left(monkeypatch):
     # Priced per terabyte, a query is charged for the bytes the reply says it
-    # scanned, and asks BigQuery to refuse a scan the run could not pay for.
+    # scanned, and asks BigQuery to refuse a scan past its hold: the smaller
+    # of what the run has left and [budget] max_unmetered_hold_dollars.
     # A reply without byte counts is charged the per-call safety ceiling.
     import os
 
@@ -831,7 +832,7 @@ def test_bigquery_is_charged_by_terabytes_scanned_within_what_is_left(monkeypatc
     budget = Budget(max_dollars=2.0)
     tool = bigquery_tool(budget=budget)
     assert tool.fn({"op": "query", "sql": "select 1"}).startswith("ok")
-    assert post.call_args.kwargs["json"]["maximumBytesBilled"] == str(int(2.0 / 5.0 * 1e12))
+    assert post.call_args.kwargs["json"]["maximumBytesBilled"] == str(int(1.0 / 5.0 * 1e12))
     assert budget.dollars == pytest.approx(1.0)
     with open(os.path.join(home, "config.toml"), "w", encoding="utf-8") as f:
         f.write("")

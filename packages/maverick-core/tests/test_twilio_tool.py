@@ -97,7 +97,7 @@ def test_twilio_sms_is_charged_per_message_and_needs_a_budget(monkeypatch):
     home = os.environ["MAVERICK_HOME"]
     os.makedirs(home, exist_ok=True)
     with open(os.path.join(home, "config.toml"), "w", encoding="utf-8") as f:
-        f.write('[budget.tool_prices]\ntwilio = { dollars = 0.0079, per = "message" }\n')
+        f.write('[budget.tool_prices]\ntwilio = { dollars = 0.02, per = "message" }\n')
     config.reset_config_cache()
     monkeypatch.setenv("TWILIO_ACCOUNT_SID", "AC123")
     monkeypatch.setenv("TWILIO_AUTH_TOKEN", "tok")
@@ -108,6 +108,6 @@ def test_twilio_sms_is_charged_per_message_and_needs_a_budget(monkeypatch):
     send = {"op": "sms_send", "to": "+15555550000", "body": "hello", "confirm": True}
     budget = Budget()
     assert "SM1" in twilio_tool(budget=budget).fn(send)
-    assert budget.dollars == pytest.approx(0.0079)
+    assert budget.dollars == pytest.approx(0.02)
     out = twilio_tool().fn(send)
     assert out.startswith("ERROR") and "nothing was sent" in out and post.call_count == 1

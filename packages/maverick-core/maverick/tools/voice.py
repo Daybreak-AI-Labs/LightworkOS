@@ -125,9 +125,29 @@ def _paid(service: str, label: str, send, **metering):
 
 
 def _audio_seconds(resp) -> dict[str, float | None]:
-    seconds = getattr(resp, "duration", None)
-    return {"second": float(seconds) if isinstance(seconds, (int, float))
-            and not isinstance(seconds, bool) else None}
+    """Seconds billed, from the reply: ``usage.seconds`` (OpenAI's default
+    reply, ``UsageDuration``), else ``duration`` (verbose replies)."""
+    for seconds in (getattr(getattr(resp, "usage", None), "seconds", None),
+                    getattr(resp, "duration", None)):
+        if isinstance(seconds, (int, float)) and not isinstance(seconds, bool):
+            return {"second": float(seconds)}
+    return {"second": None}
+
+
+def _stt_units(audio_path: Path) -> dict[str, float]:
+    """One request, and the audio length read from the file's header when it
+    states one, so a per-second hold is what the call can cost."""
+    from ._audio_length import audio_seconds
+
+    units: dict[str, float] = {"request": 1}
+    try:
+        with _open_audio(audio_path) as f:
+            seconds = audio_seconds(f, os.fstat(f.fileno()).st_size)
+    except OSError:
+        seconds = None
+    if seconds is not None and seconds > 0:
+        units["second"] = seconds
+    return units
 
 
 def _open_audio(audio_path: Path):
@@ -181,7 +201,7 @@ def _whisper_openai(audio_path: Path, language: str | None) -> str | None:
                 kwargs["language"] = language
             resp = _paid("openai_whisper", "OpenAI speech-to-text",
                          lambda: client.audio.transcriptions.create(**kwargs),
-                         units={"request": 1}, measure=_audio_seconds)
+                         units=_stt_units(audio_path), measure=_audio_seconds)
         return getattr(resp, "text", None) or str(resp)
     except _PASS_THROUGH:
         raise
@@ -218,7 +238,7 @@ def _whisper_groq(audio_path: Path, language: str | None) -> str | None:
                 kwargs["language"] = language
             resp = _paid("groq_whisper", "Groq speech-to-text",
                          lambda: client.audio.transcriptions.create(**kwargs),
-                         units={"request": 1}, measure=_audio_seconds)
+                         units=_stt_units(audio_path), measure=_audio_seconds)
         return getattr(resp, "text", None) or str(resp)
     except _PASS_THROUGH:
         raise

@@ -298,7 +298,7 @@ def execute(flow: Flow, *, agent_runner: AgentRunner, action_runner: ActionRunne
             agent_runner = _budget_gated(agent_runner, run_budget_limit, agent_budget_dollars, spent,
                                          spend_lock)
         else:
-            agent_runner = _spend_tracked(agent_runner, agent_budget_dollars, spent)
+            agent_runner = _spend_tracked(agent_runner, agent_budget_dollars, spent, spend_lock)
     # Paid tool calls in a tool step are charged to what is left of the run's
     # allowance, and count toward the run's spend.
     action_runner = _tool_spend_metered(action_runner, run_budget_limit, spent, spend_lock)

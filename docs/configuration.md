@@ -138,9 +138,9 @@ strict_pricing      = true
 # message, character, image, second or terabyte scanned). Set search first: with no
 # price, 20 searches use a $2 task limit. Settings > Models, under Prices for
 # paid tool services, writes these too. A workspace may only raise them.
-# tavily = { dollars = 0.008, per = "request" }
-# deepl = { dollars = 0.00002, per = "character" }
-# bigquery = { dollars = 5.0, per = "terabyte" }
+# tavily = { dollars = <your price>, per = "request" }
+# deepl = { dollars = <your price>, per = "character" }
+# bigquery = { dollars = <your price>, per = "terabyte" }
 
 [context]
 # Longest reply one model call may return, in tokens. The hold taken before

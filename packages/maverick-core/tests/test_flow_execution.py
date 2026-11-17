@@ -768,3 +768,45 @@ def test_flow_tool_step_charges_paid_tools_to_the_flow_allowance(tmp_path, monke
                             action_runner=execution.default_action_runner(world=None))
     assert run.data["r1"] == "translated" and "r2" not in run.data
     assert sent == [1] and run.cost_dollars == pytest.approx(0.10)
+
+
+def test_capped_flow_free_tool_steps_run_side_by_side_and_name_the_limit():
+    # A flow allowance must not make free tool steps wait on each other: two
+    # parallel steps both reach the barrier. A stop by another spending limit
+    # names that limit, not the flow's.
+    import threading
+
+    import pytest
+    from maverick.budget import BudgetExceeded
+    from maverick.flow.budgeting import _tool_spend_metered
+    from maverick.flow.run_events import FlowBudgetExceeded
+
+    barrier = threading.Barrier(2, timeout=5)
+    errors = []
+
+    def free_step(tool, params, data):
+        barrier.wait()
+        return ("ok", 1.0)
+
+    run = _tool_spend_metered(free_step, 1.0, [0.0], threading.Lock())
+
+    def call():
+        try:
+            run("free", {}, {})
+        except Exception as exc:  # collected for the assertion below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=call) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == []
+
+    def org_limited(tool, params, data):
+        raise BudgetExceeded("organisation daily spending limit of $50 reached")
+
+    with pytest.raises(FlowBudgetExceeded) as stopped:
+        _tool_spend_metered(org_limited, None, [0.0], threading.Lock())("paid", {}, {})
+    assert "organisation daily spending limit" in str(stopped.value)
+    assert "flow spending allowance" not in str(stopped.value)

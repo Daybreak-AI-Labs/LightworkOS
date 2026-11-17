@@ -437,12 +437,12 @@ def test_tool_prices_are_set_on_the_prices_page_and_through_the_copilot(monkeypa
     origin = {"origin": "http://127.0.0.1"}
     page = c.get("/settings").text
     assert "Prices for paid tool services" in page and "Safety ceiling: $0.10 per call" in page
-    saved = c.post("/settings/tools/price", data={"service": "deepl", "dollars": "0.00002",
+    saved = c.post("/settings/tools/price", data={"service": "deepl", "dollars": "0.001",
                                                  "per": "character", "confirm": "on"},
                    headers=origin, follow_redirects=False)
     assert saved.status_code == 303
     price = tool_call_price("deepl")
-    assert (price.dollars_per_unit, price.unit) == (0.00002, "character")
+    assert (price.dollars_per_unit, price.unit) == (0.001, "character")
     assert "per character" in c.get("/settings", params={"saved": "tool_price"}).text
     assert c.post("/settings/tools/price", data={"service": "deepl", "dollars": "1", "per": "request"},
                   headers=origin, follow_redirects=False).status_code == 400
@@ -455,7 +455,7 @@ def test_tool_prices_are_set_on_the_prices_page_and_through_the_copilot(monkeypa
         return Request({"type": "http", "method": "POST", "path": "/settings",
                         "headers": [(b"host", b"127.0.0.1")], "client": ("127.0.0.1", 1)})
 
-    args = {"service": "tavily", "dollars": 0.008, "per": "request", "confirmed": True}
+    args = {"service": "tavily", "dollars": 0.5, "per": "request", "confirmed": True}
     with pytest.raises(HTTPException) as refused:
         setter.prepare(request(), {}, dict(args, confirmed=False))
     assert refused.value.status_code == 400
@@ -476,3 +476,15 @@ def test_tool_prices_are_set_on_the_prices_page_and_through_the_copilot(monkeypa
     removed = c.post("/settings/tools/price/remove", data={"service": "deepl"}, headers=origin,
                      follow_redirects=False)
     assert removed.status_code == 303 and tool_call_price("deepl").unit is None
+    # While the settings cannot be read, a price is not saved, and the reply
+    # says so rather than blaming another settings file.
+    import maverick.budget as budget_mod
+
+    def unreadable_prices():
+        raise budget_mod.ToolPricesUnavailable("unreadable")
+
+    monkeypatch.setattr(budget_mod, "tool_price_settings", unreadable_prices)
+    unreadable = c.post("/settings/tools/price", data={"service": "deepl", "dollars": "0.001",
+                                                      "per": "character", "confirm": "on"},
+                        headers=origin, follow_redirects=False)
+    assert unreadable.status_code == 503 and "cannot read its settings" in unreadable.text

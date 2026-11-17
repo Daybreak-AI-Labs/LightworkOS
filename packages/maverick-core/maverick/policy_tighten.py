@@ -224,6 +224,8 @@ TENANT_RULES: dict[str, dict[str, tuple]] = {
     # A workspace may charge paid tool calls more, never less.
     "budget": {
         "unpriced_tool_call_dollars": ("minimum", 0.10, (), None),
+        # The full hold is the charge when usage is not reported: only up.
+        "max_unmetered_hold_dollars": ("minimum", 1.00, (), None),
         "tool_prices": _consumer("budget.tool_prices", {}),
     },
     "governance": {

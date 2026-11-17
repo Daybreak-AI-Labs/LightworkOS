@@ -117,34 +117,53 @@ def _measured(result) -> dict[str, float | None]:
             "image": images if final.get("status") == "succeeded" else 0}
 
 
+def _priced_per_second() -> bool:
+    from ..budget import ToolPricesUnavailable, tool_call_price
+
+    try:
+        return tool_call_price("replicate").unit == "second"
+    except ToolPricesUnavailable:
+        return False  # charged_call refuses the call with the reason
+
+
 def run_prediction(version: str, inp: dict, wait: bool, budget, *, label: str = "Replicate"):
     """Create one prediction and, with ``wait``, poll it for up to ~90s.
 
-    One paid call charged to ``budget``. When Replicate is priced per second,
-    a polled prediction is cancelled once it has run as long as the run's
-    remaining allowance pays for. Returns ``(code, created, final,
-    poll_error)``: ``final`` is the finished prediction, or ``None`` when not
-    waiting, still running or the poll failed (``poll_error`` says how).
+    One paid call charged to ``budget``. Priced per second, a prediction is
+    always waited for, so its time can be measured and limited: it is
+    cancelled when it reaches the seconds its hold pays for or the 90-second
+    deadline, whichever is first. The poll wakes at that moment, so the
+    overshoot is Replicate's own time to stop. Returns ``(code, created,
+    final, poll_error)``: ``final`` is the finished prediction, or ``None``
+    when not waiting, still running or the poll failed (``poll_error`` says
+    how).
     """
+    wait = wait or _priced_per_second()
+
     def send(max_units):
         code, data = _post("/predictions", {"version": version, "input": inp})
         if code >= 400 or not isinstance(data, dict) or not wait:
             return code, data, None, None
         started = time.time()
-        deadline = started + 90
-        cancelled = False
-        while time.time() < deadline:
+        stop_at = started + (90 if max_units is None else min(90, max_units))
+        cancelled_polls = None
+        while cancelled_polls is None or cancelled_polls < 3:
             c2, p2 = _get(f"/predictions/{data.get('id')}")
             if c2 >= 400 or not isinstance(p2, dict):
                 return code, data, None, f"ERROR: poll ({c2}): {p2}"
             if p2.get("status") in ("succeeded", "failed", "canceled"):
                 return code, data, p2, None
-            if (max_units is not None and not cancelled
-                    and time.time() - started >= max_units):
-                # The run cannot pay for more seconds: stop the prediction.
+            now = time.time()
+            if cancelled_polls is None and now >= stop_at:
+                # The hold or the deadline is reached: stop the prediction so
+                # it does not keep billing, then read its final state.
                 _post(f"/predictions/{data.get('id')}/cancel", {})
-                cancelled = True
-            time.sleep(2)
+                cancelled_polls = 0
+            if cancelled_polls is None:
+                time.sleep(min(2.0, max(0.5, stop_at - now)))
+            else:
+                cancelled_polls += 1
+                time.sleep(1.0)
         return code, data, None, None
 
     return charged_call("replicate", send, budget=budget, label=label,

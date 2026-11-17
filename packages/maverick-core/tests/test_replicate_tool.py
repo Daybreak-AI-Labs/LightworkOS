@@ -93,13 +93,11 @@ def test_replicate_models_search_passes_the_egress_check(monkeypatch):
 
 def test_replicate_wait_is_charged_for_the_seconds_it_ran(monkeypatch):
     # A prediction polled to the end is charged for its reported compute time
-    # at the [budget.tool_prices] per-second price; without waiting, the
-    # seconds are unknown, so the per-call safety ceiling is charged.
+    # at the [budget.tool_prices] per-second price.
     import os
 
     import pytest
     from maverick import config
-    from maverick.budget import DEFAULT_UNPRICED_TOOL_CALL_DOLLARS
 
     home = os.environ["MAVERICK_HOME"]
     os.makedirs(home, exist_ok=True)
@@ -109,16 +107,13 @@ def test_replicate_wait_is_charged_for_the_seconds_it_ran(monkeypatch):
     monkeypatch.setenv("REPLICATE_API_TOKEN", "r8_xx")
     done = {"id": "pred1", "status": "succeeded", "output": ["x.png"],
             "metrics": {"predict_time": 2.5}}
-    get = MagicMock(side_effect=[_resp(200, {"latest_version": {"id": "v1"}}), _resp(200, done),
-                                 _resp(200, {"latest_version": {"id": "v1"}})])
+    get = MagicMock(side_effect=[_resp(200, {"latest_version": {"id": "v1"}}), _resp(200, done)])
     _fake_httpx(monkeypatch, get=get, post=MagicMock(return_value=_resp(201, {"id": "pred1"})))
     from maverick.tools.replicate_tool import replicate_tool
     budget = Budget()
     tool = replicate_tool(budget=budget)
     assert "succeeded" in tool.fn({"op": "run", "model": "o/m", "input": {}, "wait": True})
     assert budget.dollars == pytest.approx(0.025)
-    assert "created prediction" in tool.fn({"op": "run", "model": "o/m", "input": {}})
-    assert budget.dollars == pytest.approx(0.025 + DEFAULT_UNPRICED_TOOL_CALL_DOLLARS)
 
 
 def test_replicate_priced_per_second_cannot_spend_past_the_limit(monkeypatch):
@@ -163,28 +158,44 @@ def test_replicate_priced_per_second_cannot_spend_past_the_limit(monkeypatch):
     assert budget.dollars == pytest.approx(0.15) and budget._reserved == 0
 
 
-def test_replicate_unreported_seconds_charge_everything_held_and_say_so(monkeypatch):
-    # Priced per second, a prediction not waited for never reports its
-    # seconds. It is charged everything the run had left, not the small
-    # per-call ceiling, and the cost line says why and how to fix it.
+def test_replicate_per_second_runs_waiting_and_is_cancelled_at_its_deadline(monkeypatch):
+    # Priced per second, a prediction asked not to wait is still waited for,
+    # so its time can be measured and limited. One that is still running at
+    # the deadline is cancelled, not left billing. With no time reported, it
+    # is charged the full amount held for it, and the cost line says why.
     import os
 
     import pytest
     from maverick import config
+    from maverick.budget import DEFAULT_MAX_UNMETERED_HOLD_DOLLARS
 
     home = os.environ["MAVERICK_HOME"]
     os.makedirs(home, exist_ok=True)
     with open(os.path.join(home, "config.toml"), "w", encoding="utf-8") as f:
-        f.write('[budget.tool_prices]\nreplicate = { dollars = 0.01, per = "second" }\n')
+        f.write('[budget.tool_prices]\nreplicate = { dollars = 0.001, per = "second" }\n')
     config.reset_config_cache()
     monkeypatch.setenv("REPLICATE_API_TOKEN", "r8_xx")
-    _fake_httpx(monkeypatch, get=MagicMock(return_value=_resp(200, {"latest_version": {"id": "v1"}})),
-                post=MagicMock(return_value=_resp(201, {"id": "p1", "status": "starting"})))
-    from maverick.tools.replicate_tool import replicate_tool
-    budget = Budget(max_dollars=0.5)
-    assert "created prediction" in replicate_tool(budget=budget).fn({"op": "run", "model": "o/m", "input": {}})
-    assert budget.dollars == pytest.approx(0.5)
+    import maverick.tools.replicate_tool as rt
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(rt.time, "time", lambda: clock["now"])
+    monkeypatch.setattr(rt.time, "sleep", lambda s: clock.__setitem__("now", clock["now"] + s))
+    posts = []
+
+    def get(url, **_kw):
+        if url.endswith("/models/o/m"):
+            return _resp(200, {"latest_version": {"id": "v1"}})
+        return _resp(200, {"id": "p1", "status": "processing"})
+
+    def post(url, **_kw):
+        posts.append(url)
+        return _resp(201, {"id": "p1", "status": "starting"})
+
+    _fake_httpx(monkeypatch, get=MagicMock(side_effect=get), post=MagicMock(side_effect=post))
+    budget = Budget(max_dollars=5.0)
+    out = rt.replicate_tool(budget=budget).fn({"op": "run", "model": "o/m", "input": {}})
+    assert "p1" in out and posts[-1].endswith("/predictions/p1/cancel")
+    assert clock["now"] - 1000.0 <= 94  # cancelled at 90 s, then three short reads
+    assert budget.dollars == pytest.approx(DEFAULT_MAX_UNMETERED_HOLD_DOLLARS)
     summary = budget.summary()
     assert "Replicate did not report its real usage" in summary
-    assert "everything the run had left was charged" in summary
-    assert "Prices for paid tool services" in summary
+    assert "full amount held" in summary and "Prices for paid tool services" in summary

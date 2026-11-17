@@ -312,6 +312,7 @@ def _settings_response(request: Request, saved: str = "", *, notice: str = "",
         "self_hosted_states": self_hosted_states(),
         "tool_price_states": tool_price_states(),
         "tool_price_services": _tool_price_choices(),
+        "tool_unmetered_hold": _unmetered_hold_words(),
         "price_today": today.isoformat(),
         "price_review_until": (today + timedelta(days=30)).isoformat(),
         "model_options": model_options,
@@ -590,6 +591,17 @@ def _tool_charge(entry: tuple[float, str] | None, ceiling: float) -> str:
     return f"{money(entry[0], 6)} per {TOOL_PRICE_UNIT_WORDS[entry[1]]}"
 
 
+def _unmetered_hold_words() -> str:
+    from maverick.budget import ToolPricesUnavailable, max_unmetered_hold
+
+    from .plain_labels import money
+
+    try:
+        return money(max_unmetered_hold(), 2)
+    except ToolPricesUnavailable:
+        return "nothing: paid calls are refused until the settings can be read"
+
+
 def _tool_price_choices() -> list[dict[str, str]]:
     from maverick.budget import paid_tool_services
 
@@ -662,8 +674,19 @@ def _saved_tool_price(service: str):
         return None
 
 
+TOOL_PRICES_UNREADABLE = ("Lightwork cannot read its settings, so prices cannot be saved now. "
+                          "Fix the settings file that maverick doctor names, then try again.")
+
+
 def _write_tool_price(request: Request, service: str, dollars: float | None, per: str = "") -> None:
+    from maverick.budget import ToolPricesUnavailable, tool_price_settings
+
     from . import settings_store
+
+    try:
+        tool_price_settings()
+    except ToolPricesUnavailable as exc:
+        raise HTTPException(status_code=503, detail=TOOL_PRICES_UNREADABLE) from exc
 
     try:
         with _setting_write(request, "budget", "tool_prices",
@@ -701,6 +724,12 @@ def remove_tool_price(request: Request, service: str) -> dict:
     from maverick.budget import paid_tool_services
 
     auth.require_global_permission(request, "admin")
+    from maverick.budget import ToolPricesUnavailable, tool_price_settings
+
+    try:
+        tool_price_settings()
+    except ToolPricesUnavailable as exc:
+        raise HTTPException(status_code=503, detail=TOOL_PRICES_UNREADABLE) from exc
     if service not in paid_tool_services() or _saved_tool_price(service) is None:
         raise HTTPException(status_code=400, detail="Choose a saved tool price to remove.")
     _write_tool_price(request, service, None)

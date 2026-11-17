@@ -55,12 +55,14 @@ def _budget_gated(agent_runner: AgentRunner, cap: float, per_call: float, spent:
     return run
 
 
-def _spend_tracked(agent_runner: AgentRunner, per_call: float, spent: list) -> AgentRunner:
+def _spend_tracked(agent_runner: AgentRunner, per_call: float, spent: list,
+                   lock=None) -> AgentRunner:
     """Wrap a runner to accumulate reserved spend (``per_call`` per invocation)
     into ``spent`` so the run's total cost can be persisted -- used when there is
-    NO ``max_dollars`` gate (the gate already tracks spend itself)."""
+    NO ``max_dollars`` gate (the gate already tracks spend itself). ``lock`` is
+    shared with the tool-step budget, which adds to ``spent`` under it too."""
     import threading
-    lock = threading.Lock()
+    lock = lock or threading.Lock()
 
     @wraps(agent_runner, updated=())
     def run(brief: str, data: dict, **kw) -> tuple:
@@ -85,39 +87,97 @@ def current_step_budget():
     return _STEP_BUDGET.get()
 
 
-def _tool_spend_metered(action_runner: Callable, cap: float | None, spent: list,
-                        lock=None) -> Callable:
-    """Give each tool step a run budget of what is left of the flow's
-    allowance, so a paid tool can run inside the flow's limit, and add what
-    the step spent to the run's total. With an allowance, a step holds
-    ``lock`` (shared with the agent gate) while it runs, so two paid steps
-    cannot spend the same remainder."""
-    import threading
+def _flow_step_budget_class():
+    import math
 
     from ..budget import Budget, BudgetExceeded
+
+    class _FlowStepBudget(Budget):
+        """One tool step's run budget, admitted against the flow's shared
+        allowance. A paid call takes the flow's lock only to hold its cost and
+        to record its charge, so free steps never wait on each other and two
+        paid steps cannot hold the same remainder."""
+
+        def __init__(self, cap: float | None, spent: list, held: list, lock):
+            super().__init__()
+            self._flow_cap, self._flow_spent, self._flow_held, self._flow_lock = cap, spent, held, lock
+
+        def remaining_dollars(self) -> float | None:
+            if self._flow_cap is None:
+                return None
+            with self._flow_lock:
+                return self._flow_cap - self._flow_spent[0] - self._flow_held[0]
+
+        def _over(self, amount: float) -> bool:
+            return (self._flow_cap is not None and amount > self._flow_cap
+                    and not math.isclose(amount, self._flow_cap, rel_tol=1e-15, abs_tol=0.0))
+
+        def reserve(self, est_cost: float) -> float:
+            with self._flow_lock:
+                projected = self._flow_spent[0] + self._flow_held[0] + est_cost
+                if self._over(projected):
+                    raise FlowBudgetExceeded(
+                        f"flow spending allowance reached (${self._flow_cap:g}): "
+                        f"${self._flow_spent[0]:.2f} spent, ${self._flow_held[0]:.2f} held, "
+                        f"${est_cost:.2f} more needed")
+                held = super().reserve(est_cost)
+                self._flow_held[0] += held
+                return held
+
+        def release(self, held: float) -> None:
+            with self._flow_lock:
+                super().release(held)
+                self._flow_held[0] = max(0.0, self._flow_held[0] - held)
+
+        def record_tokens(self, *args, **kwargs):
+            try:
+                charge, failure = super().record_tokens(*args, **kwargs), None
+            except BudgetExceeded as exc:
+                charge, failure = getattr(exc, "token_charge", None), exc
+                if charge is None:
+                    raise
+            with self._flow_lock:
+                self._flow_spent[0] += charge.dollars
+                over = self._over(self._flow_spent[0])
+            if failure is not None:
+                raise failure
+            if over:
+                stop = FlowBudgetExceeded(
+                    f"flow spending allowance reached (${self._flow_cap:g}) by a paid tool call")
+                stop.token_charge = charge
+                stop.pricing_evidence = dict(charge.pricing_evidence)
+                raise stop
+            return charge
+
+    return _FlowStepBudget
+
+
+def _tool_spend_metered(action_runner: Callable, cap: float | None, spent: list,
+                        lock=None) -> Callable:
+    """Give each tool step a run budget drawn from the flow's allowance, so a
+    paid tool can run inside the flow's limit, and add what it charges to the
+    run's total. ``lock`` (shared with the agent gate) is taken only while a
+    paid call holds its cost or records its charge; free steps never take it.
+    A stop by another spending limit keeps that limit's own message."""
+    import threading
+
+    from ..budget import BudgetExceeded
     lock = lock or threading.Lock()
+    step_budget = _flow_step_budget_class()
+    held = [0.0]
+    limit = cap if cap and cap > 0 else None
 
     @wraps(action_runner, updated=())
     def run(tool: str, params: dict, data: dict) -> tuple:
-        def step():
-            remaining = None if not cap or cap <= 0 else max(0.0, cap - spent[0])
-            budget = Budget(max_dollars=remaining)
-            token = _STEP_BUDGET.set(budget)
-            try:
-                return action_runner(tool, params, data)
-            except BudgetExceeded as exc:
-                if isinstance(exc, FlowBudgetExceeded):
-                    raise
-                # The step's paid call did not fit what was left of the flow's
-                # allowance: the run stops as budget-limited.
-                raise FlowBudgetExceeded(
-                    f"flow spending allowance reached (${cap or 0:g}): {exc}") from exc
-            finally:
-                _STEP_BUDGET.reset(token)
-                spent[0] += budget.dollars
-
-        if cap and cap > 0:
-            with lock:
-                return step()
-        return step()
+        token = _STEP_BUDGET.set(step_budget(limit, spent, held, lock))
+        try:
+            return action_runner(tool, params, data)
+        except BudgetExceeded as exc:
+            if isinstance(exc, FlowBudgetExceeded):
+                raise
+            # Another spending limit stopped the step's paid call: the run stops
+            # as budget-limited, naming that limit.
+            raise FlowBudgetExceeded(f"a spending limit stopped this tool step: {exc}") from exc
+        finally:
+            _STEP_BUDGET.reset(token)
     return run

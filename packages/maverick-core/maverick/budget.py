@@ -1050,6 +1050,10 @@ def record_tool_tokens(
 # unpriced_tool_call_dollars. No provider's price is written here.
 TOOL_PRICE_UNITS = ("request", "message", "page", "character", "image", "second", "terabyte")
 DEFAULT_UNPRICED_TOOL_CALL_DOLLARS = 0.10
+# The most a paid call whose cost is known only afterwards may hold, when the
+# service takes no limit and its length cannot be measured first
+# ([budget] max_unmetered_hold_dollars).
+DEFAULT_MAX_UNMETERED_HOLD_DOLLARS = 1.00
 _MAX_TOOL_UNIT_DOLLARS = 10_000.0
 _TOOL_PRICE_VERSION = "operator-tool-price-v1"
 _UNPRICED_TOOL_CEILING = "unpriced-tool-call-ceiling-v1"
@@ -1089,8 +1093,9 @@ PAID_CONNECTOR_NAMES = frozenset({
     "ollama_cloud", "cerebrium", "beam_cloud", "paperspace_gradient", "otter_ai",
     "happyscribe", "pictory", "opus_clip", "invideo", "relevance_ai", "dify_ai",
     "chatbase", "vectara", "picsart", "descript", "threeplay_media", "trint", "veed",
-    "kapwing", "voltage_park", "floydhub", "wonderchat", "gumloop", "lindy_ai",
-    "stack_ai", "tinypng", "luminance", "lexcheck", "baidu", "telesign",
+    "kapwing", "voltage_park", "wonderchat", "gumloop", "lindy_ai",
+    "stack_ai", "tinypng", "baidu", "telesign", "removebg", "dialogflow",
+    "amazon_lex", "pdfco", "ilovepdf", "smallpdf",
     "prove_identity", "jumio", "onfido", "persona_kyc", "trulioo", "socure",
     "middesk", "checkr", "sterling_check", "hireright", "goodhire",
 })
@@ -1104,7 +1109,7 @@ MESSAGING_CONNECTOR_NAMES = frozenset({
     "link_mobility", "esendex", "didww", "flowroute", "karix", "route_mobile",
     "plum_voice", "callfire", "syniverse", "tanla_platforms", "valuefirst",
     "seven_io", "dexatel", "termii", "smsapi_com", "bulksms", "gupshup", "msg91",
-    "textlocal", "whatsapp_business", "attentive", "postscript", "simpletexting",
+    "textlocal", "attentive", "postscript", "simpletexting",
     "eztexting", "textmagic", "textedly", "slicktext", "tatango", "trumpia",
 })
 # Per-lookup data services: a GET is billed too (a credit or a lookup).
@@ -1169,10 +1174,11 @@ class ToolCallPrice:
         return _nonnegative_finite(amount, "tool usage") * self.dollars_per_unit, True
 
 
-def _tool_ceiling(value: object) -> float:
-    """[budget] unpriced_tool_call_dollars: a number (or its text) above 0."""
+def _tool_ceiling(value: object, default: float = DEFAULT_UNPRICED_TOOL_CALL_DOLLARS,
+                  key: str = "unpriced_tool_call_dollars") -> float:
+    """A [budget] dollar setting: a number (or its text) above 0."""
     if value is None:
-        return DEFAULT_UNPRICED_TOOL_CALL_DOLLARS
+        return default
     try:
         amount = float(value.strip()) if isinstance(value, str) else (
             float(value) if isinstance(value, (int, float)) and not isinstance(value, bool)
@@ -1181,9 +1187,8 @@ def _tool_ceiling(value: object) -> float:
         amount = math.nan
     if math.isfinite(amount) and 0 < amount <= _MAX_TOOL_UNIT_DOLLARS:
         return amount
-    log.warning("[budget] unpriced_tool_call_dollars must be a number above 0; "
-                "charging $%.2f per unpriced tool call", DEFAULT_UNPRICED_TOOL_CALL_DOLLARS)
-    return DEFAULT_UNPRICED_TOOL_CALL_DOLLARS
+    log.warning("[budget] %s must be a number above 0; using $%.2f", key, default)
+    return default
 
 
 def tool_price_entry(value: object) -> tuple[float, str] | None:
@@ -1228,6 +1233,23 @@ def tool_price_settings() -> tuple[dict[str, object], float]:
             _tool_ceiling(section.get("unpriced_tool_call_dollars")))
 
 
+def max_unmetered_hold() -> float:
+    """[budget] max_unmetered_hold_dollars (default $1.00). Raises
+    :class:`ToolPricesUnavailable` while the settings cannot be read."""
+    try:
+        from .config import config_source_errors, get_budget_overrides
+
+        if config_source_errors(include_tenant=True):
+            raise ToolPricesUnavailable(_TOOL_PRICES_UNREADABLE)
+        section = get_budget_overrides() or {}
+    except ToolPricesUnavailable:
+        raise
+    except Exception as exc:
+        raise ToolPricesUnavailable(_TOOL_PRICES_UNREADABLE) from exc
+    value = section.get("max_unmetered_hold_dollars") if isinstance(section, dict) else None
+    return _tool_ceiling(value, DEFAULT_MAX_UNMETERED_HOLD_DOLLARS, "max_unmetered_hold_dollars")
+
+
 def tool_call_price(service: str) -> ToolCallPrice:
     """The price for one paid call to ``service`` (a [budget.tool_prices] key)."""
     prices, ceiling = tool_price_settings()
@@ -1260,7 +1282,7 @@ def record_tool_dollars(
         quote = _estimate_policy_price(
             route, (0.0, 0.0), source=f"config://budget.tool_prices.{price.service}",
             confidence=0.0, version=_UNREPORTED_TOOL_UNITS, evidence_id=_UNREPORTED_TOOL_UNITS,
-            pricing_basis=f"Everything held: the reply did not report the {price.unit}s used",
+            pricing_basis=f"The full hold: the reply did not report the {price.unit}s used",
             applicability="Spend-limit charge for a paid tool call whose usage was not "
                           "reported; the provider's invoice remains authoritative.")
     elif priced:
@@ -1793,7 +1815,7 @@ class Budget:
         if tools := priced_by.get(_UNREPORTED_TOOL_UNITS):
             note += (
                 f". {', '.join(tool_route_label(t) for t in tools)} did not report its real "
-                "usage, so everything the run had left was charged. Set a price per request "
+                "usage, so the full amount held for it was charged. Set a price per request "
                 "for it in Settings > Models, under Prices for paid tool services, to be "
                 "charged per call instead"
             )

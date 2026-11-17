@@ -45,6 +45,7 @@ def test_pick_budget_defaults_to_strict_pricing(monkeypatch):
     assert budget["guidance"] is True and budget["warnings"] is True
     assert budget["warning_thresholds"] == [0.8, 0.95, 1.0]
     assert budget["unpriced_tool_call_dollars"] == 0.1 and "tool_prices" not in budget
+    assert budget["max_unmetered_hold_dollars"] == 1.0
 
 
 def test_pick_budget_preserves_explicit_legacy_estimate_opt_out(monkeypatch):
@@ -130,7 +131,7 @@ def test_tool_prices_from_the_wizard_are_written_as_the_budget_reads_them(monkey
     from maverick import budget as budget_mod
     from maverick import config
 
-    answers = iter(["0.25", "deepl=0.00002/character, tavily=0.008/request, openai_platform=0.02/request"])
+    answers = iter(["0.25", "deepl=0.001/character, tavily=0.5/request, openai_platform=0.25/request"])
     seen = []
     monkeypatch.setattr(wizard, "_q_text", lambda message, *, default="": (
         seen.append(message) or next(answers) if "tool" in message else default))
@@ -142,8 +143,8 @@ def test_tool_prices_from_the_wizard_are_written_as_the_budget_reads_them(monkey
     monkeypatch.setattr(config, "load_config", lambda *_args, **_kwargs: written)
     assert budget_mod.tool_price_settings()[1] == 0.25
     deepl = budget_mod.tool_call_price("deepl")
-    assert (deepl.dollars_per_unit, deepl.unit) == (0.00002, "character")
+    assert (deepl.dollars_per_unit, deepl.unit) == (0.001, "character")
     assert budget_mod.tool_call_price("tavily").unit == "request"
     # The same services as the Prices page, connectors included; search first.
     assert budget_mod.tool_call_price("openai_platform").unit == "request"
-    assert "search first" in seen[1] and seen[1].index("tavily") < seen[1].index("deepl")
+    assert "search first" in seen[1] and "tavily=PRICE/request" in seen[1]

@@ -21,6 +21,7 @@ from ..budget import (
     ToolPricesUnavailable,
     UsageAccountingError,
     _is_private_endpoint,
+    max_unmetered_hold,
     record_tool_dollars,
     tool_call_price,
     tool_ceiling_reason,
@@ -49,6 +50,8 @@ def is_free_backend(url: str | None) -> bool:
 
 def _remaining(budget) -> float | None:
     """Dollars left on ``budget`` after spend and holds; ``None`` with no cap."""
+    if callable(getattr(budget, "remaining_dollars", None)):
+        return budget.remaining_dollars()
     if budget.max_dollars is None:
         return None
     return budget.max_dollars - budget.dollars - getattr(budget, "_reserved", 0.0)
@@ -76,11 +79,12 @@ def charged_call(
     never comes back, the call is charged everything it held. ``measure`` returns ``None`` when
     ``send`` stopped before anything was sent, so nothing is charged.
 
-    When the priced unit is known only from the reply, the hold is all the
-    run has left, so no other paid call can spend the same money; the charge
-    is then settled to the real cost. With ``bounded``, ``send`` is called
-    with the most units that fit in that hold (``None`` when unlimited), for a
-    service that accepts a limit. Returns what ``send`` returned.
+    When the priced unit is known only from the reply, the call holds what
+    it may cost: the smaller of what the run has left and ``[budget]
+    max_unmetered_hold_dollars``. With ``bounded``, ``send`` is called with
+    the most units that fit in that hold, for a service that accepts a limit.
+    The charge is settled to the real cost, or to the full hold when the
+    reply never reports the units. Returns what ``send`` returned.
     """
     if budget is None:
         raise PaidCallRefused(
@@ -96,14 +100,16 @@ def charged_call(
     max_units = None
     if price.unit is not None and (units or {}).get(price.unit) is None:
         remaining = _remaining(budget)
-        if remaining is not None:
-            if remaining <= 0:
-                raise BudgetExceeded(
-                    f"no spending left for {label}, whose cost is known only after it "
-                    f"runs (${budget.dollars:.2f} of ${budget.max_dollars:.2f} spent or held)")
-            projected = remaining
-            if price.dollars_per_unit > 0:
-                max_units = remaining / price.dollars_per_unit
+        if remaining is not None and remaining <= 0:
+            raise BudgetExceeded(
+                f"no spending left for {label}, whose cost is known only after it runs")
+        try:
+            bound = max_unmetered_hold()
+        except ToolPricesUnavailable as exc:
+            raise PaidCallRefused(str(exc)) from exc
+        projected = bound if remaining is None else min(remaining, bound)
+        if price.dollars_per_unit > 0:
+            max_units = projected / price.dollars_per_unit
     outcome: dict[str, Any] = {}
 
     def call():

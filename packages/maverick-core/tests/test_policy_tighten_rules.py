@@ -26,6 +26,7 @@ CASES = {
     # A workspace may charge paid tool calls more, never less: a higher
     # per-call ceiling, or a higher price in the unit the organisation set.
     "budget.unpriced_tool_call_dollars": dict(os=0.25, s=0.5, l=0.05, us=0.5, ul=0.01),
+    "budget.max_unmetered_hold_dollars": dict(os=2.0, s=3.0, l=0.5, us=2.0, ul=0.5),
     "budget.tool_prices": dict(os={"deepl": {"dollars": 0.02, "per": "request"}},
                                s={"deepl": {"dollars": 0.03, "per": "request"}},
                                l={"deepl": {"dollars": 0.01, "per": "request"}},

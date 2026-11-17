@@ -709,19 +709,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   SMS, voice and email gateways (such as `sendgrid`, `vonage`, `plivo`) on
   every request but a GET; per-lookup data services (such as `shodan`,
   `hunter`, `zoominfo`) on every request.
-- Not charged: subscription services (CRM, ERP, storage and the like), which
-  bill by plan, not by call; payments, shipping labels and stock-media
-  purchases, which move money under their own approval rather than spend a
-  task's budget; and local engines, DuckDuckGo and servers on a private
-  address, which are free.
+- Not charged: subscription services (CRM, ERP, storage, contract review
+  such as `luminance` and the like), which bill by plan, not by call;
+  payments, shipping labels and stock-media purchases, which move money
+  under their own approval rather than spend a task's budget; connectors on
+  Meta's shared Graph API (`whatsapp_business`, `messenger`), where one
+  address serves free and paid calls alike; and local engines, DuckDuckGo
+  and servers on a private address, which are free.
 - A call whose price is known before it is sent is stopped if it would pass
-  the limit. A call priced per second or per terabyte holds everything the
-  run has left; BigQuery and a waited Replicate prediction are told to stop
-  there. Otherwise such a call can still cost more than was left, and the
-  run stops right after it. If the reply does not report the seconds or
-  terabytes used, everything the run had left is charged, the cost line
-  says so, and the run stops on its limit; price such a service per
-  request to be charged per call instead.
+  the limit. Speech-to-text priced per second holds the audio's length,
+  read from the file first. Another call priced per second or per terabyte
+  holds the smaller of what the run has left and `[budget]
+  max_unmetered_hold_dollars` (default $1.00, in All settings and the
+  wizard; a workspace may only raise it), so other calls keep running.
+  BigQuery is told to stop at that hold. Replicate priced per second is
+  always waited for and cancelled at that hold or its 90-second deadline;
+  it may still run for the few seconds Replicate takes to stop. A call
+  with no limit can still cost more than it held, and the run stops right
+  after it. If the reply does not report the seconds or terabytes used,
+  the full hold is charged and the cost line says so; price such a service
+  per request to be charged per call instead.
 - GPU rentals (`runpod`, `vast_ai`, `lambda_labs_cloud`, `coreweave`,
   `voltage_park`, `paperspace_gradient`) start machines billed by the hour.
   The limit sees only the per-call charge, never those hours.
@@ -730,9 +737,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Set prices for the services you use first, starting with search, in
   Settings > Models, under Prices for paid tool services, the Copilot, the
   setup wizard, or `[budget.tool_prices]` (for example
-  `tavily = { dollars = 0.008, per = "request" }`; units are request,
-  message, page, character, image, second and terabyte). Change the $0.10 per call in All
-  settings (`[budget] unpriced_tool_call_dollars`); a warning and the cost
+  `tavily = { dollars = <your price>, per = "request" }`; units are
+  request, message, page, character, image, second and terabyte). Change
+  the $0.10 per call in All settings (`[budget] unpriced_tool_call_dollars`); a warning and the cost
   line name the services charged it. A workspace may only raise these
   prices. While settings cannot be read, paid tool calls are refused.
 - A flow's tool step charges paid tools to what is left of the flow's

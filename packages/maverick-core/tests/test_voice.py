@@ -607,3 +607,50 @@ def test_auto_speech_to_text_falls_back_to_local_when_the_run_cannot_pay(monkeyp
     assert "local words" in tool.fn({"source": "a.wav"})
     out = tool.fn({"source": "a.wav", "backend": "openai"})
     assert out.startswith("ERROR") and "nothing was sent" in out and created == []
+
+
+def test_hosted_speech_to_text_holds_the_audio_length_and_reads_usage_seconds(monkeypatch, tmp_path):
+    # The audio length is read from the file before sending, so the hold is
+    # what the call can cost and a sibling call still fits. OpenAI reports
+    # the seconds in usage.seconds (UsageDuration); the charge uses them.
+    import sys
+    import types
+    import wave
+    from types import SimpleNamespace as NS
+
+    import pytest
+    from maverick import config
+    from maverick.budget import Budget
+    from openai.types.audio import Transcription
+
+    _isolate(monkeypatch, tmp_path)
+    (tmp_path / "config.toml").write_text(
+        '[budget.tool_prices]\nopenai_whisper = { dollars = 0.0001, per = "second" }\n',
+        encoding="utf-8")
+    config.reset_config_cache()
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    with wave.open(str(tmp_path / "a.wav"), "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(8000)
+        audio.writeframes(b"\0\0" * 8000 * 12)
+    budget = Budget(max_dollars=2.0)
+    held = []
+
+    def create(**_kw):
+        held.append(budget._reserved)
+        budget.release(budget.reserve(0.05))  # a sibling call still fits
+        return Transcription.model_validate({"text": "twelve seconds",
+                                             "usage": {"type": "duration", "seconds": 12}})
+
+    class _OpenAI:
+        def __init__(self, **_kw):
+            self.audio = NS(transcriptions=NS(create=create))
+
+    fake = types.ModuleType("openai")
+    fake.OpenAI = _OpenAI
+    monkeypatch.setitem(sys.modules, "openai", fake)
+    tool = voice_mod.transcribe_audio(NS(workdir=str(tmp_path)), budget=budget)
+    assert "twelve seconds" in tool.fn({"source": "a.wav", "backend": "openai"})
+    assert held == [pytest.approx(0.0012)]
+    assert budget.dollars == pytest.approx(0.0012)

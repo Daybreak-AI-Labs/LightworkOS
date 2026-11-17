@@ -291,7 +291,8 @@
         <td>{% if row.priced %}<form method="post" action="/settings/tools/price/remove" data-settings-local="true"><input type="hidden" name="service" value="{{ row.service }}"><button class="btn btn--ghost" type="submit">Remove price</button></form>{% endif %}</td>
       </tr>{% endfor %}</tbody>
     </table>
-    <p class="muted">Enter the service's own USD price and what it charges for. Its invoice remains the final bill. Change the safety ceiling in <a href="/settings/all">All settings</a>.</p>
+    <p class="muted">A call priced per second or per terabyte holds at most {{ tool_unmetered_hold }} while it runs. If it never reports its usage, that full amount is charged.</p>
+    <p class="muted">Enter the service's own USD price and what it charges for. Its invoice remains the final bill. Change the safety ceiling and that hold in <a href="/settings/all">All settings</a>.</p>
     <form method="post" action="/settings/tools/price" class="settings-row-form" data-settings-local="true">
       <label class="settings-field">Service
         <select class="select" name="service" required>
