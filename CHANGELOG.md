@@ -824,6 +824,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `maverick voice` are not part of a run and are not charged. With the
   default `auto` speech-to-text, a hosted service the run cannot pay for
   falls back to the local engine.
+- A new benchmark, `benchmarks/eval_factory_checker.py`, measures how many
+  planted defects the code factory's checkers find, how often they raise
+  false alarms on correct changes, and the cost per case. Run it with a
+  model key to score your configured checkers; `--self-test` needs no key.
 
 ### Fixed
 
