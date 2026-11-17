@@ -725,6 +725,29 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   or "Test commands" on the Code page. The approval card shows one line
   per tier, and a quick pass alone never reads as the tests passing.
   Existing projects keep running their one test command as before.
+- A run can now stop and ask a person to decide. It offers two to five
+  options, says which it recommends and why, and waits as blocked without
+  spending until someone chooses on the Approvals page, a Slack card, the
+  Copilot or `maverick decisions answer`; then it continues with that choice.
+  Nobody answering in time (`[approval] decision_expiry_hours`, default 72)
+  stops the run without choosing. Upgrading adds world-model migration 55.
+- New `[approval] decision_areas` and `decision_admin_areas` settings (wizard
+  approvals step and Settings > Safety > Approvals) list where a run must ask
+  and which decisions need an administrator. By default governance-control
+  decisions need an administrator; the person who started the run answers
+  only as `[approval] separate_approver` allows for a risky approval (someone
+  else when another administrator can). A workspace file can add areas but
+  cannot remove them, and an unknown area name keeps the defaults.
+- `maverick resume`, the dashboard Resume button and answering a clarifying
+  question no longer restart a run that is still waiting for a decision.
+  Answer the decision first; `maverick resume` exits 2 until you do.
+- Inside a flow step, a run cannot stop to ask for a decision yet: the step
+  stops without a retry, and the flow takes the step's error route or stops
+  there, showing the question.
+- A run restarted after a decision begins again from the start unless durable
+  checkpoints are on, so steps it already finished (including a subagent's
+  side effects) may run again. Turn on `[durable] enabled` to continue where
+  it stopped; the answer's confirmation says so.
 
 ### Fixed
 

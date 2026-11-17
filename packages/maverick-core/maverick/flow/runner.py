@@ -26,6 +26,7 @@ from typing import Any
 
 from ..audit.errors import AuditRefused
 from ..budget import BudgetExceeded
+from ..decision_requests import FlowDecisionNeeded
 from ..killswitch import Halted
 from .continuation_frame import ContinuationFrame
 from .execution_trace import child_scope, node_scope
@@ -587,7 +588,7 @@ def _run_work(node: FlowNode, data: dict, ctx: _Ctx) -> str | None:
         try:
             result, outcome = _invoke_work(node, data, ctx)
             last_exc = None
-        except _ActionDataRefused as exc:
+        except (_ActionDataRefused, FlowDecisionNeeded) as exc:
             if node.on_error:
                 ctx.on_node(node, "error", 0.0)
                 return node.on_error

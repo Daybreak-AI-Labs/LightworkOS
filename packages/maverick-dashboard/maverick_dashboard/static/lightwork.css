@@ -2147,3 +2147,9 @@ body.glass-on:not(.theme-hicontrast) .settings-index { backdrop-filter: blur(22p
   .table--stacked td { padding: var(--space-1) 0; border: 0; }
   .table--stacked td[data-label]::before { content: attr(data-label) ": "; color: var(--muted); font-weight: var(--font-semibold); }
 }
+
+/* Decision cards on the Approvals page (lightwork-decisions.js): each option on
+   its own line, and the note's label above a full-width box. */
+.decision-option { display: flex; align-items: baseline; gap: 0.5rem; margin: 0.35rem 0; }
+.decision-note { display: flex; flex-direction: column; gap: 0.35rem; margin: 0.75rem 0; }
+.decision-note .textarea { min-height: 4.5rem; resize: vertical; }

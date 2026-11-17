@@ -251,7 +251,16 @@ class ChatThreads:
         except GoalMutationConflict as exc:
             raise SubmissionConflict(str(exc)) from exc
 
+    def _decisions_open(self, connection, goal_id):
+        from .decision_requests import OPEN_IN_TREE_SQL
+
+        return int(self.store.execute(connection, OPEN_IN_TREE_SQL, (goal_id,)).fetchone()[0])
+
     def _pending(self, connection, goal_id):
+        # No restart path may start a run that still waits for a decision.
+        if self._decisions_open(connection, goal_id):
+            from .decision_requests import WAITING_SENTENCE
+            raise SubmissionConflict(WAITING_SENTENCE)
         self._require_open(connection, goal_id)
         advance = "MAX" if self.store.sqlite else "GREATEST"
         scope, values = self._scope("goals")
@@ -269,6 +278,11 @@ class ChatThreads:
         Even an ordinary goal takes the root fence: its first explicit chat
         reply can establish membership concurrently with this restart.
         """
+        from .decision_requests import resume_refusal
+
+        waiting = resume_refusal(self.world, goal_id)
+        if waiting:
+            raise SubmissionConflict(waiting)
         with self._restart_transaction(goal_id) as (connection, binding, _status):
             if binding is not None:
                 self.require_idle(connection, binding.root_id, binding.owner, except_goal=goal_id)
@@ -299,7 +313,8 @@ class ChatThreads:
             question = next((row for row in questions if int(row[0]) == question_id), None)
             if question is None or question_version(question[0], question[1], self.store.open(question[2])) != expected_question:
                 raise SubmissionConflict("The question changed or was answered. Your draft and selected files have been kept.")
-            restart = status == "blocked" and len(questions) == 1
+            restart = (status == "blocked" and len(questions) == 1
+                       and not self._decisions_open(connection, goal_id))
             if restart:
                 if binding is not None:
                     self.require_idle(connection, binding.root_id, binding.owner, except_goal=goal_id)
@@ -338,7 +353,8 @@ class ChatThreads:
                                    (goal_id,), connection=connection)
             if question_id not in {int(row[0]) for row in questions}:
                 raise LookupError("no such open question for this goal")
-            restart = status == "blocked" and len(questions) == 1
+            restart = (status == "blocked" and len(questions) == 1
+                       and not self._decisions_open(connection, goal_id))
             if restart:
                 if binding is not None:
                     self.require_idle(connection, binding.root_id, binding.owner, except_goal=goal_id)

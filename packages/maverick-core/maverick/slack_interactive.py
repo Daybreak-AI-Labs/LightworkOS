@@ -607,6 +607,14 @@ def handle_block_action(payload: dict[str, Any], *, world, principal_for: Princi
     actions = [a for a in (payload.get("actions") or []) if isinstance(a, dict)]
     if any(a.get("action_id") == ACTION_MUTE for a in actions):
         return handle_mute_action(payload, principal_for=principal_for)
+    decide = next((a for a in actions
+                   if str(a.get("action_id") or "").startswith(ACTION_DECIDE_PREFIX)), None)
+    if decide is not None:
+        user_id = str((payload.get("user") or {}).get("id") or "")
+        principal = principal_for(user_id) if user_id else None
+        if not principal:
+            return _unlinked_note(user_id)
+        return handle_decision_action(decide, world=world, principal=principal)
     action = next((a for a in actions if a.get("action_id") in
                    (ACTION_APPROVE, ACTION_REJECT, ACTION_QUESTION, ACTION_UNDO)), None)
     if action is None:
@@ -912,7 +920,9 @@ __all__ = [
     "decode_button_value",
     "digest_blocks",
     "encode_button_value",
+    "decision_blocks",
     "handle_block_action",
+    "handle_decision_action",
     "handle_mute_action",
     "handle_slash_command",
     "open_dm",
@@ -926,3 +936,90 @@ __all__ = [
     "text_blocks",
     "verify_slack_signature",
 ]
+
+
+# ----------------------------------------------------------------------------
+# Decision cards (maverick.decision_requests): one button per option
+# ----------------------------------------------------------------------------
+
+ACTION_DECIDE_PREFIX = "lightwork_decide_"
+
+
+def decision_blocks(decision: dict[str, Any], *, dashboard_url: str = "") -> list[dict[str, Any]]:
+    """A run's question with its options, recommendation and one button each."""
+    lines = [f"{o['number']}. {o['label']}"
+             + (" (recommended)" if o["number"] == decision["recommended"] else "")
+             + f"\n{o['effect']}" for o in decision["options"]]
+    blocks: list[dict[str, Any]] = [
+        {"type": "header", "text": _plain("Decision needed")},
+        {"type": "section", "text": _plain(str(decision["question"]), 3000)},
+        {"type": "section", "text": _plain("\n\n".join(lines), 3000)},
+        {"type": "section", "fields": [
+            _plain(f"Area\n{decision['area_label']}", 2000),
+            _plain(f"Recommended\nOption {decision['recommended']}. {decision['reason']}", 2000),
+            _plain(f"Decide by\n{_when(decision.get('expires_at'))}", 2000),
+        ]},
+    ]
+    note = (f"Decision #{int(decision['id'])} · A run is waiting for this answer. With no "
+            "answer in time, it stops without choosing.")
+    if decision.get("needs_admin"):
+        note += " This one needs a workspace administrator, on the dashboard."
+    if dashboard_url:
+        note += _dashboard_link(dashboard_url, f"/approvals#decision-{int(decision['id'])}",
+                                "Open on the dashboard")
+    blocks.append({"type": "context", "elements": [_trusted_mrkdwn(note)]})
+    if not decision.get("needs_admin"):
+        blocks.append({"type": "actions", "block_id": f"lightwork_decision_{int(decision['id'])}",
+                       "elements": [
+                           {"type": "button", "action_id": f"{ACTION_DECIDE_PREFIX}{o['number']}",
+                            "value": f"{int(decision['id'])}:{int(o['number'])}",
+                            "text": _plain(f"{o['number']}. {o['label']}", 75)}
+                           for o in decision["options"]]})
+    return blocks
+
+
+def _decision_authority():
+    """The dashboard's operate-role check for a chat answer. Without the
+    dashboard there is no roster to ask, so every answer is refused."""
+    try:
+        from maverick_dashboard.approval_decisions import decision_authority_for
+    except ImportError:
+        def refuse(principal: str, decision_id: int) -> None:
+            raise PermissionError("Decisions can't be answered from Slack here. "
+                                  "Use the Lightwork dashboard.")
+        return refuse
+    return decision_authority_for("slack")
+
+
+def handle_decision_action(action: dict[str, Any], *, world, principal: str,
+                           resume: Callable[[Any, int], Any] | None = None) -> dict[str, Any]:
+    """A person pressed an option on a decision card. The chat rule applies:
+    only the run's owner, never an administrator-only decision."""
+    from . import decision_requests as dr
+
+    head, _, tail = str(action.get("value") or "").partition(":")
+    try:
+        decision_id, option = int(head), int(tail)
+    except ValueError:
+        return _ephemeral("That button no longer points at a decision.")
+    try:
+        _decision_authority()(principal, decision_id)
+    except Exception as exc:  # noqa: BLE001 -- a refusal is a plain sentence
+        return _ephemeral(str(exc) or "Your Lightwork account can't answer decisions here.")
+    try:
+        outcome = dr.answer(world, decision_id, option, actor=principal, is_admin=False,
+                            chat=True, channel="slack")
+    except dr.DecisionRefused as exc:
+        return _ephemeral(exc.message)
+    except Exception:  # noqa: BLE001 -- never leak internals into a chat app
+        log.exception("slack decision answer failed")
+        return _ephemeral("Lightwork could not save that choice. Try again or use the dashboard.")
+    decision = outcome["decision"]
+    if outcome["resume"]:
+        (resume or dr.dispatch_resume)(world, decision.goal_id)
+    label = (decision.option(option) or {}).get("label", "")
+    text = f"{principal} chose “{label}” for decision #{decision.id}. {dr.next_text(outcome)}"
+    return {"replace_original": True, "text": text,
+            "blocks": [{"type": "header", "text": _plain("Decided")},
+                       {"type": "section", "text": _plain(decision.question, 3000)},
+                       {"type": "section", "text": _plain(text, 3000)}]}

@@ -182,7 +182,7 @@
     "learning": 61,
     "sqlite_domain": 81,
     "configuration": 71,
-    "read_projection": 25,
+    "read_projection": 26,
     "audit": 24,
     "transient": 26,
     "business_records": 21,
@@ -4801,6 +4801,30 @@
           "function": "save",
           "kind": "atomic_write_text",
           "expression": "atomic_write_text(self.path, json.dumps({k: keep[k] for k in newest}, separators=(',', ':')))"
+        }
+      ]
+    },
+    {
+      "path": "packages/maverick-core/maverick/decision_requests.py",
+      "contract": "read_projection",
+      "owner": "delegated; inspect source callsites below",
+      "purpose": "Decision requests a run raises for a person; rows live in the world model (decision_requests), and the expiry sweep visits each workspace's world file.",
+      "referenced_store_owners": [
+        ".world_model",
+        ".attachment_submissions"
+      ],
+      "review": "module purpose and persistence seam read; contract-family classification (not every operation tested)",
+      "governed_namespaces": [],
+      "literal_path_hints": [
+        "world.db"
+      ],
+      "observed_mechanism_markers": {},
+      "source_sites": [
+        {
+          "line": 844,
+          "function": "_sweep_sqlite",
+          "kind": "maverick_home",
+          "expression": "maverick_home()"
         }
       ]
     },

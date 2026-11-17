@@ -54,6 +54,8 @@ def test_migrate_seals_existing_plaintext(monkeypatch, tmp_path):
     assert migrate_world_db(db) == {
         "turns.content": 1, "facts.value": 1, "messages.content": 1,
         "questions.question": 1, "questions.answer": 1,
+        "decision_requests.question": 0, "decision_requests.options": 0,
+        "decision_requests.reason": 0, "decision_requests.note": 0,
         "goals.title": 1, "goals.description": 1, "goals.result": 0,
         "goals.connection_selection": 1,
         "goal_events.content": 0,
@@ -83,6 +85,8 @@ def test_migrate_seals_existing_plaintext(monkeypatch, tmp_path):
     assert migrate_world_db(db) == {
         "turns.content": 0, "facts.value": 0, "messages.content": 0,
         "questions.question": 0, "questions.answer": 0,
+        "decision_requests.question": 0, "decision_requests.options": 0,
+        "decision_requests.reason": 0, "decision_requests.note": 0,
         "goals.title": 0, "goals.description": 0, "goals.result": 0,
         "goals.connection_selection": 0,
         "goal_events.content": 0,
