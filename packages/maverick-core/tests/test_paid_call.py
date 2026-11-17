@@ -1,0 +1,101 @@
+"""One paid tool call charged to the run budget (``maverick.tools._paid_call``)."""
+from __future__ import annotations
+
+import socket
+
+import httpx
+import pytest
+from maverick import provider_cost_cap as cap
+from maverick.budget import Budget, BudgetExceeded, ToolCallPrice
+from maverick.enterprise import EgressBlocked
+from maverick.tools import _paid_call as paid_call
+
+
+def _priced(monkeypatch, unit=None, dollars=0.0, *, hold=1.00):
+    price = ToolCallPrice("replicate", unit, dollars, 0.10)
+    monkeypatch.setattr(paid_call, "tool_call_price", lambda _service: price)
+    monkeypatch.setattr(paid_call, "max_unmetered_hold", lambda: hold)
+    monkeypatch.setattr(paid_call, "metered_provider_call",
+                        lambda _provider, callback, **_metadata: callback())
+
+
+def _failing(error):
+    def send(*_args):
+        raise error
+    return send
+
+
+@pytest.mark.parametrize("error, charged", [
+    # It may have reached the service: charged the hold.
+    (httpx.ReadTimeout("read timed out"), True),
+    (httpx.RemoteProtocolError("server hung up after the request"), True),
+    (OSError("connection reset"), True),
+    (Exception("cannot tell"), True),
+    # Known never to have left this machine: released.
+    (httpx.ConnectError("connection refused"), False),
+    (httpx.ConnectTimeout("connect timed out"), False),
+    (ConnectionRefusedError("refused"), False),
+    (socket.gaierror("name does not resolve"), False),
+    (EgressBlocked("api.example.com"), False),
+    (ValueError("governed requests require an absolute HTTP URL"), False),
+    (RuntimeError("Replicate requires REPLICATE_API_TOKEN."), False),
+])
+def test_a_send_that_may_have_reached_the_service_is_charged_its_hold(
+        monkeypatch, error, charged):
+    _priced(monkeypatch)
+    budget = Budget(max_dollars=1.0)
+    with pytest.raises(type(error)):
+        paid_call.charged_call("replicate", _failing(error), budget=budget,
+                               label="Replicate", units={"request": 1})
+    assert getattr(budget, "_reserved", 0.0) == 0.0
+    assert budget.dollars == pytest.approx(0.10 if charged else 0.0)
+    assert ("may have billed" in budget.summary()) is charged
+
+
+def test_a_timed_out_retry_stops_at_the_limit(monkeypatch):
+    # The reviewer's case: $0.10 attempts against a $0.10 limit. The first
+    # timed out after sending and is charged, so the next ones are refused.
+    _priced(monkeypatch)
+    budget = Budget(max_dollars=0.10)
+    sent = []
+
+    def send():
+        sent.append(1)
+        raise httpx.ReadTimeout("read timed out")
+
+    with pytest.raises(httpx.ReadTimeout):
+        paid_call.charged_call("replicate", send, budget=budget, label="Replicate",
+                               units={"request": 1})
+    for _ in range(2):
+        with pytest.raises(BudgetExceeded):
+            paid_call.charged_call("replicate", send, budget=budget, label="Replicate",
+                                   units={"request": 1})
+    assert len(sent) == 1
+    assert budget.dollars == pytest.approx(0.10)
+    assert getattr(budget, "_reserved", 0.0) == 0.0
+
+
+def test_a_failed_send_charges_what_its_receipt_holds_once(monkeypatch, tmp_path):
+    # The provider receipt keeps the hold as an unknown cost and the run budget
+    # is charged the same amount, once.
+    price = ToolCallPrice("replicate", "second", 0.01, 0.10)
+    monkeypatch.setattr(paid_call, "tool_call_price", lambda _service: price)
+    monkeypatch.setattr(paid_call, "max_unmetered_hold", lambda: 0.50)
+    ledger = tmp_path / "provider-spend.json"
+    monkeypatch.setattr(cap, "caps_from_config", dict)
+    monkeypatch.setattr(cap, "_ledger_path", lambda: ledger)
+    monkeypatch.setattr(cap, "_shared_world", lambda: None)
+    monkeypatch.setattr(cap, "period_key", lambda now=None, period=None: "2026-11-17")
+    budget = Budget(max_dollars=2.0)
+
+    with cap.work_item_scope("flow:paid-timeout"):
+        with pytest.raises(httpx.ReadTimeout):
+            paid_call.charged_call("replicate", _failing(httpx.ReadTimeout("t")),
+                                   budget=budget, label="Replicate", units={"request": 1})
+        receipts = cap.reservation_catalogue_for_work_item(
+            "flow:paid-timeout", path=ledger).receipts
+
+    assert [r.state for r in receipts] == ["unknown"]
+    assert receipts[0].projected == pytest.approx(0.50)
+    assert budget.dollars == pytest.approx(0.50)
+    assert getattr(budget, "_reserved", 0.0) == 0.0

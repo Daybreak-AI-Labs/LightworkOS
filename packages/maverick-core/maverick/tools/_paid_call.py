@@ -13,6 +13,7 @@ A call with no run budget is refused before anything is sent.
 """
 from __future__ import annotations
 
+import socket
 from collections.abc import Callable
 from typing import Any
 
@@ -48,6 +49,34 @@ def is_free_backend(url: str | None) -> bool:
     return bool(url) and _is_private_endpoint(url)
 
 
+def _never_sent(error: BaseException) -> bool:
+    """Whether ``send`` raised ``error`` before its request could leave this
+    machine: refused here, a plain local error (a missing key, a bad URL),
+    or no connection made. Anything else may have reached the service."""
+    from ..enterprise import EgressBlocked
+    from ._ssrf import BlockedHost
+
+    if type(error) in (RuntimeError, ValueError) or isinstance(error, (
+            PaidCallRefused, EgressBlocked, BlockedHost, ConnectionRefusedError,
+            socket.gaierror)):
+        return True
+    try:
+        import httpx
+
+        return isinstance(error, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout,
+                                  httpx.UnsupportedProtocol, httpx.InvalidURL))
+    except Exception:  # failure-policy: fail_closed -- cannot tell, so it may have been sent
+        return False
+
+
+def _charge_if_sent(budget, price, held: float, error: BaseException) -> None:
+    """A ``send`` that raised ``error`` may have reached the service: charge
+    everything ``held``, as for usage the reply never reported, so a retry
+    cannot spend it again. An error known to come before sending is free."""
+    if held > 0 and not _never_sent(error):
+        record_tool_dollars(budget, price, held, priced=False, unconfirmed=True)
+
+
 def _remaining(budget) -> float | None:
     """Dollars left on ``budget`` after spend and holds; ``None`` with no cap."""
     if callable(getattr(budget, "remaining_dollars", None)):
@@ -79,7 +108,9 @@ def charged_call(
     request, the characters in the text); ``measure`` reads more from the
     reply (seconds of audio or compute, bytes scanned). When the priced unit
     never comes back, the call is charged everything it held. ``measure`` returns ``None`` when
-    ``send`` stopped before anything was sent, so nothing is charged.
+    ``send`` stopped before anything was sent, so nothing is charged. When
+    ``send`` raises after its request may have left, the call is charged
+    everything it held; an error known to come before sending is not charged.
 
     When the priced unit is known only from the reply, the call holds what
     it may cost: the smaller of what the run has left and ``[budget]
@@ -121,7 +152,11 @@ def charged_call(
     outcome: dict[str, Any] = {}
 
     def call():
-        result = send(max_units) if bounded else send()
+        try:
+            result = send(max_units) if bounded else send()
+        except BaseException as error:
+            _charge_if_sent(budget, price, projected, error)
+            raise
         used = dict(units or {})
         measured = {} if measure is None else measure(result)
         if measured is None:

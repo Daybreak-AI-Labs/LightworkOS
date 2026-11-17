@@ -805,6 +805,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Erasure receipts are now issued as `lightwork.erasure-receipt.v3`, which
   also counts a run's decision requests before deletion. Receipts issued as v2
   keep verifying against the stores they listed; nothing needs re-issuing.
+- A paid tool call that fails after its request may have reached the
+  service (a read timeout, a failed poll) is now charged everything it held,
+  and the cost line says the provider may have billed it. A call that never
+  connected is not charged. Check the provider's invoice for the real cost.
 
 ### Fixed
 
