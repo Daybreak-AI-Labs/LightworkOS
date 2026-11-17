@@ -438,6 +438,11 @@ def _work_area(S, C) -> tuple:
         S("sandbox", "cross_run_pool", "Keep ready work areas between tasks",
           "Keep a clean work area ready so the next task starts faster.", "toggle", group,
           False, "maverick.sandbox", subgroup="Work area"),
+        S("sandbox", "workspace_infrastructure", "Let workspaces choose their own servers",
+          "A workspace's settings file may name its own cluster, remote computer or cloud work "
+          "area. It still cannot weaken isolation or add connection options.", "toggle", group,
+          False, "maverick.policy_tighten", subgroup="Work area", weaker=True,
+          warning="Each workspace's settings file can send its commands to servers it names."),
         S("sandbox", "runtime", "Stronger isolation program",
           "The name of the isolation program used when the work area type is the stronger "
           "isolation option.", "text", group, "runsc", "maverick.sandbox",

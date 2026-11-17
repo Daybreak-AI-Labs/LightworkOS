@@ -231,7 +231,11 @@ def _resolve_deferred_tools(layers: dict[str, Any]) -> dict[str, Any]:
         return {"source": "deployment", "locked": True, "value": environment, "known": True}
     layers = {**layers, "base": apply_to_base(layers["base"], layers["here"])}
     for path in (("capabilities", "deferred_tools"), ("tools", "deferred_loading")):
-        for name in ("tenant", "operator", "here", "base"):
+        # A workspace file's [capabilities] deferred_tools is ignored (only the
+        # organisation sets it); its legacy [tools] key still applies.
+        names = ("operator", "here", "base") if path[0] == "capabilities" else (
+            "tenant", "operator", "here", "base")
+        for name in names:
             present, value = catalog.lookup(layers[name], path)
             if not present:
                 continue
@@ -727,8 +731,9 @@ def _note_unreadable_containment(row: dict[str, Any]) -> None:
 
 
 def _organisation_fixed(setting: catalog.Setting, layers: dict[str, Any]) -> bool:
-    """The workspace overlay tried to loosen a policy value the organisation
-    set; the kernel ignores that value (:mod:`maverick.policy_tighten`)."""
+    """The workspace overlay tried to loosen a policy value, or set one only
+    the organisation sets; the kernel ignores that value
+    (:mod:`maverick.policy_tighten`)."""
     from maverick import config
     from maverick.policy_tighten import TENANT_RULES, merge_tenant_section
 
@@ -737,10 +742,13 @@ def _organisation_fixed(setting: catalog.Setting, layers: dict[str, Any]) -> boo
     present, value = catalog.lookup(layers.get("tenant") or {}, setting.path)
     if not present:
         return False
-    section = config.load_global_config().get(setting.section) or {}
+    organisation = config.load_global_config()
+    section = organisation.get(setting.section) or {}
     if not isinstance(section, dict):
         return True
-    _, ignored, fixed = merge_tenant_section(setting.section, section, {setting.key: value})
+    _, ignored, fixed = merge_tenant_section(
+        setting.section, section, {setting.key: value},
+        infrastructure=config.workspace_infrastructure(organisation))
     return bool(ignored or fixed)
 
 

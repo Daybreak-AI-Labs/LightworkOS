@@ -43,6 +43,7 @@ def test_ssh_selection_roundtrips_to_runtime_without_network(config_files, monke
         return next(answers)
 
     monkeypatch.setattr(wizard, "_q_text", answer)
+    monkeypatch.setattr(wizard, "_q_confirm", lambda message, default=True: default)
     selected = wizard.pick_sandbox()
     wizard.write_config([], {}, {}, {}, {}, selected, {})
     saved = tomllib.loads(wizard.CONFIG_FILE.read_text(encoding="utf-8"))["sandbox"]

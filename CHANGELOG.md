@@ -748,6 +748,30 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   checkpoints are on, so steps it already finished (including a subagent's
   side effects) may run again. Turn on `[durable] enabled` to continue where
   it stopped; the answer's confirmation says so.
+- A workspace settings file (`tenants/<name>/config.toml`) may now set only
+  policy keys that can be made stricter. In `[governance]`, `[safety]`,
+  `[capabilities]`, `[sandbox]`, `[approval]`, `[security]` and `[codebase]`
+  every other key is ignored, logged once and listed by `maverick doctor` and
+  on Settings as set by your organisation. The file still loads. Newly ignored
+  there: `[sandbox]` workdir, image, language, runtime, options, project_dir
+  and the server keys below; `[safety]` receipt_key and screenshot_key;
+  `[capabilities]` deferred_tools; `[approval]` check_retention_days,
+  dashboard_wait_seconds, undo_grace_seconds and delegation. To keep such a
+  setting, move it to the organisation's `config.toml` (or Settings), where it
+  applies to every workspace, and delete it from the workspace file.
+- New stricter-only workspace rules: `[sandbox] warm` and `[codebase] enable`
+  may only be turned off; `[approval] record_checks` and
+  `require_acknowledgement` only on; `[approval] separate_approver` only
+  towards `always`; `[sandbox.tool.<name>]` may add denied hosts and narrow
+  allowed hosts.
+- New `[sandbox] workspace_infrastructure` (off by default; wizard sandbox
+  step for clusters and remote computers, and Settings > Protected work
+  area). When on in the organisation's settings, a workspace file may name
+  its own provider, api_key, kubeconfig, context, namespace and host. It
+  still cannot weaken the backend, and its extra_kubectl_args and ssh_args
+  are ignored: these options can run commands on this computer, so only the
+  organisation's own list is used. The switch counts as off while any
+  settings file cannot be read.
 
 ### Fixed
 

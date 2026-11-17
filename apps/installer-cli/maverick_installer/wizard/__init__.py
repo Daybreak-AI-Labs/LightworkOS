@@ -2817,6 +2817,13 @@ def pick_sandbox() -> dict[str, Any]:
             )
             console.print(kubernetes_deny_all_manifest(cfg["namespace"]), highlight=False)
             console.print("\n  kubectl apply -f - <<'EOF' ... EOF   (paste the manifest above)\n")
+    if remote or backend == "kubernetes":
+        # Off unless chosen: a workspace's own settings file may then name its
+        # own cluster or remote computer, never weaker isolation or new options.
+        place = "remote computer" if remote else "cluster"
+        if _q_confirm(f"  Let each workspace's settings file choose its own {place}? "
+                      "Only say yes if you trust every workspace's settings.", default=False):
+            cfg["workspace_infrastructure"] = True
     return cfg
 
 
