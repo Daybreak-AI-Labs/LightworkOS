@@ -666,7 +666,7 @@ def test_postgres_sweep_under_forced_rls_reaches_known_workspaces(postgres_test_
     from psycopg import sql
     from psycopg.conninfo import make_conninfo
 
-    role, password = "mvk_dec_" + secrets.token_hex(6), secrets.token_hex(24)
+    role, password = "mvk_dec_" + secrets.token_hex(6), secrets.token_hex(24)  # pragma: allowlist secret -- random throwaway role
     create_tenant("tenant-a")
     with PostgresWorldModel(dsn=postgres_test_dsn) as admin:
         decisions = {}
