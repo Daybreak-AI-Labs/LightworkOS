@@ -66,3 +66,26 @@ def test_a_live_run_refuses_without_a_model_key(monkeypatch, capsys):
     assert fc.main([]) == 2
     assert "No model key is set up" in capsys.readouterr().err
     assert _results_now() == before
+
+
+def test_a_failed_checker_keeps_the_next_checkers_repro_in_its_own_slot(monkeypatch):
+    # Checker 1 stops with an error; checker 2's raw output must still be read
+    # as checker 2's, or its repro loses its probe file on the base and the
+    # confirmed-by-repro rate is wrong.
+    from maverick.budget import Budget
+    monkeypatch.setenv("MAVERICK_SUPPRESS_SANDBOX_WARNING", "1")
+    case = next(c for c in fc.load_cases() if c.verdict == "defect")
+    python = fc.shlex.quote(sys.executable)
+
+    def make(case, budget):
+        def broken(_goal_id, _copy):
+            raise RuntimeError("the checker stopped")
+        return [broken, fc.stub_checkers(case, budget, python)[0]]
+
+    with fc.isolated_home():
+        [row] = fc.run_cases([case], make, lambda: Budget(
+            max_dollars=10.0, max_wall_seconds=900.0, max_tool_calls=1000),
+            sandbox_factory=fc.StandInContainer, python=python)
+    first, second = row["checkers"]
+    assert first["error"] and not first["ran"]
+    assert second["repros_confirmed"] == 1 and second["found_by_repro"]

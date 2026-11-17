@@ -302,12 +302,14 @@ def _author(case: Case) -> Callable[[int, Path], None]:
     return run
 
 
-def _observed(checker: Callable, seen: list) -> Callable:
-    """``checker`` as is, keeping its raw output (the probe files a repro
-    needs are not kept in the proposal)."""
+def _observed(checker: Callable, seen: list, n: int) -> Callable:
+    """``checker`` as is, keeping its raw output in slot ``n`` (the probe
+    files a repro needs are not kept in the proposal). A failed look leaves
+    its slot empty, so a later checker's output never moves into it."""
     def look(goal_id: int, copy: Path) -> object:
+        seen[n - 1] = None
         out = checker(goal_id, copy)
-        seen.append(out)
+        seen[n - 1] = out
         return out
     look.model = getattr(checker, "model", None)  # type: ignore[attr-defined]
     return look
@@ -317,7 +319,7 @@ def _raw_finding(seen: list, fid: str) -> dict | None:
     """The raw finding behind proposal finding ``fid`` (``1.3`` or ``2-1.3``)."""
     from maverick.codebase import features
     n = int(fid.split("-", 1)[0]) if "-" in fid else 1
-    if n > len(seen):
+    if n > len(seen) or seen[n - 1] is None:
         return None
     report = features._report(seen[n - 1])
     index = int(fid.rsplit(".", 1)[1]) - 1
@@ -362,14 +364,14 @@ def run_case(world, case: Case, checkers: list[Callable], *, budget, sandbox_fac
     """One case through ``features.propose``; its per-checker scores and cost."""
     from maverick.codebase import features
     from maverick.codebase.vault import VaultError
-    seen: list = []
+    seen: list = [None] * len(checkers)
     started = time.monotonic()
     row = {"id": case.id, "verdict": case.verdict,
            "kind": (case.defect or {}).get("kind") or case.looks_like, "error": None}
     try:
         name = _register(case, python)
         p = features.propose(world, name, case.title, case.description, _author(case),
-                             checker=[_observed(c, seen) for c in checkers],
+                             checker=[_observed(c, seen, n) for n, c in enumerate(checkers, start=1)],
                              sandbox_factory=sandbox_factory, budget=budget,
                              repair_rounds=0, check_rounds=1)
     except VaultError as exc:
