@@ -12087,12 +12087,19 @@ async def external_agent_unenroll(request: Request, agent_id: str) -> None:
     Prefer revoking (POST /trust/agents/{id}/revoke) to keep the entry."""
     require_permission(request, "admin")
     from maverick import external_agents as xa
-    from maverick.agent_trust import RevokedAgentRemovalRefused
+    from maverick.agent_trust import ChangeNotRecorded, RevokedAgentRemovalRefused
+    from maverick.audit import AuditRefused
+
+    from .trust_page_api import _UNRECORDED, _UNSAVED, _actor
 
     try:
-        removed = xa.unenroll(agent_id)
+        removed = xa.unenroll(agent_id, actor=_actor(request))
     except RevokedAgentRemovalRefused as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
+    except (AuditRefused, ChangeNotRecorded) as e:
+        raise HTTPException(status_code=503, detail=_UNRECORDED) from e
+    except OSError as e:
+        raise HTTPException(status_code=503, detail=_UNSAVED) from e
     if not removed:
         raise HTTPException(status_code=404, detail=f"agent {agent_id!r} is not enrolled")
 

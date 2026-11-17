@@ -367,3 +367,23 @@ def test_saving_an_edit_keeps_the_security_key_unless_it_is_removed(tmp_path):
     assert "pubkey" not in json.loads((tmp_path / "agent_trust.json").read_text())[0]
     page = client.get("/trust").text
     assert "The key on file is kept" in page and 'name="remove_key"' in page
+
+
+def test_a_failed_save_is_a_plain_refusal_on_every_route(tmp_path, monkeypatch):
+    from maverick import agent_trust
+
+    assert _register().status_code == 201
+    before = (tmp_path / "agent_trust.json").read_text()
+
+    def broken(entries):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(agent_trust, "_save_managed", broken)
+    plain = "The list of outside agents could not be saved. Nothing was changed."
+    answers = [_register(id="another-agent"),
+               client.put("/api/v1/trust/agents/partner-copilot", json={"direction": "both"}),
+               client.post("/api/v1/trust/agents/partner-copilot/revoke", json={"revoked": True}),
+               client.post("/api/v1/trust/agents/partner-copilot/revoke", json={"revoked": False}),
+               client.delete("/api/v1/trust/agents/partner-copilot")]
+    assert [(r.status_code, r.json()["detail"]) for r in answers] == [(503, plain)] * 5
+    assert (tmp_path / "agent_trust.json").read_text() == before

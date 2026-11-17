@@ -213,8 +213,22 @@ async def check_agent(request: Request, agent_id: str, body: CheckIn) -> dict:
     return await run_in_threadpool(check_access, request, agent_id, body)
 
 
+_UNSAVED = "The list of outside agents could not be saved. Nothing was changed."
+
+
 def _not_recorded() -> HTTPException:
     return HTTPException(status_code=503, detail=_UNRECORDED)
+
+
+def _not_saved() -> HTTPException:
+    # The audit row may already be written: like the partner limits, the
+    # record comes first, so a failed save leaves a record of the attempt.
+    return HTTPException(status_code=503, detail=_UNSAVED)
+
+
+class _NotSaved(Exception):
+    """The registry file could not be written (kept apart from a failure of
+    the containment authority around an unblock)."""
 
 
 def apply_agent_limits(request: Request, agent_id: str, body: AgentLimitsIn) -> None:
@@ -260,8 +274,8 @@ def apply_agent_limits(request: Request, agent_id: str, body: AgentLimitsIn) -> 
         write()
     except (AuditRefused, agent_trust.ChangeNotRecorded) as exc:
         raise _not_recorded() from exc
-    except agent_trust.AgentTrustError as exc:
-        raise HTTPException(status_code=503, detail="The list of outside agents could not be saved.") from exc
+    except (agent_trust.AgentTrustError, OSError) as exc:
+        raise _not_saved() from exc
 
 
 def register_agent(request: Request, body: BaseModel) -> str:
@@ -275,6 +289,8 @@ def register_agent(request: Request, body: BaseModel) -> str:
         return agent_trust.put_agent(body.model_dump(), actor=_actor(request)).id
     except (AuditRefused, agent_trust.ChangeNotRecorded) as exc:
         raise _not_recorded() from exc
+    except OSError as exc:
+        raise _not_saved() from exc
     except agent_trust.AgentTrustError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -289,17 +305,23 @@ def set_agent_blocked(request: Request, agent_id: str, blocked: bool) -> None:
     from maverick.revocation import ProtectedRevocationError, shared
 
     actor = _actor(request)
+
+    def flip(revoked: bool) -> bool:
+        try:
+            return agent_trust.set_revoked(agent_id, revoked, actor=actor)
+        except OSError as exc:
+            raise _NotSaved from exc
+
     try:
         changed = (
-            agent_trust.set_revoked(agent_id, True, actor=actor)
+            flip(True)
             if blocked
-            else shared().run_if_unprotected(
-                f"agent:{agent_id}",
-                lambda: agent_trust.set_revoked(agent_id, False, actor=actor),
-            )
+            else shared().run_if_unprotected(f"agent:{agent_id}", lambda: flip(False))
         )
     except (AuditRefused, agent_trust.ChangeNotRecorded) as exc:
         raise _not_recorded() from exc
+    except _NotSaved as exc:
+        raise _not_saved() from exc
     except ProtectedRevocationError as exc:
         raise HTTPException(
             status_code=409,
@@ -329,6 +351,8 @@ def remove_managed_agent(request: Request, agent_id: str) -> None:
         removed = agent_trust.remove_agent(agent_id, actor=_actor(request))
     except (AuditRefused, agent_trust.ChangeNotRecorded) as exc:
         raise _not_recorded() from exc
+    except OSError as exc:
+        raise _not_saved() from exc
     except agent_trust.RevokedAgentRemovalRefused as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if not removed:

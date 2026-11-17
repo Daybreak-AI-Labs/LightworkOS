@@ -40,6 +40,11 @@ Payload shapes (kind -> required fields, all events also carry
   agent_trust_denied: peer:str, direction:str (inbound|outbound), rule:str,
                      reason:str, correlation_id:str — an external agent was
                      refused by the Agent Trust Plane.
+  agent_trust_changed: action:str (added|replaced|limits_changed|blocked|
+                     unblocked|removed), trusted_agent:str, actor:str — an
+                     app-managed Agent Trust entry changed; written before the
+                     change is saved, so a failed save leaves a record of the
+                     attempt with no change.
   privacy_record_changed: event_id:str, occurred_at:float, actor:str, tenant:str,
                      record_type:str, action:str, record_id:str, revision:int,
                      status:str, record_sha256:str (opaque control metadata and

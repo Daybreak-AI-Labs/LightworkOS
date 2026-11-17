@@ -291,3 +291,28 @@ def test_copilot_blocks_and_unblocks_an_agent_like_the_page(client, monkeypatch,
         adapter.execute(_request(), {}, {"agent": "partner-copilot", "confirmed": True}, {}, "a" * 32)
     assert error.value.status_code == 403
     assert not json.loads((tmp_path / "agent_trust.json").read_text())[0]["revoked"]
+
+
+def test_copilot_reports_a_failed_save_plainly(client, monkeypatch):
+    from maverick import agent_trust
+    from maverick_dashboard import product_operations_agent_trust as ops
+
+    _as(monkeypatch, "admin", "user:ada")
+    _register(client, "partner-copilot")
+
+    def broken(entries):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(agent_trust, "_save_managed", broken)
+    adapter = {a.id: a for a in ops.entries()}["trust.agents.block"]
+    with pytest.raises(HTTPException) as error:
+        adapter.execute(_request(), {}, {"agent": "partner-copilot", "confirmed": True}, {}, "a" * 32)
+    assert (error.value.status_code, error.value.detail) == (
+        503, "The list of outside agents could not be saved. Nothing was changed.")
+
+
+def test_the_activity_log_names_agent_list_changes():
+    from maverick_dashboard.audit_actions_api import FIELD_LABELS, KIND_LABELS
+
+    assert KIND_LABELS["agent_trust_changed"] == "Outside agent list changed"
+    assert FIELD_LABELS["trusted_agent"] == "Outside agent"
