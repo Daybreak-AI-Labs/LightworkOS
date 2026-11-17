@@ -164,6 +164,11 @@ What to expect from the backfill:
   first. The dry run reports how many encrypted values there are; allow about
   one minute for every 500,000 (100,000 took about 4 seconds on a test
   machine). Reads are not held up.
+- **Records the workspace already has stay apart.** A learning record saved
+  both without a workspace and in the target workspace under the same key
+  keeps the workspace's own; the other is left unchanged and listed by table
+  and key, for you to delete. Any other clash stops the backfill and names
+  the table and the key.
 - **It is all or nothing.** It is one transaction. If Lightwork is busy
   writing for more than 10 seconds, or the database stops it, it says so,
   changes nothing, and can be run again.

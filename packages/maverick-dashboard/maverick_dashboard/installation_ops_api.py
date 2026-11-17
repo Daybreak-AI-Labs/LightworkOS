@@ -731,6 +731,15 @@ def _backfill_rows(report: dict[str, int]) -> list[dict[str, Any]]:
     return [{"records": _words(table), "count": int(count)} for table, count in sorted(report.items())]
 
 
+def _kept(report: dict[str, int]) -> tuple[list[dict[str, Any]], str]:
+    """Records left without a workspace because the workspace has its own."""
+    kept = [{"records": _words(table), "keys": [_bounded(k, 120) for k in keys[:51]]}
+            for table, keys in sorted((getattr(report, "skipped", None) or {}).items())]
+    note = (" Some older records were left as they are, because the workspace already has its own "
+            "under the same name." if kept else "")
+    return kept, note
+
+
 @router.post("/older-records/preview")
 async def older_records_preview(body: WorkspaceIn, request: Request) -> dict:
     _mutation(request)  # opens a database transaction (rolled back)
@@ -744,9 +753,10 @@ async def older_records_preview(body: WorkspaceIn, request: Request) -> dict:
     except Exception as exc:  # noqa: BLE001 -- connection errors can quote the address
         raise HTTPException(503, "Lightwork could not reach the shared database. Ask your IT team.") from exc
     total = sum(report.values())
-    return {"total": total, "rows": _backfill_rows(report),
+    kept, note = _kept(report)
+    return {"total": total, "rows": _backfill_rows(report), "kept": kept,
             "summary": (f"{total:,} older record{'s' if total != 1 else ''} would be assigned to this workspace."
-                        if total else "There are no older records to assign.")}
+                        if total else "There are no older records to assign.") + note}
 
 
 @router.post("/older-records/assign")
@@ -759,12 +769,16 @@ async def older_records_assign(body: WorkspaceIn, request: Request) -> dict:
     def work() -> dict[str, Any]:
         report = _backfill(workspace, False)
         total = sum(report.values())
-        return {"total": total, "rows": _backfill_rows(report),
-                "summary": f"Assigned {total:,} older record{'s' if total != 1 else ''} to the workspace."}
+        kept, note = _kept(report)
+        return {"total": total, "rows": _backfill_rows(report), "kept": kept,
+                "summary": f"Assigned {total:,} older record{'s' if total != 1 else ''} to the workspace."
+                           + note}
 
     def failure(exc: BaseException) -> str:
         if isinstance(exc, HTTPException):
             return str(exc.detail)
+        if isinstance(exc, ValueError):  # the backfill's own refusal, naming the table and key
+            return _bounded(str(exc), 600)
         if isinstance(exc, ImportError):
             return "The database driver isn't installed with this copy of Lightwork."
         return "The older records could not be assigned. Nothing was changed; ask your IT team to check the database."

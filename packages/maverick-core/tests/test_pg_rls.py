@@ -300,6 +300,49 @@ def test_native_event_scope_conflict_rolls_back_every_backfill_table(
         assert event_admission.poll_batch(world, "same-trigger") == legacy_batch
 
 
+def test_backfill_keeps_a_learning_record_the_workspace_already_has_and_names_conflicts(
+    postgres_test_dsn, monkeypatch,
+):
+    """A learning-store key saved both without a workspace and in the target
+    workspace no longer stops the backfill: the workspace keeps its own, the
+    one without a workspace is left where it is and listed by table and key,
+    and everything else is assigned. A conflict it cannot settle that way
+    names the table and the key."""
+    import psycopg
+    from maverick.paths import tenant_scope
+    from maverick.world_model_backends.postgres import PostgresWorldModel
+
+    monkeypatch.setenv("MAVERICK_PG_RLS", "0")
+    with PostgresWorldModel(postgres_test_dsn) as world:
+        with tenant_scope(tenant=None):
+            legacy_goal = world.create_goal("saved before workspaces")
+    with psycopg.connect(postgres_test_dsn, autocommit=True) as admin:
+        for tenant, block in ((None, "unbound"), ("ws_a", "workspace")):
+            admin.execute("INSERT INTO harness_addenda(key, block, updated_at, tenant_id) "
+                          "VALUES('model-x', %s, 0, %s)", (block, tenant))
+        admin.execute("INSERT INTO harness_addenda(key, block, updated_at) VALUES('model-y', 'y', 0)")
+    with psycopg.connect(postgres_test_dsn) as conn:
+        preview = pg_rls.backfill(conn, "ws_a", dry_run=True)
+        assert preview["harness_addenda"] == 1
+        assert preview.skipped == {"harness_addenda": ["model-x"]}
+        report = pg_rls.backfill(conn, "ws_a")
+        assert report["goals"] == 1 and report["harness_addenda"] == 1
+        assert report.skipped == {"harness_addenda": ["model-x"]}
+        assert conn.execute("SELECT key, tenant_id, block FROM harness_addenda ORDER BY key, block"
+                            ).fetchall() == [("model-x", None, "unbound"), ("model-x", "ws_a", "workspace"),
+                                             ("model-y", "ws_a", "y")]
+        assert conn.execute("SELECT tenant_id FROM goals WHERE id = %s",
+                            (legacy_goal,)).fetchone() == ("ws_a",)
+    # A fact saved under the same key both ways is a conflict backfill cannot settle.
+    with PostgresWorldModel(postgres_test_dsn) as world:
+        for tenant in (None, "ws_b"):
+            with tenant_scope(tenant=tenant):
+                world.upsert_fact("contact", f"{tenant}@example.test")
+    with psycopg.connect(postgres_test_dsn) as conn:
+        with pytest.raises(ValueError, match=r"in facts .*contact.*no rows were reassigned"):
+            pg_rls.backfill(conn, "ws_b")
+
+
 # --- records without a workspace that every workspace reads -----------------
 
 class _CountWorld:

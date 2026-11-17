@@ -756,6 +756,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   56 adds them when Lightwork starts as the table owner, so start once as the
   owner after upgrading. `maverick tenant backfill` now also assigns
   learning-store and approval-check records that have no workspace.
+- `maverick tenant backfill` no longer stops when a learning record exists
+  both without a workspace and in the target workspace: the workspace keeps
+  its own, the other is left unchanged and listed by table and key. A
+  conflict it still cannot settle names the table and the key.
 - A Postgres database update that the login cannot run because it does not
   own the tables now says so and changes nothing. Start Lightwork once as the
   table owner, then again with the usual login.

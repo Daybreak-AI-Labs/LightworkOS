@@ -3533,6 +3533,12 @@ def tenant_backfill(tenant_id: str, dsn: str | None, dry_run: bool) -> None:
     verb = "would assign" if dry_run else "assigned"
     for t in sorted(report):
         click.echo(f"  {t}: {verb} {report[t]}")
+    for t, keys in sorted((getattr(report, "skipped", None) or {}).items()):
+        click.echo(f"  {t}: left without a workspace, because {tenant_id!r} already has its "
+                   f"own: {', '.join(keys)}")
+    if getattr(report, "skipped", None):
+        click.echo("Those records were not changed. Delete them once you are sure the "
+                   "workspace's own records are the ones to keep.")
     click.echo(f"{verb} {sum(report.values())} row(s) to tenant {tenant_id!r}"
                + (" (dry run)" if dry_run else ""))
     sealed = int(getattr(report, "encrypted_values", 0))

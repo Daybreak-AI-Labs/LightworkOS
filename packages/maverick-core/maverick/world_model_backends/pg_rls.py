@@ -302,9 +302,64 @@ _LOCK_TIMEOUT_SECONDS = 10
 
 class BackfillReport(dict):
     """``{table: rows assigned}``; ``encrypted_values`` is how many sealed
-    values were re-sealed (in a dry run: would be)."""
+    values were re-sealed (in a dry run: would be); ``skipped`` lists, by
+    table, the keys of records left without a workspace because the workspace
+    already has its own record under that key."""
 
     encrypted_values: int = 0
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.skipped: dict[str, list[str]] = {}
+
+
+#: Learning-store tables whose key is unique per workspace: a key saved both
+#: without a workspace and in the target workspace keeps the workspace's own
+#: record, and the other stays without a workspace (listed, never deleted).
+_KEEP_WORKSPACE_RECORD = {
+    "harness_addenda": ("key",),
+    "harness_line_meta": ("line_id",),
+    "harness_transfer_tried": ("line_id",),
+    "harness_corpus": ("kind", "key", "seq"),
+}
+
+
+#: Keys listed per table in ``BackfillReport.skipped``; the rest are counted.
+_SKIPPED_LISTED = 50
+
+
+def _assign(cur, table: str, tenant_id: str, report: BackfillReport, *, dry_run: bool) -> None:
+    """Assign one table's legacy rows (or count them, in a dry run)."""
+    stored = _stored_tenant(table, tenant_id)
+    where, params = _legacy_scope(table), ()
+    keys = _KEEP_WORKSPACE_RECORD.get(table)
+    if keys:
+        same = " AND ".join(f"d.{k} = {table}.{k}" for k in keys)
+        taken = f"EXISTS (SELECT 1 FROM {table} d WHERE d.tenant_id = %s AND {same})"
+        cur.execute(f"SELECT {', '.join(keys)} FROM {table} WHERE {where} AND {taken} "
+                    f"ORDER BY {', '.join(keys)} LIMIT {_SKIPPED_LISTED + 1}", (stored,))
+        kept = ["/".join(str(v) for v in row) for row in cur.fetchmany(_SKIPPED_LISTED + 1)]
+        if len(kept) > _SKIPPED_LISTED:
+            cur.execute(f"SELECT count(*) FROM {table} WHERE {where} AND {taken}", (stored,))
+            kept = [*kept[:_SKIPPED_LISTED], f"and {int(cur.fetchone()[0]) - _SKIPPED_LISTED} more"]
+        if kept:
+            report.skipped[table] = kept
+        where, params = f"{where} AND NOT {taken}", (stored,)
+    if dry_run:
+        cur.execute(f"SELECT count(*) FROM {table} WHERE {where}", params)
+        report[table] = int(cur.fetchone()[0])
+    else:
+        cur.execute(f"UPDATE {table} SET {_column(table)} = %s WHERE {where}", (stored, *params))
+        report[table] = cur.rowcount
+
+
+def _conflict_message(exc: BaseException) -> str:
+    diag = getattr(exc, "diag", None)
+    table = getattr(diag, "table_name", None) or "a table"
+    detail = getattr(diag, "message_detail", None)
+    return (f"Records without a workspace conflict with records the workspace already has "
+            f"in {table}" + (f" ({detail})" if detail else "") + ": no rows were reassigned. "
+            "Remove or rename one of the two records, then run the backfill again.")
 
 
 def _open_legacy_value(value: str, context: str, tenant: str, keys: dict) -> str | None:
@@ -495,15 +550,7 @@ def backfill(conn, tenant_id: str, *, dry_run: bool = False) -> BackfillReport:
             if cur.fetchone()[0] is None:
                 report[t] = 0  # table not migrated yet -- nothing to assign
                 continue
-            if dry_run:
-                cur.execute(f"SELECT count(*) FROM {t} WHERE {_legacy_scope(t)}")
-                report[t] = int(cur.fetchone()[0])
-            else:
-                cur.execute(
-                    f"UPDATE {t} SET {_column(t)} = %s WHERE {_legacy_scope(t)}",
-                    (_stored_tenant(t, tenant_id),),
-                )
-                report[t] = cur.rowcount
+            _assign(cur, t, tenant_id, report, dry_run=dry_run)
         if not dry_run:
             try:
                 conn.commit()
@@ -518,10 +565,7 @@ def backfill(conn, tenant_id: str, *, dry_run: bool = False) -> BackfillReport:
             except Exception:  # a dropped connection has nothing left to roll back
                 pass
         if getattr(exc, "sqlstate", None) == "23505":
-            raise ValueError(
-                "legacy tenant records conflict with the destination tenant; "
-                "no rows were reassigned; reconcile the conflicting records before retrying"
-            ) from exc
+            raise ValueError(_conflict_message(exc)) from exc
         raise
     return report
 

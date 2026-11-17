@@ -110,6 +110,18 @@ def test_backfill_reports_assigned_rows(monkeypatch):
     assert "assigned 5 row(s) to tenant 'acme'" in res.output
 
 
+def test_backfill_lists_records_left_without_a_workspace(monkeypatch):
+    report = pg_rls.BackfillReport(goals=1, harness_addenda=0)
+    report.skipped = {"harness_addenda": ["model-x"]}
+    monkeypatch.setattr(pg_rls, "resolve_dsn", lambda dsn=None: "x")
+    monkeypatch.setattr(pg_rls, "connect", lambda *a, **k: _Conn())
+    monkeypatch.setattr(pg_rls, "backfill", lambda conn, tid, dry_run=False: report)
+    res = CliRunner().invoke(main, ["tenant", "backfill", "--tenant", "acme"])
+    assert res.exit_code == 0, res.output
+    assert "harness_addenda: left without a workspace, because 'acme' already has its own: " \
+           "model-x" in res.output
+
+
 def test_backfill_requires_tenant():
     res = CliRunner().invoke(main, ["tenant", "backfill"])
     assert res.exit_code != 0
