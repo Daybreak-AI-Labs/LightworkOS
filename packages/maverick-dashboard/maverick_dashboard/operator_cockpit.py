@@ -67,7 +67,26 @@ _GAP_LABELS = {
     "regulatory_impacts_refreshing": (
         "An accepted regulatory impact is still refreshing dependent evidence."
     ),
+    "task_answers_blocked": (
+        "Task answers in this workspace will be held back."
+    ),
 }
+
+
+def _gap_label(gap: str, delivery_code: str | None) -> str:
+    label = _GAP_LABELS.get(gap, gap.replace("_", " ").strip().capitalize() + ".")
+    if gap == "task_answers_blocked" and delivery_code is not None:
+        from maverick.stop_reasons import evidence_cause
+
+        label = f"{label} {evidence_cause(delivery_code)[0]}"
+    return label
+
+
+def _task_delivery_code(summary: Mapping[str, Any]) -> str | None:
+    delivery = _mapping(summary.get("task_delivery"))
+    if delivery.get("blocked") is not True:
+        return None
+    return str(delivery.get("code") or "other")
 
 
 def _integer(value: object) -> int:
@@ -125,8 +144,20 @@ def _next_action(
     receipt_count: int,
     pending_impacts: int,
     refreshing_impacts: int,
+    delivery_code: str | None = None,
 ) -> dict[str, str]:
     gap_set = set(gaps)
+    if delivery_code is not None:
+        from maverick.stop_reasons import evidence_cause
+
+        cause, fix, href, label = evidence_cause(delivery_code)
+        return {
+            "title": "Tasks in this workspace can't deliver answers",
+            "detail": f"{cause} {fix}",
+            "code": "",
+            "href": href,
+            "label": label,
+        }
     if gap_set & _CRITICAL_GAPS:
         return {
             "title": "Investigate receipt integrity before relying on packets",
@@ -309,6 +340,9 @@ def gateway_view(
         impact_summary.get("total", len(regulatory_impacts))
     )
     gaps = _gaps(summary)
+    delivery_code = _task_delivery_code(summary)
+    if delivery_code is not None:
+        gaps.insert(0, "task_answers_blocked")
     gap_set = set(gaps)
     synthetic = _synthetic_present(gaps, policies)
     chains_valid = (
@@ -421,15 +455,13 @@ def gateway_view(
             receipt_count=receipt_count,
             pending_impacts=pending_impacts,
             refreshing_impacts=refreshing_impacts,
+            delivery_code=delivery_code,
         ),
         "gaps": [
             {
                 "code": gap,
-                "label": _GAP_LABELS.get(
-                    gap,
-                    gap.replace("_", " ").strip().capitalize() + ".",
-                ),
-                "critical": gap in _CRITICAL_GAPS,
+                "label": _gap_label(gap, delivery_code),
+                "critical": gap in _CRITICAL_GAPS or gap == "task_answers_blocked",
             }
             for gap in gaps
         ],

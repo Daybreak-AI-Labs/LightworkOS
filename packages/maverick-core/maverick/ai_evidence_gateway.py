@@ -797,6 +797,65 @@ def _impact_transaction_target() -> Path:
     )
 
 
+_POLICY_MODE_RECORD = "tenant-policy-mode"
+
+
+def _validated_policy_mode(record: Mapping[str, Any], tenant: str) -> str:
+    mode = record.get("mode")
+    if (
+        record.get("id") != _stable_id("AIM", _POLICY_MODE_RECORD)
+        or record.get("schema") != POLICY_MODE_SCHEMA
+        or record.get("status") != "active"
+        or record.get("tenant_id") != tenant
+        or mode not in {"production", "synthetic"}
+    ):
+        raise EvidenceGatewayStateError(
+            "AI evidence policy tenant mode failed validation"
+        )
+    return str(mode)
+
+
+def _legacy_policy_modes() -> set[str]:
+    """Modes implied by the policies of a tenant that predates its mode record."""
+
+    legacy_rows = _POLICIES.list(limit=_MAX_POLICIES + 1)
+    if len(legacy_rows) > _MAX_POLICIES:
+        raise EvidenceGatewayStateError(
+            "AI evidence policy namespace is oversized"
+        )
+    return {
+        (
+            "synthetic"
+            if (
+                isinstance(policy.get("metadata"), Mapping)
+                and (
+                    policy["metadata"].get("demo") is True
+                    or policy["metadata"].get("synthetic") is True
+                )
+            )
+            else "production"
+        )
+        for policy in (_policy_view(row) for row in legacy_rows)
+    }
+
+
+def _policy_tenant_mode() -> str | None:
+    """Read the tenant's policy mode without claiming one.
+
+    Returns ``"synthetic"``, ``"production"``, ``"mixed"`` for a legacy
+    namespace that holds both, or ``None`` when nothing has chosen a mode yet.
+    """
+
+    tenant = _active_tenant()
+    existing = _POLICY_MODES.get(_stable_id("AIM", _POLICY_MODE_RECORD))
+    if existing is not None:
+        return _validated_policy_mode(existing, tenant)
+    legacy_modes = _legacy_policy_modes()
+    if len(legacy_modes) > 1:
+        return "mixed"
+    return next(iter(legacy_modes), None)
+
+
 def _claim_policy_tenant_mode(
     *,
     synthetic: bool,
@@ -806,46 +865,14 @@ def _claim_policy_tenant_mode(
 
     tenant = _active_tenant()
     requested = "synthetic" if synthetic else "production"
-    record_id = _stable_id("AIM", "tenant-policy-mode")
-
-    def validated_mode(record: Mapping[str, Any]) -> str:
-        mode = record.get("mode")
-        if (
-            record.get("id") != record_id
-            or record.get("schema") != POLICY_MODE_SCHEMA
-            or record.get("status") != "active"
-            or record.get("tenant_id") != tenant
-            or mode not in {"production", "synthetic"}
-        ):
-            raise EvidenceGatewayStateError(
-                "AI evidence policy tenant mode failed validation"
-            )
-        return str(mode)
+    record_id = _stable_id("AIM", _POLICY_MODE_RECORD)
 
     existing = _POLICY_MODES.get(record_id)
     if existing is None:
         # Upgrade an existing tenant conservatively. A historically mixed
         # namespace is refused; otherwise the current policy set determines
         # the permanent mode before a new mutation can proceed.
-        legacy_rows = _POLICIES.list(limit=_MAX_POLICIES + 1)
-        if len(legacy_rows) > _MAX_POLICIES:
-            raise EvidenceGatewayStateError(
-                "AI evidence policy namespace is oversized"
-            )
-        legacy_modes = {
-            (
-                "synthetic"
-                if (
-                    isinstance(policy.get("metadata"), Mapping)
-                    and (
-                        policy["metadata"].get("demo") is True
-                        or policy["metadata"].get("synthetic") is True
-                    )
-                )
-                else "production"
-            )
-            for policy in (_policy_view(row) for row in legacy_rows)
-        }
+        legacy_modes = _legacy_policy_modes()
         if len(legacy_modes) > 1:
             raise EvidenceGatewayStateError(
                 "AI evidence policy tenant already mixes synthetic and "
@@ -870,7 +897,7 @@ def _claim_policy_tenant_mode(
                 raise EvidenceGatewayStateError(
                     "AI evidence policy tenant mode could not be recovered"
                 ) from None
-    actual = validated_mode(existing)
+    actual = _validated_policy_mode(existing, tenant)
     if actual != requested:
         raise EvidenceGatewayStateError(
             "synthetic demo and production AI evidence policies require "
@@ -2074,13 +2101,106 @@ def _ensure_default_policy(policy_id: str, *, actor: str) -> None:
     inside the delivery lock.  A concurrent creator is harmless: the upsert
     re-reads the record under the policy lock and returns the existing
     revision when its snapshot is identical.
+
+    The policy follows the tenant's permanent mode. A dedicated demo tenant
+    (``seed_demo``) has already claimed synthetic mode, so its default policy
+    is labelled synthetic too: a production policy there is refused, which
+    withheld every task answer. This never changes a claimed mode, and an
+    unclaimed or production tenant still gets the unlabelled production policy.
     """
 
     if _token(policy_id, "policy_id") != "default":
         return
     if _policy_record("default") is not None:
         return
+    if _policy_tenant_mode() == "synthetic":
+        upsert_policy("default", actor=actor, metadata=_SYNTHETIC_DEFAULT_METADATA)
+        return
     upsert_policy("default", actor=actor)
+
+
+_SYNTHETIC_DEFAULT_METADATA = {"demo": True, "synthetic": True, "network_access": False}
+
+
+def delivery_preflight() -> dict[str, str] | None:
+    """Predict a refusal of a goal's delivery without creating evidence state.
+
+    The orchestrator calls this before any model work so a configuration that
+    ``deliver_text`` would refuse for every goal stops the task at its start.
+    Returns ``{"code", "detail"}`` (codes as :func:`delivery_refusal_code`) or
+    ``None``. It creates no policy, mode, receipt or ledger. It is an earlier
+    check, not a replacement: the delivery itself still fails closed. Model
+    bindings and receipt capacity are not predicted here (the root model is
+    chosen later; reading capacity prepares ledgers).
+    """
+
+    if not enabled():
+        return None
+    try:
+        from .paths import current_tenant_id_strict
+
+        tenant = current_tenant_id_strict()
+    except Exception as exc:  # an invalid client binding is a missing scope
+        return {"code": "no_workspace", "detail": _bounded_detail(exc)}
+    if not tenant:
+        return {
+            "code": "no_workspace",
+            "detail": "AI evidence gateway records require an explicit tenant scope",
+        }
+    try:
+        record = _policy_record("default")
+        if record is None:
+            if _policy_tenant_mode() == "mixed":
+                return {
+                    "code": "demo_and_real_mixed",
+                    "detail": "AI evidence policy tenant already mixes synthetic "
+                    "and production authority",
+                }
+            return None
+        policy = _policy_view(record)
+        if "text" not in policy["settings"]["supported_modalities"]:
+            return {
+                "code": "written_answers_not_allowed",
+                "detail": "the default AI evidence policy does not support text",
+            }
+        if policy.get("context_sha256"):
+            # Goal deliveries bind the digest of each goal's own brief.
+            return {
+                "code": "fixed_request",
+                "detail": "the default AI evidence policy is bound to one "
+                "context digest",
+            }
+    except EvidenceGatewayError as exc:
+        return {"code": "records_unreadable", "detail": _bounded_detail(exc)}
+    return None
+
+
+def _bounded_detail(exc: BaseException) -> str:
+    return " ".join(str(exc).split())[:500] or type(exc).__name__
+
+
+_REFUSAL_CODES = (
+    ("separate tenant namespaces", "demo_and_real_mixed"),
+    ("already mixes synthetic and production", "demo_and_real_mixed"),
+    ("require an explicit tenant scope", "no_workspace"),
+    ("marking is not implemented", "written_answers_not_allowed"),
+    ("delivery is not implemented by deliver_text", "written_answers_not_allowed"),
+    ("context digest does not match", "fixed_request"),
+    ("model digest does not match", "fixed_model"),
+    ("receipt capacity has been reached", "receipt_limit"),
+    ("failed validation", "records_unreadable"),
+    ("is malformed", "records_unreadable"),
+)
+
+
+def delivery_refusal_code(exc: BaseException) -> str:
+    """Stable cause code for a delivery refusal (plain words: stop_reasons)."""
+
+    text = str(exc)
+    for fragment, code in _REFUSAL_CODES:
+        if fragment in text:
+            return code
+    return "other"
 
 
 def deliver_text(
@@ -4241,6 +4361,9 @@ def summary() -> dict[str, Any]:
         gaps.append("pending_regulatory_impacts")
     if impact_counts["accepted_refreshing"]:
         gaps.append("regulatory_impacts_refreshing")
+    # Whether Lightwork's own task answers would be held back. Reported beside
+    # readiness, not in it: API deliveries may legitimately bind one context.
+    delivery = delivery_preflight()
     result = {
         "schema": SUMMARY_SCHEMA,
         "enabled": True,
@@ -4283,6 +4406,10 @@ def summary() -> dict[str, Any]:
         "readiness": {
             "ready": not gaps,
             "gaps": gaps,
+        },
+        "task_delivery": {
+            "blocked": delivery is not None,
+            "code": delivery["code"] if delivery is not None else None,
         },
         "legal_certification": False,
         "compliance_verdict": "not_provided",
@@ -5194,10 +5321,18 @@ def seed_demo(*, actor: str = "demo") -> dict[str, Any]:
     # materialization even if an operator calls this on the wrong namespace.
     existing_receipts = list_interaction_receipts(limit=2)
     existing_impacts = list_regulatory_impacts(limit=_MAX_IMPACTS)
+    # Tasks run in a demo tenant are delivered under its synthetic-labelled
+    # default policy (_ensure_default_policy); those stay demo evidence.
+    demo_policy_ids = {policy_id} | {
+        str(policy.get("policy_id"))
+        for policy in existing_policies
+        if policy.get("policy_id") == "default"
+        and policy.get("metadata") == _SYNTHETIC_DEFAULT_METADATA
+    }
     if (
-        any(policy.get("policy_id") != policy_id for policy in existing_policies)
+        any(policy.get("policy_id") not in demo_policy_ids for policy in existing_policies)
         or any(
-            receipt.get("policy_id") != policy_id
+            receipt.get("policy_id") not in demo_policy_ids
             for receipt in existing_receipts
         )
         or any(impact.get("id") != demo_impact_id for impact in existing_impacts)
@@ -5306,6 +5441,8 @@ __all__ = [
     "REGULATORY_IMPACT_SCHEMA",
     "UnsupportedMediaMarking",
     "deliver_text",
+    "delivery_preflight",
+    "delivery_refusal_code",
     "enabled",
     "get_interaction_receipt",
     "get_policy",

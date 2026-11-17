@@ -1048,6 +1048,39 @@ def _check_proxy_auth() -> None:
         _row(GREEN, "proxy-auth", "loopback fallback disabled")
 
 
+def _check_evidence_gateway() -> None:
+    """Flag each workspace whose AI evidence setup would hold back every task
+    answer. Uses the same read-only check tasks run before any model work."""
+    from . import ai_evidence_gateway as gateway
+
+    if not gateway.enabled():
+        return
+    from .paths import tenant_scope
+    from .stop_reasons import evidence_cause
+
+    try:
+        from .tenant.registry import list_tenants
+
+        workspaces = [(t.id, t.display_name or t.id) for t in list_tenants()]
+    except Exception as e:  # the current scope is still checked below
+        _row(YELLOW, "evidence", f"could not list workspaces: {type(e).__name__}")
+        workspaces = []
+    blocked = 0
+    for tenant_id, name in workspaces or [(None, "current workspace")]:
+        try:
+            with tenant_scope(tenant=tenant_id):
+                found = gateway.delivery_preflight()
+        except Exception as e:
+            _row(YELLOW, f"evidence:{name}", f"could not check: {type(e).__name__}")
+            continue
+        if found is not None:
+            blocked += 1
+            cause, fix, _link, _label = evidence_cause(found["code"])
+            _row(RED, f"evidence:{name}", f"task answers will be held back. {cause}", fix=fix)
+    if not blocked:
+        _row(GREEN, "evidence", "task answers can be recorded in every checked workspace")
+
+
 def diagnose() -> int:
     """Run every health check, print the report, and return the number of
     failed (✗) checks. 0 == healthy. The CLI exits nonzero when this is
@@ -1075,6 +1108,7 @@ def diagnose() -> int:
     _check_agent_trust()
     _check_external_agents()
     _check_governed_execution()
+    _check_evidence_gateway()
     _check_tls_cert_expiry()
     click.echo("")
     if _FAILURES:
