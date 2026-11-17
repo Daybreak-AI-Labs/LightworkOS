@@ -470,7 +470,12 @@ def _fire_webhook(event: str, payload: dict[str, Any]) -> None:
         from .immune import twin
         if twin.active():
             return  # a production twin replay is not a run anyone subscribed to
+        from .tools import fresh_context
         from .webhooks import fire
+        if fresh_context() and "result" in payload:
+            # A fresh-context run (the code checker) may quote vaulted code;
+            # its result stays with its proposal, never in an outbound hook.
+            payload = {**payload, "result": "(kept with the code change it checked)"}
         fire(event, _webhook_public_payload(event, payload))
     except Exception as e:  # pragma: no cover -- webhooks never block a run
         log.debug(
@@ -674,7 +679,10 @@ def _maybe_recall_prior_work(world, goal, shield) -> str | None:
     Tunables: ``MAVERICK_AUTO_RECALL_K`` (default 3); min similarity 0.10.
     """
     from .env_setting import env_or_config
+    from .tools import fresh_context
 
+    if fresh_context():  # e.g. the code checker: never recall the author's goals
+        return None
     if (env_or_config("MAVERICK_AUTO_RECALL", "context", "auto_recall") or "").strip().lower() not in {
         "1", "true", "yes", "on",
     }:
@@ -1031,6 +1039,22 @@ def _brief_facts_block(world: WorldModel, goal_id: int, shield: Any | None) -> s
     return facts_block
 
 
+def _maybe_experience_guidance(world, goal, shield) -> str | None:
+    """Outcomes of similar prior goals, or None for a fresh-context run (the
+    code checker), which must not learn how the author's goal went."""
+    from .tools import fresh_context
+
+    if fresh_context():
+        return None
+    from . import experience
+    return experience.recall(
+        world,
+        f"{goal.title}\n{goal.description or ''}",
+        shield=shield,
+        owner=str(getattr(goal, "owner", "") or ""),
+    )
+
+
 async def _apply_brief_enrichments(
     brief: str, *, llm: LLM, world: WorldModel, budget: Budget,
     blackboard: Blackboard, goal: Any, conversation_id: int | None,
@@ -1071,13 +1095,7 @@ async def _apply_brief_enrichments(
     # brief on outcomes of similar prior goals (how many succeeded/failed).
     # No-op when explicitly disabled or no useful history exists; fail-open.
     with _enrich("experience guidance"):
-        from . import experience
-        _exp = experience.recall(
-            world,
-            f"{goal.title}\n{goal.description or ''}",
-            shield=shield,
-            owner=str(getattr(goal, "owner", "") or ""),
-        )
+        _exp = _maybe_experience_guidance(world, goal, shield)
         if _exp:
             brief = brief + "\n\n" + _exp
 
@@ -1120,7 +1138,8 @@ async def _apply_brief_enrichments(
     # or there are no similar prior failures.
     with _enrich("reflexion recall"):
         from . import reflexion
-        if reflexion.enabled():
+        from .tools import fresh_context
+        if reflexion.enabled() and not fresh_context():
             recalled = reflexion.recall(
                 f"{goal.title}\n{goal.description or ''}",
                 channel=channel,
@@ -1358,12 +1377,14 @@ async def _build_orchestrator_brief(
     # this block the whole propose/approve/apply loop writes a store nothing
     # consumes, so an operator's approval would change nothing.
     refine_block = _brief_refinements_block(shield)
+    decision_block = _brief_decisions_block(world, goal_id, shield)
 
     brief = (
         f"Top-level goal: {goal.title}\n"
         f"Description: {description}\n"
         f"{history_block}"
-        f"{qa_block}\n"
+        f"{qa_block}"
+        f"{decision_block}\n"
         f"{refine_block}"
         # Facts are writable from untrusted sources (the agent's own kv_memory
         # set, the dashboard set_fact endpoint, MCP), so a fact value can be a
@@ -2255,6 +2276,92 @@ def _handle_root_error(*, result: Any, world: WorldModel, goal: Any, goal_id: in
 
 
 
+def _brief_decisions_block(world: Any, goal_id: int, shield: Any) -> str:
+    """The areas that always need a person, and the decisions people made for
+    this run, as structured records (never a free-text answer to reinterpret)."""
+    from . import decision_requests
+
+    try:
+        rules = "\n" + decision_requests.rules_text() + "\n"
+    except Exception:  # pragma: no cover -- never block a run on this
+        rules = ""
+    made = decision_requests.brief_block(
+        world, goal_id,
+        clean=lambda text, limit: _sanitize_persisted_prompt_text(
+            text, shield=shield, max_chars=limit),
+    )
+    return rules + made
+
+
+def _decision_start_refusal(world: Any, goal_id: int) -> str:
+    """Every path that starts or restarts a goal ends here: a goal with an
+    open decision (its own or a sub-goal's) stays waiting for a person."""
+    from . import decision_requests
+
+    waiting = decision_requests.resume_refusal(world, goal_id)
+    if waiting:
+        world.set_goal_status(goal_id, "blocked", result=waiting)
+        log.info("goal #%s not started: it waits for a decision", goal_id)
+        return "Paused: " + waiting
+    decision_requests.clear_run(world, goal_id)
+    return ""
+
+
+def _paused_for_decision(world: Any, goal_id: int) -> bool:
+    """Whether this goal's last run stopped for a decision (waiting on one, or
+    unable to file it). Unreadable state counts as paused."""
+    from . import decision_requests
+
+    if decision_requests.run_state(world, goal_id) is not None:
+        return True
+    try:
+        return bool(decision_requests.open_for_tree(world, goal_id))
+    except Exception:  # noqa: BLE001 -- unknown means do not treat the attempt as done
+        log.warning("decision lookup failed after a best-of-N attempt", exc_info=True)
+        return True
+
+
+def _settle_decision_result(*, result: Any, world: WorldModel, goal_id: int,
+                            lifecycle: _RunLifecycle) -> str | None:
+    """A run waiting on a person's decision, or stopped because its decision
+    request could not be saved. ``None`` for every other result."""
+    from . import decision_requests
+
+    if result.error and result.stop_kind == decision_requests.STOP_KIND:
+        message = result.error
+        lifecycle.end_episode("decision not recorded", "interrupted")
+        world.set_goal_status(goal_id, "blocked", result=message)
+        _fire_webhook("goal_finished", {"goal_id": goal_id, "status": "blocked",
+                                        "result": message})
+        return message
+    if result.error:
+        return None
+    # A run never finishes while a decision of this goal, or of a goal below
+    # it, is open: whichever agent filed it, the run waits for the answer.
+    waiting = decision_requests.open_for_tree(world, goal_id)
+    filed = decision_requests.run_state(world, goal_id) == decision_requests.WAITING
+    if not waiting and not filed:
+        return None
+    lifecycle.end_episode("blocked awaiting a decision", "interrupted")
+    text = (decision_requests.waiting_text(waiting) if waiting
+            else decision_requests.ANSWERED_EARLY)
+    world.set_goal_status(goal_id, "blocked", result=text)
+    if not waiting:
+        # Answered before this pause took effect: the run continues with that
+        # choice once it has released its lease (decision_requests.after_run).
+        return text
+    _fire_webhook("goal_waiting", {
+        "goal_id": goal_id, "status": "blocked", "waiting_for": "decision",
+        "open_decision_count": len(waiting),
+    })
+    lines = [f"  #{d.id}: {d.question}" for d in waiting]
+    return (
+        f"Paused: {text}\n" + "\n".join(lines)
+        + "\n\nAnswer on the Approvals page, in the chat card, or with: "
+        "maverick decisions answer <id> <option number>"
+    )
+
+
 def _handle_root_result(*, result: Any, world: WorldModel, goal: Any, goal_id: int,
                         budget: Budget, blackboard: Blackboard, shield: Any,
                         channel: str | None, user_id: str | None, domain: str | None,
@@ -2271,6 +2378,10 @@ def _handle_root_result(*, result: Any, world: WorldModel, goal: Any, goal_id: i
         lifecycle.end_episode("cancelled", "interrupted")
         return "Stopped: this goal was cancelled."
 
+    settled = _settle_decision_result(result=result, world=world, goal_id=goal_id,
+                                      lifecycle=lifecycle)
+    if settled is not None:
+        return settled
     if result.blocked_on_user:
         lifecycle.end_episode("blocked awaiting user", "interrupted")
         world.set_goal_status(goal_id, "blocked")
@@ -2767,6 +2878,9 @@ async def _run_goal_impl(  # noqa: C901  -- core goal-execution loop
         world.set_goal_status(goal_id, "blocked", result=_risk_refusal)
         log.warning("goal #%s not started: %s", goal_id, _risk_refusal)
         return _risk_refusal
+    _waiting = _decision_start_refusal(world, goal_id)
+    if _waiting:
+        return _waiting
     _lifecycle.started = True
     try:
         world.set_goal_status(goal_id, "active")
@@ -3161,6 +3275,10 @@ async def run_goal(
         return f"BLOCKED: {exc}"
     except (TaskBusy, GoalMutationConflict, StarterWorkerAlreadyAdmitted, FederationAdmissionRequired) as exc:
         return f"BLOCKED: {exc}"
+    finally:
+        # After the execution lease is released, so the continued run can take it.
+        from .decision_requests import after_run
+        after_run(world, goal_id)
 
 
 def run_goal_sync(*args, **kwargs) -> str:
@@ -3615,6 +3733,10 @@ async def run_goal_best_of_n(
         except BudgetExceeded:
             cap_reached = True
 
+        if _paused_for_decision(world, goal_id):
+            # The attempt is waiting for a person: its partial changes are not
+            # a candidate, and no later attempt may act before the answer.
+            return answer
         from pathlib import Path as _Path
         workdir = _Path(getattr(sandbox, "workdir", "."))
         # Answer-diff is PRIMARY (FINAL: is canonical). When the agent edited

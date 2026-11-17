@@ -291,6 +291,9 @@ _DEFAULT_RISK: dict[str, str] = {
     "maverick_skills_list": "low",
     "maverick_fleet_recall": "low",
     "maverick_facts_get": "low",
+    # Files a decision request for a person and pauses the run: it writes a
+    # record and posts a card, but spends nothing and acts on nothing.
+    "request_decision": "medium",
     # Rated on purpose so no built-in tool rides the unrated high floor
     # (test_every_built_in_tool_has_an_explicit_rating). high: writes, sends,
     # spends or runs a program.

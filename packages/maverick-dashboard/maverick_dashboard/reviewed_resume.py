@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from maverick import goal_resume
 from maverick.attachment_submissions import SubmissionConflict
 from maverick.authority_effects import authority_effect_fence
+from maverick.decision_requests import stranded
 from maverick.goal_mutations import GoalMutationConflict
 from maverick.stop_reasons import stop_payload
 from maverick.task_execution_guard import TaskBusy
@@ -69,7 +70,8 @@ def status(request, goal_id):
     return {"goal_id": goal_id, "title": goal.title, "status": goal.status, "context": context_for(request),
             "expected_updated_at": float(goal.updated_at), "expected_owner": goal.owner or "",
             "workspace_ceiling": limits(request, goal_id, None), "blocked": closed or specialist_setup_block(goal) or
-            ("Only stopped, failed or blocked tasks can be resumed." if goal.status not in {"blocked", "cancelled", "failed"} else ""),
+            ("Only stopped, failed or blocked tasks can be resumed." if goal.status not in {"blocked", "cancelled", "failed"}
+             and not stranded(world, goal_id) else ""),
             "unanswered_questions": len(world.open_questions(goal_id=goal_id)),
             "consequence": "Starts a new billable attempt under current policy. Earlier external actions are not undone; inspect uncertain effects before retrying."}
 

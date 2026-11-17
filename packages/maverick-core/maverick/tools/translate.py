@@ -13,6 +13,13 @@ ops:
 
 Choose backend per call via ``backend`` (default: deepl when key
 present, else libretranslate when ``LIBRETRANSLATE_URL`` is set).
+
+DeepL and a LibreTranslate server on a public address are paid calls charged
+to the run budget (kernel rule 3) through ``_paid_call.charged_call``: priced
+per character or request from ``[budget.tool_prices] deepl`` /
+``libretranslate``, else the per-call safety ceiling. A LibreTranslate server
+on this machine or a private network is free. A tool built with no run budget
+refuses a paid call before anything is sent.
 """
 from __future__ import annotations
 
@@ -22,6 +29,7 @@ from typing import Any
 
 from ..governed_http import guarded_sender as _governed_sender
 from . import Tool
+from ._paid_call import STOP_SIGNALS, PaidCallRefused, charged_call, is_free_backend
 
 log = logging.getLogger(__name__)
 
@@ -67,7 +75,7 @@ def _libre_base() -> str:
     return os.environ.get("LIBRETRANSLATE_URL", "").strip().rstrip("/")
 
 
-def _translate_deepl(text: str, target: str, source: str) -> str:
+def _translate_deepl(text: str, target: str, source: str, budget) -> str:
     import httpx
     key = os.environ.get("DEEPL_API_KEY", "").strip()
     if not key:
@@ -77,11 +85,11 @@ def _translate_deepl(text: str, target: str, source: str) -> str:
     payload = {"text": [text], "target_lang": target.upper()}
     if source:
         payload["source_lang"] = source.upper()
-    r = _governed_sender(httpx.post)(
+    r = charged_call("deepl", lambda: _governed_sender(httpx.post)(
         f"https://{host}/v2/translate",
         headers={"Authorization": f"DeepL-Auth-Key {key}"},
         json=payload, timeout=30.0,
-    )
+    ), budget=budget, label="DeepL", units={"request": 1, "character": len(text)})
     if r.status_code >= 400:
         return f"ERROR: DeepL ({r.status_code}): {r.text[:300]}"
     data = r.json()
@@ -90,34 +98,44 @@ def _translate_deepl(text: str, target: str, source: str) -> str:
     return f"[from={detected} to={target}]\n{out.get('text', '')}"
 
 
-def _translate_libre(text: str, target: str, source: str) -> str:
+def _libre_post(path: str, payload: dict, text: str, budget):
+    """One LibreTranslate request; charged unless the server is private."""
     import httpx
-    base = _libre_base()
+    url = f"{_libre_base()}{path}"
+
+    def send():
+        return _governed_sender(httpx.post)(url, json=payload, timeout=30.0)
+
+    if is_free_backend(url):
+        return send()
+    return charged_call("libretranslate", send, budget=budget, label="LibreTranslate",
+                        units={"request": 1, "character": len(text)})
+
+
+def _translate_libre(text: str, target: str, source: str, budget) -> str:
     payload = {"q": text, "target": target.lower(), "source": source.lower() or "auto",
                "format": "text"}
     key = os.environ.get("LIBRETRANSLATE_API_KEY", "").strip()
     if key:
         payload["api_key"] = key
-    r = _governed_sender(httpx.post)(f"{base}/translate", json=payload, timeout=30.0)
+    r = _libre_post("/translate", payload, text, budget)
     if r.status_code >= 400:
         return f"ERROR: LibreTranslate ({r.status_code}): {r.text[:300]}"
     data = r.json()
     return f"[to={target}]\n{data.get('translatedText', '')}"
 
 
-def _detect_deepl(text: str) -> str:
+def _detect_deepl(text: str, budget) -> str:
     # DeepL detects as a side effect of translate; round-trip to en.
-    return _translate_deepl(text, "EN", "")
+    return _translate_deepl(text, "EN", "", budget)
 
 
-def _detect_libre(text: str) -> str:
-    import httpx
-    base = _libre_base()
+def _detect_libre(text: str, budget) -> str:
     payload = {"q": text}
     key = os.environ.get("LIBRETRANSLATE_API_KEY", "").strip()
     if key:
         payload["api_key"] = key
-    r = _governed_sender(httpx.post)(f"{base}/detect", json=payload, timeout=30.0)
+    r = _libre_post("/detect", payload, text, budget)
     if r.status_code >= 400:
         return f"ERROR: LibreTranslate detect ({r.status_code}): {r.text[:300]}"
     data = r.json()
@@ -127,7 +145,7 @@ def _detect_libre(text: str) -> str:
     return "(no detection)"
 
 
-def _run(args: dict[str, Any]) -> str:
+def _run(args: dict[str, Any], budget=None) -> str:
     op = args.get("op")
     if not op:
         return "ERROR: op is required"
@@ -148,18 +166,22 @@ def _run(args: dict[str, Any]) -> str:
     try:
         if op == "translate":
             if backend == "deepl":
-                return _translate_deepl(text, target, source)
-            return _translate_libre(text, target, source)
+                return _translate_deepl(text, target, source, budget)
+            return _translate_libre(text, target, source, budget)
         if op == "detect":
             if backend == "deepl":
-                return _detect_deepl(text)
-            return _detect_libre(text)
+                return _detect_deepl(text, budget)
+            return _detect_libre(text, budget)
+    except STOP_SIGNALS:
+        raise
+    except PaidCallRefused as e:
+        return f"ERROR: {e}"
     except Exception as e:
         return f"ERROR: translate failed: {type(e).__name__}: {e}"
     return f"ERROR: unknown op {op!r}"
 
 
-def translate() -> Tool:
+def translate(*, budget=None) -> Tool:
     return Tool(
         name="translate",
         description=(
@@ -171,5 +193,5 @@ def translate() -> Tool:
             "configured the tool returns an error and sends nothing."
         ),
         input_schema=_TRANS_SCHEMA,
-        fn=_run,
+        fn=lambda args: _run(args, budget),
     )

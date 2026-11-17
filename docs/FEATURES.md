@@ -23,7 +23,7 @@ catalogue of built features and tools.
 | [Hosted control plane and multi-tenancy](#hosted-control-plane-and-multi-tenancy) | 11 |
 | [Evaluation and benchmarks](#evaluation-and-benchmarks) | prose |
 | [Observability and reliability](#observability-and-reliability) | prose |
-| [UX surfaces](#ux-surfaces) | 50 |
+| [UX surfaces](#ux-surfaces) | 51 |
 | [Packaged governance, evidence and external privacy control planes](#packaged-governance-evidence-and-external-privacy-control-planes) | 4 |
 | [Software development: the code vault](#software-development-the-code-vault) | 2 |
 | [Information-flow control](#information-flow-control) | 1 |
@@ -32,7 +32,7 @@ catalogue of built features and tools.
 | [Distribution and install](#distribution-and-install) | 19 |
 | [Customer workflow completion and readiness](#customer-workflow-completion-and-readiness) | 22 in 24 subsections |
 
-454 entries in 19 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
+455 entries in 19 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
 <!-- toc:end -->
 
 ## Agent kernel and orchestration
@@ -5009,6 +5009,33 @@ tested without spawning py-spy.
   has someone other than the requester approve a high/critical action whenever
   another eligible approver exists (`channel_approvals.separate_approver_refusal`,
   enforced in `record_vote` for the dashboard, Slack and Teams).
+- **Decision requests** (`maverick.decision_requests`, tool `request_decision`,
+  table `decision_requests`, migration 55) — a governed run (any goal run,
+  including chat tasks and code-vault feature runs) asks a person to choose between two
+  to five options, with its recommendation and why, and pauses as `blocked`
+  without spending. The owner or a workspace administrator answers on the
+  Approvals page (`/api/v1/decisions`), the Copilot (`reviews.decision_*`), a
+  Slack card or `maverick decisions answer`; areas in `[approval]
+  decision_admin_areas` need an administrator, and the starter answers only as
+  `[approval] separate_approver` allows a requester to approve a high-risk
+  action. The run resumes with the choice as a structured
+  record in its brief. An unanswered decision expires
+  (`decision_expiry_hours`) and stops the run without choosing; an unsaved
+  request stops it before it acts. Requests, answers and expiries are audited
+  (`decision_requested`, `decision_answered`, `decision_expired`). Once any
+  agent of a run files a decision (a subagent, swarm member or task graph
+  included), no other tool runs in that turn or later, and the run cannot finish,
+  restart or be resumed while a decision of the goal or a sub-goal is open.
+  Expiry is checked every five minutes by the dashboard and `maverick serve`,
+  and when the task is read; a run that ends closes its open decisions. A flow
+  step that needs a decision stops without a retry and the flow takes the step's
+  error route or stops, showing the question (flows do not wait for a decision
+  yet). A run bound to its own access key is not restarted after an answer: the
+  queue and the task say who must start it again. With durable checkpoints off
+  (`[durable] enabled`, the default) a restarted run begins again, so finished
+  steps may repeat. Decision rows are deleted with their goal and counted in
+  the signed pre-delete erasure receipt (receipt schema v3); receipts issued
+  under v2 keep verifying against their own store list.
 - **Web dashboard** — run list, plan-tree, chat at `/chat`,
   [root conversation summaries and shared durable SSE replay](./dashboard-read-models.md)
   (schema 37 root indexes; monotonic heartbeat deadlines), and an approval queue with
@@ -5420,15 +5447,29 @@ tested without spawning py-spy.
 
 ## Software development: the code vault
 
-- **Vaulted repositories** (`codebase/vault.py`, `maverick code add|sync|export`):
+- **Vaulted repositories** (`codebase/vault.py`, `maverick code add|set|sync|export`):
   every branch and tag in one sealed git bundle per repository; plaintext only
   in private, short-lived working copies; credentials named by environment
   variable, never stored; hardened host git.
 - **Feature swarms** (`codebase/features.py`, `maverick code feature|proposals|
   show|merge|push`): a governed swarm builds the change on a branch, labelled
   `code:<repo>` and enforced at the repository's protection mode; the repo's
-  tests run in the sandbox and the independent reviewer reads the diff; the
-  sealed proposal waits for a `codebase_merge` approval before any merge or push.
+  tests run in the sandbox on a fresh copy of the pinned commit, in tiers set
+  per repository (a quick tier with `{changed}` while repairing, the full
+  suite and a gate on the final candidate, heavy tests only in the checker
+  image), and failing tiers go back to the author
+  (`[codebase] repair_rounds`); an independent
+  checker with a fresh context runs the change on its own copy and reports
+  findings, whose blockers go back to the author (`checker`, `check_rounds`);
+  Lightwork re-runs each finding's `repro` command on a fresh copy to confirm
+  it, and confirmed ones again after a repair (`max_repros`); several
+  independent checkers, one model each (`checkers`, `checker_models`), and
+  an optional checker container with PostgreSQL and a browser
+  (`checker_image`, `deploy/checker/`);
+  every round charges one budget; the independent reviewer reads the diff; the
+  sealed proposal records what was and was not checked
+  (`features.evidence`) and waits for a `codebase_merge` approval before any
+  merge or push.
 
 ## Information-flow control
 

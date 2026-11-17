@@ -12,9 +12,11 @@ ops:
 from __future__ import annotations
 
 import logging
+from contextvars import ContextVar
 from typing import Any
 
 from . import Tool, as_bool
+from ._paid_call import STOP_SIGNALS, PaidCallRefused, charged_call
 
 log = logging.getLogger(__name__)
 
@@ -37,6 +39,17 @@ _SNS_SCHEMA: dict[str, Any] = {
     },
     "required": ["op"],
 }
+
+
+# The run budget of the call being run (set by the tool's entry point).
+_BUDGET: ContextVar[Any] = ContextVar("sns_budget", default=None)
+
+
+def _paid(send, messages: int = 1):
+    """One paid send, charged to the run budget at [budget.tool_prices] sns,
+    else the per-call ceiling."""
+    return charged_call("sns", send, budget=_BUDGET.get(), label="Amazon SNS",
+                        units={"request": 1, "message": messages})
 
 
 def _client():
@@ -64,7 +77,7 @@ def _op_publish(args: dict) -> str:
     kwargs = {"TopicArn": arn, "Message": msg}
     if args.get("subject"):
         kwargs["Subject"] = args["subject"]
-    r = _client().publish(**kwargs)
+    r = _paid(lambda: _client().publish(**kwargs))
     return f"published (message_id={r.get('MessageId')})"
 
 
@@ -75,7 +88,7 @@ def _op_sms(args: dict) -> str:
         return "ERROR: sms requires phone and message"
     if not as_bool(args.get("confirm")):
         return f"DRY RUN: would SMS {phone}. Re-run with confirm=true."
-    r = _client().publish(PhoneNumber=phone, Message=msg)
+    r = _paid(lambda: _client().publish(PhoneNumber=phone, Message=msg))
     return f"sent SMS (message_id={r.get('MessageId')})"
 
 
@@ -104,7 +117,15 @@ def _op_unsubscribe(args: dict) -> str:
     return f"unsubscribed {arn}"
 
 
-def _run(args: dict[str, Any]) -> str:
+def _run(args: dict[str, Any], budget=None) -> str:
+    token = _BUDGET.set(budget)
+    try:
+        return _run_scoped(args)
+    finally:
+        _BUDGET.reset(token)
+
+
+def _run_scoped(args: dict[str, Any]) -> str:
     op = args.get("op")
     if not op:
         return "ERROR: op is required"
@@ -120,11 +141,15 @@ def _run(args: dict[str, Any]) -> str:
             "subscribe":   _op_subscribe,
             "unsubscribe": _op_unsubscribe,
         }.get(op, lambda a: f"ERROR: unknown op {op!r}")(args)
+    except STOP_SIGNALS:
+        raise
+    except PaidCallRefused as e:
+        return f"ERROR: {e}"
     except Exception as e:
         return f"ERROR: SNS request failed: {type(e).__name__}: {e}"
 
 
-def sns_tool() -> Tool:
+def sns_tool(*, budget=None) -> Tool:
     return Tool(
         name="sns",
         description=(
@@ -134,5 +159,5 @@ def sns_tool() -> Tool:
             "unsubscribe (confirm=true). boto3 chain + AWS_REGION."
         ),
         input_schema=_SNS_SCHEMA,
-        fn=_run,
+        fn=lambda args: _run(args, budget),
     )

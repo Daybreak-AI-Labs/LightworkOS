@@ -91,7 +91,7 @@ def test_extract_url_rejects_on_content_length_without_streaming(monkeypatch):
 def test_extract_url_normal_body_reaches_ocr(monkeypatch, tmp_path):
     seen = {}
 
-    def fake_extract(path, lang, backend, hf_model, sandbox):
+    def fake_extract(path, lang, backend, hf_model, sandbox, budget=None):
         p = Path(path)
         seen["blob"] = p.read_bytes()
         seen["suffix"] = p.suffix

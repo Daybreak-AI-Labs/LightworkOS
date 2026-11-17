@@ -406,7 +406,37 @@ def run_as_user(upper: object, lower: object) -> tuple[Any, bool]:
     return lower, False
 
 
+def organisation_only(upper: object, lower: object) -> tuple[Any, bool]:
+    """``[codebase] checker_image`` and ``checker_models``: which image runs the
+    checks (and so decides every re-run's result) and which models check. Only
+    the organisation sets them; a lower layer's different value is ignored."""
+    return upper, lower != upper
+
+
+def tool_prices(upper: object, lower: object) -> tuple[Any, bool]:
+    """``[budget.tool_prices]``: a lower layer may only raise a service's price
+    in the unit the organisation set. A price for a service the organisation
+    left unpriced (charged the per-call ceiling) cannot be compared, so it is
+    ignored, as is one the budget cannot read."""
+    from .budget import tool_price_entry
+
+    if not isinstance(lower, dict):
+        raise ValueError("expected a table of service prices")
+    up = upper if isinstance(upper, dict) else {}
+    merged, loosened = dict(up), False
+    for service, entry in lower.items():
+        mine, theirs = tool_price_entry(entry), tool_price_entry(up.get(service))
+        if mine is None or theirs is None or mine[1] != theirs[1] or mine[0] < theirs[0]:
+            loosened = True
+            continue
+        merged[service] = entry
+    return merged, loosened
+
+
 MERGES = {
+    "codebase.checker_image": organisation_only,
+    "codebase.checker_models": organisation_only,
+    "budget.tool_prices": tool_prices,
     "sandbox.run_as_user": run_as_user,
     "safety.consent_mode": consent_mode,
     **SCALARS,

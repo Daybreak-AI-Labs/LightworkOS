@@ -130,6 +130,7 @@ from .advanced import _pick_agent_budget_reporting as _pick_agent_budget_reporti
 from .advanced import _pick_approval_url as _pick_approval_url
 from .advanced import _pick_client_id as _pick_client_id
 from .advanced import _pick_codebase as _pick_codebase
+from .advanced import _pick_codebase_checkers as _pick_codebase_checkers
 from .advanced import _pick_data_protection_toggles as _pick_data_protection_toggles
 from .advanced import _pick_device_pairing as _pick_device_pairing
 from .advanced import _pick_enterprise_toggles as _pick_enterprise_toggles
@@ -159,6 +160,9 @@ from .advanced import pick_department_access as pick_department_access
 from .advanced import pick_governed_mcp_sidecar as pick_governed_mcp_sidecar
 from .advanced import pick_oidc as pick_oidc
 from .advanced import pick_sign_in_security as pick_sign_in_security
+from .approval_spend import _parse_tool_prices as _parse_tool_prices
+from .approval_spend import _pick_decision_requests as _pick_decision_requests
+from .approval_spend import _pick_tool_prices as _pick_tool_prices
 from .assessments import _cfg_assessments as _cfg_assessments
 from .assessments import _ConsentChoices as _ConsentChoices
 from .assessments import _pick_consent_destinations as _pick_consent_destinations
@@ -1518,6 +1522,7 @@ def pick_approvals() -> dict[str, Any]:
         "record_checks": bool(record_checks),
         "check_retention_days": max(INTEGER_SETTINGS["approval.check_retention_days"].minimum,
                                     min(retention, INTEGER_SETTINGS["approval.check_retention_days"].maximum)),
+        **_pick_decision_requests(),
     }
 
 
@@ -1543,6 +1548,18 @@ def pick_budget() -> dict[str, Any]:
         "Choose No only if you accept that dollar limits may be under-counted",
         default=BOOLEAN_SETTINGS["budget.strict_pricing"].default,
     )
+    # Paid tool calls (speech, translation, search, hosted image models) are
+    # charged to the task's spending limit: at a price per service, else a
+    # per-call safety ceiling. Settings > Models changes both later.
+    budget["unpriced_tool_call_dollars"] = _prompt_positive_dollars(
+        "  Charge per paid tool call with no price set, in USD", default="0.10")
+    # A paid call priced per second or per terabyte holds at most this while
+    # it runs, and is charged it in full if it never reports its usage.
+    budget["max_unmetered_hold_dollars"] = _prompt_positive_dollars(
+        "  Most to hold while a paid call of unknown length runs, in USD", default="1.00")
+    tool_prices = _pick_tool_prices(budget["unpriced_tool_call_dollars"])
+    if tool_prices:
+        budget["tool_prices"] = tool_prices
     budget["guidance"] = _q_confirm(
         "  Show known budget headroom before work? This never changes execution limits.",
         default=BOOLEAN_SETTINGS["budget.guidance"].default)
@@ -4373,8 +4390,14 @@ def _cfg_core(
 ) -> list[str]:
     lines = ["[budget]"]
     for k, v in budget.items():
-        _emit_kv(lines, k, v)
+        if k != "tool_prices":
+            _emit_kv(lines, k, v)
     lines.append("")
+    if budget.get("tool_prices"):
+        lines.append("[budget.tool_prices]")
+        for service, entry in budget["tool_prices"].items():
+            lines.append(f'{service} = {{ dollars = {entry["dollars"]}, per = "{entry["per"]}" }}')
+        lines.append("")
     lines.append("[safety]")
     for k, v in safety.items():
         _emit_kv(lines, k, v)

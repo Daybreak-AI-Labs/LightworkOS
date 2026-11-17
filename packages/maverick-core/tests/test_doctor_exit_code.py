@@ -59,3 +59,19 @@ def test_channel_check_skips_scalar_entries(monkeypatch):
     monkeypatch.setattr(h, "_row", lambda *a, **k: rows.append(a))
     h._check_channels({"channels": {"default": "slack"}})
     assert rows == []
+
+
+def test_doctor_does_not_look_for_records_without_a_workspace_on_sqlite(monkeypatch, tmp_path):
+    """Only a shared Postgres store mixes workspaces in one table; a SQLite
+    world has one file per workspace, so the doctor never runs that check."""
+    from maverick.world_model_backends import pg_rls
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    monkeypatch.delenv("MAVERICK_WORLD_BACKEND", raising=False)
+    monkeypatch.delenv("MAVERICK_CONFIG", raising=False)
+    monkeypatch.setattr(pg_rls, "shared_legacy_rows",
+                        lambda world: (_ for _ in ()).throw(AssertionError("checked on SQLite")))
+    rows = []
+    monkeypatch.setattr(h, "_row", lambda *a, **k: rows.append(a))
+    h._check_world_db()
+    assert [r[1] for r in rows] == ["world-db"] and rows[0][0] == h.GREEN

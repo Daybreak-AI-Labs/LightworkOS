@@ -1367,8 +1367,20 @@ def test_write_config_emits_ifc_mode_only_when_changed(tmp_path: Path, monkeypat
 
 def test_write_config_emits_codebase_when_enabled(tmp_path: Path, monkeypatch):
     parsed = _write_full_config(tmp_path, monkeypatch, advanced={
-        "codebase_enable": True, "codebase_protect": "approve"})
-    assert parsed["codebase"] == {"enable": True, "default_protect": "approve"}
+        "codebase_enable": True, "codebase_protect": "approve", "codebase_repair_rounds": 1,
+        "codebase_checker": False, "codebase_require_container": True})
+    assert parsed["codebase"] == {"enable": True, "default_protect": "approve",
+                                  "repair_rounds": 1, "checker": False, "check_rounds": 2,
+                                  "checkers": 1, "max_repros": 5, "require_container": True}
+    parsed = _write_full_config(tmp_path, monkeypatch, advanced={
+        "codebase_enable": True, "codebase_checkers": 2, "codebase_max_repros": 3,
+        "codebase_checker_models": ["openai:gpt-x", "gemini:g-y"],
+        "codebase_checker_image": "lightwork/checker:1"})
+    assert parsed["codebase"] == {"enable": True, "default_protect": "block",
+                                  "repair_rounds": 2, "checker": True, "check_rounds": 2,
+                                  "checkers": 2, "max_repros": 3,
+                                  "checker_models": ["openai:gpt-x", "gemini:g-y"],
+                                  "checker_image": "lightwork/checker:1"}
     parsed = _write_full_config(tmp_path, monkeypatch, advanced={})
     assert "codebase" not in parsed
 

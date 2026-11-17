@@ -359,3 +359,13 @@ def _separate_container_test_home(tmp_path, monkeypatch, _isolate_dynamic_maveri
     monkeypatch.setenv("HOME", str(operator_home))
     monkeypatch.setenv("USERPROFILE", str(operator_home))
     monkeypatch.setenv("MAVERICK_HOME", str(operator_home / ".maverick"))
+
+
+@pytest.mark.parametrize("backend", [DockerBackend, PodmanBackend])
+@pytest.mark.parametrize("field,value", [("pull", "never"), ("run_as", "1000:1000")])
+def test_a_checker_image_container_is_never_parked(tmp_path, daemon, backend, field, value):
+    # The feature-run checker image runs with --pull never and, on a root
+    # host, as an ordinary user: a pooled container must never carry those.
+    box = backend(workdir=tmp_path / "old", image="reviewed:tag")
+    setattr(box, field, value)
+    assert pool.SandboxPool().park(box) is False

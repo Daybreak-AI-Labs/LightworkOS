@@ -13,6 +13,8 @@ import sys
 import threading
 import time
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -199,14 +201,15 @@ def _harness_environ_hidden() -> bool:
 _RUN_MARKER_ENV = "MAVERICK_SANDBOX_RUN"
 
 
-def _reap_marked(marker: str) -> None:
+def _reap_marked(marker: str, env: str = _RUN_MARKER_ENV) -> None:
     """Kill processes that still carry this run's marker (Linux ``/proc``).
 
-    Used only when a command timed out or was cancelled; after a normal exit,
-    deliberately detached processes (a server the person started) are kept.
+    Used only when a command timed out or was cancelled, or when a contained
+    step ends (:func:`contained_step`); after a normal exit, deliberately
+    detached processes (a server the person started) are otherwise kept.
 
     Best effort: a child that also clears its environment is not found."""
-    needle = f"{_RUN_MARKER_ENV}={marker}".encode()
+    needle = f"{env}={marker}".encode()
     for _ in range(3):  # a survivor may fork while it is being reaped
         found = False
         try:
@@ -227,6 +230,130 @@ def _reap_marked(marker: str) -> None:
                     pass
         if not found:
             return
+
+
+# A contained step (a code feature run's test run, checker look or author
+# round) can span many commands. Every command a LocalBackend runs inside the
+# step's folder also carries the step's marker, so the step's end stops all
+# it started, detached (setsid) or not, before the next step's folder exists.
+_STEP_MARKER_ENV = "MAVERICK_SANDBOX_STEP"
+_STEPS: dict[str, tuple[str, dict]] = {}
+_STEPS_LOCK = threading.Lock()
+
+
+def _step_for(workdir: object) -> tuple[str, str, dict] | None:
+    """The contained step (its root folder, its marker, its state) ``workdir`` is in."""
+    path = os.path.realpath(str(workdir))
+    with _STEPS_LOCK:
+        for root, (marker, state) in _STEPS.items():
+            if path == root or path.startswith(root + os.sep):
+                return root, marker, state
+    return None
+
+
+# Where Linux allows unprivileged user namespaces, each command of a contained
+# step runs in its own user, PID and mount namespace. When the command's first
+# process exits, the kernel kills every process in it, whatever its session or
+# environment (the marker reap cannot find a process that cleared its
+# environment). The temporary folder is replaced by an empty private one with
+# only the step's own folder mounted back, so a command cannot list or reach
+# other rounds' or other proposals' copies. Root inside the namespace is used
+# only to set up those mounts: the command itself then runs in a nested user
+# namespace as the real user and group, so repository tests see the same
+# user, permissions and refusals as anywhere else. The command writes a
+# "ready" file first, so a failed setup is told apart from a failed command.
+# Files elsewhere, the network and this computer's services are shared as
+# before: this is not a container.
+_NS_PRELUDE = r"""tmproot=$1 step=$2 wd=$3 ready=$4 uid=$5 gid=$6 unshare=$7
+shift 7
+set -e
+if [ -n "$tmproot" ]; then
+  exec 3<"$step"
+  mount -t tmpfs -o mode=0700 lwstep "$tmproot"
+  mkdir -p "$step"
+  mount --no-canonicalize --bind /proc/self/fd/3 "$step"
+  exec 3<&-
+fi
+cd "$wd"
+exec "$unshare" --user --map-user="$uid" --map-group="$gid" -- \
+  /bin/sh -c ': > "$1"; shift; exec "$@"' lw-ready "$ready" "$@"
+"""
+_NS_AVAILABLE: list[bool] = []
+SETUP_FAILED = "the isolated work area could not be set up"
+
+
+def _in_step_namespace(cmd: str | list[str], root: str, workdir: object,
+                       ready: str) -> list[str]:
+    import shutil
+    import tempfile
+
+    unshare = shutil.which("unshare") or "unshare"
+    tmproot = os.path.realpath(tempfile.gettempdir())
+    overlay = tmproot if root.startswith(tmproot + os.sep) else ""
+    inner = ["/bin/sh", "-c", cmd] if isinstance(cmd, str) else list(cmd)
+    return [unshare, "--user", "--map-root-user", "--pid", "--fork", "--kill-child",
+            "--mount", "--propagation", "private", "--mount-proc",
+            "/bin/sh", "-c", _NS_PRELUDE, "lw-step", overlay, root, str(workdir), ready,
+            str(os.getuid()), str(os.getgid()), unshare, *inner]
+
+
+def step_namespaces_available() -> bool:
+    """Whether contained steps can run in their own namespaces here: Linux,
+    ``unshare`` on PATH with ``--map-user``/``--map-group``, and user
+    namespaces allowed. Probed once per process by running the real wrapper
+    (the same detection idea as the document worker's ``unshare -rn`` probe):
+    the step folder must be mounted back and the command must run as the
+    real user. Anything else falls back to the marker reap, never to root."""
+    import shutil
+    import tempfile
+
+    if not _NS_AVAILABLE:
+        ok = False
+        if sys.platform.startswith("linux") and shutil.which("unshare"):
+            with tempfile.TemporaryDirectory(prefix="lw-nsprobe-") as probe:
+                root = os.path.realpath(probe)
+                Path(root, "mounted").touch()  # proves the step folder is mounted back
+                ready = os.path.join(root, "ready")
+                check = f'test -f mounted && [ "$(id -u)" = "{os.getuid()}" ]'
+                try:
+                    ok = subprocess.run(_in_step_namespace(check, root, root, ready),
+                                        capture_output=True, timeout=10,
+                                        check=False).returncode == 0 and os.path.exists(ready)
+                except (OSError, subprocess.TimeoutExpired):
+                    ok = False
+        _NS_AVAILABLE.append(ok)
+    return _NS_AVAILABLE[0]
+
+
+@contextmanager
+def contained_step(root: str | Path) -> Iterator[dict]:
+    """Stop every process a command under ``root`` started, once the block
+    ends. Yields the step's state: ``setup_failed`` turns true when a command
+    could not get its isolated work area (it then did not run)."""
+    marker = uuid.uuid4().hex
+    key = os.path.realpath(str(root))
+    state = {"setup_failed": False}
+    with _STEPS_LOCK:
+        _STEPS[key] = (marker, state)
+    try:
+        yield state
+    finally:
+        with _STEPS_LOCK:
+            _STEPS.pop(key, None)
+        _reap_marked(marker, _STEP_MARKER_ENV)
+
+
+def _settle_ready(result: ExecResult, ready: str, state: dict) -> ExecResult:
+    """A wrapped command that never wrote its ready file did not run: report
+    the work area, not a result of the command."""
+    if os.path.exists(ready):
+        os.unlink(ready)
+        return result
+    if result.exit_code == 124:  # timed out: reported as before
+        return result
+    state["setup_failed"] = True
+    return ExecResult(stdout="", stderr=f"{SETUP_FAILED}: {result.stderr[-500:]}",
+                      exit_code=125, setup_failed=True)
 
 
 def _reap_process_group(proc: subprocess.Popen, marker: str | None = None) -> None:
@@ -447,6 +574,9 @@ class ExecResult:
     stdout: str
     stderr: str
     exit_code: int
+    # True when a contained step's isolated work area could not be set up,
+    # so the command did not run (exit_code 125).
+    setup_failed: bool = False
 
     @property
     def ok(self) -> bool:
@@ -487,6 +617,18 @@ class LocalBackend:
         self, cmd: str | list[str], timeout: float | None = None,
         stdin: str | None = None,
     ) -> ExecResult:
+        step = _step_for(self.workdir)
+        if step is None or os.name == "nt" or not step_namespaces_available():
+            return self._exec(cmd, timeout, stdin, step)
+        ready = os.path.join(step[0], f".lw-ready-{uuid.uuid4().hex}")
+        result = self._exec(_in_step_namespace(cmd, step[0], self.workdir, ready),
+                            timeout, stdin, step)
+        return _settle_ready(result, ready, step[2])
+
+    def _exec(
+        self, cmd: str | list[str], timeout: float | None, stdin: str | None,
+        step: tuple[str, str, dict] | None,
+    ) -> ExecResult:
         # Per-call `timeout` kwarg lets the test runner override
         # the default 60s (too short for real pytest on SWE-bench
         # instances). Falls back to self.timeout when unset, preserving
@@ -502,6 +644,8 @@ class LocalBackend:
         effective = self.timeout if timeout is None else timeout
         marker = uuid.uuid4().hex
         child_env = {**_contained(scrub_env()), _RUN_MARKER_ENV: marker}
+        if step is not None:
+            child_env[_STEP_MARKER_ENV] = step[1]
         _hide_harness_environ()
 
         windows_creation_flags = (

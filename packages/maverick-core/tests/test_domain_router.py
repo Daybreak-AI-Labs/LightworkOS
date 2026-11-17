@@ -10,11 +10,21 @@ silently degrade routing.
 """
 from __future__ import annotations
 
+import pytest
 from maverick.domain import builtin_dir, load_domains, suite_for
 from maverick.domain_router import DomainRouter, rank_specialists
 
 _PACKS = load_domains(builtin_dir())
 _ROUTER = DomainRouter(_PACKS)
+
+
+@pytest.fixture(autouse=True)
+def _embed_each_pack_once(monkeypatch, tmp_path_factory):
+    """Reuse this run's vector for a pack text (test_support.embedding_memo)."""
+    from test_support.embedding_memo import reuse_embeddings
+
+    reuse_embeddings(monkeypatch, tmp_path_factory)
+
 
 # (task phrased as a user would, acceptable specialist set, expected suite).
 # Multiple packs are acceptable on purpose: with 1,118 specialists several are

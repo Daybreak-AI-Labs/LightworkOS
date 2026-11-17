@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import contextlib
 import contextvars
 import functools
 import logging
@@ -256,6 +257,40 @@ def _principal_semaphore(principal: str | None) -> threading.BoundedSemaphore:
 # thread forever (the daemon stops draining the queue entirely). On
 # timeout we refuse the run and let the job queue retry later.
 _ACQUIRE_TIMEOUT = env_float("MAVERICK_GOAL_ACQUIRE_TIMEOUT", 300.0)
+
+
+_submitted: dict[tuple[str, int], int] = {}
+_submitted_lock = threading.Lock()
+
+
+def _submitted_key(goal_id: int) -> tuple[str, int]:
+    from .paths import current_tenant_id
+
+    return (current_tenant_id() or "", int(goal_id))
+
+
+@contextlib.contextmanager
+def _submitted_here(goal_id: int):
+    """Hold this goal as handed to this process's runner until its run returns,
+    including while it waits for an executor thread or a concurrency slot."""
+    key = _submitted_key(goal_id)
+    with _submitted_lock:
+        _submitted[key] = _submitted.get(key, 0) + 1
+    try:
+        yield
+    finally:
+        with _submitted_lock:
+            left = _submitted.get(key, 1) - 1
+            if left:
+                _submitted[key] = left
+            else:
+                _submitted.pop(key, None)
+
+
+def goal_submitted_here(goal_id: int) -> bool:
+    """Whether this process's runner holds the goal (queued or running)."""
+    with _submitted_lock:
+        return _submitted_key(goal_id) in _submitted
 
 
 def inflight_goals() -> int:
@@ -532,7 +567,13 @@ def _run_world(db_path: Path | None):
     return open_world(db_path)
 
 
-def run_goal_in_thread(
+def run_goal_in_thread(goal_id: int, *args: Any, **kwargs: Any) -> str | None | GoalRunUnavailable:
+    """:func:`_run_goal_in_thread`, holding the goal as queued here meanwhile."""
+    with _submitted_here(goal_id):
+        return _run_goal_in_thread(goal_id, *args, **kwargs)
+
+
+def _run_goal_in_thread(
     goal_id: int,
     max_dollars: float | None = None,
     max_wall_seconds: float | None = None,
@@ -997,7 +1038,8 @@ async def start_goal_observed_async(
         **({"db_path": db_path} if db_path is not None else {}),
     )
     try:
-        observation = await loop.run_in_executor(_goal_executor, call)
+        with _submitted_here(goal_id):  # queued for an executor thread counts too
+            observation = await loop.run_in_executor(_goal_executor, call)
     except Exception:
         # An exception can follow a remote acceptance or an effect. Preserve the
         # legacy no-raise return without repainting a potentially live goal or

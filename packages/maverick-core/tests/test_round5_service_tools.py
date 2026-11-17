@@ -374,5 +374,8 @@ def test_ocr_hf_requires_operator_enablement_before_read_or_send(monkeypatch, tm
     out = ocr._run_hf(str(path), "test/model")
     assert "OCR_BACKEND" in out and sent == []
     monkeypatch.setenv("OCR_BACKEND", "hf")
-    assert ocr._run_hf(str(path), "test/model") == "OCR result"
+    from maverick.budget import Budget
+
+    # A paid hosted call is charged to a run budget; one is passed here.
+    assert ocr._run_hf(str(path), "test/model", budget=Budget()) == "OCR result"
     assert sent == [b"private image"]

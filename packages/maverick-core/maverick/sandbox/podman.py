@@ -62,6 +62,9 @@ class PodmanBackend:
     # (Rootless podman maps container-uid 0 to the host user already; with
     # ``--user`` it also needs ``--userns=keep-id``, see ``_user_args``.)
     allow_root: bool = False
+    # ``podman run --pull`` policy and an explicit ``--user``, as DockerBackend.
+    pull: str | None = None
+    run_as: str | None = None
     pending_cleanup: dict[str, ContainerCleanup] = field(default_factory=dict, init=False, repr=False)
     _pool_lease: BackendLease = field(default_factory=BackendLease, init=False, repr=False, compare=False)
 
@@ -90,7 +93,8 @@ class PodmanBackend:
         does not own the bind-mounted workspace, so every write failed.
         ``keep-id`` maps the invoking user to the same uid inside.
         """
-        args = container_user_args(self.allow_root)
+        run_as = getattr(self, "run_as", None)
+        args = ["--user", run_as] if run_as else container_user_args(self.allow_root)
         geteuid = getattr(os, "geteuid", None)
         if args and geteuid is not None and geteuid() != 0:
             args = ["--userns=keep-id", *args]
@@ -125,6 +129,8 @@ class PodmanBackend:
             "--security-opt", "no-new-privileges",
             *self._user_args(),
         ]
+        if getattr(self, "pull", None):
+            args.extend(["--pull", str(self.pull)])
         if self.pids_limit:
             args.extend(["--pids-limit", str(self.pids_limit)])
         if self.memory:

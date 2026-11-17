@@ -1141,6 +1141,19 @@ def repair_default_workspace() -> None:
         log.exception("default workspace repair skipped")
 
 
+def _start_decision_sweeper() -> None:
+    """Past-due decisions stop their runs on time, even for a team that
+    answers only in chat and never opens the Approvals page."""
+    try:
+        import threading
+
+        from maverick.decision_requests import start_sweeper
+
+        start_sweeper(threading.Event())
+    except Exception:  # pragma: no cover - never block startup
+        log.exception("decision expiry sweep not started")
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     """Application lifespan: run startup tasks, then yield to serve.
@@ -1255,6 +1268,7 @@ async def _lifespan(app: FastAPI):
         await run_in_threadpool(start_starter_team_scheduler)
         warm_ready = threading.Event()
         warm_stop = _warm_goal_runtime(ready=warm_ready)
+        _start_decision_sweeper()
         try:
             from maverick_dashboard.security_api import start_hunter_scheduler
 
@@ -10128,6 +10142,9 @@ def approvals_page(request: Request, view: str = "") -> HTMLResponse:
 
     all_view = _all_decisions_view(request, view)
     world = _world()
+    from .decision_requests_api import waiting_count
+
+    decision_count = waiting_count(request, world)
     pending = list(world.pending_approvals())
     approvals = [row for row in pending if can_read_approval(request, row, world)]
     flow_approvals = pending_for_request(request)
@@ -10147,6 +10164,7 @@ def approvals_page(request: Request, view: str = "") -> HTMLResponse:
             "flow_approvals": flow_approvals["items"],
             "flow_approval_coverage": flow_approvals["coverage"],
             "private_count": len(pending) - len(approvals),
+            "decision_count": decision_count,
             "private_cards": private,
             "viewer_role": _approval_viewer_role(request),
             # Link to Content access only when asking for a card read is on.
@@ -14345,6 +14363,7 @@ async def shell_copilot_js() -> FileResponse:
 @app.get("/static/lightwork-conversation-organization.js")
 @app.get("/static/lightwork-deliverable-bundles.js")
 @app.get("/static/lightwork-deliverable-sharing.js")
+@app.get("/static/lightwork-decisions.js")
 @app.get("/static/lightwork-employee-companion.js")
 @app.get("/static/lightwork-external-agent-executions.js")
 @app.get("/static/lightwork-file-selection.js")

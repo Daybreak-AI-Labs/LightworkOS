@@ -124,6 +124,27 @@ class TestExecution:
 
         assert "unsafe direct action tool 'shell'" in "; ".join(f.validate())
 
+    def test_vertex_is_refused_when_a_flow_is_saved_and_when_an_old_one_runs(
+            self, tmp_path, monkeypatch):
+        # A flow's tool step has no run budget to charge, so `vertex` is
+        # refused at save time. A flow saved before that still loads, and its
+        # vertex step stops with a plain refusal instead of sending.
+        import json
+
+        from maverick.flow import store
+        _patch_home(tmp_path, monkeypatch)
+        f = Flow(id="vx", name="vx", start="a", nodes={
+            "a": FlowNode(id="a", kind=NODE_ACTION, tool="vertex",
+                          params={"args": {"op": "predict"}}, output="o")})
+        assert "unsafe direct action tool 'vertex'" in "; ".join(f.validate())
+        path = store._flows_dir() / "vx.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(f.to_dict()))
+        assert store.load_flow("vx").nodes["a"].tool == "vertex"
+        result, outcome = execution.default_action_runner(world=None)(
+            "vertex", {"args": {"op": "predict"}}, {})
+        assert outcome == 0.0 and result == "ERROR: unsafe direct action tool 'vertex'"
+
     def test_default_action_runner_blocks_unsafe_shell_tool(self):
         run = execution.default_action_runner(world=None)
 
@@ -714,3 +735,100 @@ class TestEvolve:
         monkeypatch.delenv("MAVERICK_FLOWS", raising=False)
         monkeypatch.setattr("maverick.config.get_flows", lambda: {"enable": False})
         assert evolve.maybe_propose(self._flow()) == []
+
+
+def test_flow_tool_step_charges_paid_tools_to_the_flow_allowance(tmp_path, monkeypatch):
+    # A flow's tool step gives paid tools a run budget of what is left of the
+    # flow's allowance, and their charges count toward the run's cost. A paid
+    # call that would pass the allowance is stopped before it is sent.
+    import pytest
+    from maverick import tools
+    from maverick.tools._paid_call import charged_call
+
+    _patch_home(tmp_path, monkeypatch)
+    monkeypatch.setattr("maverick.tool_authz.authorize", lambda *a, **k: None)
+    import importlib
+    risk_module = importlib.import_module("maverick.safety.tool_risk")
+    monkeypatch.setattr(risk_module, "_load_overrides", lambda: {"paid_fixture": "low"})
+    sent = []
+
+    def registry(*_args, budget=None, **_kwargs):
+        reg = tools.ToolRegistry(principal="reviewer")
+        reg.register(tools.Tool(
+            name="paid_fixture", description="Paid fixture", input_schema={"type": "object"},
+            fn=lambda args: charged_call("deepl", lambda: sent.append(1) or "translated",
+                                         budget=budget, label="DeepL", units={"request": 1})))
+        return reg
+
+    monkeypatch.setattr(tools, "base_registry", registry)
+    f = Flow(id="fT", name="f", start="a", max_dollars=0.15, nodes={
+        "a": FlowNode(id="a", kind=NODE_ACTION, tool="paid_fixture", output="r1", next="b"),
+        "b": FlowNode(id="b", kind=NODE_ACTION, tool="paid_fixture", output="r2")})
+    run = execution.execute(f, agent_runner=lambda brief, d: ("", None),
+                            action_runner=execution.default_action_runner(world=None))
+    assert run.data["r1"] == "translated" and "r2" not in run.data
+    assert sent == [1] and run.cost_dollars == pytest.approx(0.10)
+
+
+def test_capped_flow_free_tool_steps_run_side_by_side_and_name_the_limit():
+    # A flow allowance must not make free tool steps wait on each other: two
+    # parallel steps both reach the barrier. A stop by another spending limit
+    # names that limit, not the flow's.
+    import threading
+
+    import pytest
+    from maverick.budget import BudgetExceeded
+    from maverick.flow.budgeting import _tool_spend_metered
+    from maverick.flow.run_events import FlowBudgetExceeded
+
+    barrier = threading.Barrier(2, timeout=5)
+    errors = []
+
+    def free_step(tool, params, data):
+        barrier.wait()
+        return ("ok", 1.0)
+
+    run = _tool_spend_metered(free_step, 1.0, [0.0], threading.Lock())
+
+    def call():
+        try:
+            run("free", {}, {})
+        except Exception as exc:  # collected for the assertion below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=call) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == []
+
+    def org_limited(tool, params, data):
+        raise BudgetExceeded("organisation daily spending limit of $50 reached")
+
+    with pytest.raises(FlowBudgetExceeded) as stopped:
+        _tool_spend_metered(org_limited, None, [0.0], threading.Lock())("paid", {}, {})
+    assert "organisation daily spending limit" in str(stopped.value)
+    assert "flow spending allowance" not in str(stopped.value)
+
+
+def test_flow_agent_gate_leaves_out_what_tool_steps_hold():
+    # A paid tool step holding part of the flow's allowance leaves an agent
+    # node starting at the same moment only the rest, so the flow cannot
+    # spend its allowance twice.
+    import threading
+
+    import pytest
+    from maverick.flow.budgeting import _budget_gated, _MeteredAgentResult
+
+    allowances = []
+
+    def agent(brief, data, allowance=None):
+        allowances.append(allowance)
+        return _MeteredAgentResult("ok", 1.0, 0.0)
+
+    agent._meters_usage = True
+    held = [0.8]
+    gated = _budget_gated(agent, 1.0, 5.0, [0.0], threading.Lock(), held=held)
+    gated("brief", {})
+    assert allowances == [pytest.approx(0.2)]

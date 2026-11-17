@@ -196,8 +196,11 @@ def test_work_from_a_note_runs_under_the_projects_protection(client, monkeypatch
         (work / "app.py").write_text("def f(xs):\n    return xs or []\n")
 
     monkeypatch.setattr(features, "default_runner",
-                        lambda max_dollars=None, user_id=None, allowed_suites=None: runner)
-    monkeypatch.setattr(features, "default_reviewer", lambda: None)
+                        lambda budget=None, user_id=None, allowed_suites=None: runner)
+    monkeypatch.setattr(features, "default_checker",
+                        lambda **kwargs: lambda goal_id, copy: seen_policy.append(
+                            ifc._RUN_LABELS.get()) or {"findings": [], "fixed": []})
+    monkeypatch.setattr(features, "default_reviewer", lambda **kwargs: None)
     client.post("/api/v1/code/watch/website/start", json={"confirm": True})
     note = _wait(client)["notes"][0]
     audit = _audit(monkeypatch)
@@ -205,7 +208,8 @@ def test_work_from_a_note_runs_under_the_projects_protection(client, monkeypatch
     r = client.post(url, json={"confirm": True})
     assert r.status_code == 202, r.text
     assert r.json()["protect"] == "block"
-    assert seen_policy == [(frozenset({"code:website"}), "block")]
+    # The author's run and the checker's run carry the same labels and mode.
+    assert seen_policy == [(frozenset({"code:website"}), "block")] * 2
     proposals = features.list_proposals("website")
     assert len(proposals) == 1 and proposals[0]["status"] == "pending"
     assert audit[-1] == "code_watch_note_start"
@@ -251,7 +255,8 @@ def test_named_note_preserves_identity_and_rechecks_dispatch_authority(
     assert response.status_code == 202, response.text
     assert len(queued) == 1 and queued[0][-2:] == ("user:alice", "alice")
     monkeypatch.setattr(features, "default_runner", lambda **kwargs: identities.append(kwargs))
-    monkeypatch.setattr(features, "default_reviewer", lambda: None)
+    monkeypatch.setattr(features, "default_checker", lambda **kwargs: identities.append(kwargs))
+    monkeypatch.setattr(features, "default_reviewer", lambda **kwargs: None)
     monkeypatch.setattr(features, "propose", lambda *args, **kwargs: admissions.append(kwargs))
     if revoke_before_dispatch:
         rbac.set_role("user:alice", "viewer")
@@ -259,8 +264,11 @@ def test_named_note_preserves_identity_and_rechecks_dispatch_authority(
     if revoke_before_dispatch:
         assert not admissions and not identities
     else:
-        assert admissions == [{"reviewer": None, "owner": "user:alice"}]
-        assert identities == [{"max_dollars": None, "user_id": "alice", "allowed_suites": None}]
+        budget = admissions[0].pop("budget")
+        # One checker by default ([codebase] checkers), built as alice.
+        assert admissions == [{"reviewer": None, "checker": [None], "owner": "user:alice"}]
+        # The author and the checker run as alice and charge the run's one budget.
+        assert identities == [{"budget": budget, "user_id": "alice", "allowed_suites": None}] * 2
 
 
 def test_watch_stops_itself_after_repeated_read_failures(client, monkeypatch, project):

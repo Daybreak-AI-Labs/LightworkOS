@@ -5,6 +5,8 @@ import sys
 import types
 from unittest.mock import MagicMock
 
+from maverick.budget import Budget
+
 
 def test_replicate_rejects_traversal_model():
     from maverick.tools.replicate_tool import _op_run
@@ -37,14 +39,14 @@ def _resp(status, body, *, text=None):
 
 def test_replicate_requires_op():
     from maverick.tools.replicate_tool import replicate_tool
-    assert "op is required" in replicate_tool().fn({})
+    assert "op is required" in replicate_tool(budget=Budget()).fn({})
 
 
 def test_replicate_missing_token(monkeypatch):
     monkeypatch.delenv("REPLICATE_API_TOKEN", raising=False)
     _fake_httpx(monkeypatch, get=MagicMock(), post=MagicMock())
     from maverick.tools.replicate_tool import replicate_tool
-    out = replicate_tool().fn({"op": "predict_get", "prediction_id": "p1"})
+    out = replicate_tool(budget=Budget()).fn({"op": "predict_get", "prediction_id": "p1"})
     assert "REPLICATE_API_TOKEN" in out
 
 
@@ -57,7 +59,7 @@ def test_replicate_run_creates_prediction(monkeypatch):
                 get=MagicMock(return_value=get_resp),
                 post=MagicMock(return_value=post_resp))
     from maverick.tools.replicate_tool import replicate_tool
-    out = replicate_tool().fn({
+    out = replicate_tool(budget=Budget()).fn({
         "op": "run", "model": "stability-ai/sdxl", "input": {"prompt": "cat"},
     })
     assert "pred1" in out and "starting" in out
@@ -67,7 +69,7 @@ def test_replicate_cancel_dry_run(monkeypatch):
     monkeypatch.setenv("REPLICATE_API_TOKEN", "r8_xx")
     _fake_httpx(monkeypatch, post=MagicMock())
     from maverick.tools.replicate_tool import replicate_tool
-    out = replicate_tool().fn({"op": "cancel", "prediction_id": "p1"})
+    out = replicate_tool(budget=Budget()).fn({"op": "cancel", "prediction_id": "p1"})
     assert "DRY RUN" in out
 
 
@@ -85,5 +87,161 @@ def test_replicate_models_search_passes_the_egress_check(monkeypatch):
 
     monkeypatch.setattr(egress_guard, "_check", _deny)
     from maverick.tools.replicate_tool import replicate_tool
-    out = replicate_tool().fn({"op": "models", "query": "upscaler"})
+    out = replicate_tool(budget=Budget()).fn({"op": "models", "query": "upscaler"})
     assert out.startswith("ERROR") and checked and not request.called
+
+
+def test_replicate_wait_is_charged_for_the_seconds_it_ran(monkeypatch):
+    # A prediction polled to the end is charged for its reported compute time
+    # at the [budget.tool_prices] per-second price.
+    import os
+
+    import pytest
+    from maverick import config
+
+    home = os.environ["MAVERICK_HOME"]
+    os.makedirs(home, exist_ok=True)
+    with open(os.path.join(home, "config.toml"), "w", encoding="utf-8") as f:
+        f.write('[budget.tool_prices]\nreplicate = { dollars = 0.01, per = "second" }\n')
+    config.reset_config_cache()
+    monkeypatch.setenv("REPLICATE_API_TOKEN", "r8_xx")
+    done = {"id": "pred1", "status": "succeeded", "output": ["x.png"],
+            "metrics": {"predict_time": 2.5}}
+    get = MagicMock(side_effect=[_resp(200, {"latest_version": {"id": "v1"}}), _resp(200, done)])
+    _fake_httpx(monkeypatch, get=get, post=MagicMock(return_value=_resp(201, {"id": "pred1"})))
+    from maverick.tools.replicate_tool import replicate_tool
+    budget = Budget()
+    tool = replicate_tool(budget=budget)
+    assert "succeeded" in tool.fn({"op": "run", "model": "o/m", "input": {}, "wait": True})
+    assert budget.dollars == pytest.approx(0.025)
+
+
+def test_replicate_priced_per_second_cannot_spend_past_the_limit(monkeypatch):
+    # The seconds a prediction runs are known only afterwards. The call holds
+    # all the run has left, so nothing else can spend it, and a polled
+    # prediction is cancelled once it has used that much. The charge is the
+    # real time it ran.
+    import os
+
+    import pytest
+    from maverick import config
+
+    home = os.environ["MAVERICK_HOME"]
+    os.makedirs(home, exist_ok=True)
+    with open(os.path.join(home, "config.toml"), "w", encoding="utf-8") as f:
+        f.write('[budget.tool_prices]\nreplicate = { dollars = 0.01, per = "second" }\n')
+    config.reset_config_cache()
+    monkeypatch.setenv("REPLICATE_API_TOKEN", "r8_xx")
+    import maverick.tools.replicate_tool as rt
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(rt.time, "time", lambda: clock["now"])
+    monkeypatch.setattr(rt.time, "sleep", lambda s: clock.__setitem__("now", clock["now"] + 5))
+    budget = Budget(max_dollars=0.15)
+    held, posts = [], []
+
+    def get(url, **_kw):
+        if url.endswith("/models/o/m"):
+            return _resp(200, {"latest_version": {"id": "v1"}})
+        held.append(budget._reserved)
+        if any(u.endswith("/cancel") for u in posts):
+            return _resp(200, {"id": "p1", "status": "canceled", "metrics": {"predict_time": 15.0}})
+        return _resp(200, {"id": "p1", "status": "processing"})
+
+    def post(url, **_kw):
+        posts.append(url)
+        return _resp(201, {"id": "p1", "status": "starting"})
+
+    _fake_httpx(monkeypatch, get=MagicMock(side_effect=get), post=MagicMock(side_effect=post))
+    out = rt.replicate_tool(budget=budget).fn({"op": "run", "model": "o/m", "input": {}, "wait": True})
+    assert "canceled" in out and posts[-1].endswith("/predictions/p1/cancel")
+    assert held[0] == pytest.approx(0.15)
+    assert budget.dollars == pytest.approx(0.15) and budget._reserved == 0
+
+
+def _replicate_clock(monkeypatch, price=None):
+    import os
+
+    from maverick import config
+
+    home = os.environ["MAVERICK_HOME"]
+    os.makedirs(home, exist_ok=True)
+    with open(os.path.join(home, "config.toml"), "w", encoding="utf-8") as f:
+        if price is not None:
+            f.write(f'[budget.tool_prices]\nreplicate = {{ dollars = {price}, per = "second" }}\n')
+    config.reset_config_cache()
+    monkeypatch.setenv("REPLICATE_API_TOKEN", "r8_xx")
+    import maverick.tools.replicate_tool as rt
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(rt.time, "time", lambda: clock["now"])
+    monkeypatch.setattr(rt.time, "sleep", lambda s: clock.__setitem__("now", clock["now"] + s))
+    return rt, clock
+
+
+def test_replicate_with_no_per_second_price_is_never_cancelled_by_the_poll_window(monkeypatch):
+    # Charged per call, a long prediction keeps running when the 90-second
+    # poll ends: the reply says so, and nothing is cancelled.
+    rt, clock = _replicate_clock(monkeypatch)
+    posts = []
+
+    def get(url, **_kw):
+        if url.endswith("/models/o/m"):
+            return _resp(200, {"latest_version": {"id": "v1"}})
+        return _resp(200, {"id": "p1", "status": "processing"})
+
+    _fake_httpx(monkeypatch, get=MagicMock(side_effect=get),
+                post=MagicMock(side_effect=lambda url, **_kw: posts.append(url) or _resp(201, {"id": "p1"})))
+    out = rt.replicate_tool(budget=Budget()).fn({"op": "run", "model": "o/m", "input": {}, "wait": True})
+    assert "still running after 90s" in out
+    assert not any(url.endswith("/cancel") for url in posts)
+
+
+def test_replicate_per_second_is_cancelled_at_its_hold_and_settles_a_slow_cancel(monkeypatch):
+    # Priced per second, a prediction asked not to wait is waited for, and the
+    # reply says so. It is cancelled at its spending hold, the reply gives that
+    # real final state, and a cancel that takes a while is still settled from
+    # the seconds Replicate reports, not the whole hold.
+    import pytest
+
+    rt, clock = _replicate_clock(monkeypatch, price=0.01)
+    posts, polls_after_cancel = [], []
+
+    def get(url, **_kw):
+        if url.endswith("/models/o/m"):
+            return _resp(200, {"latest_version": {"id": "v1"}})
+        if any(u.endswith("/cancel") for u in posts):
+            polls_after_cancel.append(clock["now"])
+            if len(polls_after_cancel) < 6:
+                return _resp(200, {"id": "p1", "status": "processing"})
+            return _resp(200, {"id": "p1", "status": "canceled", "metrics": {"predict_time": 19.5}})
+        return _resp(200, {"id": "p1", "status": "processing"})
+
+    _fake_httpx(monkeypatch, get=MagicMock(side_effect=get),
+                post=MagicMock(side_effect=lambda url, **_kw: posts.append(url) or _resp(201, {"id": "p1"})))
+    budget = Budget(max_dollars=0.2)
+    out = rt.replicate_tool(budget=budget).fn({"op": "run", "model": "o/m", "input": {}})
+    assert posts[-1].endswith("/predictions/p1/cancel")
+    assert "Waited for the result" in out and "priced per second" in out
+    assert "cancelled at the spending hold after 20 s" in out and "canceled" in out
+    assert budget.dollars == pytest.approx(0.195)
+
+
+def test_replicate_poll_that_cannot_connect_is_still_charged(monkeypatch):
+    # The prediction was created, so a poll that then cannot connect is not
+    # a request that was never sent: the reply says the poll failed, and the
+    # created prediction is charged.
+    import httpx
+    import pytest
+
+    rt, _clock = _replicate_clock(monkeypatch)
+
+    def get(url, **_kw):
+        if url.endswith("/models/o/m"):
+            return _resp(200, {"latest_version": {"id": "v1"}})
+        raise httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr(httpx, "get", get)
+    monkeypatch.setattr(httpx, "post", lambda url, **_kw: _resp(201, {"id": "p1"}))
+    budget = Budget(max_dollars=1.0)
+    out = rt.replicate_tool(budget=budget).fn({"op": "run", "model": "o/m", "input": {}, "wait": True})
+    assert "poll failed" in out and "p1" in out
+    assert budget.dollars == pytest.approx(0.10) and budget._reserved == 0

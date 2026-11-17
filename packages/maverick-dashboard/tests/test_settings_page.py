@@ -418,3 +418,73 @@ def test_denied_tools_preserved_when_pinning_model(monkeypatch, tmp_path):
     ro.clear_default_model()
     assert "browser" in ro.denied_tools()
     assert ro.default_model_override() is None
+
+
+def test_tool_prices_are_set_on_the_prices_page_and_through_the_copilot(monkeypatch, tmp_path):
+    """Paid tool services are priced on the Prices page and by the Copilot
+    through the same function: administrators only, the confirmation, an
+    audited write, and the price read back from the budget."""
+    import pytest
+    from fastapi import HTTPException
+    from maverick.budget import tool_call_price
+    from maverick_dashboard import auth
+    from maverick_dashboard import product_operations as registry
+    from maverick_dashboard import product_operations_models as ops
+    from starlette.requests import Request
+
+    _prep(monkeypatch, tmp_path)
+    c = _client()
+    origin = {"origin": "http://127.0.0.1"}
+    page = c.get("/settings").text
+    assert "Prices for paid tool services" in page and "Safety ceiling: $0.10 per call" in page
+    saved = c.post("/settings/tools/price", data={"service": "deepl", "dollars": "0.001",
+                                                 "per": "character", "confirm": "on"},
+                   headers=origin, follow_redirects=False)
+    assert saved.status_code == 303
+    price = tool_call_price("deepl")
+    assert (price.dollars_per_unit, price.unit) == (0.001, "character")
+    assert "per character" in c.get("/settings", params={"saved": "tool_price"}).text
+    assert c.post("/settings/tools/price", data={"service": "deepl", "dollars": "1", "per": "request"},
+                  headers=origin, follow_redirects=False).status_code == 400
+
+    assert {"tools.price.set", "tools.price.remove"} <= set(registry.adapters())
+    by_id = {a.id: a for a in ops.entries()}
+    setter, remover = by_id["tools.price.set"], by_id["tools.price.remove"]
+
+    def request():
+        return Request({"type": "http", "method": "POST", "path": "/settings",
+                        "headers": [(b"host", b"127.0.0.1")], "client": ("127.0.0.1", 1)})
+
+    args = {"service": "tavily", "dollars": 0.5, "per": "request", "confirmed": True}
+    with pytest.raises(HTTPException) as refused:
+        setter.prepare(request(), {}, dict(args, confirmed=False))
+    assert refused.value.status_code == 400
+    review = setter.prepare(request(), {}, args)
+    assert review.changes[0]["before"] == "Safety ceiling: $0.10 per call"
+    assert setter.execute(request(), {}, args, review.native, "a" * 32).status == "confirmed"
+    assert tool_call_price("tavily").unit == "request"
+
+    def deny(_request, _permission):
+        raise HTTPException(status_code=403, detail="forbidden")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(auth, "require_global_permission", deny)
+        with pytest.raises(HTTPException):
+            remover.execute(request(), {}, {"service": "tavily"}, {}, "b" * 32)
+    assert remover.execute(request(), {}, {"service": "tavily"}, {}, "c" * 32).status == "confirmed"
+    assert tool_call_price("tavily").unit is None
+    removed = c.post("/settings/tools/price/remove", data={"service": "deepl"}, headers=origin,
+                     follow_redirects=False)
+    assert removed.status_code == 303 and tool_call_price("deepl").unit is None
+    # While the settings cannot be read, a price is not saved, and the reply
+    # says so rather than blaming another settings file.
+    import maverick.budget as budget_mod
+
+    def unreadable_prices():
+        raise budget_mod.ToolPricesUnavailable("unreadable")
+
+    monkeypatch.setattr(budget_mod, "tool_price_settings", unreadable_prices)
+    unreadable = c.post("/settings/tools/price", data={"service": "deepl", "dollars": "0.001",
+                                                      "per": "character", "confirm": "on"},
+                        headers=origin, follow_redirects=False)
+    assert unreadable.status_code == 503 and "cannot read its settings" in unreadable.text

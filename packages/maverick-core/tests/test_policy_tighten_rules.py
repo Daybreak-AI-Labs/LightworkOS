@@ -21,8 +21,18 @@ def _perm(default: bool):  # a permission: may only turn off
     return dict(os=True, s=False, ol=False, l=True, us=False if default else None, ul=None if default else True)
 
 
+_DECISION_DEFAULTS = ["security", "workspace_boundaries", "data_erasure_retention", "spending",
+                      "user_facing", "governance"]
 _DEFAULT_KEYS = ["budget.max_dollars", "governance.*", "plugins.*", "safety.*"]
 CASES = {
+    # A workspace may charge paid tool calls more, never less: a higher
+    # per-call ceiling, or a higher price in the unit the organisation set.
+    "budget.unpriced_tool_call_dollars": dict(os=0.25, s=0.5, l=0.05, us=0.5, ul=0.01),
+    "budget.max_unmetered_hold_dollars": dict(os=2.0, s=3.0, l=0.5, us=2.0, ul=0.5),
+    "budget.tool_prices": dict(os={"deepl": {"dollars": 0.02, "per": "request"}},
+                               s={"deepl": {"dollars": 0.03, "per": "request"}},
+                               l={"deepl": {"dollars": 0.01, "per": "request"}},
+                               ul={"deepl": {"dollars": 0.01, "per": "request"}}),
     # A deny-like list only grows: the tenant's names are added to the
     # organisation's, so only a value the consumer cannot read is ignored.
     "governance.deny_actions": dict(os=["shell"], s=["browser"], se=["shell", "browser"], l="shell", us=["shell"]),
@@ -82,6 +92,14 @@ CASES = {
     "sandbox.cpus": dict(os=2, s=1, l=4, us=1),
     "sandbox.long_command_timeout": dict(os=600, s=300, l=1200, us=300, ul=86400),
     "sandbox.timeout": dict(os=60, s=30, l=120, us=30, ul=120),
+    # A workspace adds areas where a run must ask a person; it never removes one.
+    "approval.decision_areas": dict(
+        os=["security"], s=["security", "legal"], l=[], us=[*_DECISION_DEFAULTS, "legal"],
+        ul=["security"]),
+    "approval.decision_admin_areas": dict(
+        os=["governance"], s=["governance", "security"], l=[], us=["governance", "security"],
+        ul=[]),
+    "approval.decision_expiry_hours": dict(os=72, s=24, l=240, us=24, ul=720),
     "security.allowed_tools": dict(os=["a", "b"], s=["a"], l=[], us=["a"]),
     "security.denied_tools": dict(os=["shell"], s="x", se=["shell", "x"], l=5, us="shell", use=["shell"]),
     "security.max_risk": dict(os="medium", s="low", l="high", us="medium"),
@@ -101,6 +119,21 @@ CASES = {
     "security.allow_self_approval": _perm(False),
     "security.isolate_parsers": _prot(False),
     "security.secure_defaults": _prot(True),
+    # A workspace may protect code more, never less: stricter protection,
+    # the checker on, a container required, more repair rounds and looks.
+    "codebase.default_protect": dict(os="approve", s="block", l="audit", ul="audit"),
+    "codebase.checker": _prot(True),
+    "codebase.require_container": _prot(False),
+    "codebase.repair_rounds": dict(os=2, s=3, l=1, us=3, ul=0),
+    "codebase.check_rounds": dict(os=2, s=3, l=1, us=3, ul=1),
+    "codebase.checkers": dict(os=2, s=3, l=1, us=2, ul=0),
+    "codebase.max_repros": dict(os=5, s=8, l=2, us=8, ul=1),
+    # Where checks run and which models check are the organisation's alone:
+    # a workspace file may not set them at all.
+    "codebase.checker_image": dict(os="lw-checker:1", s="lw-checker:1", l="other:1",
+                                   ul="other:1"),
+    "codebase.checker_models": dict(os=["model-a"], s=["model-a"], l=["model-b"],
+                                    ul=["model-b"]),
 }
 
 
@@ -424,3 +457,13 @@ def test_adding_a_tenant_layer_never_loosens_what_the_consumer_does(consumer, ke
                 continue  # the organisation's own value already stops every call
             assert after != "refused", (org, tenant)
             assert _no_looser(before, after), (org, tenant, before, after)
+
+
+def test_a_workspace_cannot_remove_an_area_that_needs_a_decision(consumer):
+    from maverick import decision_requests as dr
+
+    (areas, admin), ignored = consumer(
+        "", '[approval]\ndecision_areas = ["security", "legal"]\ndecision_admin_areas = []\n',
+        lambda: (dr.areas(), dr.admin_areas()))
+    assert areas == [*dr.DEFAULT_AREAS, "legal"] and admin == ["governance"]
+    assert {"approval.decision_areas", "approval.decision_admin_areas"} <= set(ignored)

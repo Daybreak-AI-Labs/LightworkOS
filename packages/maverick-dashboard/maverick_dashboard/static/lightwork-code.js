@@ -15,6 +15,7 @@
     rejected: "Rejected",
     expired: "Approval request lapsed",
     unrequested: "Needs an approval request",
+    decision: "Waiting for a person’s decision",
     merged: "Merged",
     empty: "No changes were made",
     conflict: "No longer fits the latest code"
@@ -75,13 +76,26 @@
     body.appendChild(tr);
   }
 
-  function testsText(value) {
+  function testsText(value, ran) {
     if (value === null || value === undefined) { return "Not set up"; }
+    if (ran === false) { return "Not run on this version"; }
     return value ? "Passed" : "Failed";
+  }
+  var TIERS = { quick: "Quick tests", full: "All tests", gate: "Other checks", heavy: "Tests that need services" };
+  function tiersText(r) {
+    var tiers = r.test_tiers || (r.tests ? ["full"] : []);
+    if (!tiers.length) { return "Not set up"; }
+    return tiers.map(function (t) { return TIERS[t] || human(t); }).join(", ");
   }
   function reviewText(value) {
     if (value === null || value === undefined) { return "Not run"; }
     return value ? "Recommends it" : "Has concerns";
+  }
+  var CHECK = { clean: "No open problems", open: "Problems still open", failed: "Could not run",
+    off: "Turned off", not_run: "Not run on this version" };
+  function checkText(value) {
+    if (value === null || value === undefined) { return "Not run"; }
+    return CHECK[value] || human(value);
   }
 
   function renderRepos() {
@@ -100,13 +114,14 @@
       tr.appendChild(el("td", null, r.name));
       tr.appendChild(el("td", null, r.default_branch));
       tr.appendChild(el("td", null, PROTECT[r.protect] || human(r.protect)));
-      tr.appendChild(el("td", null, r.tests ? "Set up" : "Not set up"));
+      tr.appendChild(el("td", null, tiersText(r)));
       tr.appendChild(el("td", null, when(r.updated_at) || "—"));
       var actions = el("td");
       var wrap = el("div", "ic-actions");
       if (canAdmin) {
         wrap.appendChild(button("Start a change", "btn--primary", function () { pickRepo(r.name); }));
         wrap.appendChild(button("Get latest changes", "btn--ghost", function () { syncRepo(r.name); }));
+        wrap.appendChild(button("Test commands", "btn--ghost", function () { editCommands(r.name); }));
         wrap.appendChild(button("Download a copy", "btn--ghost", function () { exportRepo(r.name); }));
       } else {
         wrap.appendChild(el("span", "muted", "Administrators can start changes."));
@@ -123,7 +138,7 @@
     var props = summary.proposals || [];
     if (!props.length) {
       var start = canAdmin && (summary.repos || []).length ? button("Start a change", "btn--primary", function () { pickRepo(""); }) : null;
-      emptyRow(body, 7, "No proposed changes yet. Changes appear here when an agent proposes one; ask for one in Chat.", start);
+      emptyRow(body, 8, "No proposed changes yet. Changes appear here when an agent proposes one; ask for one in Chat.", start);
       return;
     }
     props.forEach(function (p) {
@@ -131,7 +146,8 @@
       tr.appendChild(el("td", null, p.title));
       tr.appendChild(el("td", null, p.repo));
       tr.appendChild(el("td", null, p.files));
-      tr.appendChild(el("td", null, testsText(p.tests)));
+      tr.appendChild(el("td", null, testsText(p.tests, p.tests_ran)));
+      tr.appendChild(el("td", null, checkText(p.check)));
       tr.appendChild(el("td", null, reviewText(p.review)));
       tr.appendChild(el("td", null, STATUS[p.status] || human(p.status)));
       var td = el("td");
@@ -341,6 +357,28 @@
     if (out) { say("Added " + out.name + "."); await load(true); } else { say(""); }
   }
 
+  // Test commands: the same authority as adding a code project.
+  async function editCommands(name) {
+    var url = "/api/v1/code/repos/" + encodeURIComponent(name) + "/commands";
+    var current;
+    try { current = await window.mvFetchJSON(url, {}, "open the test commands"); }
+    catch (error) { fail(failure(error, "open the test commands")); return; }
+    var values = await window.mvForm("Test commands for " + name, [
+      { key: "quick_test_command", label: "Quick tests (optional)", default: current.quick_test_command, allowEmpty: true,
+        help: "Lightwork runs these after each change while it fixes problems. Write {changed}, not in quotes, where the changed files go. The command must accept any file, not only tests." },
+      { key: "test_command", label: "All tests (optional)", default: current.test_command, allowEmpty: true,
+        help: "Lightwork runs these on the finished change. Only these passing counts as the tests passing." },
+      { key: "gate_command", label: "Other checks (optional)", default: current.gate_command, allowEmpty: true,
+        help: "For example a style check. Lightwork runs it with all tests on the finished change." },
+      { key: "heavy_test_command", label: "Tests that need services (optional)", default: current.heavy_test_command,
+        allowEmpty: true,
+        help: "Tests that need a database or a browser. They run only in the check container your organization sets up." }
+    ], { okText: "Save commands" });
+    if (!values) { return; }
+    var out = await post(url, values, "save the test commands");
+    if (out) { say("Saved the test commands for " + name + "."); await load(true); }
+  }
+
   async function syncRepo(name) {
     var ok = await window.mvConfirm("Bring the latest changes from the original project into Lightwork’s copy of " +
       name + "? Changes already merged here are kept.", { okText: "Get latest changes" });
@@ -390,6 +428,28 @@
     parent.appendChild(el("h3", null, title));
   }
 
+  function list(parent, items) {
+    var ul = el("ul", "ic-list");
+    items.forEach(function (text) { ul.appendChild(el("li", null, text)); });
+    parent.appendChild(ul);
+  }
+
+  function checks(parent, value) {
+    if (!value) { return; }
+    section(parent, "What was checked");
+    if (value.gaps.length) {
+      parent.appendChild(el("p", null, "Not everything was checked. Read these points before you approve:"));
+      list(parent, value.gaps);
+    } else {
+      parent.appendChild(el("p", null, "The tests passed on this version. The independent check left no blocking problem open."));
+    }
+    list(parent, value.lines);
+    if (value.findings.length) {
+      section(parent, "What the independent check found");
+      list(parent, value.findings);
+    }
+  }
+
   async function review(pid) {
     var panel = document.getElementById("code-review");
     var body = document.getElementById("code-review-body");
@@ -398,8 +458,11 @@
     catch (error) { fail(failure(error, "open the change")); return; }
     clear(body);
     body.appendChild(el("p", null, p.title + " · " + p.repo + " · " + (STATUS[p.status] || human(p.status))));
+    checks(body, p.checks);
     section(body, "Tests");
-    body.appendChild(el("p", null, p.tests ? (p.tests.passed ? "The project’s tests passed." :
+    body.appendChild(el("p", null, p.tests ? (p.tests.ran === false ?
+      "The project’s tests did not run on this version. Read What was checked above." :
+      p.tests.passed ? "The project’s tests passed." :
       "The project’s tests failed. Look at the test results before approving.") :
       "This project has no tests set up."));
     section(body, "Independent review");

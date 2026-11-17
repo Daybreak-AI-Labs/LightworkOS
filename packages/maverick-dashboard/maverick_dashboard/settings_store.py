@@ -761,6 +761,26 @@ def set_self_hosted_free(name: str, free: bool) -> None:
         _write(data)
 
 
+def set_tool_price(service: str, dollars: float | None, per: str = "") -> None:
+    """Save ``[budget.tool_prices] <service>`` (``dollars`` per ``per``), or
+    remove it when ``dollars`` is ``None``. The caller validates the values."""
+    with _locked():
+        data = _load_overlay_for_update()
+        budget = data.setdefault("budget", {})
+        prices = dict(budget.get("tool_prices") or {})
+        if dollars is None:
+            prices.pop(service, None)
+        else:
+            prices[service] = {"dollars": dollars, "per": per}
+        if prices:
+            budget["tool_prices"] = prices
+        else:
+            budget.pop("tool_prices", None)
+        if not budget:
+            data.pop("budget", None)
+        _write(data)
+
+
 # Tests only: production saves go through ``rotate_provider`` and its checks.
 def set_provider(name: str, api_key: str | None = None, base_url: str | None = None) -> None:
     """Set a provider's api_key/base_url. Empty/None values are left unchanged

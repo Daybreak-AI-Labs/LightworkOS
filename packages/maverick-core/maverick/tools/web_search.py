@@ -14,6 +14,13 @@ force a specific backend (skips fall-through).
 
 Each search returns up to ``num_results`` (default 10) entries with
 title + URL + snippet.
+
+A Tavily, Brave or SerpAPI search is a paid call charged to the run budget
+(kernel rule 3) through ``_paid_call.charged_call``: priced per request from
+``[budget.tool_prices] tavily`` / ``brave`` / ``serpapi``, else the per-call
+safety ceiling. A tool built with no run budget refuses a paid search before
+anything is sent. DuckDuckGo is free; it is metered against the provider
+spend cap only.
 """
 from __future__ import annotations
 
@@ -25,12 +32,9 @@ from typing import Any
 
 from ..governed_http import guarded_redirect_get
 from ..governed_http import guarded_sender as _governed_sender
-from ..provider_cost_cap import (
-    ProviderAccountingUnavailable,
-    ProviderCapExceeded,
-    metered_provider_call,
-)
+from ..provider_cost_cap import metered_provider_call
 from . import Tool
+from ._paid_call import STOP_SIGNALS, PaidCallRefused, charged_call
 
 log = logging.getLogger(__name__)
 
@@ -38,13 +42,20 @@ log = logging.getLogger(__name__)
 class _SearchMeter:
     """One logical search operation spanning sequential backend failover."""
 
-    def __init__(self, operation_id: str | None = None):
+    def __init__(self, operation_id: str | None = None, *, budget=None):
         self.operation_id = operation_id or f"web-search:{uuid.uuid4().hex}"
         self.attempt_no = 0
+        self.budget = budget
 
     def dispatch(self, provider: str, callback):
         self.attempt_no += 1
         category = "search" if self.attempt_no == 1 else "retry"
+        if provider in _PAID_LABELS:
+            return charged_call(
+                provider, callback, budget=self.budget, label=_PAID_LABELS[provider],
+                units={"request": 1}, category=category, parent_category="search",
+                operation_id=self.operation_id, attempt_no=self.attempt_no,
+            )
         return metered_provider_call(
             provider,
             callback,
@@ -54,6 +65,12 @@ class _SearchMeter:
             attempt_no=self.attempt_no,
             service=provider,
         )
+
+
+# Search services that charge per request; DuckDuckGo is free.
+_PAID_LABELS = {"tavily": "Tavily search", "brave": "Brave search", "serpapi": "SerpAPI search"}
+# Errors a backend must not turn into "try the next backend".
+_PASS_THROUGH = (*STOP_SIGNALS, PaidCallRefused)
 
 
 _SEARCH_INPUT_SCHEMA: dict[str, Any] = {
@@ -122,7 +139,7 @@ def _try_tavily(
             return resp.json()
 
         data = (meter or _SearchMeter()).dispatch("tavily", request)
-    except (ProviderAccountingUnavailable, ProviderCapExceeded):
+    except _PASS_THROUGH:
         raise
     except Exception as e:
         log.warning("tavily search failed: %s", e)
@@ -159,7 +176,7 @@ def _try_brave(
             return resp.json()
 
         data = (meter or _SearchMeter()).dispatch("brave", request)
-    except (ProviderAccountingUnavailable, ProviderCapExceeded):
+    except _PASS_THROUGH:
         raise
     except Exception as e:
         log.warning("brave search failed: %s", e)
@@ -195,7 +212,7 @@ def _try_serpapi(
             return resp.json()
 
         data = (meter or _SearchMeter()).dispatch("serpapi", request)
-    except (ProviderAccountingUnavailable, ProviderCapExceeded):
+    except _PASS_THROUGH:
         raise
     except Exception as e:
         # Redact the key: httpx errors embed the full request URL, which
@@ -319,7 +336,7 @@ def _try_duckduckgo(
             return resp.text
 
         html = (meter or _SearchMeter()).dispatch("duckduckgo", request)
-    except (ProviderAccountingUnavailable, ProviderCapExceeded):
+    except _PASS_THROUGH:
         raise
     except Exception as e:
         log.warning("duckduckgo search failed: %s", e)
@@ -348,7 +365,7 @@ _BACKEND_HOSTS = {
 }
 
 
-def _run_search(args: dict[str, Any]) -> str:
+def _run_search(args: dict[str, Any], budget=None) -> str:
     query = (args.get("query") or "").strip()
     if not query:
         return "ERROR: query is required"
@@ -393,11 +410,13 @@ def _run_search(args: dict[str, Any]) -> str:
             )
 
     last_err: str | None = None
-    meter = _SearchMeter()
+    meter = _SearchMeter(budget=budget)
     for name, fn in backends:
         try:
             results = fn(full_query, num, meter=meter)
-        except (ProviderAccountingUnavailable, ProviderCapExceeded):
+        except PaidCallRefused as e:
+            return f"ERROR: {e}"
+        except _PASS_THROUGH:
             raise
         except Exception as e:
             last_err = f"{name}: {type(e).__name__}: {e}"
@@ -413,7 +432,7 @@ def _run_search(args: dict[str, Any]) -> str:
     return f"ERROR: no search backend succeeded. last_err={last_err}"
 
 
-def web_search() -> Tool:
+def web_search(*, budget=None) -> Tool:
     """Factory: builds the web_search tool."""
     return Tool(
         name="web_search",
@@ -425,5 +444,5 @@ def web_search() -> Tool:
             "'browser' tool to fetch specific URL contents."
         ),
         input_schema=_SEARCH_INPUT_SCHEMA,
-        fn=_run_search,
+        fn=lambda args: _run_search(args, budget),
     )

@@ -3142,19 +3142,71 @@ def get_fleet_memory() -> dict:
     return {"enable": coerce_bool(cfg.get("enable"), False)}
 
 
+CODEBASE_LOOP_DEFAULTS = {"repair_rounds": 2, "checker": True, "check_rounds": 2,
+                          "require_container": False, "checkers": 1, "checker_models": [],
+                          "checker_image": "", "max_repros": 5}
+# A container image reference ([codebase] checker_image); anything else is kept
+# as an unusable name, so the check reports "could not run" instead of running
+# on this computer.
+_IMAGE_REF_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/:@-]{0,254}")
+
+
+def _codebase_models(raw: object) -> list[str]:
+    """``[codebase] checker_models``: up to three model names; anything else is empty."""
+    if not isinstance(raw, list):
+        return []
+    return [str(m).strip()[:200] for m in raw if isinstance(m, str) and m.strip()][:3]
+
+
+def _codebase_image(raw: object) -> str:
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return ""
+    text = raw.strip() if isinstance(raw, str) else ""
+    return text if _IMAGE_REF_RE.fullmatch(text) else "<unreadable image name>"
+
+
 def get_codebase() -> dict:
     """Return the ``[codebase]`` section (:mod:`maverick.codebase`).
 
     ``enable`` turns on the code vault and feature swarms (OFF by default: it
     stores a company's source). ``default_protect`` is the information-flow
     mode a newly registered repository enforces on every run over it:
-    ``block`` (default), ``approve`` or ``audit``."""
+    ``block`` (default), ``approve`` or ``audit``. A feature run then repairs
+    and checks its change: ``repair_rounds`` (0-5, default 2) follow-up rounds
+    for the author after failing tests or checker blockers; ``checker``
+    (default on; a malformed value keeps it on) runs the independent checker;
+    ``check_rounds`` (1-3, default 2) bounds how often it looks.
+    ``require_container`` (default off; a malformed value turns it on) refuses
+    a feature run whose steps would run on this computer without a container.
+    ``checkers`` (1-3, default 1) independent checkers look at each version;
+    ``checker_models`` names one model per checker (empty: the checker model
+    rule); ``checker_image`` (default empty) runs checks and re-runs in that
+    container image (a malformed name is kept as unusable, never dropped);
+    ``max_repros`` (0-20, default 5) bounds the findings Lightwork re-runs
+    per look."""
     cfg = load_config().get("codebase", {})
     if not isinstance(cfg, dict):
         cfg = {}
     protect = str(cfg.get("default_protect", "block")).strip().lower()
+
+    def _rounds(key: str, low: int, high: int) -> int:
+        raw = cfg.get(key, CODEBASE_LOOP_DEFAULTS[key])
+        try:
+            value = CODEBASE_LOOP_DEFAULTS[key] if isinstance(raw, bool) else int(raw)
+        except (TypeError, ValueError, OverflowError):
+            value = CODEBASE_LOOP_DEFAULTS[key]
+        return max(low, min(high, value))
     return {"enable": _strict_config_bool(cfg, "enable", False),
-            "default_protect": protect if protect in ("audit", "approve", "block") else "block"}
+            "default_protect": protect if protect in ("audit", "approve", "block") else "block",
+            "repair_rounds": _rounds("repair_rounds", 0, 5),
+            "checker": _strict_config_bool(cfg, "checker", True, invalid=True),
+            "check_rounds": _rounds("check_rounds", 1, 3),
+            "require_container": _strict_config_bool(cfg, "require_container", False,
+                                                     invalid=True),
+            "checkers": _rounds("checkers", 1, 3),
+            "checker_models": _codebase_models(cfg.get("checker_models")),
+            "checker_image": _codebase_image(cfg.get("checker_image")),
+            "max_repros": _rounds("max_repros", 0, 20)}
 
 
 def get_ifc() -> dict:

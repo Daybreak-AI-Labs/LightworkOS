@@ -302,9 +302,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   them; a saved flow that names one says which setting to turn on.
 - `vertex generate` has no built-in model: name one, and it must be on
   `[access] allowed_models` (as `vertex:<model id>`) when that list is set.
-  Each Vertex call leaves a spend receipt with an unknown cost; it is not
-  charged to the run budget. With `[budget.provider_caps] vertex` set, the
-  tool refuses every call.
+- Each `vertex` tool call is now charged to the run budget, and no call is
+  sent once the budget is spent. The price is the one you set in Settings >
+  Models, under Prices for the models you use, for the exact route
+  (`vertex:<model id>`, or `vertex:endpoints/<endpoint id>` for `predict`),
+  else a tracked price if Lightwork has one, else the safety ceiling
+  ($10/$50 per million tokens); the spending-limit message and the cost line
+  then say so. Set the route's price to be charged your real rate. A reply
+  with no token counts (custom endpoints usually give none), an error reply
+  included, is charged an estimate from the text length and marked
+  estimated. The spend receipt carries the charge and how it was priced, and
+  `[budget.provider_caps] vertex` is now enforced instead of refusing every
+  call. Before sending, each call holds room for its longest reply: the
+  per-call output allowance model calls use (`[context] max_output_tokens`,
+  or `MAVERICK_AGENT_MAX_TOKENS`; by default scaled from the context window,
+  at least 4096 tokens). A call that cannot fit is not sent. `generate` asks
+  Vertex for at most that many tokens, or the smaller `max_output_tokens`
+  you give it. `predict` cannot limit a custom endpoint's reply, so a longer
+  reply is still charged in full and can pass the limit by that much. A flow
+  cannot use `vertex` as a direct action step, because it has no run budget:
+  saving one is refused, and an older saved flow's `vertex` step stops with
+  "unsafe direct action tool 'vertex'". Call it from an agent step.
 - `oracle` asks for `confirm` when a read hides a second statement in
   Oracle `q'...'` quoting, or after a `show`/`desc` line, a `/` line, a `.`
   line or a blank line. Remove blank lines inside a query to run it as a read.
@@ -643,6 +661,174 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   check and activity-log entries apply. These are offered only once the
   Reviews family is in `[copilot] operation_families` (it is off by
   default); publishing and retiring also need Copilot actions turned on.
+- On Postgres with at-rest encryption and strict isolation off, records
+  saved before workspaces were used are shown to every workspace again, as
+  they already are without encryption: facts, goals, goal events, artifacts,
+  questions, episodes, sign-offs, approvals, projects and chat turns no
+  longer show a "withheld" placeholder there. `maverick doctor` and
+  Installation health now warn when such records exist next to a workspace.
+  To stop every workspace reading them, assign them to one workspace with
+  `maverick tenant backfill --tenant <id>` (preview with `--dry-run`), then
+  turn on strict isolation ("Hide records with no workspace" in Settings).
+- `maverick tenant backfill` now re-seals the encrypted values of the
+  records it assigns, so the workspace they go to can read them; before,
+  that workspace saw a "withheld" placeholder. Run it on the computer that
+  runs Lightwork: it stops, changing nothing, if it cannot open a value.
+  Writes to goals, facts, conversations and their events wait while it
+  runs (about 4 seconds for 100,000 encrypted values), so pick a quiet
+  period; if Lightwork is busy writing for more than 10 seconds it stops,
+  changing nothing, and can be run again.
+- `maverick tenant backfill` now stops with an explanation when row-level
+  security is on and its database login cannot see records without a
+  workspace; before, it reported that it assigned 0 rows. A script that
+  runs it that way now gets exit code 2. Run it as a login that bypasses
+  row-level security.
+- A code change built with `maverick code feature` or the Code page now
+  repairs itself: failing tests go back to the agent for up to two more
+  tries, then a separate agent runs the change and tries to break it.
+  Blocking problems it finds go back too, and it looks again. Tests and
+  checks run on a fresh copy of exactly the commit you approve, so your test
+  command must install anything it needs. Every round shares one spending
+  limit. The approval card, `maverick code show` and the Code page list what
+  was and was not checked. Set `[codebase] repair_rounds`, `checker` and
+  `check_rounds` in Settings; each round or look is one more agent run.
+- On the default `local` work area, a code change's tests, checker and
+  agent share this computer. Each round now starts from a fresh copy. Where
+  Linux allows it, each command gets its own processes and temporary
+  folder, runs as your own user, and nothing it starts outlives it. The approval card says how the
+  steps were kept apart, and lists it as not fully checked. To refuse such
+  runs, turn on `[codebase] require_container` in Settings. A workspace can
+  no longer weaken the `[codebase]` checks in its own config file.
+- A code checker's finding can now carry a command that shows the problem.
+  Lightwork re-runs it on a fresh copy and marks the finding confirmed, or
+  not reproduced and read only. After a repair it re-runs confirmed ones to
+  decide "fixed" itself. Set how many it re-runs per look with `[codebase]
+  max_repros` (default 5); each re-run counts as one tool call.
+- `[codebase] checkers` (1-3, default 1) sets how many independent checkers
+  look at each change, and `checker_models` picks one model for each. Each
+  extra checker is one more agent run per look. The approval card names
+  each checker's model and flags it when all share the author's kind.
+- `[codebase] checker_image` runs the checkers and their re-runs in a
+  container image. `deploy/checker/` builds one with Python 3.11 and 3.12,
+  PostgreSQL 16 and a Playwright browser. If the image cannot be used, the
+  check says "could not run"; it never runs on this computer instead.
+  Lightwork never pulls the image and never lowers your work area's
+  isolation for it; only the organisation's config may set it. Re-runs
+  happen only when the steps run in a container, and a fix that only
+  makes the re-run pass waits for a later look to confirm it.
+- A code project can now have test tiers: quick tests run after each
+  repair round (`{changed}`, unquoted, lists the changed files that still
+  exist, so the command must accept any path), and the full tests plus
+  other checks run on the finished change; a failure goes back to the
+  author. Tests that need services run only in `[codebase] checker_image`.
+  Set them with `maverick code add|set --quick-test --gate --heavy-test`
+  or "Test commands" on the Code page. The approval card shows one line
+  per tier, and a quick pass alone never reads as the tests passing.
+  Existing projects keep running their one test command as before.
+- A run can now stop and ask a person to decide. It offers two to five
+  options, says which it recommends and why, and waits as blocked without
+  spending until someone chooses on the Approvals page, a Slack card, the
+  Copilot or `maverick decisions answer`; then it continues with that choice.
+  Nobody answering in time (`[approval] decision_expiry_hours`, default 72)
+  stops the run without choosing. Upgrading adds world-model migration 55.
+- New `[approval] decision_areas` and `decision_admin_areas` settings (wizard
+  approvals step and Settings > Safety > Approvals) list where a run must ask
+  and which decisions need an administrator. By default governance-control
+  decisions need an administrator; the person who started the run answers
+  only as `[approval] separate_approver` allows for a risky approval (someone
+  else when another administrator can). A workspace file can add areas but
+  cannot remove them, and an unknown area name keeps the defaults.
+- `maverick resume`, the dashboard Resume button and answering a clarifying
+  question no longer restart a run that is still waiting for a decision.
+  Answer the decision first; `maverick resume` exits 2 until you do.
+- Inside a flow step, a run cannot stop to ask for a decision yet: the step
+  stops without a retry, and the flow takes the step's error route or stops
+  there, showing the question.
+- A run restarted after a decision begins again from the start unless durable
+  checkpoints are on, so steps it already finished (including a subagent's
+  side effects) may run again. Turn on `[durable] enabled` to continue where
+  it stopped; the answer's confirmation says so.
+- Paid tool calls now count against the task's spending limit, so a capped
+  run can stop on tool spend. This covers search (Tavily, Brave, SerpAPI),
+  Hugging Face (and its OCR), Replicate and hosted image edits, DeepL,
+  LibreTranslate on a public server, OpenAI and Groq speech-to-text, OpenAI
+  and ElevenLabs speech, Wolfram|Alpha, NewsAPI, BigQuery (by terabytes
+  scanned when priced that way), Twilio, Amazon SES and SNS sends, and the
+  pay-per-use connectors: AI, media AI, identity and background checks, and
+  SMS, voice, WhatsApp and email gateways (such as `sendgrid`, `vonage`,
+  `plivo`, `whatsapp_business`) on
+  every request but a GET; per-lookup data services (such as `shodan`,
+  `hunter`, `zoominfo`) on every request.
+- Not charged: subscription services (CRM, ERP, storage, contract review
+  such as `luminance` and the like), which bill by plan, not by call;
+  payments, shipping labels and stock-media purchases, which move money
+  under their own approval rather than spend a task's budget; and local
+  engines, DuckDuckGo and servers on a private address, which are free.
+  `whatsapp_business` is charged per message, though `messenger` on the
+  same Meta address is free.
+- A call whose price is known before it is sent is stopped if it would pass
+  the limit. Speech-to-text priced per second holds what the file's size
+  allows at the lowest speech bitrate (a header's stated length is never
+  trusted for this) and is charged the seconds the service reports. Another
+  call priced per second or per terabyte holds the smaller of what the run
+  has left and `[budget] max_unmetered_hold_dollars` (default $1.00, in All
+  settings and the wizard; a workspace may only raise it), so other calls
+  keep running. BigQuery is told to stop at that hold. Replicate priced per
+  second is always waited for, and the reply says so; it is cancelled when
+  it reaches its hold, the reply gives its final state, and Replicate's
+  reported seconds settle the charge even if the cancel is slow. Unpriced
+  or priced per call, Replicate is never cancelled: a prediction still
+  running after 90 seconds is reported as still running. A call with no
+  limit can still cost more than it held, and the run stops right after
+  it. If the reply does not report the seconds or terabytes used, the full
+  hold is charged and the cost line says so; price such a service per
+  request to be charged per call instead.
+- GPU rentals (`runpod`, `vast_ai`, `lambda_labs_cloud`, `coreweave`,
+  `voltage_park`, `paperspace_gradient`) start machines billed by the hour.
+  The limit sees only the per-call charge, never those hours.
+- Upgrading: a new install's task limit is $2, and a paid tool with no price
+  set counts $0.10 per call, so 20 unpriced searches use the whole limit.
+  Set prices for the services you use first, starting with search, in
+  Settings > Models, under Prices for paid tool services, the Copilot, the
+  setup wizard, or `[budget.tool_prices]` (for example
+  `tavily = { dollars = <your price>, per = "request" }`; units are
+  request, message, page, character, image, second and terabyte). Change
+  the $0.10 per call in All settings (`[budget] unpriced_tool_call_dollars`); a warning and the cost
+  line name the services charged it. A workspace may only raise these
+  prices. While settings cannot be read, paid tool calls are refused.
+- A flow's tool step charges paid tools to what is left of the flow's
+  spending allowance, and adds them to the run's cost. The dashboard
+  microphone, its read-aloud voice, voice-only mode, chat attachments and
+  `maverick voice` are not part of a run and are not charged. With the
+  default `auto` speech-to-text, a hosted service the run cannot pay for
+  falls back to the local engine.
+- Erasure receipts are now issued as `lightwork.erasure-receipt.v3`, which
+  also counts a run's decision requests before deletion. Receipts issued as v2
+  keep verifying against the stores they listed; nothing needs re-issuing.
+- A code change whose round or checker asks a person to decide now stops at
+  once: nothing half done is committed or offered for approval, and its
+  status reads "Waiting for a person's decision". Answer it, then start a
+  new code change; the answer never restarts the old step.
+- An answer given in the moment before a run pauses for its decision now
+  continues the run with that choice; before, the run stayed paused with
+  nothing left to answer. Nothing to do.
+- A run left waiting to start after its decision was answered, because
+  Lightwork stopped first, now continues when Lightwork starts again, in
+  every workspace. Resume, the Copilot and `maverick resume` also accept it.
+- The Approvals page, its API and the Copilot now always find your own
+  waiting decisions, even behind more than 200 of other people's; before,
+  yours could be hidden and answering one by its number said it was gone.
+- A paid tool call that fails after its request may have reached the
+  service (a read timeout, a failed poll) is now charged everything it held,
+  and the cost line says the provider may have billed it. It counts once
+  against the organization's daily cap. A call that never connected is not
+  charged. Check the provider's invoice for the real cost.
+- A paid tool service priced at $0 per second or per terabyte no longer
+  holds or charges anything, even when its replies do not report that unit.
+  Before, it held and charged up to `max_unmetered_hold_dollars` per call. A
+  $0 price for a count (message, image, page, character) makes only the
+  calls counted in it free; other calls to that service are charged as
+  before.
 
 ### Fixed
 

@@ -11,9 +11,11 @@ ops:
 from __future__ import annotations
 
 import logging
+from contextvars import ContextVar
 from typing import Any
 
 from . import Tool, as_bool
+from ._paid_call import STOP_SIGNALS, PaidCallRefused, charged_call
 
 log = logging.getLogger(__name__)
 
@@ -31,6 +33,17 @@ _SES_SCHEMA: dict[str, Any] = {
     },
     "required": ["op"],
 }
+
+
+# The run budget of the call being run (set by the tool's entry point).
+_BUDGET: ContextVar[Any] = ContextVar("ses_budget", default=None)
+
+
+def _paid(send, messages: int = 1):
+    """One paid send, charged to the run budget at [budget.tool_prices] ses,
+    else the per-call ceiling."""
+    return charged_call("ses", send, budget=_BUDGET.get(), label="Amazon SES",
+                        units={"request": 1, "message": messages})
 
 
 def _client():
@@ -58,11 +71,11 @@ def _op_send(args: dict) -> str:
     }
     if args.get("html"):
         msg["Body"]["Html"] = {"Data": args["html"]}
-    r = _client().send_email(
+    r = _paid(lambda: _client().send_email(
         Source=src,
         Destination={"ToAddresses": to},
         Message=msg,
-    )
+    ), messages=len(to))
     return f"sent (message_id={r.get('MessageId')})"
 
 
@@ -83,7 +96,15 @@ def _op_verified(_args: dict) -> str:
     return "\n".join(f"  {a}" for a in addrs)
 
 
-def _run(args: dict[str, Any]) -> str:
+def _run(args: dict[str, Any], budget=None) -> str:
+    token = _BUDGET.set(budget)
+    try:
+        return _run_scoped(args)
+    finally:
+        _BUDGET.reset(token)
+
+
+def _run_scoped(args: dict[str, Any]) -> str:
     op = args.get("op")
     if not op:
         return "ERROR: op is required"
@@ -97,11 +118,15 @@ def _run(args: dict[str, Any]) -> str:
             "quota":               _op_quota,
             "verified_identities": _op_verified,
         }.get(op, lambda a: f"ERROR: unknown op {op!r}")(args)
+    except STOP_SIGNALS:
+        raise
+    except PaidCallRefused as e:
+        return f"ERROR: {e}"
     except Exception as e:
         return f"ERROR: SES request failed: {type(e).__name__}: {e}"
 
 
-def ses_tool() -> Tool:
+def ses_tool(*, budget=None) -> Tool:
     return Tool(
         name="ses",
         description=(
@@ -111,5 +136,5 @@ def ses_tool() -> Tool:
             "AWS_REGION."
         ),
         input_schema=_SES_SCHEMA,
-        fn=_run,
+        fn=lambda args: _run(args, budget),
     )

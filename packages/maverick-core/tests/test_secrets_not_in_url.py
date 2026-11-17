@@ -27,8 +27,13 @@ def test_newsapi_key_goes_in_header_not_url(monkeypatch):
         return _Resp()
 
     monkeypatch.setattr(httpx, "get", fake_get)
-    from maverick.tools.newsapi_tool import _get
-    _get("/top-headlines", {"country": "us"})
+    from maverick.budget import Budget
+    from maverick.tools.newsapi_tool import _BUDGET, _get
+    token = _BUDGET.set(Budget())
+    try:
+        _get("/top-headlines", {"country": "us"})
+    finally:
+        _BUDGET.reset(token)
 
     assert "apiKey" not in captured["params"]
     assert "SECRET123" not in str(captured["params"])
@@ -48,9 +53,10 @@ def test_serpapi_key_redacted_from_error_log(monkeypatch, caplog):
         )
 
     monkeypatch.setattr(httpx, "get", boom)
-    from maverick.tools.web_search import _try_serpapi
+    from maverick.budget import Budget
+    from maverick.tools.web_search import _SearchMeter, _try_serpapi
     with caplog.at_level(logging.WARNING):
-        out = _try_serpapi("hello", 5)
+        out = _try_serpapi("hello", 5, meter=_SearchMeter(budget=Budget()))
 
     assert out is None
     assert "SECRET456" not in caplog.text

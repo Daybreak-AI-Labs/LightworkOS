@@ -3439,6 +3439,12 @@ def tenant_backfill(tenant_id: str, dsn: str | None, dry_run: bool) -> None:
     Pre-tenancy rows have a NULL tenant_id (empty for event records) and RLS would hide
     them. This assigns them to --tenant so they stay visible under that tenant.
     Idempotent and safe to re-run. Run `maverick tenant rls-preflight` first.
+
+    Encrypted values of those rows are re-sealed for the tenant. Writes to
+    goals, facts, conversations and their events wait while it runs, so run it
+    in a quiet period or stop Lightwork first. It is one transaction: if it
+    stops, nothing was changed. --dry-run reports how many encrypted values
+    there are; allow about 1 minute for every 500,000.
     """
     from ..world_model_backends import pg_rls
     resolved = pg_rls.resolve_dsn(dsn)
@@ -3460,10 +3466,21 @@ def tenant_backfill(tenant_id: str, dsn: str | None, dry_run: bool) -> None:
     except ImportError as e:
         click.echo(f"ERROR: {e}", err=True)
         sys.exit(2)
+    if not dry_run:
+        click.echo("Assigning records. Writes to goals, facts, conversations and their "
+                   "events wait until this finishes.")
     try:
         report = pg_rls.backfill(conn, tenant_id, dry_run=dry_run)
     except ValueError as e:
         click.echo(f"ERROR: {e}", err=True)
+        sys.exit(2)
+    except Exception as e:
+        # A lock timeout, a deadlock, a dropped connection: one transaction,
+        # so nothing was changed. Anything else is a bug and is raised.
+        message = pg_rls.database_error_message(e)
+        if message is None:
+            raise
+        click.echo(f"ERROR: {message}", err=True)
         sys.exit(2)
     finally:
         conn.close()
@@ -3472,6 +3489,15 @@ def tenant_backfill(tenant_id: str, dsn: str | None, dry_run: bool) -> None:
         click.echo(f"  {t}: {verb} {report[t]}")
     click.echo(f"{verb} {sum(report.values())} row(s) to tenant {tenant_id!r}"
                + (" (dry run)" if dry_run else ""))
+    sealed = int(getattr(report, "encrypted_values", 0))
+    if sealed:
+        click.echo(f"{sealed:,} encrypted value(s) "
+                   + ("would be re-sealed" if dry_run else "re-sealed") + " for that tenant.")
+    if dry_run and sum(report.values()):
+        minutes = max(1, round(sealed / 500_000))
+        click.echo(f"The real run should take about {minutes} minute{'s' if minutes != 1 else ''}. "
+                   "Writes to goals, facts, conversations and their events wait while it "
+                   "runs: pick a quiet period, or stop Lightwork first.")
 
 
 @tenant.command("kms-rotate")
@@ -5322,6 +5348,33 @@ def resume(ctx, goal_id_arg, goal_id, max_depth: int, max_dollars, max_wall_seco
         # and exit non-zero. Otherwise the run prints run_goal's "no such goal"
         # and still exits 0, which a script can't detect (export exits 2 here).
         click.echo(f"no such goal #{goal_id}. See `maverick status`.", err=True)
+        sys.exit(2)
+    from ..decision_requests import (
+        expire_due,
+        feature_start_refusal,
+        for_goal,
+        open_for_tree,
+        restart_stranded,
+    )
+
+    expire_due(world, goal_id=goal_id)
+    refused = feature_start_refusal(world, goal_id)
+    if refused:  # a code change's step runs only inside its own private copy
+        click.echo(f"cannot resume goal #{goal_id}: {refused}")
+        sys.exit(2)
+    if (world.get_goal(goal_id).status == "pending"
+            and any(d.status == "answered" for d in for_goal(world, goal_id))
+            and not restart_stranded(world, goal_id)):
+        click.echo(f"cannot resume goal #{goal_id}: it is already starting again with "
+                   "its answer. Check it again in a minute.")
+        sys.exit(2)
+    waiting = open_for_tree(world, goal_id)
+    if waiting:
+        click.echo(f"cannot resume goal #{goal_id}: it is waiting for "
+                   f"{len(waiting)} decision{'s' if len(waiting) != 1 else ''}.")
+        for d in waiting:
+            click.echo(f"  #{d.id}: {d.question}")
+        click.echo("Answer with: maverick decisions answer <id> <option number>")
         sys.exit(2)
     open_qs = world.open_questions(goal_id)
     if open_qs:
@@ -8291,6 +8344,7 @@ from . import (  # noqa: E402,F401
     _compliance_groups,
     _connector_groups,
     _cortex_groups,
+    _decision_groups,
     _ekko_groups,
     _external_agent_groups,
     _finance_groups,

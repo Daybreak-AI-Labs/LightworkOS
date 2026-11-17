@@ -38,6 +38,10 @@ import math
 from collections.abc import Sequence
 from typing import Any
 
+from .decision_requests import DEFAULT_ADMIN_AREAS as _DECISION_ADMIN_AREAS
+from .decision_requests import DEFAULT_AREAS as _DECISION_AREAS
+from .decision_requests import EXPIRY_CONTRACT as _DECISION_EXPIRY
+
 _RISK_ORDER = ("low", "medium", "high", None)
 
 
@@ -221,6 +225,13 @@ _ACL_RISK = ("low", "medium", "high", (None, ""))
 # A key not listed has no stricter direction (a path, an image, a key name or
 # a place the owner chooses to run work) and merges as an ordinary setting.
 TENANT_RULES: dict[str, dict[str, tuple]] = {
+    # A workspace may charge paid tool calls more, never less.
+    "budget": {
+        "unpriced_tool_call_dollars": ("minimum", 0.10, (), None),
+        # The full hold is the charge when usage is not reported: only up.
+        "max_unmetered_hold_dollars": ("minimum", 1.00, (), None),
+        "tool_prices": _consumer("budget.tool_prices", {}),
+    },
     "governance": {
         "deny_actions": _consumer("governance.deny_actions"),
         "require_human_actions": _consumer("governance.require_human_actions"),
@@ -280,6 +291,14 @@ TENANT_RULES: dict[str, dict[str, tuple]] = {
         "long_command_timeout": _consumer("sandbox.long_command_timeout", 600),
         "timeout": _consumer("sandbox.timeout", 60),
     },
+    # Decision requests (maverick.decision_requests): a workspace may add areas
+    # where a run must ask a person, or areas that need an administrator, and
+    # may shorten how long a decision waits; it may never remove an area.
+    "approval": {
+        "decision_areas": ("deny_list", list(_DECISION_AREAS), (), None),
+        "decision_admin_areas": ("deny_list", list(_DECISION_ADMIN_AREAS), (), None),
+        "decision_expiry_hours": ("limit", _DECISION_EXPIRY.default, (), None),
+    },
     "security": {
         "allowed_tools": _consumer("security.allowed_tools"),
         "denied_tools": _consumer("security.denied_tools"),
@@ -294,6 +313,19 @@ TENANT_RULES: dict[str, dict[str, tuple]] = {
         "allow_self_approval": ("permission", False, (), None),
         "isolate_parsers": ("protection", False, (), None),
         "secure_defaults": ("protection", True, (), None),
+    },
+    # maverick.config.get_codebase; the defaults mirror CODEBASE_LOOP_DEFAULTS.
+    # An unreadable protection mode is read as "block".
+    "codebase": {
+        "default_protect": ("rank", "block", ("block", "approve", "audit"), "block"),
+        "checker": ("protection", True, (), None),
+        "require_container": ("protection", False, (), None),
+        "repair_rounds": ("minimum", 2, (), None),
+        "check_rounds": ("minimum", 2, (), None),
+        "checkers": ("minimum", 1, (), None),
+        "max_repros": ("minimum", 5, (), None),
+        "checker_models": _consumer("codebase.checker_models", []),
+        "checker_image": _consumer("codebase.checker_image", ""),
     },
 }
 

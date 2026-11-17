@@ -15,6 +15,7 @@ from __future__ import annotations
 import contextvars
 import copy
 import inspect
+import threading
 from collections.abc import Callable
 from typing import Any
 
@@ -33,6 +34,8 @@ from .approval_dispatch import ApprovalDispatch
 from .budgeting import (
     _budget_gated,
     _spend_tracked,
+    _tool_spend_metered,
+    current_step_budget,
 )
 from .budgeting import (
     _MeteredAgentResult as _MeteredAgentResult,
@@ -287,13 +290,20 @@ def execute(flow: Flow, *, agent_runner: AgentRunner, action_runner: ActionRunne
         else prior.budget_limit_dollars if prior is not None and prior.budget_limit_dollars is not None
         else flow.max_dollars
     )
+    spend_lock = threading.Lock()
+    # Dollars paid tool steps hold while they run, seen by the agent gate too.
+    tool_held = [0.0]
     if record_outcomes:
         if run_budget_limit and run_budget_limit > 0:
             # Aggregate per-run spend ceiling: a wide parallel / long foreach can't
             # fan out unbounded cost (per-node budget alone doesn't bound the COUNT).
-            agent_runner = _budget_gated(agent_runner, run_budget_limit, agent_budget_dollars, spent)
+            agent_runner = _budget_gated(agent_runner, run_budget_limit, agent_budget_dollars, spent,
+                                         spend_lock, tool_held)
         else:
-            agent_runner = _spend_tracked(agent_runner, agent_budget_dollars, spent)
+            agent_runner = _spend_tracked(agent_runner, agent_budget_dollars, spent, spend_lock)
+    # Paid tool calls in a tool step are charged to what is left of the run's
+    # allowance, and count toward the run's spend.
+    action_runner = _tool_spend_metered(action_runner, run_budget_limit, spent, spend_lock, tool_held)
 
     # Write a "running" state before executing so a long run is distinguishable
     # from a stuck "queued" one on the dashboard (a fresh, non-resume run only).
@@ -527,6 +537,12 @@ def default_agent_runner(
         dollars = clamp_task_limit(budget_dollars, configured_max_dollars())
         dollars = clamp_task_limit(allowance, dollars)
         usage = []
+        from ..decision_requests import IN_FLOW_STEP
+
+        # A flow step does not wait for a person's decision yet: the step's
+        # goal is told so instead of pausing and being retried as a failure.
+        questions: list[str] = []
+        in_flow = IN_FLOW_STEP.set(questions)
         try:
             from ..runner import run_goal_in_thread
             result = run_goal_in_thread(
@@ -544,6 +560,14 @@ def default_agent_runner(
                 f"agent step failed: {type(e).__name__}: {_safe_failure(e)}", 0.0,
                 usage[-1] if usage else 0.0,
             )
+        finally:
+            IN_FLOW_STEP.reset(in_flow)
+        if questions:
+            from ..decision_requests import FlowDecisionNeeded, flow_question_text
+
+            message = flow_question_text(questions)
+            world.set_goal_status(gid, "failed", result=message)
+            raise FlowDecisionNeeded(message)
         from ..run_outcome import GoalAdmissionRefused
 
         if (
@@ -679,6 +703,8 @@ def default_action_runner(
                 goal_id=None,
                 channel=channel,
                 user_id=user_id,
+                # What is left of the flow's allowance: paid tools charge it.
+                budget=current_step_budget(),
             )
             t = next((x for x in reg.all() if x.name == tool), None)
             if t is None:

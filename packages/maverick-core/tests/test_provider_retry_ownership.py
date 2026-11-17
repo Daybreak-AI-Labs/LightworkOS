@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ast
+import functools
 from pathlib import Path
 from typing import Any
 
@@ -154,13 +155,20 @@ class _ProviderClientVisitor(ast.NodeVisitor):
 
 
 def _provider_client_calls() -> list[tuple[Path, str, str, ast.Call]]:
+    return list(_scan_provider_client_calls(_REPO_ROOT))
+
+
+@functools.cache
+def _scan_provider_client_calls(repo_root: Path) -> tuple[tuple[Path, str, str, ast.Call], ...]:
+    # Parsing every source file takes tens of seconds; two tests read the same
+    # tree, so a root is parsed once per process and its result only read.
     calls: list[tuple[Path, str, str, ast.Call]] = []
     for relative_root in _SOURCE_ROOTS:
-        source_root = _REPO_ROOT / relative_root
+        source_root = repo_root / relative_root
         if not source_root.exists():
             continue
         for path in source_root.rglob("*.py"):
-            relative = path.relative_to(_REPO_ROOT)
+            relative = path.relative_to(repo_root)
             if "tests" in relative.parts or path.name.startswith("test_"):
                 continue
             # Wheel builds leave copies of package modules under build/lib.
@@ -172,7 +180,7 @@ def _provider_client_calls() -> list[tuple[Path, str, str, ast.Call]]:
             visitor = _ProviderClientVisitor(relative)
             visitor.visit(tree)
             calls.extend(visitor.calls)
-    return calls
+    return tuple(calls)
 
 
 def test_provider_scan_keeps_source_and_ignores_generated_wheel_copy(tmp_path, monkeypatch):

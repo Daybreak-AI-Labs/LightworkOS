@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import pytest
 from maverick import provider_cost_cap as cap
+from maverick.budget import Budget
 from maverick.paths import tenant_scope
+from maverick.tools import _paid_call as paid_call
 from maverick.tools import web_search as search
 
 
@@ -51,10 +53,11 @@ def test_every_physical_failover_dispatch_is_metered_under_one_operation(monkeyp
         ))
 
     monkeypatch.setattr(search, "metered_provider_call", meter)
+    monkeypatch.setattr(paid_call, "metered_provider_call", meter)
     monkeypatch.setattr(httpx, "post", post)
     monkeypatch.setattr(httpx, "get", get)
 
-    result = search._run_search({"query": "governed evidence"})
+    result = search._run_search({"query": "governed evidence"}, Budget())
 
     assert "[backend: ddg]" in result
     assert [provider for provider, _ in attempts] == [
@@ -91,13 +94,14 @@ def test_accounting_refusal_stops_failover_before_an_unmetered_retry(monkeypatch
         raise error
 
     monkeypatch.setattr(search, "metered_provider_call", refuse)
+    monkeypatch.setattr(paid_call, "metered_provider_call", refuse)
     monkeypatch.setattr(
         httpx, "post", lambda *_args, **_kwargs: pytest.fail("dispatch must be blocked"))
     monkeypatch.setattr(
         httpx, "get", lambda *_args, **_kwargs: pytest.fail("failover must stop"))
 
     with pytest.raises(type(error)) as captured:
-        search._run_search({"query": "accounted search"})
+        search._run_search({"query": "accounted search"}, Budget())
 
     assert captured.value is error
     assert calls == ["tavily"]
@@ -124,16 +128,18 @@ def test_receipt_is_discoverable_only_under_an_existing_work_item(monkeypatch, t
     work_item = "research:search-run-17"
     with tenant_scope(tenant="workspace-one"):
         with cap.work_item_scope(work_item):
-            assert "[backend: tavily]" in search._run_search({"query": "first"})
+            assert "[backend: tavily]" in search._run_search({"query": "first"}, Budget())
         # The adapter must inherit an existing work item, never invent one.
-        assert "[backend: tavily]" in search._run_search({"query": "second"})
+        assert "[backend: tavily]" in search._run_search({"query": "second"}, Budget())
         receipts = cap.reservation_catalogue_for_work_item(
             work_item, path=ledger,
         ).receipts
 
     assert len(receipts) == 1
     receipt = receipts[0]
-    assert receipt.state == "unknown" and receipt.actual is None
+    # A paid search is charged to the run budget (the per-call safety ceiling
+    # with no price set), so its receipt is settled with that charge.
+    assert receipt.state == "settled" and receipt.actual == pytest.approx(0.10)
     assert receipt.operation is not None
     assert receipt.operation["operation_id"].startswith("web-search:")
     assert receipt.operation["category"] == "search"
@@ -169,7 +175,7 @@ def test_accounted_provider_failure_falls_through_with_both_receipts(monkeypatch
 
     work_item = "research:search-failover-18"
     with tenant_scope(tenant="workspace-one"), cap.work_item_scope(work_item):
-        assert "[backend: brave]" in search._run_search({"query": "fallback"})
+        assert "[backend: brave]" in search._run_search({"query": "fallback"}, Budget())
         receipts = cap.reservation_catalogue_for_work_item(
             work_item, path=ledger,
         ).receipts
@@ -185,3 +191,40 @@ def test_accounted_provider_failure_falls_through_with_both_receipts(monkeypatch
     assert brave["category"] == "retry" and brave["attempt_no"] == 2
     assert brave["attempt_state"] == "succeeded" and brave["service"] == "brave"
     assert tavily["parent_category"] == brave["parent_category"] == "search"
+
+
+def test_paid_search_is_charged_to_the_run_and_duckduckgo_is_not(monkeypatch):
+    # A Tavily search is charged to the run budget (the per-call safety
+    # ceiling with no price set); without a run budget it is refused before
+    # sending. DuckDuckGo is free.
+    import httpx
+
+    monkeypatch.setenv("TAVILY_API_KEY", "tavily-key")
+    monkeypatch.setattr("maverick.enterprise.enterprise_enabled", lambda: False)
+    posts = []
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: posts.append(a) or _Response(data={
+        "results": [{"title": "t", "url": "https://example.com", "content": "hit"}]}))
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: _Response(text=(
+        '<a class="result__a" href="/l/?uddg=https%3A%2F%2Fexample.com">hit</a>'
+        '<a class="result__snippet">snippet</a>')))
+    budget = Budget()
+    monkeypatch.setenv("MAVERICK_SEARCH_BACKEND", "tavily")
+    assert "[backend: tavily]" in search._run_search({"query": "q"}, budget)
+    assert budget.dollars == pytest.approx(0.10) and len(posts) == 1
+    out = search._run_search({"query": "q"})
+    assert out.startswith("ERROR") and "nothing was sent" in out and len(posts) == 1
+    monkeypatch.setenv("MAVERICK_SEARCH_BACKEND", "ddg")
+    assert "[backend: ddg]" in search._run_search({"query": "q"}, budget)
+    assert budget.dollars == pytest.approx(0.10)
+
+
+def test_every_paid_service_has_a_readable_name_not_its_connector_id():
+    # The Prices page lists these names; a raw id such as
+    # "anyscale_endpoints connector" is not plain language.
+    from maverick.budget import paid_tool_services
+
+    labels = paid_tool_services()
+    assert labels["anyscale_endpoints"] == "Anyscale Endpoints"
+    for service, label in labels.items():
+        assert "_" not in label, (service, label)
+        assert not label.endswith(" connector"), (service, label)

@@ -745,6 +745,13 @@ class Server:
         # tenancy on, _reclaim_tenant_orphans() also sweeps every tenant's
         # own world.db (a crash strands goals there too).
         try:
+            from .decision_requests import recover_everywhere
+
+            # Before the reclaim below: a run left pending after its answer continues.
+            recover_everywhere(self.world)
+        except Exception:  # pragma: no cover -- a person can still resume it
+            log.exception("answered-run recovery failed on serve startup")
+        try:
             from .runner import startup_reclaim_statuses
 
             reclaimed = self.world.reclaim_orphan_goals(statuses=startup_reclaim_statuses())
@@ -753,6 +760,14 @@ class Server:
                 log.warning("reclaimed %d orphan goal(s) from prior crash", reclaimed)
         except Exception:  # pragma: no cover
             log.exception("orphan goal reclaim failed on serve startup")
+        try:
+            import threading
+
+            from .decision_requests import start_sweeper
+
+            start_sweeper(threading.Event())
+        except Exception:  # pragma: no cover -- expiry also runs when decisions are read
+            log.exception("decision expiry sweep not started")
         log.info(
             "starting %d channel(s): %s",
             len(self._channels),

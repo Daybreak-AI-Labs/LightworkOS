@@ -1647,6 +1647,9 @@ def metered_provider_call(
     parent_category: str | None = None,
     attempt_no: int | None = None,
     service: str | None = None,
+    settlement=None,
+    organization_budget=None,
+    failure_settlement=None,
 ):
     """Bracket one synchronous physical provider call with a durable receipt.
 
@@ -1654,6 +1657,13 @@ def metered_provider_call(
     free. Provider failures are re-raised only after their failed/cancelled
     attempt has been retained. If failure accounting cannot be secured, an
     accounting error stops outer retry/failover from issuing another paid call.
+
+    A cost known only from the reply is given by ``settlement``: called with
+    the callback's result, it returns ``(actual_dollars, cost_basis,
+    pricing_evidence)``. ``organization_budget`` is the run budget the call is
+    charged to, as :func:`reserve` takes it. ``failure_settlement`` does the
+    same for a callback that raised: called with the error, it gives the cost
+    the caller charged for it, or ``(None, None, None)`` when that is unknown.
     """
 
     if not callable(callback):
@@ -1683,18 +1693,25 @@ def metered_provider_call(
         attempt_no=attempt_no,
         service=service,
         projection_known=projection_known,
+        organization_budget=organization_budget,
     )
     try:
         result = callback()
     except BaseException as error:
         if hold is not None:
             try:
-                settle(hold, None, attempt_state=_failed_attempt_state(error))
+                actual, basis, evidence = (
+                    (None, None, None) if failure_settlement is None
+                    else failure_settlement(error))
+                settle(hold, actual, cost_basis=basis, pricing_evidence=evidence,
+                       attempt_state=_failed_attempt_state(error))
             except Exception as accounting_error:
                 raise ProviderAccountingUnavailable from accounting_error
         raise
     if hold is not None:
         try:
+            if settlement is not None:
+                actual_dollars, cost_basis, pricing_evidence = settlement(result)
             settle(
                 hold,
                 actual_dollars,

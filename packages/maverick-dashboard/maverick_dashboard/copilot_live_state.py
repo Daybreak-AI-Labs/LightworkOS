@@ -29,6 +29,11 @@ _STATUS = re.compile(
     r"(?:what is (?:the status of )?(?:my |this |the )?(?:goal|task)(?: \d{1,18})?(?: status)?|(?:show|check) (?:my|this) (?:goal|task) status|how is (?:my|this) (?:goal|task) doing)(?: please)?\Z"
 )
 _FIND = re.compile(r"(?:find|search for|look up) my task(?: called| named)? (.{2,100})\Z")
+_CODE_CHECKS = re.compile(
+    r"(?:what (?:was|has been) checked (?:on|in|for) (?:my |the )?(?:proposed )?code changes|"
+    r"(?:show|list) (?:my |the )?proposed code changes|"
+    r"(?:were|are|was) (?:my |the )?(?:proposed )?code changes? checked)(?: please)?\Z"
+)
 _EXPLICIT_TASK = re.compile(r"\b(?:goal|task|run)\s*#?(\d{1,18})\b")
 _PAGE_TASK = re.compile(r"^/(?:chat/goal|goals|tasks)/(\d{1,18})(?:/|$)")
 _DECISIONS = frozenset({"approval", "signoff", "assessment", "project_review", "vendor_reconciliation"})
@@ -47,6 +52,8 @@ def intent(message: str) -> str | None:
         return "task_status"
     if _FIND.fullmatch(normalized):
         return "task_find"
+    if _CODE_CHECKS.fullmatch(normalized):
+        return "code_checks"
     return None
 
 
@@ -104,6 +111,49 @@ def _decisions(request):
     if len(rows) > 8 or value.get("flow_approval_coverage") != "current":
         reply += " The displayed list may be incomplete; open Approvals to review current records."
     return _answer(reply, "/approvals", "Open approvals", "Approvals")
+
+
+def _code_checks(request):
+    """Proposed code changes waiting for approval, and what was not checked:
+    the same words, and the same administrator access, as the Code page's
+    review panel. Never code, diffs or test output."""
+    from maverick.codebase import features, vault
+
+    from .app import _world
+
+    if not auth.has_permission(request, "admin"):
+        return _answer("Your role cannot open proposed code changes. Ask an administrator to review them with you.",
+                       "/code", "Open Code", "Code access")
+    if not vault.enabled():
+        return _answer("Code projects are turned off, so no code changes are waiting.", "/code", "Open Code", "Code")
+    world = _world()
+    rows = [p for p in features.list_proposals() if features.status(world, p) == "pending"]
+    parts = []
+    for i, p in enumerate(rows[:8], 1):
+        gaps = features.evidence(p)["gaps"]
+        state = (" ".join(["Not fully checked:", *gaps[:3]]) if gaps else
+                 "The tests passed and the independent check left no blocking problem open.")
+        tiers = features.tier_summary(p)
+        parts.append(f"{i}. {_bounded(p['title'])} in {_bounded(p['repo'], 64)}. {state}"
+                     + (f" {tiers}" if tiers else "") + _code_reruns(p))
+    if parts:
+        reply = (f"Checked the proposed code changes {_checked_at()}. Waiting for approval: "
+                 f"{len(rows)}. {' '.join(parts)}")
+    else:
+        reply = f"Checked the proposed code changes {_checked_at()}. None are waiting for approval."
+    if len(rows) > 8:
+        reply += " This is a shortened list; open Code for the full view."
+    return _answer(reply, "/code", "Open Code", "Code")
+
+
+def _code_reruns(p: dict) -> str:
+    """How many checker findings Lightwork re-ran itself, and how many it confirmed."""
+    findings = (p.get("check") or {}).get("findings") or []
+    rerun = [f for f in findings if f.get("repro_state") in ("confirmed", "not reproduced")]
+    if not rerun:
+        return ""
+    confirmed = sum(1 for f in rerun if f["repro_state"] == "confirmed")
+    return f" Lightwork re-ran {len(rerun)} finding(s) itself and confirmed {confirmed}."
 
 
 def _running_tasks(request):
@@ -218,6 +268,8 @@ def answer(request, message: str, page: str, selected_goal_id: int | None) -> di
             value = _running_tasks(request)
         elif selected == "task_find":
             value = _find_tasks(request, message)
+        elif selected == "code_checks":
+            value = _code_checks(request)
         else:
             value = _task_failure(request, message, page, selected_goal_id)
     except HTTPException:

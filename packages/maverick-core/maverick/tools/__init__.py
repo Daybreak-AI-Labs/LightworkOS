@@ -597,7 +597,7 @@ class ToolRegistry:
         priority = (
             [self.META_TOOL]
             + list(reversed(self._activation_order))
-            + ["ask_user", "spawn_subagent", "spawn_swarm", "spawn_specialist",
+            + ["ask_user", "request_decision", "spawn_subagent", "spawn_swarm", "spawn_specialist",
                "list_specialists", "send_to_agent", "recv_from_agent",
                "delegate_to_agent", "knowledge_search"]
             + sorted(CORE_TOOL_NAMES)
@@ -836,7 +836,7 @@ CORE_TOOL_NAMES = frozenset({
     # repo understanding
     "repo_map", "dep_graph",
     # interaction + attachments
-    "ask_user", "list_attachments", "read_attachment",
+    "ask_user", "request_decision", "list_attachments", "read_attachment",
     # web / docs / media basics
     "http_fetch", "web_search", "read_pdf", "view_image",
     # memory + run introspection
@@ -1110,6 +1110,7 @@ def base_registry(
     from .attachments import list_attachments_tool, read_attachment_tool
     from .fs import list_dir, read_file, write_file
     from .repo_map import repo_map
+    from .request_decision import request_decision
     from .shell import shell
     from .str_edit import str_replace_editor
 
@@ -1136,6 +1137,8 @@ def base_registry(
     _register_local_workspace_tool(reg, sandbox, repo_map, has_local_workdir)
     _register_local_workspace_tool(
         reg, sandbox, lambda sb: str_replace_editor(sb, goal_id=goal_id), has_local_workdir)
+    # After the first ten core tools, whose order limited provider catalogs rely on.
+    reg.register(request_decision(world, goal_id=goal_id))
     # Governed session kernel. Registered ONLY when the operator has turned
     # it on: an unregistered tool costs no catalog tokens and cannot be
     # called, so the default deployment is unchanged.
@@ -1427,7 +1430,7 @@ def base_registry(
     reg.register(gitlab())
     reg.register(embeddings())
     reg.register(error_patterns())
-    reg.register(huggingface())
+    reg.register(huggingface(budget=budget))
     reg.register(notify_tool())
     reg.register(diagnose())
     reg.register(differential_privacy())
@@ -1443,7 +1446,7 @@ def base_registry(
     _register_local_workspace_tool(
         reg, sandbox, lambda sb: spreadsheet(sb, goal_id=goal_id), has_local_workdir)
     _register_local_workspace_tool(reg, sandbox, spreadsheet_read, has_local_workdir)
-    reg.register(translate())
+    reg.register(translate(budget=budget))
     reg.register(slack_bot())
     reg.register(stripe_tool())
     from .sanctions_screen import sanctions_screen
@@ -1600,7 +1603,8 @@ def base_registry(
     reg.register(ai_act_classifier())
     reg.register(cache_admin())
     _register_local_workspace_tool(reg, sandbox, openapi_runner, has_local_workdir)
-    _register_local_workspace_tool(reg, sandbox, ocr, has_local_workdir)
+    _register_local_workspace_tool(
+        reg, sandbox, lambda sb: ocr(sb, budget=budget), has_local_workdir)
     _register_local_workspace_tool(reg, sandbox, container_build, has_local_workdir)
     from .catalog import ToolDescriptor, register_descriptors
 
@@ -1618,7 +1622,7 @@ def base_registry(
         ToolDescriptor("cloudflare", cloudflare_tool, True),
         ToolDescriptor("datadog", datadog_tool, True),
         ToolDescriptor("hubspot", hubspot_tool, True),
-        ToolDescriptor("twilio", twilio_tool, True),
+        ToolDescriptor("twilio", lambda: twilio_tool(budget=budget), True),
     ))
     reg.register(serial_tool())
     register_descriptors(reg, (ToolDescriptor("elasticsearch", elasticsearch_tool, True),))
@@ -1640,17 +1644,17 @@ def base_registry(
         ToolDescriptor("snowflake", snowflake_tool, True),
         ToolDescriptor("databricks", databricks_tool, True),
         ToolDescriptor("onetrust", onetrust_tool, True),
-        ToolDescriptor("vertex", vertex_tool, True),
+        ToolDescriptor("vertex", lambda: vertex_tool(budget=budget), True),
         ToolDescriptor("oracle", oracle_tool, True),
         ToolDescriptor("sap", sap_tool, True),
         ToolDescriptor("workday", workday_tool, True),
-        ToolDescriptor("bigquery", bigquery_tool, True),
+        ToolDescriptor("bigquery", lambda: bigquery_tool(budget=budget), True),
         ToolDescriptor("dynamics", dynamics_tool, True),
     ))
     # The long tail of token-authed REST connectors (one spec each, built on
     # make_rest_tool). Same house rules: explicit env auth, confirm-gated writes.
     from .enterprise_connectors import enterprise_connectors
-    for _conn in enterprise_connectors():
+    for _conn in enterprise_connectors(budget=budget):
         reg.register(_conn)
         # The long tail is deferred-eligible: with [capabilities]
         # deferred_tools on (the default), these schemas stay out of the
@@ -1680,15 +1684,15 @@ def base_registry(
         # and dynamodb do.
         register_descriptors(reg, (
             ToolDescriptor("s3", s3_tool, True),
-            ToolDescriptor("ses", ses_tool, True),
-            ToolDescriptor("sns", sns_tool, True),
+            ToolDescriptor("ses", lambda: ses_tool(budget=budget), True),
+            ToolDescriptor("sns", lambda: sns_tool(budget=budget), True),
         ))
     register_descriptors(reg, (
         ToolDescriptor("trello", trello_tool, True),
         ToolDescriptor("confluence", confluence_tool, True),
-        ToolDescriptor("replicate", replicate_tool, True),
-        ToolDescriptor("newsapi", newsapi_tool, True),
-        ToolDescriptor("wolfram", wolfram_tool, True),
+        ToolDescriptor("replicate", lambda: replicate_tool(budget=budget), True),
+        ToolDescriptor("newsapi", lambda: newsapi_tool(budget=budget), True),
+        ToolDescriptor("wolfram", lambda: wolfram_tool(budget=budget), True),
         ToolDescriptor("dropbox", dropbox_tool, True),
         ToolDescriptor("msgraph", msgraph_tool, True),
         ToolDescriptor("gmail", gmail_tool, True),
@@ -1709,7 +1713,8 @@ def base_registry(
         reg.register(hardware_sensors())
     _register_local_workspace_tool(reg, sandbox, imagemagick_tool, has_local_workdir)
     _register_local_workspace_tool(reg, sandbox, audio_understanding, has_local_workdir)
-    _register_local_workspace_tool(reg, sandbox, image_edit, has_local_workdir)
+    _register_local_workspace_tool(
+        reg, sandbox, lambda sb: image_edit(sb, budget=budget), has_local_workdir)
     _register_local_workspace_tool(reg, sandbox, embedded_device, has_local_workdir)
     register_descriptors(reg, (
         ToolDescriptor("ga4", ga4_tool, True),
@@ -1722,8 +1727,10 @@ def base_registry(
     # when called without the required API key OR SDK; registering is
     # cheap).
     from .voice import speak, transcribe_audio
-    _register_local_workspace_tool(reg, sandbox, transcribe_audio, has_local_workdir)
-    _register_local_workspace_tool(reg, sandbox, speak, has_local_workdir)
+    _register_local_workspace_tool(
+        reg, sandbox, lambda sb: transcribe_audio(sb, budget=budget), has_local_workdir)
+    _register_local_workspace_tool(
+        reg, sandbox, lambda sb: speak(sb, budget=budget), has_local_workdir)
 
     # Capability tools that live in the parent package (maverick/), not the
     # tools subpackage.
@@ -1778,6 +1785,7 @@ def base_registry(
 
     _register_optional_tools(
         reg, sandbox,
+        budget=budget,
         enable_web_search=enable_web_search,
         enable_computer_use=enable_computer_use,
         enable_browser=enable_browser,
@@ -1824,6 +1832,7 @@ def base_registry(
         if not _skip_tool_acl:
             _apply_containment(reg)
             _apply_network_posture(reg)
+        _apply_fresh_context(reg)
         _apply_deferred_loading(reg)
 
         # Route every compatible external connector write through the durable,
@@ -1912,13 +1921,14 @@ def _register_optional_tools(
     reg: ToolRegistry,
     sandbox,
     *,
+    budget=None,
     enable_web_search: bool,
     enable_computer_use: bool,
     enable_browser: bool,
 ) -> None:
     if enable_web_search:
         from .web_search import web_search
-        reg.register(web_search())
+        reg.register(web_search(budget=budget))
 
     if enable_computer_use:
         from .computer import computer
@@ -2009,6 +2019,35 @@ def _apply_containment(reg: ToolRegistry) -> None:
     profile = active_profile()
     if profile is not None:
         apply(profile, registry=reg, sandbox_env={})
+
+
+# A run that must start from a fresh context (the code checker, which must
+# never read the author's goals or reasoning): the tools that read past goals
+# or other runs' memory are denied for the whole run, and the orchestrator
+# recalls no prior goals into its brief.
+PAST_WORK_TOOLS = frozenset({"recall_past_goals", "memory", "kv_memory", "spend_report"})
+_FRESH_CONTEXT: ContextVar[bool] = ContextVar("maverick_fresh_context_run", default=False)
+
+
+@contextlib.contextmanager
+def fresh_context_run():
+    """Run the enclosed goal without access to past goals or shared memory."""
+    token = _FRESH_CONTEXT.set(True)
+    try:
+        yield
+    finally:
+        _FRESH_CONTEXT.reset(token)
+
+
+def fresh_context() -> bool:
+    return _FRESH_CONTEXT.get()
+
+
+def _apply_fresh_context(reg: ToolRegistry) -> None:
+    if fresh_context():
+        reg.set_acl(allowed=set(getattr(reg, "_acl_allowed", set()) or set()),
+                    denied=set(getattr(reg, "_acl_denied", set()) or set()) | PAST_WORK_TOOLS,
+                    max_risk=getattr(reg, "_acl_max_risk", None))
 
 
 def _apply_network_posture(reg: ToolRegistry) -> None:

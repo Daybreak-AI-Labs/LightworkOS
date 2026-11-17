@@ -29,6 +29,11 @@ from __future__ import annotations
 import math
 
 from maverick.config_contracts import BOOLEAN_SETTINGS, CHOICE_SETTINGS, INTEGER_SETTINGS
+from maverick.decision_requests import AREAS as _DECISION_AREAS
+from maverick.decision_requests import DEFAULT_ADMIN_AREAS as _DECISION_ADMIN_DEFAULTS
+from maverick.decision_requests import DEFAULT_AREAS as _DECISION_DEFAULTS
+
+_DECISION_AREA_CHOICES = tuple(_DECISION_AREAS.items())
 
 _P = "Privacy"
 
@@ -1092,6 +1097,29 @@ def _other_rows(S) -> tuple:
           INTEGER_SETTINGS["approval.check_retention_days"].default, "maverick.approval_checks",
           subgroup="Approvals", minimum=INTEGER_SETTINGS["approval.check_retention_days"].minimum,
           maximum=INTEGER_SETTINGS["approval.check_retention_days"].maximum, integer=True, unit="days"),
+        S("approval", "decision_areas", "Choices a run must ask a person about",
+          "A run stops and asks a person to choose before it decides anything in these "
+          "areas. It offers options and says which one it recommends. A run cannot spot "
+          "every such choice by itself, so it is told to ask whenever a choice touches one.",
+          "multiselect", "Safety", list(_DECISION_DEFAULTS), "maverick.decision_requests",
+          subgroup="Approvals", choices=_DECISION_AREA_CHOICES, weaker="shrink",
+          aliases="decision request ask a person policy question recommendation options",
+          warning="Runs will decide these choices on their own instead of asking a person."),
+        S("approval", "decision_admin_areas", "Choices only an administrator can decide",
+          "Decisions in these areas need a workspace administrator. As with a risky approval, "
+          "someone other than the person who started the run answers whenever another "
+          "administrator can.",
+          "multiselect", "Safety", list(_DECISION_ADMIN_DEFAULTS), "maverick.decision_requests",
+          subgroup="Approvals", choices=_DECISION_AREA_CHOICES, weaker="shrink",
+          aliases="decision administrator admin answer",
+          warning="The person who started a run will be able to decide these choices."),
+        S("approval", "decision_expiry_hours", "Stop a run waiting for a decision after",
+          "How long a run waits for someone to answer its decision. With no answer in time, "
+          "the run stops without choosing an option.", "number", "Safety",
+          INTEGER_SETTINGS["approval.decision_expiry_hours"].default, "maverick.decision_requests",
+          subgroup="Approvals", minimum=INTEGER_SETTINGS["approval.decision_expiry_hours"].minimum,
+          maximum=INTEGER_SETTINGS["approval.decision_expiry_hours"].maximum, integer=True,
+          unit="hours", env=INTEGER_SETTINGS["approval.decision_expiry_hours"].dashboard_env),
     )
 
 

@@ -601,16 +601,47 @@ def _check_world_db() -> None:
     from .world_model import close_world_if_owned, open_world
     from .world_model_backends import is_postgres_configured
 
-    label = "Postgres" if is_postgres_configured() else str(Workspace.current().db_path)
+    postgres = is_postgres_configured()
+    label = "Postgres" if postgres else str(Workspace.current().db_path)
     try:
         w = open_world()
         try:
             _row(GREEN, "world-db", f"{label} (schema v{w.schema_version})")
+            if postgres:
+                _check_workspace_records(w)
         finally:
             close_world_if_owned(w)
     except Exception as e:
         _row(RED, "world-db", f"open failed: {e}",
              fix="check world-model backend credentials, connectivity, and storage permissions")
+
+
+def _check_workspace_records(world) -> None:
+    """Warn when every workspace can read records that have no workspace.
+
+    A shared Postgres store keeps records saved before workspaces were used
+    without one. Until strict isolation is on, each workspace reads them."""
+    from .world_model_backends import pg_rls
+
+    try:
+        found = pg_rls.shared_legacy_rows(world)
+    except Exception as e:  # a warning never fails the world-db check
+        _row(YELLOW, "workspace-records",
+             f"could not check for records that have no workspace: {type(e).__name__}")
+        return
+    if found is None:
+        return
+    count = f"{found['rows']} or more" if found["capped"] else str(found["rows"])
+    one = found["rows"] == 1
+    _row(YELLOW, "workspace-records",
+         f"{count} {'record' if one else 'records'} saved before workspaces were used "
+         f"{'has' if one else 'have'} no workspace, so every workspace can read "
+         f"{'it' if one else 'them'}",
+         fix="Assign such records to one workspace: maverick tenant backfill --tenant <id> "
+             "(preview with --dry-run). Writes wait while it runs, so pick a quiet "
+             "period. Then turn on strict isolation: "
+             "MAVERICK_STRICT_TENANT_ISOLATION=1, or \"Hide records with no workspace\" "
+             "in Settings.")
 
 
 def _check_shield() -> None:

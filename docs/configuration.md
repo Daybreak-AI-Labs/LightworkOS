@@ -129,6 +129,24 @@ task_limits_enabled = true
 # max_input_tokens  = 1000000
 # max_output_tokens = 200000
 strict_pricing      = true
+# Charged per paid tool call (speech, translation, search, hosted image models,
+# pay-per-use AI connectors) when [budget.tool_prices] has no price for it.
+# unpriced_tool_call_dollars = 0.10
+
+# [budget.tool_prices]
+# One entry per paid tool service: USD per unit, and the unit (request, page,
+# message, character, image, second or terabyte scanned). Set search first: with no
+# price, 20 searches use a $2 task limit. Settings > Models, under Prices for
+# paid tool services, writes these too. A workspace may only raise them.
+# tavily = { dollars = <your price>, per = "request" }
+# deepl = { dollars = <your price>, per = "character" }
+# bigquery = { dollars = <your price>, per = "terabyte" }
+
+[context]
+# Longest reply one model call may return, in tokens. The hold taken before
+# each call covers it, and the vertex tool sends it as Vertex's output limit.
+# Unset, it scales with the model's context window (at least 4096).
+# max_output_tokens = 8192
 
 [contact_centre]
 # Where a human handoff goes outside Lightwork when a person takes over a
@@ -183,6 +201,31 @@ separate_approver       = "when_available"
 # rows older than check_retention_days are pruned a few hundred at a time.
 record_checks           = true
 check_retention_days    = 90
+# Decision requests: a run asks a person to choose between options (with its
+# recommendation and why) and waits, spending nothing, until someone answers
+# on the Approvals page, a Slack card, the Copilot or `maverick decisions
+# answer`. Areas where a run must ask instead of deciding alone (the list is
+# in the model's instructions; nothing detects every such choice by itself):
+decision_areas          = ["security", "workspace_boundaries", "data_erasure_retention",
+                           "spending", "user_facing", "governance"]
+# Decisions in these areas need a workspace administrator. Whether the person
+# who started the run may answer follows separate_approver above, as for a
+# high-risk approval: by default someone else answers whenever another
+# administrator can; with nobody else (a single-person install) they may.
+decision_admin_areas    = ["governance"]
+# An unanswered decision expires after this long and the run stops without
+# choosing an option (checked every five minutes, and when the task or a
+# decision is read). A workspace file may add areas or shorten this wait,
+# never remove an area. A flow step cannot wait for a decision yet: a step
+# that needs one stops without a retry, and the flow takes the step's error
+# route or stops there, showing the question. When a run ends (cancelled,
+# done or failed) its open decisions are closed. With [durable] enabled off
+# (the default) a run restarted after an answer begins again, so steps it
+# already finished, including a subagent's side effects, may run again.
+# Decision rows are deleted with their goal on erasure and counted in the
+# signed pre-delete erasure receipt (schema v3); v2 receipts already on disk
+# keep verifying against the stores they listed.
+decision_expiry_hours   = 72
 
 [sandbox]
 backend = "local"                   # local | docker | ssh | podman | gvisor | devcontainer | firecracker | kubernetes | modal

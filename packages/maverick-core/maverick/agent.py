@@ -56,6 +56,7 @@ You have a single sub-goal. Plan briefly, then act.
 Tools you can call include:
   - File / shell / read / write for the sandbox.
   - `ask_user` to queue a question for the user (async). Use sparingly, batch.
+  - `request_decision` to have a person choose between options before you act; the run pauses until they answer.
   - `spawn_subagent` to delegate a focused sub-task to a child specialist.
   - `spawn_swarm` to fan out INDEPENDENT sub-tasks in PARALLEL.
   - `memory` for durable, cross-session notes: consult it for long-horizon work and record lasting learnings (conventions, decisions, dead ends) — not scratch.
@@ -78,7 +79,7 @@ Standard playbook:
 2. Spawn: use `spawn_swarm` to fan out independent sub-tasks in parallel. Use `spawn_subagent` for sequential dependencies.
 3. Synthesize: aggregate findings from your children into a coherent answer.
 4. Verify: before finalizing, check that the answer satisfies the original goal.
-5. If you are blocked on info only the user can give, use `ask_user` (batched).
+5. If you are blocked on info only the user can give, use `ask_user` (batched). For a judgment call a person must make, use `request_decision`.
 6. End with `FINAL:` followed by your synthesized answer.
 
 Consult your `memory` (durable cross-session notes) when planning a long-horizon goal, and record lasting learnings there as the run progresses.
@@ -718,7 +719,7 @@ _UNSCOPED_NETWORK_TOOLS = frozenset({
 _HOST_SCOPED_LOCAL_TOOLS = frozenset({
     "read_file", "write_file", "list_dir", "str_replace_editor",
     "spreadsheet", "spreadsheet_read", "pandas_query", "sql_query", "sql_query_read",
-    "capability_query", "ask_user", "compute", "ast_edit",
+    "capability_query", "ask_user", "request_decision", "compute", "ast_edit",
 })
 
 _UNSCOPED_WORKSPACE_TOOLS = frozenset({
@@ -731,7 +732,7 @@ _UNSCOPED_WORKSPACE_TOOLS = frozenset({
 })
 
 _PATH_SCOPED_NONFILE_TOOLS = frozenset({
-    "ask_user", "compute", "capability_query", "http_fetch", "websocket", "oidc",
+    "ask_user", "request_decision", "compute", "capability_query", "http_fetch", "websocket", "oidc",
 })
 
 
@@ -6163,6 +6164,9 @@ class Agent:
                 stop_kind="cancelled", stop_detail="cancelled via dashboard",
             )
 
+        waiting = self._decision_wait_stop(resp, st.messages, answered=False)
+        if waiting is not None:
+            return waiting
         run_parallel = (
             len(resp.tool_calls) > 1
             and _env_or_config("MAVERICK_PARALLEL_TOOLS", "agent", "parallel_tools", "1") != "0"
@@ -6190,7 +6194,7 @@ class Agent:
         self._maybe_speculate_reads()
         if blocked:
             return AgentResult(blocked_on_user=True, role=self.role, name=self.name)
-        return None
+        return self._decision_wait_stop(resp, st.messages, answered=True)
 
     def _answer_pending_tool_uses(self, resp, messages: list[dict],
                                   tool_results: list[dict], reason: str) -> None:
@@ -6310,7 +6314,14 @@ class Agent:
         bb = st.bb
         messages = st.messages
         blocked = False
+        # A decision pauses the whole turn: nothing else in it runs, before or
+        # after the request, so no step acts on a choice nobody has made.
+        deciding = any(tc.name == "request_decision" for tc in resp.tool_calls)
         for tc in resp.tool_calls:
+            if deciding and tc.name != "request_decision":
+                from .decision_requests import WAITING_RESULT
+                tool_results.append(self._make_tool_result(tc.id, WAITING_RESULT))
+                continue
             # A serial turn may run a long shell command; honour a halt that
             # lands mid-turn.
             try:
@@ -6356,6 +6367,11 @@ class Agent:
                     "reconcile state before retrying",
                 )
                 raise
+            if tc.name == "request_decision" and not isinstance(output, _NotExecutedToolResult):
+                stopped, waiting = self._decision_outcome(bb, resp, tc, output, messages, tool_results)
+                if stopped is not None:
+                    return stopped, blocked
+                blocked = blocked or waiting
             if (tc.name == "ask_user" and not isinstance(output, _NotExecutedToolResult)
                     and not _tool_call_failed(output)):  # only a filed question pauses the run
                 from .autonomy import assume_when_headless
@@ -6386,6 +6402,52 @@ class Agent:
             tool_results.append(self._make_tool_result(tc.id, output))
             self._record_tool_lineage(tc, output)
         return None, blocked
+
+    def _decision_wait_stop(self, resp, messages: list[dict], *,
+                            answered: bool) -> AgentResult | None:
+        """Stop this agent when any agent of the run filed a decision (or
+        failed to): a subagent's request pauses its parent, a swarm sibling and
+        the root alike. ``answered`` says this turn's tool results are already
+        in ``messages``; otherwise each call is answered as not executed."""
+        from .decision_requests import STOP_KIND, WAITING, WAITING_RESULT, run_state, stop_message
+
+        state = run_state(self.ctx.world, self.ctx.goal_id)
+        if state is None:
+            return None
+        if not answered:
+            results: list[dict] = []
+            self._answer_pending_tool_uses(resp, messages, results, WAITING_RESULT)
+        if state != WAITING:
+            message = stop_message(state)
+            return AgentResult(error=message, role=self.role, name=self.name,
+                               stop_kind=STOP_KIND, stop_detail=message)
+        return AgentResult(blocked_on_user=True, role=self.role, name=self.name)
+
+    def _decision_outcome(self, bb, resp, tc, output, messages: list[dict],
+                          tool_results: list[dict]) -> tuple[AgentResult | None, bool]:
+        """A filed decision pauses the run, even headless: nobody picks the
+        recommendation for the person. A request that could not be saved stops
+        the run here, before the model can act on its own choice."""
+        from .decision_requests import (
+            FLOW_MESSAGE,
+            FLOW_STOP,
+            NOT_RECORDED,
+            STOP_KIND,
+            STOP_MESSAGE,
+        )
+
+        text = str(output)
+        if NOT_RECORDED in text or FLOW_STOP in text:  # the tool's own result, inside its frame
+            message = FLOW_MESSAGE if FLOW_STOP in text else STOP_MESSAGE
+            tool_results.append(self._make_tool_result(tc.id, output))
+            self._answer_pending_tool_uses(
+                resp, messages, tool_results, "ERROR: tool not executed (decision not recorded)")
+            if not messages or messages[-1].get("content") is not tool_results:
+                messages.append({"role": "user", "content": tool_results})
+            bb.post(self.name, "error", message)
+            return AgentResult(error=message, role=self.role, name=self.name,
+                               stop_kind=STOP_KIND, stop_detail=text), False
+        return None, not _tool_call_failed(output)
 
     def _record_tool_lineage(self, tc, output) -> None:
         """Governed-action lineage (opt-in via [actions] enable /

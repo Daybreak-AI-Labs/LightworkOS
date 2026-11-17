@@ -86,7 +86,7 @@ def test_code_page_offers_every_action_to_an_admin(client, monkeypatch):
         assert label in text, label
     assert "/static/lightwork-code.js" in page
     js = client.get("/static/lightwork-code.js").text
-    for label in ("Get latest changes", "Approve in the approvals queue", "Merge",
+    for label in ("Get latest changes", "Test commands", "Approve in the approvals queue", "Merge",
                   "Send to the original project", "Ask for approval again", "mvConfirm"):
         assert label in js, label
     for banned in ("innerHTML", "window.confirm", "window.alert", "'HTTP '", "maverick code"):
@@ -126,6 +126,8 @@ def test_code_actions_need_admin(client, monkeypatch):
     for method, path, body in (
         ("post", "/api/v1/code/repos", {"name": "x", "source": "https://example.com/x.git"}),
         ("post", "/api/v1/code/repos/x/sync", None),
+        ("get", "/api/v1/code/repos/x/commands", None),
+        ("post", "/api/v1/code/repos/x/commands", {"gate_command": "true"}),
         ("post", "/api/v1/code/features", {"repo": "x", "title": "t"}),
         ("get", "/api/v1/code/proposals/0123456789abcdef", None),
         ("post", "/api/v1/code/proposals/0123456789abcdef/merge", None),
@@ -135,6 +137,33 @@ def test_code_actions_need_admin(client, monkeypatch):
     ):
         kwargs = {"json": body} if body is not None else {}
         assert getattr(client, method)(path, **kwargs).status_code == 403, path
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
+def test_an_admin_sets_a_projects_test_commands_like_adding_it(client, monkeypatch, tmp_path):
+    from maverick.codebase import vault
+    from maverick_dashboard import code_actions_api
+    _code_on(monkeypatch)
+    vault.register("core", str(_source_repo(tmp_path)), test_command="python -m pytest -q")
+    url = "/api/v1/code/repos/core/commands"
+    r = client.post(url, json={"quick_test_command": "python -m pytest -q {changed}",
+                               "gate_command": "bash lint.sh", "test_command": ""})
+    assert r.status_code == 200, r.text
+    assert client.get(url).json() == {
+        "name": "core", "test_command": "", "quick_test_command": "python -m pytest -q {changed}",
+        "gate_command": "bash lint.sh", "heavy_test_command": ""}
+    refused = client.post(url, json={"gate_command": "lint {changed}"})
+    assert refused.status_code == 422 and "quick tests" in refused.json()["detail"]
+    # One limit and one message for every command, on both forms.
+    long = "x" * 2001
+    for path, body in ((url, {"test_command": long}),
+                       ("/api/v1/code/repos", {"name": "y", "source": "https://example.com/y.git",
+                                               "test_command": long})):
+        refused = client.post(path, json=body)
+        assert refused.status_code == 422 and refused.json()["detail"] == \
+            code_actions_api._COMMANDS_REFUSED, path
+    assert client.post("/api/v1/code/repos/nope/commands", json={"gate_command": "x"}).status_code == 404
+    assert client.get("/api/v1/code/summary").json()["repos"][0]["test_tiers"] == ["quick", "gate"]
 
 
 def test_code_actions_are_refused_while_the_vault_is_off(client):
@@ -187,6 +216,11 @@ def test_start_a_change_runs_the_kernel_swarm_in_the_background(client, monkeypa
                                                    "max_dollars": 5})
     assert r.status_code == 202
     assert calls == [("core", "Add a button", "", 5.0, "", None)]
+    from maverick.codebase import features
+    monkeypatch.setattr(features, "container_refusal", lambda: features.CONTAINER_REQUIRED)
+    r = client.post("/api/v1/code/features", json={"repo": "core", "title": "Again"})
+    assert r.status_code == 409 and "must run in a container" in r.json()["detail"]
+    assert len(calls) == 1                         # refused before anything started
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
@@ -204,6 +238,10 @@ def test_merge_waits_for_the_approval_then_merges(client, monkeypatch, tmp_path)
     detail = client.get(f"/api/v1/code/proposals/{pid}").json()
     assert detail["status"] == "pending" and detail["files"] == ["a.py"]
     assert "VALUE = 2" in detail["changes"]
+    assert "Independent check: turned off for this run." in detail["checks"]["lines"]
+    assert "Nobody independently tried to break this change." in detail["checks"]["gaps"]
+    # The review panel lists running on this computer as not checked, too.
+    assert {features.NAMESPACE_GAP, features.HOST_GAP} & set(detail["checks"]["gaps"])
     # The kernel's gate: no merge and no push without an approved approval.
     r = client.post(f"/api/v1/code/proposals/{pid}/merge")
     assert r.status_code == 409 and "waiting for a person to approve" in r.json()["detail"]
@@ -255,15 +293,22 @@ def test_named_code_runs_keep_execution_owner_and_approval_scope(client, monkeyp
     monkeypatch.setattr(code_actions_api, "_provider_missing", lambda: False)
     monkeypatch.setattr(llm, "LLM", lambda: object())
     monkeypatch.setattr(sandbox, "build_sandbox", lambda workdir: SimpleNamespace(workdir=workdir))
-    monkeypatch.setattr(features, "default_reviewer", lambda: None)
+    monkeypatch.setattr(features, "default_reviewer", lambda **kwargs: None)
     observed = []
+
+    budgets = set()
 
     def run_without_provider(_llm, world, _budget, goal_id, **kwargs):
         goal = world.get_goal(goal_id)
+        budgets.add(id(_budget))
+        if goal.title.startswith("[core] Check: "):  # the independent checker's own run
+            checks.append((goal.owner, goal.execution_principal, kwargs["user_id"]))
+            return '{"findings": [], "fixed": []}'
         observed.append((goal_id, goal.owner, goal.execution_principal, kwargs["user_id"]))
         from pathlib import Path
         (Path(kwargs["sandbox"].workdir) / "a.py").write_text("VALUE = 2\n")
         world.set_goal_status(goal_id, "done", result="local fixture")
+    checks: list = []
 
     monkeypatch.setattr(orchestrator, "run_goal_sync", run_without_provider)
     for subject in ("alice", "bob"):
@@ -272,6 +317,9 @@ def test_named_code_runs_keep_execution_owner_and_approval_scope(client, monkeyp
         assert response.status_code == 202, response.text
     assert [(owner, execution, user_id) for _, owner, execution, user_id in observed] == [
         ("user:alice", "user:alice", "alice"), ("user:bob", "user:bob", "bob")]
+    # The checker runs under the same identity, and each run charges one budget.
+    assert checks == [("user:alice", "user:alice", "alice"), ("user:bob", "user:bob", "bob")]
+    assert len(budgets) == 2
     world = dash_app._world()
     for subject, (goal_id, _, _, _) in zip(("alice", "bob"), observed, strict=True):
         headers = {"Authorization": f"Bearer {subject}"}

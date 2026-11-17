@@ -56,6 +56,11 @@ def _seed_complete_graph(world: WorldModel, attachment_path: Path) -> dict:
         episode_id=episode,
     )
     world.add_artifact(child, "text", "private artifact", "private content")
+    from maverick import decision_requests
+
+    decision_requests.request(world, child, **decision_requests.validate({
+        "question": "private decision", "area": "security", "recommended": 1, "why": "private",
+        "options": [{"label": "Keep", "effect": "private"}, {"label": "Change", "effect": "private"}]}))
     attachment_path.write_text("private attachment", encoding="utf-8")
     world.add_attachment(
         grandchild,
@@ -1199,3 +1204,28 @@ def test_an_unusable_pending_list_never_strands_this_runs_attachment_files(monke
     aside.unlink()
     result = CliRunner().invoke(main, erase)
     assert result.exit_code == 0, result.output
+
+
+def test_a_stored_v2_receipt_still_verifies_with_its_own_store_list(tmp_path):
+    from maverick import erasure_receipts as er
+
+    world = WorldModel(tmp_path / "world.db")
+    seeded = _seed_complete_graph(world, tmp_path / "private.txt")
+    _plan, manifest = _manifest_for(world, seeded["conversation_id"])
+    v2_stores = [store for store in RECEIPT_STORES if store != "decision_requests"]
+    body = {**manifest, "schema": "lightwork.erasure-receipt.v2", "expected_stores": v2_stores}
+    stored = er._sign_body(body)
+    raw = _canonical(stored)
+    world.store_erasure_receipt(
+        stored["receipt_id"], raw, tenant_id="shared",
+        created_at=datetime.fromisoformat(stored["issued_at"].replace("Z", "+00:00")).timestamp(),
+        retained_until=datetime.fromisoformat(stored["retained_until"].replace("Z", "+00:00")).timestamp())
+
+    recovered = load_verified_receipt(world, stored["receipt_id"], expected_tenant="shared")
+
+    assert recovered["schema"] == "lightwork.erasure-receipt.v2"
+    assert recovered["expected_stores"] == v2_stores
+    assert manifest["schema"] == er.RECEIPT_SCHEMA != "lightwork.erasure-receipt.v2"
+    assert "decision_requests" in manifest["expected_stores"]
+    report = verify_erasure("alice", channel="telegram", receipt=recovered, world=world)
+    assert "decision_requests" not in report["stores"]
