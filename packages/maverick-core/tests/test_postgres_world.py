@@ -1667,18 +1667,30 @@ def test_rls_holds_for_a_login_the_policies_apply_to(rls_login):
 
 def test_rls_readiness_and_startup_for_a_login_the_policies_apply_to(rls_login, monkeypatch):
     """What `maverick tenant rls-preflight` and start-up report once the
-    policies are forced and rows with no workspace remain. The login cannot
-    count those rows any more, so readiness shows none; start-up does not
-    refuse, in enterprise mode either. A superuser is refused there."""
+    policies are forced and rows with no workspace remain. The owner counts
+    them with FORCE lifted in a transaction it rolls back; a login that does
+    not own the tables cannot see them and says so. Neither reports READY
+    while they remain. Start-up does not refuse, in enterprise mode either.
+    A superuser is refused there."""
     import psycopg
     from maverick.world_model_backends import pg_rls, postgres
     from maverick.world_model_backends.postgres import PostgresWorldModel
 
+    def forced():
+        with psycopg.connect(rls_login.admin, autocommit=True) as admin:
+            return admin.execute("SELECT relforcerowsecurity FROM pg_class "
+                                 "WHERE oid = 'goals'::regclass").fetchone()[0]
+
     with psycopg.connect(rls_login.dsn, autocommit=True) as conn:
         report = pg_rls.preflight(conn)
     assert {info["owned_by_current_role"] for info in report["tables"].values()} == {rls_login.owner}
-    assert report["tables"]["goals"]["null_tenant_rows"] == 0
-    assert report["ready"] is rls_login.owner
+    goals = report["tables"]["goals"]
+    if rls_login.owner:
+        assert (goals["counted_by"], goals["null_tenant_rows"]) == ("owner_no_force", 1)
+    else:
+        assert (goals["counted_by"], goals["null_tenant_rows"]) == (None, None)
+    assert report["ready"] is False
+    assert forced() is True  # the count changed nothing
     with psycopg.connect(rls_login.admin, autocommit=True) as conn:
         assert pg_rls.preflight(conn)["tables"]["goals"]["null_tenant_rows"] == 1
         assert pg_rls.backfill(conn, "rls_alpha", dry_run=True)["goals"] == 1
@@ -1696,6 +1708,14 @@ def test_rls_readiness_and_startup_for_a_login_the_policies_apply_to(rls_login, 
         assert world._rls and world.rls_bypass_reason is None
     with pytest.raises(RuntimeError, match="superuser, which bypasses row-level security"):
         PostgresWorldModel(dsn=rls_login.admin)
+
+    # Once nothing is hidden, the owner's check is READY.
+    with psycopg.connect(rls_login.admin) as conn:
+        pg_rls.backfill(conn, "rls_alpha")
+    with psycopg.connect(rls_login.dsn, autocommit=True) as conn:
+        report = pg_rls.preflight(conn)
+    assert report["tables"]["goals"]["null_tenant_rows"] == (0 if rls_login.owner else None)
+    assert report["ready"] is rls_login.owner
 
 
 def _seed_workspace_rows(admin, tenant):

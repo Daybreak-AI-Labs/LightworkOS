@@ -48,6 +48,27 @@ def test_preflight_reports_ownership_and_legacy_rows(monkeypatch):
     assert "NOT READY" in res.output
 
 
+def test_preflight_says_how_it_counted_and_what_it_could_not(monkeypatch):
+    monkeypatch.setattr(pg_rls, "resolve_dsn", lambda dsn=None: "x")
+    monkeypatch.setattr(pg_rls, "connect", lambda *a, **k: _Conn())
+    monkeypatch.setattr(pg_rls, "preflight", lambda conn: {
+        "role": "app",
+        "tables": {"goals": {"owner": "app", "owned_by_current_role": True,
+                             "null_tenant_rows": 0, "empty_tenant_rows": 0,
+                             "counted_by": "owner_no_force"},
+                   "facts": {"owner": "dba", "owned_by_current_role": False,
+                             "null_tenant_rows": None, "empty_tenant_rows": None,
+                             "counted_by": None}},
+        "ready": False,
+    })
+    res = CliRunner().invoke(main, ["tenant", "rls-preflight"])
+    assert res.exit_code == 0, res.output
+    assert "counted as: " + pg_rls.COUNT_METHODS["owner_no_force"] in res.output
+    assert "facts: NOT owned (owner=dba), NOT COUNTED" in res.output
+    assert "Some tables were not counted" in res.output
+    assert "NOT READY" in res.output
+
+
 def test_preflight_ready_says_ready(monkeypatch):
     monkeypatch.setattr(pg_rls, "resolve_dsn", lambda dsn=None: "x")
     monkeypatch.setattr(pg_rls, "connect", lambda *a, **k: _Conn())

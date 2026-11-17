@@ -756,6 +756,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   a login that does not own the tables cannot apply it, so start once as the
   owner after upgrading. `maverick tenant backfill` now also assigns
   learning-store and approval-check records that have no workspace.
+- `maverick tenant rls-preflight` no longer reports READY while row-level
+  security hides records that have no workspace. The table owner now counts
+  them with FORCE lifted in a rolled-back transaction; a login that cannot
+  see them reports NOT COUNTED. Each report says how it counted.
 
 ### Fixed
 

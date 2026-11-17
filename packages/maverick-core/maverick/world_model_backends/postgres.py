@@ -1772,7 +1772,7 @@ class PostgresWorldModel:
                 "MAVERICK_PG_RLS=1 explicitly."
             ) from e
         offenders = {
-            t: info.get("null_tenant_rows", 0) + info.get("empty_tenant_rows", 0)
+            t: (info.get("null_tenant_rows") or 0) + (info.get("empty_tenant_rows") or 0)
             for t, info in report.get("tables", {}).items()
             if info.get("null_tenant_rows") or info.get("empty_tenant_rows")
         }

@@ -20,13 +20,16 @@ class _FakeCursor:
     def execute(self, sql: str, params: tuple | None = None) -> None:
         self.conn.calls.append((sql, params))
         s = sql.strip().lower()
-        if "current_user" in s:
+        if s.startswith("select rolsuper or rolbypassrls"):
+            self._result = (self.conn.bypass,)
+        elif "current_user" in s:
             self._result = (self.conn.role,)
         elif "to_regclass" in s:
             tbl = params[0]
             self._result = (tbl if self.conn.tables.get(tbl, {}).get("exists") else None,)
         elif "pg_get_userbyid" in s:
-            self._result = (self.conn.tables[params[0]]["owner"],)
+            info = self.conn.tables[params[0]]
+            self._result = (info["owner"], info.get("rls", False), info.get("force", False))
         elif s.startswith("select count(*)"):
             tbl = sql.split("FROM ")[1].split()[0]
             empty = self.conn.tables[tbl].get("empty", 0)
@@ -54,6 +57,7 @@ class _FakeCursor:
 class _FakeConn:
     def __init__(self, role: str, tables: dict[str, dict]) -> None:
         self.role = role
+        self.bypass = False
         self.tables = tables
         self.calls: list = []
         self.updated: dict[str, str] = {}

@@ -179,6 +179,21 @@ def test_database_checks_on_a_computer_without_a_shared_database(client):
     assert client.post(BASE + "/older-records/assign", json={"workspace": "acme"}).status_code == 409
 
 
+def test_database_separation_never_calls_an_uncounted_table_ready(client, monkeypatch):
+    from maverick.world_model_backends import pg_rls
+
+    class Conn:
+        def close(self):
+            pass
+    monkeypatch.setattr(pg_rls, "resolve_dsn", lambda dsn=None: "postgres://x")
+    monkeypatch.setattr(pg_rls, "connect", lambda *a, **k: Conn())
+    monkeypatch.setattr(pg_rls, "preflight", lambda conn: {"role": "app", "ready": False, "tables": {
+        "goals": {"owner": "app", "owned_by_current_role": True, "null_tenant_rows": None,
+                  "empty_tenant_rows": None, "counted_by": None}}})
+    row, = client.get(BASE + "/database-separation").json()["rows"]
+    assert row["ok"] is False and row["state"].startswith("Couldn't be counted")
+
+
 def test_local_model_plan_explains_missing_setup(client, tmp_path):
     data = client.get(BASE + "/local-models").json()
     assert data["planned"] is False and "All settings" in data["summary"]

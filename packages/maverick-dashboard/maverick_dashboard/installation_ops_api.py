@@ -232,6 +232,8 @@ def _database_separation() -> dict[str, Any]:
             state = "Not created yet"
         elif not info.get("owned_by_current_role"):
             state = "Lightwork's database account can't protect these"
+        elif info.get("counted_by", "owner") is None:
+            state = "Couldn't be counted because the database was busy. Try again later"
         elif legacy:
             state = f"{legacy:,} older entr{'ies' if legacy != 1 else 'y'} not assigned to a workspace"
         else:

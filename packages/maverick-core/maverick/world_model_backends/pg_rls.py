@@ -97,19 +97,82 @@ def connect(dsn: str, *, autocommit: bool = False):
     return psycopg.connect(dsn, autocommit=autocommit)
 
 
+#: How :func:`preflight` counted a table's rows, in plain words. ``None``
+#: (not counted) means the policies hide rows from this login, so any count
+#: it made would be too low.
+COUNT_METHODS = {
+    "bypass": "this login bypasses row-level security",
+    "no_policy": "row-level security is off for this table",
+    "owner": "this login owns the table and the policy is not forced",
+    "owner_no_force": "this login owns the table; the policy was lifted for the count "
+                      "inside a transaction that was then rolled back",
+}
+#: How long the count waits for writers before giving up on one table.
+_COUNT_LOCK_TIMEOUT_SECONDS = 5
+
+
+def _count_method(bypass: bool, owned: bool, rls_on: bool, forced: bool) -> str | None:
+    if bypass:
+        return "bypass"
+    if not rls_on:
+        return "no_policy"
+    if owned:
+        return "owner_no_force" if forced else "owner"
+    return None
+
+
+def _count_legacy(cur, table: str) -> tuple[int, int]:
+    col = _column(table)
+    cur.execute(f"SELECT count(*) FROM {table} WHERE {col} IS NULL")
+    nulls = int(cur.fetchone()[0])
+    empty = 0
+    if table in _EMPTY_SCOPE_TABLES:
+        cur.execute(f"SELECT count(*) FROM {table} WHERE {col} = ''")
+        empty = int(cur.fetchone()[0])
+    return nulls, empty
+
+
+def _count_legacy_without_force(conn, table: str) -> tuple[int, int] | None:
+    """Count as the owner with FORCE lifted, in a transaction that is always
+    rolled back, so the policy hides nothing and nothing is changed. ``None``
+    when writers held the table for longer than the lock timeout."""
+    try:
+        with conn.transaction(force_rollback=True):
+            cur = conn.cursor()
+            cur.execute(f"SET LOCAL lock_timeout = '{int(_COUNT_LOCK_TIMEOUT_SECONDS)}s'")
+            cur.execute(f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY")
+            return _count_legacy(cur, table)
+    except Exception as exc:
+        if getattr(exc, "sqlstate", None) == "55P03":
+            return None
+        raise
+
+
 def preflight(conn, *, only: tuple[str, ...] | None = None) -> dict[str, Any]:
     """Read-only readiness report for enabling RLS.
 
     For each tenant-scoped table: its owner, whether the *current* role owns it
     (only the owner can ALTER / CREATE POLICY), and the count of legacy
-    NULL-tenant rows and empty-tenant event rows that RLS would hide. ``ready``
-    is True only when every table exists, is owned by the current role, and has
-    no unscoped rows. ``only`` limits the report to a subset of
-    :data:`_PREFLIGHT_TABLES` (the boot gate skips tables already protected).
+    NULL-tenant rows and empty-tenant event rows that RLS would hide.
+
+    A login the policies apply to sees none of those rows, so the count is
+    made where they are visible: as a superuser or BYPASSRLS login, on a table
+    with no policy, or as the owner of a table whose policy is not forced. For
+    a forced table the owner counts with FORCE lifted inside a transaction
+    that is rolled back. ``counted_by`` names the way (:data:`COUNT_METHODS`);
+    ``None`` means the rows could not be counted, and the counts are ``None``.
+
+    ``ready`` is True only when every table exists, is owned by the current
+    role, was counted, and has no unscoped rows. ``only`` limits the report to
+    a subset of :data:`_PREFLIGHT_TABLES` (the boot gate skips tables already
+    protected).
     """
     cur = conn.cursor()
     cur.execute("SELECT current_user")
     role = cur.fetchone()[0]
+    cur.execute("SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user")
+    row = cur.fetchone()
+    bypass = bool(row and row[0] is True)
     tables: dict[str, dict[str, Any]] = {}
     ready = True
     for t in _PREFLIGHT_TABLES if only is None else only:
@@ -118,25 +181,30 @@ def preflight(conn, *, only: tuple[str, ...] | None = None) -> dict[str, Any]:
         cur.execute("SELECT to_regclass(%s)", (t,))
         if cur.fetchone()[0] is None:
             tables[t] = {"owner": None, "owned_by_current_role": False,
-                         "null_tenant_rows": 0, "empty_tenant_rows": 0, "missing": True}
+                         "null_tenant_rows": 0, "empty_tenant_rows": 0, "missing": True,
+                         "counted_by": None}
             ready = False
             continue
         cur.execute(
-            "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid = %s::regclass",
+            "SELECT pg_get_userbyid(relowner), relrowsecurity, relforcerowsecurity "
+            "FROM pg_class WHERE oid = %s::regclass",
             (t,),
         )
-        owner = cur.fetchone()[0]
-        col = _column(t)
-        cur.execute(f"SELECT count(*) FROM {t} WHERE {col} IS NULL")
-        nulls = int(cur.fetchone()[0])
-        empty = 0
-        if t in _EMPTY_SCOPE_TABLES:
-            cur.execute(f"SELECT count(*) FROM {t} WHERE {col} = ''")
-            empty = int(cur.fetchone()[0])
+        owner, rls_on, forced = cur.fetchone()
         owned = owner == role
+        method = _count_method(bypass, owned, bool(rls_on), bool(forced))
+        counts: tuple[int, int] | None = None
+        if method == "owner_no_force":
+            counts = _count_legacy_without_force(conn, t)
+            if counts is None:
+                method = None
+        elif method is not None:
+            counts = _count_legacy(cur, t)
+        nulls, empty = counts if counts is not None else (None, None)
         tables[t] = {"owner": owner, "owned_by_current_role": owned,
-                     "null_tenant_rows": nulls, "empty_tenant_rows": empty}
-        if not owned or nulls or empty:
+                     "null_tenant_rows": nulls, "empty_tenant_rows": empty,
+                     "counted_by": method}
+        if not owned or counts is None or nulls or empty:
             ready = False
     return {"role": role, "tables": tables, "ready": ready}
 
@@ -450,5 +518,5 @@ def shared_legacy_rows(world) -> dict[str, Any] | None:
     return {"rows": sum(found), "capped": _LEGACY_COUNT_CAP in found}
 
 
-__all__ = ["resolve_dsn", "connect", "preflight", "backfill", "shared_legacy_rows",
+__all__ = ["resolve_dsn", "connect", "preflight", "backfill", "shared_legacy_rows", "COUNT_METHODS",
            "database_error_message", "BackfillReport", "BackfillCommitUncertain"]

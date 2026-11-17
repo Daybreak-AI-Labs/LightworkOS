@@ -3414,10 +3414,20 @@ def tenant_rls_preflight(dsn: str | None) -> None:
             continue
         own = ("owned" if info["owned_by_current_role"]
                else f"NOT owned (owner={info['owner']})")
+        if info.get("null_tenant_rows") is None:
+            click.echo(f"  {t}: {own}, NOT COUNTED: row-level security hides rows "
+                       "from this login")
+            continue
         click.echo(f"  {t}: {own}, {info['null_tenant_rows']} legacy "
                    f"NULL-tenant row(s)")
         if info.get("empty_tenant_rows"):
             click.echo(f"    {info['empty_tenant_rows']} legacy empty-tenant event row(s)")
+    methods = {info.get("counted_by") for info in rep["tables"].values()} - {None}
+    for method in sorted(methods):
+        click.echo(f"counted as: {pg_rls.COUNT_METHODS[method]}")
+    if any(info.get("null_tenant_rows") is None for info in rep["tables"].values()):
+        click.echo("Some tables were not counted. Run this check as the table owner, "
+                   "or as a superuser or BYPASSRLS login.")
     if rep["ready"]:
         click.echo("READY: set [world_model] rls = true (or MAVERICK_PG_RLS=1) "
                    "to enforce database tenant isolation.")
