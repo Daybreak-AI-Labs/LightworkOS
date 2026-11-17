@@ -84,6 +84,13 @@ CASES = {
     "sandbox.cpus": dict(os=2, s=1, l=4, us=1),
     "sandbox.long_command_timeout": dict(os=600, s=300, l=1200, us=300, ul=86400),
     "sandbox.timeout": dict(os=60, s=30, l=120, us=30, ul=120),
+    "sandbox.warm": _perm(False),
+    # A workspace may add hosts a tool must not reach and narrow the hosts it
+    # may reach; a tool rule that is not a table is ignored.
+    "sandbox.tool": dict(os={"http_fetch": {"allow_egress": ["a.example", "b.example"]}},
+                         s={"http_fetch": {"allow_egress": ["a.example"], "deny_egress": ["x.example"]}},
+                         l={"http_fetch": {"allow_egress": ["c.example"]}},
+                         us={"shell": {"deny_egress": ["*"]}}, ul={"shell": "open"}),
     # A workspace adds areas where a run must ask a person; it never removes one.
     "approval.decision_areas": dict(
         os=["security"], s=["security", "legal"], l=[], us=[*_DECISION_DEFAULTS, "legal"],
@@ -92,6 +99,10 @@ CASES = {
         os=["governance"], s=["governance", "security"], l=[], us=["governance", "security"],
         ul=[]),
     "approval.decision_expiry_hours": dict(os=72, s=24, l=240, us=24, ul=720),
+    "approval.record_checks": _prot(True),
+    "approval.require_acknowledgement": _prot(True),
+    "approval.separate_approver": dict(os="when_available", s="always", l="never", us="always",
+                                       ul="never"),
     "security.allowed_tools": dict(os=["a", "b"], s=["a"], l=[], us=["a"]),
     "security.denied_tools": dict(os=["shell"], s="x", se=["shell", "x"], l=5, us="shell", use=["shell"]),
     "security.max_risk": dict(os="medium", s="low", l="high", us="medium"),
@@ -113,6 +124,7 @@ CASES = {
     "security.secure_defaults": _prot(True),
     # A workspace may protect code more, never less: stricter protection,
     # the checker on, a container required, more repair rounds and looks.
+    "codebase.enable": _perm(False),
     "codebase.default_protect": dict(os="approve", s="block", l="audit", ul="audit"),
     "codebase.checker": _prot(True),
     "codebase.require_container": _prot(False),
@@ -459,3 +471,98 @@ def test_a_workspace_cannot_remove_an_area_that_needs_a_decision(consumer):
         lambda: (dr.areas(), dr.admin_areas()))
     assert areas == [*dr.DEFAULT_AREAS, "legal"] and admin == ["governance"]
     assert {"approval.decision_areas", "approval.decision_admin_areas"} <= set(ignored)
+
+
+# --- Keys without a rule: only the organisation sets them -------------------
+
+def _unruled_keys() -> list[str]:
+    """Every key the code names in a policy section without a tighten rule,
+    plus one no code reads yet, so a key added later is covered too."""
+    from maverick import config_contracts, config_lint
+    from maverick.policy_tighten import WORKSPACE_INFRASTRUCTURE
+
+    named = {f"{section}.{key}" for section in TENANT_RULES
+             for key in (config_lint.KNOWN_SCHEMA.get(section) or ())}
+    for registry in (config_contracts.TEXT_SETTINGS, config_contracts.INTEGER_SETTINGS,
+                     config_contracts.BOOLEAN_SETTINGS, config_contracts.CHOICE_SETTINGS,
+                     config_contracts.NUMBER_LIST_SETTINGS):
+        named.update(name for name in registry
+                     if name.count(".") == 1 and name.split(".")[0] in TENANT_RULES)
+    named.update(f"{section}.a_setting_added_later" for section in TENANT_RULES)
+    named.update(f"sandbox.{key}" for key in WORKSPACE_INFRASTRUCTURE)
+    return sorted(key for key in named if key.split(".", 1)[1] not in TENANT_RULES[key.split(".")[0]])
+
+
+def test_the_unruled_key_list_comes_from_the_code():
+    keys = _unruled_keys()
+    assert {"sandbox.image", "sandbox.kubeconfig", "safety.receipt_key", "capabilities.deferred_tools",
+            "approval.undo_grace_seconds", "sandbox.workspace_infrastructure"} <= set(keys)
+    assert "sandbox.tool" not in keys and "approval.record_checks" not in keys
+
+
+@pytest.mark.parametrize("key", _unruled_keys())
+def test_a_workspace_value_for_a_key_without_a_rule_is_ignored(load, key):
+    name = key.split(".", 1)[1]
+    merged, reported, warnings = load(key, "organisation-value", "workspace-value")
+    assert merged.get(name) == "organisation-value" and reported and warnings == 1
+    merged, reported, warnings = load(key, None, {"a": "workspace-table"})
+    assert name not in merged and reported and warnings == 1
+
+
+_INFRASTRUCTURE = (
+    'provider = "e2b"\napi_key = "acme-key"\nkubeconfig = "/srv/acme/kube"\ncontext = "acme"\n'
+    'namespace = "acme"\nhost = "acme@build.example"\n')
+
+
+def test_the_organisation_switch_lets_a_workspace_name_its_own_work_area_servers(consumer, tmp_path):
+    from maverick import config
+
+    def ask():
+        return config.load_config().get("sandbox", {})
+
+    org = ('[sandbox]\nbackend = "kubernetes"\nnamespace = "org"\nextra_kubectl_args = ["--v=2"]\n'
+           'ssh_args = ["-p2222"]\n')
+    tenant = ("[sandbox]\n" + _INFRASTRUCTURE + 'extra_kubectl_args = ["--v=2"]\n'
+              'ssh_args = ["-oProxyCommand=sh"]\nbackend = "local"\nimage = "acme:1"\n')
+    infrastructure = {"sandbox.provider", "sandbox.api_key", "sandbox.kubeconfig", "sandbox.context",
+                      "sandbox.namespace", "sandbox.host", "sandbox.extra_kubectl_args"}
+    # Off (the default): every one stays the organisation's and is listed.
+    sandbox, ignored = consumer(org, tenant, ask)
+    assert sandbox["namespace"] == "org" and "host" not in sandbox and sandbox["backend"] == "kubernetes"
+    assert infrastructure | {"sandbox.ssh_args", "sandbox.backend", "sandbox.image"} <= ignored
+    # The switch in a workspace file is itself ignored.
+    sandbox, ignored = consumer(org, tenant + "workspace_infrastructure = true\n", ask)
+    assert sandbox["namespace"] == "org" and "sandbox.workspace_infrastructure" in ignored
+    # On: the workspace names its own servers, but cannot weaken isolation or
+    # pass connection options the organisation has not given.
+    on = org + "workspace_infrastructure = true\n"
+    sandbox, ignored = consumer(on, tenant, ask)
+    assert {k: sandbox[k] for k in ("provider", "namespace", "host", "kubeconfig")} == {
+        "provider": "e2b", "namespace": "acme", "host": "acme@build.example", "kubeconfig": "/srv/acme/kube"}
+    assert sandbox["extra_kubectl_args"] == ["--v=2"] and sandbox["ssh_args"] == ["-p2222"]
+    assert sandbox["backend"] == "kubernetes" and "image" not in sandbox
+    assert ignored == {"sandbox.ssh_args", "sandbox.backend", "sandbox.image"}
+    # While a settings file cannot be read, the switch counts as off.
+    config.dashboard_overrides_path().parent.mkdir(parents=True, exist_ok=True)
+    config.dashboard_overrides_path().write_text("[sandbox\n", encoding="utf-8")
+    sandbox, ignored = consumer(on, tenant, ask)
+    assert sandbox["namespace"] == "org" and infrastructure <= ignored
+
+
+def test_a_switch_the_consumer_reads_only_as_true_or_false(consumer, monkeypatch):
+    """``record_checks`` and ``require_acknowledgement`` read anything but
+    true or false as on, so a workspace false never lands under such a value."""
+    from maverick import approval_checks
+    from maverick.safety.consent import approval_requires_acknowledgement
+
+    monkeypatch.delenv("MAVERICK_APPROVAL_REQUIRE_ACKNOWLEDGEMENT", raising=False)
+
+    def ask():
+        return approval_checks.enabled(), approval_requires_acknowledgement()
+
+    org = '[approval]\nrecord_checks = "false"\nrequire_acknowledgement = "no"\n'
+    tenant = "[approval]\nrecord_checks = false\nrequire_acknowledgement = false\n"
+    assert consumer(org, None, ask)[0] == (True, True)
+    result, ignored = consumer(org, tenant, ask)
+    assert result == (True, True)
+    assert ignored == {"approval.record_checks", "approval.require_acknowledgement"}

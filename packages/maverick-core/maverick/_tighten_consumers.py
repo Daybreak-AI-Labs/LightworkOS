@@ -408,14 +408,76 @@ def run_as_user(upper: object, lower: object) -> tuple[Any, bool]:
 
 def organisation_only(upper: object, lower: object) -> tuple[Any, bool]:
     """``[codebase] checker_image`` and ``checker_models``: which image runs the
-    checks (and so decides every re-run's result) and which models check. Only
-    the organisation sets them; a lower layer's different value is ignored."""
+    checks (and so decides every re-run's result) and which models check; and
+    the sandbox connection options a workspace may not choose even when it
+    names its own servers. Only the organisation sets them; a lower layer's
+    different value is ignored."""
     return upper, lower != upper
+
+
+def _switch(default: bool, *, protection: bool):
+    """A switch whose consumer reads only ``true`` or ``false``; anything
+    else is the consumer's default. A protection may only go to on, a
+    permission only to off."""
+    def merge(upper: object, lower: object) -> tuple[Any, bool]:
+        if not isinstance(lower, bool):
+            raise ValueError("expected true or false")
+        current = upper if isinstance(upper, bool) else default
+        looser = (current and not lower) if protection else (lower and not current)
+        return (upper, True) if looser else (lower, False)
+    return merge
+
+
+def _hosts(value: object) -> list:
+    """Host patterns as ``sandbox.network_policy`` reads them: one text is one pattern."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return list(value)
+    raise ValueError("expected a list of host names")
+
+
+_EGRESS = {"allow_egress": "allow_list", "deny_egress": "deny_list"}
+
+
+def egress_rules(upper: object, lower: object) -> tuple[Any, bool]:
+    """``[sandbox.tool.<name>]``: a lower layer may add hosts a tool must not
+    reach and narrow the hosts it may reach, never widen them. A rule that is
+    not a table, or any other key in it, is ignored."""
+    from .policy_tighten import Incomparable, tighten
+
+    if not isinstance(lower, dict):
+        raise ValueError("expected a table of tools")
+    if upper is not None and not isinstance(upper, dict):
+        raise Incomparable("the organisation's tool rules cannot be read")
+    merged, loosened = dict(upper or {}), False
+    for tool, rule in lower.items():
+        base = merged.get(tool, {})
+        if not isinstance(rule, dict) or not isinstance(base, dict):
+            loosened = True
+            continue
+        out = dict(base)
+        for key, value in rule.items():
+            try:
+                out[key], looser = tighten(_EGRESS[key], _hosts(base.get(key)), _hosts(value))
+            except (KeyError, ValueError):
+                looser = True
+            loosened = loosened or looser
+        merged[tool] = out
+    return merged, loosened
 
 
 MERGES = {
     "codebase.checker_image": organisation_only,
     "codebase.checker_models": organisation_only,
+    "codebase.enable": _switch(False, protection=False),
+    "approval.record_checks": _switch(True, protection=True),
+    "approval.require_acknowledgement": _switch(True, protection=True),
+    "sandbox.tool": egress_rules,
+    "sandbox.extra_kubectl_args": organisation_only,
+    "sandbox.ssh_args": organisation_only,
     "sandbox.run_as_user": run_as_user,
     "safety.consent_mode": consent_mode,
     **SCALARS,

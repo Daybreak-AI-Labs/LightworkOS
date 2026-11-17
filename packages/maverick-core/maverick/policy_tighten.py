@@ -24,6 +24,12 @@ place that decides it:
 * ``rank`` -- an ordered choice, ``order`` listed from strictest to loosest;
   an entry may be a tuple of equally strict spellings.
 
+A key without a rule in a policy section is set by the organisation alone: a
+lower layer's value for it is ignored and reported, whatever it is. The one
+exception is the sandbox infrastructure keys (:data:`WORKSPACE_INFRASTRUCTURE`),
+which a workspace may name only when the organisation turns on ``[sandbox]
+workspace_infrastructure``.
+
 Keys whose consumer has its own parser (governance thresholds, approval
 counts, tool risk ratings, sandbox limits, ...) are compared by what that
 consumer does with each value (:mod:`maverick._tighten_consumers`), and a
@@ -222,8 +228,9 @@ _ACL_RISK = ("low", "medium", "high", (None, ""))
 # section -> key -> (kind, default, order, unknown). The default is what the
 # key's consumer uses when it is unset (a callable gets the organisation's
 # section); ``unknown`` is the choice the consumer treats an unlisted value as.
-# A key not listed has no stricter direction (a path, an image, a key name or
-# a place the owner chooses to run work) and merges as an ordinary setting.
+# A key not listed (a path, an image, a signing key, a waiting time) has no
+# stricter direction, so only the organisation sets it: a lower layer's value
+# is ignored and reported.
 TENANT_RULES: dict[str, dict[str, tuple]] = {
     "governance": {
         "deny_actions": _consumer("governance.deny_actions"),
@@ -283,6 +290,8 @@ TENANT_RULES: dict[str, dict[str, tuple]] = {
         "cpus": _consumer("sandbox.cpus"),
         "long_command_timeout": _consumer("sandbox.long_command_timeout", 600),
         "timeout": _consumer("sandbox.timeout", 60),
+        "warm": ("permission", False, (), None),
+        "tool": _consumer("sandbox.tool"),
     },
     # Decision requests (maverick.decision_requests): a workspace may add areas
     # where a run must ask a person, or areas that need an administrator, and
@@ -291,6 +300,12 @@ TENANT_RULES: dict[str, dict[str, tuple]] = {
         "decision_areas": ("deny_list", list(_DECISION_AREAS), (), None),
         "decision_admin_areas": ("deny_list", list(_DECISION_ADMIN_AREAS), (), None),
         "decision_expiry_hours": ("limit", _DECISION_EXPIRY.default, (), None),
+        "record_checks": _consumer("approval.record_checks", True),
+        "require_acknowledgement": _consumer("approval.require_acknowledgement", True),
+        # safety.dual_control.separate_approver_mode: blank is the default and
+        # any other unknown value means "always".
+        "separate_approver": ("rank", "when_available",
+                              (("always",), ("when_available", ""), ("never",)), "always"),
     },
     "security": {
         "allowed_tools": _consumer("security.allowed_tools"),
@@ -310,6 +325,7 @@ TENANT_RULES: dict[str, dict[str, tuple]] = {
     # maverick.config.get_codebase; the defaults mirror CODEBASE_LOOP_DEFAULTS.
     # An unreadable protection mode is read as "block".
     "codebase": {
+        "enable": _consumer("codebase.enable", False),
         "default_protect": ("rank", "block", ("block", "approve", "audit"), "block"),
         "checker": ("protection", True, (), None),
         "require_container": ("protection", False, (), None),
@@ -323,6 +339,29 @@ TENANT_RULES: dict[str, dict[str, tuple]] = {
 }
 
 _ACL_RULES = {key: TENANT_RULES["security"][key] for key in ("allowed_tools", "denied_tools", "max_risk")}
+
+_ORDINARY = ("ordinary", None, (), None)
+
+# [sandbox] keys that say where work runs. A workspace may set them only when
+# the organisation's ``[sandbox] workspace_infrastructure`` is on; the backend
+# kind still follows its own rule above. Connection options are handed to
+# kubectl and ssh on this computer, where options such as ProxyCommand or a
+# credential program run commands here, so only the organisation's own list
+# is ever used.
+WORKSPACE_INFRASTRUCTURE: dict[str, tuple] = {
+    **dict.fromkeys(("provider", "api_key", "kubeconfig", "context", "namespace", "host"), _ORDINARY),
+    "extra_kubectl_args": _consumer("sandbox.extra_kubectl_args"),
+    "ssh_args": _consumer("sandbox.ssh_args"),
+}
+
+
+def workspace_infrastructure(sandbox: object) -> bool:
+    """The organisation's ``[sandbox] workspace_infrastructure`` switch: off
+    unless it is true."""
+    from ._envparse import coerce_bool
+
+    value = sandbox.get("workspace_infrastructure") if isinstance(sandbox, dict) else None
+    return value is True or (isinstance(value, str) and coerce_bool(value, False))
 
 
 def _acl(upper: object, lower: object) -> tuple[Any, bool]:
@@ -343,13 +382,15 @@ def _acl(upper: object, lower: object) -> tuple[Any, bool]:
 def _merge_key(rule: tuple | None, section: dict, key: str, value: object,
                deep_merge=None) -> tuple[bool, Any, str | None]:
     """``(changed, value, status)`` for one lower-layer key of a tight section;
-    ``status`` is ``"looser"``, ``"fixed"`` (incomparable) or ``None``."""
+    ``status`` is ``"looser"``, ``"fixed"`` (set by the organisation) or ``None``."""
     present = key in section
-    if rule is None:  # no stricter direction: an ordinary setting
+    if rule is None:  # no stricter direction: only the organisation sets it
+        return False, None, "fixed"
+    kind, default, order, unknown = rule
+    if kind == "ordinary":  # a key the organisation lets a workspace choose
         if deep_merge is not None and isinstance(value, dict) and isinstance(section.get(key), dict):
             return True, deep_merge(section[key], value), None
         return True, value, None
-    kind, default, order, unknown = rule
     upper = section[key] if present else (default(section) if callable(default) else default)
     try:
         if kind == "risk":
@@ -389,18 +430,26 @@ def _merge_rules(rules: dict, prefix: str, upper: dict, lower: dict,
     return merged, ignored, fixed
 
 
-def merge_tenant_section(name: str, upper: dict, lower: dict,
-                         deep_merge=None) -> tuple[dict, list[str], list[str]]:
+def merge_tenant_section(name: str, upper: dict, lower: dict, deep_merge=None, *,
+                         infrastructure: bool | None = None) -> tuple[dict, list[str], list[str]]:
     """Apply ``lower`` (a tenant's section) under ``upper`` (the organisation's).
 
     Returns the merged section, the dotted names of keys whose looser value
-    was ignored, and those kept because the organisation's value cannot be
-    compared (set by the organisation).
+    was ignored, and those only the organisation sets (no rule, or an
+    organisation value that cannot be compared). ``infrastructure`` says
+    whether a workspace may name its own sandbox servers; ``None`` reads the
+    organisation's switch from ``upper``.
     """
-    return _merge_rules(TENANT_RULES[name], f"{name}.", upper, lower, deep_merge)
+    rules = TENANT_RULES[name]
+    if infrastructure is None:
+        infrastructure = name == "sandbox" and workspace_infrastructure(upper)
+    if name == "sandbox" and infrastructure:
+        rules = {**WORKSPACE_INFRASTRUCTURE, **rules}
+    return _merge_rules(rules, f"{name}.", upper, lower, deep_merge)
 
 
-def merge_tenant_overlay(upper: dict, lower: dict, deep_merge) -> tuple[dict, list[str], list[str]]:
+def merge_tenant_overlay(upper: dict, lower: dict, deep_merge, *,
+                         infrastructure: bool | None = None) -> tuple[dict, list[str], list[str]]:
     """Merge a tenant's whole config file under the organisation's config.
 
     The tables in :data:`TENANT_RULES` are tighten-only; every other table
@@ -416,7 +465,8 @@ def merge_tenant_overlay(upper: dict, lower: dict, deep_merge) -> tuple[dict, li
         if not isinstance(lower[name], dict) or not isinstance(section, dict):
             ignored.append(name)
             continue
-        merged[name], missed, kept = merge_tenant_section(name, section, lower[name], deep_merge)
+        merged[name], missed, kept = merge_tenant_section(name, section, lower[name], deep_merge,
+                                                          infrastructure=infrastructure)
         ignored.extend(missed)
         fixed.extend(kept)
     return merged, ignored, fixed

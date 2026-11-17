@@ -120,8 +120,9 @@ def _check_governance_tool_names(cfg: dict) -> None:
 
 def _check_policy_overlays() -> None:
     """Advisory: workspace settings and agent overrides on disk that try to
-    loosen your organisation's policy. They still load; the looser part is
-    ignored, and this lists it so an administrator can tidy the file."""
+    loosen your organisation's policy or set what only it sets. They still
+    load; that part is ignored, and this lists it so an administrator can
+    tidy the file."""
     try:
         from .config import tenant_policy_loosenings
         from .domain import clamped_workspace_domains
@@ -131,7 +132,8 @@ def _check_policy_overlays() -> None:
         return
     for workspace, keys in sorted(loosened.items())[:8]:
         _row(YELLOW, "workspace policy", f"{workspace}: ignored {', '.join(keys)}",
-             fix="A workspace can only make these settings stricter. Remove them from its config.toml.")
+             fix="A workspace can only make some settings stricter. "
+                 "Move the others to your organisation's config.toml, or remove them from the workspace file.")
     for name, reasons in sorted(clamped.items())[:8]:
         _row(YELLOW, "agent override", f"{name}: {'; '.join(reasons)}",
              fix="The looser part is ignored. Edit the override so it only narrows the built-in agent.")
