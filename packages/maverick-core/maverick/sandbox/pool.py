@@ -35,7 +35,7 @@ _DIGEST = re.compile(r"(?:sha256:)?[0-9a-f]{64}\Z")
 # adding a backend field requires a new eligibility/policy decision.
 _COMMON_STATE = frozenset({
     "workdir", "image", "timeout", "allow_network", "allow_root", "pids_limit",
-    "memory", "cpus", "pending_cleanup", "_pool_lease",
+    "memory", "cpus", "pending_cleanup", "_pool_lease", "pull", "run_as",
 })
 _DOCKER_STATE = _COMMON_STATE | {"runtime", "reuse_container", "read_only_paths",
                                   "_read_only_mounts", "_warm_name"}
@@ -102,6 +102,9 @@ def _policy_of(sandbox: object) -> SandboxPolicy | None:
     else:
         return None
     if set(vars(sandbox)) != expected:
+        return None
+    # A checker-image box (never pulled, run as an ordinary user) is never pooled.
+    if sandbox.pull is not None or sandbox.run_as is not None:
         return None
     if (type(sandbox.pending_cleanup) is not dict or sandbox.pending_cleanup
             or type(sandbox._pool_lease) is not BackendLease):
