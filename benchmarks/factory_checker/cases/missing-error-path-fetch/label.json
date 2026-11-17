@@ -1,0 +1,12 @@
+{
+  "id": "missing-error-path-fetch",
+  "title": "Return parsed JSON from fetch_json",
+  "description": "fetch_json() in fetch.py returns the body as text. Return the parsed JSON instead, so callers get a dict.",
+  "verdict": "defect",
+  "defect": {
+    "kind": "missing-error-path",
+    "file": "fetch.py",
+    "repro": "python repro.py",
+    "why": "The status check is gone: a 500 answer whose body is JSON is returned as if it were the document instead of raising FetchError."
+  }
+}

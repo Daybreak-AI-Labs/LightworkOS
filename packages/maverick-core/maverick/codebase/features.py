@@ -48,6 +48,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from ..budget import BudgetExceeded
+from ..channel_approvals import CODE_PROTECTED_PROVENANCE
 from ..file_lock import atomic_write_bytes, cross_process_lock
 from . import vault
 from .vault import VaultError, _git
@@ -56,6 +57,11 @@ MAX_DIFF_CHARS = 200_000
 MAX_TEST_OUTPUT_CHARS = 20_000
 MAX_REPAIR_OUTPUT_CHARS = 6_000
 MAX_FINDINGS = 20
+MAX_PROTECTED_LISTED = 200
+# A protected proposal's approval: two distinct people, neither the person who
+# started the feature run (channel_approvals.ALWAYS_SEPARATE_PROVENANCES).
+PROTECTED_PROVENANCE = CODE_PROTECTED_PROVENANCE
+PROTECTED_APPROVALS = 2
 MAX_REPRO_CHARS = 2_000
 MAX_PROBE_FILES = 3
 MAX_PROBE_BYTES = 20 * 1024
@@ -379,7 +385,7 @@ def _write_probes(copy: Path, files: dict[str, str]) -> str | None:
     return None
 
 
-def _finding(raw: object, fid: str, checker: int = 1) -> dict:
+def _finding(raw: object, fid: str, checker: int | str = 1) -> dict:
     raw = raw if isinstance(raw, dict) else {"what": str(raw)}
     severity = str(raw.get("severity", "")).strip().lower()
     f = {"id": fid, "checker": checker,
@@ -416,28 +422,6 @@ def _stop_if_waiting(world, goal_id: int) -> None:
         raise DecisionPending(decisions, goal_id)
 
 
-def _mark_step(world, goal_id: int, pid: str) -> None:
-    """Record a goal as a code-change step, before it runs; an origin it
-    already has is kept. A mark that cannot be written raises, so nothing
-    runs unmarked (decision_requests.feature_start_refusal)."""
-    if world.tenant_query("SELECT 1 FROM goal_origins o WHERE o.goal_id = ? AND "
-                          "{tenant_goal:o.goal_id}", (int(goal_id),)):
-        return
-    world.record_goal_origin(goal_id, ORIGIN_KIND, pid)
-
-
-@contextmanager
-def _in_loop(goal_id: int):
-    """This loop's own run of ``goal_id``: the one place a marked step starts."""
-    from .. import decision_requests
-    token = decision_requests.FEATURE_LOOP.set(
-        decision_requests.FEATURE_LOOP.get() | {int(goal_id)})
-    try:
-        yield
-    finally:
-        decision_requests.FEATURE_LOOP.reset(token)
-
-
 class _Loop:
     """One feature run's rounds. The author works in its own working copy; every
     author round is committed host-side and pinned before any repository code
@@ -447,7 +431,8 @@ class _Loop:
     def __init__(self, world, repo: vault.Repo, host: Path, *, base: str,
                  branch: str, pid: str, title: str, description: str, owner: str,
                  run: Runner, checkers: list[Checker], sandbox_factory, budget,
-                 repair_rounds: int, check_rounds: int, on_host: bool = True) -> None:
+                 repair_rounds: int, check_rounds: int, on_host: bool = True,
+                 protected_checker: Checker | None = None, self_repo: bool = False) -> None:
         self.world, self.repo, self.host = world, repo, host
         self.base, self.branch, self.pid = base, branch, pid
         self.title, self.description, self.owner = title, description, owner
@@ -477,6 +462,10 @@ class _Loop:
                             "checkers": [_checker_record(c, n, author)
                                          for n, c in enumerate(checkers, start=1)],
                             "image": self.image or None, "repros_skipped": False}
+        # A change to a protected path (or, when allowed, to the repository the
+        # running installation came from): see protect().
+        self.protected_checker, self.self_repo = protected_checker, self_repo
+        self.protected: dict | None = None
 
     def _labelled(self):
         from ..ifc import labelled_run
@@ -704,23 +693,12 @@ class _Loop:
         # the author saw that command, so the checker must confirm the fix.
         earlier = [f for f in self.check["findings"]
                    if f.get("checker", 1) == n and (not f["fixed"] or _unconfirmed(f))]
-        files = [f for f in _git(["diff", "--name-only", "-z", self.base, self.head],
-                                 git_dir=self.host).split("\0") if f]
-        gid = self.world.create_goal(
-            f"[{self.repo.name}] Check: {self.title}" + (f" (checker {n})" if many else ""),
-            _check_brief(self.repo, self.title, self.description, self.base, files, earlier),
-            owner=self.owner, execution_principal=self.owner)
+        gid = self._check_goal(f"Check: {self.title}" + (f" (checker {n})" if many else ""),
+                               earlier)
         self.check["goal_ids"].append(gid)
         who = f"checker {n}: " if many else ""
         try:
-            _mark_step(self.world, gid, self.pid)
-            with vault.work_dir() as tmp, _step(tmp) as step:
-                copy = _fresh_copy(self.host, tmp / "check", self.head)
-                self._for_image(copy)
-                with self._labelled(), _in_loop(gid):
-                    out = checker(gid, copy)
-                self.setup_failed |= step["setup_failed"]
-            _stop_if_waiting(self.world, gid)  # never read as a clean look
+            out = self._check_copy(checker, gid)
         except DecisionPending:
             self.check["error"] = f"{who}{ASKED_REASON}"
             self.check["checkers"][n - 1]["error"] = ASKED_REASON
@@ -743,6 +721,93 @@ class _Loop:
             self.check["checkers"][n - 1]["error"] = "its report could not be read"
         self._count_only(gid, report)
         return report
+
+    def _check_goal(self, what: str, earlier: list[dict]) -> int:
+        """A fresh check task: the request and where to read the change, never
+        the author's goal, transcript or reasoning."""
+        files = [f for f in _git(["diff", "--name-only", "-z", self.base, self.head],
+                                 git_dir=self.host).split("\0") if f]
+        gid = self.world.create_goal(
+            f"[{self.repo.name}] {what}",
+            _check_brief(self.repo, self.title, self.description, self.base, files, earlier),
+            owner=self.owner, execution_principal=self.owner)
+        _mark_step(self.world, gid, self.pid)
+        return gid
+
+    def _check_copy(self, checker: Checker, gid: int) -> object:
+        """Run ``checker`` on its own throwaway copy of the pinned head."""
+        with vault.work_dir() as tmp, _step(tmp) as step:
+            copy = _fresh_copy(self.host, tmp / "check", self.head)
+            self._for_image(copy)
+            with self._labelled(), _in_loop(gid):
+                out = checker(gid, copy)
+            self.setup_failed |= step["setup_failed"]
+        _stop_if_waiting(self.world, gid)  # never read as a clean look
+        return out
+
+    def protect(self) -> None:
+        """Whether the final change is protected: it touches a protected path
+        (both sides of a rename count) or, when allowed, the repository the
+        running installation came from (then the whole repository is)."""
+        if self.head == self.base:
+            return
+        paths = [f for f in _git(["diff", "--name-only", "--no-renames", "-z", self.base,
+                                  self.head], git_dir=self.host).split("\0") if f]
+        matched = vault.protected_matches(self.repo.protected_paths, paths)
+        if not matched and not self.self_repo:
+            return
+        self.protected = {"paths": matched[:MAX_PROTECTED_LISTED], "count": len(matched),
+                          "self": self.self_repo, "model": None, "problem": None,
+                          "state": "not run", "reason": None, "commit": None,
+                          "goal_id": None, "findings": []}
+        self._second_check()
+
+    def _second_check(self) -> None:
+        """For a protected change, after the normal checkers: one more
+        independent checker, whose model must be of a different provider family
+        from the author's and every normal checker's. Charged to the same
+        budget; it looks once, at the final version."""
+        rec = self.protected
+        assert rec is not None
+        checker = self.protected_checker
+        model = getattr(checker, "model", None) if checker is not None else None
+        rec["model"] = str(model) if model else None
+        rec["problem"] = _family_problem(rec["model"], _author_model(),
+                                         [c.get("model") for c in self.check["checkers"]])
+        if rec["problem"] or checker is None or not _named(self.owner):
+            return  # it could not be approved anyway: spend nothing on it
+        if self.stopped or not self._afford():
+            rec["reason"] = BUDGET_REASON if self.stopped in (None, "budget") else \
+                "the run stopped early"
+            return
+        gid = rec["goal_id"] = self._check_goal(f"Protected check: {self.title}", [])
+        try:
+            out = self._check_copy(checker, gid)
+        except DecisionPending:
+            rec["reason"] = ASKED_REASON
+            raise
+        except BudgetExceeded as exc:
+            self.stopped, rec["reason"] = "budget", BUDGET_REASON
+            _fail_goal(self.world, gid, exc)
+            return
+        except Exception as exc:  # noqa: BLE001 -- recorded: the change was not checked
+            rec["reason"] = f"it stopped with {type(exc).__name__}"
+            _fail_goal(self.world, gid, exc)
+            return
+        if not self._afford():
+            rec["reason"] = BUDGET_REASON  # it ran, but its report is not used
+            return
+        report = _report(out)
+        self._count_only(gid, report)
+        if report is None:
+            rec["reason"] = "its report could not be read"
+            return
+        findings = [_finding(raw, f"p.{i}", "protected") for i, raw in
+                    enumerate(report["findings"][:MAX_FINDINGS], start=1)]
+        self._confirm(findings)
+        rec.update(state="ran", commit=self.head, findings=[
+            {k: v for k, v in f.items() if k not in ("sent", "fixed") and not k.startswith("_")}
+            | {"status": "not attempted"} for f in findings])
 
     def _count_only(self, goal_id: int, report: dict | None) -> None:
         """Finding text can quote vaulted code: the check task's own result
@@ -1024,6 +1089,77 @@ def _checker_record(checker: Checker, n: int, author: str | None) -> dict:
     return {"n": n, "model": model, "same_family": same, "commit": None}
 
 
+# family -> the names its models start with (a whole name: followed by the
+# end, a separator or a version number, never more letters).
+_FAMILIES = {
+    "anthropic": ("claude",),
+    "openai": ("gpt", "chatgpt", "o1", "o3", "o4", "davinci"),
+    "google": ("gemini", "gemma", "palm"),
+    "meta": ("llama", "codellama"),
+    "mistral": ("mistral", "mixtral", "codestral", "magistral", "ministral", "pixtral",
+                "devstral"),
+    "deepseek": ("deepseek",),
+    "alibaba": ("qwen", "qwq"),
+    "cohere": ("command", "aya"),
+    "xai": ("grok",),
+    "microsoft": ("phi",),
+    "amazon": ("nova", "titan"),
+    "moonshot": ("kimi",),
+    "zhipu": ("glm",),
+}
+_NAME = {stem: family for family, stems in _FAMILIES.items() for stem in stems}
+_STEM = re.compile(r"(" + "|".join(sorted(map(re.escape, _NAME), key=len, reverse=True))
+                   + r")(?=$|[-_.:\s]|\d)")
+_ORGS = frozenset({"anthropic", "openai", "google", "meta", "meta-llama", "mistralai", "mistral",
+                   "deepseek", "deepseek-ai", "qwen", "alibaba", "cohere", "x-ai", "xai",
+                   "microsoft", "amazon", "moonshotai", "z-ai", "zhipu", "ai21"})
+def model_family(model: object) -> str | None:
+    """The vendor family of a model spec, or None when it cannot be told.
+
+    The model's own name decides, after any gateway (``openrouter:``,
+    ``bedrock:``, ``vertex:``...), organisation (``anthropic/``) or Bedrock
+    region and vendor (``us.anthropic.``): it must START with a known model
+    name (``claude-``, ``gpt-``, ``o3``, ``gemini-``, ``llama3``...). A name
+    that also names another vendor's model anywhere (a distillation) cannot
+    be compared. A name it does not know cannot be compared either, whatever
+    its provider prefix (``openai:my-ft``); OpenAI's fine-tune form
+    ``ft:<base model>:...`` reads as its base model. Stricter than
+    :func:`maverick.verifier._same_family`, which other callers keep."""
+    text = str(model or "").strip().lower()
+    if not text:
+        return None
+    provider, _, name = text.partition(":") if ":" in text else ("", "", text)
+    if provider == "ft" or name.startswith("ft:"):
+        # OpenAI's own fine-tune form, ft:<base model>:<org>:...: its base decides.
+        name = (name if provider == "ft" else name[3:]).split(":", 1)[0]
+    name = name.rsplit("/", 1)[-1]
+    name = re.sub(r"^(?:us|eu|apac|global|us-gov)\.", "", name)
+    head, dot, rest = name.partition(".")
+    if dot and head in _ORGS:
+        name = rest
+    found = _STEM.match(name)
+    others = {_NAME[m.group(1)] for m in _STEM.finditer(name)
+              if m.start() == 0 or name[m.start() - 1] in "-_.: "}
+    if not found:
+        return None  # a name Lightwork does not know: never its provider's family
+    family = _NAME[found.group(1)]
+    return family if others <= {family} else None
+
+
+def _family_problem(model: str | None, author: str | None,
+                    checkers: list[str | None]) -> str | None:
+    """Why the second checker cannot vouch for a protected change, or None:
+    unset | same_family (as the author or a normal checker) | uncompared
+    (any family that cannot be told counts as not comparable)."""
+    if not model:
+        return "unset"
+    mine = model_family(model)
+    others = [model_family(o) for o in (author, *checkers)]
+    if mine is None or any(o is None for o in others):
+        return "uncompared"
+    return "same_family" if mine in others else None
+
+
 def _fail_goal(world, goal_id: int, exc: BaseException) -> None:
     try:
         world.set_goal_status(goal_id, "failed",
@@ -1062,16 +1198,237 @@ def _review(loop: _Loop, reviewer: Reviewer | None, brief: str, diff: str) -> di
         return None
 
 
+SELF_REFUSAL = ("This code project is the Lightwork installation that runs these changes, so "
+                "Lightwork will not change it. Run the factory from a separate installation "
+                "pinned to a released version.")
+
+
+def _installation_checkout(package_dir: Path | None = None) -> Path | None:
+    """The git checkout the running ``maverick`` package was imported from
+    (an editable or source install), or None: a wheel lives in
+    ``site-packages``, outside any checkout, even inside a checkout's venv."""
+    if package_dir is None:
+        import maverick
+        package_dir = Path(maverick.__file__).resolve().parent
+    for folder in (package_dir, *package_dir.parents):
+        if folder.name in ("site-packages", "dist-packages"):
+            return None
+        if (folder / ".git").exists():
+            return folder
+    return None
+
+
+def _same_place(url: str) -> str:
+    """A git address reduced to host and path (scheme, user, port, ``.git``
+    and case of the host dropped), or a local path resolved."""
+    from urllib.parse import urlsplit
+    text = url.strip()
+    scp = re.fullmatch(r"(?:[^@/\s]+@)?([^:/\s]+):(?!//)(.+)", text)
+    if "://" in text:
+        parts = urlsplit(text)
+        if parts.scheme == "file":
+            return str(Path(parts.path).resolve())
+        host, path = (parts.hostname or "").lower(), parts.path
+    elif scp and not Path(text).exists():
+        host, path = scp.group(1).lower(), scp.group(2)
+    else:
+        return str(Path(text).expanduser().resolve())
+    path = path.strip("/")
+    return f"{host}/{path.removesuffix('.git')}"
+
+
+def _roots(git_dir: Path | None = None, cwd: Path | None = None, ref: str = "HEAD",
+           safe: Path | None = None) -> set[str]:
+    """First commits of ``ref``; raises :class:`VaultError` when git cannot say."""
+    trust = ["-c", f"safe.directory={safe}"] if safe is not None else []
+    return set(_git([*trust, "rev-list", "--max-parents=0", ref], git_dir=git_dir,
+                    cwd=cwd).split())
+
+
+def is_installation(repo: vault.Repo, host: Path) -> bool:
+    """Whether ``repo`` is the source of the running installation: the
+    installed ``maverick`` package is imported from a git checkout (not a
+    wheel) and that checkout is the repository's source path, has a remote
+    at the same address, or shares a first commit with the vaulted default
+    branch (a mirror, a fork or another address of the same history).
+
+    The checkout is read with ``safe.directory`` set to it, so one owned by
+    another user still answers; anything git cannot answer about a checkout
+    that was found counts as the installation (fail closed)."""
+    checkout = _installation_checkout()
+    if checkout is None:
+        return False
+    if _same_place(repo.source) == _same_place(str(checkout)):
+        return True
+    try:
+        remotes = _git(["-c", f"safe.directory={checkout}", "remote", "-v"], cwd=checkout)
+    except VaultError:
+        return True
+    places = {_same_place(line.split()[1]) for line in remotes.splitlines()
+              if len(line.split()) >= 2}
+    if _same_place(repo.source) in places:
+        return True
+    try:
+        ours = _roots(git_dir=host, ref=f"refs/heads/{repo.default_branch}")
+        theirs = _roots(cwd=checkout, safe=checkout)
+    except VaultError:
+        return True
+    return bool(ours & theirs)
+
+
+def self_change_refusal(name: str) -> str | None:
+    """The plain refusal when ``name`` is the running installation's own
+    repository and ``[codebase] allow_self_changes`` is off; otherwise None."""
+    if loop_settings()["allow_self_changes"]:
+        return None
+    try:
+        repo = vault.get(name)
+        with vault.host_repo(name) as host:
+            return SELF_REFUSAL if is_installation(repo, host) else None
+    # failure-policy: fail_open -- an early answer only; propose() checks again and refuses
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _mark_step(world, goal_id: int, pid: str) -> None:
+    """Record a goal as a code-change step, before it runs; an origin it
+    already has is kept. A mark that cannot be written raises, so nothing
+    runs unmarked (decision_requests.feature_start_refusal)."""
+    if world.tenant_query("SELECT 1 FROM goal_origins o WHERE o.goal_id = ? AND "
+                          "{tenant_goal:o.goal_id}", (int(goal_id),)):
+        return
+    world.record_goal_origin(goal_id, ORIGIN_KIND, pid)
+
+
+@contextmanager
+def _in_loop(goal_id: int):
+    """This loop's own run of ``goal_id``: the one place a marked step starts."""
+    from .. import decision_requests
+    token = decision_requests.FEATURE_LOOP.set(
+        decision_requests.FEATURE_LOOP.get() | {int(goal_id)})
+    try:
+        yield
+    finally:
+        decision_requests.FEATURE_LOOP.reset(token)
+
+
+RUNNING_LINE = "This change is still being built."
+STOPPED_LINE = ("This change stopped before it finished, for example because Lightwork "
+                "restarted. Start a new code change.")
+
+
+def _proc_identity(pid: int) -> tuple[str, str] | None:
+    """(boot id, start time) of process ``pid`` from ``/proc``, so a reused
+    process number or a restarted computer never reads as the same process;
+    None where ``/proc`` cannot tell (another system, or no such process)."""
+    try:
+        boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+        stat = Path(f"/proc/{int(pid)}/stat").read_text()
+    except (OSError, ValueError):
+        return None
+    fields = stat.rsplit(")", 1)[-1].split()
+    return (boot, fields[19]) if len(fields) > 19 else None  # field 22: start time
+
+
+def _wall_cap(budget) -> float:
+    """The run's wall-time cap: the budget's, else the configured default."""
+    from ..runner import DEFAULT_MAX_WALL_SECONDS, goal_budget_defaults
+    cap = getattr(budget, "max_wall_seconds", None) or \
+        goal_budget_defaults()["max_wall_seconds"] or DEFAULT_MAX_WALL_SECONDS
+    return float(cap)
+
+
+def _running_record(pid: str, name: str, title: str, branch: str, base: str, owner: str,
+                    budget) -> dict:
+    """The record a change keeps while it is built, replaced by its proposal
+    when it ends; who runs it (this computer and process) and until when."""
+    import socket
+    now, cap = time.time(), _wall_cap(budget)
+    identity = _proc_identity(os.getpid())
+    return {"id": pid, "repo": name, "title": title, "goal_id": None, "branch": branch,
+            "base": base, "head": base, "files": [], "diff": "", "tests_output": None,
+            "tests": None, "review": None, "check": None, "status": "running",
+            "approval_id": None, "created_at": now, "merged_at": None,
+            "owner": owner or None, "protected": None, "decision": None,
+            "host": socket.gethostname(), "process": os.getpid(),
+            "boot_id": identity[0] if identity else None,
+            "process_start": identity[1] if identity else None,
+            "wall_cap": cap, "deadline": now + cap}
+
+
+def _run_gone(p: dict) -> bool:
+    """Whether a change left \"running\" is no longer being built: past its
+    time cap anywhere, or, on this computer, its process is not the very one
+    that started it (same boot, same process start time; a reused process
+    number or a restart does not count). Without ``/proc`` the cap decides."""
+    import socket
+    if time.time() > float(p.get("deadline") or 0):
+        return True
+    if p.get("host") != socket.gethostname() or not isinstance(p.get("process"), int):
+        return False
+    now = _proc_identity(int(p["process"]))
+    if now is None:
+        return _proc_identity(os.getpid()) is not None  # /proc works: that process is gone
+    return now != (p.get("boot_id"), p.get("process_start"))
+
+
+def _end_run(world, pid: str, record: dict | None) -> None:
+    """A change that raised: its record reads stopped, and nothing it queued starts."""
+    _close_queued(world, pid)
+    if record is not None:
+        try:
+            _save({**record, "status": "stopped"})
+        except Exception:  # noqa: BLE001 -- the process ending shows it as stopped anyway
+            pass
+
+
+def _close_queued(world, pid: str) -> None:
+    """Cancel every goal still waiting to start below this change's steps:
+    its private copy of the code is gone, so none of them may run now."""
+    from ..decision_requests import FEATURE_RESTARTS
+    try:
+        rows = world.tenant_query(
+            "WITH RECURSIVE down(id) AS (SELECT o.goal_id FROM goal_origins o WHERE o.kind = ? "
+            "AND o.ref = ? UNION SELECT g.id FROM goals g JOIN down d ON g.parent_id = d.id) "
+            "SELECT g.id FROM goals g JOIN down ON g.id = down.id WHERE g.status = 'pending' "
+            "AND {tenant_goal:g.id}", (ORIGIN_KIND, pid))
+        for row in rows:
+            world.set_goal_status(int(row[0]), "cancelled", result=FEATURE_RESTARTS)
+    except Exception:  # noqa: BLE001 -- the start check refuses them anyway
+        import logging
+        logging.getLogger(__name__).warning("feature run %s: queued goals not closed", pid)
+
+
+def _hold(world, decisions: list, goal_id: int, pid: str) -> list[dict]:
+    """The decisions a feature run stopped for, as the proposal records them.
+    The round's goal and every waiting goal are marked as feature-run steps,
+    so no answer or restart ever runs them outside their private copy
+    (decision_requests.resume_refusal)."""
+    for marked in dict.fromkeys([goal_id, *(d.goal_id for d in decisions)]):
+        try:
+            _mark_step(world, marked, pid)
+        except Exception:  # noqa: BLE001 -- its round was marked before it ran
+            import logging
+            logging.getLogger(__name__).warning("feature run %s: goal #%s not marked", pid,
+                                                marked)
+    return [{"id": d.id, "goal_id": d.goal_id, "question": d.question,
+             "open": d.status == "open"} for d in decisions]
+
+
 def propose(world, name: str, title: str, description: str, run: Runner, *,
             reviewer: Reviewer | None = None,
             checker: Checker | list[Checker] | None = None,
             sandbox_factory=None, owner: str = "", budget=None,
-            repair_rounds: int | None = None, check_rounds: int | None = None) -> dict:
+            repair_rounds: int | None = None, check_rounds: int | None = None,
+            protected_checker: Checker | None = None) -> dict:
     """Run a feature swarm, repair and check its change, and park it for
     human approval. ``budget`` is the one cap for every round (the caller's
     runner and checkers must charge the same object); ``None`` builds one from
     configuration. ``checker`` is one checker or a list of independent ones
-    (:func:`default_checkers`). Round limits default to ``[codebase]``."""
+    (:func:`default_checkers`). Round limits default to ``[codebase]``.
+    ``protected_checker`` (:func:`default_protected_checker`) is the second,
+    cross-family checker a change to a protected path needs; ``owner`` is the
+    person who started the run, who may not approve a protected change."""
     repo = vault.get(name)
     settings = loop_settings()
     on_host = _runs_on_host(sandbox_factory)
@@ -1082,15 +1439,21 @@ def propose(world, name: str, title: str, description: str, run: Runner, *,
                 else [checker])
     pid = secrets.token_hex(8)
     branch = f"lightwork/{_slug(title)}-{pid[:6]}"
-    goal_id, waiting = None, None
+    goal_id, waiting, record = None, None, None
     try:
         with vault.host_repo(name) as host:
             base = _git(["rev-parse", "--verify", f"refs/heads/{repo.default_branch}"],
                         git_dir=host).strip()
+            self_repo = is_installation(repo, host)
+            if self_repo and not settings["allow_self_changes"]:
+                raise VaultError(SELF_REFUSAL)
+            record = _running_record(pid, name, title, branch, base, owner, budget)
+            _save(record)  # the Code page shows the change while it is built
             loop = _Loop(world, repo, host, base=base, branch=branch, pid=pid,
                          title=title, description=description, owner=owner, run=run,
                          checkers=checkers, sandbox_factory=sandbox_factory, budget=budget,
-                         on_host=on_host,
+                         on_host=on_host, protected_checker=protected_checker,
+                         self_repo=self_repo,
                          repair_rounds=max(0, int(settings["repair_rounds"] if repair_rounds
                                                   is None else repair_rounds)),
                          check_rounds=max(1, int(settings["check_rounds"] if check_rounds
@@ -1100,13 +1463,14 @@ def propose(world, name: str, title: str, description: str, run: Runner, *,
                                         owner=owner, execution_principal=owner)
             _mark_step(world, goal_id, pid)
             try:
-                loop.author(goal_id, "author")
-                loop.verify()
-                loop.finish()
+                with _exact_models(repo, self_repo):
+                    loop.author(goal_id, "author")
+                    loop.verify()
+                    loop.protect()
+                    loop.finish()
             except DecisionPending as pause:  # what was spent stays charged
                 loop.stopped = "decision"
-                waiting = [{"id": d.id, "goal_id": d.goal_id, "question": d.question,
-                            "open": d.status == "open"} for d in pause.decisions]
+                waiting = _hold(world, pause.decisions, pause.goal_id, pid)
             head, changed = loop.head, loop.head != base
             diff = files = None
             if changed:
@@ -1116,10 +1480,12 @@ def propose(world, name: str, title: str, description: str, run: Runner, *,
     except BaseException as exc:
         if goal_id is not None:
             _fail_goal(world, goal_id, exc)
+        _end_run(world, pid, record)
         if isinstance(exc, BudgetExceeded):
             raise VaultError("the spending limit ran out before the first version was "
                              "finished; nothing was proposed") from exc
         raise
+    _close_queued(world, pid)
     diff, files = diff or "", files or []
     review = _review(loop, reviewer, f"{title}\n\n{description}", diff)
     tests, tiers, tests_output = loop.tier_record()
@@ -1136,7 +1502,7 @@ def propose(world, name: str, title: str, description: str, run: Runner, *,
         "review": review,
         "status": "decision" if waiting else "empty" if not changed else "pending",
         "approval_id": None, "created_at": time.time(), "merged_at": None,
-        "decision": waiting,
+        "owner": owner or None, "protected": loop.protected, "decision": waiting,
     }
     if changed:
         atomic_write_bytes(_proposal_dir(name) / f"{pid}.bundle",
@@ -1147,10 +1513,21 @@ def propose(world, name: str, title: str, description: str, run: Runner, *,
             request_approval(world, proposal)
         except Exception as exc:  # noqa: BLE001 -- `maverick code renew` parks it again
             import logging
-            logging.getLogger(__name__).warning(
-                "proposal %s saved but its approval was not parked (%s); "
-                "run `maverick code renew %s`", pid, type(exc).__name__, pid)
+            if protected_refusal(proposal) is None:
+                logging.getLogger(__name__).warning(
+                    "proposal %s saved but its approval was not parked (%s); "
+                    "run `maverick code renew %s`", pid, type(exc).__name__, pid)
     return proposal
+
+
+def _exact_models(repo: vault.Repo, self_repo: bool):
+    """No provider failover for a run whose change may turn out protected:
+    the second checker's family check compares configured models, so the
+    author and every normal checker must be answered by exactly theirs."""
+    from contextlib import nullcontext
+
+    from ..provider_failover import no_failover
+    return no_failover() if self_repo or repo.protected_paths else nullcontext()
 
 
 def _approval_expired(appr) -> bool:
@@ -1177,6 +1554,10 @@ def request_approval(world, p: dict) -> int:
             raise VaultError(DECISION_GAP)
         if p["status"] != "pending":
             raise VaultError(f"proposal {p['id']} is {p['status']}")
+        refusal = protected_refusal(p)
+        if refusal:
+            raise VaultError(refusal)
+        _check_current_protection(p)
         appr = world.get_approval(p["approval_id"]) if p.get("approval_id") else None
         if appr is not None and not (appr.status in ("pending", "approved")
                                      and _approval_expired(appr)):
@@ -1184,9 +1565,14 @@ def request_approval(world, p: dict) -> int:
         from ..logging_config import reset_goal_context, set_goal_context
         context = set_goal_context(p.get("goal_id"))
         try:
+            protected = bool(p.get("protected"))
             p["approval_id"] = world.create_approval(
-                "codebase_merge", risk="high", scope=p["repo"], provenance="codebase",
-                requested_by="agent:codebase", detail=_approval_detail(p))
+                "codebase_merge", risk="high", scope=p["repo"],
+                provenance=PROTECTED_PROVENANCE if protected else "codebase",
+                approvals_required=PROTECTED_APPROVALS if protected else 1,
+                # The person who started a protected change may not approve it.
+                requested_by=(p.get("owner") if protected else None) or "agent:codebase",
+                detail=_approval_detail(p))
         finally:
             reset_goal_context(context)
         _save(p)
@@ -1234,6 +1620,118 @@ UNCONFIRMED_GAP = ("{n} blocker(s) passed their repro command after a repair, bu
                    "look confirmed the fix.")
 SAME_FAMILY_GAP = ("Every checker used the same kind of model as the author, so they may "
                    "share its blind spots.")
+PROTECTED_LINE = ("Protected: this change touches {n} protected path(s), so it needs a second "
+                  "checker and two people to approve it.")
+SELF_LINE = ("Protected: this change is to the repository Lightwork itself was installed from, so "
+             "the whole repository counts as protected.")
+TWO_PEOPLE = ("Two different people must approve this change, and neither may be the person "
+              "who started it.")
+PROTECTED_REFUSALS = {
+    "unset": ("This change is protected, but no second checker is set. An administrator can "
+              "choose one in Settings, then build the change again. It cannot be approved."),
+    "same_family": ("This change is protected, but its second checker uses the same kind of model "
+                    "as the author or a checker. It cannot be approved."),
+    "uncompared": ("This change is protected, but Lightwork could not compare the second "
+                   "checker's model with the others. It cannot be approved."),
+}
+NO_STARTER = ("This change is protected, but it was started without a signed-in person, such as "
+              "from the command line. Someone else must approve it, so start it again from the "
+              "Code page while signed in.")
+BASE_MOVED = ("The project's main code no longer contains the version this change was built on. "
+              "Build the change again.")
+NEWLY_PROTECTED = ("Protected paths now cover this change, but it was not built as a protected "
+                   "change. Build the change again so it gets a second checker and two approvers.")
+NOT_LOOKED = ("This change is protected, but the second checker did not look at this version "
+              "({reason}). It cannot be approved.")
+
+
+def run_lines(p: dict) -> list[str]:
+    """A change still being built, or stopped before it finished (Code page, Copilot)."""
+    if p.get("status") == "running":
+        return [STOPPED_LINE if _run_gone(p) else RUNNING_LINE]
+    return [STOPPED_LINE] if p.get("status") == "stopped" else []
+
+
+def protected_refusal(p: dict) -> str | None:
+    """Why a protected proposal cannot be approved, in one plain sentence, or
+    None (also for a proposal that is not protected, or saved before
+    protected paths existed)."""
+    rec = p.get("protected")
+    if not isinstance(rec, dict):
+        return None
+    if not _named(p.get("owner")):
+        return NO_STARTER
+    if rec.get("problem"):
+        return PROTECTED_REFUSALS.get(rec["problem"], PROTECTED_REFUSALS["uncompared"])
+    if rec.get("state") != "ran" or rec.get("commit") != p.get("head"):
+        return NOT_LOOKED.format(reason=rec.get("reason") or "it did not run")
+    return None
+
+
+def plain_refusal(exc: BaseException) -> str | None:
+    """The sentence of a governance refusal a person can act on (shown as
+    is by the dashboard), or None for any other error."""
+    text = str(exc)
+    plain = {TWO_PEOPLE, NEWLY_PROTECTED, SELF_REFUSAL, NO_STARTER, DECISION_GAP, BASE_MOVED,
+             *PROTECTED_REFUSALS.values()}
+    return text if text in plain or text.startswith(NOT_LOOKED.split("(")[0]) else None
+
+
+def _named(principal: object) -> bool:
+    """A person signed in with their own account (``user:<name>``)."""
+    text = str(principal or "").strip()
+    return text.startswith("user:") and len(text) > len("user:")
+
+
+def protected_status(world, p: dict) -> str:
+    """Whether a proposal is protected and what it still needs (Copilot):
+    the approvals so far from people who count, and which second checker
+    looked, or why it cannot be approved. Empty when it is not protected."""
+    rec = p.get("protected")
+    if not isinstance(rec, dict):
+        return ""
+    what = ("Protected, because it changes Lightwork's own code" if rec.get("self") else
+            f"Protected, because it changes {rec.get('count', len(rec.get('paths') or []))} "
+            "protected path(s)")
+    refusal = protected_refusal(p)
+    if refusal:
+        return f"{what}. {refusal}"
+    from ..safety.dual_control import person_key
+    state = (world.approval_state(p["approval_id"]) or {}) if p.get("approval_id") else {}
+    people = {person_key(a) for a in state.get("approvers") or () if _named(a)}
+    people.discard(person_key(p.get("owner")))
+    return (f"{what}. It needs two different people to approve, not the person who started "
+            f"it: {min(len(people), PROTECTED_APPROVALS)} of {PROTECTED_APPROVALS} so far. "
+            f"The second checker, {rec.get('model')}, looked at this version.")
+
+
+def _protected_evidence(p: dict) -> tuple[list[str], list[str], list[str]]:
+    """(the card's first lines, gaps, finding lines) for a protected change."""
+    rec = p.get("protected")
+    if not isinstance(rec, dict):
+        return [], [], []
+    paths = list(rec.get("paths") or [])
+    lines = [SELF_LINE] if rec.get("self") else []
+    if paths:
+        lines.append(PROTECTED_LINE.format(n=rec.get("count", len(paths))))
+        more = int(rec.get("count", len(paths))) - min(len(paths), 10)
+        lines.append("Protected paths changed: " + ", ".join(_safe_label(x, 120) for x in paths[:10])
+                     + (f", and {more} more." if more > 0 else "."))
+    if _named(p.get("owner")):
+        lines.append(TWO_PEOPLE)
+    refusal = protected_refusal(p)
+    findings = list(rec.get("findings") or [])
+    gaps = [refusal] if refusal else []
+    if refusal:
+        lines.append(refusal)
+    else:
+        open_blockers = sum(1 for f in findings if f["severity"] == "blocker")
+        lines.append(f"Second checker: {rec.get('model')}, a different kind of model, looked at this "
+                     f"version. It reported {len(findings)} finding(s), {open_blockers} of them "
+                     "blocking.")
+        if open_blockers:
+            gaps.append(f"{open_blockers} blocker(s) from the second checker are still open.")
+    return lines, gaps, [_finding_line(f) for f in findings]
 
 
 def _tiers_evidence(tiers: dict) -> tuple[list[str], list[str]]:
@@ -1403,13 +1901,16 @@ def _finding_line(f: dict, many: bool = False) -> str:
     elif status != "fixed" and (f.get("recheck") or {}).get("result") not in (None, "failed"):
         status += (" (Lightwork could not re-run it on the last version: "
                    f"{f['recheck'].get('reason')})")
-    who = f" from checker {f.get('checker', 1)}" if many else ""
+    who = " from the second checker" if f.get("checker") == "protected" else \
+        f" from checker {f.get('checker', 1)}" if many else ""
     return f"Finding {f['id']}{who}, {f['severity']}, {status}: {f['what']} ({how})."
 
 
 def evidence(p: dict) -> dict:
     """What was and was not checked, in plain words: the one source for the
-    approval card, the CLI, the dashboard and Copilot. ``gaps`` lists every
+    approval card, the CLI, the dashboard and Copilot. A protected change's
+    lines come first (``protected``): what is protected, who must approve,
+    and the second checker's result or why it cannot be approved. ``gaps`` lists every
     reason the change is not fully checked; it is empty only when the tests
     passed on the approved commit and the checker looked at that commit and
     left no blocker open. Proposals saved before repair rounds and the checker
@@ -1441,9 +1942,12 @@ def evidence(p: dict) -> dict:
     check_lines, check_gaps = _check_evidence(p)
     check = p.get("check") or {}
     many = len(check.get("checkers") or ()) > 1
-    return {"lines": decision_lines(p) + lines + check_lines, "gaps": gaps + check_gaps,
-            "tests": tests,
-            "findings": [_finding_line(f, many) for f in check.get("findings") or []]}
+    first, protected_gaps, protected_findings = _protected_evidence(p)
+    first = run_lines(p) + decision_lines(p) + first
+    return {"lines": first + lines + check_lines, "gaps": protected_gaps + gaps + check_gaps,
+            "tests": tests, "protected": first,
+            "findings": [_finding_line(f, many) for f in check.get("findings") or []]
+            + protected_findings}
 
 
 def decision_lines(p: dict) -> list[str]:
@@ -1464,8 +1968,9 @@ def _approval_card(p: dict, *, full: bool) -> str:
     from ..approval_cards import encode_operation_approval_detail
     review = p["review"]
     facts = evidence(p)
-    lines = [f"Branch {p['branch']} at {p['head'][:12]} from {p['base'][:12]}; "
-             f"{len(p['files'])} file(s) changed.", *facts["lines"]]
+    first = facts["protected"]
+    lines = [*first, f"Branch {p['branch']} at {p['head'][:12]} from "
+             f"{p['base'][:12]}; {len(p['files'])} file(s) changed.", *facts["lines"][len(first):]]
     # Counts and statuses only: this card reaches chat channels and lists that
     # need only operate access, and finding text can quote vaulted code.
     findings = (p.get("check") or {}).get("findings") or []
@@ -1512,10 +2017,14 @@ def _approval_card(p: dict, *, full: bool) -> str:
 
 
 def status(world, p: dict) -> str:
-    if p["status"] in ("merged", "empty", "conflict", "decision"):
+    if p["status"] == "running":
+        return "stopped" if _run_gone(p) else "running"
+    if p["status"] in ("merged", "empty", "conflict", "decision", "stopped"):
         return p["status"]
     appr = world.get_approval(p["approval_id"]) if p["approval_id"] else None
     if appr is None:
+        if protected_refusal(p):
+            return "blocked"  # a protected change that cannot be approved as it is
         return "unrequested"  # its approval failed to park: `maverick code renew`
     if appr.status in ("pending", "approved") and _approval_expired(appr):
         return "expired"      # past its card's expiry: `maverick code renew`
@@ -1535,6 +2044,63 @@ def _require_approved(world, p: dict) -> None:
         # expiry no longer authorizes the change it described.
         raise VaultError(f"proposal {p['id']}'s approval #{appr.id} has expired; "
                          f"run `maverick code renew {p['id']}` and approve it again")
+    if p.get("protected"):
+        problem = protected_refusal(p) or _protected_approval_problem(world, p, appr)
+        if problem:
+            raise VaultError(problem)
+
+
+def _require_current_protection(p: dict, host: Path) -> None:
+    """Protection again, from the project's CURRENT protected paths and
+    whether it is now the running installation's own repository, against
+    both base..head and merge-base(current tip, head)..head (both sides of a
+    rename): a change that was not built as a protected one, but is one now,
+    never merges, pushes or asks for approval on the strength of its
+    single-approver checks. A change whose base is no longer in the main
+    code is refused outright."""
+    repo = vault.get(p["repo"])
+    tip = _git(["rev-parse", "--verify", f"refs/heads/{repo.default_branch}"],
+               git_dir=host).strip()
+    if not vault._is_ancestor(host, p["base"], tip):
+        # A merge would bring in commits that nothing checked or approved.
+        raise VaultError(BASE_MOVED)
+    self_repo = is_installation(repo, host)
+    if self_repo and not loop_settings()["allow_self_changes"]:
+        raise VaultError(SELF_REFUSAL)
+    if p.get("protected"):
+        return
+    # What the merge brings in (from the merge base with the current tip),
+    # and the change as it was built (from its base).
+    since = {p["base"], _git(["merge-base", tip, p["head"]], git_dir=host).strip()}
+    paths = {f for start in since for f in _git(
+        ["diff", "--name-only", "--no-renames", "-z", start, p["head"]],
+        git_dir=host).split("\0") if f}
+    if self_repo or vault.protected_matches(repo.protected_paths, sorted(paths)):
+        raise VaultError(NEWLY_PROTECTED)
+
+
+def _check_current_protection(p: dict) -> None:
+    """:func:`_require_current_protection` on a fresh host copy (renew)."""
+    if not (_proposal_dir(p["repo"]) / f"{p['id']}.bundle").exists():
+        return  # nothing to merge or push without its branch bundle
+    with vault.host_repo(p["repo"]) as host:
+        _fetch_proposal(p, host)
+        _require_current_protection(p, host)
+
+
+def _protected_approval_problem(world, p: dict, appr) -> str | None:
+    """A protected change merges or pushes only on the votes of two distinct
+    named people, neither the person who started it, whatever surface they
+    voted on."""
+    from ..safety.dual_control import person_key
+    state = world.approval_state(appr.id) or {}
+    people = {person_key(a) for a in state.get("approvers") or () if _named(a)}
+    people.discard(person_key(p.get("owner")))
+    if (appr.provenance != PROTECTED_PROVENANCE
+            or int(appr.approvals_required or 1) < PROTECTED_APPROVALS
+            or len(people) < PROTECTED_APPROVALS):
+        return TWO_PEOPLE
+    return None
 
 
 def _fetch_proposal(p: dict, host: Path) -> None:
@@ -1543,8 +2109,13 @@ def _fetch_proposal(p: dict, host: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="lw-prop-") as tmp:
         b = Path(tmp) / "p.bundle"
         b.write_bytes(vault._unseal(raw, f"codebase/{p['repo']}/proposal-bundle/{p['id']}"))
-        _git(["fetch", "-q", str(b), f"+refs/heads/{p['branch']}:refs/heads/{p['branch']}"],
-             git_dir=host)
+        try:
+            _git(["fetch", "-q", str(b), f"+refs/heads/{p['branch']}:refs/heads/{p['branch']}"],
+                 git_dir=host)
+        except VaultError as exc:
+            if "prerequisite" in str(exc):  # its base is no longer in the vault at all
+                raise VaultError(BASE_MOVED) from exc
+            raise
     tip = _git(["rev-parse", "--verify", f"refs/heads/{p['branch']}"], git_dir=host).strip()
     if tip != p["head"]:
         raise VaultError(f"proposal {p['id']} branch is not the approved commit; refused")
@@ -1561,6 +2132,7 @@ def merge(world, pid: str) -> dict:
     with cross_process_lock(vault._bundle_path(p["repo"]), strict=True), \
             vault.host_repo(p["repo"]) as host:
         _fetch_proposal(p, host)
+        _require_current_protection(p, host)
         work = vault.clone_work(host, host.parent / "merge-work", repo.default_branch)
         _git(["fetch", "-q", str(host), f"refs/heads/{p['branch']}:refs/heads/{p['branch']}"],
              cwd=work)
@@ -1604,6 +2176,7 @@ def push(world, pid: str) -> str:
     repo = vault.get(p["repo"])
     with vault.host_repo(p["repo"]) as host:
         _fetch_proposal(p, host)
+        _require_current_protection(p, host)
         _git(["push", "-q", repo.source, f"refs/heads/{p['branch']}:refs/heads/{p['branch']}"],
              git_dir=host, token_env=repo.token_env)
     return p["branch"]
@@ -1705,13 +2278,15 @@ def checker_sandbox(workdir: str):
 
 def default_checker(*, budget, user_id: str | None = None,
                     allowed_suites: frozenset[str] | None = None,
-                    model: str | None = None) -> Checker:
+                    model: str | None = None, exact_model: bool = False) -> Checker:
     """The independent checker: a separate governed run with a fresh context,
     whose sandbox is its own throwaway copy of the pinned commit, charged to
     the feature run's ``budget``. Its run is a fresh context
     (:func:`maverick.tools.fresh_context_run`): no tool that reads past goals
     or shared memory, and no prior goals recalled into its brief. ``model``
-    defaults to :func:`checker_model`; the checker carries it as ``.model``."""
+    defaults to :func:`checker_model`; the checker carries it as ``.model``.
+    With ``exact_model`` no provider failover applies: when that model
+    cannot answer, the check does not happen."""
     chosen = model or checker_model()
 
     def check(goal_id: int, copy: Path) -> object:
@@ -1721,8 +2296,11 @@ def default_checker(*, budget, user_id: str | None = None,
         from ..world_model import close_world_if_owned, open_world
         world = open_world()
         box = checker_sandbox(str(copy))
+        from contextlib import nullcontext
+
+        from ..provider_failover import no_failover
         try:
-            with fresh_context_run():
+            with fresh_context_run(), (no_failover() if exact_model else nullcontext()):
                 return orchestrator.run_goal_sync(LLM(), world, budget, goal_id, sandbox=box,
                                                   user_id=user_id,
                                                   allowed_suites=allowed_suites,
@@ -1746,6 +2324,18 @@ def default_checkers(*, budget, user_id: str | None = None,
             for i in range(max(1, int(settings["checkers"])))]
 
 
+def default_protected_checker(*, budget, user_id: str | None = None,
+                              allowed_suites: frozenset[str] | None = None) -> Checker | None:
+    """The second checker a change to a protected path needs: ``[codebase]
+    protected_checker_model``, charged to the feature run's ``budget``; None
+    when it is unset (a protected change then cannot be approved)."""
+    model = loop_settings()["protected_checker_model"]
+    if not model:
+        return None
+    return default_checker(budget=budget, user_id=user_id, allowed_suites=allowed_suites,
+                           model=model, exact_model=True)
+
+
 def default_reviewer(*, budget=None) -> Reviewer:
     """The independent diff reviewer (cross-family where possible), charged
     to the feature run's ``budget``."""
@@ -1762,10 +2352,11 @@ def default_reviewer(*, budget=None) -> Reviewer:
     return review
 
 
-__all__ = ["checker_sandbox", "default_checker", "default_checkers", "default_reviewer",
-           "default_runner", "evidence", "feature_budget", "find", "list_proposals",
-           "loop_settings", "merge", "propose", "push", "run_tests", "settle", "status",
-           "tier_summary"]
+__all__ = ["checker_sandbox", "default_checker", "default_checkers", "default_protected_checker",
+           "default_reviewer", "default_runner", "evidence", "feature_budget", "find",
+           "list_proposals", "loop_settings", "merge", "propose", "protected_refusal",
+           "protected_status", "push",
+           "run_tests", "settle", "status", "tier_summary"]
 
 
 def _check_word(check: dict, head: str) -> str:
@@ -1786,7 +2377,7 @@ def summary(world) -> dict:
     repos = [{"name": r.name, "default_branch": r.default_branch, "head": r.head[:12],
               "protect": r.protect, "tests": bool(r.test_command),
               "test_tiers": [tier for tier, key, _ in TIERS if getattr(r, key)],
-              "updated_at": r.updated_at}
+              "protected_paths": len(r.protected_paths), "updated_at": r.updated_at}
              for r in vault.list_repos()]
     proposals = []
     for p in list_proposals()[:200]:
@@ -1801,7 +2392,7 @@ def summary(world) -> dict:
             "tests_ran": None if tests is None else tests.get("ran", True),
             "review": None if review is None else bool(review.get("approves")),
             "check": None if check is None else _check_word(check, p["head"]),
-            "gaps": len(evidence(p)["gaps"]),
+            "gaps": len(evidence(p)["gaps"]), "protected": bool(p.get("protected")),
             "approval_id": p["approval_id"], "created_at": p["created_at"]})
     return {"schema": "lightwork.codebase-summary.v1", "enabled": vault.enabled(),
             "repos": repos, "proposals": proposals}

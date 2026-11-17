@@ -748,6 +748,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   checkpoints are on, so steps it already finished (including a subagent's
   side effects) may run again. Turn on `[durable] enabled` to continue where
   it stopped; the answer's confirmation says so.
+- Code projects have protected paths (`maverick code set --protected-path`,
+  or the test commands dialog on the Code page). A change that touches one,
+  counting both sides of a rename, needs a second checker from a different
+  model family (`[codebase] protected_checker_model`) and two different
+  people to approve, never the person who started it. Without that checker,
+  or when the change was started without a signed-in person, it cannot be
+  approved. Protection is checked again at merge, push and renew: a change
+  that became protected after it was built must be built again. Set the
+  model and the paths you care about.
+- An approval that needs two or more people now counts names with case,
+  spacing and character width ignored: `user:Alice`, `user:alice` and
+  `user:Ａｌｉｃｅ` are one person, and the requester spelt differently is
+  still the requester.
+- No agent, API key or automation can approve a code change any more, and
+  Copilot cannot approve a protected one: approve those on the Approvals page.
+- Feature runs on the repository the running Lightwork was installed from
+  are refused. Run the factory from a separate installation pinned to a
+  released version, or set `[codebase] allow_self_changes = true`; each such
+  change is then protected.
+- A code change whose run stops to ask a person to decide now stops at once
+  with the status "decision" and is never offered for approval. Answer the
+  decision, then start a new code change: the answer does not restart it.
 - Paid tool calls now count against the task's spending limit, so a capped
   run can stop on tool spend. This covers search (Tavily, Brave, SerpAPI),
   Hugging Face (and its OCR), Replicate and hosted image edits, DeepL,
@@ -805,6 +827,109 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Erasure receipts are now issued as `lightwork.erasure-receipt.v3`, which
   also counts a run's decision requests before deletion. Receipts issued as v2
   keep verifying against the stores they listed; nothing needs re-issuing.
+- With Postgres row-level security on, 18 more world tables now have a row
+  policy. Events and episodes carry a copy of their goal's workspace, kept in
+  step by the database; artifacts, questions, turns and the other child
+  tables check their parent goal, approval or conversation; the learning-store
+  and approval-check tables check their workspace column. Database migration
+  56 adds them when Lightwork starts as the table owner, so start once as the
+  owner after upgrading. `maverick tenant backfill` now also assigns
+  learning-store and approval-check records that have no workspace. Vector
+  memory and knowledge-store tables in the same database are not covered yet.
+  Migration 56 copies each event's and episode's workspace (about 10-13
+  microseconds a row) only where RLS is on. With RLS already forced it does
+  so while the tables are locked: allow about two minutes per 10 million
+  rows and upgrade in a quiet window. Turning RLS on later copies them in
+  short batches first.
+- `maverick tenant backfill` no longer stops when a learning record exists
+  both without a workspace and in the target workspace: the workspace keeps
+  its own, the other is left unchanged and listed by table and key. A
+  conflict it still cannot settle names the table and the key.
+- A Postgres database update that the login cannot run because it does not
+  own the tables now says so and changes nothing. Start Lightwork once as the
+  table owner, then again with the usual login.
+- `maverick tenant rls-preflight` no longer reports READY while row-level
+  security hides records that have no workspace. The table owner now counts
+  them with FORCE lifted in a rolled-back transaction, waiting at most 200 ms
+  for a busy table; a login that cannot see them reports NOT COUNTED. Each
+  report says how it counted, and lists orphaned rows (no task or approval)
+  that no workspace can see; delete those before turning RLS on.
+- The `database` tool now refuses an address that names Lightwork's own
+  Postgres records database (same host, port and database as the world
+  DSN), from `DATABASE_URL` or from an agent. Use a separate database; only
+  the organisation can allow it, with `[tools] database_allow_world_database`.
+- A workspace settings file (`tenants/<name>/config.toml`) may now set only
+  policy keys that can be made stricter. In `[governance]`, `[safety]`,
+  `[capabilities]`, `[sandbox]`, `[approval]`, `[security]`, `[codebase]`,
+  `[egress]`, `[tenancy]`, `[enterprise]`, `[profile]` and `[compliance]`
+  every other key is ignored, logged once and listed by `maverick doctor` and
+  on Settings as set by your organisation. The file still loads. Newly ignored
+  there: `[sandbox]` workdir, image, language, runtime, options, project_dir
+  and the server keys below; `[safety]` receipt_key and screenshot_key;
+  `[capabilities]` deferred_tools; `[approval]` check_retention_days,
+  dashboard_wait_seconds, undo_grace_seconds and delegation; `[tenancy]`
+  by_user; and `[tools]` deferred_loading,
+  fetch_allow_private, fetch_skip_scan and database_allow_url_arg. To keep
+  such a setting, move it to the organisation's `config.toml` (or Settings)
+  and delete it from the workspace file. A moved value applies to every
+  workspace: workspaces that each had their own `[sandbox] workdir` would
+  then share one folder. For a separate folder, run that workspace's
+  Lightwork process with `MAVERICK_WORKDIR` and leave `workdir` out of the
+  organisation's file; a per-workspace image has no replacement yet.
+  Likewise a workspace can no longer add its own `[enterprise]
+  allowed_hosts` (a SaaS host) or `local_providers` (a local model server):
+  moved to the organisation's file, the host or server is allowed for every
+  workspace, and there is no way yet to allow one for a single workspace.
+  `[tenancy.egress.<name>] allow` in the organisation's file approves hosts
+  for one workspace under the allowlist network posture, but does not open
+  the enterprise egress lock.
+- New stricter-only workspace rules: `[sandbox] warm` and `[codebase] enable`
+  may only be turned off; `[approval] record_checks` and
+  `require_acknowledgement` only on; `[approval] separate_approver` only
+  towards `always`. Host lists in `[sandbox.tool.<name>]`, `[egress]` and
+  `[tenancy.egress.<name>]` may add denied hosts and narrow an allowed list
+  the organisation set; a workspace allow list where the organisation has
+  none is ignored, because under the allowlist network posture it would
+  approve hosts, and a `[tenancy.egress.<name>]` table the organisation did
+  not set is ignored, because it would replace `[egress]`. `[enterprise]`
+  mode and require may only be turned on, allowed_hosts and local_providers
+  only shortened, `[profile] name` only raised to enterprise,
+  `[compliance] profiles` only extended with known profiles, and
+  `[compliance] disclosure_text` replaced with other text but never emptied.
+- New `[sandbox] workspace_infrastructure` and `workspace_hosts` (off and
+  empty by default; wizard sandbox step for clusters and remote computers,
+  and Settings > Protected work area). When on in the organisation's
+  settings, a workspace file may choose a `context` and `namespace` (plain
+  names) in the organisation's own cluster settings file, and a `host` that
+  matches a `workspace_hosts` pattern such as `*@build.example.com` (no
+  port: it comes from the organisation's ssh_args or ssh config). Its
+  kubeconfig, api_key, provider, extra_kubectl_args and ssh_args are still
+  ignored: a cluster settings file or ssh option can run a program on this
+  computer, and a key or provider reaches another service. The backend
+  cannot be weakened, and the switch counts as off while any settings file
+  cannot be read.
+- The ssh work area now always passes `--` before the remote computer and
+  refuses a destination that starts with a dash or holds spaces or control
+  characters, so a destination can never be read as an ssh option.
+- Copilot on the Agent trust page can now list outside agents, check whether
+  one would be let in, change an app-added agent's limits, and turn blocking
+  on or off. Each runs the page's own checks. To offer them, choose Connections
+  in "Actions available through Copilot".
+- Adding, editing, blocking, unblocking or removing an outside agent on the
+  Agent trust page (or through Copilot, which now offers all five), and
+  unenrolling one on Outside agents, writes an `agent_trust_changed` audit
+  record first; if it cannot be written, nothing changes. Include this event
+  in any audit export filters you maintain. Enrolling and new credentials keep
+  their own records, and containment keeps its control-plane record. Only
+  terminal commands write no record: `maverick trust` changes, and blocking,
+  restoring or unenrolling with `maverick external-agents`.
+- Saving an outside agent's limits now keeps its security key on file unless
+  a new key is pasted or "Remove the key on file" is ticked. Before, saving an
+  edit without re-pasting the key removed it: re-add any key lost that way.
+- A new benchmark, `benchmarks/eval_factory_checker.py`, measures how many
+  planted defects the code factory's checkers find, how often they raise
+  false alarms on correct changes, and the cost per case. Run it with a
+  model key to score your configured checkers; `--self-test` needs no key.
 - A code change whose round or checker asks a person to decide now stops at
   once: nothing half done is committed or offered for approval, and its
   status reads "Waiting for a person's decision". Answer it, then start a
@@ -829,6 +954,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   $0 price for a count (message, image, page, character) makes only the
   calls counted in it free; other calls to that service are charged as
   before.
+- A task an agent started inside a code change now runs only inside that
+  code change. `maverick resume`, Resume, the Copilot, the queue and recovery
+  refuse it and say to start a new code change.
+- A workspace file can lower but no longer raise budget caps: the spending,
+  time, action and word limits per task, and the caps per AI service. It
+  cannot turn task limits or strict pricing off, and may only add warning
+  thresholds. A value it cannot use is ignored and listed by `maverick
+  doctor`; raise a cap in the organisation's config.toml instead.
+- A code change in a repository with protected paths, or in the
+  installation's own repository, now runs its author and every checker with
+  no provider failover, so the second checker's family check compares the
+  models that answered. If such a model is down, that step stops; retry the
+  change when it is back.
+- Copilot on the Code page can now show and change a code project's test
+  commands and protected paths, for administrators, with the page's checks
+  and audit record. Turn on the `tasks` Copilot action family to offer it.
+- The database tool now compares where server names lead, not how they are
+  spelled, before it refuses Lightwork's own records database. Another name
+  for that server is refused, and the connection uses the address it checked.
+  A name it cannot look up in time is refused with "could not check": retry,
+  or ask your organisation to allow it.
+- Copilot's form for an outside agent's limits now shows the chosen agent's
+  own limits. After you choose another agent, select "Load selected agent's
+  current limits" before reviewing. A review made with one agent's limits is
+  refused for another agent; load that agent's limits and review again.
 
 ### Fixed
 

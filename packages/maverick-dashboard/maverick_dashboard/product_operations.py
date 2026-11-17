@@ -179,6 +179,7 @@ def _adapter_modules():
         product_operations_activation,
         product_operations_agent_activity,
         product_operations_agent_overrides,
+        product_operations_agent_trust,
         product_operations_answer_feedback,
         product_operations_applicability_regions,
         product_operations_approval_challenges,
@@ -194,6 +195,7 @@ def _adapter_modules():
         product_operations_channel_tests,
         product_operations_chat_code_controls,
         product_operations_chat_messages,
+        product_operations_code_checks,
         product_operations_commitment_capability,
         product_operations_commitment_economic_alternatives,
         product_operations_commitments,
@@ -461,7 +463,9 @@ def _adapter_modules():
         product_operations_continuous_evidence,
         product_operations_viewpoints,
         product_operations_partner_limits,
+        product_operations_agent_trust,
         product_operations_sensitive_data_exit,
+        product_operations_code_checks,
     )
 
 

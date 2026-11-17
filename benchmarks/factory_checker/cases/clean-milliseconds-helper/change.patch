@@ -1,0 +1,28 @@
+diff --git a/timing.py b/timing.py
+index fb0876b..cd89352 100644
+--- a/timing.py
++++ b/timing.py
+@@ -4,3 +4,8 @@
+ def elapsed(start, end):
+     """Seconds between two time.monotonic() readings."""
+     return end - start
++
++
++def elapsed_ms(start, end):
++    """Milliseconds between two time.monotonic() readings, for display."""
++    return elapsed(start, end) * 1000
+diff --git a/timing_test.py b/timing_test.py
+index dd14cf5..9ad300c 100644
+--- a/timing_test.py
++++ b/timing_test.py
+@@ -1,5 +1,9 @@
+-from timing import elapsed
++from timing import elapsed, elapsed_ms
+ 
+ 
+ def test_seconds():
+     assert elapsed(1.0, 3.5) == 2.5
++
++
++def test_milliseconds():
++    assert elapsed_ms(1.0, 3.5) == 2500

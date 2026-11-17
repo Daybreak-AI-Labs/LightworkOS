@@ -508,6 +508,23 @@ def _pick_codebase(advanced: dict[str, Any]) -> None:
         "the tests, the checker and the agent share this computer.",
         default=False,
     )
+    _pick_codebase_protected(advanced)
+
+
+def _pick_codebase_protected(advanced: dict[str, Any]) -> None:
+    """The second, cross-family checker a change to a protected path needs,
+    and whether Lightwork may change the code it was installed from."""
+    model = str(_q_text(
+        "    Model for the second checker of protected code changes, a different kind of "
+        "model from the author's (blank = protected changes cannot be approved)",
+        default="") or "").strip()
+    if model:
+        advanced["codebase_protected_checker_model"] = model[:200]
+    advanced["codebase_allow_self_changes"] = _q_confirm(
+        "    Let Lightwork propose changes to the code it was installed from? (not "
+        "recommended; run the factory from a separate installation instead)",
+        default=False,
+    )
 
 
 def _pick_codebase_checkers(advanced: dict[str, Any]) -> None:
@@ -1706,6 +1723,13 @@ def _pick_data_protection_toggles() -> dict[str, Any]:
             "Off by default; leave off for SQLite or single-tenant installs.",
             default=False,
         ),
+        "database_allow_world_database": _q_confirm(
+            "Let the database tool open Lightwork's own shared Postgres records database? "
+            "A query there could read or change every workspace's records, because the "
+            "row protection trusts a setting any query can change. Leave off unless you "
+            "use a separate read-only login for it.",
+            default=False,
+        ),
         "copilot_operation_families": [
             "commitments" if value == "Promise reviews" else value
             for value in _q_checkbox(
@@ -2116,6 +2140,34 @@ def _ask_chat_and_resource_followups(advanced: dict[str, Any]) -> None:
     _pick_ifc(advanced)
     _pick_codebase(advanced)
     _pick_swarm_scale(advanced)
+
+
+def _ask_workspace_servers(cfg: dict[str, Any]) -> dict[str, Any]:
+    """The sandbox step's last question, for clusters and remote computers.
+
+    Off unless chosen, and nothing is written for "no". With yes, a
+    workspace's own settings file may pick a cluster and namespace in this
+    installation's cluster settings file, or a remote computer from the list
+    asked for here (``[sandbox] workspace_infrastructure`` and
+    ``workspace_hosts``). Cluster files, keys and options stay the
+    installation's."""
+    if cfg.get("backend") not in ("kubernetes", "ssh"):
+        return cfg
+    place = "remote computer" if cfg["backend"] == "ssh" else "cluster namespace"
+    if not _q_confirm(f"  Let each workspace's settings file choose its own {place}? "
+                      "Only say yes if you trust every workspace's settings.", default=False):
+        return cfg
+    cfg["workspace_infrastructure"] = True
+    if cfg["backend"] == "ssh":
+        hosts = _csv_list(_q_text("  Remote computers workspaces may choose (comma-separated, "
+                                  "* matches any text, e.g. *@build.example.com)", default=""))
+        from maverick.config_contracts import SSH_DESTINATION_PATTERN
+
+        cfg["workspace_hosts"] = [h for h in hosts if re.fullmatch(SSH_DESTINATION_PATTERN, h)]
+        if len(cfg["workspace_hosts"]) < len(hosts):
+            console.print("[yellow]Left out entries that are not user@host or host. "
+                          "Set a port in the ssh connection options.[/yellow]")
+    return cfg
 
 
 def _ask_regulated_deployment(advanced: dict[str, Any]) -> None:
@@ -3324,6 +3376,11 @@ def _cfg_advanced_memory_and_immune(advanced: dict[str, Any]) -> list[str]:
             lines.append(f"checker_image = {_toml_str(advanced['codebase_checker_image'])}")
         if advanced.get("codebase_require_container"):
             lines.append("require_container = true")
+        if advanced.get("codebase_protected_checker_model"):
+            lines.append("protected_checker_model = "
+                         + _toml_str(advanced["codebase_protected_checker_model"]))
+        if advanced.get("codebase_allow_self_changes"):
+            lines.append("allow_self_changes = true")
     if advanced.get("ifc_mode"):
         lines.append("")
         lines.append("[ifc]")
@@ -3627,6 +3684,8 @@ def _cfg_advanced_runtime_and_tools(advanced: dict[str, Any], providers: list[st
         tool_lines.append("hardware_sensors = true")
     if advanced.get("credential_connectors"):
         tool_lines.append("credential_connectors = true")
+    if advanced.get("database_allow_world_database"):
+        tool_lines.append("database_allow_world_database = true")
     if tool_lines:
         lines.append("")
         lines.append("[tools]")

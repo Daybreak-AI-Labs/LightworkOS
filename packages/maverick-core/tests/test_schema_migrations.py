@@ -144,7 +144,9 @@ def test_current_plan_reads_the_version_without_migrating(tmp_path, monkeypatch)
     conn.close()
     problems, current, target, steps = current_plan()
     assert problems == [] and (current, target) == (old, world_model.SCHEMA_VERSION)
-    assert {s.version for s in steps} == {old + 1, old + 2}
+    # A documented empty placeholder (SQLite v56) has no step to show.
+    assert {s.version for s in steps} == {v for v in (old + 1, old + 2) if world_model.MIGRATIONS[v]}
+    assert steps
     with sqlite3.connect(db) as conn:
         assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == old
     conn.close()

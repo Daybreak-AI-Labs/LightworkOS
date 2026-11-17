@@ -156,6 +156,12 @@ def test_pg_rls_writes_world_model_section_with_prep_reminder(tmp_path, monkeypa
     assert parsed["world_model"]["rls"] is True
 
 
+def test_database_tool_world_database_switch_is_off_unless_chosen(tmp_path, monkeypatch):
+    assert "database_allow_world_database" not in _write(tmp_path / "off", monkeypatch, {})
+    cfg = tomllib.loads(_write(tmp_path, monkeypatch, {"database_allow_world_database": True}))
+    assert cfg["tools"]["database_allow_world_database"] is True
+
+
 def test_unified_audit_is_default_off_and_enables_signed_six_suite_projection(
     tmp_path,
     monkeypatch,

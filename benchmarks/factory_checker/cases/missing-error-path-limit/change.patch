@@ -1,0 +1,27 @@
+diff --git a/limits.py b/limits.py
+index c3438b3..75d059a 100644
+--- a/limits.py
++++ b/limits.py
+@@ -4,8 +4,5 @@ DEFAULT_LIMIT = 100
+ 
+ 
+ def read_limit(env):
+-    """LIMIT from ``env`` as a number, or DEFAULT_LIMIT when it is not set."""
+-    raw = env.get("LIMIT")
+-    if raw is None:
+-        return DEFAULT_LIMIT
+-    return int(raw)
++    """LIMIT from ``env`` as a number, spaces allowed around it."""
++    return int(env["LIMIT"].strip())
+diff --git a/limits_test.py b/limits_test.py
+index 764aa30..86b7001 100644
+--- a/limits_test.py
++++ b/limits_test.py
+@@ -3,3 +3,7 @@ from limits import read_limit
+ 
+ def test_reads_the_limit():
+     assert read_limit({"LIMIT": "5"}) == 5
++
++
++def test_spaces_are_allowed():
++    assert read_limit({"LIMIT": " 5 "}) == 5

@@ -13,13 +13,34 @@ when unset -> failover is a no-op). Wiring lives in `LLM.complete` /
 """
 from __future__ import annotations
 
+import contextvars
 import logging
+from contextlib import contextmanager
 
 log = logging.getLogger(__name__)
 
+# Set for a run that must be answered by exactly its configured model (the
+# second checker of a protected code change): no fallback chain applies.
+_NO_FAILOVER: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "maverick_no_failover", default=False)
+
+
+@contextmanager
+def no_failover():
+    """Within this block :func:`fallback_models` is empty: a model that cannot
+    answer fails instead of being replaced by another provider's."""
+    token = _NO_FAILOVER.set(True)
+    try:
+        yield
+    finally:
+        _NO_FAILOVER.reset(token)
+
 
 def fallback_models(primary: str) -> list[str]:
-    """Configured fallback chain for ``primary`` (``[]`` when failover is off)."""
+    """Configured fallback chain for ``primary`` (``[]`` when failover is off,
+    and inside :func:`no_failover`)."""
+    if _NO_FAILOVER.get():
+        return []
     try:
         from .config import load_config
         chains = ((load_config() or {}).get("provider_failover") or {}).get("chains") or {}
@@ -153,4 +174,4 @@ async def afailover(attempts, *, should_retry=None):
     raise last
 
 
-__all__ = ["fallback_models", "should_retry_llm_error", "failover", "afailover"]
+__all__ = ["fallback_models", "should_retry_llm_error", "failover", "afailover", "no_failover"]

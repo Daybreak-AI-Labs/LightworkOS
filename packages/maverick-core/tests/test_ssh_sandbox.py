@@ -310,3 +310,49 @@ def test_exec_tells_a_failed_connection_from_a_remote_exit_255(monkeypatch, stde
         args, 255, stdout="", stderr=stderr))
     result = backend.exec("exit 255")
     assert (result.exit_code, result.stderr) == (255, expected)
+
+
+def test_the_destination_always_follows_an_end_of_options_mark(monkeypatch):
+    calls = []
+    _patch_ssh_ok(monkeypatch, calls)
+    backend = SSHBackend(host="me@example.com", ssh_args=["-p2222"])
+    monkeypatch.setattr(ssh_module, "run_capped",
+                        lambda args, **kw: calls.append((args, kw)) or SimpleNamespace(
+                            returncode=0, stdout="", stderr=""))
+    backend.exec("true")
+    for args, _ in calls:
+        assert args[args.index("me@example.com") - 1] == "--", args
+
+
+@pytest.mark.parametrize("host", ["-oProxyCommand=touch /tmp/x", "me@ex ample.com", "me@example.com\n",
+                                  "me@example.com\t-v", ""])
+def test_a_destination_ssh_could_read_as_an_option_is_refused(monkeypatch, host):
+    calls = []
+    _patch_ssh_ok(monkeypatch, calls)
+    with pytest.raises(ValueError, match="SSH destination"):
+        SSHBackend(host=host)
+    assert calls == []
+
+
+def test_a_workspace_host_cannot_run_a_command_on_this_computer(tmp_path, monkeypatch):
+    """End to end with the real ssh client: the organisation lets workspaces
+    choose their remote computer, and a workspace names an ssh option."""
+    if not shutil.which("ssh"):
+        pytest.skip("needs the ssh client")
+    from maverick import config
+
+    ran = tmp_path / "ran"
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    monkeypatch.delenv("MAVERICK_CONFIG", raising=False)
+    monkeypatch.delenv("MAVERICK_DEPLOYMENT_ISOLATION", raising=False)
+    (tmp_path / "config.toml").write_text(
+        '[sandbox]\nbackend = "ssh"\nhost = "me@example.invalid"\nworkspace_infrastructure = true\n'
+        'workspace_hosts = ["*"]\n', encoding="utf-8")
+    tenant = tmp_path / "tenants" / "acme" / "config.toml"
+    tenant.parent.mkdir(parents=True)
+    tenant.write_text(f'[sandbox]\nhost = "-oProxyCommand=touch {ran}"\n', encoding="utf-8")
+    config.reset_config_cache()
+    monkeypatch.setenv("MAVERICK_TENANT", "acme")
+    with pytest.raises((ValueError, RuntimeError)):
+        build_sandbox()
+    assert not ran.exists()

@@ -317,7 +317,9 @@ def test_embedded_repositories_are_refused_and_failed_runs_close_their_goal(
     with pytest.raises(RuntimeError):
         features.propose(world, "pricing", "Boom", "", run)
     assert world.get_goal(seen["goal_id"]).status == "failed"
-    assert features.list_proposals("pricing") == []
+    # A run that raised leaves only a stopped record, never offered for approval.
+    assert [(x["status"], x["approval_id"]) for x in features.list_proposals("pricing")] == \
+        [("stopped", None)] * 2
 
 
 def test_truncated_diffs_are_flagged_to_the_approver(upstream, tmp_path, monkeypatch):
@@ -780,7 +782,9 @@ def test_a_round_that_overruns_the_budget_is_never_offered(upstream, tmp_path):
     with pytest.raises(vault.VaultError, match="spending limit ran out"):
         features.propose(world, "pricing", "C", "", run, budget=budget, checker=None)
     assert world.get_goal(calls[0]["goal_id"]).status == "failed"
-    assert [x["title"] for x in features.list_proposals()] == ["D", "B", "A"]
+    assert [(x["title"], x["status"]) for x in features.list_proposals()
+            if x["status"] != "stopped"] == [("D", "pending"), ("B", "pending"), ("A", "pending")]
+    assert [x["title"] for x in features.list_proposals() if x["status"] == "stopped"] == ["C"]
 
 
 def test_the_checker_cannot_change_the_proposal(upstream, tmp_path):
@@ -824,7 +828,10 @@ def test_a_proposal_saved_before_verified_runs_still_loads_and_shows(upstream, t
     lines = features.evidence(loaded)["lines"]
     assert "Tests: PASSED (`pytest`)." in lines and "Independent check: not run." in lines
     assert features.summary(world)["proposals"][0]["check"] is None
-    features.request_approval(world, loaded)                  # renew builds its card
+    aid = features.request_approval(world, loaded)            # renew builds its card
+    # Saved before protected paths: not protected, one approval as before.
+    assert world.get_approval(aid).approvals_required == 1
+    assert features.summary(world)["proposals"][0]["protected"] is False
     monkeypatch.setattr(config, "get_codebase",
                         lambda: {"enable": True, "default_protect": "block"})
     out = CliRunner().invoke(main, ["code", "show", old["id"]])
@@ -1933,6 +1940,265 @@ def test_test_output_shown_is_only_from_the_final_version():
     assert "quick ok" in output and "3 passed" not in output   # never an earlier version's run
 
 
+# -- the governed factory: protected paths, a second cross-family checker,
+#    two people to approve, and not changing the Lightwork that runs it --
+
+def test_protected_path_patterns_are_checked_and_matched(upstream, monkeypatch):
+    import json
+
+    from click.testing import CliRunner
+    from maverick import config
+    from maverick.cli import main
+    check = vault.check_protected_paths
+    assert check(["/.github/", "./src/**/*.py", "  ", ".github"]) == (".github", "src/**/*.py")
+    for bad in (["a/../b"], ["a\\b"], ["a\nb"], ["x" * 301], "a", [3], ["a//b"]):
+        with pytest.raises(vault.VaultError, match="protected paths"):
+            check(bad)
+    match = vault.protected_matches
+    paths = [".github/workflows/ci.yml", "src/a/b/c.py", "src/c.txt", "README.md", "docs/x.md"]
+    assert match([".github"], paths) == [".github/workflows/ci.yml"]   # a folder covers its files
+    assert match(["src/**/*.py"], paths) == ["src/a/b/c.py"]
+    assert match(["*.md"], paths) == ["README.md"]                     # * stays in one folder
+    assert match(["**/*.MD"], paths) == ["README.md", "docs/x.md"]     # case is ignored
+    # A record saved before protected paths loads with none; the CLI sets them.
+    vault.register("pricing", str(upstream))
+    registry = json.loads(vault._registry_path().read_text())
+    del registry["pricing"]["protected_paths"]
+    vault._registry_path().write_text(json.dumps(registry))
+    assert vault.get("pricing").protected_paths == ()
+    monkeypatch.setattr(config, "get_codebase", lambda: {"enable": True, "default_protect": "block"})
+    run = CliRunner().invoke
+    out = run(main, ["code", "set", "pricing", "--protected-path", ".github",
+                     "--protected-path", "app.py"])
+    assert out.exit_code == 0 and "protected paths: .github, app.py" in out.output, out.output
+    assert run(main, ["code", "set", "pricing", "--protected-path", "../x"]).exit_code != 0
+    assert vault.get("pricing").protected_paths == (".github", "app.py")
+    out = run(main, ["code", "set", "pricing", "--protected-path", ""])
+    assert out.exit_code == 0 and "protected paths: (none)" in out.output
+
+
+def test_the_factory_settings_are_read_strictly(tmp_path, monkeypatch):
+    from maverick import config
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    monkeypatch.delenv("MAVERICK_CONFIG", raising=False)
+
+    def read(text):
+        (tmp_path / "config.toml").write_text(text, encoding="utf-8")
+        config.reset_config_cache()
+        got = config.get_codebase()
+        return got["allow_self_changes"], got["protected_checker_model"]
+    try:
+        assert read("") == (False, "")
+        assert read('[codebase]\nallow_self_changes = true\nprotected_checker_model = " openai:m "\n') \
+            == (True, "openai:m")
+        assert read('[codebase]\nallow_self_changes = "yes"\n') == (False, "")   # not a real switch
+        config.dashboard_overrides_path().write_text("[broken\n", encoding="utf-8")
+        assert read("[codebase]\nallow_self_changes = true\n")[0] is False  # a source is unreadable
+    finally:
+        config.reset_config_cache()
+
+
+def _second(model="openai:gpt-second", report=None, charge=None):
+    """A stand-in for the second checker: records each look; ``charge`` is the
+    budget it spends from, as the real one does."""
+    calls = []
+
+    def look(gid, copy):
+        calls.append((gid, copy))
+        if charge is not None:
+            charge.record_tool_call()
+        return report or {"findings": []}
+    look.model = model
+    return look, calls
+
+
+def _protected_repo(upstream, monkeypatch, patterns=("app.py",)):
+    monkeypatch.setattr(features, "_author_model", lambda: "anthropic:claude-author")
+    return vault.register("pricing", str(upstream), protected_paths=list(patterns))
+
+
+def test_a_rename_into_or_out_of_a_protected_path_is_protected(upstream, tmp_path, monkeypatch):
+    _protected_repo(upstream, monkeypatch, patterns=("app.py", "secure"))
+    world = WorldModel(tmp_path / "world.db")
+    second, _ = _second()
+
+    def out_of(work):                                           # app.py -> lib/app.py
+        (work / "lib").mkdir()
+        (work / "app.py").rename(work / "lib" / "app.py")
+
+    def into(work):                                             # test_app.py -> secure/
+        (work / "secure").mkdir()
+        (work / "test_app.py").rename(work / "secure" / "test_app.py")
+    for edit, matched in ((out_of, ["app.py"]), (into, ["secure/test_app.py"])):
+        run, _ = _rounds(edit)
+        p = features.propose(world, "pricing", "Move", "", run, protected_checker=second,
+                             owner="user:starter")
+        assert p["protected"]["paths"] == matched, p["files"]
+        facts = features.evidence(p)
+        assert facts["lines"][0] == features.PROTECTED_LINE.format(n=1)
+        assert f"Protected paths changed: {matched[0]}." in facts["lines"]
+        card = _card(world, p)
+        assert card["parameter_summary"][0] == features.PROTECTED_LINE.format(n=1)
+        appr = world.get_approval(p["approval_id"])
+        assert (appr.approvals_required, appr.requested_by, appr.provenance) == (
+            2, "user:starter", features.PROTECTED_PROVENANCE)
+    run, _ = _rounds(lambda work: (work / "notes.md").write_text("idea\n"))
+    plain = features.propose(world, "pricing", "Notes", "", run, protected_checker=second,
+                             owner="user:starter")
+    appr = world.get_approval(plain["approval_id"])
+    assert plain["protected"] is None and appr.approvals_required == 1
+    assert (appr.requested_by, appr.provenance) == ("agent:codebase", "codebase")
+
+
+def test_the_second_checker_runs_only_for_protected_changes_and_is_charged(upstream, tmp_path,
+                                                                            monkeypatch):
+    from maverick.budget import Budget
+    _protected_repo(upstream, monkeypatch)
+    world = WorldModel(tmp_path / "world.db")
+    budget = Budget(max_tool_calls=10)
+    finding = {"findings": [{"severity": "blocker", "what": "the price can go negative"}]}
+    second, calls = _second(report=finding, charge=budget)
+    normal = lambda gid, copy: {"findings": []}  # noqa: E731
+    normal.model = "gemini:gemini-normal"
+    run, _ = _rounds(lambda work: (work / "notes.md").write_text("idea\n"))
+    features.propose(world, "pricing", "Notes", "", run, checker=normal,
+                     protected_checker=second, budget=budget)
+    assert calls == []                                         # not protected: never runs
+    run, _ = _rounds(_passing)
+    p = features.propose(world, "pricing", "Discount", "", run, checker=normal,
+                         protected_checker=second, budget=budget, owner="user:starter")
+    assert len(calls) == 1 and budget.tool_calls == 1          # charged to the run's budget
+    gid, copy = calls[0]
+    assert "Protected check" in world.get_goal(gid).title and not copy.exists()
+    assert p["protected"]["state"] == "ran" and p["protected"]["commit"] == p["head"]
+    facts = features.evidence(p)
+    assert "1 blocker(s) from the second checker are still open." in facts["gaps"]
+    assert any("Finding p.1 from the second checker, blocker" in f for f in facts["findings"])
+    assert features.protected_refusal(p) is None and p["approval_id"]
+    # With the budget spent, the second checker does not run: it cannot be approved.
+    run, _ = _rounds(_passing)
+    second, calls = _second()
+    spent = Budget(max_tool_calls=1)
+
+    def normal_spends(gid, copy):
+        spent.tool_calls = 5
+        return {"findings": []}
+    normal_spends.model = "gemini:gemini-normal"
+    q = features.propose(world, "pricing", "Discount", "", run, checker=normal_spends,
+                         protected_checker=second, budget=spent, owner="user:starter")
+    assert calls == [] and q["approval_id"] is None
+    assert features.protected_refusal(q) == features.NOT_LOOKED.format(
+        reason=features.BUDGET_REASON)
+    assert features.status(world, q) == "blocked"
+
+
+def test_an_unset_or_same_family_second_checker_cannot_be_approved(upstream, tmp_path,
+                                                                   monkeypatch):
+    _protected_repo(upstream, monkeypatch)
+    world = WorldModel(tmp_path / "world.db")
+    normal = lambda gid, copy: {"findings": []}  # noqa: E731
+    normal.model = "gemini:gemini-normal"
+    for second, problem in ((None, "unset"),
+                            (_second("anthropic:claude-other")[0], "same_family"),      # the author's
+                            (_second("gemini:gemini-other")[0], "same_family"),         # a checker's
+                            (_second("openai:gpt-x")[0], None)):
+        run, _ = _rounds(_passing)
+        p = features.propose(world, "pricing", "Discount", "", run, checker=normal,
+                             protected_checker=second, owner="user:starter")
+        assert p["protected"]["problem"] == problem
+        if problem is None:
+            assert p["approval_id"] and features.status(world, p) == "pending"
+            continue
+        sentence = features.PROTECTED_REFUSALS[problem]
+        assert p["approval_id"] is None and features.status(world, p) == "blocked"
+        assert sentence in features.evidence(p)["lines"] and sentence in features.evidence(p)["gaps"]
+        with pytest.raises(vault.VaultError) as refused:
+            features.request_approval(world, p)
+        assert str(refused.value) == sentence
+
+
+def _protected_proposal(upstream, tmp_path, monkeypatch, world=None):
+    if world is None:
+        _protected_repo(upstream, monkeypatch)
+        world = WorldModel(tmp_path / "world.db")
+    run, _ = _rounds(_passing)
+    p = features.propose(world, "pricing", "Discount", "", run,
+                         protected_checker=_second()[0], owner="user:starter")
+    return world, p
+
+
+def test_a_protected_change_needs_two_distinct_people_never_the_starter(upstream, tmp_path,
+                                                                        monkeypatch):
+    monkeypatch.delenv("MAVERICK_ALLOW_SELF_APPROVAL", raising=False)
+    world, p = _protected_proposal(upstream, tmp_path, monkeypatch)
+    aid = p["approval_id"]
+    assert world.decide_approval(aid, "approved", decided_by="user:starter") is False
+    assert world.decide_approval(aid, "approved", decided_by="user:alice")
+    assert world.decide_approval(aid, "approved", decided_by="user:alice")  # once, not twice
+    assert features.status(world, features.find(p["id"])) == "pending"
+    for act in (features.merge, features.push):
+        with pytest.raises(vault.VaultError, match="must approve"):
+            act(world, p["id"])
+    # Even where the starter's own vote is let through, or an agent's, they never count.
+    monkeypatch.setenv("MAVERICK_ALLOW_SELF_APPROVAL", "1")
+    for other in ("user:starter", "agent:helper"):
+        _, q = _protected_proposal(upstream, tmp_path, monkeypatch, world=world)
+        world.decide_approval(q["approval_id"], "approved", decided_by="user:alice")
+        world.decide_approval(q["approval_id"], "approved", decided_by=other)
+        assert features.status(world, features.find(q["id"])) == "approved"
+        for act in (features.merge, features.push):
+            with pytest.raises(vault.VaultError) as refused:
+                act(world, q["id"])
+            assert str(refused.value) == features.TWO_PEOPLE
+    monkeypatch.delenv("MAVERICK_ALLOW_SELF_APPROVAL")
+    world.decide_approval(aid, "approved", decided_by="user:bob")
+    assert features.status(world, features.find(p["id"])) == "approved"
+    assert features.merge(world, p["id"])["status"] == "merged"
+    assert features.push(world, p["id"]) == p["branch"]
+
+
+def test_every_chat_channel_needs_two_distinct_people_never_an_agent(upstream, tmp_path,
+                                                                     monkeypatch):
+    """Slack, Teams and email decide through decide_from_channel, and the
+    Approvals page and Copilot through record_vote: one shared vote path."""
+    import maverick.audit as audit
+    from maverick.approval_cards import decode_approval_detail
+    from maverick.channel_approvals import (
+        CODE_PERSON_ONLY,
+        ChannelApprovalRefused,
+        decide_from_channel,
+        record_vote,
+    )
+    monkeypatch.setattr(audit, "record", lambda kind, **fields: True)
+    monkeypatch.delenv("MAVERICK_ALLOW_SELF_APPROVAL", raising=False)
+    world, p = _protected_proposal(upstream, tmp_path, monkeypatch)
+    aid = p["approval_id"]
+    binding = decode_approval_detail(world.get_approval(aid).detail)["binding_sha256"]
+
+    def vote(who, channel):
+        return decide_from_channel(world, aid, "approved", principal=who, channel=channel,
+                                   binding=binding, confirmed=True, acknowledged=True)
+    for channel in ("slack", "teams", "email"):
+        with pytest.raises(ChannelApprovalRefused) as refused:
+            vote("user:starter", channel)                       # the person who started it
+        assert refused.value.reason == "separate_approver"
+    for who in ("agent:helper", "operator"):                    # an agent, or no named person
+        with pytest.raises(ChannelApprovalRefused) as refused:
+            record_vote(world, aid, "approved", who)
+        assert refused.value.message == CODE_PERSON_ONLY
+    assert vote("user:alice", "slack")["status"] == "pending"
+    assert vote("user:alice", "teams")["approved_count"] == 1   # one person twice counts once
+    assert features.status(world, features.find(p["id"])) == "pending"
+    assert vote("user:bob", "email")["status"] == "approved"
+    assert features.merge(world, p["id"])["status"] == "merged"
+    # An ordinary code change keeps one approval, but never an agent's.
+    run, _ = _rounds(lambda work: (work / "notes.md").write_text("idea\n"))
+    plain = features.propose(world, "pricing", "Notes", "", run, owner="user:starter")
+    with pytest.raises(ChannelApprovalRefused):
+        record_vote(world, plain["approval_id"], "approved", "agent:helper")
+    record_vote(world, plain["approval_id"], "approved", "operator")
+
+
 # -- a feature-run step that asks a person to decide --
 
 def _ask(world, goal_id, question):
@@ -1980,6 +2246,7 @@ def test_an_author_that_asks_for_a_decision_stops_the_run(upstream, tmp_path, mo
     assert features.status(world, features.find(p["id"])) == "decision"
     with pytest.raises(vault.VaultError, match="wait for a person's decision"):
         features.request_approval(world, features.find(p["id"]))
+    assert world.get_goal(d.goal_id).status == "blocked"      # not failed: it can be answered
     # No restart path takes the paused round back up outside its private copy.
     assert decision_requests.resume_refusal(world, root) == decision_requests.FEATURE_RESTARTS
     with pytest.raises(Exception, match="step of a code change"):
@@ -2039,3 +2306,474 @@ def test_a_round_whose_decision_was_answered_before_it_paused_still_stops(upstre
     assert features.evidence(p)["lines"][0] == (
         "A person was asked to decide “Which way?” before this step could finish. "
         "Start a new code change to use the answer.")
+
+
+# -- not changing the Lightwork that runs the factory --
+
+def test_the_installations_own_repository_is_refused_then_protected(upstream, tmp_path,
+                                                                    monkeypatch):
+    install = tmp_path / "install"                             # a source checkout of it
+    subprocess.run(["git", "clone", "-q", str(upstream), str(install)], check=True)
+    package = install / "packages" / "maverick-core" / "maverick"
+    package.mkdir(parents=True)
+    assert features._installation_checkout(package) == install
+    wheel = install / ".venv" / "lib" / "python3.12" / "site-packages" / "maverick"
+    wheel.mkdir(parents=True)
+    assert features._installation_checkout(wheel) is None      # a wheel in its venv is not
+    monkeypatch.setattr(features, "_installation_checkout", lambda package_dir=None: install)
+    monkeypatch.setattr(features, "_author_model", lambda: "anthropic:claude-author")
+    world = WorldModel(tmp_path / "world.db")
+    mirror = tmp_path / "mirror.git"                            # same history, another address
+    subprocess.run(["git", "clone", "-q", "--bare", str(upstream), str(mirror)], check=True)
+    vault.register("pricing", str(upstream))
+    vault.register("mirror", str(mirror))
+    other = tmp_path / "other"
+    other.mkdir()
+    _sh("init", "-q", "-b", "main", cwd=other)
+    (other / "x.py").write_text("x = 1\n")
+    _sh("add", "-A", cwd=other)
+    _sh("commit", "-q", "-m", "other", cwd=other)
+    vault.register("other", str(other))
+    for name in ("pricing", "mirror"):
+        assert features.self_change_refusal(name) == features.SELF_REFUSAL
+        run, calls = _rounds(_passing)
+        with pytest.raises(vault.VaultError) as refused:
+            features.propose(world, name, "Discount", "", run)
+        assert str(refused.value) == features.SELF_REFUSAL and calls == []
+    assert features.self_change_refusal("other") is None
+    # Allowed by the organisation: every such change is protected, whole repository.
+    _settings(monkeypatch, allow_self_changes=True)
+    assert features.self_change_refusal("pricing") is None
+    run, _ = _rounds(lambda work: (work / "notes.md").write_text("idea\n"))
+    p = features.propose(world, "pricing", "Notes", "", run, protected_checker=_second()[0],
+                         owner="user:starter")
+    assert p["protected"]["self"] is True and p["protected"]["paths"] == []
+    assert features.evidence(p)["lines"][0] == features.SELF_LINE
+    assert world.get_approval(p["approval_id"]).approvals_required == 2
+
+
+def test_copilot_words_say_what_a_protected_change_still_needs(upstream, tmp_path, monkeypatch):
+    monkeypatch.delenv("MAVERICK_ALLOW_SELF_APPROVAL", raising=False)
+    world, p = _protected_proposal(upstream, tmp_path, monkeypatch)
+    said = features.protected_status(world, p)
+    assert said.startswith("Protected, because it changes 1 protected path(s).")
+    assert "0 of 2 so far" in said and "openai:gpt-second, looked at this version" in said
+    world.decide_approval(p["approval_id"], "approved", decided_by="user:alice")
+    assert "1 of 2 so far" in features.protected_status(world, p)
+
+
+# -- repair round 1 --
+
+def test_protection_is_checked_again_when_merging_pushing_and_renewing(upstream, tmp_path,
+                                                                        monkeypatch):
+    monkeypatch.setattr(features, "_author_model", lambda: "anthropic:claude-author")
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    run, _ = _rounds(_passing)
+    p = features.propose(world, "pricing", "Discount", "", run, owner="user:starter",
+                         protected_checker=_second()[0])
+    run, _ = _rounds(_passing)
+    q = features.propose(world, "pricing", "Discount", "", run, owner="user:starter",
+                         protected_checker=_second()[0])
+    assert p["protected"] is None and q["protected"] is None
+    vault.set_protected_paths("pricing", ["app.py"])           # an administrator adds a path
+    assert world.decide_approval(p["approval_id"], "approved", decided_by="user:starter")
+    for act in (features.merge, features.push):
+        with pytest.raises(vault.VaultError) as refused:
+            act(world, p["id"])
+        assert str(refused.value) == features.NEWLY_PROTECTED
+    stored = features._load("pricing", q["id"])
+    stored["approval_id"] = None                                # its approval failed to park
+    features._save(stored)
+    with pytest.raises(vault.VaultError) as refused:
+        features.request_approval(world, features.find(q["id"]))
+    assert str(refused.value) == features.NEWLY_PROTECTED
+    assert "lightwork/" not in subprocess.run(["git", "branch"], cwd=upstream,
+                                              capture_output=True, text=True).stdout
+
+
+def test_a_protected_change_with_no_named_starter_cannot_be_approved(upstream, tmp_path,
+                                                                     monkeypatch):
+    _protected_repo(upstream, monkeypatch)
+    world = WorldModel(tmp_path / "world.db")
+    second, calls = _second()
+    for owner in ("", "operator"):                             # the command line; no sign-in
+        run, _ = _rounds(_passing)
+        p = features.propose(world, "pricing", "Discount", "", run, protected_checker=second,
+                             owner=owner)
+        assert p["approval_id"] is None and features.status(world, p) == "blocked"
+        assert features.protected_refusal(p) == features.NO_STARTER
+        lines = features.evidence(p)["lines"]
+        assert features.NO_STARTER in lines and features.TWO_PEOPLE not in lines
+    assert calls == []                                         # no second check it cannot use
+    # The command line passes no starter at all; the card says so plainly.
+    from click.testing import CliRunner
+    from maverick import config
+    from maverick.cli import main
+    monkeypatch.setattr(config, "get_codebase", lambda: {"enable": True})
+    monkeypatch.setattr("maverick.cli._require_llm_key", lambda: None)
+    monkeypatch.setattr("maverick.cli.open_world", lambda *a, **k: world)
+    seen = {}
+    monkeypatch.setattr(features, "propose", lambda *a, **k: seen.update(k) or {
+        "status": "empty", "id": "0" * 16})
+    assert CliRunner().invoke(main, ["code", "feature", "pricing", "T"]).exit_code == 0
+    assert "owner" not in seen                                  # no named person is passed
+    assert "command line" in features.NO_STARTER
+
+
+@pytest.mark.skipif(not hasattr(__import__("os"), "geteuid") or __import__("os").geteuid() != 0,
+                    reason="needs root to give the checkout to another user")
+def test_an_installation_owned_by_another_user_is_still_recognised(upstream, tmp_path,
+                                                                   monkeypatch):
+    install = tmp_path / "install"
+    subprocess.run(["git", "clone", "-q", str(upstream), str(install)], check=True)
+    _sh("remote", "set-url", "origin", "https://example.invalid/other/fork.git", cwd=install)
+    vault.register("pricing", str(upstream))
+    monkeypatch.setattr(features, "_installation_checkout", lambda package_dir=None: install)
+    subprocess.run(["chown", "-R", "65534:65534", str(install)], check=True)  # git: "dubious"
+    with vault.host_repo("pricing") as host:
+        assert features.is_installation(vault.get("pricing"), host)   # by its first commit
+        broken = install / "broken"
+        (install / ".git").rename(broken)
+        (install / ".git").write_text("gitdir: /nowhere\n")       # git cannot read it at all
+        assert features.is_installation(vault.get("pricing"), host)   # unknown: fail closed
+
+
+def test_the_second_checker_family_reads_through_gateways(upstream, tmp_path, monkeypatch):
+    family = features.model_family
+    for model in ("anthropic:claude-x", "openrouter:anthropic/claude-3.5", "claude-3-opus",
+                  "bedrock:us.anthropic.claude-3-5-sonnet", "vertex:claude-sonnet-4",
+                  "litellm:claude-haiku", "anthropic:claude-author"):
+        assert family(model) == "anthropic", model
+    assert family("openrouter:openai/gpt-4o") == family("openai:o3-mini") == "openai"
+    assert family("vertex:gemini-2.5-pro") == family("gemini:gemini-other") == "google"
+    # An unknown name never borrows its provider's family; a fine-tune reads as its base.
+    for unknown in ("openai:my-ft", "anthropic:author-model", "gemini:other"):
+        assert family(unknown) is None, unknown
+    assert family("ft:gpt-4o-mini:acme::abc123") == family("openai:ft:gpt-4o:acme:x:1") == "openai"
+    assert family("ollama:llama3.1") == family("openai:llama-3-70b") == "meta"
+    for unknown in ("my-local", "ollama:my-model", "openrouter:some/thing",
+                    "openrouter:metaculus-bot", "azure:phind",              # no anchored name
+                    "openrouter:google/gemma-claude-distill",              # two vendors
+                    "openrouter:deepseek/deepseek-r1-distill-llama-70b",
+                    "openrouter:nousresearch/hermes-3-llama-3.1"):
+        assert family(unknown) is None, unknown
+    assert family("openai:commander-x") is None                  # "commander" is not "command"
+    assert family("openrouter:x/command-a") == "cohere"
+    assert family("groq:openai/gpt-oss-120b") == family("openai:o3") == "openai"
+    _protected_repo(upstream, monkeypatch)                    # the author is anthropic:...
+    world = WorldModel(tmp_path / "world.db")
+    for model, problem in (("openrouter:anthropic/claude-3.5", "same_family"),
+                           ("bedrock:anthropic.claude-v2", "same_family"),
+                           ("vertex:claude-sonnet-4", "same_family"),
+                           ("my-local", "uncompared")):
+        run, _ = _rounds(_passing)
+        second, calls = _second(model)
+        p = features.propose(world, "pricing", "Discount", "", run, protected_checker=second,
+                             owner="user:starter")
+        assert p["protected"]["problem"] == problem and calls == [], model
+        assert p["approval_id"] is None
+
+
+def test_the_second_checker_never_fails_over_to_another_model(monkeypatch, tmp_path):
+    from maverick import config, orchestrator, provider_failover
+    from maverick import world_model as wm
+    chains = {"provider_failover": {"chains": {"openai:second": ["anthropic:claude-x"]}}}
+    monkeypatch.setattr(config, "load_config", lambda *a, **k: chains)
+    assert provider_failover.fallback_models("openai:second") == ["anthropic:claude-x"]
+    seen = []
+    monkeypatch.setattr(orchestrator, "run_goal_sync", lambda *a, **k: seen.append(
+        (k.get("orchestrator_model_override"), provider_failover.fallback_models("openai:second"))))
+    monkeypatch.setattr(wm, "open_world", lambda: object())
+    monkeypatch.setattr(wm, "close_world_if_owned", lambda world: None)
+    monkeypatch.setattr(features, "checker_sandbox", lambda workdir: object())
+    _settings(monkeypatch, protected_checker_model="openai:second")
+    checker = features.default_protected_checker(budget=None)
+    checker(1, tmp_path)
+    normal = features.default_checker(budget=None, model="openai:second")
+    normal(1, tmp_path)
+    assert seen == [("openai:second", []), ("openai:second", ["anthropic:claude-x"])]
+
+
+def test_a_protected_change_compares_the_models_that_served_it(upstream, tmp_path, monkeypatch):
+    # An OpenAI author and a Gemini checker that could fail over to Anthropic
+    # would make an Anthropic second checker's "different family" untrue: in a
+    # repository with protected paths, every participant runs with no failover.
+    from maverick import config, provider_failover
+    chains = {"provider_failover": {"chains": {
+        "openai:gpt-author": ["anthropic:claude-backup"],
+        "gemini:gemini-normal": ["anthropic:claude-backup"]}}}
+    monkeypatch.setattr(config, "load_config", lambda *a, **k: chains)
+    _protected_repo(upstream, monkeypatch)
+    monkeypatch.setattr(features, "_author_model", lambda: "openai:gpt-author")
+    world = WorldModel(tmp_path / "world.db")
+    served = []
+
+    def serve(model):  # the configured model is down: a chain, when there is one, answers
+        served.append((provider_failover.fallback_models(model) or [model])[0])
+    run, _ = _rounds(lambda work: (serve("openai:gpt-author"), _passing(work)))
+
+    def normal(gid, copy):
+        serve("gemini:gemini-normal")
+        return {"findings": []}
+    normal.model = "gemini:gemini-normal"
+    p = features.propose(world, "pricing", "Discount", "", run, checker=normal,
+                         protected_checker=_second("anthropic:claude-second")[0],
+                         owner="user:starter")
+    assert p["protected"]["problem"] is None
+    assert served == ["openai:gpt-author", "gemini:gemini-normal"]
+
+
+def test_a_paused_step_is_never_restarted_outside_its_private_copy(upstream, tmp_path,
+                                                                    monkeypatch):
+    from click.testing import CliRunner
+    from maverick import config, decision_requests, orchestrator
+    from maverick.chat_threads import ChatThreads
+    from maverick.cli import main
+    monkeypatch.setattr(decision_requests, "_announce", lambda world, decision: None)
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    world.record_goal_origin(world.create_goal("scheduled", "x"), "schedule", "nightly")
+    asked = {}
+
+    def author(goal_id, work):
+        _passing(work)
+        step = world.create_goal("step", "deep", parent_id=goal_id, owner="user:starter")
+        world.set_goal_status(goal_id, "blocked")
+        asked["root"], asked["d"] = goal_id, [_ask(world, step, f"Question {i}?") for i in range(6)]
+    p = features.propose(world, "pricing", "Discount", "", author, owner="user:starter")
+    assert len(p["decision"]) == 6                              # every decision is held
+    root = asked["root"]
+    for d in asked["d"][:-1]:
+        decision_requests.answer(world, d.id, 1, actor="user:starter", is_admin=True)
+    last = decision_requests.answer(world, asked["d"][-1].id, 1, actor="user:starter",
+                                    is_admin=True)
+    assert last["resume"] is False and last["restart"] == decision_requests.FEATURE_RESTARTS
+    step = world.get_goal(asked["d"][0].goal_id)
+    assert step.status == "cancelled" and step.result == decision_requests.FEATURE_RESTARTS
+    # No restart path takes the paused round back up.
+    assert decision_requests.resume_refusal(world, root) == decision_requests.FEATURE_RESTARTS
+    with pytest.raises(Exception, match="step of a code change"):
+        ChatThreads(world).resume(root)
+    assert orchestrator._decision_start_refusal(world, root).endswith(
+        decision_requests.FEATURE_RESTARTS)
+    monkeypatch.setattr(config, "get_codebase", lambda: {"enable": True})
+    monkeypatch.setattr("maverick.cli.open_world", lambda *a, **k: world, raising=False)
+    out = CliRunner().invoke(main, ["resume", "--goal-id", str(root)])
+    assert out.exit_code == 2 and "step of a code change" in out.output, out.output
+    # An existing origin is never overwritten, and an unreadable one is an error.
+    assert [r[0] for r in world.tenant_query(
+        "SELECT kind FROM goal_origins WHERE goal_id = 1 AND {tenant_goal:goal_id}", ())] \
+        == ["schedule"]
+    monkeypatch.setattr(world, "tenant_query", lambda *a, **k: (_ for _ in ()).throw(OSError()))
+    assert decision_requests.resume_refusal(world, root) == \
+        decision_requests.FEATURE_UNKNOWN_RESTART
+
+
+def test_one_person_spelt_two_ways_is_still_one_person(upstream, tmp_path, monkeypatch):
+    import maverick.audit as audit
+    from maverick.channel_approvals import ChannelApprovalRefused, record_vote
+    monkeypatch.setattr(audit, "record", lambda kind, **fields: True)
+    monkeypatch.delenv("MAVERICK_ALLOW_SELF_APPROVAL", raising=False)
+    world, p = _protected_proposal(upstream, tmp_path, monkeypatch)
+    aid = p["approval_id"]
+    for starter in ("user:Starter", "user:STARTER"):            # the starter, spelt differently
+        assert world.decide_approval(aid, "approved", decided_by=starter) is False
+        with pytest.raises(ChannelApprovalRefused):
+            record_vote(world, aid, "approved", starter)
+    assert world.decide_approval(aid, "approved", decided_by="user:alice")
+    assert world.decide_approval(aid, "approved", decided_by="user:ALICE")
+    record_vote(world, aid, "approved", "user:Alice")
+    state = world.approval_state(aid)
+    assert state["status"] == "pending" and state["approved_count"] == 1
+    assert "1 of 2 so far" in features.protected_status(world, p)
+    event = record_vote(world, aid, "approved", "user:bob")      # a second person: quorum
+    assert event.final_status == "approved"
+
+
+@pytest.fixture
+def pg_world(monkeypatch):
+    import os
+    import uuid
+    dsn = os.environ.get("MAVERICK_PG_DSN")
+    if not dsn:
+        pytest.skip("MAVERICK_PG_DSN is not set")
+    psycopg = pytest.importorskip("psycopg")
+    from maverick.world_model_backends.postgres import PostgresWorldModel
+    from psycopg import sql
+    from psycopg.conninfo import make_conninfo
+    db = "mvk_codebase_" + uuid.uuid4().hex
+    with psycopg.connect(dsn, autocommit=True) as admin:
+        admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(db)))
+    own = make_conninfo(dsn, dbname=db)
+    monkeypatch.setenv("MAVERICK_PG_DSN", own)
+    try:
+        yield PostgresWorldModel(own)
+    finally:
+        with psycopg.connect(dsn, autocommit=True) as admin:
+            admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(db)))
+
+
+def test_two_people_on_postgres_never_the_starter_or_one_person_twice(upstream, monkeypatch,
+                                                                       pg_world):
+    import maverick.audit as audit
+    from maverick.channel_approvals import ChannelApprovalRefused, record_vote
+    monkeypatch.setattr(audit, "record", lambda kind, **fields: True)
+    monkeypatch.delenv("MAVERICK_ALLOW_SELF_APPROVAL", raising=False)
+    _protected_repo(upstream, monkeypatch)
+    run, _ = _rounds(_passing)
+    p = features.propose(pg_world, "pricing", "Discount", "", run,
+                         protected_checker=_second()[0], owner="user:starter")
+    aid = p["approval_id"]
+    for who in ("user:starter", "user:STARTER", "agent:x", "operator"):
+        with pytest.raises(ChannelApprovalRefused):
+            record_vote(pg_world, aid, "approved", who)
+    assert pg_world.decide_approval(aid, "approved", decided_by="user:Starter") is False
+    record_vote(pg_world, aid, "approved", "user:alice")
+    record_vote(pg_world, aid, "approved", "user:ALICE")
+    assert pg_world.approval_state(aid)["approved_count"] == 1
+    with pytest.raises(vault.VaultError, match="must approve"):
+        features.merge(pg_world, p["id"])
+    assert record_vote(pg_world, aid, "approved", "user:bob").final_status == "approved"
+
+
+def test_a_change_whose_base_left_the_main_code_never_merges_or_pushes(upstream, tmp_path,
+                                                                       monkeypatch):
+    monkeypatch.setattr(features, "_author_model", lambda: "anthropic:claude-author")
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    run, _ = _rounds(_passing)
+    p = features.propose(world, "pricing", "Discount", "", run, owner="user:starter")
+    world.decide_approval(p["approval_id"], "approved", decided_by="user:lead")
+    with vault.host_repo("pricing") as host:                    # main is rewritten without base
+        tree = vault._git(["rev-parse", "HEAD^{tree}"], git_dir=host).strip()
+        orphan = vault._git(["commit-tree", tree, "-m", "rewritten"], git_dir=host,
+                            env=features._IDENTITY).strip()
+        vault._git(["update-ref", "refs/heads/keep", "refs/heads/main"], git_dir=host)
+        vault._git(["update-ref", "refs/heads/main", orphan], git_dir=host)
+        vault.commit_back("pricing", host)
+    for keep in (True, False):                                   # base kept on a side branch, or gone
+        if not keep:
+            with vault.host_repo("pricing") as host:
+                vault._git(["update-ref", "-d", "refs/heads/keep"], git_dir=host)
+                vault.commit_back("pricing", host)
+        for act in (features.merge, features.push):
+            with pytest.raises(vault.VaultError) as refused:
+                act(world, p["id"])
+            assert str(refused.value) == features.BASE_MOVED, keep
+    assert features.plain_refusal(vault.VaultError(features.BASE_MOVED)) == features.BASE_MOVED
+
+
+def test_every_feature_step_is_marked_before_it_runs(upstream, tmp_path, monkeypatch):
+    from maverick import decision_requests
+    monkeypatch.setattr(decision_requests, "_announce", lambda world, decision: None)
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    # A mark that cannot be written stops the run before anything runs.
+    real = world.record_goal_origin
+    monkeypatch.setattr(world, "record_goal_origin",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("disk")))
+    run, calls = _rounds(_passing)
+    with pytest.raises(OSError):
+        features.propose(world, "pricing", "Discount", "", run, owner="user:starter")
+    assert calls == []
+    monkeypatch.setattr(world, "record_goal_origin", real)
+    # Marking a sub-goal at the pause may fail: the step is still known, by its round.
+    asked = {}
+
+    def author(goal_id, work):
+        _passing(work)
+        assert decision_requests.resume_refusal(world, goal_id) == ""   # its own run starts
+        child = world.create_goal("child", "c", parent_id=goal_id, owner="user:starter")
+        asked["d"] = _ask(world, child, "Which way?")
+        monkeypatch.setattr(features, "_mark_step", lambda *a, **k: None)
+    p = features.propose(world, "pricing", "Discount", "", author, owner="user:starter")
+    d = asked["d"]
+    assert decision_requests.resume_refusal(world, p["goal_id"]) == \
+        decision_requests.FEATURE_RESTARTS
+    out = decision_requests.answer(world, d.id, 1, actor="user:starter", is_admin=True)
+    assert out["resume"] is False and world.get_goal(d.goal_id).status == "cancelled"
+
+
+def test_queued_children_of_a_change_never_start_after_it_ends(upstream, tmp_path, monkeypatch):
+    from maverick import decision_requests as dr
+    monkeypatch.setattr(dr, "_announce", lambda world, decision: None)
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    got = {}
+
+    def author(goal_id, work):
+        _passing(work)
+        got["root"] = goal_id
+        got["queued"] = world.create_goal("queued child", "c", parent_id=goal_id,
+                                          owner="user:starter", execution_principal="user:starter")
+        asking = world.create_goal("asking child", "c", parent_id=goal_id, owner="user:starter",
+                                   execution_principal="user:starter")
+        got["d"] = _ask(world, asking, "Which way?")
+    features.propose(world, "pricing", "Discount", "", author, owner="user:starter")
+    queued = world.get_goal(got["queued"])
+    assert queued.status == "cancelled" and queued.result == dr.FEATURE_RESTARTS
+    later = world.create_goal("made later", "c", parent_id=got["root"], owner="user:starter")
+    assert dr.resume_refusal(world, later) == dr.FEATURE_RESTARTS   # never ran, but the change ended
+    assert world.get_goal(got["d"].goal_id).status == "blocked"      # still answerable
+
+
+def test_a_change_shows_while_it_runs_and_after_its_process_died(upstream, tmp_path, monkeypatch):
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    seen = {}
+
+    def author(goal_id, work):
+        _passing(work)
+        (only,) = features.list_proposals("pricing")
+        seen["during"] = (only["status"], features.status(world, only),
+                          features.evidence(only)["lines"][0])
+        seen["pid"] = only["id"]
+    p = features.propose(world, "pricing", "Discount", "", author, owner="user:starter")
+    assert seen["during"] == ("running", "running", features.RUNNING_LINE)
+    assert p["id"] == seen["pid"] and features.status(world, features.find(p["id"])) == "pending"
+    record = dict(features.find(p["id"]), status="running", process=2 ** 22 + 12345)
+    features._save(record)                                    # left running by a process now gone
+    assert features.status(world, features.find(p["id"])) == "stopped"
+    assert features.evidence(features.find(p["id"]))["lines"][0] == features.STOPPED_LINE
+    features._save(dict(record, host="elsewhere", deadline=1.0))     # another computer, past its cap
+    assert features.status(world, features.find(p["id"])) == "stopped"
+
+    def broken(goal_id, work):
+        raise RuntimeError("the run broke")
+    with pytest.raises(RuntimeError):
+        features.propose(world, "pricing", "Broken", "", broken, owner="user:starter")
+    gone = [q for q in features.list_proposals("pricing") if q["title"] == "Broken"]
+    assert [features.status(world, q) for q in gone] == ["stopped"]
+
+
+def test_a_change_is_live_only_in_the_very_process_that_builds_it(upstream, tmp_path,
+                                                                  monkeypatch):
+    import os
+    import time as clock
+
+    from maverick import runner
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    run, _ = _rounds(_passing)
+    p = features.propose(world, "pricing", "Discount", "", run, owner="user:starter")
+    live = features._running_record(p["id"], "pricing", "Discount", p["branch"], p["base"],
+                                    "user:starter", None)
+    assert live["deadline"] > clock.time() and live["process"] == os.getpid()
+    # No cap given: the configured one.
+    cap = runner.goal_budget_defaults()["max_wall_seconds"] or runner.DEFAULT_MAX_WALL_SECONDS
+    assert live["wall_cap"] == cap and live["deadline"] == live["created_at"] + cap
+
+    def gone(**changes):
+        features._save({**live, **changes})
+        return features.status(world, features.find(p["id"])) == "stopped"
+    assert not gone()                                          # this very process, in time
+    sleeper = subprocess.Popen(["sleep", "30"])                # a reused process number
+    try:
+        assert gone(process=sleeper.pid)
+    finally:
+        sleeper.kill()
+    assert gone(boot_id="another-boot")                        # the computer restarted
+    assert gone(deadline=1.0)                                  # past its time cap, here too
+    monkeypatch.setattr(features, "_proc_identity", lambda pid: None)  # no /proc: the cap alone
+    assert not gone(process=4_000_000) and gone(process=4_000_000, deadline=1.0)

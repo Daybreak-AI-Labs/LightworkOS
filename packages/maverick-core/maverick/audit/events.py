@@ -40,6 +40,11 @@ Payload shapes (kind -> required fields, all events also carry
   agent_trust_denied: peer:str, direction:str (inbound|outbound), rule:str,
                      reason:str, correlation_id:str — an external agent was
                      refused by the Agent Trust Plane.
+  agent_trust_changed: action:str (added|replaced|limits_changed|blocked|
+                     unblocked|removed), trusted_agent:str, actor:str — an
+                     app-managed Agent Trust entry changed; written before the
+                     change is saved, so a failed save leaves a record of the
+                     attempt with no change.
   privacy_record_changed: event_id:str, occurred_at:float, actor:str, tenant:str,
                      record_type:str, action:str, record_id:str, revision:int,
                      status:str, record_sha256:str (opaque control metadata and
@@ -260,6 +265,10 @@ class EventKind:
     # payload: peer:str, direction:str (inbound|outbound), rule:str, reason:str,
     # correlation_id:str ("" when none).
     AGENT_TRUST_DENIED = "agent_trust_denied"
+    # An app-managed entry in the Agent Trust registry changed, written before
+    # the change is saved. payload: action (added|replaced|limits_changed|
+    # blocked|unblocked|removed), trusted_agent:str, actor:str.
+    AGENT_TRUST_CHANGED = "agent_trust_changed"
     # Agent Control Plane: an operator verb (suspend / resume / contain /
     # release / attenuate / halt / clear-halt) applied to a governed principal
     # from the console or `maverick control-plane`. payload: verb:str,

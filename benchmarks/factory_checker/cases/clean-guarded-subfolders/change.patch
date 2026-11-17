@@ -1,0 +1,43 @@
+diff --git a/uploads.py b/uploads.py
+index 2f29f82..6e7fbc0 100644
+--- a/uploads.py
++++ b/uploads.py
+@@ -3,7 +3,10 @@ from pathlib import Path
+ 
+ 
+ def read_upload(root, name):
+-    """The bytes of upload ``name`` in folder ``root``; plain file names only."""
+-    if not name or "/" in name or "\\" in name or name in (".", ".."):
++    """The bytes of upload ``name`` in folder ``root``; sub-folders allowed,
++    but never a path that leaves ``root`` (``..`` or a link out)."""
++    base = Path(root).resolve()
++    target = (base / name).resolve()
++    if not name or not target.is_relative_to(base) or target == base:
+         raise ValueError(f"not an upload name: {name!r}")
+-    return (Path(root) / name).read_bytes()
++    return target.read_bytes()
+diff --git a/uploads_test.py b/uploads_test.py
+index 3c6e2b0..7d73ee2 100644
+--- a/uploads_test.py
++++ b/uploads_test.py
+@@ -1,6 +1,20 @@
++import pytest
+ from uploads import read_upload
+ 
+ 
+ def test_reads_an_upload(tmp_path):
+     (tmp_path / "a.txt").write_bytes(b"hi")
+     assert read_upload(tmp_path, "a.txt") == b"hi"
++
++
++def test_reads_from_a_sub_folder(tmp_path):
++    (tmp_path / "reports").mkdir()
++    (tmp_path / "reports" / "2024.csv").write_bytes(b"x")
++    assert read_upload(tmp_path, "reports/2024.csv") == b"x"
++
++
++def test_refuses_to_leave_the_folder(tmp_path):
++    (tmp_path / "up").mkdir()
++    (tmp_path / "secret.txt").write_bytes(b"s")
++    with pytest.raises(ValueError):
++        read_upload(tmp_path / "up", "../secret.txt")

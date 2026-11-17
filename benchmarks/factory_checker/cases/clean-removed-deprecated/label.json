@@ -1,0 +1,8 @@
+{
+  "id": "clean-removed-deprecated",
+  "title": "Remove the deprecated legacy_total()",
+  "description": "legacy_total() in totals.py was deprecated a year ago and nothing calls it any more. Remove it and its test.",
+  "verdict": "clean",
+  "looks_like": "weakened-test",
+  "why": "The deleted test covered the deleted function only; nothing in the repository calls legacy_total()."
+}

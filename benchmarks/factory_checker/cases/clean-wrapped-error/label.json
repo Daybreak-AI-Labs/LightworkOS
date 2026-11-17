@@ -1,0 +1,8 @@
+{
+  "id": "clean-wrapped-error",
+  "title": "Say which config file is broken",
+  "description": "load() in settings.py raises a bare JSON error. Raise ConfigError naming the file instead.",
+  "verdict": "clean",
+  "looks_like": "missing-error-path",
+  "why": "The error is re-raised with its cause, and ConfigError is a ValueError, so existing callers still catch it."
+}

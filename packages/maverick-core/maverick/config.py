@@ -1094,9 +1094,10 @@ _LOOSENING_LOGGED: set[tuple[str, tuple[str, ...]]] = set()
 
 
 def _merge_tenant(cfg: dict, tenant: dict, path: Path) -> dict:
-    """A tenant overlay may only tighten governance, safety, capabilities,
-    sandbox and security settings; a looser value is ignored, logged once and listed by
-    ``maverick doctor`` (:func:`tenant_policy_loosenings`)."""
+    """A tenant overlay may only tighten the policy sections
+    (:data:`policy_tighten.TENANT_RULES`), and only keys with a rule; a looser
+    value or a key only the organisation sets is ignored, logged once and
+    listed by ``maverick doctor`` (:func:`tenant_policy_loosenings`)."""
     merged, ignored, fixed = _tighten_tenant(cfg, tenant)
     marker = (str(path), tuple(ignored), tuple(fixed))
     if (ignored or fixed) and marker not in _LOOSENING_LOGGED:
@@ -1112,10 +1113,19 @@ def _tighten_tenant(cfg: dict, tenant: dict) -> tuple[dict, list[str], list[str]
     section the tenant wrote as something other than a table (the loader
     already reads it as empty)."""
     from .policy_tighten import merge_tenant_overlay
-    merged, ignored, fixed = merge_tenant_overlay(cfg, tenant, _deep_merge_config)
+    merged, ignored, fixed = merge_tenant_overlay(cfg, tenant, _deep_merge_config,
+                                                  infrastructure=workspace_infrastructure(cfg))
     message = getattr(tenant, "message", "") if isinstance(tenant, _UnreadableTable) else ""
     ignored += [name for name in ("safety", "sandbox") if f"[{name}] must be a configuration table" in message]
     return merged, ignored, fixed
+
+
+def workspace_infrastructure(cfg: dict) -> bool:
+    """Whether a workspace may name its own sandbox servers (``[sandbox]
+    workspace_infrastructure``, off by default). Off while any settings file
+    cannot be read."""
+    from .policy_tighten import workspace_infrastructure as switch
+    return switch(cfg.get("sandbox")) and not config_source_errors(include_tenant=True)
 
 
 def tenant_policy_loosenings() -> dict[str, list[str]]:
@@ -3144,7 +3154,8 @@ def get_fleet_memory() -> dict:
 
 CODEBASE_LOOP_DEFAULTS = {"repair_rounds": 2, "checker": True, "check_rounds": 2,
                           "require_container": False, "checkers": 1, "checker_models": [],
-                          "checker_image": "", "max_repros": 5}
+                          "checker_image": "", "max_repros": 5,
+                          "protected_checker_model": "", "allow_self_changes": False}
 # A container image reference ([codebase] checker_image); anything else is kept
 # as an unusable name, so the check reports "could not run" instead of running
 # on this computer.
@@ -3156,6 +3167,11 @@ def _codebase_models(raw: object) -> list[str]:
     if not isinstance(raw, list):
         return []
     return [str(m).strip()[:200] for m in raw if isinstance(m, str) and m.strip()][:3]
+
+
+def _codebase_model(raw: object) -> str:
+    """``[codebase] protected_checker_model``: one model name, or empty."""
+    return raw.strip()[:200] if isinstance(raw, str) else ""
 
 
 def _codebase_image(raw: object) -> str:
@@ -3183,7 +3199,11 @@ def get_codebase() -> dict:
     rule); ``checker_image`` (default empty) runs checks and re-runs in that
     container image (a malformed name is kept as unusable, never dropped);
     ``max_repros`` (0-20, default 5) bounds the findings Lightwork re-runs
-    per look."""
+    per look. ``protected_checker_model`` (default empty) is the second,
+    cross-family checker a change to a protected path needs before it can be
+    approved; ``allow_self_changes`` (default off; a malformed value, or a
+    configuration file that cannot be read, keeps it off) lets feature runs
+    change the repository the running installation was installed from."""
     cfg = load_config().get("codebase", {})
     if not isinstance(cfg, dict):
         cfg = {}
@@ -3206,7 +3226,10 @@ def get_codebase() -> dict:
             "checkers": _rounds("checkers", 1, 3),
             "checker_models": _codebase_models(cfg.get("checker_models")),
             "checker_image": _codebase_image(cfg.get("checker_image")),
-            "max_repros": _rounds("max_repros", 0, 20)}
+            "max_repros": _rounds("max_repros", 0, 20),
+            "protected_checker_model": _codebase_model(cfg.get("protected_checker_model")),
+            "allow_self_changes": (not config_source_errors(include_tenant=True)
+                                   and _strict_config_bool(cfg, "allow_self_changes", False))}
 
 
 def get_ifc() -> dict:

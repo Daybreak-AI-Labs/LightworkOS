@@ -48,11 +48,13 @@ def _who(request: Request, world, approval) -> tuple[str, int]:
     required = max(1, int(getattr(approval, "approvals_required", 1) or 1))
     state = world.approval_state(approval.id) or {}
     approvers = list(state.get("approvers") or [])
-    remaining = max(1, required - len(approvers))
+    from maverick.safety.dual_control import distinct_people, includes_person
+
+    remaining = max(1, required - distinct_people(approvers))
     viewer = _viewer(request)
     if own_request_note(world, approval, viewer):
         return "others", remaining
-    can_decide = (viewer not in approvers and has_permission(request, "operate")
+    can_decide = (not includes_person(approvers, viewer) and has_permission(request, "operate")
                   and can_read_approval(request, approval, world))
     if required <= 1:
         return ("you" if can_decide else "approver"), remaining

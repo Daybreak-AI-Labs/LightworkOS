@@ -1,0 +1,23 @@
+diff --git a/ranges.py b/ranges.py
+index 584b360..b9c2b05 100644
+--- a/ranges.py
++++ b/ranges.py
+@@ -3,4 +3,4 @@
+ 
+ def between(x, low, high):
+     """True when low <= x <= high (both ends included)."""
+-    return low <= x < high
++    return low <= x <= high
+diff --git a/ranges_test.py b/ranges_test.py
+index d40093e..57d9866 100644
+--- a/ranges_test.py
++++ b/ranges_test.py
+@@ -4,3 +4,8 @@ from ranges import between
+ def test_inside_and_outside():
+     assert between(5, 1, 10)
+     assert not between(0, 1, 10)
++
++
++def test_both_ends_are_included():
++    assert between(1, 1, 10)
++    assert between(10, 1, 10)

@@ -20,6 +20,8 @@
   limits file aside so the default limits apply (``--start-over``).
 
 Restoring a blocked agent (``maverick trust unrevoke``) already has an API.
+Each change runs one shared function, which Copilot also calls
+(``product_operations_agent_trust`` and ``product_operations_partner_limits``).
 """
 from __future__ import annotations
 
@@ -30,7 +32,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 
-from .auth import caller_principal, require_global_permission, require_permission
+from . import auth
+from .auth import require_global_permission, require_permission
 
 router = APIRouter(prefix="/api/v1/trust", tags=["agent-trust-page"])
 
@@ -55,7 +58,9 @@ class CheckIn(BaseModel):
 
 class AgentLimitsIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    pubkey: str = Field(default="", max_length=64)
+    # No key, or an empty one, keeps the key on file; only remove_key clears it.
+    pubkey: str | None = Field(default=None, max_length=64)
+    remove_key: bool = False
     direction: Literal["inbound", "outbound", "both"] = "both"
     allow_tools: list[str] = Field(default_factory=list, max_length=256)
     deny_tools: list[str] = Field(default_factory=list, max_length=256)
@@ -119,8 +124,17 @@ def _enforced_now() -> bool | None:
         return None
 
 
-@router.post("/enforcement")
-async def set_enforcement(request: Request, body: EnforcementIn):
+class ConfirmationNeeded(Exception):
+    """Turning blocking off lowers a protection and was not confirmed."""
+
+
+_PINNED = "Your installation controls this setting, so it cannot be changed here."
+
+
+def apply_enforcement(request: Request, enforced: bool, *, confirm: bool) -> None:
+    """Turn blocking of unlisted outside agents on or off. Shared by the page
+    and Copilot: installation administrators only, turning it off needs the
+    person's confirmation, and a change that cannot be recorded is undone."""
     require_global_permission(request, "admin")
     from maverick.audit import AuditRefused
 
@@ -129,63 +143,64 @@ async def set_enforcement(request: Request, body: EnforcementIn):
     from .settings_audit import record_setting_change
 
     setting = catalog.BY_ID["agent_trust.enforce"]
-    before = await run_in_threadpool(_enforced_now)
-    if not body.enforced and before is not False and not body.confirm:
+    before = _enforced_now()
+    if not enforced and before is not False and not confirm:
+        raise ConfirmationNeeded
+
+    settings_store.set_agent_trust_enforce(enforced)
+    effective = _enforced_now()
+    if effective is not enforced:
+        # Something with higher precedence pins it: leave the saved value
+        # matching what is really in force.
+        if effective is not None:
+            settings_store.set_agent_trust_enforce(effective)
+            _enforced_now()
+        raise HTTPException(status_code=409, detail=_PINNED)
+    if before is enforced:
+        return
+    try:
+        record_setting_change(
+            request, section="agent_trust", key="enforce", old=before, new=enforced,
+            confirmed=confirm and catalog.weakens(setting, before, enforced))
+    except AuditRefused as exc:
+        # No change without a record of it: put the previous value back.
+        if before is not None:
+            settings_store.set_agent_trust_enforce(before)
+            _enforced_now()
+        raise HTTPException(
+            status_code=503,
+            detail="The change could not be recorded, so it was undone.") from exc
+
+
+@router.post("/enforcement")
+async def set_enforcement(request: Request, body: EnforcementIn):
+    try:
+        await run_in_threadpool(lambda: apply_enforcement(request, body.enforced, confirm=body.confirm))
+    except ConfirmationNeeded:
+        from . import settings_catalog as catalog
+
+        setting = catalog.BY_ID["agent_trust.enforce"]
         return JSONResponse(
             {"detail": "confirmation required",
              "confirm": [{"id": setting.id, "label": setting.label, "warning": setting.warning}]},
             status_code=409, headers={"Cache-Control": "no-store"})
-
-    def write() -> bool:
-        settings_store.set_agent_trust_enforce(body.enforced)
-        effective = _enforced_now()
-        if effective is not body.enforced:
-            # Something with higher precedence pins it: leave the saved value
-            # matching what is really in force.
-            if effective is not None:
-                settings_store.set_agent_trust_enforce(effective)
-                _enforced_now()
-            return False
-        return True
-
-    if not await run_in_threadpool(write):
-        raise HTTPException(
-            status_code=409,
-            detail="Your installation controls this setting, so it cannot be changed here.")
-    if before is not body.enforced:
-        try:
-            await run_in_threadpool(
-                lambda: record_setting_change(
-                    request, section="agent_trust", key="enforce", old=before,
-                    new=body.enforced,
-                    confirmed=body.confirm and catalog.weakens(setting, before, body.enforced)))
-        except AuditRefused as exc:
-            # No change without a record of it: put the previous value back.
-            if before is not None:
-                await run_in_threadpool(settings_store.set_agent_trust_enforce, before)
-                await run_in_threadpool(_enforced_now)
-            raise HTTPException(
-                status_code=503,
-                detail="The change could not be recorded, so it was undone.") from exc
     return {"enforced": body.enforced}
 
 
-@router.post("/agents/{agent_id}/check")
-async def check_agent(request: Request, agent_id: str, body: CheckIn) -> dict:
+def check_access(request: Request, agent_id: str, body: CheckIn) -> dict:
+    """Replay the access decision for one agent without changing anything.
+    Shared by the page and Copilot; anyone who may view the page."""
     require_permission(request, "view")
     from maverick import agent_trust
 
     if not agent_trust.valid_agent_id(agent_id):
         raise HTTPException(status_code=404, detail="That agent is not on the list.")
-
-    def decide():
-        if body.direction == "outbound":
-            return agent_trust.decide_outbound(agent_id, enforced=True)
-        return agent_trust.decide_inbound(agent_id, requested_tools=body.tools,
-                                          max_risk=body.risk, enforced=True)
-
     try:
-        decision = await run_in_threadpool(decide)
+        if body.direction == "outbound":
+            decision = agent_trust.decide_outbound(agent_id, enforced=True)
+        else:
+            decision = agent_trust.decide_inbound(agent_id, requested_tools=body.tools,
+                                                  max_risk=body.risk, enforced=True)
     except agent_trust.AgentTrustError as exc:
         raise HTTPException(status_code=503, detail="The list of outside agents could not be read.") from exc
     return {"allowed": bool(decision.allowed),
@@ -193,15 +208,46 @@ async def check_agent(request: Request, agent_id: str, body: CheckIn) -> dict:
                                    if not decision.allowed else "This agent would be let in.")}
 
 
-@router.put("/agents/{agent_id}")
-async def update_agent(request: Request, agent_id: str, body: AgentLimitsIn) -> dict:
+@router.post("/agents/{agent_id}/check")
+async def check_agent(request: Request, agent_id: str, body: CheckIn) -> dict:
+    return await run_in_threadpool(check_access, request, agent_id, body)
+
+
+_UNSAVED = "The list of outside agents could not be saved. Nothing was changed."
+
+
+def _not_recorded() -> HTTPException:
+    return HTTPException(status_code=503, detail=_UNRECORDED)
+
+
+def _not_saved() -> HTTPException:
+    # The audit row may already be written: like the partner limits, the
+    # record comes first, so a failed save leaves a record of the attempt.
+    return HTTPException(status_code=503, detail=_UNSAVED)
+
+
+class _NotSaved(Exception):
+    """The registry file could not be written (kept apart from a failure of
+    the containment authority around an unblock)."""
+
+
+def apply_agent_limits(request: Request, agent_id: str, body: AgentLimitsIn) -> None:
+    """Change an app-managed agent's limits, keeping its connection tokens,
+    expiry, block state and security key (unless ``remove_key``). Shared by
+    the page and Copilot: workspace administrators only, in the caller's
+    workspace, with the audit row written before the change is saved."""
     require_permission(request, "admin")
     from maverick import agent_trust
+    from maverick.audit import AuditRefused
+
+    actor = _actor(request)
 
     def write() -> None:
         if not agent_trust.valid_agent_id(agent_id):
             raise HTTPException(status_code=404, detail="That agent is not on the list.")
-        pubkey = body.pubkey.strip()
+        pubkey = (body.pubkey or "").strip()
+        if pubkey and body.remove_key:
+            raise HTTPException(status_code=422, detail="Paste a new security key or remove the one on file, not both.")
         if pubkey and not agent_trust._PUBKEY_RE.fullmatch(pubkey):
             raise HTTPException(status_code=422, detail="That security key is not valid.")
         with agent_trust._managed_locked():
@@ -211,8 +257,8 @@ async def update_agent(request: Request, agent_id: str, body: AgentLimitsIn) -> 
                 raise HTTPException(
                     status_code=404,
                     detail="This agent was set up by your installation and can't be edited here.")
-            update = body.model_dump()
-            update["pubkey"] = pubkey
+            update = body.model_dump(exclude={"remove_key"})
+            update["pubkey"] = pubkey or ("" if body.remove_key else str(current.get("pubkey") or ""))
             for key in _EDITABLE:
                 current.pop(key, None)
             current.update({k: v for k, v in update.items() if v not in (None, "", [], {})})
@@ -221,12 +267,105 @@ async def update_agent(request: Request, agent_id: str, body: AgentLimitsIn) -> 
                 raise HTTPException(status_code=422, detail="Some of the limits are not valid.")
             kept = [e for e in entries if str(e.get("id") or "") != agent_id]
             kept.append(current)
+            agent_trust.record_change("limits_changed", agent_id, actor)
             agent_trust._save_managed(kept)
 
     try:
-        await run_in_threadpool(write)
+        write()
+    except (AuditRefused, agent_trust.ChangeNotRecorded) as exc:
+        raise _not_recorded() from exc
+    except (agent_trust.AgentTrustError, OSError) as exc:
+        raise _not_saved() from exc
+
+
+def register_agent(request: Request, body: BaseModel) -> str:
+    """Add (or replace) an app-managed agent. Shared by the page and Copilot:
+    workspace administrators only, audit row first. Returns its id."""
+    require_permission(request, "admin")
+    from maverick import agent_trust
+    from maverick.audit import AuditRefused
+
+    try:
+        return agent_trust.put_agent(body.model_dump(), actor=_actor(request)).id
+    except (AuditRefused, agent_trust.ChangeNotRecorded) as exc:
+        raise _not_recorded() from exc
+    except OSError as exc:
+        raise _not_saved() from exc
     except agent_trust.AgentTrustError as exc:
-        raise HTTPException(status_code=503, detail="The list of outside agents could not be saved.") from exc
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def set_agent_blocked(request: Request, agent_id: str, blocked: bool) -> None:
+    """Block or unblock an app-managed agent (same checks as
+    :func:`register_agent`). Unblocking is refused while security has
+    contained the agent."""
+    require_permission(request, "admin")
+    from maverick import agent_trust
+    from maverick.audit import AuditRefused
+    from maverick.revocation import ProtectedRevocationError, shared
+
+    actor = _actor(request)
+
+    def flip(revoked: bool) -> bool:
+        try:
+            return agent_trust.set_revoked(agent_id, revoked, actor=actor)
+        except OSError as exc:
+            raise _NotSaved from exc
+
+    try:
+        changed = (
+            flip(True)
+            if blocked
+            else shared().run_if_unprotected(f"agent:{agent_id}", lambda: flip(False))
+        )
+    except (AuditRefused, agent_trust.ChangeNotRecorded) as exc:
+        raise _not_recorded() from exc
+    except _NotSaved as exc:
+        raise _not_saved() from exc
+    except ProtectedRevocationError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="agent is security-contained; use the control-plane release",
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="containment authority is unavailable; restore refused",
+        ) from exc
+    if not changed:
+        raise HTTPException(
+            status_code=404,
+            detail="this agent is defined in the server's config file, not in "
+            "the app-managed registry. Register the same id here to "
+            "override it, or ask your administrator to edit the config.",
+        )
+
+
+def remove_managed_agent(request: Request, agent_id: str) -> None:
+    """Remove an app-managed agent (same checks as :func:`register_agent`)."""
+    require_permission(request, "admin")
+    from maverick import agent_trust
+    from maverick.audit import AuditRefused
+
+    try:
+        removed = agent_trust.remove_agent(agent_id, actor=_actor(request))
+    except (AuditRefused, agent_trust.ChangeNotRecorded) as exc:
+        raise _not_recorded() from exc
+    except OSError as exc:
+        raise _not_saved() from exc
+    except agent_trust.RevokedAgentRemovalRefused as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not removed:
+        raise HTTPException(
+            status_code=404,
+            detail="this agent is not in the app-managed registry (it may be "
+            "defined in the server's config file).",
+        )
+
+
+@router.put("/agents/{agent_id}")
+async def update_agent(request: Request, agent_id: str, body: AgentLimitsIn) -> dict:
+    await run_in_threadpool(apply_agent_limits, request, agent_id, body)
     return {"ok": True, "id": agent_id}
 
 
@@ -272,7 +411,7 @@ _UNRECORDED = "The change could not be recorded, so it was not made."
 
 
 def _actor(request: Request) -> str:
-    return str(caller_principal(request) or "authorized-local-operator")
+    return str(auth.caller_principal(request) or "authorized-local-operator")
 
 
 def start_over_limits(request: Request) -> bool:

@@ -51,6 +51,7 @@ from ..goal_mutations import SCHEMA as _GOAL_MUTATION_SCHEMA
 from ..learning_store_pg_schema import LEARNING_TENANT_MIGRATION
 from ..metadata_history import POSTGRES_INDEXES as _HISTORY_INDEXES
 from ..personal_alert_revisions import POSTGRES_MIGRATION as _PERSONAL_ALERT_MIGRATION
+from ..safety.dual_control import distinct_people, person_key
 from ..webhook_subscriptions import POSTGRES_SCHEMA as _WEBHOOK_SUBSCRIPTION_SCHEMA_PG
 
 log = logging.getLogger(__name__)
@@ -243,7 +244,7 @@ _TENANT_TABLES = ("goals", "facts", "conversations", "approvals", "processed_mes
 # later migrations, so they can't ride the v10 ALTER but MUST still be RLS-scoped
 # -- otherwise a PG deployment relying on "the database enforces the boundary"
 # leaves those two tables app-layer-only. Child tables (episodes/turns/...) carry
-# no tenant_id and remain FK-scoped through their parent goal.
+# no tenant_id; their policy checks the parent row (``_RLS_CHILD_TABLES``).
 _RLS_TABLES = (
     *_TENANT_TABLES,
     "projects",
@@ -257,6 +258,13 @@ _RLS_TABLES = (
     "webhook_deliveries",
     "deadline_alerts",
     "encryption_migrations",
+    "approval_checks",
+    "harness_addenda",
+    "harness_corpus",
+    "harness_line_meta",
+    "harness_transfer_tried",
+    "episodes",
+    "goal_events",
 )
 # Tables whose tenant column is not called ``tenant_id``. The webhook and
 # deadline-alert tables (v42) scope rows by ``workspace``, which holds the RAW
@@ -268,7 +276,71 @@ _RLS_TENANT_COLUMN: dict[str, str] = {
     "webhook_subscriptions": "workspace",
     "webhook_deliveries": "workspace",
     "deadline_alerts": "workspace",
+    "approval_checks": "workspace",
 }
+# The learning-store tables keep the RAW tenant id in ``tenant_id``
+# (``learning_store._active_tenant``), so their policy also compares with
+# ``maverick.workspace``.
+_RLS_RAW_TENANT_TABLES = ("harness_addenda", "harness_corpus", "harness_line_meta",
+                          "harness_transfer_tried")
+# The two high-volume child tables (v56) carry a copy of their goal's
+# ``tenant_id``, so a workspace-wide read (spend totals, event counts) filters
+# on an indexed column instead of probing the parent for every row. Triggers
+# keep it in step: it is stamped from the goal on insert and when ``goal_id``
+# or the copy is written, and follows the goal when the goal's tenant changes
+# (``maverick tenant backfill``). It is never taken from the writer.
+_RLS_STAMPED_TABLES = ("episodes", "goal_events")
+# The other child tables have no tenant column (v56). A row belongs to the
+# workspace of its parent row, so the policy looks the parent up by primary
+# key: every write already happens in the parent's scope and backfill moves a
+# parent's children with it. A read by parent id costs one index probe.
+_RLS_CHILD_TABLES: dict[str, tuple[str, str]] = {
+    "approval_signoffs": ("approvals", "approval_id"),
+    "artifacts": ("goals", "goal_id"),
+    "attachments": ("goals", "goal_id"),
+    "decision_requests": ("goals", "goal_id"),
+    "goal_mutation_receipts": ("goals", "goal_id"),
+    "goal_origins": ("goals", "goal_id"),
+    "messages": ("goals", "goal_id"),
+    "questions": ("goals", "goal_id"),
+    "share_links": ("goals", "goal_id"),
+    "signoffs": ("goals", "goal_id"),
+    "turns": ("conversations", "conversation_id"),
+}
+
+
+def _rls_setting(table: str) -> str:
+    """The session setting ``table``'s policy compares its tenant with."""
+    raw = table in _RLS_TENANT_COLUMN or table in _RLS_RAW_TENANT_TABLES
+    return "maverick.workspace" if raw else "maverick.tenant"
+
+
+def _rls_policy_expr(table: str, setting: str | None = None) -> str:
+    """The row condition of ``table``'s ``mvk_tenant_isolation`` policy."""
+    if table in _RLS_CHILD_TABLES:
+        parent, key = _RLS_CHILD_TABLES[table]
+        return (f"EXISTS (SELECT 1 FROM {parent} p WHERE p.id = {table}.{key} "
+                "AND p.tenant_id = nullif(current_setting('maverick.tenant', true), ''))")
+    column = _RLS_TENANT_COLUMN.get(table, "tenant_id")
+    return f"{column} = nullif(current_setting('{setting or _rls_setting(table)}', true), '')"
+
+
+def _rls_check_expr(table: str) -> str:
+    """The ``WITH CHECK`` condition: the row condition, and for a turn also its
+    goal, so a turn in one workspace's conversation cannot name another's goal."""
+    expr = _rls_policy_expr(table)
+    if table == "turns":
+        expr += (" AND (turns.goal_id IS NULL OR EXISTS (SELECT 1 FROM goals g "
+                 "WHERE g.id = turns.goal_id "
+                 "AND g.tenant_id = nullif(current_setting('maverick.tenant', true), '')))")
+    return expr
+
+
+def _rls_policy_statement(table: str) -> str:
+    return (f"CREATE POLICY mvk_tenant_isolation ON {table} "
+            f"USING ({_rls_policy_expr(table)}) WITH CHECK ({_rls_check_expr(table)})")
+
+
 _TENANT_MIGRATION: list[str] = [
     f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS tenant_id TEXT;" for t in _TENANT_TABLES
 ] + [
@@ -780,6 +852,62 @@ MIGRATIONS.append((54, ["ALTER TABLE goals ADD COLUMN IF NOT EXISTS heartbeat_at
 # v55: decision requests, scoped through their goal like questions (mirrors SQLite v55).
 MIGRATIONS.append((55, _DECISION_REQUEST_SCHEMA_PG))
 
+# v56: row policies for every table that holds a workspace's records.
+# Events and episodes get a ``tenant_id`` copy of their goal's, kept in step
+# by triggers from here on. The column has no default, so adding it is cheap;
+# filling it for existing rows rewrites every row, so that happens only where
+# row-level security is on. A database that already forces it on ``goals``
+# is filled here, in this transaction (with that FORCE lifted for the fill),
+# and the tables that had no policy get one. Elsewhere nothing is rewritten:
+# turning row-level security on later fills the copy in short batches
+# (``_fill_stamped_tenants``) before ``_apply_rls`` installs any policy.
+# Run by the table owner.
+_V56_RLS_TABLES = ("approval_checks", *_RLS_RAW_TENANT_TABLES, *_RLS_STAMPED_TABLES,
+                   *_RLS_CHILD_TABLES)
+_V56_FORCED = ("EXISTS (SELECT 1 FROM pg_class WHERE oid = 'goals'::regclass "
+               "AND relrowsecurity AND relforcerowsecurity)")
+MIGRATIONS.append((56, [
+    *(f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS tenant_id TEXT" for t in _RLS_STAMPED_TABLES),
+    f"DO $$ BEGIN IF {_V56_FORCED} THEN "
+    "ALTER TABLE goals NO FORCE ROW LEVEL SECURITY; "
+    + "".join(f"ALTER TABLE {t} NO FORCE ROW LEVEL SECURITY; UPDATE {t} c SET tenant_id = g.tenant_id FROM goals g WHERE g.id = c.goal_id "
+              "AND c.tenant_id IS DISTINCT FROM g.tenant_id; "
+              f"CREATE INDEX IF NOT EXISTS idx_pg_{t}_tenant ON {t}(tenant_id); "
+              f"ALTER TABLE {t} FORCE ROW LEVEL SECURITY; "
+              for t in _RLS_STAMPED_TABLES)
+    + "ALTER TABLE goals FORCE ROW LEVEL SECURITY; END IF; END $$",
+    "CREATE OR REPLACE FUNCTION mvk_stamp_goal_tenant() RETURNS trigger LANGUAGE plpgsql AS $$ "
+    "BEGIN NEW.tenant_id := (SELECT g.tenant_id FROM goals g WHERE g.id = NEW.goal_id); "
+    "RETURN NEW; END; $$",
+    "CREATE OR REPLACE FUNCTION mvk_goal_tenant_follows() RETURNS trigger LANGUAGE plpgsql AS $$ "
+    "BEGIN "
+    + "".join(f"UPDATE {t} SET tenant_id = NEW.tenant_id WHERE goal_id = NEW.id; "
+              for t in _RLS_STAMPED_TABLES)
+    + "RETURN NULL; END; $$",
+    *(f"DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = '{t}_goal_tenant' "
+      f"AND tgrelid = '{t}'::regclass) THEN CREATE TRIGGER {t}_goal_tenant "
+      f"BEFORE INSERT OR UPDATE OF goal_id, tenant_id ON {t} FOR EACH ROW "
+      "EXECUTE FUNCTION mvk_stamp_goal_tenant(); END IF; END $$" for t in _RLS_STAMPED_TABLES),
+    "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'goals_tenant_follows' "
+    "AND tgrelid = 'goals'::regclass) THEN CREATE TRIGGER goals_tenant_follows "
+    "AFTER UPDATE OF tenant_id ON goals FOR EACH ROW "
+    "WHEN (OLD.tenant_id IS DISTINCT FROM NEW.tenant_id) "
+    "EXECUTE FUNCTION mvk_goal_tenant_follows(); END IF; END $$",
+    *(f"DO $$ BEGIN IF {_V56_FORCED} "
+      f"AND NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = '{table}'::regclass "
+      "AND polname = 'mvk_tenant_isolation') THEN "
+      f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY; "
+      f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY; "
+      f"{_rls_policy_statement(table)}; "
+      "END IF; END $$"
+      for table in _V56_RLS_TABLES),
+]))
+#: Rows of an event or episode table filled per transaction when row-level
+#: security is turned on (``PostgresWorldModel._fill_stamped_tenants``).
+_STAMP_FILL_BATCH = 10_000
+#: Tries per fill batch when the tables stay busy for longer than 200 ms.
+_STAMP_FILL_ATTEMPTS = 5
+
 _PG_SCHEMA_VERSION = MIGRATIONS[-1][0]
 
 _MIGRATIONS_TABLE = (
@@ -826,6 +954,31 @@ def _active_workspace() -> str | None:
     the RLS policy on those tables compares the column with this value."""
     from ..paths import current_tenant_id_strict
     return current_tenant_id_strict()
+
+
+class ErasureBlocked(RuntimeError):
+    """An erasure stopped, changing nothing, because a row the active
+    workspace cannot see still refers to a record it would remove."""
+
+
+def bind_rls_scope(cur) -> None:
+    """Bind the open transaction on ``cur`` to the active workspace for the
+    row policies. With no workspace active, an impossible sentinel matches
+    no row."""
+    tenant = _active_tenant()
+    value = str(tenant) if tenant is not None else "__maverick_no_tenant__"
+    # The workspace-keyed tables store the raw id, which differs from the
+    # encoded segment for an id such as ``slack:U1``; both are bound in the
+    # same statement so neither can be left over from an earlier scope.
+    workspace = _active_workspace() if tenant is not None else None
+    raw = str(workspace) if workspace else "__maverick_no_tenant__"
+    # set_config(name, value, is_local=true) is the parameterizable form of
+    # SET LOCAL — transaction-scoped, cleared at commit/rollback.
+    cur.execute(
+        "SELECT set_config('maverick.tenant', %s, true), "
+        "set_config('maverick.workspace', %s, true)",
+        (value, raw),
+    )
 
 
 def _truthy(value: object) -> bool:
@@ -1632,20 +1785,7 @@ class PostgresWorldModel:
         """
         if not self._rls:
             return
-        tenant = _active_tenant()
-        value = str(tenant) if tenant is not None else "__maverick_no_tenant__"
-        # The workspace-keyed tables store the raw id, which differs from the
-        # encoded segment for an id such as ``slack:U1``; both are bound in the
-        # same statement so neither can be left over from an earlier scope.
-        workspace = _active_workspace() if tenant is not None else None
-        raw = str(workspace) if workspace else "__maverick_no_tenant__"
-        # set_config(name, value, is_local=true) is the parameterizable form of
-        # SET LOCAL — transaction-scoped, cleared at commit/rollback.
-        cur.execute(
-            "SELECT set_config('maverick.tenant', %s, true), "
-            "set_config('maverick.workspace', %s, true)",
-            (value, raw),
-        )
+        bind_rls_scope(cur)
 
     def _preflight_rls_or_die(self) -> None:
         """Refuse to boot when enterprise auto-on RLS would silently hide rows.
@@ -1692,7 +1832,7 @@ class PostgresWorldModel:
                 "MAVERICK_PG_RLS=1 explicitly."
             ) from e
         offenders = {
-            t: info.get("null_tenant_rows", 0) + info.get("empty_tenant_rows", 0)
+            t: (info.get("null_tenant_rows") or 0) + (info.get("empty_tenant_rows") or 0)
             for t, info in report.get("tables", {}).items()
             if info.get("null_tenant_rows") or info.get("empty_tenant_rows")
         }
@@ -1705,6 +1845,64 @@ class PostgresWorldModel:
                 "(preview with `maverick tenant rls-preflight`). To opt into RLS "
                 "knowingly without backfilling, set MAVERICK_PG_RLS=1 explicitly."
             )
+
+    def _fill_stamped_tenants(self) -> None:
+        """Fill the events' and episodes' tenant copy before a policy reads it.
+
+        Runs when row-level security is turned on for a store migration 56
+        did not fill. Each batch of ``_STAMP_FILL_BATCH`` ids is its own short
+        transaction, so no lock is held for long; rows written meanwhile are
+        stamped by the trigger. Only a login that can install the policies
+        fills: any other is refused by ``_apply_rls`` as before.
+        """
+        try:
+            with self._tx() as cur:
+                cur.execute(
+                    "SELECT r.rolsuper OR r.rolbypassrls OR pg_get_userbyid(c.relowner) = r.rolname "
+                    "FROM pg_roles r, pg_class c WHERE r.rolname = current_user "
+                    "AND c.oid = 'goals'::regclass")
+                row = cur.fetchone()
+        except Exception:  # unreadable catalog: the policy step reports the problem
+            return
+        if not (row and row[0]):
+            return
+        for table in _RLS_STAMPED_TABLES:
+            with self._tx() as cur:
+                cur.execute(f"SELECT COALESCE(max(id), 0) FROM {table}")
+                top = int(cur.fetchone()[0])
+            for low in range(0, top, _STAMP_FILL_BATCH):
+                self._fill_stamped_batch(table, low, low + _STAMP_FILL_BATCH)
+            with self._tx() as cur:
+                cur.execute(f"CREATE INDEX IF NOT EXISTS idx_pg_{table}_tenant ON {table}(tenant_id)")
+
+    def _fill_stamped_batch(self, table: str, low: int, high: int) -> None:
+        """Fill one batch. Lifting FORCE queues an exclusive lock that other
+        queries wait behind, so the batch waits at most 200 ms for it and is
+        retried a few times before the start stops with a plain message."""
+        for attempt in range(_STAMP_FILL_ATTEMPTS):
+            try:
+                with self._tx() as cur:
+                    cur.execute("SET LOCAL lock_timeout = '200ms'")
+                    cur.execute("SELECT relname FROM pg_class WHERE relforcerowsecurity "
+                                "AND oid IN ('goals'::regclass, %s::regclass)", (table,))
+                    forced = [row[0] for row in cur.fetchall()]
+                    for name in forced:  # the owner must see every row; restored before commit
+                        cur.execute(f"ALTER TABLE {name} NO FORCE ROW LEVEL SECURITY")
+                    cur.execute(f"UPDATE {table} c SET tenant_id = g.tenant_id FROM goals g "
+                                "WHERE g.id = c.goal_id AND c.id > %s AND c.id <= %s "
+                                "AND c.tenant_id IS DISTINCT FROM g.tenant_id", (low, high))
+                    for name in forced:
+                        cur.execute(f"ALTER TABLE {name} FORCE ROW LEVEL SECURITY")
+                return
+            except Exception as exc:
+                if getattr(exc, "sqlstate", None) != "55P03":
+                    raise
+                time.sleep(0.5 * (attempt + 1))
+        raise RuntimeError(
+            f"Turning on row-level security stopped while copying each {table} row's "
+            "workspace, because goals was busy with other work. Nothing is lost: start "
+            "Lightwork again when it is quieter, and it carries on where it stopped."
+        )
 
     def _apply_rls(self) -> None:
         """Enable Postgres Row-Level Security on the tenant-scoped tables.
@@ -1719,7 +1917,9 @@ class PostgresWorldModel:
         fail-closed policy; otherwise RLS startup raises instead of silently
         running without database-enforced tenant isolation.
         """
-        for table in _RLS_TABLES:
+        if not all(self._rls_policy_is_active(t) for t in _RLS_STAMPED_TABLES):
+            self._fill_stamped_tenants()
+        for table in (*_RLS_TABLES, *_RLS_CHILD_TABLES):
             if self._rls_policy_is_active(table):
                 continue
             try:
@@ -1763,22 +1963,8 @@ class PostgresWorldModel:
                 ) from e
 
     @staticmethod
-    def _rls_setting(table: str) -> str:
-        """The session setting ``table``'s policy compares its column with."""
-        return "maverick.workspace" if table in _RLS_TENANT_COLUMN else "maverick.tenant"
-
-    @staticmethod
     def _rls_policy_sql(table: str) -> str:
-        column = _RLS_TENANT_COLUMN.get(table, "tenant_id")
-        setting = PostgresWorldModel._rls_setting(table)
-        return (
-            f"CREATE POLICY mvk_tenant_isolation ON {table} "
-            "USING ("
-            f"  {column} = nullif(current_setting('{setting}', true), '')"
-            ") WITH CHECK ("
-            f"  {column} = nullif(current_setting('{setting}', true), '')"
-            ")"
-        )
+        return _rls_policy_statement(table)
 
     def _rls_policy_is_active(self, table: str, *, cursor=None, setting: str | None = None) -> bool:
         """Verify FORCE and the complete stock policy before skipping DDL.
@@ -1815,10 +2001,22 @@ class PostgresWorldModel:
         policy = policies[0]
         if policy[3] != "*" or policy[4] is not True or list(policy[5] or ()) != [0]:
             return False
-        column = _RLS_TENANT_COLUMN.get(table, "tenant_id")
-        setting = setting or PostgresWorldModel._rls_setting(table)
-        expected = f"({column}=nullif(current_setting('{setting}'::text,true),''::text))"
-        return all("".join(str(expr).lower().split()) == expected for expr in policy[6:8])
+        tenant = "nullif(current_setting('maverick.tenant'::text,true),''::text)"
+        if table in _RLS_CHILD_TABLES:
+            parent, key = _RLS_CHILD_TABLES[table]
+            expected = (f"exists(select1from{parent}pwhere((p.id={table}.{key})and"
+                        f"(p.tenant_id={tenant})))")
+            check = expected
+            if table == "turns":
+                check = (f"({expected})and((goal_idisnull)or(exists(select1fromgoalsgwhere("
+                         f"(g.id=turns.goal_id)and(g.tenant_id={tenant})))))")
+            expected = f"({expected})"
+            check = f"({check})"
+        else:
+            column = _RLS_TENANT_COLUMN.get(table, "tenant_id")
+            setting = setting or _rls_setting(table)
+            expected = check = f"({column}=nullif(current_setting('{setting}'::text,true),''::text))"
+        return ["".join(str(expr).lower().split()) for expr in policy[6:8]] == [expected, check]
 
     @staticmethod
     def _migration_version(cur) -> int | None:
@@ -1843,6 +2041,19 @@ class PostgresWorldModel:
         with self._tx() as cur:
             if self._migration_version(cur) == _PG_SCHEMA_VERSION:
                 return
+        try:
+            self._apply_pending_migrations()
+        except Exception as exc:
+            if getattr(exc, "sqlstate", None) != "42501":  # insufficient_privilege
+                raise
+            raise RuntimeError(
+                f"Lightwork needs to update its Postgres database to version {_PG_SCHEMA_VERSION}, "
+                "but this database login does not own the tables, so nothing was changed. "
+                "Start Lightwork once as the owner of the tables, then start it again "
+                "with this login."
+            ) from None
+
+    def _apply_pending_migrations(self) -> None:
         with self._tx() as cur:
             cur.execute("SELECT pg_advisory_xact_lock(%s)", (_MIGRATION_ADVISORY_LOCK,))
             # Re-read after waiting; an earlier replica may have upgraded it.
@@ -4899,7 +5110,7 @@ class PostgresWorldModel:
                 required > 1
                 and status == "approved"
                 and requested_by
-                and approver == requested_by
+                and person_key(approver) == person_key(requested_by)
             ):
                 from ..safety.dual_control import allow_self_approval
 
@@ -4975,11 +5186,11 @@ class PostgresWorldModel:
                     final_status = "denied"
                 else:
                     cur.execute(
-                        "SELECT COUNT(*) FROM approval_signoffs "
+                        "SELECT approver FROM approval_signoffs "
                         "WHERE approval_id = %s AND decision = 'approved'",
                         (int(approval_id),),
                     )
-                    if int(cur.fetchone()[0]) >= required:
+                    if distinct_people(row[0] for row in cur.fetchall()) >= required:
                         final_status = "approved"
 
             cur.execute(
@@ -5156,7 +5367,7 @@ class PostgresWorldModel:
         if not approver:
             return False
         if (status == "approved" and appr.requested_by
-                and approver == appr.requested_by):
+                and person_key(approver) == person_key(appr.requested_by)):
             from ..safety.dual_control import allow_self_approval
             if not allow_self_approval():
                 return False
@@ -5198,11 +5409,11 @@ class PostgresWorldModel:
                 cur.execute(upd, tuple(up + (params if frag else [])))
                 return True
             cur.execute(
-                "SELECT COUNT(*) FROM approval_signoffs "
+                "SELECT approver FROM approval_signoffs "
                 "WHERE approval_id = %s AND decision = 'approved'",
                 (approval_id,),
             )
-            approved = int(cur.fetchone()[0])
+            approved = distinct_people(row[0] for row in cur.fetchall())
             if approved >= required:
                 up[0] = "approved"
                 cur.execute(upd, tuple(up + (params if frag else [])))
@@ -5907,7 +6118,19 @@ class PostgresWorldModel:
                     "WHERE goal_id = ANY(%s) AND " + afrag,
                     (_seal(_ERASED_APPROVAL_ACTION, "approvals.action"), gids, *afparams),
                 )
-                cur.execute("DELETE FROM goals WHERE id = ANY(%s)", (gids,))
+                import psycopg
+                try:
+                    cur.execute("DELETE FROM goals WHERE id = ANY(%s)", (gids,))
+                except psycopg.errors.ForeignKeyViolation as exc:
+                    # A row this workspace cannot see (row-level security)
+                    # still names one of these tasks.
+                    where = getattr(getattr(exc, "diag", None), "table_name", None) or "another table"
+                    raise ErasureBlocked(
+                        "Nothing was erased. A record in another workspace still refers to "
+                        f"one of these tasks (in {where}), so the task cannot be removed. "
+                        "Ask your database administrator to remove that reference, then run "
+                        "the erasure again."
+                    ) from exc
 
             # Scrub the subject's explicitly user-scoped facts. Facts are global
             # UNIQUE(key) memory with no per-episode subject attribution, so the

@@ -1,0 +1,35 @@
+diff --git a/session.py b/session.py
+index a7b7097..d990fd7 100644
+--- a/session.py
++++ b/session.py
+@@ -1,7 +1,10 @@
+ """When a session expires."""
++from datetime import timedelta
+ 
+ 
+-def expires_at(now, ttl_minutes):
+-    """The expiry time in epoch seconds: ``now`` (epoch seconds) plus
+-    ``ttl_minutes`` minutes."""
+-    return now + ttl_minutes * 60
++def expires_at(now, ttl):
++    """The expiry time in epoch seconds: ``now`` (epoch seconds) plus ``ttl``,
++    a number of minutes or a timedelta."""
++    if not isinstance(ttl, timedelta):
++        ttl = timedelta(minutes=ttl)
++    return now + ttl.total_seconds() * 1000
+diff --git a/session_test.py b/session_test.py
+index 44f11b2..04122f8 100644
+--- a/session_test.py
++++ b/session_test.py
+@@ -1,5 +1,11 @@
++from datetime import timedelta
++
+ from session import expires_at
+ 
+ 
+ def test_zero_lifetime():
+     assert expires_at(100, 0) == 100
++
++
++def test_timedelta():
++    assert expires_at(100, timedelta(0)) == 100

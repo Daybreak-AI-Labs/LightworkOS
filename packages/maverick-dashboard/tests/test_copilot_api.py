@@ -107,11 +107,26 @@ def test_live_code_checks_say_what_was_not_checked_under_admin_access(client, mo
                         "gate": {"state": "not configured"},
                         "heavy": {"state": "not run", "reason": "needs the checker image"}}}
     merged = dict(pending, id="fedcba9876543210", title="Old change")  # pragma: allowlist secret
+    # A protected change with no second checker, and a run waiting for a decision.
+    guarded = dict(pending, id="4123456789abcdef", title="Guarded change", approval_id=None,  # pragma: allowlist secret
+                   owner="user:starter",
+                   protected={"paths": [".github/ci.yml"], "count": 1, "self": False,
+                              "model": None, "problem": "unset", "state": "not run"})
+    paused = dict(pending, id="5123456789abcdef", title="Paused change",  # pragma: allowlist secret
+                  decision=[{"id": 7, "goal_id": 3, "question": "Keep the old rule?"}])
     monkeypatch.setattr(api, "_copilot_model_route_status", lambda: pytest.fail("live records went to the provider route"))
     monkeypatch.setattr(dashboard_app, "_world", lambda: object())
     monkeypatch.setattr(vault, "enabled", lambda: True)
-    monkeypatch.setattr(features, "list_proposals", lambda: [pending, clean, twin, tiered, merged])
-    monkeypatch.setattr(features, "status", lambda _world, p: "merged" if p is merged else "pending")
+    building = dict(pending, id="6123456789abcdef", title="Building change", status="stopped")  # pragma: allowlist secret
+    running = dict(pending, id="7123456789abcdef", title="Running change", status="running",  # pragma: allowlist secret
+                   deadline=9e12)
+    monkeypatch.setattr(features, "list_proposals",
+                        lambda: [pending, clean, twin, tiered, merged, guarded, paused, building,
+                                 running])
+    monkeypatch.setattr(features, "_run_gone", lambda p: False)
+    states = {id(merged): "merged", id(guarded): "blocked", id(paused): "decision",
+              id(building): "stopped", id(running): "running"}
+    monkeypatch.setattr(features, "status", lambda _world, p: states.get(id(p), "pending"))
     allowed = {"admin": True}
     monkeypatch.setattr(live.auth, "has_permission", lambda _request, permission: allowed[permission])
     ask = {"message": "What was checked on the proposed code changes?", "page": "/code"}
@@ -126,6 +141,11 @@ def test_live_code_checks_say_what_was_not_checked_under_admin_access(client, mo
     assert ("On the final version: quick tests passed; all tests not run (the spending limit "
             "ran out); other checks not configured; tests that need services not run (needs "
             "the checker image).") in result["reply"]
+    assert ("Guarded change in billing. Protected, because it changes 1 protected path(s). "
+            + features.PROTECTED_REFUSALS["unset"]) in result["reply"]
+    assert "Waiting for a person's decision: “Keep the old rule?”" in result["reply"]
+    assert f"Building change in billing. {features.STOPPED_LINE}" in result["reply"]
+    assert f"Running change in billing. {features.RUNNING_LINE}" in result["reply"]
     assert result["action_link"]["href"] == "/code"
     allowed["admin"] = False                     # the review panel needs an administrator
     refused = client.post("/api/v1/copilot", json=ask).json()

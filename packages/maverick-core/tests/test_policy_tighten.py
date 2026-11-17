@@ -37,14 +37,14 @@ def test_a_lower_layer_may_only_tighten(kind, upper, lower, expected, loosened, 
         tighten(kind if kind != "rank" else "limit", upper, object(), order=order)
 
 
-def test_a_tenant_may_choose_a_stricter_value_and_unranked_keys_merge_as_before():
+def test_a_tenant_may_choose_a_stricter_value_and_keys_without_a_rule_stay_the_organisations():
     from maverick.policy_tighten import merge_tenant_section
 
     org = {"backend": "local", "workdir": "/org", "timeout": 30}
     tenant = {"backend": "docker", "network_policy": "deny-all", "workdir": "/acme", "timeout": 0}
     merged, ignored, fixed = merge_tenant_section("sandbox", org, tenant)
-    assert merged == {"backend": "docker", "network_policy": "deny-all", "workdir": "/acme", "timeout": 30}
-    assert ignored == ["sandbox.timeout"] and fixed == []
+    assert merged == {"backend": "docker", "network_policy": "deny-all", "workdir": "/org", "timeout": 30}
+    assert ignored == ["sandbox.timeout"] and fixed == ["sandbox.workdir"]
     # An organisation choice with no place in the order is kept, and reported
     # as set by the organisation rather than as a looser tenant choice.
     merged, ignored, fixed = merge_tenant_section("sandbox", {"backend": "ssh"}, {"backend": "docker"})

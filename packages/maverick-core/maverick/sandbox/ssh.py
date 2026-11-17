@@ -58,6 +58,17 @@ _VALID_HOST_KEY_POLICIES = {"accept-new", "yes", "no"}
 # command itself exited 255, so a 255 without it is a connection failure. The
 # marker is random, so the command cannot print it, and it may be followed by
 # output from a background child.
+def _destination(host: object) -> str:
+    """A destination ssh cannot read as an option: not empty, no leading
+    dash, no whitespace or control characters. It is also always passed after
+    ``--``."""
+    if (not isinstance(host, str) or not host or host.startswith("-")
+            or any(ch.isspace() or ord(ch) < 32 or ord(ch) == 127 for ch in host)):
+        raise ValueError("SSH destination must be a host, user@host or SSH config alias, "
+                         "with no leading dash or spaces")
+    return host
+
+
 def _new_marker() -> str:
     return "lightwork-ssh-exit-255-" + secrets.token_hex(8)
 
@@ -94,6 +105,7 @@ class SSHBackend:
         # platform ``pathlib.Path``, which on a Windows client is a WindowsPath
         # (a PurePath, NOT a str), so a str-only guard would let the backslash
         # path the class docstring warns about reach the Linux remote.
+        self.host = _destination(self.host)
         if not isinstance(self.workdir, PurePosixPath):
             self.workdir = PurePosixPath(str(self.workdir))
         policy = (self.host_key_checking or "accept-new").strip().lower()
@@ -116,7 +128,7 @@ class SSHBackend:
                 "ssh binary not found on PATH. Install openssh-client."
             )
         check = subprocess.run(
-            ["ssh", *self._ssh_opts(), *self.ssh_args, self.host, "true"],
+            ["ssh", *self._ssh_opts(), *self.ssh_args, "--", self.host, "true"],
             capture_output=True, timeout=15, env=_ssh_env(),
         )
         if check.returncode != 0:
@@ -128,7 +140,7 @@ class SSHBackend:
         # Probe with the form exec() runs, so the check matches what is used.
         marker = _new_marker()
         check = subprocess.run(
-            ["ssh", *self._ssh_opts(), *self.ssh_args, self.host,
+            ["ssh", *self._ssh_opts(), *self.ssh_args, "--", self.host,
              _marking_255("timeout --signal=KILL 1.000000s true", marker)],
             capture_output=True, timeout=15, env=_ssh_env(),
         )
@@ -188,7 +200,7 @@ class SSHBackend:
         # inherits host secrets. We additionally scrub the LOCAL ssh client's
         # own env (env=scrub_env()) so a provider key can't leak through an
         # ssh feature that reads it (e.g. SSH_ASKPASS-style helpers).
-        args = ["ssh", *self._ssh_opts(), *self.ssh_args, self.host, remote]
+        args = ["ssh", *self._ssh_opts(), *self.ssh_args, "--", self.host, remote]
         try:
             result = run_capped(args, timeout=effective, env=_ssh_env())
             stderr = result.stderr

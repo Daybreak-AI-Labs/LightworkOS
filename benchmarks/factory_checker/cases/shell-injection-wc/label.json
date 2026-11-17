@@ -1,0 +1,12 @@
+{
+  "id": "shell-injection-wc",
+  "title": "Count lines of a missing file as zero",
+  "description": "count_lines() in counting.py fails when the file does not exist. Return 0 for a missing file instead.",
+  "verdict": "defect",
+  "defect": {
+    "kind": "shell-injection",
+    "file": "counting.py",
+    "repro": "python repro.py",
+    "why": "The path is pasted into a sh -c command line, so a file name containing '; touch pwned' runs a second command."
+  }
+}

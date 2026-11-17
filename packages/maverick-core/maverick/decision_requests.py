@@ -1132,39 +1132,42 @@ FEATURE_LOOP: contextvars.ContextVar[frozenset[int]] = contextvars.ContextVar(
     "decision_feature_loop", default=frozenset())
 
 
-def _feature_rows(goal_id: int, world) -> list[tuple[int, str, str]]:
-    """(goal, origin kind, status) for this goal and every goal above it.
-    Raises when the records cannot be read: callers decide what that means."""
+def _feature_rows(goal_id: int, world) -> list[tuple[int, str]]:
+    """(goal, origin kind) for this goal and every goal above it. Raises when
+    the records cannot be read: callers decide what that means."""
     rows = world.tenant_query(
         "WITH RECURSIVE up(id) AS (SELECT CAST(? AS INTEGER) UNION SELECT g.parent_id "
         "FROM goals g JOIN up u ON g.id = u.id WHERE g.parent_id IS NOT NULL) "
-        "SELECT up.id, o.kind, g.status FROM up JOIN goals g ON g.id = up.id "
+        "SELECT up.id, o.kind FROM up JOIN goals g ON g.id = up.id "
         "LEFT JOIN goal_origins o ON o.goal_id = up.id WHERE {tenant_goal:up.id}",
         (int(goal_id),))
-    return [(int(r[0]), str(r[1] or ""), str(r[2] or "")) for r in rows]
+    return [(int(r[0]), str(r[1] or "")) for r in rows]
+
+
+def _feature_marks(goal_id: int, world) -> tuple[list[int], set[int]]:
+    """(this goal and the goals above it, those marked as code-change steps)."""
+    rows = _feature_rows(goal_id, world)
+    return [r[0] for r in rows], {r[0] for r in rows if r[1] == _FEATURE_ORIGIN}
 
 
 def _feature_step(goal_id: int, world) -> bool:
     """Whether this goal, or a goal above it, is a step of a code change."""
-    return any(kind == _FEATURE_ORIGIN for _goal, kind, _status in _feature_rows(goal_id, world))
+    return bool(_feature_marks(goal_id, world)[1])
 
 
 def feature_start_refusal(world, goal_id: int) -> str:
     """Why a code change's step may not start here, or ``""``.
 
-    Every step is marked when the code change creates it, before it runs, and
-    starts only inside the change's own loop. Anywhere else (a resume, a chat
-    restart, the supervisor, an answered decision) a marked goal never starts
-    again. A goal an agent created below one starts only while that step is
-    running and the goal never ran: once the step stops, its copy is gone."""
+    Every step is marked when the code change creates it, before it runs. A
+    marked step, and every goal below one, starts only inside that change's
+    own loop, where the change's private copy of the code is. Anywhere else (a
+    resume, a chat restart, the supervisor, a queue, recovery, an answered
+    decision) it never starts: the person starts a new code change instead."""
     try:
-        rows = _feature_rows(goal_id, world)
-        marked = [(goal, status) for goal, kind, status in rows if kind == _FEATURE_ORIGIN]
-        if not marked or FEATURE_LOOP.get() & {r[0] for r in rows}:
+        chain, marked = _feature_marks(goal_id, world)
+        if not marked or FEATURE_LOOP.get() & set(chain):
             return ""
-        if any(goal == int(goal_id) or status != "active" for goal, status in marked):
-            return FEATURE_RESTARTS
-        return FEATURE_RESTARTS if world.list_episodes(limit=1, goal_id=int(goal_id)) else ""
+        return FEATURE_RESTARTS
     except Exception:  # noqa: BLE001 -- unknown is not "an ordinary run": fail closed
         log.warning("goal origin lookup failed before a restart", exc_info=True)
         return FEATURE_UNKNOWN_RESTART

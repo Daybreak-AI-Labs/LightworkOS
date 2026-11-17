@@ -1,0 +1,17 @@
+diff --git a/pages.py b/pages.py
+index 0a9b12b..83e0e19 100644
+--- a/pages.py
++++ b/pages.py
+@@ -2,8 +2,10 @@
+ 
+ 
+ def page(items, number, size):
+-    """Items on page ``number`` (counted from 1), ``size`` items per page."""
++    """Items on page ``number`` (counted from 1), ``size`` items per page.
++    Uses only len() and indexing, so it works on sequences without slicing."""
+     if number < 1 or size < 1:
+         raise ValueError("page number and size start at 1")
+     start = (number - 1) * size
+-    return list(items[start:start + size])
++    last = min(start + size, len(items) - 1)
++    return [items[i] for i in range(start, last)]

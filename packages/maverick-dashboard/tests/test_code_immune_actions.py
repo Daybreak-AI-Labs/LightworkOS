@@ -151,7 +151,7 @@ def test_an_admin_sets_a_projects_test_commands_like_adding_it(client, monkeypat
     assert r.status_code == 200, r.text
     assert client.get(url).json() == {
         "name": "core", "test_command": "", "quick_test_command": "python -m pytest -q {changed}",
-        "gate_command": "bash lint.sh", "heavy_test_command": ""}
+        "gate_command": "bash lint.sh", "heavy_test_command": "", "protected_paths": []}
     refused = client.post(url, json={"gate_command": "lint {changed}"})
     assert refused.status_code == 422 and "quick tests" in refused.json()["detail"]
     # One limit and one message for every command, on both forms.
@@ -164,6 +164,89 @@ def test_an_admin_sets_a_projects_test_commands_like_adding_it(client, monkeypat
             code_actions_api._COMMANDS_REFUSED, path
     assert client.post("/api/v1/code/repos/nope/commands", json={"gate_command": "x"}).status_code == 404
     assert client.get("/api/v1/code/summary").json()["repos"][0]["test_tiers"] == ["quick", "gate"]
+    # Protected paths are set in the same dialog, with the same authority, and audited.
+    from maverick.audit.reader import iter_events
+    r = client.post(url, json={"protected_paths": [".github", "src/**/*.py"]})
+    assert r.status_code == 200 and r.json()["protected_paths"] == [".github", "src/**/*.py"]
+    assert vault.get("core").gate_command == "bash lint.sh"            # commands kept
+    assert any(e.get("action") == "set_commands" and e.get("protected_paths") == [".github", "src/**/*.py"]
+               for e in iter_events(all_days=True))
+    refused = client.post(url, json={"protected_paths": ["../outside"], "gate_command": "x"})
+    assert refused.status_code == 422 and refused.json()["detail"] == code_actions_api._PATHS_REFUSED
+    assert vault.get("core").gate_command == "bash lint.sh"            # nothing changed
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
+def test_copilot_reads_and_sets_test_commands_and_protected_paths_like_the_page(
+        client, monkeypatch, tmp_path):
+    from fastapi import HTTPException
+    from maverick.audit.reader import iter_events
+    from maverick.codebase import vault
+    from maverick_dashboard import code_actions_api
+    from maverick_dashboard import product_operations as registry
+    copilot = "/api/v1/copilot/product-operations"
+    _code_on(monkeypatch)
+    monkeypatch.setattr(registry, "_gate", lambda request: None)
+    monkeypatch.setattr(registry, "enabled_families", lambda: {"tasks"})
+    vault.register("core", str(_source_repo(tmp_path)), test_command="python -m pytest -q")
+    _as(monkeypatch, "admin")
+
+    def listed():
+        r = client.post(f"{copilot}/catalog", json={"page": "/code", "selection": {}})
+        assert r.status_code == 200, r.text
+        return r.json(), {o["id"]: o for o in r.json()["operations"]}
+
+    def prepare(operation, arguments):
+        catalog, ops = listed()
+        return client.post(f"{copilot}/prepare", json={
+            "page": "/code", "selection": {}, "operation": operation,
+            "context": catalog["context"], "revision": ops[operation]["revision"],
+            "arguments": arguments})
+
+    def audited():
+        return [e for e in iter_events(all_days=True) if e.get("action") == "set_commands"]
+    shown = prepare("code.checks.show", {})
+    assert shown.status_code == 200, shown.text
+    assert shown.json()["details"]["Code projects"] == [{
+        "Code project": "core", "Quick tests": "None", "All tests": "python -m pytest -q",
+        "Other checks": "None", "Tests that need services": "None", "Protected paths": "None"}]
+    args = {"name": "core", "quick_test_command": "", "test_command": "python -m pytest -q",
+            "gate_command": "bash lint.sh", "heavy_test_command": "",
+            "protected_paths": ".github, src/**/*.py"}
+    # The page's own refusals, before anything is confirmed.
+    for bad, detail in (({"protected_paths": "../outside"}, code_actions_api._PATHS_REFUSED),
+                        ({"gate_command": "lint {changed}"}, code_actions_api._COMMANDS_REFUSED)):
+        refused = prepare("code.checks.set", dict(args, **bad))
+        assert refused.status_code == 422 and refused.json()["detail"] == detail
+    review = prepare("code.checks.set", args)
+    assert review.status_code == 200, review.text
+    assert review.json()["changes"] == [
+        {"field": "Other checks", "before": "None", "after": "bash lint.sh"},
+        {"field": "Protected paths", "before": "None", "after": ".github, src/**/*.py"}]
+    assert vault.get("core").gate_command is None and not audited()
+    done = client.post(f"{copilot}/execute", json={"token": review.json()["token"], "confirmed": True})
+    assert done.status_code == 200 and done.json()["status"] == "confirmed", done.text
+    assert done.json()["details"]["Protected paths"] == ".github, src/**/*.py"   # read back
+    repo = vault.get("core")
+    assert (repo.gate_command, list(repo.protected_paths)) == ("bash lint.sh", [".github", "src/**/*.py"])
+    (row,) = audited()
+    assert row["protected_paths"] == [".github", "src/**/*.py"] and row["repo"] == "core"
+    # The same review again changes nothing and writes no second record.
+    again = client.post(f"{copilot}/execute", json={"token": review.json()["token"], "confirmed": True})
+    assert again.status_code == 409 and len(audited()) == 1
+    # A lower role is never offered it and cannot run it.
+    _as(monkeypatch, "operator")
+    assert not {"code.checks.show", "code.checks.set"} & set(listed()[1])
+    adapter = registry.adapters()["code.checks.set"]
+    with pytest.raises(HTTPException) as error:
+        adapter.execute(_request(), {}, dict(args, gate_command="x"), {}, "a" * 32)
+    assert error.value.status_code == 403 and vault.get("core").gate_command == "bash lint.sh"
+
+
+def _request():
+    from starlette.requests import Request
+    return Request({"type": "http", "method": "POST", "path": "/code",
+                    "headers": [(b"host", b"127.0.0.1")], "client": ("127.0.0.1", 1)})
 
 
 def test_code_actions_are_refused_while_the_vault_is_off(client):
@@ -212,11 +295,15 @@ def test_start_a_change_runs_the_kernel_swarm_in_the_background(client, monkeypa
     monkeypatch.setattr(pre, "_routed_configuration_missing", lambda cfg: {})
     calls = []
     monkeypatch.setattr(code_actions_api, "_run_feature", lambda *a: calls.append(a))
+    from maverick.codebase import features
+    monkeypatch.setattr(features, "self_change_refusal", lambda name: None)
     r = client.post("/api/v1/code/features", json={"repo": "core", "title": " Add a button ",
                                                    "max_dollars": 5})
     assert r.status_code == 202
     assert calls == [("core", "Add a button", "", 5.0, "", None)]
-    from maverick.codebase import features
+    monkeypatch.setattr(features, "self_change_refusal", lambda name: features.SELF_REFUSAL)
+    r = client.post("/api/v1/code/features", json={"repo": "core", "title": "Again"})
+    assert r.status_code == 409 and r.json()["detail"] == features.SELF_REFUSAL
     monkeypatch.setattr(features, "container_refusal", lambda: features.CONTAINER_REQUIRED)
     r = client.post("/api/v1/code/features", json={"repo": "core", "title": "Again"})
     assert r.status_code == 409 and "must run in a container" in r.json()["detail"]
@@ -478,3 +565,112 @@ def test_people_list_is_for_administrators_and_the_active_workspace(client, monk
     _as(monkeypatch, "auditor")
     body = client.get("/api/v1/immune/choices").json()
     assert body["people"] == []
+
+
+# -- a protected code change: two people, on the Approvals page --
+
+def _protected_change(monkeypatch, tmp_path):
+    from maverick.codebase import features, vault
+    from maverick_dashboard import app as dash_app
+    _code_on(monkeypatch)
+    monkeypatch.setattr(features, "_author_model", lambda: "anthropic:claude-author")
+    vault.register("core", str(_source_repo(tmp_path)), protected_paths=["a.py"])
+    second = lambda gid, copy: {"findings": []}  # noqa: E731
+    second.model = "openai:gpt-second"
+    world = dash_app._world()
+    p = features.propose(world, "core", "Change the value", "",
+                         lambda gid, work: (work / "a.py").write_text("VALUE = 2\n"),
+                         protected_checker=second, owner="user:starter")
+    return world, p
+
+
+def _person(monkeypatch, principal, *, key=False):
+    from maverick_dashboard import api, auth, content_access
+    monkeypatch.setattr(auth, "role_for_principal", lambda p: "admin")
+    monkeypatch.setattr(auth, "global_role_for_principal", lambda p: "admin")
+    monkeypatch.setattr(auth, "caller_principal", lambda request: principal)
+    monkeypatch.setattr(auth, "_authorization_principal", lambda request: principal)
+    monkeypatch.setattr(api, "_supervisor", lambda request: principal)
+    monkeypatch.setattr(content_access, "can_read_approval", lambda *a, **k: True)
+    monkeypatch.setattr(auth, "api_key_permissions",
+                        lambda request: frozenset({"view", "operate", "admin"}) if key else None)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
+def test_a_protected_change_is_approved_by_two_people_not_a_key_or_the_starter(client, monkeypatch,
+                                                                              tmp_path):
+    from maverick.approval_cards import decode_approval_detail
+    from maverick.codebase import features
+    from maverick_dashboard import approval_authority, approval_decisions
+    world, p = _protected_change(monkeypatch, tmp_path)
+    aid = p["approval_id"]
+    binding = decode_approval_detail(world.get_approval(aid).detail)["binding_sha256"]
+
+    def approve(who, **kw):
+        _person(monkeypatch, who, **kw)
+        return client.post(f"/api/v1/approvals/{aid}/approve", json={"acknowledged": True},
+                           headers={"X-Lightwork-Approval-Binding": binding})
+    r = approve("user:starter")
+    assert r.status_code == 403 and r.json()["detail"] == \
+        "You asked for this, so someone else must approve it."
+    monkeypatch.setattr(approval_authority, "require_approval_authority", lambda *a, **k: None)
+    r = approve("user:alice", key=True)                        # an automation's key
+    assert r.status_code == 403 and r.json()["detail"] == approval_decisions.CODE_KEY_REFUSED
+    assert approve("user:alice").status_code in (202, 204)
+    assert approve("user:alice").status_code in (202, 204, 409)   # once, not twice
+    assert features.status(world, features.find(p["id"])) == "pending"
+    r = client.post(f"/api/v1/code/proposals/{p['id']}/merge")
+    assert r.status_code == 409 and "waiting for a person" in r.json()["detail"]
+    assert approve("user:bob").status_code in (202, 204)
+    assert features.status(world, features.find(p["id"])) == "approved"
+    assert client.post(f"/api/v1/code/proposals/{p['id']}/merge").json()["merged"] is True
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
+def test_copilot_cannot_approve_a_protected_code_change(client, monkeypatch, tmp_path):
+    from fastapi import HTTPException
+    from maverick_dashboard import api, approval_authority, approval_decisions
+    from maverick_dashboard import approval_queue_operations as native
+    from maverick_dashboard import product_operations_approvals as copilot
+    world, p = _protected_change(monkeypatch, tmp_path)
+    aid = p["approval_id"]
+    row = world.get_approval(aid)
+    monkeypatch.setattr(native, "owned", lambda request, approval_id, status=None: (world, row))
+    monkeypatch.setattr(native, "actor", lambda request: "user:alice")
+    monkeypatch.setattr(native, "public", lambda world, row, who: {})
+    monkeypatch.setattr(native, "revision", lambda world, row, who: "r1")
+    state = copilot.snapshot(object(), {"kind": "approval", "id": aid}, status="approved")
+    assert state.blocked == approval_decisions.CODE_COPILOT_REFUSED
+    # The vote Copilot would record is refused at the shared decision too.
+    _person(monkeypatch, "user:alice")
+    monkeypatch.setattr(approval_authority, "require_approval_authority", lambda *a, **k: None)
+    with pytest.raises(HTTPException) as refused:
+        api._decide_approval(object(), aid, {"acknowledged": True}, "approved",
+                             binding="b", reviewed={"binding": "b"})
+    assert refused.value.status_code == 403
+    assert refused.value.detail == approval_decisions.CODE_COPILOT_REFUSED
+    assert world.get_approval(aid).status == "pending"
+
+
+def test_copilot_and_my_work_read_the_requester_spelt_differently_as_the_requester(
+        client, monkeypatch, tmp_path):
+    from maverick_dashboard import app as dash_app
+    from maverick_dashboard import approval_queue_operations as native
+    from maverick_dashboard import me_api
+    from maverick_dashboard import product_operations_approvals as copilot
+    world = dash_app._world()
+    aid = world.create_approval("shell", risk="high", approvals_required=2,
+                                requested_by="user:Ｓａｍ")
+    row = world.get_approval(aid)
+    monkeypatch.delenv("MAVERICK_ALLOW_SELF_APPROVAL", raising=False)
+    monkeypatch.setattr(native, "owned", lambda request, approval_id, status=None: (world, row))
+    monkeypatch.setattr(native, "actor", lambda request: "user:sam")
+    monkeypatch.setattr(native, "public", lambda world, row, who: {})
+    monkeypatch.setattr(native, "revision", lambda world, row, who: "r1")
+    monkeypatch.setattr(copilot, "card_content", lambda row: {
+        "status": "current", "needs_typed_confirmation": False})
+    state = copilot.snapshot(object(), {"kind": "approval", "id": aid}, status="approved")
+    assert state.blocked == "You asked for this, so other people must approve it."
+    from maverick_dashboard import content_access
+    monkeypatch.setattr(content_access, "can_read_approval", lambda *a, **k: False)
+    assert me_api._waiting_on(object(), world, "user:sam", {"id": aid}, can_decide=False) == "others"

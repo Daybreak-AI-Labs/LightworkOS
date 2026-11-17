@@ -79,7 +79,9 @@ def reminded(world, approval, principal: str) -> bool:
     if principal not in approval_readers(approval, world) or not _may_decide(principal):
         return False
     state = world.approval_state(approval.id) or {}
-    if principal in (state.get("approvers") or []):
+    from maverick.safety.dual_control import includes_person
+
+    if includes_person(state.get("approvers") or [], principal):
         return False
     return not own_request_note(world, approval, principal)
 

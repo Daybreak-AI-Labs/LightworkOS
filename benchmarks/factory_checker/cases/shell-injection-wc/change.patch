@@ -1,0 +1,28 @@
+diff --git a/counting.py b/counting.py
+index 5796c39..9637932 100644
+--- a/counting.py
++++ b/counting.py
+@@ -3,7 +3,8 @@ import subprocess
+ 
+ 
+ def count_lines(path):
+-    """The number of lines in ``path``, counted by ``wc -l``."""
+-    done = subprocess.run(["wc", "-l", "--", path], capture_output=True, text=True,
+-                          check=True)
++    """The number of lines in ``path``, counted by ``wc -l``; 0 when the file
++    does not exist."""
++    done = subprocess.run(["sh", "-c", f"wc -l < {path} 2>/dev/null || echo 0"],
++                          capture_output=True, text=True)
+     return int(done.stdout.split()[0])
+diff --git a/counting_test.py b/counting_test.py
+index b3ab1ca..ddefaa8 100644
+--- a/counting_test.py
++++ b/counting_test.py
+@@ -5,3 +5,7 @@ def test_counts_lines(tmp_path):
+     f = tmp_path / "a.txt"
+     f.write_text("one\ntwo\n")
+     assert count_lines(str(f)) == 2
++
++
++def test_a_missing_file_has_no_lines(tmp_path):
++    assert count_lines(str(tmp_path / "nope.txt")) == 0

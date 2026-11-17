@@ -15,7 +15,10 @@
     rejected: "Rejected",
     expired: "Approval request lapsed",
     unrequested: "Needs an approval request",
+    blocked: "Cannot be approved",
     decision: "Waiting for a person’s decision",
+    running: "Being built",
+    stopped: "Stopped before it finished",
     merged: "Merged",
     empty: "No changes were made",
     conflict: "No longer fits the latest code"
@@ -149,7 +152,8 @@
       tr.appendChild(el("td", null, testsText(p.tests, p.tests_ran)));
       tr.appendChild(el("td", null, checkText(p.check)));
       tr.appendChild(el("td", null, reviewText(p.review)));
-      tr.appendChild(el("td", null, STATUS[p.status] || human(p.status)));
+      tr.appendChild(el("td", null, (STATUS[p.status] || human(p.status)) +
+        (p.protected ? " · Protected: two people approve" : "")));
       var td = el("td");
       var wrap = el("div", "ic-actions");
       if (canAdmin) { wrap.appendChild(button("Review", "btn--ghost", function () { review(p.id); })); }
@@ -363,7 +367,7 @@
     var current;
     try { current = await window.mvFetchJSON(url, {}, "open the test commands"); }
     catch (error) { fail(failure(error, "open the test commands")); return; }
-    var values = await window.mvForm("Test commands for " + name, [
+    var values = await window.mvForm("Test commands and protected paths for " + name, [
       { key: "quick_test_command", label: "Quick tests (optional)", default: current.quick_test_command, allowEmpty: true,
         help: "Lightwork runs these after each change while it fixes problems. Write {changed}, not in quotes, where the changed files go. The command must accept any file, not only tests." },
       { key: "test_command", label: "All tests (optional)", default: current.test_command, allowEmpty: true,
@@ -372,11 +376,16 @@
         help: "For example a style check. Lightwork runs it with all tests on the finished change." },
       { key: "heavy_test_command", label: "Tests that need services (optional)", default: current.heavy_test_command,
         allowEmpty: true,
-        help: "Tests that need a database or a browser. They run only in the check container your organization sets up." }
-    ], { okText: "Save commands" });
+        help: "Tests that need a database or a browser. They run only in the check container your organization sets up." },
+      { key: "protected_paths", label: "Protected paths (optional)", default: (current.protected_paths || []).join(", "),
+        allowEmpty: true,
+        help: "Separate paths with commas, for example .github, src/billing/**. A change to one needs a second checker and two people to approve it." }
+    ], { okText: "Save" });
     if (!values) { return; }
+    values.protected_paths = String(values.protected_paths || "").split(",")
+      .map(function (v) { return v.trim(); }).filter(function (v) { return v; });
     var out = await post(url, values, "save the test commands");
-    if (out) { say("Saved the test commands for " + name + "."); await load(true); }
+    if (out) { say("Saved the test commands and protected paths for " + name + "."); await load(true); }
   }
 
   async function syncRepo(name) {

@@ -1,0 +1,12 @@
+{
+  "id": "path-traversal-uploads",
+  "title": "Allow uploads in sub-folders",
+  "description": "read_upload() in uploads.py only reads files directly in the upload folder. Allow names with sub-folders, like 'reports/2024.csv'.",
+  "verdict": "defect",
+  "defect": {
+    "kind": "path-traversal",
+    "file": "uploads.py",
+    "repro": "python repro.py",
+    "why": "Only a leading / is refused now, so a name like '../secret.txt' reads a file outside the upload folder."
+  }
+}

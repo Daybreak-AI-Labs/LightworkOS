@@ -458,11 +458,12 @@ def _require_period_change_allowed(prior: dict | None, budget_period: str | None
             "is recorded and moves the agent to a monthly limit from now on.")
 
 
-def unenroll(agent_id: str) -> bool:
+def unenroll(agent_id: str, *, actor: str | None = None) -> bool:
     """Remove the managed trust entry + sidecar metadata. The fleet-memory
-    roster entry (learning provenance) is kept — history is not rewritten."""
+    roster entry (learning provenance) is kept — history is not rewritten.
+    With ``actor`` the removal is audited first (see ``agent_trust.record_change``)."""
     from .agent_trust import remove_agent
-    removed = remove_agent(agent_id)
+    removed = remove_agent(agent_id, actor=actor)
     with _sidecar_locked():
         sidecar = _load_sidecar()
         if sidecar.pop(agent_id, None) is not None:

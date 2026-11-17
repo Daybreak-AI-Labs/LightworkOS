@@ -33,6 +33,21 @@ CASES = {
                                s={"deepl": {"dollars": 0.03, "per": "request"}},
                                l={"deepl": {"dollars": 0.01, "per": "request"}},
                                ul={"deepl": {"dollars": 0.01, "per": "request"}}),
+    # A workspace may lower a task's caps, never raise them; zero is a cap.
+    "budget.max_dollars": dict(os=5.0, s=2.0, ol=0, l=10.0, us=2.0),
+    "budget.max_wall_seconds": dict(os=1800, s=600, l=3600, us=600),
+    "budget.max_tool_calls": dict(os=50, s=20, l=100, us=20),
+    "budget.max_input_tokens": dict(os=100000, s=50000, l=200000, us=50000),
+    "budget.max_output_tokens": dict(os=20000, s=10000, l=40000, us=10000),
+    "budget.task_limits_enabled": _prot(True),
+    "budget.strict_pricing": _prot(True),
+    # Per AI service, in any spelling: lower or add a cap, never raise one.
+    "budget.provider_caps": dict(os={"anthropic": 50.0}, s={"Anthropic": 20.0, "openai": 10.0},
+                                 se={"anthropic": 20.0, "openai": 10.0}, l={"ANTHROPIC": 100.0},
+                                 us={"openai": 10.0}),
+    # Warnings may be added, never removed.
+    "budget.warning_thresholds": dict(os=[0.8, 1.0], s=[0.5, 0.8, 1.0], l=[1.0],
+                                      us=[0.5, 0.8, 0.95, 1.0], ul=[5]),
     # A deny-like list only grows: the tenant's names are added to the
     # organisation's, so only a value the consumer cannot read is ignored.
     "governance.deny_actions": dict(os=["shell"], s=["browser"], se=["shell", "browser"], l="shell", us=["shell"]),
@@ -92,6 +107,13 @@ CASES = {
     "sandbox.cpus": dict(os=2, s=1, l=4, us=1),
     "sandbox.long_command_timeout": dict(os=600, s=300, l=1200, us=300, ul=86400),
     "sandbox.timeout": dict(os=60, s=30, l=120, us=30, ul=120),
+    "sandbox.warm": _perm(False),
+    # A workspace may add hosts a tool must not reach and narrow the hosts it
+    # may reach; a tool rule that is not a table is ignored.
+    "sandbox.tool": dict(os={"http_fetch": {"allow_egress": ["a.example", "b.example"]}},
+                         s={"http_fetch": {"allow_egress": ["a.example"], "deny_egress": ["x.example"]}},
+                         l={"http_fetch": {"allow_egress": ["c.example"]}},
+                         us={"shell": {"deny_egress": ["*"]}}, ul={"shell": "open"}),
     # A workspace adds areas where a run must ask a person; it never removes one.
     "approval.decision_areas": dict(
         os=["security"], s=["security", "legal"], l=[], us=[*_DECISION_DEFAULTS, "legal"],
@@ -100,6 +122,10 @@ CASES = {
         os=["governance"], s=["governance", "security"], l=[], us=["governance", "security"],
         ul=[]),
     "approval.decision_expiry_hours": dict(os=72, s=24, l=240, us=24, ul=720),
+    "approval.record_checks": _prot(True),
+    "approval.require_acknowledgement": _prot(True),
+    "approval.separate_approver": dict(os="when_available", s="always", l="never", us="always",
+                                       ul="never"),
     "security.allowed_tools": dict(os=["a", "b"], s=["a"], l=[], us=["a"]),
     "security.denied_tools": dict(os=["shell"], s="x", se=["shell", "x"], l=5, us="shell", use=["shell"]),
     "security.max_risk": dict(os="medium", s="low", l="high", us="medium"),
@@ -121,6 +147,32 @@ CASES = {
     "security.secure_defaults": _prot(True),
     # A workspace may protect code more, never less: stricter protection,
     # the checker on, a container required, more repair rounds and looks.
+    # The default egress plane: denied hosts only grow; an allow list may only
+    # narrow one the organisation set (a new one approves hosts under the
+    # allowlist posture).
+    "egress.deny": dict(os=["169.254.169.254"], s=["169.254.169.254", "x.example"], l=[],
+                        us=["x.example"], ul=5),
+    "egress.allow": dict(os=["a.example", "b.example"], s=["a.example"], l=["c.example"],
+                         ul=["c.example"]),
+    # A workspace plane replaces [egress], so only one the organisation set is tightened.
+    "tenancy.egress": dict(os={"acme": {"deny": ["169.254.169.254"]}},
+                           s={"acme": {"deny": ["169.254.169.254", "x.example"]}},
+                           l={"acme": {"allow": ["c.example"]}}, ul={"acme": {"deny": ["x.example"]}}),
+    # Each can lift the egress lock.
+    "enterprise.mode": _prot(False),
+    "enterprise.require": _prot(False),
+    # Exceptions to the lock: only removed (empty means none).
+    "enterprise.allowed_hosts": dict(os=["a.example", "b.example"], s=["a.example"],
+                                     l=["a.example", "b.example", "c.example"], ul=["c.example"]),
+    "enterprise.local_providers": dict(os=["ollama", "vllm"], s=["ollama"], l=["ollama", "vllm", "openai"],
+                                       ul=["ollama"]),
+    "profile.name": dict(os="standard", s="enterprise", ol="enterprise", l="standard", us="enterprise"),
+    "compliance.profiles": dict(os=["hipaa"], s=["gdpr"], se=["hipaa", "gdpr"], l="hipaa", us=["gdpr"],
+                                ul=["no_such_profile"]),
+    # A workspace may word the AI disclosure its own way, never remove it.
+    "compliance.disclosure_text": dict(os="Org text", s="Workspace text", l="", us="Workspace text",
+                                       ul="  "),
+    "codebase.enable": _perm(False),
     "codebase.default_protect": dict(os="approve", s="block", l="audit", ul="audit"),
     "codebase.checker": _prot(True),
     "codebase.require_container": _prot(False),
@@ -134,6 +186,11 @@ CASES = {
                                    ul="other:1"),
     "codebase.checker_models": dict(os=["model-a"], s=["model-a"], l=["model-b"],
                                     ul=["model-b"]),
+    # The second checker for protected paths, and whether the factory may change
+    # the Lightwork that runs it, are the organisation's alone too.
+    "codebase.protected_checker_model": dict(os="openai:m", s="openai:m", l="gemini:g",
+                                             ul="gemini:g"),
+    "codebase.allow_self_changes": dict(os=False, s=False, l=True, ul=True),
 }
 
 
@@ -226,6 +283,33 @@ def consumer(tmp_path, monkeypatch):
             monkeypatch.delenv("MAVERICK_TENANT")
 
     return run
+
+
+def test_a_workspace_can_lower_but_never_raise_a_task_budget(consumer, monkeypatch):
+    from maverick.budget import resolve_budget_caps
+    from maverick.provider_cost_cap import caps_from_config
+
+    for name in ("MAVERICK_BUDGET_DOLLARS", "MAVERICK_BILLING_STRICT"):
+        monkeypatch.delenv(name, raising=False)
+
+    def ask():
+        return resolve_budget_caps(), caps_from_config()
+
+    org = ("[budget]\nmax_dollars = 5.0\nmax_wall_seconds = 600\nmax_tool_calls = 0\n"
+           "[budget.provider_caps]\nanthropic = 50.0\n")
+    raised = ("[budget]\nmax_dollars = 50.0\nmax_wall_seconds = 6000\nmax_tool_calls = 10\n"
+              "task_limits_enabled = false\n[budget.provider_caps]\nANTHROPIC = 500.0\n")
+    (caps, providers), ignored = consumer(org, raised, ask)
+    assert caps == {"max_dollars": 5.0, "max_wall_seconds": 600.0, "max_tool_calls": 0}
+    assert providers == {"anthropic": 50.0}
+    assert {"budget.max_dollars", "budget.max_wall_seconds", "budget.max_tool_calls",
+            "budget.task_limits_enabled", "budget.provider_caps"} <= ignored
+    lowered = "[budget]\nmax_dollars = 1.5\n[budget.provider_caps]\nAnthropic = 20.0\n"
+    (caps, providers), ignored = consumer(org, lowered, ask)
+    assert caps["max_dollars"] == 1.5 and providers == {"anthropic": 20.0} and not ignored
+    # An organisation cap the budget cannot read stays the organisation's.
+    _, ignored = consumer('[budget]\nmax_dollars = "lots"\n', lowered, lambda: None)
+    assert "budget.max_dollars" in ignored
 
 
 def test_a_workspace_cannot_turn_on_self_approval_or_run_as_root(consumer, monkeypatch):
@@ -467,3 +551,174 @@ def test_a_workspace_cannot_remove_an_area_that_needs_a_decision(consumer):
         lambda: (dr.areas(), dr.admin_areas()))
     assert areas == [*dr.DEFAULT_AREAS, "legal"] and admin == ["governance"]
     assert {"approval.decision_areas", "approval.decision_admin_areas"} <= set(ignored)
+
+
+# --- Keys without a rule: only the organisation sets them -------------------
+
+def _unruled_keys() -> list[str]:
+    """Every key the code names in a policy section without a tighten rule,
+    plus one no code reads yet, so a key added later is covered too."""
+    from maverick import config_contracts, config_lint
+    from maverick.policy_tighten import WORKSPACE_INFRASTRUCTURE
+
+    named = {f"{section}.{key}" for section in TENANT_RULES
+             for key in (config_lint.KNOWN_SCHEMA.get(section) or ())}
+    for registry in (config_contracts.TEXT_SETTINGS, config_contracts.INTEGER_SETTINGS,
+                     config_contracts.BOOLEAN_SETTINGS, config_contracts.CHOICE_SETTINGS,
+                     config_contracts.NUMBER_LIST_SETTINGS):
+        named.update(name for name in registry
+                     if name.count(".") == 1 and name.split(".")[0] in TENANT_RULES)
+    named.update(f"{section}.a_setting_added_later" for section in TENANT_RULES)
+    named.update(f"sandbox.{key}" for key in WORKSPACE_INFRASTRUCTURE)
+    return sorted(key for key in named if key.split(".", 1)[1] not in TENANT_RULES[key.split(".")[0]])
+
+
+def test_the_unruled_key_list_comes_from_the_code():
+    keys = _unruled_keys()
+    assert {"sandbox.image", "sandbox.kubeconfig", "safety.receipt_key", "capabilities.deferred_tools",
+            "approval.undo_grace_seconds", "sandbox.workspace_infrastructure"} <= set(keys)
+    assert "sandbox.tool" not in keys and "approval.record_checks" not in keys
+    assert {f"budget.{key}" for key in ("guidance", "warnings", "self_tuning", "receipts",
+                                        "provider_caps_period")} <= set(keys)
+    assert not {"budget.max_dollars", "budget.strict_pricing"} & set(keys)
+
+
+@pytest.mark.parametrize("key", _unruled_keys())
+def test_a_workspace_value_for_a_key_without_a_rule_is_ignored(load, key):
+    name = key.split(".", 1)[1]
+    merged, reported, warnings = load(key, "organisation-value", "workspace-value")
+    assert merged.get(name) == "organisation-value" and reported and warnings == 1
+    merged, reported, warnings = load(key, None, {"a": "workspace-table"})
+    assert name not in merged and reported and warnings == 1
+
+
+_INFRASTRUCTURE = (
+    'provider = "e2b"\napi_key = "acme-key"\nkubeconfig = "/srv/acme/kube"\ncontext = "acme"\n'  # pragma: allowlist secret -- sample workspace file
+    'namespace = "acme"\nhost = "acme@build.example"\n')
+
+
+def test_the_organisation_switch_lets_a_workspace_name_its_own_work_area_servers(consumer, tmp_path):
+    from maverick import config
+
+    def ask():
+        return config.load_config().get("sandbox", {})
+
+    org = ('[sandbox]\nbackend = "kubernetes"\nnamespace = "org"\nkubeconfig = "/srv/org/kube"\n'
+           'extra_kubectl_args = ["--v=2"]\nssh_args = ["-p2222"]\n')
+    tenant = ("[sandbox]\n" + _INFRASTRUCTURE + 'extra_kubectl_args = ["--v=2"]\n'
+              'ssh_args = ["-oProxyCommand=sh"]\nbackend = "local"\nimage = "acme:1"\n')
+    infrastructure = {"sandbox.context", "sandbox.namespace", "sandbox.host"}
+    # Never the workspace's: a cluster settings file can name a program this
+    # computer runs, a key or provider picks another service, options run here.
+    organisation_only = {"sandbox.provider", "sandbox.api_key", "sandbox.kubeconfig",
+                         "sandbox.extra_kubectl_args", "sandbox.ssh_args", "sandbox.backend", "sandbox.image"}
+    # Off (the default): every one stays the organisation's and is listed.
+    sandbox, ignored = consumer(org, tenant, ask)
+    assert sandbox["namespace"] == "org" and "host" not in sandbox and sandbox["backend"] == "kubernetes"
+    assert infrastructure | organisation_only <= ignored
+    # The switch in a workspace file is itself ignored.
+    sandbox, ignored = consumer(org, tenant + "workspace_infrastructure = true\n", ask)
+    assert sandbox["namespace"] == "org" and "sandbox.workspace_infrastructure" in ignored
+    # On: the workspace picks a context and namespace in the organisation's
+    # cluster settings, and a remote computer only from the organisation's list.
+    on = org + "workspace_infrastructure = true\n"
+    sandbox, ignored = consumer(on, tenant, ask)
+    assert {k: sandbox[k] for k in ("context", "namespace", "kubeconfig")} == {
+        "context": "acme", "namespace": "acme", "kubeconfig": "/srv/org/kube"}
+    assert "host" not in sandbox and "provider" not in sandbox and "api_key" not in sandbox
+    assert sandbox["extra_kubectl_args"] == ["--v=2"] and sandbox["ssh_args"] == ["-p2222"]
+    assert ignored == organisation_only | {"sandbox.host"}
+    sandbox, ignored = consumer(on + 'workspace_hosts = ["*@build.example"]\n', tenant, ask)
+    assert sandbox["host"] == "acme@build.example" and "sandbox.host" not in ignored
+    # A name the cluster tools could read as something else is ignored.
+    sandbox, ignored = consumer(on, '[sandbox]\nnamespace = "x/../y"\ncontext = "-v"\n', ask)
+    assert sandbox["namespace"] == "org" and {"sandbox.namespace", "sandbox.context"} <= ignored
+    # While a settings file cannot be read, the switch counts as off.
+    config.dashboard_overrides_path().parent.mkdir(parents=True, exist_ok=True)
+    config.dashboard_overrides_path().write_text("[sandbox\n", encoding="utf-8")
+    sandbox, ignored = consumer(on, tenant, ask)
+    assert sandbox["namespace"] == "org" and infrastructure <= ignored
+
+
+def test_a_switch_the_consumer_reads_only_as_true_or_false(consumer, monkeypatch):
+    """``record_checks`` and ``require_acknowledgement`` read anything but
+    true or false as on, so a workspace false never lands under such a value."""
+    from maverick import approval_checks
+    from maverick.safety.consent import approval_requires_acknowledgement
+
+    monkeypatch.delenv("MAVERICK_APPROVAL_REQUIRE_ACKNOWLEDGEMENT", raising=False)
+
+    def ask():
+        return approval_checks.enabled(), approval_requires_acknowledgement()
+
+    org = '[approval]\nrecord_checks = "false"\nrequire_acknowledgement = "no"\n'
+    tenant = "[approval]\nrecord_checks = false\nrequire_acknowledgement = false\n"
+    assert consumer(org, None, ask)[0] == (True, True)
+    result, ignored = consumer(org, tenant, ask)
+    assert result == (True, True)
+    assert ignored == {"approval.record_checks", "approval.require_acknowledgement"}
+
+
+def test_a_workspace_cannot_reach_more_of_the_network(consumer, monkeypatch):
+    """Each of these workspace values used to approve or unblock hosts."""
+    from maverick import compliance_profiles, enterprise, profile
+    from maverick.tenant.egress import egress_allowed
+    from maverick.tools import _ssrf
+
+    for name in ("MAVERICK_ENTERPRISE", "MAVERICK_PROFILE", "MAVERICK_COMPLIANCE_PROFILES",
+                 "MAVERICK_FETCH_ALLOW_PRIVATE"):
+        monkeypatch.delenv(name, raising=False)
+
+    def reach(host):
+        return lambda: egress_allowed("http_fetch", host, tenant="acme")
+
+    allowlist = '[security]\nnetwork_policy = "allowlist"\n'
+    tool = '[sandbox.tool.http_fetch]\nallow_egress = ["evil.example"]\n'
+    assert consumer(allowlist, tool, reach("evil.example")) == (False, {"sandbox.tool"})
+    plane = '[tenancy.egress.acme]\nallow = ["evil.example"]\n'
+    assert consumer(allowlist, plane, reach("evil.example")) == (False, {"tenancy.egress"})
+    assert consumer(allowlist + '[egress]\nallow = ["a.example"]\n', '[egress]\nallow = ["evil.example"]\n',
+                    reach("evil.example")) == (False, {"egress.allow"})
+    org = '[egress]\ndeny = ["169.254.169.254"]\n'
+    assert consumer(org, "[egress]\ndeny = []\n", reach("169.254.169.254"))[0] is False
+    # A narrower tool list the organisation set still applies.
+    narrowed = '[sandbox.tool.http_fetch]\nallow_egress = ["a.example"]\n'
+    result, ignored = consumer(allowlist + '[sandbox.tool.http_fetch]\nallow_egress = ["a.example", "b.example"]\n',
+                               narrowed, lambda: (reach("a.example")(), reach("b.example")()))
+    assert result == (True, False) and not ignored
+    # The egress lock and what decides it.
+    lock = '[enterprise]\nmode = true\n[profile]\nname = "enterprise"\n[compliance]\nprofiles = ["hipaa"]\n'
+    loose = ('[enterprise]\nmode = false\nallowed_hosts = ["evil.example"]\n[profile]\nname = "standard"\n'
+             '[compliance]\nprofiles = []\n[tools]\nfetch_allow_private = true\n')
+    result, ignored = consumer(lock, loose, lambda: (
+        enterprise.enterprise_enabled(), profile.active_profile(), compliance_profiles.resolve_profiles(),
+        enterprise.egress_permitted("https://evil.example/"), _ssrf.allow_private()))
+    assert result == (True, "enterprise", ["hipaa"], False, False)
+    assert {"enterprise.mode", "enterprise.allowed_hosts", "profile.name", "tools.fetch_allow_private"} <= ignored
+
+
+@pytest.mark.parametrize(("host", "applied"), [
+    ("$(touch /tmp/q)@build.example.com", False),
+    ("%h%r@build.example.com", False),
+    ("ssh://x@evil.com:22/@build.example.com", False),
+    ("`id`@build.example.com", False),
+    ("u@[::1]", True),
+    ("deploy@build.example.com", True),
+    # ssh has no port syntax here: the port comes from ssh_args or ssh config.
+    ("deploy@build.example.com:22", False),
+])
+def test_a_workspace_host_has_a_plain_shape_before_it_matches(consumer, host, applied):
+    """Older ssh clients pass a user name with % or $ to a ProxyCommand or
+    Match exec, so only user@host or host with a port is accepted."""
+    from maverick import config
+
+    org = '[sandbox]\nworkspace_infrastructure = true\nworkspace_hosts = ["*@build.example.com", "u@[::1]", "*@build.example.com:22"]\n'
+    sandbox, ignored = consumer(org, f"[sandbox]\nhost = {json.dumps(host)}\n",
+                                lambda: config.load_config().get("sandbox", {}))
+    assert (sandbox.get("host") == host) is applied and ("sandbox.host" in ignored) is not applied
+
+
+@pytest.mark.parametrize("invisible", ["\u200b", "\ufeff", "\u2060", "\u200c", " \u200b\t\ufeff "])
+def test_invisible_disclosure_text_cannot_turn_the_disclosure_off(load, invisible):
+    merged, reported, _ = load("compliance.disclosure_text", "Org text", invisible)
+    assert merged.get("disclosure_text") == "Org text" and reported

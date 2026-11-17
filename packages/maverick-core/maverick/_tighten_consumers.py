@@ -407,9 +407,11 @@ def run_as_user(upper: object, lower: object) -> tuple[Any, bool]:
 
 
 def organisation_only(upper: object, lower: object) -> tuple[Any, bool]:
-    """``[codebase] checker_image`` and ``checker_models``: which image runs the
-    checks (and so decides every re-run's result) and which models check. Only
-    the organisation sets them; a lower layer's different value is ignored."""
+    """``[codebase] checker_image``, ``checker_models``,
+    ``protected_checker_model`` and ``allow_self_changes``: which image runs
+    the checks (and so decides every re-run's result), which models check, and
+    whether the factory may change the Lightwork that runs it. Only the
+    organisation sets them; a lower layer's different value is ignored."""
     return upper, lower != upper
 
 
@@ -433,10 +435,291 @@ def tool_prices(upper: object, lower: object) -> tuple[Any, bool]:
     return merged, loosened
 
 
+def task_cap(key: str):
+    """``[budget] max_dollars`` and the other task caps, read as
+    ``budget._configured_task_limits`` reads them: unset is no cap, zero is a
+    cap of nothing, and anything else it refuses. A workspace may only lower
+    one; an organisation cap the budget cannot read stays the organisation's."""
+    from .budget import _BUDGET_KEY_TYPES
+    from .policy_tighten import Incomparable
+
+    caster = _BUDGET_KEY_TYPES[key]
+
+    def read(value: object) -> float:
+        if isinstance(value, bool) or isinstance(value, (dict, list, tuple)):
+            raise ValueError("expected a number")
+        try:
+            amount = float(caster(value))
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("expected a number") from exc
+        if not math.isfinite(amount) or amount < 0:
+            raise ValueError("expected a finite non-negative number")
+        return amount
+
+    def merge(upper: object, lower: object) -> tuple[Any, bool]:
+        low = read(lower)
+        if upper is None:
+            return lower, False
+        try:
+            up = read(upper)
+        except ValueError as exc:
+            raise Incomparable("the organisation's cap cannot be read") from exc
+        return (upper, True) if low > up else (lower, False)
+    return merge
+
+
+def _provider_caps(value: object) -> dict[str, float]:
+    """``provider_cost_cap.caps_from_config``: names in any case, positive
+    numbers only (zero or less is no cap)."""
+    from .provider_cost_cap import _canon
+
+    if not isinstance(value, dict):
+        raise ValueError("expected a table of caps")
+    caps: dict[str, float] = {}
+    for name, amount in value.items():
+        if isinstance(amount, bool) or not isinstance(amount, (int, float)):
+            raise ValueError("expected a number")
+        if _canon(name) and math.isfinite(amount) and amount > 0:
+            caps[_canon(name)] = float(amount)
+    return caps
+
+
+def provider_caps(upper: object, lower: object) -> tuple[Any, bool]:
+    """``[budget.provider_caps]``: a workspace may lower a service's cap or add
+    one, in any spelling, never raise or remove one."""
+    from .provider_cost_cap import _canon
+
+    if not isinstance(lower, dict):
+        raise ValueError("expected a table of caps")
+    up = _provider_caps(upper) if isinstance(upper, dict) else {}
+    merged, loosened = dict(up), False
+    for name, value in lower.items():
+        key, amount = _canon(name), _provider_caps({name: value}).get(_canon(name))
+        if key in up and (amount is None or amount > up[key]):
+            loosened = True
+        elif amount is not None:
+            merged[key] = amount
+    return merged, loosened
+
+
+def warning_thresholds(upper: object, lower: object) -> tuple[Any, bool]:
+    """``[budget] warning_thresholds`` as ``budget_guidance.policy`` reads
+    them: a workspace may add warnings, never remove the organisation's."""
+    from .config_contracts import NUMBER_LIST_SETTINGS
+    from .policy_tighten import Incomparable
+
+    contract = NUMBER_LIST_SETTINGS["budget.warning_thresholds"]
+
+    def read(value: object) -> list[float]:
+        if (not isinstance(value, list) or not value or len(value) > contract.max_items
+                or any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v)
+                       or not contract.minimum_exclusive < v <= contract.maximum for v in value)):
+            raise ValueError("expected warning thresholds")
+        return sorted(set(value))
+
+    low = read(lower)
+    try:
+        up = read(list(contract.default) if upper is None else upper)
+    except ValueError as exc:
+        raise Incomparable("the organisation's thresholds cannot be read") from exc
+    merged = read(sorted(set(up) | set(low)))
+    return merged, any(item not in low for item in up)
+
+
+def _switch(default: bool, *, protection: bool):
+    """A switch whose consumer reads only ``true`` or ``false``; anything
+    else is the consumer's default. A protection may only go to on, a
+    permission only to off."""
+    def merge(upper: object, lower: object) -> tuple[Any, bool]:
+        if not isinstance(lower, bool):
+            raise ValueError("expected true or false")
+        current = upper if isinstance(upper, bool) else default
+        looser = (current and not lower) if protection else (lower and not current)
+        return (upper, True) if looser else (lower, False)
+    return merge
+
+
+def _hosts(value: object) -> list:
+    """Host patterns as ``sandbox.network_policy`` and ``tenant.egress`` read
+    them: one text is one pattern."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return list(value)
+    raise ValueError("expected a list of host names")
+
+
+def _narrowed(up: list, low: list) -> tuple[list, bool]:
+    """An allow list a lower layer may only narrow. Where the organisation
+    set none, a lower layer's list would approve hosts under the allowlist
+    posture, so it is ignored."""
+    from .policy_tighten import tighten
+
+    if not up:
+        return up, bool(low)
+    return tighten("allow_list", up, low)
+
+
+def host_deny(upper: object, lower: object) -> tuple[Any, bool]:
+    """``[egress] deny``: denied hosts may only grow."""
+    from .policy_tighten import tighten
+
+    return tighten("deny_list", _hosts(upper), _hosts(lower))
+
+
+def host_allow(upper: object, lower: object) -> tuple[Any, bool]:
+    """``[egress] allow``: only narrows a list the organisation set."""
+    value, loosened = _narrowed(_hosts(upper), _hosts(lower))
+    return (upper, True) if loosened and not value else (value, loosened)
+
+
+def _host_lists(upper: dict, lower: object, allow: str, deny: str) -> tuple[dict, bool]:
+    """One table of host lists: ``deny`` may only grow, ``allow`` only narrow
+    a list the organisation set; any other key is ignored."""
+    from .policy_tighten import tighten
+
+    if not isinstance(lower, dict):
+        raise ValueError("expected a table")
+    merged, loosened = dict(upper), False
+    for key, value in lower.items():
+        try:
+            current = _hosts(upper.get(key))
+            if key == deny:
+                result, looser = tighten("deny_list", current, _hosts(value))
+            elif key == allow:
+                result, looser = _narrowed(current, _hosts(value))
+            else:
+                raise ValueError("not a host list")
+        except ValueError:
+            result, looser = None, True
+        if result is not None and result != current:
+            merged[key] = result
+        loosened = loosened or looser
+    return merged, loosened
+
+
+def _tables(upper: object, lower: object, *, new: bool, allow: str, deny: str) -> tuple[Any, bool]:
+    """Named tables of host lists; ``new`` says whether a lower layer may add
+    a table the organisation did not set."""
+    from .policy_tighten import Incomparable
+
+    if not isinstance(lower, dict):
+        raise ValueError("expected a table of tables")
+    if upper is not None and not isinstance(upper, dict):
+        raise Incomparable("the organisation's table cannot be read")
+    merged, loosened = dict(upper or {}), False
+    for name, table in lower.items():
+        base = merged.get(name, {} if new else None)
+        if not isinstance(base, dict) or not isinstance(table, dict):
+            loosened = True
+            continue
+        merged[name], looser = _host_lists(base, table, allow, deny)
+        loosened = loosened or looser
+    return merged, loosened
+
+
+def egress_rules(upper: object, lower: object) -> tuple[Any, bool]:
+    """``[sandbox.tool.<name>]``: a lower layer may add hosts a tool must not
+    reach and narrow a list of hosts the organisation lets it reach."""
+    return _tables(upper, lower, new=True, allow="allow_egress", deny="deny_egress")
+
+
+def tenant_planes(upper: object, lower: object) -> tuple[Any, bool]:
+    """``[tenancy.egress.<id>]`` replaces ``[egress]`` for that workspace, so a
+    lower layer may only tighten a plane the organisation set."""
+    return _tables(upper, lower, new=False, allow="allow", deny="deny")
+
+
+def compliance_profiles(upper: object, lower: object) -> tuple[Any, bool]:
+    """``[compliance] profiles``: a lower layer may add known profiles, never
+    remove one (a profile can lock egress)."""
+    from .compliance_profiles import ComplianceProfileError, _validated_profile_keys
+    from .policy_tighten import Incomparable
+
+    try:
+        added = _validated_profile_keys(lower, source="workspace")
+    except ComplianceProfileError as exc:
+        raise ValueError("not a list of known profiles") from exc
+    if upper is not None and not isinstance(upper, list):
+        raise Incomparable("the organisation's profiles cannot be read")
+    up = list(upper or [])
+    return up + [key for key in added if key not in up], False
+
+
+def disclosure_text(upper: object, lower: object) -> tuple[Any, bool]:
+    """``[compliance] disclosure_text`` (maverick.compliance): a lower layer may
+    word the AI disclosure its own way, never empty it (empty turns it off).
+    Invisible format characters and spaces do not count: the text needs at
+    least one letter or digit."""
+    import unicodedata
+
+    visible = "" if not isinstance(lower, str) else "".join(
+        ch for ch in lower if unicodedata.category(ch) != "Cf" and not ch.isspace())
+    if not any(ch.isalnum() for ch in visible):
+        raise ValueError("expected the disclosure text")
+    return lower, False
+
+
+# kubectl reads these as a value after --context / -n, and the namespace also
+# inside a "namespace/pod:path" copy target: plain names only.
+_PLAIN_NAMES = {"namespace": re.compile(r"[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?"),
+                "context": re.compile(r"[A-Za-z0-9@._:][A-Za-z0-9@._:/-]{0,199}")}
+
+
+def plain_name(key: str):
+    """``[sandbox] context`` or ``namespace`` a workspace chooses, with the
+    organisation's switch on: any plain name in the organisation's own cluster
+    settings file; anything the cluster tools could read otherwise is ignored."""
+    def merge(upper: object, lower: object) -> tuple[Any, bool]:
+        if not isinstance(lower, str) or not _PLAIN_NAMES[key].fullmatch(lower):
+            raise ValueError("expected a plain name")
+        return lower, False
+    return merge
+
+
+def listed_host(allowed: object):
+    """``[sandbox] host`` a workspace chooses, with the organisation's switch
+    on: a plain ``user@host`` or ``host`` (:data:`config_contracts.SSH_DESTINATION`)
+    matching one of the organisation's ``workspace_hosts`` patterns (none when
+    unset); brackets in a pattern are literal. The ssh backend refuses a
+    destination it could read as an option in any case."""
+    from .config_contracts import SSH_DESTINATION, SSH_DESTINATION_PATTERN
+
+    patterns = [re.sub(r"[][]", lambda bracket: f"[{bracket.group()}]", p)
+                for p in (allowed if isinstance(allowed, list) else [])
+                if isinstance(p, str) and re.fullmatch(SSH_DESTINATION_PATTERN, p)]
+
+    def merge(upper: object, lower: object) -> tuple[Any, bool]:
+        if (not isinstance(lower, str) or not re.fullmatch(SSH_DESTINATION, lower)
+                or not any(fnmatch.fnmatchcase(lower, p) for p in patterns)):
+            return upper, True
+        return lower, False
+    return merge
+
+
 MERGES = {
     "codebase.checker_image": organisation_only,
     "codebase.checker_models": organisation_only,
+    "codebase.protected_checker_model": organisation_only,
+    "codebase.allow_self_changes": organisation_only,
     "budget.tool_prices": tool_prices,
+    "budget.provider_caps": provider_caps,
+    "budget.warning_thresholds": warning_thresholds,
+    "budget.task_limits_enabled": _switch(True, protection=True),
+    "budget.strict_pricing": _switch(True, protection=True),
+    **{f"budget.{key}": task_cap(key) for key in (
+        "max_dollars", "max_wall_seconds", "max_tool_calls", "max_input_tokens", "max_output_tokens")},
+    "codebase.enable": _switch(False, protection=False),
+    "approval.record_checks": _switch(True, protection=True),
+    "approval.require_acknowledgement": _switch(True, protection=True),
+    "sandbox.tool": egress_rules,
+    "egress.deny": host_deny,
+    "egress.allow": host_allow,
+    "tenancy.egress": tenant_planes,
+    "compliance.profiles": compliance_profiles,
+    "compliance.disclosure_text": disclosure_text,
     "sandbox.run_as_user": run_as_user,
     "safety.consent_mode": consent_mode,
     **SCALARS,

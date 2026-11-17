@@ -25,14 +25,14 @@ catalogue of built features and tools.
 | [Observability and reliability](#observability-and-reliability) | prose |
 | [UX surfaces](#ux-surfaces) | 51 |
 | [Packaged governance, evidence and external privacy control planes](#packaged-governance-evidence-and-external-privacy-control-planes) | 4 |
-| [Software development: the code vault](#software-development-the-code-vault) | 2 |
+| [Software development: the code vault](#software-development-the-code-vault) | 3 |
 | [Information-flow control](#information-flow-control) | 1 |
 | [Adaptive immunity](#adaptive-immunity) | 5 |
 | [Unified cross-suite audit projection](#unified-cross-suite-audit-projection) | 6 |
 | [Distribution and install](#distribution-and-install) | 19 |
 | [Customer workflow completion and readiness](#customer-workflow-completion-and-readiness) | 22 in 24 subsections |
 
-455 entries in 19 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
+456 entries in 19 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
 <!-- toc:end -->
 
 ## Agent kernel and orchestration
@@ -3391,7 +3391,9 @@ and a `maverick_llm_cache_tokens_total` hit-rate metric.
   declared scope — unscoped reads denied). Engagement + registry are read from a
   **single config snapshot** per operation; `maverick doctor` warns when the
   plane is engaged with an empty registry. Denials record an `agent_trust_denied`
-  audit row. In-process peer messaging (`agent_bus`) is internal and never gated.
+  audit row. Changes made in the dashboard or through Copilot (add, edit,
+  block, unblock, remove, unenroll) record an `agent_trust_changed` row naming
+  who made them, written before the change is saved. In-process peer messaging (`agent_bus`) is internal and never gated.
   **Signed-request identity** makes the pinned key *load-bearing* on federation
   delegation: the caller signs the canonical delegation envelope
   (`maverick-federation-delegate/1`) with its audit Ed25519 key and the receiver
@@ -5470,6 +5472,12 @@ tested without spawning py-spy.
   sealed proposal records what was and was not checked
   (`features.evidence`) and waits for a `codebase_merge` approval before any
   merge or push.
+- **Governed factory** (`codebase/vault.py` protected paths,
+  `codebase/features.py`): a change to a protected path needs a second
+  checker of a different model family (`protected_checker_model`) and two
+  people, never its starter (`channel_approvals.code_vote_refusal`); runs on
+  the running installation's own repository are refused unless
+  `allow_self_changes`; a run that asks for a decision stops the change.
 
 ## Information-flow control
 

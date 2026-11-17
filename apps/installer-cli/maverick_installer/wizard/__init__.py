@@ -86,6 +86,7 @@ from .advanced import _ask_model_followups as _ask_model_followups
 from .advanced import _ask_regulated_deployment as _ask_regulated_deployment
 from .advanced import _ask_self_harness_evaluation_boundary as _ask_self_harness_evaluation_boundary
 from .advanced import _ask_self_harness_followups as _ask_self_harness_followups
+from .advanced import _ask_workspace_servers as _ask_workspace_servers
 from .advanced import _bad_network as _bad_network
 from .advanced import _cfg_advanced as _cfg_advanced
 from .advanced import _cfg_advanced_autonomy_and_workforce as _cfg_advanced_autonomy_and_workforce
@@ -131,6 +132,7 @@ from .advanced import _pick_approval_url as _pick_approval_url
 from .advanced import _pick_client_id as _pick_client_id
 from .advanced import _pick_codebase as _pick_codebase
 from .advanced import _pick_codebase_checkers as _pick_codebase_checkers
+from .advanced import _pick_codebase_protected as _pick_codebase_protected
 from .advanced import _pick_data_protection_toggles as _pick_data_protection_toggles
 from .advanced import _pick_device_pairing as _pick_device_pairing
 from .advanced import _pick_enterprise_toggles as _pick_enterprise_toggles
@@ -2801,7 +2803,7 @@ def pick_sandbox() -> dict[str, Any]:
             )
             console.print(kubernetes_deny_all_manifest(cfg["namespace"]), highlight=False)
             console.print("\n  kubectl apply -f - <<'EOF' ... EOF   (paste the manifest above)\n")
-    return cfg
+    return _ask_workspace_servers(cfg)
 
 
 def pick_research_execution() -> dict[str, Any]:

@@ -120,8 +120,9 @@ def _check_governance_tool_names(cfg: dict) -> None:
 
 def _check_policy_overlays() -> None:
     """Advisory: workspace settings and agent overrides on disk that try to
-    loosen your organisation's policy. They still load; the looser part is
-    ignored, and this lists it so an administrator can tidy the file."""
+    loosen your organisation's policy or set what only it sets. They still
+    load; that part is ignored, and this lists it so an administrator can
+    tidy the file."""
     try:
         from .config import tenant_policy_loosenings
         from .domain import clamped_workspace_domains
@@ -130,8 +131,16 @@ def _check_policy_overlays() -> None:
     except Exception:  # pragma: no cover -- the doctor must never break
         return
     for workspace, keys in sorted(loosened.items())[:8]:
-        _row(YELLOW, "workspace policy", f"{workspace}: ignored {', '.join(keys)}",
-             fix="A workspace can only make these settings stricter. Remove them from its config.toml.")
+        fix = ("A workspace can only make some settings stricter. "
+               "Move the others to your organisation's config.toml, or remove them from the workspace file.")
+        if any(key.startswith(("sandbox.workdir", "sandbox.image")) for key in keys):
+            fix += (" A moved work folder or image applies to every workspace. "
+                    "For a separate folder, run that workspace's Lightwork with MAVERICK_WORKDIR set "
+                    "and no workdir in the organisation's file.")
+        if any(key.startswith(("enterprise.allowed_hosts", "enterprise.local_providers")) for key in keys):
+            fix += (" A host or model server moved to the organisation's file is allowed for every workspace. "
+                    "There is no way yet to allow one for a single workspace.")
+        _row(YELLOW, "workspace policy", f"{workspace}: ignored {', '.join(keys)}", fix=fix)
     for name, reasons in sorted(clamped.items())[:8]:
         _row(YELLOW, "agent override", f"{name}: {'; '.join(reasons)}",
              fix="The looser part is ignored. Edit the override so it only narrows the built-in agent.")

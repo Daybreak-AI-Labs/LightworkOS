@@ -1,0 +1,31 @@
+diff --git a/lines.py b/lines.py
+index 71b4fbd..b89b153 100644
+--- a/lines.py
++++ b/lines.py
+@@ -2,6 +2,8 @@
+ 
+ 
+ def read_lines(path):
+-    """The lines of ``path`` without their newlines."""
++    """Yield the lines of ``path`` without their newlines. The file closes
++    when the loop ends, or when an unfinished generator is closed."""
+     with open(path, encoding="utf-8") as fh:
+-        return [line.rstrip("\n") for line in fh]
++        for line in fh:
++            yield line.rstrip("\n")
+diff --git a/lines_test.py b/lines_test.py
+index 94a85bd..8f1eb92 100644
+--- a/lines_test.py
++++ b/lines_test.py
+@@ -5,3 +5,11 @@ def test_reads_lines(tmp_path):
+     f = tmp_path / "a.txt"
+     f.write_text("one\ntwo\n")
+     assert list(read_lines(f)) == ["one", "two"]
++
++
++def test_closing_early_closes_the_file(tmp_path):
++    f = tmp_path / "a.txt"
++    f.write_text("one\ntwo\n")
++    lines = read_lines(f)
++    assert next(lines) == "one"
++    lines.close()

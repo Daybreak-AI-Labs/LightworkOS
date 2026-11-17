@@ -1,0 +1,12 @@
+{
+  "id": "concurrency-once-cache",
+  "title": "Run slow factories in parallel",
+  "description": "OnceCache.get() in memo.py holds its lock while the factory runs, so slow factories for different keys wait for each other. Let them run in parallel.",
+  "verdict": "defect",
+  "defect": {
+    "kind": "concurrency",
+    "file": "memo.py",
+    "repro": "python repro.py",
+    "why": "Two threads asking for the same missing key both see it absent and both run the factory, breaking the at-most-once promise."
+  }
+}

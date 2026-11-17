@@ -1,0 +1,12 @@
+{
+  "id": "regression-csv",
+  "title": "Choose the CSV delimiter",
+  "description": "to_csv() in report.py always uses commas. Add a delimiter argument, comma by default.",
+  "verdict": "defect",
+  "defect": {
+    "kind": "regression",
+    "file": "report.py",
+    "repro": "python repro.py",
+    "why": "The hand-written join no longer quotes values, so a value containing the delimiter (like 'Doe, Jane') splits into two columns."
+  }
+}

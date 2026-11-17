@@ -12,7 +12,12 @@ reads it; a value the environment sets (``env``) wins over this page.
 """
 from __future__ import annotations
 
-from maverick.config_contracts import BOOLEAN_SETTINGS, INTEGER_SETTINGS, TEXT_SETTINGS
+from maverick.config_contracts import (
+    BOOLEAN_SETTINGS,
+    INTEGER_SETTINGS,
+    SSH_DESTINATION_PATTERN,
+    TEXT_SETTINGS,
+)
 
 from .settings_catalog_patterns import HTTPS as _HTTPS
 
@@ -438,6 +443,22 @@ def _work_area(S, C) -> tuple:
         S("sandbox", "cross_run_pool", "Keep ready work areas between tasks",
           "Keep a clean work area ready so the next task starts faster.", "toggle", group,
           False, "maverick.sandbox", subgroup="Work area"),
+        S("sandbox", "workspace_infrastructure", "Let workspaces choose where their work runs",
+          "A workspace's settings file may pick a cluster and namespace in your cluster settings "
+          "file, or a remote computer from the list below. Your cluster file, keys and options "
+          "stay yours.", "toggle", group, False, "maverick.policy_tighten", subgroup="Work area",
+          weaker=True,
+          warning="Each workspace's settings file can choose where in your cluster its commands run."),
+        S("sandbox", "workspace_hosts", "Remote computers workspaces may choose",
+          "Remote computers a workspace's settings file may choose when the switch above is on, "
+          "one per entry, as user@host or host. A star matches any text. Set the port in the "
+          "connection options. With none listed, workspaces cannot choose.",
+          "list", group, [], "maverick.policy_tighten", subgroup="Work area",
+          item_label="Remote computer", item_hint="*@build.example.com",
+          pattern=SSH_DESTINATION_PATTERN,
+          item_error="a remote computer such as user@host, without a port", max_items=50,
+          weaker="grow",
+          warning="Workspaces will be able to send their commands to more remote computers."),
         S("sandbox", "runtime", "Stronger isolation program",
           "The name of the isolation program used when the work area type is the stronger "
           "isolation option.", "text", group, "runsc", "maverick.sandbox",
@@ -724,6 +745,12 @@ def _safety(S, C) -> tuple:
           "maverick.tools.database_tool", subgroup="Tool access",
           env=("MAVERICK_DATABASE_ALLOW_URL_ARG",), weaker=True,
           warning="Agents will be able to connect to any database they can reach."),
+        S("tools", "database_allow_world_database", "Let the database tool open Lightwork's records",
+          "The database tool may connect to Lightwork's own shared records database. Only the "
+          "organisation can allow this, and a workspace's settings cannot.", "toggle",
+          "Security", False, "maverick.tools.database_tool", subgroup="Tool access",
+          env=("MAVERICK_DATABASE_ALLOW_WORLD_DATABASE",), weaker=True,
+          warning="A query through the tool could read or change every workspace's records."),
         S("egress", "deny", "Addresses no tool may reach",
           "Tools and connections refuse these addresses. A star matches any part of a name; "
           "a single star blocks everything not allowed below.", "list", "Security", [],

@@ -124,6 +124,7 @@ _WORDS = {
 _LISTS = {
     "models.catalog": ["vllm:my-model"],
     "sandbox.ssh_args": ["-p2222"],
+    "sandbox.workspace_hosts": ["*@build.example.com"],
     "sandbox.extra_kubectl_args": ["--request-timeout=30s"],
     "egress.deny": ["169.254.169.254"],
     "egress.allow": ["api.example.com"],

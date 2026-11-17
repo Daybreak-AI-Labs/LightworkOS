@@ -1,0 +1,8 @@
+{
+  "id": "clean-milliseconds-helper",
+  "title": "Show elapsed time in milliseconds",
+  "description": "The dashboard shows milliseconds. Add elapsed_ms() to timing.py next to elapsed(), which returns seconds.",
+  "verdict": "clean",
+  "looks_like": "wrong-unit",
+  "why": "elapsed_ms() is new, named for its unit and documented; elapsed() still returns seconds."
+}

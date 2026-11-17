@@ -1,0 +1,28 @@
+diff --git a/totals.py b/totals.py
+index 8fc7a13..2881322 100644
+--- a/totals.py
++++ b/totals.py
+@@ -4,8 +4,3 @@
+ def total(items):
+     """The sum of price * quantity over (price, quantity) pairs."""
+     return sum(price * qty for price, qty in items)
+-
+-
+-def legacy_total(prices):
+-    """Deprecated: use total(). The sum of a list of prices."""
+-    return sum(prices)
+diff --git a/totals_test.py b/totals_test.py
+index 5c113c4..ce1cebf 100644
+--- a/totals_test.py
++++ b/totals_test.py
+@@ -1,9 +1,5 @@
+-from totals import legacy_total, total
++from totals import total
+ 
+ 
+ def test_total():
+     assert total([(2, 3), (5, 1)]) == 11
+-
+-
+-def test_legacy_total():
+-    assert legacy_total([1, 2]) == 3

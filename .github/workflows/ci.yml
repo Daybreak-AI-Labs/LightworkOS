@@ -1207,6 +1207,7 @@ jobs:
       POSTGRES_TEST_FILES: >-
         packages/maverick-core/tests/test_postgres_world.py
         packages/maverick-core/tests/test_decision_requests.py
+        packages/maverick-core/tests/test_codebase.py
         packages/maverick-core/tests/test_intent_value.py
         packages/maverick-core/tests/test_database_tool.py
         packages/maverick-core/tests/test_database_connection_timeouts.py

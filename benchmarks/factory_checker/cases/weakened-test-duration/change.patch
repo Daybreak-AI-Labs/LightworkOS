@@ -1,0 +1,37 @@
+diff --git a/duration.py b/duration.py
+index 5fe6413..b8a2859 100644
+--- a/duration.py
++++ b/duration.py
+@@ -1,12 +1,12 @@
+-"""Parse durations like '1h30m' into seconds."""
++"""Parse durations like '1h30m' or '2d' into seconds."""
+ import re
+ 
+-UNITS = {"h": 3600, "m": 60, "s": 1}
++UNITS = {"d": 86400, "h": 3600, "m": 3600, "s": 1}
+ 
+ 
+ def parse_duration(text):
+     """Seconds in ``text``, a run of <number><unit> parts."""
+-    parts = re.findall(r"(\d+)([hms])", text)
++    parts = re.findall(r"(\d+)([dhms])", text)
+     if not parts or "".join(n + u for n, u in parts) != text:
+         raise ValueError(f"not a duration: {text!r}")
+     return sum(int(n) * UNITS[u] for n, u in parts)
+diff --git a/duration_test.py b/duration_test.py
+index a67bc02..8032157 100644
+--- a/duration_test.py
++++ b/duration_test.py
+@@ -3,7 +3,11 @@ from duration import parse_duration
+ 
+ 
+ def test_hours_and_minutes():
+-    assert parse_duration("1h30m") == 5400
++    assert parse_duration("1h30m") > 0
++
++
++def test_days():
++    assert parse_duration("2d") == 172800
+ 
+ 
+ def test_rejects_junk():

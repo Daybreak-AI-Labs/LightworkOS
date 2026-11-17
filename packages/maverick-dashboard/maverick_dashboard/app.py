@@ -10014,7 +10014,9 @@ def _approval_progress(approvals: list, request: Request) -> dict:
         required = int(state.get("approvals_required") or 1)
         words = ["One approval is needed." if required <= 1
                  else f"{state.get('approved_count', 0)} of {required} required approvals received."]
-        recorded = who in (state.get("approvers") or [])
+        from maverick.safety.dual_control import includes_person
+
+        recorded = includes_person(state.get("approvers") or [], who)
         if recorded:
             words.append("Your approval is recorded.")
         elif state.get("requested_by") and state.get("requested_by") == who:

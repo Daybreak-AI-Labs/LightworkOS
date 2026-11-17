@@ -33,7 +33,13 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from .postgres import _RLS_TABLES, _RLS_TENANT_COLUMN
+from .postgres import (
+    _RLS_CHILD_TABLES,
+    _RLS_RAW_TENANT_TABLES,
+    _RLS_STAMPED_TABLES,
+    _RLS_TABLES,
+    _RLS_TENANT_COLUMN,
+)
 
 _EMPTY_TENANT_TABLES = ("event_goal_admissions", "event_trigger_batches")
 # Unbound writers stamp the empty string, not NULL, in these tables (the event
@@ -41,8 +47,10 @@ _EMPTY_TENANT_TABLES = ("event_goal_admissions", "event_trigger_batches")
 _EMPTY_SCOPE_TABLES = (*_EMPTY_TENANT_TABLES, *_RLS_TENANT_COLUMN)
 # Every table the RLS policy is forced on, so nothing it would hide goes
 # unreported or un-backfilled. ``encryption_migrations`` is excluded: its scope
-# key is derived from the tenant and is managed by the backend itself.
-_PREFLIGHT_TABLES = tuple(t for t in _RLS_TABLES if t != "encryption_migrations")
+# key is derived from the tenant and is managed by the backend itself. So are
+# events and episodes: their tenant is a copy of their goal's, and follows it.
+_PREFLIGHT_TABLES = tuple(t for t in _RLS_TABLES
+                          if t != "encryption_migrations" and t not in _RLS_STAMPED_TABLES)
 
 
 def _column(table: str) -> str:
@@ -58,13 +66,15 @@ def _stored_tenant(table: str, tenant_id: str) -> str:
     """The value the backend itself writes for ``tenant_id`` in ``table``.
 
     ``tenant_id`` columns hold the path-encoded segment
-    (``paths.current_tenant_strict``); the workspace-keyed tables hold the raw
-    id. Binding anything else assigns rows to a value no tenant queries with.
+    (``paths.current_tenant_strict``); the workspace-keyed and learning-store
+    tables hold the raw id. Binding anything else assigns rows to a value no
+    tenant queries with.
     """
     from ..paths import _tenant_segment, canonical_tenant_id
 
     canonical = canonical_tenant_id(tenant_id.strip())
-    return canonical if table in _RLS_TENANT_COLUMN else _tenant_segment(canonical)
+    raw = table in _RLS_TENANT_COLUMN or table in _RLS_RAW_TENANT_TABLES
+    return canonical if raw else _tenant_segment(canonical)
 
 def resolve_dsn(dsn: str | None = None) -> str:
     """Resolve the Postgres DSN: explicit arg > ``MAVERICK_PG_DSN`` > config
@@ -95,48 +105,170 @@ def connect(dsn: str, *, autocommit: bool = False):
     return psycopg.connect(dsn, autocommit=autocommit)
 
 
-def preflight(conn, *, only: tuple[str, ...] | None = None) -> dict[str, Any]:
+#: How :func:`preflight` counted a table's rows, in plain words.
+COUNT_METHODS = {
+    "bypass": "this login bypasses row-level security",
+    "no_policy": "row-level security is off for this table",
+    "owner": "this login owns the table and the policy is not forced",
+    "owner_no_force": "this login owns the table; the policy was lifted for the count "
+                      "inside a transaction that was then rolled back",
+}
+#: Why a table was not counted (``not_counted``), in plain words.
+NOT_COUNTED = {
+    "hidden": "NOT COUNTED: row-level security hides these rows from this login",
+    "busy": "could not count: the table was busy",
+    "skipped": "not counted here: run `maverick tenant rls-preflight` to count them",
+}
+#: How long a count that lifts FORCE waits for the table. ALTER TABLE queues
+#: for an exclusive lock, and every later query on the table waits behind it,
+#: so the wait is kept short; a busy table is reported, not waited for.
+_COUNT_LOCK_TIMEOUT_MS = 200
+#: The child tables :func:`preflight` checks for rows with no parent, which no
+#: workspace can see once row-level security is on: ``(table, parent, key)``.
+_ORPHAN_CHECKS = tuple((t, parent, key) for t, (parent, key) in sorted(_RLS_CHILD_TABLES.items()))
+
+
+def _visibility(bypass: bool, role: str, catalog: tuple) -> str | None:
+    """How ``role`` can see every row of a table: a :data:`COUNT_METHODS`
+    key, or ``None`` when the policy applies to it and it cannot lift it."""
+    owner, rls_on, forced = catalog
+    if bypass:
+        return "bypass"
+    if not rls_on:
+        return "no_policy"
+    if owner == role:
+        return "owner_no_force" if forced else "owner"
+    return None
+
+
+def _catalog(cur, table: str) -> tuple:
+    cur.execute(
+        "SELECT pg_get_userbyid(relowner), relrowsecurity, relforcerowsecurity "
+        "FROM pg_class WHERE oid = %s::regclass",
+        (table,),
+    )
+    owner, rls_on, forced = cur.fetchone()
+    return owner, bool(rls_on), bool(forced)
+
+
+def _count_legacy(cur, table: str) -> tuple[int, int]:
+    col = _column(table)
+    cur.execute(f"SELECT count(*) FROM {table} WHERE {col} IS NULL")
+    nulls = int(cur.fetchone()[0])
+    empty = 0
+    if table in _EMPTY_SCOPE_TABLES:
+        cur.execute(f"SELECT count(*) FROM {table} WHERE {col} = ''")
+        empty = int(cur.fetchone()[0])
+    return nulls, empty
+
+
+def _count_orphans(cur, table: str, parent: str, key: str) -> int:
+    cur.execute(f"SELECT count(*) FROM {table} c WHERE c.{key} IS NULL OR NOT EXISTS "
+                f"(SELECT 1 FROM {parent} p WHERE p.id = c.{key})")
+    return int(cur.fetchone()[0])
+
+
+def _counted(conn, cur, unforce: list[str], count, *, lift: bool):
+    """``count(cursor)`` where every row is visible: directly, or with FORCE
+    lifted on ``unforce`` inside a transaction that is always rolled back.
+    Returns the count, or a :data:`NOT_COUNTED` key."""
+    if not unforce:
+        return count(cur)
+    if not lift:
+        return "skipped"
+    try:
+        with conn.transaction(force_rollback=True):
+            inner = conn.cursor()
+            inner.execute(f"SET LOCAL lock_timeout = '{int(_COUNT_LOCK_TIMEOUT_MS)}ms'")
+            for table in unforce:
+                inner.execute(f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY")
+            return count(inner)
+    except Exception as exc:
+        if getattr(exc, "sqlstate", None) == "55P03":
+            return "busy"
+        raise
+
+
+def _count_tables(conn, cur, bypass, role, tables: list[str], count, *, lift: bool):
+    """Count across ``tables`` (one, or a child and its parent); return
+    ``(result, method)`` where ``result`` is the count or a reason key."""
+    methods = {t: _visibility(bypass, role, _catalog(cur, t)) for t in tables}
+    if None in methods.values():
+        return "hidden", None
+    unforce = [t for t, m in methods.items() if m == "owner_no_force"]
+    result = _counted(conn, cur, unforce, count, lift=lift)
+    return result, ("owner_no_force" if unforce else methods[tables[0]])
+
+
+def _preflight_orphans(conn, cur, bypass, role, *, lift: bool) -> dict[str, dict[str, Any]]:
+    orphans: dict[str, dict[str, Any]] = {}
+    for table, parent, key in _ORPHAN_CHECKS:
+        if len(_existing(cur, (table, parent))) < 2:
+            continue
+        result, method = _count_tables(
+            conn, cur, bypass, role, [table, parent],
+            lambda c, t=table, p=parent, k=key: _count_orphans(c, t, p, k), lift=lift)
+        counted = isinstance(result, int)
+        orphans[table] = {"rows": result if counted else None, "parent": parent,
+                          "counted_by": method if counted else None,
+                          "not_counted": None if counted else result}
+    return orphans
+
+
+def preflight(conn, *, only: tuple[str, ...] | None = None, lift_force: bool = True) -> dict[str, Any]:
     """Read-only readiness report for enabling RLS.
 
     For each tenant-scoped table: its owner, whether the *current* role owns it
     (only the owner can ALTER / CREATE POLICY), and the count of legacy
-    NULL-tenant rows and empty-tenant event rows that RLS would hide. ``ready``
-    is True only when every table exists, is owned by the current role, and has
-    no unscoped rows. ``only`` limits the report to a subset of
-    :data:`_PREFLIGHT_TABLES` (the boot gate skips tables already protected).
+    NULL-tenant rows and empty-tenant event rows that RLS would hide. For each
+    child table (``orphans``): rows whose parent is gone or unset, which no
+    workspace can see and backfill cannot assign.
+
+    A login the policies apply to sees none of those rows, so the count is
+    made where they are visible: as a superuser or BYPASSRLS login, on a table
+    with no policy, or as the owner of a table whose policy is not forced. For
+    a forced table the owner counts with FORCE lifted inside a transaction
+    that is rolled back, waiting at most 200 ms for the table; a caller that
+    must never lift it (a page view) passes ``lift_force=False``.
+    ``counted_by`` names the way (:data:`COUNT_METHODS`). An uncounted table
+    has ``None`` counts and a ``not_counted`` reason (:data:`NOT_COUNTED`).
+
+    ``ready`` is True only when every table exists, is owned by the current
+    role, was counted, and has no unscoped rows, and no orphaned row was
+    found or left uncounted. ``only`` limits the report to a subset of
+    :data:`_PREFLIGHT_TABLES` (the boot gate skips tables already protected,
+    and the orphan check).
     """
     cur = conn.cursor()
     cur.execute("SELECT current_user")
     role = cur.fetchone()[0]
+    cur.execute("SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user")
+    row = cur.fetchone()
+    bypass = bool(row and row[0] is True)
     tables: dict[str, dict[str, Any]] = {}
-    ready = True
     for t in _PREFLIGHT_TABLES if only is None else only:
         # to_regclass returns NULL (no error) for a table that isn't there yet,
         # so a pre-migration DB reports cleanly instead of raising.
-        cur.execute("SELECT to_regclass(%s)", (t,))
-        if cur.fetchone()[0] is None:
+        if not _existing(cur, (t,)):
             tables[t] = {"owner": None, "owned_by_current_role": False,
-                         "null_tenant_rows": 0, "empty_tenant_rows": 0, "missing": True}
-            ready = False
+                         "null_tenant_rows": 0, "empty_tenant_rows": 0, "missing": True,
+                         "counted_by": None, "not_counted": None}
             continue
-        cur.execute(
-            "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid = %s::regclass",
-            (t,),
-        )
-        owner = cur.fetchone()[0]
-        col = _column(t)
-        cur.execute(f"SELECT count(*) FROM {t} WHERE {col} IS NULL")
-        nulls = int(cur.fetchone()[0])
-        empty = 0
-        if t in _EMPTY_SCOPE_TABLES:
-            cur.execute(f"SELECT count(*) FROM {t} WHERE {col} = ''")
-            empty = int(cur.fetchone()[0])
-        owned = owner == role
-        tables[t] = {"owner": owner, "owned_by_current_role": owned,
-                     "null_tenant_rows": nulls, "empty_tenant_rows": empty}
-        if not owned or nulls or empty:
-            ready = False
-    return {"role": role, "tables": tables, "ready": ready}
+        owner = _catalog(cur, t)[0]
+        result, method = _count_tables(conn, cur, bypass, role, [t],
+                                       lambda c, t=t: _count_legacy(c, t), lift=lift_force)
+        counted = isinstance(result, tuple)
+        nulls, empty = result if counted else (None, None)
+        tables[t] = {"owner": owner, "owned_by_current_role": owner == role,
+                     "null_tenant_rows": nulls, "empty_tenant_rows": empty,
+                     "counted_by": method if counted else None,
+                     "not_counted": None if counted else result}
+    orphans = {} if only is not None else _preflight_orphans(conn, cur, bypass, role,
+                                                             lift=lift_force)
+    ready = all(info["owned_by_current_role"] and info["null_tenant_rows"] == 0
+                and not info["empty_tenant_rows"] for info in tables.values()) and all(
+        info["rows"] == 0 for info in orphans.values())
+    return {"role": role, "tables": tables, "orphans": orphans, "ready": ready}
 
 
 def _sealed_legacy_scope(table: str) -> str:
@@ -170,9 +302,64 @@ _LOCK_TIMEOUT_SECONDS = 10
 
 class BackfillReport(dict):
     """``{table: rows assigned}``; ``encrypted_values`` is how many sealed
-    values were re-sealed (in a dry run: would be)."""
+    values were re-sealed (in a dry run: would be); ``skipped`` lists, by
+    table, the keys of records left without a workspace because the workspace
+    already has its own record under that key."""
 
     encrypted_values: int = 0
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.skipped: dict[str, list[str]] = {}
+
+
+#: Learning-store tables whose key is unique per workspace: a key saved both
+#: without a workspace and in the target workspace keeps the workspace's own
+#: record, and the other stays without a workspace (listed, never deleted).
+_KEEP_WORKSPACE_RECORD = {
+    "harness_addenda": ("key",),
+    "harness_line_meta": ("line_id",),
+    "harness_transfer_tried": ("line_id",),
+    "harness_corpus": ("kind", "key", "seq"),
+}
+
+
+#: Keys listed per table in ``BackfillReport.skipped``; the rest are counted.
+_SKIPPED_LISTED = 50
+
+
+def _assign(cur, table: str, tenant_id: str, report: BackfillReport, *, dry_run: bool) -> None:
+    """Assign one table's legacy rows (or count them, in a dry run)."""
+    stored = _stored_tenant(table, tenant_id)
+    where, params = _legacy_scope(table), ()
+    keys = _KEEP_WORKSPACE_RECORD.get(table)
+    if keys:
+        same = " AND ".join(f"d.{k} = {table}.{k}" for k in keys)
+        taken = f"EXISTS (SELECT 1 FROM {table} d WHERE d.tenant_id = %s AND {same})"
+        cur.execute(f"SELECT {', '.join(keys)} FROM {table} WHERE {where} AND {taken} "
+                    f"ORDER BY {', '.join(keys)} LIMIT {_SKIPPED_LISTED + 1}", (stored,))
+        kept = ["/".join(str(v) for v in row) for row in cur.fetchmany(_SKIPPED_LISTED + 1)]
+        if len(kept) > _SKIPPED_LISTED:
+            cur.execute(f"SELECT count(*) FROM {table} WHERE {where} AND {taken}", (stored,))
+            kept = [*kept[:_SKIPPED_LISTED], f"and {int(cur.fetchone()[0]) - _SKIPPED_LISTED} more"]
+        if kept:
+            report.skipped[table] = kept
+        where, params = f"{where} AND NOT {taken}", (stored,)
+    if dry_run:
+        cur.execute(f"SELECT count(*) FROM {table} WHERE {where}", params)
+        report[table] = int(cur.fetchone()[0])
+    else:
+        cur.execute(f"UPDATE {table} SET {_column(table)} = %s WHERE {where}", (stored, *params))
+        report[table] = cur.rowcount
+
+
+def _conflict_message(exc: BaseException) -> str:
+    diag = getattr(exc, "diag", None)
+    table = getattr(diag, "table_name", None) or "a table"
+    detail = getattr(diag, "message_detail", None)
+    return (f"Records without a workspace conflict with records the workspace already has "
+            f"in {table}" + (f" ({detail})" if detail else "") + ": no rows were reassigned. "
+            "Remove or rename one of the two records, then run the backfill again.")
 
 
 def _open_legacy_value(value: str, context: str, tenant: str, keys: dict) -> str | None:
@@ -363,15 +550,7 @@ def backfill(conn, tenant_id: str, *, dry_run: bool = False) -> BackfillReport:
             if cur.fetchone()[0] is None:
                 report[t] = 0  # table not migrated yet -- nothing to assign
                 continue
-            if dry_run:
-                cur.execute(f"SELECT count(*) FROM {t} WHERE {_legacy_scope(t)}")
-                report[t] = int(cur.fetchone()[0])
-            else:
-                cur.execute(
-                    f"UPDATE {t} SET {_column(t)} = %s WHERE {_legacy_scope(t)}",
-                    (_stored_tenant(t, tenant_id),),
-                )
-                report[t] = cur.rowcount
+            _assign(cur, t, tenant_id, report, dry_run=dry_run)
         if not dry_run:
             try:
                 conn.commit()
@@ -386,10 +565,7 @@ def backfill(conn, tenant_id: str, *, dry_run: bool = False) -> BackfillReport:
             except Exception:  # a dropped connection has nothing left to roll back
                 pass
         if getattr(exc, "sqlstate", None) == "23505":
-            raise ValueError(
-                "legacy tenant records conflict with the destination tenant; "
-                "no rows were reassigned; reconcile the conflicting records before retrying"
-            ) from exc
+            raise ValueError(_conflict_message(exc)) from exc
         raise
     return report
 
@@ -448,5 +624,6 @@ def shared_legacy_rows(world) -> dict[str, Any] | None:
     return {"rows": sum(found), "capped": _LEGACY_COUNT_CAP in found}
 
 
-__all__ = ["resolve_dsn", "connect", "preflight", "backfill", "shared_legacy_rows",
+__all__ = ["resolve_dsn", "connect", "preflight", "backfill", "shared_legacy_rows", "COUNT_METHODS",
+           "NOT_COUNTED",
            "database_error_message", "BackfillReport", "BackfillCommitUncertain"]

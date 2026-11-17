@@ -64,12 +64,14 @@ class RepoIn(BaseModel):
 
 
 class CommandsIn(BaseModel):
-    """A code project's test commands; a missing one is kept, an empty one
-    is cleared. vault.check_commands is their one limit and message."""
+    """A code project's test commands and protected paths; a missing one is
+    kept, an empty one is cleared. vault.check_commands and
+    vault.check_protected_paths are their one limit and message."""
     test_command: str | None = None
     quick_test_command: str | None = None
     gate_command: str | None = None
     heavy_test_command: str | None = None
+    protected_paths: list[str] | None = Field(default=None, max_length=200)
 
 
 class FeatureIn(BaseModel):
@@ -125,6 +127,7 @@ def _plain_state(world, p: dict) -> str:
 
 def _refuse_unapproved(world, p: dict) -> None:
     """Say, in words, why the kernel will refuse -- before asking it."""
+    from maverick.codebase import features
     state = _plain_state(world, p)
     if state == "merged":
         raise HTTPException(status_code=409, detail="This change is already merged.")
@@ -134,6 +137,8 @@ def _refuse_unapproved(world, p: dict) -> None:
             "then approve it in the approvals queue."))
     if state == "rejected":
         raise HTTPException(status_code=409, detail="This change was rejected in the approvals queue.")
+    if state == "blocked":
+        raise HTTPException(status_code=409, detail=features.protected_refusal(p))
     if state != "approved":
         raise HTTPException(status_code=409, detail=(
             "This change is still waiting for a person to approve it in the approvals queue."))
@@ -199,9 +204,14 @@ _COMMANDS_REFUSED = ("Lightwork could not save these commands. Keep each one to 
                      "files, and not inside quotes.")
 
 
+_PATHS_REFUSED = ("Lightwork could not save these protected paths. Give at most 100, each a path "
+                  "inside the project of at most 300 characters, with / between folders.")
+
+
 def _commands(repo) -> dict:
     from maverick.codebase import vault
-    return {"name": repo.name, **{key: getattr(repo, key) or "" for key in vault.COMMANDS}}
+    return {"name": repo.name, **{key: getattr(repo, key) or "" for key in vault.COMMANDS},
+            "protected_paths": list(repo.protected_paths)}
 
 
 @router.get("/code/repos/{name}/commands")
@@ -216,24 +226,55 @@ async def repo_commands(request: Request, name: str) -> dict:
     return _commands(repo)
 
 
-@router.post("/code/repos/{name}/commands")
-async def set_repo_commands(request: Request, name: str, body: CommandsIn) -> dict:
-    """Change a code project's test commands: the same authority as adding one."""
+def check_commands_change(request: Request, name: str, given: dict,
+                          paths: list[str] | None):
+    """The checks for changing a code project's test commands and protected
+    paths, on the Code page and in Copilot: the administrator check, a known
+    project, and the vault's own limits. Returns the vault module."""
     require_permission(request, "admin")
     vault = _vault()
-    given = body.model_dump(exclude_none=True)
-    if not given:
+    if not given and paths is None:
         raise HTTPException(status_code=422, detail="Enter at least one command to change.")
     try:
-        await run_in_threadpool(vault.get, name)
+        vault.get(name)
     except vault.VaultError as exc:
         raise HTTPException(status_code=404, detail="That code project was not found.") from exc
     try:
-        repo = await run_in_threadpool(lambda: vault.set_commands(name, **given))
+        vault.check_commands(given)
     except vault.VaultError as exc:
         raise HTTPException(status_code=422, detail=_COMMANDS_REFUSED) from exc
-    _audit(request, "set_commands", repo=name, changed=sorted(given))
+    try:
+        vault.check_protected_paths(paths)
+    except vault.VaultError as exc:
+        raise HTTPException(status_code=422, detail=_PATHS_REFUSED) from exc
+    return vault
+
+
+def apply_commands_change(request: Request, name: str, given: dict,
+                          paths: list[str] | None) -> dict:
+    """Change a code project's test commands and protected paths: the Code
+    page's and Copilot's one path, with the same checks and audit record.
+    A missing command is kept, an empty one is cleared."""
+    vault = check_commands_change(request, name, given, paths)
+    try:
+        repo = vault.set_commands(name, **given) if given else vault.get(name)
+        if paths is not None:
+            repo = vault.set_protected_paths(name, paths)
+    except vault.VaultError as exc:
+        raise HTTPException(status_code=422, detail=_COMMANDS_REFUSED) from exc
+    changed = sorted(given) + ([] if paths is None else ["protected_paths"])
+    _audit(request, "set_commands", repo=name, changed=changed,
+           **({} if paths is None else {"protected_paths": list(repo.protected_paths)}))
     return _commands(repo)
+
+
+@router.post("/code/repos/{name}/commands")
+async def set_repo_commands(request: Request, name: str, body: CommandsIn) -> dict:
+    """Change a code project's test commands and protected paths: the same
+    authority as adding one."""
+    given = body.model_dump(exclude_none=True)
+    paths = given.pop("protected_paths", None)
+    return await run_in_threadpool(apply_commands_change, request, name, given, paths)
 
 
 @router.post("/code/repos/{name}/sync")
@@ -272,7 +313,8 @@ async def start_feature(request: Request, body: FeatureIn, bg: BackgroundTasks) 
         raise HTTPException(status_code=503, detail=(
             "Set up an AI provider in Settings before asking Lightwork to build a change."))
     from maverick.codebase import features
-    refusal = await run_in_threadpool(features.container_refusal)
+    refusal = (await run_in_threadpool(features.container_refusal)
+               or await run_in_threadpool(features.self_change_refusal, body.repo))
     if refusal:
         raise HTTPException(status_code=409, detail=refusal)
     owner = caller_principal(request) or ""
@@ -322,6 +364,8 @@ async def merge_proposal(request: Request, pid: str) -> dict:
     try:
         merged = await run_in_threadpool(features.merge, world, pid)
     except vault.VaultError as exc:
+        if features.plain_refusal(exc):
+            raise HTTPException(status_code=409, detail=features.plain_refusal(exc)) from exc
         clean = "no longer merges cleanly" in str(exc)
         raise HTTPException(status_code=409, detail=(
             "This change no longer fits the latest code. Ask Lightwork to build it again."
@@ -342,6 +386,8 @@ async def push_proposal(request: Request, pid: str) -> dict:
     try:
         branch = await run_in_threadpool(features.push, world, pid)
     except vault.VaultError as exc:
+        if features.plain_refusal(exc):
+            raise HTTPException(status_code=409, detail=features.plain_refusal(exc)) from exc
         raise HTTPException(status_code=502, detail=(
             "Lightwork could not send this change to the original project. Check that "
             "Lightwork is allowed to write there.")) from exc
@@ -355,9 +401,14 @@ async def renew_proposal(request: Request, pid: str) -> dict:
     from maverick.codebase import features
     p = await run_in_threadpool(_find, pid)
     world = _world()
+    refusal = features.protected_refusal(p)
+    if refusal:
+        raise HTTPException(status_code=409, detail=refusal)
     try:
         aid = await run_in_threadpool(features.request_approval, world, p)
     except (vault.VaultError, ValueError) as exc:
+        if features.plain_refusal(exc):
+            raise HTTPException(status_code=409, detail=features.plain_refusal(exc)) from exc
         raise HTTPException(status_code=409, detail=(
             "This change already has an open approval request, or it is no longer "
             "waiting for one.")) from exc
@@ -410,6 +461,8 @@ def _run_feature(repo: str, title: str, description: str, max_dollars: float | N
                          features.default_runner(budget=budget, user_id=user_id,
                                                  allowed_suites=suites),
                          reviewer=features.default_reviewer(budget=budget), checker=checker,
+                         protected_checker=features.default_protected_checker(
+                             budget=budget, user_id=user_id, allowed_suites=suites),
                          owner=owner, budget=budget)
     except Exception as exc:  # noqa: BLE001 -- the failed goal carries the outcome
         log.warning("code feature for %s did not finish (%s)", repo, type(exc).__name__)

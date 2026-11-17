@@ -1567,6 +1567,14 @@
     });
     launch.className = 'btn btn--primary'; launch.focus(); nativeLink(item, formHost);
   }
+  var RELOADING_FORMS = {
+    'specialists.drafts.save': {field: 'name', load: 'Load selected specialist’s current fields',
+      first: 'Load the selected specialist’s current fields before reviewing this draft.',
+      note: 'Your entered work is kept below. Loading this specialist replaces these fields with its current settings; returning to the previous choice keeps your edits.'},
+    'trust.agents.edit': {field: 'agent', load: 'Load selected agent’s current limits',
+      first: 'Load the selected agent’s current limits before reviewing a change.',
+      note: 'These limits belong to the agent chosen before. Loading the selected agent replaces them with its current limits.'}
+  };
   async function openOperation(id) {
     if (busy) return false;
     var started = generation; lock(true);
@@ -1598,21 +1606,25 @@
       (item.fields || []).forEach(function (spec) { var setup = createField(spec, form, controls); if (setup) dependents.push(setup); });
       dependents.forEach(function (setup) { setup(); });
       var submit = node('button', item.confirmation_required ? 'Review change' : 'Check current status', form); submit.type = 'submit'; submit.className = 'btn btn--primary';
-      if (item.id === 'specialists.drafts.save' && controls.name) {
-        var initialSpecialist = controls.name(), specialistChoice = form.elements.namedItem('name');
-        var selectionNote = node('p', undefined, form), reloadSpecialist = button('Load selected specialist’s current fields', form, async function () {
-          if (busy || controls.name() === initialSpecialist) return;
-          overrideSelection = Object.assign({}, context(), {name: controls.name()});
+      // Forms whose other fields hold one record's current values: changing
+      // the record reloads them before a review can be prepared.
+      var reloading = RELOADING_FORMS[item.id];
+      if (reloading && controls[reloading.field]) {
+        var recordField = reloading.field, initialRecord = controls[recordField](), recordChoice = form.elements.namedItem(recordField);
+        var selectionNote = node('p', undefined, form), reloadRecord = button(reloading.load, form, async function () {
+          if (busy || controls[recordField]() === initialRecord) return;
+          var chosen = {}; chosen[recordField] = controls[recordField]();
+          overrideSelection = Object.assign({}, context(), chosen);
           generation += 1; cancelRequests(); catalog = null; selected = null; clear(buttons);
           document.dispatchEvent(new CustomEvent('lightwork:copilot-context-changed', {detail: {reason: 'selection'}}));
           await openOperation(item.id);
         });
-        reloadSpecialist.hidden = true;
-        specialistChoice.addEventListener('change', function () {
-          var changed = controls.name() !== initialSpecialist;
-          specialistChoice.setCustomValidity(changed ? 'Load the selected specialist’s current fields before reviewing this draft.' : '');
-          selectionNote.textContent = changed ? 'Your entered work is kept below. Loading this specialist replaces these fields with its current settings; returning to the previous choice keeps your edits.' : '';
-          reloadSpecialist.hidden = !changed; submit.disabled = busy || changed;
+        reloadRecord.hidden = true;
+        recordChoice.addEventListener('change', function () {
+          var changed = controls[recordField]() !== initialRecord;
+          recordChoice.setCustomValidity(changed ? reloading.first : '');
+          selectionNote.textContent = changed ? reloading.note : '';
+          reloadRecord.hidden = !changed; submit.disabled = busy || changed;
         });
       }
       form.addEventListener('submit', async function (event) {

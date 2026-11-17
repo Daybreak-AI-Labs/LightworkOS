@@ -859,3 +859,68 @@ def test_postgres_sweep_under_forced_rls_reaches_known_workspaces(postgres_test_
             with admin._tx() as cur:
                 cur.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(role)))
                 cur.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(role)))
+
+
+# -- goals below a code change's step (maverick.codebase.features) --
+
+def _below_a_step(world, *, step_status: str) -> tuple[int, int]:
+    """A never-run goal an agent made below a code change's step."""
+    from maverick.codebase import features
+
+    step = world.create_goal("[pricing] Discount", "", owner="alice")
+    world.record_goal_origin(step, features.ORIGIN_KIND, "change-1")
+    world.set_goal_status(step, step_status)
+    return step, world.create_goal("look closer", "", parent_id=step, owner="alice")
+
+
+def test_a_goal_below_a_running_step_whose_change_is_gone_never_starts(tmp_path):
+    world = _world(tmp_path)
+    _step, child = _below_a_step(world, step_status="active")
+    assert dr.resume_refusal(world, child) == dr.FEATURE_RESTARTS
+
+
+def test_a_goal_below_a_paused_step_never_starts_while_its_change_is_built(tmp_path):
+    from maverick.codebase import features
+
+    world = _world(tmp_path)
+    paused, _ = _below_a_step(world, step_status="blocked")
+    # A repair step below the paused one is running.
+    repair = world.create_goal("[pricing] Repair", "", parent_id=paused, owner="alice")
+    world.record_goal_origin(repair, features.ORIGIN_KIND, "change-1")
+    world.set_goal_status(repair, "active")
+    child = world.create_goal("look closer", "", parent_id=repair, owner="alice")
+    assert dr.resume_refusal(world, child) == dr.FEATURE_RESTARTS
+
+
+def test_an_early_answer_never_continues_a_code_change_step(tmp_path, monkeypatch):
+    from maverick.codebase import features
+
+    monkeypatch.setattr("maverick.outcome_pilot_start_gate.require_work_item_admission",
+                        lambda *a: None)
+    started = []
+    monkeypatch.setattr(dr, "dispatch_resume", lambda world, goal_id: started.append(goal_id))
+    world = _world(tmp_path)
+    gid, decision = _paused_goal(world)
+    world.record_goal_origin(gid, features.ORIGIN_KIND, "change-1")
+    with world._writing() as conn:   # answered before the step paused
+        conn.execute("UPDATE decision_requests SET status = 'answered', chosen = 1 WHERE id = ?",
+                     (decision.id,))
+    assert dr.continue_answered(world, gid) is False
+    assert started == [] and world.get_goal(gid).status == "blocked"
+
+
+def test_a_goal_below_a_live_step_starts_only_inside_its_code_change(tmp_path, monkeypatch):
+    from click.testing import CliRunner
+    from maverick.cli import main
+
+    world = _world(tmp_path)
+    step, child = _below_a_step(world, step_status="active")
+    token = dr.FEATURE_LOOP.set(frozenset({step}))
+    try:
+        assert dr.resume_refusal(world, child) == ""             # the change's own loop
+    finally:
+        dr.FEATURE_LOOP.reset(token)
+    assert dr.resume_refusal(world, child) == dr.FEATURE_RESTARTS    # anywhere else
+    monkeypatch.setattr("maverick.cli.open_world", lambda *a, **k: world, raising=False)
+    out = CliRunner().invoke(main, ["resume", "--goal-id", str(child)])
+    assert out.exit_code == 2 and "step of a code change" in out.output, out.output

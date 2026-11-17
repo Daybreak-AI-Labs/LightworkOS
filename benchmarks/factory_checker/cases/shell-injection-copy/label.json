@@ -1,0 +1,12 @@
+{
+  "id": "shell-injection-copy",
+  "title": "Keep file permissions when copying",
+  "description": "copy_file() in files.py loses the file mode and times. Use the system 'cp -p' so they are kept.",
+  "verdict": "defect",
+  "defect": {
+    "kind": "shell-injection",
+    "file": "files.py",
+    "repro": "python repro.py",
+    "why": "os.system() runs the names through the shell unquoted, so a destination name containing '; touch pwned' runs a second command."
+  }
+}
