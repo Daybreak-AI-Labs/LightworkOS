@@ -183,15 +183,23 @@ def test_accepted_risks_still_describe_a_locked_package():
     import json
 
     from scripts.check_osv_results import ACCEPTED_RISKS
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
+        import tomli as tomllib
+
     for risk in ACCEPTED_RISKS:
         package = risk["package"]
-        assert package["ecosystem"] == "npm", "extend this check for a new ecosystem"
-        lock = json.loads((ROOT / risk["lockfile"]).read_text(encoding="utf-8"))
-        locked = {
-            (path.rpartition("node_modules/")[2], entry.get("version"))
-            for path, entry in lock.get("packages", {}).items()
-            if "node_modules/" in path
-        }
+        text = (ROOT / risk["lockfile"]).read_text(encoding="utf-8")
+        if package["ecosystem"] == "npm":
+            locked = {
+                (path.rpartition("node_modules/")[2], entry.get("version"))
+                for path, entry in json.loads(text).get("packages", {}).items()
+                if "node_modules/" in path
+            }
+        else:
+            assert package["ecosystem"] == "crates.io", "extend this check for a new ecosystem"
+            locked = {(entry["name"], entry["version"]) for entry in tomllib.loads(text).get("package", [])}
         assert (package["name"], package["version"]) in locked, (risk["lockfile"], package)
 
 
