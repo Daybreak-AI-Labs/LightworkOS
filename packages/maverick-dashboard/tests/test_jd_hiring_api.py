@@ -31,6 +31,14 @@ def _fresh_world(tmp_path, monkeypatch):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _embed_each_pack_once(monkeypatch, tmp_path_factory):
+    """Reuse this run's vector for a pack text (test_support.embedding_memo)."""
+    from test_support.embedding_memo import reuse_embeddings
+
+    reuse_embeddings(monkeypatch, tmp_path_factory)
+
+
 # ---- /agents/jd/match ---------------------------------------------------------
 
 def test_jd_match_ranks_roster():

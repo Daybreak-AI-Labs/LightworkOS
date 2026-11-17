@@ -27,6 +27,9 @@ def _clean(monkeypatch, tmp_path):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("MAVERICK_BILLING_STRICT", "false")
     monkeypatch.setenv("MAVERICK_CONSENT_DASHBOARD_TIMEOUT", "0.3")
+    # An approved start waits out the decision's undo window before it runs;
+    # one second keeps that wait without spending the 30-second default.
+    monkeypatch.setenv("MAVERICK_APPROVAL_UNDO_GRACE_SECONDS", "1")
     monkeypatch.setenv("MAVERICK_GOAL_RISK_REQUIRE_HUMAN", "medium")
 
 
