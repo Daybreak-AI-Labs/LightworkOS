@@ -642,7 +642,8 @@ A parked approval notifies people instead of waiting for someone to open the que
   platform-side scanner errors never count toward containment. Containment,
   release, and budget resets are all audited
   (`external_agent_contained` / `external_agent_released` /
-  `external_budget_reset`).
+  `external_budget_reset`). Unenrolling from the dashboard also records an
+  `agent_trust_changed` row naming the administrator.
 
 ## Fail-closed notes
 

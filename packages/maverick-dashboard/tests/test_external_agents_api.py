@@ -910,6 +910,21 @@ def test_unenroll_over_http():
     assert client.get("/api/v1/external-agents").json()["agents"] == []
 
 
+def test_unenroll_is_recorded_with_who_did_it(monkeypatch):
+    import maverick.audit as audit
+    from maverick.audit import EventKind
+    from maverick_dashboard import auth, rbac
+
+    _enroll()
+    rows = []
+    monkeypatch.setattr(audit, "audit_event", lambda kind, **payload: rows.append({"kind": kind, **payload}) or True)
+    rbac.set_role("user:ada", "admin")
+    monkeypatch.setattr(auth, "caller_principal", lambda request: "user:ada")
+    assert client.delete("/api/v1/external-agents/sf-quotebot").status_code == 204
+    changed = [r for r in rows if r["kind"] == EventKind.AGENT_TRUST_CHANGED]
+    assert [(r["action"], r["trusted_agent"], r["actor"]) for r in changed] == [("removed", "sf-quotebot", "user:ada")]
+
+
 def test_live_run_flow_over_http():
     _enroll()
     token = _mint()

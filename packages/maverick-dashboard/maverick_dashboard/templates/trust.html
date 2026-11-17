@@ -4,7 +4,7 @@
 {% block head_extra %}
 <style{% if csp_style_nonce is defined %} nonce="{{ csp_style_nonce }}"{% endif %}>
   .tr-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); gap: var(--space-3); }
-  .tr-grid label, .tr-field { display: grid; gap: .3rem; }
+  .tr-grid label:not(.mv-form__check), .tr-field { display: grid; gap: .3rem; }
   .tr-checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 12rem), 1fr)); gap: .25rem .75rem; max-height: 14rem; overflow: auto; padding: .5rem; border: 1px solid var(--border); border-radius: var(--radius-sm); }
   .tr-checks label { display: flex; gap: .4rem; align-items: center; font-size: var(--text-sm); }
   .tr-actions { display: flex; gap: .4rem; flex-wrap: wrap; }
@@ -223,6 +223,9 @@
         <label for="tr-pubkey">Security key from the agent's provider (optional)</label>
         <input class="input" id="tr-pubkey" name="pubkey" maxlength="64" placeholder="Paste the key you were given" aria-describedby="tr-pubkey-help">
         <span class="muted" id="tr-pubkey-help" style="font-size:var(--text-xs)">Or <button type="button" class="btn btn--ghost" id="tr-pubkey-file">load it from a file</button></span>
+        <span class="muted" id="tr-pubkey-kept" style="font-size:var(--text-xs)" hidden>The key on file is kept. Paste a new key only to replace it.</span>
+        <span class="muted" id="tr-pubkey-removed" style="font-size:var(--text-xs)" hidden>The key on file is removed when you save.</span>
+        <label id="tr-remove-key" class="mv-form__check" hidden><input type="checkbox" name="remove_key"> Remove the key on file</label>
       </div>
     </div>
 
@@ -479,7 +482,15 @@
     document.getElementById("tr-form-title").textContent = "Add an Outside Agent";
     document.getElementById("tr-save").textContent = "Add agent";
     document.getElementById("tr-cancel").hidden = true; msg.textContent = "";
+    document.getElementById("tr-pubkey-kept").hidden = true; document.getElementById("tr-remove-key").hidden = true;
+    document.getElementById("tr-pubkey-removed").hidden = true;
   }
+  function keyNote() {
+    var removing = F("remove_key").checked, editingKey = !document.getElementById("tr-remove-key").hidden;
+    document.getElementById("tr-pubkey-kept").hidden = !editingKey || removing;
+    document.getElementById("tr-pubkey-removed").hidden = !editingKey || !removing;
+  }
+  F("remove_key").addEventListener("change", keyNote);
   function edit(id) {
     var a = agents.filter(function (x) { return x.id === id; })[0]; if (!a) return;
     resetForm();
@@ -494,6 +505,9 @@
     form.querySelectorAll('input[name="allow_tools"]').forEach(function (c) { c.checked = some && a.allow_tools.indexOf(c.value) >= 0; });
     form.querySelectorAll('input[name="deny_tools"]').forEach(function (c) { c.checked = a.deny_tools.indexOf(c.value) >= 0; });
     Array.prototype.forEach.call(scopes.options, function (o) { o.selected = a.data_scopes.indexOf(o.value) >= 0; });
+    // An empty key field keeps the key on file; only the box below removes it.
+    document.getElementById("tr-pubkey-kept").hidden = !a.has_key;
+    document.getElementById("tr-remove-key").hidden = !a.has_key;
     document.getElementById("tr-form-title").textContent = "Edit " + F("name").value;
     document.getElementById("tr-save").textContent = "Save changes";
     document.getElementById("tr-cancel").hidden = false;
@@ -507,6 +521,7 @@
     var b = body();
     if (F("tools_mode").value === "some" && !b.allow_tools.length) { msg.textContent = "Choose at least one tool, or pick All tools."; return; }
     if (F("id").value) {
+      b.remove_key = F("remove_key").checked;
       send("/api/v1/trust/agents/" + encodeURIComponent(F("id").value), { method: "PUT", body: JSON.stringify(b) }, "Changes saved.", "save this agent");
       return;
     }

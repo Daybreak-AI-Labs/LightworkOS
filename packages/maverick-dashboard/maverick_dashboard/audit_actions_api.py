@@ -51,6 +51,7 @@ KIND_LABELS: dict[str, str] = {
     "workspace_selected": "Workspace chosen", "access_grant_changed": "Access changed",
     "federation_delegate": "Access passed to a partner",
     "federation_admission_limit_changed": "Partner request limit changed", "agent_trust_denied": "Outside assistant not trusted",
+    "agent_trust_changed": "Outside agent list changed",
     "control_plane_action": "Administrator action", "learning_update": "Learning changed",
     "tenant_suspended": "Workspace paused", "tenant_resumed": "Workspace resumed",
     "tenant_deleted": "Workspace removed",
@@ -79,7 +80,7 @@ FIELD_LABELS: dict[str, str] = {
     "email": "Email", "channel": "Chat app", "enabled": "Turned on", "suites": "Departments",
     "occurred_at": "Occurred at", "approval_id": "Approval", "scope": "Recorded in",
     "decided_by": "Decided by", "previously_decided_by": "Earlier decision by",
-    "self_approval": "Approved own request",
+    "self_approval": "Approved own request", "trusted_agent": "Outside agent",
 }
 _HIDDEN = {"v", "ts", "kind", "agent", "goal_id", "hash", "prev_hash", "sig", "key_id", "projection",
            "decided_by_person"}

@@ -3391,7 +3391,9 @@ and a `maverick_llm_cache_tokens_total` hit-rate metric.
   declared scope — unscoped reads denied). Engagement + registry are read from a
   **single config snapshot** per operation; `maverick doctor` warns when the
   plane is engaged with an empty registry. Denials record an `agent_trust_denied`
-  audit row. In-process peer messaging (`agent_bus`) is internal and never gated.
+  audit row. Changes made in the dashboard or through Copilot (add, edit,
+  block, unblock, remove, unenroll) record an `agent_trust_changed` row naming
+  who made them, written before the change is saved. In-process peer messaging (`agent_bus`) is internal and never gated.
   **Signed-request identity** makes the pinned key *load-bearing* on federation
   delegation: the caller signs the canonical delegation envelope
   (`maverick-federation-delegate/1`) with its audit Ed25519 key and the receiver
