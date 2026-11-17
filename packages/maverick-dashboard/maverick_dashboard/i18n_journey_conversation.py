@@ -36,6 +36,7 @@ ROWS = [
     ('Attach files', 'Joindre des fichiers', 'Dateien anhängen', 'ファイルを添付', '附加文件'),
     ('Dictate a task by voice', 'Dicter une tâche', 'Aufgabe diktieren', '音声でタスクを入力', '通过语音输入任务'),
     ('What should Lightwork create?', 'Que doit créer Lightwork ?', 'Was soll Lightwork erstellen?', 'Lightworkで何を作成しますか？', '您想让Lightwork创建什么？'),
+    ('Create', 'Créer', 'Erstellen', '作成', '创建'),
     ('Workflow draft', 'Brouillon de workflow', 'Workflow-Entwurf', 'ワークフローの下書き', '工作流草稿'),
     ('Agent draft', 'Brouillon d’agent', 'Agentenentwurf', 'エージェントの下書き', '智能体草稿'),
     ('Draft a workflow', 'Préparer un workflow', 'Workflow entwerfen', 'ワークフローを下書き', '起草工作流'),

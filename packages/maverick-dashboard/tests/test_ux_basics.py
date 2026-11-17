@@ -373,3 +373,22 @@ def test_chat_shell_matches_the_product_shell():
     assert 'href="/settings"' in top
     assert 'class="cs-account"' not in body
     assert ".cs-product { flex: none;" in body
+
+
+def test_chat_shell_phone_layout_keeps_one_top_row_and_the_greeting():
+    # On a phone the chat top bar wrapped into two rows of unlabeled icons,
+    # the greeting and suggestions sat out of view, and the mode picker
+    # looked like a "Run this task" button.
+    import re
+    body = _client().get("/chat").text
+    side = re.search(r'<aside class="cs-side".*?</aside>', body, re.DOTALL).group(0)
+    # Secondary actions move into the menu drawer on narrow screens, by name.
+    more = re.search(r'<nav class="cs-side__more"[^>]*>.*?</nav>', side, re.DOTALL).group(0)
+    for name in (">Docs<", ">Your account<"):
+        assert name in more, name
+    assert ".cs-topbar .topbar-utilities > :not(.help-menu):not(#prefs-menu) { display: none; }" in body
+    assert 'class="iconbtn cs-topbar__settings"' in body
+    # The greeting flows above the composer on a phone instead of being squeezed out.
+    assert ".cs-empty-state { min-height: 0; justify-content: flex-start;" in body
+    # The mode picker has a visible label, so it reads as a choice.
+    assert '<label for="authoring-kind" class="composer__mode-label">' in body

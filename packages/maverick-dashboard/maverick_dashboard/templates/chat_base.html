@@ -170,6 +170,15 @@
       background-repeat: no-repeat; background-position: right 0.6rem center; background-size: 10px;
     }
     .composer__mode:hover { color: var(--text); border-color: var(--border-strong); }
+    /* A labelled field with a square edge and caret reads as a choice, not
+       a second start button beside the arrow. */
+    .composer .composer__mode {
+      border-radius: var(--radius-md); color: var(--text); min-width: 0; max-width: 9rem;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M2 3.5 5 6.5 8 3.5' fill='none' stroke='%2397a1b5' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 0.6rem center; background-size: 10px;
+    }
+    @media (max-width: 480px) { .composer__bar { gap: var(--space-1); } }
+    .composer__mode-label { flex: none; color: var(--muted); font-size: var(--text-xs); }
     .composer__send, .ask__send {
       flex: none; display: inline-flex; align-items: center; justify-content: center;
       width: 36px; height: 36px; border: 0; border-radius: var(--radius-round); cursor: pointer;
@@ -204,6 +213,7 @@
     /* ---- small screens: the sidebar becomes a drawer behind a Menu button ---- */
     .cs-backdrop { display: none; }
     .cs-side__close { display: none; margin-inline-start: auto; }
+    .cs-side__more { display: none; }
     @media (max-width: 860px) {
       body.chat-shell { grid-template-columns: 1fr; }
       body.chat-shell main, .cs-topbar { grid-column: 1; }
@@ -223,13 +233,20 @@
       body.cs-drawer-open .cs-side { visibility: visible; transform: none; transition: transform 0.18s ease; }
       body.cs-drawer-open .cs-backdrop { display: block; position: fixed; inset: 0; z-index: 55; background: var(--scrim, rgba(0,0,0,.45)); }
       .cs-side__close { display: flex; min-width: 44px; min-height: 44px; }
+      /* One row of controls on a phone: notifications, Settings, Docs,
+         Account and Sign out are in the menu drawer (named links). */
+      .cs-topbar > .personal-notification-link, .cs-topbar__settings { display: none; }
+      .cs-topbar .topbar-utilities > :not(.help-menu):not(#prefs-menu) { display: none; }
+      .cs-side__more { display: flex; flex-direction: column; gap: 1px; padding-block: var(--space-2); border-top: 1px solid var(--hairline); }
+      .cs-side__more a { padding: .45rem var(--space-3); border-radius: var(--radius-md); color: var(--text); font-size: var(--text-sm); }
+      .cs-side__more a:hover { background: var(--row-hover); text-decoration: none; }
       .chat-shell > .mv-copilot {
         top: 3.6rem; bottom: .65rem; right: .65rem; left: .65rem; width: auto;
       }
       [dir="rtl"] .chat-shell > .mv-copilot { right: .65rem; left: .65rem; }
     }
     @media (max-width: 480px) {
-      .cs-topbar__title, .cs-topbar__copilot span { display: none; }
+      .cs-topbar__title, .cs-topbar__copilot span, .cs-topbar__new { display: none; }
       .cs-topbar__copilot { margin-inline-start: auto; }
     }
     @media (prefers-reduced-motion: reduce) { .cs-side { transition: none !important; } }
@@ -292,6 +309,13 @@
       <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3.5h10v7H8l-3.5 2v-2H3z"/></svg>
       {{ ui('Copilot') }}
     </button>
+    {# Phones: the top bar keeps Menu, Copilot, the emergency stop, Help and
+       Display; these secondary actions move here, each with its name. #}
+    <nav class="cs-side__more" aria-label="{{ ut('Your account') }}" lang="{{ ul('Your account') }}">
+      <a href="{{ docs_learn_more.url if docs_learn_more else docs_home }}" target="_blank" rel="noopener noreferrer">Docs<span class="sr-only"> (opens in a new tab)</span></a>
+      <a href="/account"{% if lang and page_lang and lang != page_lang %} lang="{{ lang }}"{% endif %}>{{ t('chrome.account') }}</a>
+      {% if show_logout %}<a href="/auth/logout"{% if lang and page_lang and lang != page_lang %} lang="{{ lang }}"{% endif %}>{{ t('chrome.sign_out') }}</a>{% endif %}
+    </nav>
     <p class="muted cs-workspace">{{ ui('Workspace:') }} <a href="/workspace/tenant">{% if workspace_tenant_name %}<bdi lang="und" dir="auto" data-user-content>{{ workspace_tenant_name }}</bdi>{% else %}{{ ui('Main workspace') }}{% endif %}</a></p>
     {# The emergency stop, Settings, Help, Docs, Display, Account and Sign out
        sit in the top bar, as in the product shell, so they never move. #}
@@ -327,7 +351,7 @@
     </span>
     {% endif %}
     {% if show_settings_link %}
-    <a class="iconbtn" href="/settings" aria-label="{{ ut('Settings') }}" title="{{ ut('Settings') }}" lang="{{ ul('Settings') }}">
+    <a class="iconbtn cs-topbar__settings" href="/settings" aria-label="{{ ut('Settings') }}" title="{{ ut('Settings') }}" lang="{{ ul('Settings') }}">
       <svg viewBox="0 0 16 16" aria-hidden="true"><use href="#i-settings"></use></svg>
     </a>
     {% endif %}

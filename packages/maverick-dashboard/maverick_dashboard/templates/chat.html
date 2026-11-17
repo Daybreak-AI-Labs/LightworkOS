@@ -23,6 +23,16 @@
   .cs-example:hover, .cs-example:focus-visible { border-color: var(--brand-border); }
   .cs-examples__sample { margin: var(--space-3) 0 0; font-size: var(--text-sm); color: var(--muted); }
   .cs-limits { max-width: 40rem; margin: 0; font-size: var(--text-sm); color: var(--muted); }
+  /* Phones: the greeting and suggestions flow above the composer and the
+     page scrolls, instead of a centred block squeezed out of view. */
+  @media (max-width: 600px) {
+    body.chat-shell main { overflow-y: auto; }
+    body.chat-shell .cs-scroll { flex: none; overflow: visible; padding-top: var(--space-4); }
+    .cs-empty-state { min-height: 0; justify-content: flex-start; gap: var(--space-3); }
+    .cs-mark { display: none; }
+    .cs-greet { font-size: var(--text-xl); }
+    .cs-example { padding: var(--space-2) var(--space-3); }
+  }
 </style>
 {% endblock %}
 
@@ -200,7 +210,7 @@
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="6" y="1.5" width="4" height="8" rx="2" stroke="currentColor" stroke-width="1.3"/><path d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
     </button>
     <span class="composer__hint" id="composer-hint"></span>
-    <label for="authoring-kind" class="sr-only">{{ ui('What should Lightwork create?') }}</label>
+    <label for="authoring-kind" class="composer__mode-label">{{ ui('Create') }}</label>
     <select id="authoring-kind" name="authoring_kind" class="composer__mode" aria-label="{{ ut('What should Lightwork create?') }}">
       <option value="goal" lang="{{ ul('Task') }}">{{ ut('Task') }}</option>
       {% if flows_enabled and can_create_goal %}
