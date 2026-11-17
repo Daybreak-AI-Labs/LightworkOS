@@ -427,7 +427,8 @@ def _switch(default: bool, *, protection: bool):
 
 
 def _hosts(value: object) -> list:
-    """Host patterns as ``sandbox.network_policy`` reads them: one text is one pattern."""
+    """Host patterns as ``sandbox.network_policy`` and ``tenant.egress`` read
+    them: one text is one pattern."""
     if value is None:
         return []
     if isinstance(value, str):
@@ -437,34 +438,101 @@ def _hosts(value: object) -> list:
     raise ValueError("expected a list of host names")
 
 
-_EGRESS = {"allow_egress": "allow_list", "deny_egress": "deny_list"}
+def _narrowed(up: list, low: list) -> tuple[list, bool]:
+    """An allow list a lower layer may only narrow. Where the organisation
+    set none, a lower layer's list would approve hosts under the allowlist
+    posture, so it is ignored."""
+    from .policy_tighten import tighten
+
+    if not up:
+        return up, bool(low)
+    return tighten("allow_list", up, low)
+
+
+def host_deny(upper: object, lower: object) -> tuple[Any, bool]:
+    """``[egress] deny``: denied hosts may only grow."""
+    from .policy_tighten import tighten
+
+    return tighten("deny_list", _hosts(upper), _hosts(lower))
+
+
+def host_allow(upper: object, lower: object) -> tuple[Any, bool]:
+    """``[egress] allow``: only narrows a list the organisation set."""
+    value, loosened = _narrowed(_hosts(upper), _hosts(lower))
+    return (upper, True) if loosened and not value else (value, loosened)
+
+
+def _host_lists(upper: dict, lower: object, allow: str, deny: str) -> tuple[dict, bool]:
+    """One table of host lists: ``deny`` may only grow, ``allow`` only narrow
+    a list the organisation set; any other key is ignored."""
+    from .policy_tighten import tighten
+
+    if not isinstance(lower, dict):
+        raise ValueError("expected a table")
+    merged, loosened = dict(upper), False
+    for key, value in lower.items():
+        try:
+            current = _hosts(upper.get(key))
+            if key == deny:
+                result, looser = tighten("deny_list", current, _hosts(value))
+            elif key == allow:
+                result, looser = _narrowed(current, _hosts(value))
+            else:
+                raise ValueError("not a host list")
+        except ValueError:
+            result, looser = None, True
+        if result is not None and result != current:
+            merged[key] = result
+        loosened = loosened or looser
+    return merged, loosened
+
+
+def _tables(upper: object, lower: object, *, new: bool, allow: str, deny: str) -> tuple[Any, bool]:
+    """Named tables of host lists; ``new`` says whether a lower layer may add
+    a table the organisation did not set."""
+    from .policy_tighten import Incomparable
+
+    if not isinstance(lower, dict):
+        raise ValueError("expected a table of tables")
+    if upper is not None and not isinstance(upper, dict):
+        raise Incomparable("the organisation's table cannot be read")
+    merged, loosened = dict(upper or {}), False
+    for name, table in lower.items():
+        base = merged.get(name, {} if new else None)
+        if not isinstance(base, dict) or not isinstance(table, dict):
+            loosened = True
+            continue
+        merged[name], looser = _host_lists(base, table, allow, deny)
+        loosened = loosened or looser
+    return merged, loosened
 
 
 def egress_rules(upper: object, lower: object) -> tuple[Any, bool]:
     """``[sandbox.tool.<name>]``: a lower layer may add hosts a tool must not
-    reach and narrow the hosts it may reach, never widen them. A rule that is
-    not a table, or any other key in it, is ignored."""
-    from .policy_tighten import Incomparable, tighten
+    reach and narrow a list of hosts the organisation lets it reach."""
+    return _tables(upper, lower, new=True, allow="allow_egress", deny="deny_egress")
 
-    if not isinstance(lower, dict):
-        raise ValueError("expected a table of tools")
-    if upper is not None and not isinstance(upper, dict):
-        raise Incomparable("the organisation's tool rules cannot be read")
-    merged, loosened = dict(upper or {}), False
-    for tool, rule in lower.items():
-        base = merged.get(tool, {})
-        if not isinstance(rule, dict) or not isinstance(base, dict):
-            loosened = True
-            continue
-        out = dict(base)
-        for key, value in rule.items():
-            try:
-                out[key], looser = tighten(_EGRESS[key], _hosts(base.get(key)), _hosts(value))
-            except (KeyError, ValueError):
-                looser = True
-            loosened = loosened or looser
-        merged[tool] = out
-    return merged, loosened
+
+def tenant_planes(upper: object, lower: object) -> tuple[Any, bool]:
+    """``[tenancy.egress.<id>]`` replaces ``[egress]`` for that workspace, so a
+    lower layer may only tighten a plane the organisation set."""
+    return _tables(upper, lower, new=False, allow="allow", deny="deny")
+
+
+def compliance_profiles(upper: object, lower: object) -> tuple[Any, bool]:
+    """``[compliance] profiles``: a lower layer may add known profiles, never
+    remove one (a profile can lock egress)."""
+    from .compliance_profiles import ComplianceProfileError, _validated_profile_keys
+    from .policy_tighten import Incomparable
+
+    try:
+        added = _validated_profile_keys(lower, source="workspace")
+    except ComplianceProfileError as exc:
+        raise ValueError("not a list of known profiles") from exc
+    if upper is not None and not isinstance(upper, list):
+        raise Incomparable("the organisation's profiles cannot be read")
+    up = list(upper or [])
+    return up + [key for key in added if key not in up], False
 
 
 # kubectl reads these as a value after --context / -n, and the namespace also
@@ -505,6 +573,10 @@ MERGES = {
     "approval.record_checks": _switch(True, protection=True),
     "approval.require_acknowledgement": _switch(True, protection=True),
     "sandbox.tool": egress_rules,
+    "egress.deny": host_deny,
+    "egress.allow": host_allow,
+    "tenancy.egress": tenant_planes,
+    "compliance.profiles": compliance_profiles,
     "sandbox.run_as_user": run_as_user,
     "safety.consent_mode": consent_mode,
     **SCALARS,

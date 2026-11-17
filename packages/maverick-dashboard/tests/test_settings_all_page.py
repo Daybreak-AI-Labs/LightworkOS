@@ -676,7 +676,8 @@ def test_a_workspace_value_looser_than_the_organisation_shows_who_set_it(tmp_pat
     tenant = home / "tenants" / "acme" / "config.toml"
     tenant.parent.mkdir(parents=True)
     tenant.write_text("[safety]\nscan_input = false\nscan_output = true\n"
-                      '[sandbox]\nkubeconfig = "/srv/acme"\n[capabilities]\ndeferred_tools = false\n',
+                      '[sandbox]\nkubeconfig = "/srv/acme"\n[capabilities]\ndeferred_tools = false\n'
+                      "[tools]\nfetch_allow_private = true\n",
                       encoding="utf-8")
     monkeypatch.setenv("MAVERICK_TENANT", "acme")
     config.reset_config_cache()
@@ -684,7 +685,8 @@ def test_a_workspace_value_looser_than_the_organisation_shows_who_set_it(tmp_pat
     def rows():
         layers = page._sources()
         return {s.id: page._row(s, layers) for s in catalog.SETTINGS if s.id in {
-            "safety.scan_input", "safety.scan_output", "sandbox.kubeconfig", "capabilities.deferred_tools"}}
+            "safety.scan_input", "safety.scan_output", "sandbox.kubeconfig", "capabilities.deferred_tools",
+            "tools.fetch_allow_private"}}
 
     shown = rows()
     assert shown["safety.scan_input"]["source_text"] == "Set by your organisation"
@@ -694,6 +696,7 @@ def test_a_workspace_value_looser_than_the_organisation_shows_who_set_it(tmp_pat
     # organisation lets workspaces name their own servers.
     assert shown["sandbox.kubeconfig"]["source_text"] == "Set by your organisation"
     assert shown["capabilities.deferred_tools"]["source_text"] == "Set by your organisation"
+    assert shown["tools.fetch_allow_private"]["source_text"] == "Set by your organisation"
     assert shown["capabilities.deferred_tools"]["value"] is True is config.get_capabilities()["deferred_tools"]
     assert catalog.BY_ID["sandbox.workspace_infrastructure"].default is False
     (home / "config.toml").write_text("[safety]\nscan_input = true\nscan_output = true\n"

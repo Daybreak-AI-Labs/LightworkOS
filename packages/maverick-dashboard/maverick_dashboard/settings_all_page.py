@@ -231,11 +231,8 @@ def _resolve_deferred_tools(layers: dict[str, Any]) -> dict[str, Any]:
         return {"source": "deployment", "locked": True, "value": environment, "known": True}
     layers = {**layers, "base": apply_to_base(layers["base"], layers["here"])}
     for path in (("capabilities", "deferred_tools"), ("tools", "deferred_loading")):
-        # A workspace file's [capabilities] deferred_tools is ignored (only the
-        # organisation sets it); its legacy [tools] key still applies.
-        names = ("operator", "here", "base") if path[0] == "capabilities" else (
-            "tenant", "operator", "here", "base")
-        for name in names:
+        # A workspace file's value is ignored: only the organisation sets it.
+        for name in ("operator", "here", "base"):
             present, value = catalog.lookup(layers[name], path)
             if not present:
                 continue
@@ -735,13 +732,16 @@ def _organisation_fixed(setting: catalog.Setting, layers: dict[str, Any]) -> boo
     the organisation sets; the kernel ignores that value
     (:mod:`maverick.policy_tighten`)."""
     from maverick import config
-    from maverick.policy_tighten import TENANT_RULES, merge_tenant_section
+    from maverick.policy_tighten import ORGANISATION_KEYS, TENANT_RULES, merge_tenant_section
 
-    if setting.section not in TENANT_RULES or len(setting.path) != 2:
+    if len(setting.path) != 2 or (setting.section not in TENANT_RULES
+                                  and setting.key not in ORGANISATION_KEYS.get(setting.section, ())):
         return False
     present, value = catalog.lookup(layers.get("tenant") or {}, setting.path)
     if not present:
         return False
+    if setting.section not in TENANT_RULES:
+        return True
     organisation = config.load_global_config()
     section = organisation.get(setting.section) or {}
     if not isinstance(section, dict):

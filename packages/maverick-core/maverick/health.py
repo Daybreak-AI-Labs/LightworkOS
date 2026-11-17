@@ -131,9 +131,13 @@ def _check_policy_overlays() -> None:
     except Exception:  # pragma: no cover -- the doctor must never break
         return
     for workspace, keys in sorted(loosened.items())[:8]:
-        _row(YELLOW, "workspace policy", f"{workspace}: ignored {', '.join(keys)}",
-             fix="A workspace can only make some settings stricter. "
-                 "Move the others to your organisation's config.toml, or remove them from the workspace file.")
+        fix = ("A workspace can only make some settings stricter. "
+               "Move the others to your organisation's config.toml, or remove them from the workspace file.")
+        if any(key.startswith(("sandbox.workdir", "sandbox.image")) for key in keys):
+            fix += (" A moved work folder or image applies to every workspace. "
+                    "For a separate folder, run that workspace's Lightwork with MAVERICK_WORKDIR set "
+                    "and no workdir in the organisation's file.")
+        _row(YELLOW, "workspace policy", f"{workspace}: ignored {', '.join(keys)}", fix=fix)
     for name, reasons in sorted(clamped.items())[:8]:
         _row(YELLOW, "agent override", f"{name}: {'; '.join(reasons)}",
              fix="The looser part is ignored. Edit the override so it only narrows the built-in agent.")

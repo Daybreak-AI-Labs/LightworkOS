@@ -324,9 +324,9 @@ max_repros = 5             # 0-20 findings Lightwork re-runs per look
 require_container = false  # true: refuse feature runs on the local backend
 ```
 
-A workspace's own `config.toml` may only tighten these: turn the checker
-and `require_container` on, raise the rounds, `checkers` or `max_repros`, or
-choose a stricter `default_protect`. `checker_image` and `checker_models`
+A workspace's own `config.toml` may only tighten these: turn `enable` off,
+turn the checker and `require_container` on, raise the rounds, `checkers` or
+`max_repros`, or choose a stricter `default_protect`. `checker_image` and `checker_models`
 are the organisation's alone: a workspace file that sets them is ignored
 and reported.
 

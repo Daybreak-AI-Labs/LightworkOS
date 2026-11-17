@@ -124,6 +124,28 @@ CASES = {
     "security.secure_defaults": _prot(True),
     # A workspace may protect code more, never less: stricter protection,
     # the checker on, a container required, more repair rounds and looks.
+    # The default egress plane: denied hosts only grow; an allow list may only
+    # narrow one the organisation set (a new one approves hosts under the
+    # allowlist posture).
+    "egress.deny": dict(os=["169.254.169.254"], s=["169.254.169.254", "x.example"], l=[],
+                        us=["x.example"], ul=5),
+    "egress.allow": dict(os=["a.example", "b.example"], s=["a.example"], l=["c.example"],
+                         ul=["c.example"]),
+    # A workspace plane replaces [egress], so only one the organisation set is tightened.
+    "tenancy.egress": dict(os={"acme": {"deny": ["169.254.169.254"]}},
+                           s={"acme": {"deny": ["169.254.169.254", "x.example"]}},
+                           l={"acme": {"allow": ["c.example"]}}, ul={"acme": {"deny": ["x.example"]}}),
+    # Each can lift the egress lock.
+    "enterprise.mode": _prot(False),
+    "enterprise.require": _prot(False),
+    # Exceptions to the lock: only removed (empty means none).
+    "enterprise.allowed_hosts": dict(os=["a.example", "b.example"], s=["a.example"],
+                                     l=["a.example", "b.example", "c.example"], ul=["c.example"]),
+    "enterprise.local_providers": dict(os=["ollama", "vllm"], s=["ollama"], l=["ollama", "vllm", "openai"],
+                                       ul=["ollama"]),
+    "profile.name": dict(os="standard", s="enterprise", ol="enterprise", l="standard", us="enterprise"),
+    "compliance.profiles": dict(os=["hipaa"], s=["gdpr"], se=["hipaa", "gdpr"], l="hipaa", us=["gdpr"],
+                                ul=["no_such_profile"]),
     "codebase.enable": _perm(False),
     "codebase.default_protect": dict(os="approve", s="block", l="audit", ul="audit"),
     "codebase.checker": _prot(True),
@@ -574,3 +596,41 @@ def test_a_switch_the_consumer_reads_only_as_true_or_false(consumer, monkeypatch
     result, ignored = consumer(org, tenant, ask)
     assert result == (True, True)
     assert ignored == {"approval.record_checks", "approval.require_acknowledgement"}
+
+
+def test_a_workspace_cannot_reach_more_of_the_network(consumer, monkeypatch):
+    """Each of these workspace values used to approve or unblock hosts."""
+    from maverick import compliance_profiles, enterprise, profile
+    from maverick.tenant.egress import egress_allowed
+    from maverick.tools import _ssrf
+
+    for name in ("MAVERICK_ENTERPRISE", "MAVERICK_PROFILE", "MAVERICK_COMPLIANCE_PROFILES",
+                 "MAVERICK_FETCH_ALLOW_PRIVATE"):
+        monkeypatch.delenv(name, raising=False)
+
+    def reach(host):
+        return lambda: egress_allowed("http_fetch", host, tenant="acme")
+
+    allowlist = '[security]\nnetwork_policy = "allowlist"\n'
+    tool = '[sandbox.tool.http_fetch]\nallow_egress = ["evil.example"]\n'
+    assert consumer(allowlist, tool, reach("evil.example")) == (False, {"sandbox.tool"})
+    plane = '[tenancy.egress.acme]\nallow = ["evil.example"]\n'
+    assert consumer(allowlist, plane, reach("evil.example")) == (False, {"tenancy.egress"})
+    assert consumer(allowlist + '[egress]\nallow = ["a.example"]\n', '[egress]\nallow = ["evil.example"]\n',
+                    reach("evil.example")) == (False, {"egress.allow"})
+    org = '[egress]\ndeny = ["169.254.169.254"]\n'
+    assert consumer(org, "[egress]\ndeny = []\n", reach("169.254.169.254"))[0] is False
+    # A narrower tool list the organisation set still applies.
+    narrowed = '[sandbox.tool.http_fetch]\nallow_egress = ["a.example"]\n'
+    result, ignored = consumer(allowlist + '[sandbox.tool.http_fetch]\nallow_egress = ["a.example", "b.example"]\n',
+                               narrowed, lambda: (reach("a.example")(), reach("b.example")()))
+    assert result == (True, False) and not ignored
+    # The egress lock and what decides it.
+    lock = '[enterprise]\nmode = true\n[profile]\nname = "enterprise"\n[compliance]\nprofiles = ["hipaa"]\n'
+    loose = ('[enterprise]\nmode = false\nallowed_hosts = ["evil.example"]\n[profile]\nname = "standard"\n'
+             '[compliance]\nprofiles = []\n[tools]\nfetch_allow_private = true\n')
+    result, ignored = consumer(lock, loose, lambda: (
+        enterprise.enterprise_enabled(), profile.active_profile(), compliance_profiles.resolve_profiles(),
+        enterprise.egress_permitted("https://evil.example/"), _ssrf.allow_private()))
+    assert result == (True, "enterprise", ["hipaa"], False, False)
+    assert {"enterprise.mode", "enterprise.allowed_hosts", "profile.name", "tools.fetch_allow_private"} <= ignored

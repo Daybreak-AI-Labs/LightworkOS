@@ -47,6 +47,7 @@ from typing import Any
 from .decision_requests import DEFAULT_ADMIN_AREAS as _DECISION_ADMIN_AREAS
 from .decision_requests import DEFAULT_AREAS as _DECISION_AREAS
 from .decision_requests import EXPIRY_CONTRACT as _DECISION_EXPIRY
+from .profile import _ENTERPRISE_ALIASES, _STANDARD_ALIASES
 
 _RISK_ORDER = ("low", "medium", "high", None)
 
@@ -322,6 +323,26 @@ TENANT_RULES: dict[str, dict[str, tuple]] = {
         "isolate_parsers": ("protection", False, (), None),
         "secure_defaults": ("protection", True, (), None),
     },
+    # tenant.egress: the default egress plane, and per-workspace planes that
+    # replace it. Denied hosts only grow; an allow list only narrows one the
+    # organisation set, since a new one approves hosts under the allowlist
+    # posture.
+    "egress": {
+        "deny": _consumer("egress.deny"),
+        "allow": _consumer("egress.allow"),
+    },
+    "tenancy": {"egress": _consumer("tenancy.egress")},
+    # What decides the egress lock (maverick.enterprise, maverick.profile,
+    # maverick.compliance_profiles): a workspace may only turn it on.
+    "enterprise": {
+        "mode": ("protection", False, (), None),
+        "require": ("protection", False, (), None),
+        "allowed_hosts": ("subset", [], (), None),
+        "local_providers": ("subset", [], (), None),
+    },
+    "profile": {"name": ("rank", "standard", (tuple(_ENTERPRISE_ALIASES), (*_STANDARD_ALIASES, "")),
+                         "standard")},
+    "compliance": {"profiles": _consumer("compliance.profiles")},
     # maverick.config.get_codebase; the defaults mirror CODEBASE_LOOP_DEFAULTS.
     # An unreadable protection mode is read as "block".
     "codebase": {
@@ -446,16 +467,29 @@ def merge_tenant_section(name: str, upper: dict, lower: dict, deep_merge=None, *
     return _merge_rules(rules, f"{name}.", upper, lower, deep_merge)
 
 
+# Keys of ordinary tables that only the organisation sets: they reach private
+# addresses or any database, skip the web page check, or choose which tools
+# load (as [capabilities] deferred_tools does).
+ORGANISATION_KEYS = {"tools": frozenset({"deferred_loading", "fetch_allow_private", "fetch_skip_scan",
+                                         "database_allow_url_arg"})}
+
+
 def merge_tenant_overlay(upper: dict, lower: dict, deep_merge, *,
                          infrastructure: bool | None = None) -> tuple[dict, list[str], list[str]]:
     """Merge a tenant's whole config file under the organisation's config.
 
     The tables in :data:`TENANT_RULES` are tighten-only; every other table
-    merges as before through ``deep_merge``.
+    merges as before through ``deep_merge``, without :data:`ORGANISATION_KEYS`.
     """
-    merged = deep_merge(upper, {k: v for k, v in lower.items() if k not in TENANT_RULES})
-    ignored: list[str] = []
+    ordinary = {k: v for k, v in lower.items() if k not in TENANT_RULES}
     fixed: list[str] = []
+    for name, keys in ORGANISATION_KEYS.items():
+        table = ordinary.get(name)
+        if isinstance(table, dict) and keys & set(table):
+            fixed += [f"{name}.{key}" for key in table if key in keys]
+            ordinary[name] = {key: value for key, value in table.items() if key not in keys}
+    merged = deep_merge(upper, ordinary)
+    ignored: list[str] = []
     for name in TENANT_RULES:
         if name not in lower:
             continue

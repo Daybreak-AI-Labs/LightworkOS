@@ -750,20 +750,34 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   it stopped; the answer's confirmation says so.
 - A workspace settings file (`tenants/<name>/config.toml`) may now set only
   policy keys that can be made stricter. In `[governance]`, `[safety]`,
-  `[capabilities]`, `[sandbox]`, `[approval]`, `[security]` and `[codebase]`
+  `[capabilities]`, `[sandbox]`, `[approval]`, `[security]`, `[codebase]`,
+  `[egress]`, `[tenancy]`, `[enterprise]`, `[profile]` and `[compliance]`
   every other key is ignored, logged once and listed by `maverick doctor` and
   on Settings as set by your organisation. The file still loads. Newly ignored
   there: `[sandbox]` workdir, image, language, runtime, options, project_dir
   and the server keys below; `[safety]` receipt_key and screenshot_key;
   `[capabilities]` deferred_tools; `[approval]` check_retention_days,
-  dashboard_wait_seconds, undo_grace_seconds and delegation. To keep such a
-  setting, move it to the organisation's `config.toml` (or Settings), where it
-  applies to every workspace, and delete it from the workspace file.
+  dashboard_wait_seconds, undo_grace_seconds and delegation; `[tenancy]`
+  by_user; `[compliance]` disclosure_text; and `[tools]` deferred_loading,
+  fetch_allow_private, fetch_skip_scan and database_allow_url_arg. To keep
+  such a setting, move it to the organisation's `config.toml` (or Settings)
+  and delete it from the workspace file. A moved value applies to every
+  workspace: workspaces that each had their own `[sandbox] workdir` would
+  then share one folder. For a separate folder, run that workspace's
+  Lightwork process with `MAVERICK_WORKDIR` and leave `workdir` out of the
+  organisation's file; a per-workspace image has no replacement yet.
 - New stricter-only workspace rules: `[sandbox] warm` and `[codebase] enable`
   may only be turned off; `[approval] record_checks` and
   `require_acknowledgement` only on; `[approval] separate_approver` only
-  towards `always`; `[sandbox.tool.<name>]` may add denied hosts and narrow
-  allowed hosts.
+  towards `always`. Host lists in `[sandbox.tool.<name>]`, `[egress]` and
+  `[tenancy.egress.<name>]` may add denied hosts and narrow an allowed list
+  the organisation set; a workspace allow list where the organisation has
+  none is ignored, because under the allowlist network posture it would
+  approve hosts, and a `[tenancy.egress.<name>]` table the organisation did
+  not set is ignored, because it would replace `[egress]`. `[enterprise]`
+  mode and require may only be turned on, allowed_hosts and local_providers
+  only shortened, `[profile] name` only raised to enterprise, and
+  `[compliance] profiles` only extended with known profiles.
 - New `[sandbox] workspace_infrastructure` and `workspace_hosts` (off and
   empty by default; wizard sandbox step for clusters and remote computers,
   and Settings > Protected work area). When on in the organisation's
