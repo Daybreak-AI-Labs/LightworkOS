@@ -26,22 +26,43 @@ def code_group() -> None:
     """Software development: protected repositories and governed feature swarms."""
 
 
+def _tier_options(func):
+    """The test-tier commands ``code add`` and ``code set`` take."""
+    for option in reversed((
+        click.option("--test", "test_command", default=None,
+                     help="Command that runs the full test suite (on the final version)."),
+        click.option("--quick-test", "quick_test_command", default=None,
+                     help="Quick tests after each author round while repairing; {changed} "
+                          "(unquoted) becomes the changed paths that still exist. They are "
+                          "not only tests, so the command must accept any path."),
+        click.option("--gate", "gate_command", default=None,
+                     help="Lint and other gates, run with the full suite on the final version."),
+        click.option("--heavy-test", "heavy_test_command", default=None,
+                     help="Tests that need services; run only in [codebase] checker_image."),
+    )):
+        func = option(func)
+    return func
+
+
 @code_group.command("add")
 @click.argument("name")
 @click.argument("source")
 @click.option("--branch", default=None, help="Default branch (else the source's HEAD).")
-@click.option("--test", "test_command", default=None, help="Command that runs the test suite.")
+@_tier_options
 @click.option("--protect", type=click.Choice(["block", "approve", "audit"]), default=None,
               help="Information-flow mode for every run over this code "
                    "(default: [codebase] default_protect).")
 @click.option("--token-env", default=None,
               help="Environment variable holding the remote credential (never stored).")
-def code_add(name, source, branch, test_command, protect, token_env) -> None:
+def code_add(name, source, branch, test_command, quick_test_command, gate_command,
+             heavy_test_command, protect, token_env) -> None:
     """Import SOURCE (a git URL or local path) into the vault as NAME."""
     vault = _guard()
     from ..config import get_codebase
     try:
         repo = vault.register(name, source, default_branch=branch, test_command=test_command,
+                              quick_test_command=quick_test_command, gate_command=gate_command,
+                              heavy_test_command=heavy_test_command,
                               protect=protect or get_codebase()["default_protect"],
                               token_env=token_env)
     except vault.VaultError as exc:
@@ -50,13 +71,35 @@ def code_add(name, source, branch, test_command, protect, token_env) -> None:
                f"protect={repo.protect})")
 
 
+@code_group.command("set")
+@click.argument("name")
+@_tier_options
+def code_set(name, **commands) -> None:
+    """Change NAME's test commands; an empty value ("") clears one."""
+    vault = _guard()
+    given = {k: v for k, v in commands.items() if v is not None}
+    if not given:
+        raise click.UsageError("give at least one of --test, --quick-test, --gate, --heavy-test")
+    try:
+        repo = vault.set_commands(name, **given)
+    except vault.VaultError as exc:
+        _fail(exc)
+    for key, label in (("quick_test_command", "quick"), ("test_command", "full"),
+                       ("gate_command", "gate"), ("heavy_test_command", "heavy")):
+        value = getattr(repo, key)
+        click.echo(f"  {label:6} {_strip_terminal_control(value) if value else '(not set)'}")
+
+
 @code_group.command("list")
 def code_list() -> None:
     """Registered repositories."""
     vault = _guard()
     for r in vault.list_repos():
         click.echo(f"  {r.name:24} {r.default_branch:12} {r.head[:12]}  protect={r.protect}  "
-                   f"tests={'yes' if r.test_command else 'no'}")
+                   f"tests={'yes' if r.test_command else 'no'}"
+                   + "".join(f"  {label}=yes" for key, label in (
+                       ("quick_test_command", "quick"), ("gate_command", "gate"),
+                       ("heavy_test_command", "heavy")) if getattr(r, key)))
 
 
 @code_group.command("sync")
@@ -97,7 +140,7 @@ def code_feature(name, title, description, max_dollars, no_review, no_check) -> 
         p = features.propose(world, name, title, description,
                              features.default_runner(budget=budget),
                              reviewer=None if no_review else features.default_reviewer(budget=budget),
-                             checker=features.default_checker(budget=budget) if check else None,
+                             checker=features.default_checkers(budget=budget) if check else None,
                              budget=budget)
     except vault.VaultError as exc:
         _fail(exc)

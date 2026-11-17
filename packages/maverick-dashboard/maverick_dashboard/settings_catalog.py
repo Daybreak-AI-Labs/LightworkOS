@@ -446,6 +446,32 @@ SETTINGS: tuple[Setting, ...] = (
       "number", "Safety", 2, "maverick.config", minimum=1, maximum=3, integer=True,
       unit="looks", weaker="lower",
       warning="Fixes to blocking problems may reach you without a second look."),
+    S("codebase", "checkers", "Independent checkers",
+      "How many separate agents check each version of a change. None of them sees what the "
+      "others found. Each one is one more agent run per look.",
+      "number", "Safety", 1, "maverick.config", minimum=1, maximum=3, integer=True,
+      unit="checkers", weaker="lower",
+      warning="Fewer agents will try to break code changes before you approve them."),
+    S("codebase", "checker_models", "Models for the independent checkers",
+      "One model for each checker, in order. Leave it empty to use the reviewer model, or "
+      "a different kind of model when that one matches the author's.",
+      "picks", "Safety", [], "maverick.config", choices_from="models", max_items=3,
+      empty_unset=True, weaker="change",
+      warning="The checkers may use the same kind of model as the author and miss the same "
+              "problems."),
+    S("codebase", "checker_image", "Container for the independent check",
+      "Run the checkers, and Lightwork's own re-runs of what they found, in this container "
+      "image. Leave it empty to use the protected work area.",
+      "text", "Safety", "", "maverick.config", max_length=255, weaker="change",
+      pattern=r"([A-Za-z0-9][A-Za-z0-9._/:@-]{0,254})?",
+      warning="Checks will run in a different image, which may include programs your team "
+              "has not reviewed."),
+    S("codebase", "max_repros", "Findings Lightwork re-runs per look",
+      "When a checker gives a command that shows a problem, Lightwork runs it again itself to "
+      "confirm it. This is the most it re-runs per look.",
+      "number", "Safety", 5, "maverick.config", minimum=0, maximum=20, integer=True,
+      unit="re-runs", weaker="lower",
+      warning="More findings will rest on the checker's word alone."),
     S("codebase", "require_container", "Code changes need a container",
       "Refuse to build a code change when its tests and checks would run directly on this "
       "computer. In a container, each step is kept apart from the others.",

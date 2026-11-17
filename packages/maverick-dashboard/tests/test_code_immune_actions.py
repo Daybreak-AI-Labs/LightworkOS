@@ -86,7 +86,7 @@ def test_code_page_offers_every_action_to_an_admin(client, monkeypatch):
         assert label in text, label
     assert "/static/lightwork-code.js" in page
     js = client.get("/static/lightwork-code.js").text
-    for label in ("Get latest changes", "Approve in the approvals queue", "Merge",
+    for label in ("Get latest changes", "Test commands", "Approve in the approvals queue", "Merge",
                   "Send to the original project", "Ask for approval again", "mvConfirm"):
         assert label in js, label
     for banned in ("innerHTML", "window.confirm", "window.alert", "'HTTP '", "maverick code"):
@@ -126,6 +126,8 @@ def test_code_actions_need_admin(client, monkeypatch):
     for method, path, body in (
         ("post", "/api/v1/code/repos", {"name": "x", "source": "https://example.com/x.git"}),
         ("post", "/api/v1/code/repos/x/sync", None),
+        ("get", "/api/v1/code/repos/x/commands", None),
+        ("post", "/api/v1/code/repos/x/commands", {"gate_command": "true"}),
         ("post", "/api/v1/code/features", {"repo": "x", "title": "t"}),
         ("get", "/api/v1/code/proposals/0123456789abcdef", None),
         ("post", "/api/v1/code/proposals/0123456789abcdef/merge", None),
@@ -135,6 +137,33 @@ def test_code_actions_need_admin(client, monkeypatch):
     ):
         kwargs = {"json": body} if body is not None else {}
         assert getattr(client, method)(path, **kwargs).status_code == 403, path
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
+def test_an_admin_sets_a_projects_test_commands_like_adding_it(client, monkeypatch, tmp_path):
+    from maverick.codebase import vault
+    from maverick_dashboard import code_actions_api
+    _code_on(monkeypatch)
+    vault.register("core", str(_source_repo(tmp_path)), test_command="python -m pytest -q")
+    url = "/api/v1/code/repos/core/commands"
+    r = client.post(url, json={"quick_test_command": "python -m pytest -q {changed}",
+                               "gate_command": "bash lint.sh", "test_command": ""})
+    assert r.status_code == 200, r.text
+    assert client.get(url).json() == {
+        "name": "core", "test_command": "", "quick_test_command": "python -m pytest -q {changed}",
+        "gate_command": "bash lint.sh", "heavy_test_command": ""}
+    refused = client.post(url, json={"gate_command": "lint {changed}"})
+    assert refused.status_code == 422 and "quick tests" in refused.json()["detail"]
+    # One limit and one message for every command, on both forms.
+    long = "x" * 2001
+    for path, body in ((url, {"test_command": long}),
+                       ("/api/v1/code/repos", {"name": "y", "source": "https://example.com/y.git",
+                                               "test_command": long})):
+        refused = client.post(path, json=body)
+        assert refused.status_code == 422 and refused.json()["detail"] == \
+            code_actions_api._COMMANDS_REFUSED, path
+    assert client.post("/api/v1/code/repos/nope/commands", json={"gate_command": "x"}).status_code == 404
+    assert client.get("/api/v1/code/summary").json()["repos"][0]["test_tiers"] == ["quick", "gate"]
 
 
 def test_code_actions_are_refused_while_the_vault_is_off(client):

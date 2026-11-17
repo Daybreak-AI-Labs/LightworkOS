@@ -55,8 +55,21 @@ class RepoIn(BaseModel):
     name: str = Field(min_length=1, max_length=64)
     source: str = Field(min_length=1, max_length=2000)
     branch: str | None = Field(default=None, max_length=200)
-    test_command: str | None = Field(default=None, max_length=500)
+    # Test commands: vault.check_commands is their one limit and message.
+    test_command: str | None = None
+    quick_test_command: str | None = None
+    gate_command: str | None = None
+    heavy_test_command: str | None = None
     protect: str = "block"
+
+
+class CommandsIn(BaseModel):
+    """A code project's test commands; a missing one is kept, an empty one
+    is cleared. vault.check_commands is their one limit and message."""
+    test_command: str | None = None
+    quick_test_command: str | None = None
+    gate_command: str | None = None
+    heavy_test_command: str | None = None
 
 
 class FeatureIn(BaseModel):
@@ -155,12 +168,19 @@ async def add_repo(request: Request, body: RepoIn) -> dict:
             "https://github.com/your-company/your-project."))
     if body.protect not in _PROTECT:
         raise HTTPException(status_code=422, detail="Choose how the code is protected.")
+    try:
+        vault.check_commands({key: getattr(body, key) for key in vault.COMMANDS})
+    except vault.VaultError as exc:
+        raise HTTPException(status_code=422, detail=_COMMANDS_REFUSED) from exc
     await run_in_threadpool(_public_source, source)
     from maverick.config import get_codebase
 
     def _do():
         return vault.register(name, source, default_branch=(body.branch or "").strip() or None,
                               test_command=(body.test_command or "").strip() or None,
+                              quick_test_command=body.quick_test_command,
+                              gate_command=body.gate_command,
+                              heavy_test_command=body.heavy_test_command,
                               protect=body.protect or get_codebase()["default_protect"],
                               timeout=_WEB_GIT_TIMEOUT)
     try:
@@ -173,6 +193,48 @@ async def add_repo(request: Request, body: RepoIn) -> dict:
             "Lightwork is allowed to read it.")) from exc
     _audit(request, "add_repo", repo=repo.name)
     return {"name": repo.name, "default_branch": repo.default_branch}
+
+_COMMANDS_REFUSED = ("Lightwork could not save these commands. Keep each one to a single line "
+                     "of at most 2,000 characters. Only the quick tests can list the changed "
+                     "files, and not inside quotes.")
+
+
+def _commands(repo) -> dict:
+    from maverick.codebase import vault
+    return {"name": repo.name, **{key: getattr(repo, key) or "" for key in vault.COMMANDS}}
+
+
+@router.get("/code/repos/{name}/commands")
+async def repo_commands(request: Request, name: str) -> dict:
+    """A code project's test commands, for the administrator's form."""
+    require_permission(request, "admin")
+    vault = _vault()
+    try:
+        repo = await run_in_threadpool(vault.get, name)
+    except vault.VaultError as exc:
+        raise HTTPException(status_code=404, detail="That code project was not found.") from exc
+    return _commands(repo)
+
+
+@router.post("/code/repos/{name}/commands")
+async def set_repo_commands(request: Request, name: str, body: CommandsIn) -> dict:
+    """Change a code project's test commands: the same authority as adding one."""
+    require_permission(request, "admin")
+    vault = _vault()
+    given = body.model_dump(exclude_none=True)
+    if not given:
+        raise HTTPException(status_code=422, detail="Enter at least one command to change.")
+    try:
+        await run_in_threadpool(vault.get, name)
+    except vault.VaultError as exc:
+        raise HTTPException(status_code=404, detail="That code project was not found.") from exc
+    try:
+        repo = await run_in_threadpool(lambda: vault.set_commands(name, **given))
+    except vault.VaultError as exc:
+        raise HTTPException(status_code=422, detail=_COMMANDS_REFUSED) from exc
+    _audit(request, "set_commands", repo=name, changed=sorted(given))
+    return _commands(repo)
+
 
 @router.post("/code/repos/{name}/sync")
 async def sync_repo(request: Request, name: str) -> dict:
@@ -236,6 +298,7 @@ async def proposal_detail(request: Request, pid: str) -> dict:
         "status": await run_in_threadpool(_plain_state, world, p),
         "approval_id": p.get("approval_id"), "files": list(p.get("files") or [])[:500],
         "tests": None if tests is None else {"passed": bool(tests.get("passed")),
+                                             "ran": bool(tests.get("ran", True)),
                                              "command": tests.get("command")},
         "tests_output": (p.get("tests_output") or "")[-20000:],
         "review": None if review is None else {
@@ -340,8 +403,8 @@ def _run_feature(repo: str, title: str, description: str, max_dollars: float | N
             raise PermissionError("Current code-change authority is required")
         # One spending cap for every author and checker round of this run.
         budget = features.feature_budget(max_dollars)
-        checker = (features.default_checker(budget=budget, user_id=user_id,
-                                            allowed_suites=suites)
+        checker = (features.default_checkers(budget=budget, user_id=user_id,
+                                             allowed_suites=suites)
                    if features.loop_settings()["checker"] else None)
         features.propose(world, repo, title, description,
                          features.default_runner(budget=budget, user_id=user_id,

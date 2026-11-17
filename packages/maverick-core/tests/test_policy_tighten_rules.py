@@ -108,6 +108,14 @@ CASES = {
     "codebase.require_container": _prot(False),
     "codebase.repair_rounds": dict(os=2, s=3, l=1, us=3, ul=0),
     "codebase.check_rounds": dict(os=2, s=3, l=1, us=3, ul=1),
+    "codebase.checkers": dict(os=2, s=3, l=1, us=2, ul=0),
+    "codebase.max_repros": dict(os=5, s=8, l=2, us=8, ul=1),
+    # Where checks run and which models check are the organisation's alone:
+    # a workspace file may not set them at all.
+    "codebase.checker_image": dict(os="lw-checker:1", s="lw-checker:1", l="other:1",
+                                   ul="other:1"),
+    "codebase.checker_models": dict(os=["model-a"], s=["model-a"], l=["model-b"],
+                                    ul=["model-b"]),
 }
 
 

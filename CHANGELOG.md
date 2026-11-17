@@ -699,6 +699,32 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   steps were kept apart, and lists it as not fully checked. To refuse such
   runs, turn on `[codebase] require_container` in Settings. A workspace can
   no longer weaken the `[codebase]` checks in its own config file.
+- A code checker's finding can now carry a command that shows the problem.
+  Lightwork re-runs it on a fresh copy and marks the finding confirmed, or
+  not reproduced and read only. After a repair it re-runs confirmed ones to
+  decide "fixed" itself. Set how many it re-runs per look with `[codebase]
+  max_repros` (default 5); each re-run counts as one tool call.
+- `[codebase] checkers` (1-3, default 1) sets how many independent checkers
+  look at each change, and `checker_models` picks one model for each. Each
+  extra checker is one more agent run per look. The approval card names
+  each checker's model and flags it when all share the author's kind.
+- `[codebase] checker_image` runs the checkers and their re-runs in a
+  container image. `deploy/checker/` builds one with Python 3.11 and 3.12,
+  PostgreSQL 16 and a Playwright browser. If the image cannot be used, the
+  check says "could not run"; it never runs on this computer instead.
+  Lightwork never pulls the image and never lowers your work area's
+  isolation for it; only the organisation's config may set it. Re-runs
+  happen only when the steps run in a container, and a fix that only
+  makes the re-run pass waits for a later look to confirm it.
+- A code project can now have test tiers: quick tests run after each
+  repair round (`{changed}`, unquoted, lists the changed files that still
+  exist, so the command must accept any path), and the full tests plus
+  other checks run on the finished change; a failure goes back to the
+  author. Tests that need services run only in `[codebase] checker_image`.
+  Set them with `maverick code add|set --quick-test --gate --heavy-test`
+  or "Test commands" on the Code page. The approval card shows one line
+  per tier, and a quick pass alone never reads as the tests passing.
+  Existing projects keep running their one test command as before.
 
 ### Fixed
 

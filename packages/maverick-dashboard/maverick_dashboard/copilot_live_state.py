@@ -133,7 +133,9 @@ def _code_checks(request):
         gaps = features.evidence(p)["gaps"]
         state = (" ".join(["Not fully checked:", *gaps[:3]]) if gaps else
                  "The tests passed and the independent check left no blocking problem open.")
-        parts.append(f"{i}. {_bounded(p['title'])} in {_bounded(p['repo'], 64)}. {state}")
+        tiers = features.tier_summary(p)
+        parts.append(f"{i}. {_bounded(p['title'])} in {_bounded(p['repo'], 64)}. {state}"
+                     + (f" {tiers}" if tiers else "") + _code_reruns(p))
     if parts:
         reply = (f"Checked the proposed code changes {_checked_at()}. Waiting for approval: "
                  f"{len(rows)}. {' '.join(parts)}")
@@ -142,6 +144,16 @@ def _code_checks(request):
     if len(rows) > 8:
         reply += " This is a shortened list; open Code for the full view."
     return _answer(reply, "/code", "Open Code", "Code")
+
+
+def _code_reruns(p: dict) -> str:
+    """How many checker findings Lightwork re-ran itself, and how many it confirmed."""
+    findings = (p.get("check") or {}).get("findings") or []
+    rerun = [f for f in findings if f.get("repro_state") in ("confirmed", "not reproduced")]
+    if not rerun:
+        return ""
+    confirmed = sum(1 for f in rerun if f["repro_state"] == "confirmed")
+    return f" Lightwork re-ran {len(rerun)} finding(s) itself and confirmed {confirmed}."
 
 
 def _running_tasks(request):

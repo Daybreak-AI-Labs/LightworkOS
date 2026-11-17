@@ -406,7 +406,16 @@ def run_as_user(upper: object, lower: object) -> tuple[Any, bool]:
     return lower, False
 
 
+def organisation_only(upper: object, lower: object) -> tuple[Any, bool]:
+    """``[codebase] checker_image`` and ``checker_models``: which image runs the
+    checks (and so decides every re-run's result) and which models check. Only
+    the organisation sets them; a lower layer's different value is ignored."""
+    return upper, lower != upper
+
+
 MERGES = {
+    "codebase.checker_image": organisation_only,
+    "codebase.checker_models": organisation_only,
     "sandbox.run_as_user": run_as_user,
     "safety.consent_mode": consent_mode,
     **SCALARS,
