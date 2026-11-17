@@ -1,6 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Action Center · Lightwork{% endblock %}
 {% block content %}
-<h1 class="page-title">Action Center</h1>
+{% from "_hero.html" import hero %}
+{% set ac_intro_in_hero = true %}
+{{ hero('Operate', 'Action Center',
+        lede='Everything waiting on you is in one place: approvals, results waiting for approval, assessments and assigned project reviews. It also includes vendor lifecycle reviews, California data-broker deletion (DROP) changes, Trust Center access, privacy notice updates and actions to double-check in other apps. Open an item to review its evidence and approve or reject it.',
+        compact=true) }}
 {% include "_action_center_body.html" %}
 {% endblock %}

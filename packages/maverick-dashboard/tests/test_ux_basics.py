@@ -357,3 +357,19 @@ def test_setup_checks_are_worded_as_outcomes():
     # Provider checks keep their wording (owned by the provider-readiness work).
     provider = _plain_check({"id": "provider", "label": "Model provider", "status": "blocked"}, frozenset())
     assert provider["fix_label"] == "Add an AI provider key"
+
+
+def test_chat_shell_matches_the_product_shell():
+    # Chat used a different shell: "New chat" instead of "New task", a plain
+    # "Lightwork" name, the emergency stop at the foot of the sidebar instead
+    # of in the top bar, and the main menu in a small inner scroll box.
+    import re
+    body = _client().get("/chat").text
+    side = re.search(r'<aside class="cs-side".*?</aside>', body, re.DOTALL).group(0)
+    top = re.search(r'<header class="cs-topbar">.*?</header>', body, re.DOTALL).group(0)
+    assert "New chat" not in body and "New task" in side
+    assert '<span class="brand__name">Lightwork</span>' in side
+    assert 'id="halt-pill"' in top and 'id="halt-pill"' not in side
+    assert 'href="/settings"' in top
+    assert 'class="cs-account"' not in body
+    assert ".cs-product { flex: none;" in body

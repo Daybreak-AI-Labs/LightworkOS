@@ -19,8 +19,10 @@
   <h2>Branches</h2>
   <p class="muted">See what the agent chose next to what another way would have done. A branch starts a task again from one of its steps and keeps both versions side by side for review.</p>
   {% else %}
-  <h1 class="page-title">Task branches</h1>
-  <p class="page-subtitle">See what the agent chose next to what another way would have done. A branch starts a task again from one of its steps and keeps both versions side by side for review.</p>
+  {% from "_hero.html" import hero %}
+  {{ hero('Observe', 'Task branches',
+          lede='See what the agent chose next to what another way would have done. A branch starts a task again from one of its steps and keeps both versions side by side for review.',
+          compact=true) }}
   {% endif %}
 
   <div class="panel">

@@ -244,6 +244,9 @@
     /* The same at the bottom for the floating Copilot button (3rem tall,
        1.1rem from the edge): a focused row link is scrolled above it. */
     html:has(.mv-copilot__fab) { scroll-padding-bottom: calc(3rem + 2.2rem); }
+    /* The page's last controls (a Clear or Set up button at the end of a
+       card) can always scroll clear of the floating Copilot button. */
+    body:has(.mv-copilot__fab) main#content { padding-bottom: calc(var(--space-6) + 3rem + 2.2rem); }
     #content { scroll-margin-top: var(--space-2); }
     body {
       margin: 0;
