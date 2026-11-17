@@ -1094,9 +1094,10 @@ _LOOSENING_LOGGED: set[tuple[str, tuple[str, ...]]] = set()
 
 
 def _merge_tenant(cfg: dict, tenant: dict, path: Path) -> dict:
-    """A tenant overlay may only tighten governance, safety, capabilities,
-    sandbox and security settings; a looser value is ignored, logged once and listed by
-    ``maverick doctor`` (:func:`tenant_policy_loosenings`)."""
+    """A tenant overlay may only tighten the policy sections
+    (:data:`policy_tighten.TENANT_RULES`), and only keys with a rule; a looser
+    value or a key only the organisation sets is ignored, logged once and
+    listed by ``maverick doctor`` (:func:`tenant_policy_loosenings`)."""
     merged, ignored, fixed = _tighten_tenant(cfg, tenant)
     marker = (str(path), tuple(ignored), tuple(fixed))
     if (ignored or fixed) and marker not in _LOOSENING_LOGGED:
@@ -1112,10 +1113,19 @@ def _tighten_tenant(cfg: dict, tenant: dict) -> tuple[dict, list[str], list[str]
     section the tenant wrote as something other than a table (the loader
     already reads it as empty)."""
     from .policy_tighten import merge_tenant_overlay
-    merged, ignored, fixed = merge_tenant_overlay(cfg, tenant, _deep_merge_config)
+    merged, ignored, fixed = merge_tenant_overlay(cfg, tenant, _deep_merge_config,
+                                                  infrastructure=workspace_infrastructure(cfg))
     message = getattr(tenant, "message", "") if isinstance(tenant, _UnreadableTable) else ""
     ignored += [name for name in ("safety", "sandbox") if f"[{name}] must be a configuration table" in message]
     return merged, ignored, fixed
+
+
+def workspace_infrastructure(cfg: dict) -> bool:
+    """Whether a workspace may name its own sandbox servers (``[sandbox]
+    workspace_infrastructure``, off by default). Off while any settings file
+    cannot be read."""
+    from .policy_tighten import workspace_infrastructure as switch
+    return switch(cfg.get("sandbox")) and not config_source_errors(include_tenant=True)
 
 
 def tenant_policy_loosenings() -> dict[str, list[str]]:

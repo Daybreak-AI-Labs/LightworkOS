@@ -150,6 +150,9 @@ KNOWN_SCHEMA: dict[str, set[str] | None] = {
         "kubeconfig",
         "long_command_timeout",
         "firecracker_strict",
+        # Lets workspace files name their own work area servers (policy_tighten).
+        "workspace_infrastructure",
+        "workspace_hosts",
     },
     # Per-tool rate limits (safety/rate_limiter.py): keys are tool names
     # ("web_search", "mcp_*", ...), values "N/window" specs -- user-chosen

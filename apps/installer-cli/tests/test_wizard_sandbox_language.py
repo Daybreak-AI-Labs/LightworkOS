@@ -80,13 +80,14 @@ _DENY = "deny  - No network: apply the deny-all NetworkPolicy shown next (recomm
 _ALLOW = "allow - Pods may use the cluster network (package installs, HTTP fetches)"
 
 
-def _k8s_answers(monkeypatch, network_choice: str, namespace: str = "agents"):
+def _k8s_answers(monkeypatch, network_choice: str, namespace: str = "agents", *, servers: bool = False):
     from maverick_installer import wizard
 
     selects = iter([_K8S, _PY, network_choice])
     texts = iter(["/tmp/ws", namespace])
     monkeypatch.setattr(wizard, "_q_select", lambda *a, **k: next(selects))
     monkeypatch.setattr(wizard, "_q_text", lambda *a, **k: next(texts))
+    monkeypatch.setattr(wizard, "_q_confirm", lambda message, default=True: servers)
     printed: list[str] = []
     monkeypatch.setattr(wizard.console, "print", lambda *a, **k: printed.append(str(a[0]) if a else ""))
     return wizard, printed
@@ -131,3 +132,25 @@ def test_other_backends_do_not_ask_about_kubernetes(monkeypatch):
     )
     cfg = wizard.pick_sandbox()
     assert "namespace" not in cfg and "allow_network" not in cfg
+
+
+def test_kubernetes_asks_whether_workspaces_may_name_their_own_cluster(monkeypatch):
+    # Off unless chosen, and nothing is written for "no", so existing
+    # configurations stay as they were.
+    wizard, _ = _k8s_answers(monkeypatch, _DENY)
+    assert "workspace_infrastructure" not in wizard.pick_sandbox()
+    wizard, _ = _k8s_answers(monkeypatch, _DENY, servers=True)
+    cfg = wizard.pick_sandbox()
+    assert cfg["workspace_infrastructure"] is True
+    lines: list[str] = []
+    wizard._emit_kv(lines, "workspace_infrastructure", cfg["workspace_infrastructure"])
+    assert lines == ["workspace_infrastructure = true"]
+
+
+def test_ssh_asks_which_remote_computers_workspaces_may_choose(monkeypatch):
+    from maverick_installer import wizard
+
+    monkeypatch.setattr(wizard, "_q_confirm", lambda message, default=True: True)
+    monkeypatch.setattr(wizard, "_q_text", lambda *a, **k: "*@build.example.com, -oProxyCommand=x, %r@h, u@[::1]")
+    assert wizard._ask_workspace_servers({"backend": "ssh"}) == {
+        "backend": "ssh", "workspace_infrastructure": True, "workspace_hosts": ["*@build.example.com", "u@[::1]"]}

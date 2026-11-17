@@ -9,6 +9,7 @@ unless the request confirms it.
 from __future__ import annotations
 
 import json
+import re
 import threading
 
 import pytest
@@ -675,12 +676,39 @@ def test_a_workspace_value_looser_than_the_organisation_shows_who_set_it(tmp_pat
     (home / "config.toml").write_text("[safety]\nscan_input = true\nscan_output = true\n", encoding="utf-8")
     tenant = home / "tenants" / "acme" / "config.toml"
     tenant.parent.mkdir(parents=True)
-    tenant.write_text("[safety]\nscan_input = false\nscan_output = true\n", encoding="utf-8")
+    tenant.write_text("[safety]\nscan_input = false\nscan_output = true\n"
+                      '[sandbox]\nkubeconfig = "/srv/acme"\n[capabilities]\ndeferred_tools = false\n'
+                      "[tools]\nfetch_allow_private = true\n",
+                      encoding="utf-8")
     monkeypatch.setenv("MAVERICK_TENANT", "acme")
     config.reset_config_cache()
-    layers = page._sources()
-    rows = {s.id: page._row(s, layers) for s in catalog.SETTINGS
-            if s.id in {"safety.scan_input", "safety.scan_output"}}
-    assert rows["safety.scan_input"]["source_text"] == "Set by your organisation"
-    assert rows["safety.scan_output"]["source_text"] != "Set by your organisation"
+
+    def rows():
+        layers = page._sources()
+        return {s.id: page._row(s, layers) for s in catalog.SETTINGS if s.id in {
+            "safety.scan_input", "safety.scan_output", "sandbox.kubeconfig", "capabilities.deferred_tools",
+            "tools.fetch_allow_private"}}
+
+    shown = rows()
+    assert shown["safety.scan_input"]["source_text"] == "Set by your organisation"
+    assert shown["safety.scan_output"]["source_text"] != "Set by your organisation"
     assert config.get_safety()["scan_input"] is True
+    # A key with no rule is only the organisation's to set, unless the
+    # organisation lets workspaces name their own servers.
+    assert shown["sandbox.kubeconfig"]["source_text"] == "Set by your organisation"
+    assert shown["capabilities.deferred_tools"]["source_text"] == "Set by your organisation"
+    assert shown["tools.fetch_allow_private"]["source_text"] == "Set by your organisation"
+    assert shown["capabilities.deferred_tools"]["value"] is True is config.get_capabilities()["deferred_tools"]
+    assert catalog.BY_ID["sandbox.workspace_infrastructure"].default is False
+    (home / "config.toml").write_text("[safety]\nscan_input = true\nscan_output = true\n"
+                                      "[sandbox]\nworkspace_infrastructure = true\n", encoding="utf-8")
+    config.reset_config_cache()
+    # Even then a cluster settings file stays the organisation's: it can name
+    # a program this computer runs.
+    assert rows()["sandbox.kubeconfig"]["source_text"] == "Set by your organisation"
+    assert "kubeconfig" not in config.load_config()["sandbox"]
+    assert catalog.BY_ID["sandbox.workspace_hosts"].default == []
+    shape = re.compile(catalog.BY_ID["sandbox.workspace_hosts"].pattern)
+    assert all(shape.fullmatch(p) for p in ("*@build.example.com", "u@[::1]", "10.0.0.?"))
+    assert not any(shape.fullmatch(p) for p in ("*%r@x.example", "$(id)@x.example", "a@b@c", "ssh://x/y",
+                                                "u@[::1]:22", "build.example.com:22"))

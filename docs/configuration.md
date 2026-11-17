@@ -231,6 +231,20 @@ decision_expiry_hours   = 72
 backend = "local"                   # local | docker | ssh | podman | gvisor | devcontainer | firecracker | kubernetes | modal
 workdir = "~/maverick-workspace"
 timeout = 60
+# A workspace file (tenants/<name>/config.toml) may set only policy keys that
+# have a stricter direction, and only make them stricter; every other key in
+# [governance], [safety], [capabilities], [sandbox], [approval], [security],
+# [codebase], [egress], [tenancy], [enterprise], [profile] and [compliance] is
+# ignored and listed by `maverick doctor`, as are [tools] deferred_loading,
+# fetch_allow_private, fetch_skip_scan and database_allow_url_arg. With this
+# switch on (organisation file only), a workspace may also choose a plain
+# `context` and `namespace` in the organisation's own cluster settings file,
+# and a `host` (user@host or host, no port: set the port in ssh_args or your
+# ssh config) matching a workspace_hosts pattern. Its
+# kubeconfig, api_key, provider, extra_kubectl_args and ssh_args are always
+# ignored. Off while any settings file cannot be read.
+workspace_infrastructure = false
+workspace_hosts = []                # e.g. ["*@build.example.com"]; * matches any text
 # devcontainer defaults to the invoking non-root UID:GID, ignoring the repo's
 # remoteUser. Run Lightwork as a non-root user on a platform with UID/GID
 # support. An operator can explicitly set allow_root = true to trust that

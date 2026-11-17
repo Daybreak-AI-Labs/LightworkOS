@@ -858,6 +858,59 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Postgres records database (same host, port and database as the world
   DSN), from `DATABASE_URL` or from an agent. Use a separate database; only
   the organisation can allow it, with `[tools] database_allow_world_database`.
+- A workspace settings file (`tenants/<name>/config.toml`) may now set only
+  policy keys that can be made stricter. In `[governance]`, `[safety]`,
+  `[capabilities]`, `[sandbox]`, `[approval]`, `[security]`, `[codebase]`,
+  `[egress]`, `[tenancy]`, `[enterprise]`, `[profile]` and `[compliance]`
+  every other key is ignored, logged once and listed by `maverick doctor` and
+  on Settings as set by your organisation. The file still loads. Newly ignored
+  there: `[sandbox]` workdir, image, language, runtime, options, project_dir
+  and the server keys below; `[safety]` receipt_key and screenshot_key;
+  `[capabilities]` deferred_tools; `[approval]` check_retention_days,
+  dashboard_wait_seconds, undo_grace_seconds and delegation; `[tenancy]`
+  by_user; and `[tools]` deferred_loading,
+  fetch_allow_private, fetch_skip_scan and database_allow_url_arg. To keep
+  such a setting, move it to the organisation's `config.toml` (or Settings)
+  and delete it from the workspace file. A moved value applies to every
+  workspace: workspaces that each had their own `[sandbox] workdir` would
+  then share one folder. For a separate folder, run that workspace's
+  Lightwork process with `MAVERICK_WORKDIR` and leave `workdir` out of the
+  organisation's file; a per-workspace image has no replacement yet.
+  Likewise a workspace can no longer add its own `[enterprise]
+  allowed_hosts` (a SaaS host) or `local_providers` (a local model server):
+  moved to the organisation's file, the host or server is allowed for every
+  workspace, and there is no way yet to allow one for a single workspace.
+  `[tenancy.egress.<name>] allow` in the organisation's file approves hosts
+  for one workspace under the allowlist network posture, but does not open
+  the enterprise egress lock.
+- New stricter-only workspace rules: `[sandbox] warm` and `[codebase] enable`
+  may only be turned off; `[approval] record_checks` and
+  `require_acknowledgement` only on; `[approval] separate_approver` only
+  towards `always`. Host lists in `[sandbox.tool.<name>]`, `[egress]` and
+  `[tenancy.egress.<name>]` may add denied hosts and narrow an allowed list
+  the organisation set; a workspace allow list where the organisation has
+  none is ignored, because under the allowlist network posture it would
+  approve hosts, and a `[tenancy.egress.<name>]` table the organisation did
+  not set is ignored, because it would replace `[egress]`. `[enterprise]`
+  mode and require may only be turned on, allowed_hosts and local_providers
+  only shortened, `[profile] name` only raised to enterprise,
+  `[compliance] profiles` only extended with known profiles, and
+  `[compliance] disclosure_text` replaced with other text but never emptied.
+- New `[sandbox] workspace_infrastructure` and `workspace_hosts` (off and
+  empty by default; wizard sandbox step for clusters and remote computers,
+  and Settings > Protected work area). When on in the organisation's
+  settings, a workspace file may choose a `context` and `namespace` (plain
+  names) in the organisation's own cluster settings file, and a `host` that
+  matches a `workspace_hosts` pattern such as `*@build.example.com` (no
+  port: it comes from the organisation's ssh_args or ssh config). Its
+  kubeconfig, api_key, provider, extra_kubectl_args and ssh_args are still
+  ignored: a cluster settings file or ssh option can run a program on this
+  computer, and a key or provider reaches another service. The backend
+  cannot be weakened, and the switch counts as off while any settings file
+  cannot be read.
+- The ssh work area now always passes `--` before the remote computer and
+  refuses a destination that starts with a dash or holds spaces or control
+  characters, so a destination can never be read as an ssh option.
 
 ### Fixed
 

@@ -1845,3 +1845,41 @@ def test_a_tenant_overlay_can_only_tighten_organisation_policy(tmp_path, monkeyp
     monkeypatch.delenv("MAVERICK_TENANT")
     assert config.tenant_policy_loosenings() == {"acme": [
         "governance.require_human_min_risk", "capabilities.browser"]}
+
+
+def test_an_existing_workspace_file_with_now_ignored_settings_loads_and_lists_them(tmp_path, monkeypatch, capsys):
+    from maverick import config, health
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    monkeypatch.delenv("MAVERICK_CONFIG", raising=False)
+    (tmp_path / "config.toml").write_text('[sandbox]\nimage = "org:1"\n', encoding="utf-8")
+    tenant = tmp_path / "tenants" / "acme" / "config.toml"
+    tenant.parent.mkdir(parents=True)
+    tenant.write_text(
+        '[sandbox]\nimage = "acme:1"\nworkdir = "/srv/acme"\ntimeout = 30\n'
+        '[sandbox.tool.http_fetch]\ndeny_egress = ["ads.example"]\n'
+        '[safety]\nreceipt_key = "acme"\n[capabilities]\ndeferred_tools = false\n'
+        '[approval]\nundo_grace_seconds = 0\n[budget]\nmax_dollars = 2.0\n'
+        '[tools]\ndeferred_loading = false\nlatency_budget_ms = 500\n', encoding="utf-8")
+    config.reset_config_cache()
+    monkeypatch.setenv("MAVERICK_TENANT", "acme")
+
+    cfg = config.load_config()
+    assert cfg["sandbox"] == {"image": "org:1", "timeout": 30,
+                              "tool": {"http_fetch": {"deny_egress": ["ads.example"]}}}
+    assert "receipt_key" not in cfg.get("safety", {}) and cfg["budget"]["max_dollars"] == 2.0
+    assert "deferred_tools" not in cfg.get("capabilities", {})
+    assert cfg["tools"] == {"latency_budget_ms": 500} and config.get_deferred_tools() is True
+    monkeypatch.delenv("MAVERICK_TENANT")
+    ignored = [f"{key} (set by your organisation)" for key in (
+        "tools.deferred_loading", "safety.receipt_key", "capabilities.deferred_tools", "sandbox.image",
+        "sandbox.workdir", "approval.undo_grace_seconds")]
+    assert config.tenant_policy_loosenings() == {"acme": ignored}
+    health._check_policy_overlays()
+    out = capsys.readouterr().out
+    assert "sandbox.image (set by your organisation)" in out and "organisation's config.toml" in out
+    assert "applies to every workspace" in out and "MAVERICK_WORKDIR" in out
+    tenant.write_text('[enterprise]\nallowed_hosts = ["crm.acme.example"]\n', encoding="utf-8")
+    health._check_policy_overlays()
+    out = capsys.readouterr().out
+    assert "enterprise.allowed_hosts" in out and "every workspace" in out and "no way yet" in out

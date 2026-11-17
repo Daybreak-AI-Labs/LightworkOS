@@ -485,12 +485,13 @@ protected_checker_model = ""  # the second checker for protected changes
 allow_self_changes = false # true: allow runs on Lightwork's own repository
 ```
 
-A workspace's own `config.toml` may only tighten these: turn the checker
-and `require_container` on, raise the rounds, `checkers` or `max_repros`, or
-choose a stricter `default_protect`. `checker_image`, `checker_models`,
-`protected_checker_model` and `allow_self_changes` are the organisation's
-alone: a workspace file that sets them is ignored and reported. Settings >
-Safety has a row for each, and the setup wizard asks for them.
+A workspace's own `config.toml` may only tighten these: turn `enable` off,
+turn the checker and `require_container` on, raise the rounds, `checkers` or
+`max_repros`, or choose a stricter `default_protect`. `checker_image`,
+`checker_models`, `protected_checker_model` and `allow_self_changes` are the
+organisation's alone: a workspace file that sets them is ignored and
+reported. Settings > Safety has a row for each, and the setup wizard asks for
+them.
 
 At the defaults a feature run makes at most five agent runs instead of one:
 the author's first run, two repair rounds and two checker looks. All of them
