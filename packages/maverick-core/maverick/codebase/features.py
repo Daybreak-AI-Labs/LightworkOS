@@ -1099,41 +1099,63 @@ _GATEWAYS = frozenset({
     "replicate", "anyscale", "perplexity", "cloudflare", "huggingface", "hf", "nvidia", "nim",
     "sagemaker", "watsonx", "vllm", "tgi", "lmstudio", "cerebras", "sambanova", "baseten",
     "openai_compatible", "openai-compatible", "custom", "local", "llamacpp", "llama_cpp"})
-# family -> name tokens (exact, or a prefix when three letters or more).
-_FAMILIES = (
-    ("anthropic", ("claude", "anthropic")),
-    ("openai", ("gpt", "chatgpt", "openai", "davinci", "o1", "o3", "o4")),
-    ("google", ("gemini", "gemma", "palm", "bison", "google")),
-    ("meta", ("llama", "meta")),
-    ("mistral", ("mistral", "mixtral", "codestral", "magistral", "ministral", "pixtral",
-                 "devstral")),
-    ("deepseek", ("deepseek",)),
-    ("alibaba", ("qwen", "qwq")),
-    ("cohere", ("command", "cohere", "aya")),
-    ("xai", ("grok", "xai")),
-    ("microsoft", ("phi",)),
-    ("amazon", ("nova", "titan", "amazon")),
-    ("moonshot", ("kimi", "moonshot")),
-)
+# family -> the names its models start with (a whole name: followed by the
+# end, a separator or a version number, never more letters).
+_FAMILIES = {
+    "anthropic": ("claude",),
+    "openai": ("gpt", "chatgpt", "o1", "o3", "o4", "davinci"),
+    "google": ("gemini", "gemma", "palm"),
+    "meta": ("llama", "codellama"),
+    "mistral": ("mistral", "mixtral", "codestral", "magistral", "ministral", "pixtral",
+                "devstral"),
+    "deepseek": ("deepseek",),
+    "alibaba": ("qwen", "qwq"),
+    "cohere": ("command", "aya"),
+    "xai": ("grok",),
+    "microsoft": ("phi",),
+    "amazon": ("nova", "titan"),
+    "moonshot": ("kimi",),
+    "zhipu": ("glm",),
+}
+_NAME = {stem: family for family, stems in _FAMILIES.items() for stem in stems}
+_STEM = re.compile(r"(" + "|".join(sorted(map(re.escape, _NAME), key=len, reverse=True))
+                   + r")(?=$|[-_.:\s]|\d)")
+_ORGS = frozenset({"anthropic", "openai", "google", "meta", "meta-llama", "mistralai", "mistral",
+                   "deepseek", "deepseek-ai", "qwen", "alibaba", "cohere", "x-ai", "xai",
+                   "microsoft", "amazon", "moonshotai", "z-ai", "zhipu", "ai21"})
 _PROVIDER_FAMILIES = {"anthropic": "anthropic", "claude": "anthropic", "openai": "openai",
                       "google": "google", "gemini": "google", "mistral": "mistral",
                       "cohere": "cohere", "xai": "xai", "deepseek": "deepseek"}
 
 
 def model_family(model: object) -> str | None:
-    """The vendor family of a model spec, read from the model's own name
-    after any gateway (``openrouter:anthropic/claude-…``,
-    ``bedrock:anthropic.claude…``, ``vertex:claude-…``), else from a
-    first-party provider prefix; None when it cannot be told. Stricter than
+    """The vendor family of a model spec, or None when it cannot be told.
+
+    The model's own name decides, after any gateway (``openrouter:``,
+    ``bedrock:``, ``vertex:``...), organisation (``anthropic/``) or Bedrock
+    region and vendor (``us.anthropic.``): it must START with a known model
+    name (``claude-``, ``gpt-``, ``o3``, ``gemini-``, ``llama3``...). A name
+    that also names another vendor's model anywhere (a distillation) cannot
+    be compared. Without a known name, a first-party provider prefix
+    (``anthropic:``, ``openai:``) decides. Stricter than
     :func:`maverick.verifier._same_family`, which other callers keep."""
     text = str(model or "").strip().lower()
     if not text:
         return None
     provider, _, name = text.partition(":") if ":" in text else ("", "", text)
-    tokens = [t for t in re.split(r"[/:._\-\s@]+", name) if t]
-    for family, keys in _FAMILIES:
-        if any(t == k or (len(k) >= 3 and t.startswith(k)) for t in tokens for k in keys):
-            return family
+    name = name.rsplit("/", 1)[-1]
+    name = re.sub(r"^(?:us|eu|apac|global|us-gov)\.", "", name)
+    head, dot, rest = name.partition(".")
+    if dot and head in _ORGS:
+        name = rest
+    found = _STEM.match(name)
+    others = {_NAME[m.group(1)] for m in _STEM.finditer(name)
+              if m.start() == 0 or name[m.start() - 1] in "-_.: "}
+    if found:
+        family = _NAME[found.group(1)]
+        return family if others <= {family} else None
+    if others:
+        return None
     if provider and provider not in _GATEWAYS:
         return _PROVIDER_FAMILIES.get(provider)
     return None

@@ -2390,8 +2390,15 @@ def test_the_second_checker_family_reads_through_gateways(upstream, tmp_path, mo
     assert family("openrouter:openai/gpt-4o") == family("openai:o3-mini") == "openai"
     assert family("vertex:gemini-2.5-pro") == family("gemini:other") == "google"
     assert family("ollama:llama3.1") == family("openai:llama-3-70b") == "meta"
-    for unknown in ("my-local", "ollama:my-model", "openrouter:some/thing"):
+    for unknown in ("my-local", "ollama:my-model", "openrouter:some/thing",
+                    "openrouter:metaculus-bot", "azure:phind",              # no anchored name
+                    "openrouter:google/gemma-claude-distill",              # two vendors
+                    "openrouter:deepseek/deepseek-r1-distill-llama-70b",
+                    "openrouter:nousresearch/hermes-3-llama-3.1"):
         assert family(unknown) is None, unknown
+    assert family("openai:commander-x") == "openai"              # "commander" is not "command"
+    assert family("openrouter:x/command-a") == "cohere"
+    assert family("groq:openai/gpt-oss-120b") == family("openai:o3") == "openai"
     _protected_repo(upstream, monkeypatch)                    # the author is anthropic:...
     world = WorldModel(tmp_path / "world.db")
     for model, problem in (("openrouter:anthropic/claude-3.5", "same_family"),
