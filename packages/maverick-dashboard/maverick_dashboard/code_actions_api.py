@@ -64,12 +64,14 @@ class RepoIn(BaseModel):
 
 
 class CommandsIn(BaseModel):
-    """A code project's test commands; a missing one is kept, an empty one
-    is cleared. vault.check_commands is their one limit and message."""
+    """A code project's test commands and protected paths; a missing one is
+    kept, an empty one is cleared. vault.check_commands and
+    vault.check_protected_paths are their one limit and message."""
     test_command: str | None = None
     quick_test_command: str | None = None
     gate_command: str | None = None
     heavy_test_command: str | None = None
+    protected_paths: list[str] | None = Field(default=None, max_length=200)
 
 
 class FeatureIn(BaseModel):
@@ -199,9 +201,14 @@ _COMMANDS_REFUSED = ("Lightwork could not save these commands. Keep each one to 
                      "files, and not inside quotes.")
 
 
+_PATHS_REFUSED = ("Lightwork could not save these protected paths. Give at most 100, each a path "
+                  "inside the project of at most 300 characters, with / between folders.")
+
+
 def _commands(repo) -> dict:
     from maverick.codebase import vault
-    return {"name": repo.name, **{key: getattr(repo, key) or "" for key in vault.COMMANDS}}
+    return {"name": repo.name, **{key: getattr(repo, key) or "" for key in vault.COMMANDS},
+            "protected_paths": list(repo.protected_paths)}
 
 
 @router.get("/code/repos/{name}/commands")
@@ -218,21 +225,37 @@ async def repo_commands(request: Request, name: str) -> dict:
 
 @router.post("/code/repos/{name}/commands")
 async def set_repo_commands(request: Request, name: str, body: CommandsIn) -> dict:
-    """Change a code project's test commands: the same authority as adding one."""
+    """Change a code project's test commands and protected paths: the same
+    authority as adding one."""
     require_permission(request, "admin")
     vault = _vault()
     given = body.model_dump(exclude_none=True)
-    if not given:
+    paths = given.pop("protected_paths", None)
+    if not given and paths is None:
         raise HTTPException(status_code=422, detail="Enter at least one command to change.")
     try:
         await run_in_threadpool(vault.get, name)
     except vault.VaultError as exc:
         raise HTTPException(status_code=404, detail="That code project was not found.") from exc
     try:
-        repo = await run_in_threadpool(lambda: vault.set_commands(name, **given))
+        vault.check_commands(given)
     except vault.VaultError as exc:
         raise HTTPException(status_code=422, detail=_COMMANDS_REFUSED) from exc
-    _audit(request, "set_commands", repo=name, changed=sorted(given))
+    try:
+        vault.check_protected_paths(paths)
+    except vault.VaultError as exc:
+        raise HTTPException(status_code=422, detail=_PATHS_REFUSED) from exc
+
+    def _do():
+        repo = vault.set_commands(name, **given) if given else vault.get(name)
+        return repo if paths is None else vault.set_protected_paths(name, paths)
+    try:
+        repo = await run_in_threadpool(_do)
+    except vault.VaultError as exc:
+        raise HTTPException(status_code=422, detail=_COMMANDS_REFUSED) from exc
+    changed = sorted(given) + ([] if paths is None else ["protected_paths"])
+    _audit(request, "set_commands", repo=name, changed=changed,
+           **({} if paths is None else {"protected_paths": list(repo.protected_paths)}))
     return _commands(repo)
 
 

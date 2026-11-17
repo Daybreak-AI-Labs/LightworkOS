@@ -1931,3 +1931,40 @@ def test_test_output_shown_is_only_from_the_final_version():
     tests, tiers, output = features._Loop.tier_record(loop)
     assert tiers["full"]["state"] == "not run" and tests["ran"] is False
     assert "quick ok" in output and "3 passed" not in output   # never an earlier version's run
+
+
+# -- the governed factory: protected paths, a second cross-family checker,
+#    two people to approve, and not changing the Lightwork that runs it --
+
+def test_protected_path_patterns_are_checked_and_matched(upstream, monkeypatch):
+    import json
+
+    from click.testing import CliRunner
+    from maverick import config
+    from maverick.cli import main
+    check = vault.check_protected_paths
+    assert check(["/.github/", "./src/**/*.py", "  ", ".github"]) == (".github", "src/**/*.py")
+    for bad in (["a/../b"], ["a\\b"], ["a\nb"], ["x" * 301], "a", [3], ["a//b"]):
+        with pytest.raises(vault.VaultError, match="protected paths"):
+            check(bad)
+    match = vault.protected_matches
+    paths = [".github/workflows/ci.yml", "src/a/b/c.py", "src/c.txt", "README.md", "docs/x.md"]
+    assert match([".github"], paths) == [".github/workflows/ci.yml"]   # a folder covers its files
+    assert match(["src/**/*.py"], paths) == ["src/a/b/c.py"]
+    assert match(["*.md"], paths) == ["README.md"]                     # * stays in one folder
+    assert match(["**/*.MD"], paths) == ["README.md", "docs/x.md"]     # case is ignored
+    # A record saved before protected paths loads with none; the CLI sets them.
+    vault.register("pricing", str(upstream))
+    registry = json.loads(vault._registry_path().read_text())
+    del registry["pricing"]["protected_paths"]
+    vault._registry_path().write_text(json.dumps(registry))
+    assert vault.get("pricing").protected_paths == ()
+    monkeypatch.setattr(config, "get_codebase", lambda: {"enable": True, "default_protect": "block"})
+    run = CliRunner().invoke
+    out = run(main, ["code", "set", "pricing", "--protected-path", ".github",
+                     "--protected-path", "app.py"])
+    assert out.exit_code == 0 and "protected paths: .github, app.py" in out.output, out.output
+    assert run(main, ["code", "set", "pricing", "--protected-path", "../x"]).exit_code != 0
+    assert vault.get("pricing").protected_paths == (".github", "app.py")
+    out = run(main, ["code", "set", "pricing", "--protected-path", ""])
+    assert out.exit_code == 0 and "protected paths: (none)" in out.output

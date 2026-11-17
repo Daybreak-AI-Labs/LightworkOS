@@ -151,7 +151,7 @@ def test_an_admin_sets_a_projects_test_commands_like_adding_it(client, monkeypat
     assert r.status_code == 200, r.text
     assert client.get(url).json() == {
         "name": "core", "test_command": "", "quick_test_command": "python -m pytest -q {changed}",
-        "gate_command": "bash lint.sh", "heavy_test_command": ""}
+        "gate_command": "bash lint.sh", "heavy_test_command": "", "protected_paths": []}
     refused = client.post(url, json={"gate_command": "lint {changed}"})
     assert refused.status_code == 422 and "quick tests" in refused.json()["detail"]
     # One limit and one message for every command, on both forms.
@@ -164,6 +164,16 @@ def test_an_admin_sets_a_projects_test_commands_like_adding_it(client, monkeypat
             code_actions_api._COMMANDS_REFUSED, path
     assert client.post("/api/v1/code/repos/nope/commands", json={"gate_command": "x"}).status_code == 404
     assert client.get("/api/v1/code/summary").json()["repos"][0]["test_tiers"] == ["quick", "gate"]
+    # Protected paths are set in the same dialog, with the same authority, and audited.
+    from maverick.audit.reader import iter_events
+    r = client.post(url, json={"protected_paths": [".github", "src/**/*.py"]})
+    assert r.status_code == 200 and r.json()["protected_paths"] == [".github", "src/**/*.py"]
+    assert vault.get("core").gate_command == "bash lint.sh"            # commands kept
+    assert any(e.get("action") == "set_commands" and e.get("protected_paths") == [".github", "src/**/*.py"]
+               for e in iter_events(all_days=True))
+    refused = client.post(url, json={"protected_paths": ["../outside"], "gate_command": "x"})
+    assert refused.status_code == 422 and refused.json()["detail"] == code_actions_api._PATHS_REFUSED
+    assert vault.get("core").gate_command == "bash lint.sh"            # nothing changed
 
 
 def test_code_actions_are_refused_while_the_vault_is_off(client):
