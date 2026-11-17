@@ -930,6 +930,30 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   planted defects the code factory's checkers find, how often they raise
   false alarms on correct changes, and the cost per case. Run it with a
   model key to score your configured checkers; `--self-test` needs no key.
+- A code change whose round or checker asks a person to decide now stops at
+  once: nothing half done is committed or offered for approval, and its
+  status reads "Waiting for a person's decision". Answer it, then start a
+  new code change; the answer never restarts the old step.
+- An answer given in the moment before a run pauses for its decision now
+  continues the run with that choice; before, the run stayed paused with
+  nothing left to answer. Nothing to do.
+- A run left waiting to start after its decision was answered, because
+  Lightwork stopped first, now continues when Lightwork starts again, in
+  every workspace. Resume, the Copilot and `maverick resume` also accept it.
+- The Approvals page, its API and the Copilot now always find your own
+  waiting decisions, even behind more than 200 of other people's; before,
+  yours could be hidden and answering one by its number said it was gone.
+- A paid tool call that fails after its request may have reached the
+  service (a read timeout, a failed poll) is now charged everything it held,
+  and the cost line says the provider may have billed it. It counts once
+  against the organization's daily cap. A call that never connected is not
+  charged. Check the provider's invoice for the real cost.
+- A paid tool service priced at $0 per second or per terabyte no longer
+  holds or charges anything, even when its replies do not report that unit.
+  Before, it held and charged up to `max_unmetered_hold_dollars` per call. A
+  $0 price for a count (message, image, page, character) makes only the
+  calls counted in it free; other calls to that service are charged as
+  before.
 
 ### Fixed
 

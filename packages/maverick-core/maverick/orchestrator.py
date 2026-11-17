@@ -2339,11 +2339,17 @@ def _settle_decision_result(*, result: Any, world: WorldModel, goal_id: int,
     # A run never finishes while a decision of this goal, or of a goal below
     # it, is open: whichever agent filed it, the run waits for the answer.
     waiting = decision_requests.open_for_tree(world, goal_id)
-    if not waiting:
+    filed = decision_requests.run_state(world, goal_id) == decision_requests.WAITING
+    if not waiting and not filed:
         return None
     lifecycle.end_episode("blocked awaiting a decision", "interrupted")
-    text = decision_requests.waiting_text(waiting)
+    text = (decision_requests.waiting_text(waiting) if waiting
+            else decision_requests.ANSWERED_EARLY)
     world.set_goal_status(goal_id, "blocked", result=text)
+    if not waiting:
+        # Answered before this pause took effect: the run continues with that
+        # choice once it has released its lease (decision_requests.after_run).
+        return text
     _fire_webhook("goal_waiting", {
         "goal_id": goal_id, "status": "blocked", "waiting_for": "decision",
         "open_decision_count": len(waiting),
@@ -3269,6 +3275,10 @@ async def run_goal(
         return f"BLOCKED: {exc}"
     except (TaskBusy, GoalMutationConflict, StarterWorkerAlreadyAdmitted, FederationAdmissionRequired) as exc:
         return f"BLOCKED: {exc}"
+    finally:
+        # After the execution lease is released, so the continued run can take it.
+        from .decision_requests import after_run
+        after_run(world, goal_id)
 
 
 def run_goal_sync(*args, **kwargs) -> str:

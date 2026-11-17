@@ -28,9 +28,14 @@ def reserve(world, goal_id, *, actor, operation_id, expected_updated_at, expecte
     if prior is not None:
         require_authority()
         return prior
+    from .decision_requests import claim_stranded, stranded
+
     threads = ChatThreads(world)
+    recoverable = stranded(world, goal_id)  # left pending after its answer; before the lease
     with lease(world, goal_id), threads._restart_transaction(goal_id) as (connection, binding, status):
         require_authority()
+        if status == "pending" and recoverable and claim_stranded(threads, connection, goal_id):
+            status = "blocked"
         def execute(sql, args=()):
             return threads.store.execute(connection, sql, args)
         prior = _receipt(execute, threads.store.open, goal_id, "resume", operation_id, actor, digest)

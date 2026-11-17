@@ -5402,17 +5402,23 @@ def resume(ctx, goal_id_arg, goal_id, max_depth: int, max_dollars, max_wall_seco
         click.echo(f"no such goal #{goal_id}. See `maverick status`.", err=True)
         sys.exit(2)
     from ..decision_requests import (
-        FEATURE_RESTARTS,
-        FEATURE_UNKNOWN_RESTART,
         expire_due,
+        feature_start_refusal,
+        for_goal,
         open_for_tree,
-        resume_refusal,
+        restart_stranded,
     )
 
     expire_due(world, goal_id=goal_id)
-    refused = resume_refusal(world, goal_id)
-    if refused in (FEATURE_RESTARTS, FEATURE_UNKNOWN_RESTART):  # a code change's step
+    refused = feature_start_refusal(world, goal_id)
+    if refused:  # a code change's step runs only inside its own private copy
         click.echo(f"cannot resume goal #{goal_id}: {refused}")
+        sys.exit(2)
+    if (world.get_goal(goal_id).status == "pending"
+            and any(d.status == "answered" for d in for_goal(world, goal_id))
+            and not restart_stranded(world, goal_id)):
+        click.echo(f"cannot resume goal #{goal_id}: it is already starting again with "
+                   "its answer. Check it again in a minute.")
         sys.exit(2)
     waiting = open_for_tree(world, goal_id)
     if waiting:

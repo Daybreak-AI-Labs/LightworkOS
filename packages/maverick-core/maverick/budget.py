@@ -1058,6 +1058,9 @@ _MAX_TOOL_UNIT_DOLLARS = 10_000.0
 _TOOL_PRICE_VERSION = "operator-tool-price-v1"
 _UNPRICED_TOOL_CEILING = "unpriced-tool-call-ceiling-v1"
 _UNREPORTED_TOOL_UNITS = "unreported-tool-units-v1"
+_UNCONFIRMED_TOOL_CALL = "unconfirmed-tool-call-v1"
+# Units every call to a service priced in them uses, reported or not.
+_UNITS_EVERY_CALL_USES = ("second", "terabyte")
 _TOOL_CEILING_WARNED: set[str] = set()
 
 # The paid tool services a [budget.tool_prices] entry prices, in plain words.
@@ -1185,9 +1188,14 @@ class ToolCallPrice:
         """``(dollars, priced)`` for a call measured in ``units``.
 
         ``priced`` is false when the ceiling applied: no price is set, or the
-        call's amount of the priced unit is not known.
+        call's amount of the priced unit is not known. A zero rate for time or
+        data scanned costs nothing even when unreported, since every call uses
+        some; a zero rate for a count (messages, images) prices only calls
+        measured in it.
         """
         amount = (units or {}).get(self.unit) if self.unit else None
+        if amount is None and self.dollars_per_unit == 0 and self.unit in _UNITS_EVERY_CALL_USES:
+            return 0.0, True
         if amount is None:
             return self.ceiling, False
         return _nonnegative_finite(amount, "tool usage") * self.dollars_per_unit, True
@@ -1287,17 +1295,25 @@ def tool_call_price(service: str) -> ToolCallPrice:
 
 def record_tool_dollars(
     budget: Budget, price: ToolCallPrice, dollars: float, *, priced: bool,
-    unreported: bool = False,
+    unreported: bool = False, unconfirmed: bool = False,
 ) -> TokenCharge:
     """Charge one paid tool call's ``dollars`` to ``budget``.
 
     ``priced`` is false when the safety ceiling set the amount; ``unreported``
     marks a call whose priced unit the reply never gave, charged everything
-    it held. The cost line then names the fix. Raises as
-    :meth:`Budget.record_tokens` does.
+    it held. The cost line then names the fix. ``unconfirmed`` marks a call
+    that failed after it may have reached the service, charged everything it
+    held. Raises as :meth:`Budget.record_tokens` does.
     """
     route = f"tool:{price.service}"
-    if unreported:
+    if unconfirmed:
+        quote = _estimate_policy_price(
+            route, (0.0, 0.0), source=f"config://budget.tool_prices.{price.service}",
+            confidence=0.0, version=_UNCONFIRMED_TOOL_CALL, evidence_id=_UNCONFIRMED_TOOL_CALL,
+            pricing_basis="The full hold: the call failed after it may have been sent",
+            applicability="Spend-limit charge for a paid tool call that failed after it "
+                          "may have been sent; the provider's invoice remains authoritative.")
+    elif unreported:
         quote = _estimate_policy_price(
             route, (0.0, 0.0), source=f"config://budget.tool_prices.{price.service}",
             confidence=0.0, version=_UNREPORTED_TOOL_UNITS, evidence_id=_UNREPORTED_TOOL_UNITS,
@@ -1837,6 +1853,12 @@ class Budget:
                 "usage, so the full amount held for it was charged. Set a price per request "
                 "for it in Settings > Models, under Prices for paid tool services, to be "
                 "charged per call instead"
+            )
+        if tools := priced_by.get(_UNCONFIRMED_TOOL_CALL):
+            note += (
+                f". A call to {', '.join(tool_route_label(t) for t in tools)} failed after it "
+                "may have been sent, so the full amount held for it was charged. The "
+                "provider may have billed it"
             )
         return note
 

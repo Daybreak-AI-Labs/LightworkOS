@@ -103,6 +103,160 @@ async def test_an_answer_resumes_the_run_with_the_chosen_option(
     assert world.get_goal(gid).status == "done"
 
 
+@pytest.mark.asyncio
+async def test_an_answer_that_lands_before_the_pause_continues_the_run(
+        tmp_path, fake_llm, make_llm_response, monkeypatch):
+    import threading
+
+    world = _world(tmp_path)
+    gid = world.create_goal("tidy the retention settings", "", owner="alice")
+    published, answered, outcomes, started = threading.Event(), threading.Event(), [], []
+
+    def person():  # answers on its own thread once the decision is published
+        published.wait(10)
+        decision = dr.list_open(world)[0]
+        outcomes.append(dr.answer(world, decision.id, 2, actor="alice", is_admin=False))
+        answered.set()
+
+    def announce(world, decision):  # the run is still active: it has not paused yet
+        published.set()
+        assert answered.wait(10)
+    threading.Thread(target=person).start()
+    monkeypatch.setattr(dr, "_announce", announce)
+    monkeypatch.setattr(dr, "dispatch_resume", lambda world, goal_id: started.append(goal_id))
+    fake_llm.scripted = [make_llm_response(text="A person must decide.", tool_calls=[
+        ToolCall(id="t1", name="request_decision", input=_REQUEST)])]
+
+    await _run(world, gid, fake_llm, tmp_path)
+
+    assert outcomes[0]["resume"] is False                    # it answered a run still active
+    assert world.get_goal(gid).status == "pending" and started == [gid]
+    fake_llm.scripted = [make_llm_response(text=t) for t in _FINISH]
+    await _run(world, gid, fake_llm, tmp_path)
+    assert '"option": 2' in str(fake_llm.calls[1].get("messages", ""))
+    assert world.get_goal(gid).status == "done"
+
+
+@pytest.mark.asyncio
+async def test_an_answer_while_the_run_still_holds_its_lease_continues_it_once(
+        tmp_path, fake_llm, make_llm_response, monkeypatch):
+    import threading
+
+    from maverick import orchestrator
+
+    world = _world(tmp_path)
+    gid = world.create_goal("tidy the retention settings", "", owner="alice")
+    answered, outcomes, started = threading.Event(), [], []
+    settle = orchestrator._settle_decision_result
+
+    def person():
+        outcomes.append(dr.answer(world, dr.list_open(world)[0].id, 2, actor="alice",
+                                  is_admin=False))
+        answered.set()
+
+    def settled(**kwargs):  # blocked, but the run has not released its lease yet
+        out = settle(**kwargs)
+        threading.Thread(target=person).start()
+        assert answered.wait(10)
+        return out
+    monkeypatch.setattr(orchestrator, "_settle_decision_result", settled)
+    monkeypatch.setattr(dr, "dispatch_resume", lambda world, goal_id: started.append(goal_id))
+    fake_llm.scripted = [make_llm_response(text="A person must decide.", tool_calls=[
+        ToolCall(id="t1", name="request_decision", input=_REQUEST)])]
+
+    await _run(world, gid, fake_llm, tmp_path)
+
+    assert outcomes[0]["resume"] is False and outcomes[0]["next"] == "finishing"
+    assert "once it has stopped" in dr.next_text(outcomes[0])
+    assert world.get_goal(gid).status == "pending" and started == [gid]   # started once
+    assert dr.continue_answered(world, gid) is False and started == [gid]  # the claim is taken
+
+
+def _left_pending(world, monkeypatch, *, age=3600.0):
+    """A run its answer moved to pending, then the process stopped before the
+    run started: its last change and its restart marker are ``age`` old."""
+    monkeypatch.setattr("maverick.outcome_pilot_start_gate.require_work_item_admission",
+                        lambda *a: None)
+    gid, decision = _paused_goal(world)
+    assert dr.answer(world, decision.id, 1, actor="alice", is_admin=False)["resume"] is True
+    with world._writing() as conn:
+        conn.execute("UPDATE goals SET updated_at = updated_at - ? WHERE id = ?", (age, gid))
+        conn.execute("UPDATE decision_requests SET resume_dispatched_at = resume_dispatched_at - ? "
+                     "WHERE goal_id = ?", (age, gid))
+    return gid
+
+
+def test_a_run_left_pending_after_its_answer_is_recovered_once(tmp_path, monkeypatch):
+    from maverick import runner
+
+    started = []
+    monkeypatch.setattr(dr, "dispatch_resume", lambda world, goal_id: started.append(goal_id))
+    world = _world(tmp_path)
+    fresh = _left_pending(world, monkeypatch, age=0.0)
+    assert dr.recover_all_stranded(world) == 0                  # its restart is recent
+    world.set_goal_status(fresh, "done")
+    gid = _left_pending(world, monkeypatch)
+    with runner._submitted_here(gid):                           # still queued for a slot here
+        assert dr.recover_all_stranded(world) == 0
+    assert dr.recover_all_stranded(world) == 1 and started == [gid]
+    assert world.get_goal(gid).status == "pending"
+    assert dr.recover_all_stranded(world) == 0 and started == [gid]   # its new marker holds it
+
+
+def test_resume_and_the_cli_take_back_a_run_left_pending_once(tmp_path, monkeypatch):
+    import maverick.cli as cli
+    from click.testing import CliRunner
+    from maverick import goal_resume
+    from maverick.chat_threads import ChatThreads
+    from maverick.goal_mutations import GoalMutationConflict
+    from maverick.world_model import open_world
+
+    db = tmp_path / "world.db"
+    world = open_world(db)
+    gid = _left_pending(world, monkeypatch)
+    updated = world.get_goal(gid).updated_at
+    reserve = dict(actor="alice", expected_updated_at=updated, expected_owner="alice",
+                   max_dollars=None, require_authority=lambda: None, require_admission=lambda: None)
+    result = goal_resume.reserve(world, gid, operation_id="a" * 32, **reserve)
+    assert result["admitted"] and world.get_goal(gid).status == "pending"
+    with pytest.raises(GoalMutationConflict):                   # the same review never twice
+        goal_resume.reserve(world, gid, operation_id="b" * 32, **reserve)
+    with pytest.raises(Exception, match="already running"):     # its marker is now recent
+        ChatThreads(world).resume(gid)
+    world.set_goal_status(gid, "done")
+    gid = _left_pending(world, monkeypatch)
+    ChatThreads(world).resume(gid)
+    assert world.get_goal(gid).status == "pending"
+    world.set_goal_status(gid, "done")
+    gid = _left_pending(world, monkeypatch)
+    ran = []
+    import contextlib
+
+    monkeypatch.setattr(cli, "_require_llm_key", lambda: None)
+    monkeypatch.setattr(cli, "_cli_sandbox", lambda k, backend=None: contextlib.nullcontext())
+    monkeypatch.setattr(cli, "_kernel", lambda: type("K", (), {
+        "LLM": lambda self, model=None: None,
+        "run_goal_sync": lambda self, *a, **k: ran.append(a[3]) or "done"})())
+    out = CliRunner().invoke(cli.main, ["--db", str(db), "resume", str(gid)])
+    assert ran == [gid], out.output
+    out = CliRunner().invoke(cli.main, ["--db", str(db), "resume", str(gid)])
+    assert out.exit_code == 2 and "already starting again" in out.output and ran == [gid]
+
+
+def test_start_up_recovers_a_workspace_run_left_pending(tmp_path, monkeypatch):
+    from maverick.paths import _tenant_segment, tenant_scope
+
+    started = []
+    monkeypatch.setattr(dr, "dispatch_resume",
+                        lambda world, goal_id: started.append((current(), goal_id)))
+    from maverick.paths import current_tenant_id as current
+    store = tmp_path / "home" / "tenants" / _tenant_segment("team-a") / "world.db"
+    store.parent.mkdir(parents=True)
+    with tenant_scope(tenant="team-a"), WorldModel(path=store) as team:
+        gid = _left_pending(team, monkeypatch)
+    assert dr.recover_everywhere(_world(tmp_path)) == 1 and started == [("team-a", gid)]
+
+
 def test_a_person_without_authority_is_refused(tmp_path):
     world = _world(tmp_path)
     gid, decision = _paused_goal(world)
@@ -206,6 +360,13 @@ def test_postgres_keeps_a_decision_inside_its_named_workspace(postgres_test_dsn,
             assert hidden.value.reason == "not_found"
         with tenant_scope(tenant="tenant-a"):
             assert [d.id for d in dr.list_open(world)] == [decision.id]
+            # The owner filter runs in the query, before the limit.
+            other = world.create_goal("someone else's run", "", owner="bob")
+            world.set_goal_status(other, "blocked")
+            dr.request(world, other, **dr.validate(_REQUEST))
+            assert [d.id for d in dr.list_open(world, limit=1)] == [decision.id]
+            assert [d.requested_by for d in dr.list_open(world, limit=1, requested_by="bob")] \
+                == ["bob"]
             outcome = dr.answer(world, decision.id, 2, actor="alice", is_admin=False)
             assert outcome["resume"] and world.get_goal(gid).status == "pending"
             assert '"option": 2' in dr.brief_block(world, gid)

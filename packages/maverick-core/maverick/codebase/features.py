@@ -85,7 +85,7 @@ BUDGET_REASON = "the spending limit ran out"
 SETUP_REASON = "its work area could not be set up"
 # A run that asked a person to decide (decision_requests) stops the feature
 # run at once: its proposal waits for that answer and is never offered for
-# approval; after the answer, the person starts a new feature run.
+# approval; after the answer, the person starts a new code change.
 ORIGIN_KIND = "codebase_feature"
 ASKED_REASON = "it asked a person to decide, so it could not finish"
 DECISION_GAP = ("The run stopped to wait for a person's decision, so this change cannot be "
@@ -412,14 +412,12 @@ class DecisionPending(Exception):
         self.decisions, self.goal_id = decisions, goal_id
 
 
-def _waiting(world, goal_id: int) -> list:
-    """Open decisions of ``goal_id`` and the goals below it."""
-    from .. import decision_requests
-    return decision_requests.open_for_tree(world, goal_id)
-
-
 def _stop_if_waiting(world, goal_id: int) -> None:
-    decisions = _waiting(world, goal_id)
+    """Stop the feature run when ``goal_id`` or a goal below it asked a person
+    to decide. Each round's goals are new, so any decision in that tree was
+    asked in this round, even one answered before the round paused."""
+    from .. import decision_requests
+    decisions = decision_requests.for_tree(world, goal_id)
     if decisions:
         raise DecisionPending(decisions, goal_id)
 
@@ -1423,7 +1421,8 @@ def _hold(world, decisions: list, goal_id: int, pid: str) -> list[dict]:
             import logging
             logging.getLogger(__name__).warning("feature run %s: goal #%s not marked", pid,
                                                 marked)
-    return [{"id": d.id, "goal_id": d.goal_id, "question": d.question} for d in decisions]
+    return [{"id": d.id, "goal_id": d.goal_id, "question": d.question,
+             "open": d.status == "open"} for d in decisions]
 
 
 def propose(world, name: str, title: str, description: str, run: Runner, *,
@@ -1650,17 +1649,6 @@ def run_lines(p: dict) -> list[str]:
     if p.get("status") == "running":
         return [STOPPED_LINE if _run_gone(p) else RUNNING_LINE]
     return [STOPPED_LINE] if p.get("status") == "stopped" else []
-
-
-def decision_lines(p: dict) -> list[str]:
-    """What a feature run that stopped for a person's decision is waiting
-    for, and where to answer it."""
-    lines = []
-    for d in p.get("decision") or ():
-        lines.append(f"Waiting for a person's decision: “{_safe_label(d.get('question'), 300)}”. "
-                     "Answer it on the Approvals page or with maverick decisions answer "
-                     f"{d.get('id')}, then start a new code change.")
-    return lines
 
 
 def protected_refusal(p: dict) -> str | None:
@@ -1959,6 +1947,17 @@ def evidence(p: dict) -> dict:
             "tests": tests, "protected": first,
             "findings": [_finding_line(f, many) for f in check.get("findings") or []]
             + protected_findings}
+
+
+def decision_lines(p: dict) -> list[str]:
+    """What a code change that stopped for a person's decision waits for, and
+    what the person does next."""
+    return [f"Waiting for a person's decision: “{_safe_label(d.get('question'), 300)}”. "
+            "Answer it on the Approvals page or with maverick decisions answer "
+            f"{d.get('id')}, then start a new code change." if d.get("open", True) else
+            f"A person was asked to decide “{_safe_label(d.get('question'), 300)}” before "
+            "this step could finish. Start a new code change to use the answer."
+            for d in p.get("decision") or ()]
 
 
 def _approval_card(p: dict, *, full: bool) -> str:

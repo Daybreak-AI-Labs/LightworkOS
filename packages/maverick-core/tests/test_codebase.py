@@ -2212,8 +2212,11 @@ def _ask(world, goal_id, question):
 
 
 def test_an_author_that_asks_for_a_decision_stops_the_run(upstream, tmp_path, monkeypatch):
-    from maverick import decision_requests
+    from click.testing import CliRunner
+    from maverick import config, decision_requests, orchestrator
     from maverick.budget import Budget
+    from maverick.chat_threads import ChatThreads
+    from maverick.cli import main
     monkeypatch.setattr(decision_requests, "_announce", lambda world, decision: None)
     vault.register("pricing", str(upstream), test_command="python -m pytest -q")
     world = WorldModel(tmp_path / "world.db")
@@ -2223,29 +2226,47 @@ def test_an_author_that_asks_for_a_decision_stops_the_run(upstream, tmp_path, mo
     def author(goal_id, work):
         _passing(work)
         budget.record_tool_call()
-        asked["d"] = _ask(world, goal_id, "May the change turn off sign-in checks?")
+        assert decision_requests.resume_refusal(world, goal_id) == ""   # its own run starts
+        step = world.create_goal("step", "deep", parent_id=goal_id, owner="user:starter")
+        world.set_goal_status(goal_id, "blocked")
+        asked["root"], asked["d"] = goal_id, _ask(world, step, "May the change turn off sign-in?")
     checks = []
     p = features.propose(world, "pricing", "Discount", "", author, sandbox_factory=_Sandbox,
                          checker=lambda gid, copy: checks.append(gid) or {"findings": []},
                          owner="user:starter", budget=budget)
-    d = asked["d"]
+    d, root = asked["d"], asked["root"]
     assert p["status"] == "decision" and p["approval_id"] is None and checks == []
     assert p["head"] == p["base"] and p["files"] == []        # its half-done round never committed
     assert budget.tool_calls == 1                              # what it spent stays charged
     facts = features.evidence(p)
     assert facts["lines"][0] == ("Waiting for a person's decision: “May the change turn off "
-                                 "sign-in checks?”. Answer it on the Approvals page or with "
-                                 f"maverick decisions answer {d.id}, then start a new code change.")
+                                 "sign-in?”. Answer it on the Approvals page or with maverick "
+                                 f"decisions answer {d.id}, then start a new code change.")
     assert features.DECISION_GAP in facts["gaps"]
     assert features.status(world, features.find(p["id"])) == "decision"
     with pytest.raises(vault.VaultError, match="wait for a person's decision"):
         features.request_approval(world, features.find(p["id"]))
     assert world.get_goal(d.goal_id).status == "blocked"      # not failed: it can be answered
-    # The answer is saved, but it never restarts the step outside its private copy.
+    # No restart path takes the paused round back up outside its private copy.
+    assert decision_requests.resume_refusal(world, root) == decision_requests.FEATURE_RESTARTS
+    with pytest.raises(Exception, match="step of a code change"):
+        ChatThreads(world).resume(root)
+    assert orchestrator._decision_start_refusal(world, root).endswith(
+        decision_requests.FEATURE_RESTARTS)
+    monkeypatch.setattr(config, "get_codebase", lambda: {"enable": True})
+    monkeypatch.setattr("maverick.cli.open_world", lambda *a, **k: world, raising=False)
+    out = CliRunner().invoke(main, ["resume", "--goal-id", str(root)])
+    assert out.exit_code == 2 and "step of a code change" in out.output, out.output
+    # The answer is saved, but it never restarts the step: the step stops for good.
     outcome = decision_requests.answer(world, d.id, 2, actor="user:starter", is_admin=True)
     assert outcome["resume"] is False and outcome["next"] == "manual"
     assert outcome["restart"] == decision_requests.FEATURE_RESTARTS
-    assert world.get_goal(d.goal_id).status == "cancelled"     # the step stops for good
+    step = world.get_goal(d.goal_id)
+    assert step.status == "cancelled" and step.result == decision_requests.FEATURE_RESTARTS
+    # An origin that cannot be read refuses the restart.
+    monkeypatch.setattr(world, "tenant_query", lambda *a, **k: (_ for _ in ()).throw(OSError()))
+    assert decision_requests.resume_refusal(world, root) == \
+        decision_requests.FEATURE_UNKNOWN_RESTART
 
 
 def test_a_checker_that_asks_for_a_decision_could_not_run(upstream, tmp_path, monkeypatch):
@@ -2265,6 +2286,26 @@ def test_a_checker_that_asks_for_a_decision_could_not_run(upstream, tmp_path, mo
     assert lines[0].startswith("Waiting for a person's decision: “Should I report the pricing")
     assert f"Independent check: could not run ({features.ASKED_REASON})." in lines
     assert features.summary(world)["proposals"][0]["check"] == "failed"
+
+
+def test_a_round_whose_decision_was_answered_before_it_paused_still_stops(upstream, tmp_path,
+                                                                           monkeypatch):
+    from maverick import decision_requests
+    monkeypatch.setattr(decision_requests, "_announce", lambda world, decision: None)
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+
+    def author(goal_id, work):
+        _passing(work)
+        world.set_goal_status(goal_id, "active")
+        d = _ask(world, goal_id, "Which way?")
+        world.set_goal_status(goal_id, "active")               # the answer lands before the pause
+        decision_requests.answer(world, d.id, 1, actor="user:starter", is_admin=True)
+    p = features.propose(world, "pricing", "Discount", "", author, owner="user:starter")
+    assert p["status"] == "decision" and p["head"] == p["base"] and p["approval_id"] is None
+    assert features.evidence(p)["lines"][0] == (
+        "A person was asked to decide “Which way?” before this step could finish. "
+        "Start a new code change to use the answer.")
 
 
 # -- not changing the Lightwork that runs the factory --
@@ -2496,7 +2537,8 @@ def test_a_paused_step_is_never_restarted_outside_its_private_copy(upstream, tmp
         "SELECT kind FROM goal_origins WHERE goal_id = 1 AND {tenant_goal:goal_id}", ())] \
         == ["schedule"]
     monkeypatch.setattr(world, "tenant_query", lambda *a, **k: (_ for _ in ()).throw(OSError()))
-    assert "could not check" in decision_requests.resume_refusal(world, root)
+    assert decision_requests.resume_refusal(world, root) == \
+        decision_requests.FEATURE_UNKNOWN_RESTART
 
 
 def test_one_person_spelt_two_ways_is_still_one_person(upstream, tmp_path, monkeypatch):

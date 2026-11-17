@@ -95,7 +95,7 @@ SQLITE_SCHEMA: list[str] = [
     " admin_required INTEGER NOT NULL DEFAULT 0, requested_by TEXT NOT NULL DEFAULT '',"
     " status TEXT NOT NULL DEFAULT 'open', created_at REAL NOT NULL,"
     " expires_at REAL NOT NULL, chosen INTEGER, note TEXT, decided_by TEXT,"
-    " decided_at REAL)",
+    " decided_at REAL, resume_token TEXT, resume_dispatched_at REAL)",
     "CREATE INDEX IF NOT EXISTS idx_decision_requests_goal ON decision_requests(goal_id, status)",
     "CREATE INDEX IF NOT EXISTS idx_decision_requests_open ON decision_requests(status, expires_at)",
 ]
@@ -411,12 +411,13 @@ def _from_row(row, store) -> Decision:
     )
 
 
-def _select(world, where: str, params: tuple = ()) -> list[Decision]:
+def _select(world, where: str, params: tuple = (), *, limit: int | None = None) -> list[Decision]:
     store = _store(world)
     columns = ", ".join(f"d.{c.strip()}" for c in _COLUMNS.split(","))
     rows = world.tenant_query(
         f"SELECT {columns} FROM decision_requests d JOIN goals g ON g.id = d.goal_id "
-        f"WHERE {{tenant_exact:g.tenant_id}} AND {where} ORDER BY d.id", params)
+        f"WHERE {{tenant_exact:g.tenant_id}} AND {where} ORDER BY d.id"
+        + ("" if limit is None else f" LIMIT {max(1, int(limit))}"), params)
     return [_from_row(row, store) for row in rows]
 
 
@@ -429,21 +430,32 @@ def open_for_goal(world, goal_id: int) -> list[Decision]:
     return _select(world, "d.goal_id = ? AND d.status = 'open'", (int(goal_id),))
 
 
+_IN_TREE = ("d.goal_id IN (WITH RECURSIVE tree(id) AS ("
+            "SELECT CAST(? AS INTEGER) UNION SELECT c.id FROM goals c JOIN tree t ON c.parent_id = t.id) "
+            "SELECT id FROM tree)")
+
+
 def open_for_tree(world, goal_id: int) -> list[Decision]:
     """Open decisions of ``goal_id`` and every goal below it."""
-    return _select(
-        world,
-        "d.status = 'open' AND d.goal_id IN (WITH RECURSIVE tree(id) AS ("
-        "SELECT CAST(? AS INTEGER) UNION SELECT c.id FROM goals c JOIN tree t ON c.parent_id = t.id) "
-        "SELECT id FROM tree)", (int(goal_id),))
+    return _select(world, "d.status = 'open' AND " + _IN_TREE, (int(goal_id),))
+
+
+def for_tree(world, goal_id: int) -> list[Decision]:
+    """Every decision, in any state, of ``goal_id`` and every goal below it."""
+    return _select(world, _IN_TREE, (int(goal_id),))
 
 
 def for_goal(world, goal_id: int) -> list[Decision]:
     return _select(world, "d.goal_id = ?", (int(goal_id),))
 
 
-def list_open(world, *, limit: int = 200) -> list[Decision]:
-    return _select(world, "d.status = 'open'")[: max(1, int(limit))]
+def list_open(world, *, limit: int = 200, requested_by: str | None = None) -> list[Decision]:
+    """Open decisions, oldest first; only ``requested_by``'s runs when given.
+    The filter runs in the query, before the limit."""
+    if requested_by is None:
+        return _select(world, "d.status = 'open'", limit=limit)
+    return _select(world, "d.status = 'open' AND d.requested_by = ?", (str(requested_by),),
+                   limit=limit)
 
 
 def _goal_scope(store, world, alias: str = "g") -> tuple[str, tuple]:
@@ -651,7 +663,7 @@ def answer(world, decision_id: int, option: int, *, actor: str, is_admin: bool,
     except Exception as exc:  # noqa: BLE001 -- never guess where the run came from
         raise DecisionRefused("unavailable", FEATURE_UNKNOWN) from exc
     resumable = resume_kwargs(world.get_goal(current.goal_id)) is not None and not feature
-    resume = False
+    resume = finishing = False
     waiting = 0
     try:
         with threads._restart_transaction(current.goal_id) as (connection, binding, status):
@@ -669,6 +681,10 @@ def answer(world, decision_id: int, option: int, *, actor: str, is_admin: bool,
                 connection, "SELECT COUNT(*) FROM questions WHERE goal_id = ? AND answer IS NULL",
                 (current.goal_id,)).fetchone()[0])
             resume = status == "blocked" and int(waiting) == 0 and resumable
+            # A run still finishing holds its lease, so a restart now would be
+            # refused as busy: it continues itself once it exits (after_run).
+            finishing = resume and _run_finishing(world, current.goal_id)
+            resume = resume and not finishing
             if resume:
                 if binding is not None:
                     threads.require_idle(connection, binding.root_id, binding.owner,
@@ -695,7 +711,7 @@ def answer(world, decision_id: int, option: int, *, actor: str, is_admin: bool,
     label = (current.option(option) or {}).get("label", "")
     _timeline(world, current.goal_id, f"{recorded} chose “{label}” for: {current.question}")
     decided = get(world, decision_id) or current
-    following = ("resumed" if resume else
+    following = ("resumed" if resume else "finishing" if finishing else
                  "manual" if not int(waiting) and not resumable else "waiting")
     outcome: dict[str, Any] = {"decision": decided, "resume": resume, "next": following}
     if following == "manual":
@@ -721,6 +737,7 @@ def _manual_restart(world, current: Decision, label: str, *, feature: bool) -> s
 _NEXT_TEXT = {
     "resumed": "The run continues with this choice.",
     "waiting": "The run continues once its other decisions and questions are answered.",
+    "finishing": "The run is still stopping. It continues with this choice once it has stopped.",
 }
 
 
@@ -1096,20 +1113,18 @@ NOBODY_RESTARTS = ("Another system started this run, so no person can restart it
                    "The answer is saved for the record.")
 
 
-#: A step of a code change (``maverick.codebase.features.ORIGIN_KIND``): it ran
-#: in a private copy of the code that no longer exists, so an answer never
-#: restarts it; the person starts a new code change instead.
+#: A step of a code change (``maverick.codebase.features.ORIGIN_KIND``): it runs
+#: in a private copy of the code that is gone once the change ends, so an
+#: answer never restarts it; the person starts a new code change instead.
 _FEATURE_ORIGIN = "codebase_feature"
 FEATURE_RESTARTS = ("This was a step of a code change, so it does not continue by itself. "
                     "Start a new code change to use your answer.")
-
-
-FEATURE_UNKNOWN = ("Lightwork could not check where this run came from, so your answer was "
-                   "not saved. Try again in a moment.")
-FEATURE_UNKNOWN_RESTART = ("Lightwork could not check where this run came from, so it was not "
-                           "restarted. Try again in a moment.")
-
-
+FEATURE_UNKNOWN = ("Lightwork could not read its record of which runs belong to a code change, "
+                   "so your answer was not saved. Check that the database can be read, then "
+                   "try again.")
+FEATURE_UNKNOWN_RESTART = ("Lightwork could not read its record of which runs belong to a code "
+                           "change, so it did not start this run. Check that the database can "
+                           "be read, then try again.")
 #: The goals a code change's own loop is running right now (set by
 #: ``maverick.codebase.features`` around each round and check): only there may
 #: a goal marked as a code-change step start.
@@ -1152,19 +1167,18 @@ def _feature_step(goal_id: int, world) -> bool:
 def feature_start_refusal(world, goal_id: int) -> str:
     """Why a code change's step may not start here, or ``""``.
 
-    Every step is marked when the code change creates it, before it runs.
-    Inside the change's own loop it starts. Anywhere else (a resume, a chat
+    Every step is marked when the code change creates it, before it runs, and
+    starts only inside the change's own loop. Anywhere else (a resume, a chat
     restart, the supervisor, an answered decision) a marked goal never starts
-    again, and a goal an agent created below one starts only if it never ran
-    and its change is still being built, by a step that is running now: once
-    the change ends, its private copy of the code is gone."""
+    again. A goal an agent created below one starts only if it never ran, every
+    marked step above it is still running, and its change is still being built
+    by a live process: once the change ends, its private copy of the code is gone."""
     try:
         rows = _feature_rows(goal_id, world)
-        chain = [r[0] for r in rows]
-        marked = {r[0] for r in rows if r[1] == _FEATURE_ORIGIN}
-        if not marked or FEATURE_LOOP.get() & set(chain):
+        marked = [(goal, status) for goal, kind, _ref, status in rows if kind == _FEATURE_ORIGIN]
+        if not marked or FEATURE_LOOP.get() & {r[0] for r in rows}:
             return ""
-        if int(goal_id) in marked:
+        if any(goal == int(goal_id) or status != "active" for goal, status in marked):
             return FEATURE_RESTARTS
         if world.list_episodes(limit=1, goal_id=int(goal_id)) or not _change_live(rows):
             return FEATURE_RESTARTS
@@ -1202,6 +1216,218 @@ def restart_note(goal, world=None) -> str:
     if goal is None or resume_kwargs(goal) is not None:
         return ""
     return NOBODY_RESTARTS if _started_by_system(goal, world) else STARTER_RESTARTS
+
+
+ANSWERED_EARLY = "A person answered this run's decision before it paused. Your answer was saved."
+
+
+def _run_finishing(world, goal_id: int) -> bool:
+    """Whether a run of this goal still holds its execution lease: it is
+    running or finishing. A restart now would be refused as busy."""
+    from .task_execution_guard import TaskBusy, lease
+
+    try:
+        with lease(world, goal_id):
+            return False
+    except TaskBusy:
+        return True
+    except Exception:  # noqa: BLE001 -- unknown: restart as before; the run start re-checks
+        log.debug("execution lease probe failed", exc_info=True)
+        return False
+
+
+def _answered_and_free(world, goal_id: int) -> bool:
+    """A run that may continue by itself after an answer: a decision of its own
+    was answered, nothing it waits for is still open, and Lightwork restarts it."""
+    if _feature_step(goal_id, world) or resume_kwargs(world.get_goal(goal_id)) is None:
+        return False
+    return any(d.status == "answered" for d in for_goal(world, goal_id))
+
+
+def continue_answered(world, goal_id: int) -> bool:
+    """After a run that filed a decision has exited and released its lease:
+    when the answer arrived while it was still running or finishing (so the
+    answer restarted nothing), move it from ``blocked`` back to ``pending``
+    and start it with that answer. The move is the single claim: it runs in
+    the per-goal transaction :func:`answer` uses, and only from ``blocked``,
+    so exactly one of them starts the run."""
+    from .attachment_submissions import SubmissionConflict
+    from .chat_threads import ChatThreads
+
+    try:
+        if not _answered_and_free(world, goal_id):
+            return False
+        threads = ChatThreads(world)
+        store = threads.store
+        with threads._restart_transaction(goal_id) as (connection, binding, status):
+            if status != "blocked" or threads._decisions_open(connection, goal_id) or int(
+                    store.execute(connection, "SELECT COUNT(*) FROM questions WHERE goal_id = ? "
+                                  "AND answer IS NULL", (goal_id,)).fetchone()[0]):
+                return False
+            if binding is not None:
+                threads.require_idle(connection, binding.root_id, binding.owner,
+                                     except_goal=goal_id)
+            _require_admission(goal_id)
+            threads._pending(connection, goal_id)
+    except (SubmissionConflict, DecisionRefused):
+        return False
+    except Exception:  # noqa: BLE001 -- it stays blocked; a person can still restart it
+        log.warning("goal #%s was not continued after its answer", goal_id, exc_info=True)
+        return False
+    dispatch_resume(world, goal_id)
+    return True
+
+
+def after_run(world, goal_id: int) -> None:
+    """Called once a run has released its execution lease: continue it when
+    its decision was answered while it was still running or finishing."""
+    if run_state(world, goal_id) == WAITING:
+        continue_answered(world, goal_id)
+
+
+def mark_dispatch(store, connection, goal_id: int) -> None:
+    """Inside the transaction that moves a run back to ``pending``: record when,
+    and under which token, on its answered decisions."""
+    import secrets
+
+    store.execute(connection, "UPDATE decision_requests SET resume_token = ?, "
+                  "resume_dispatched_at = ? WHERE goal_id = ? AND status = 'answered'",
+                  (secrets.token_hex(8), time.time(), int(goal_id)))
+
+
+def _window(older_than: float | None) -> float:
+    from .world_model import reclaim_window_seconds
+
+    return reclaim_window_seconds() if older_than is None else float(older_than)
+
+
+def _queued_elsewhere(goal_id: int) -> bool:
+    """Whether a queue or this process's runner may still hold the goal. Only
+    the in-process runner can be asked; a queue or remote worker owns its
+    pending goals durably, so they are never taken from it."""
+    from .runner import LocalThreadDispatcher, get_dispatcher, goal_submitted_here
+
+    return not isinstance(get_dispatcher(), LocalThreadDispatcher) or goal_submitted_here(goal_id)
+
+
+def stranded(world, goal_id: int, *, older_than: float | None = None) -> bool:
+    """Whether a ``pending`` run was left behind after its answer: a decision
+    of its own was answered, nothing waits, its last restart marker (if any)
+    and its last change are older than the orphan-reclaim window, and no queue
+    entry or lease holds it (a process stopped before it could start it)."""
+    cutoff = time.time() - _window(older_than)
+    try:
+        rows = world.tenant_query(
+            "SELECT g.status, g.updated_at, (SELECT MAX(d.resume_dispatched_at) FROM "
+            "decision_requests d WHERE d.goal_id = g.id) FROM goals g WHERE g.id = ? AND "
+            "{tenant_exact:g.tenant_id}", (int(goal_id),))
+        if (not rows or str(rows[0][0]) != "pending" or float(rows[0][1] or 0) > cutoff
+                or float(rows[0][2] or 0) > cutoff):
+            return False
+        return (_answered_and_free(world, goal_id) and not open_for_tree(world, goal_id)
+                and not world.open_questions(goal_id) and not _queued_elsewhere(goal_id)
+                and not _run_finishing(world, goal_id))
+    except Exception:  # noqa: BLE001 -- unknown: leave it to a person
+        log.debug("stranded-run check failed", exc_info=True)
+        return False
+
+
+def claim_stranded(threads, connection, goal_id: int, *, older_than: float | None = None) -> bool:
+    """Inside a restart transaction, after :func:`stranded` said yes: take the
+    run back from ``pending`` to ``blocked`` (only one caller can), unless a
+    restart marker became recent meanwhile. The caller then restarts it."""
+    store = threads.store
+    marker = store.execute(connection, "SELECT MAX(resume_dispatched_at) FROM decision_requests "
+                           "WHERE goal_id = ?", (int(goal_id),)).fetchone()
+    if marker and float(marker[0] or 0) > time.time() - _window(older_than):
+        return False
+    scope, values = threads._scope("goals")
+    changed = threads._execute(connection, f"UPDATE goals SET status = 'blocked' WHERE id = ? "
+                               f"AND status = 'pending' AND {scope}", (int(goal_id), *values))
+    return changed.rowcount == 1
+
+
+def restart_stranded(world, goal_id: int, *, older_than: float | None = None) -> bool:
+    """Claim a run :func:`stranded` left ``pending`` and move it back to start,
+    with a new restart marker. True when this caller holds the restart and
+    must start it; False when it is not stranded or another caller won."""
+    from .chat_threads import ChatThreads
+
+    if not stranded(world, goal_id, older_than=older_than):
+        return False
+    threads = ChatThreads(world)
+    with threads._restart_transaction(goal_id) as (connection, binding, status):
+        if status != "pending" or not claim_stranded(threads, connection, goal_id,
+                                                     older_than=older_than):
+            return False
+        if binding is not None:
+            threads.require_idle(connection, binding.root_id, binding.owner,
+                                 except_goal=goal_id)
+        _require_admission(goal_id)
+        threads._pending(connection, goal_id)
+    return True
+
+
+def recover_stranded(world, goal_id: int, *, older_than: float | None = None) -> bool:
+    """Start, once, a run :func:`stranded` left ``pending``."""
+    try:
+        if not restart_stranded(world, goal_id, older_than=older_than):
+            return False
+    except Exception:  # noqa: BLE001 -- recovery is best effort; a person can resume it
+        log.warning("goal #%s left after its answer was not recovered", goal_id, exc_info=True)
+        return False
+    dispatch_resume(world, goal_id)
+    return True
+
+
+def recover_all_stranded(world) -> int:
+    """Start every run of this workspace left ``pending`` after its answer."""
+    try:
+        rows = world.tenant_query(
+            "SELECT DISTINCT g.id FROM goals g JOIN decision_requests d ON d.goal_id = g.id "
+            "WHERE {tenant_exact:g.tenant_id} AND g.status = 'pending' AND d.status = 'answered'",
+            ())
+    except Exception:  # noqa: BLE001 -- a store without the table has nothing to recover
+        log.debug("stranded-run lookup failed", exc_info=True)
+        return 0
+    return sum(1 for row in rows if recover_stranded(world, int(row[0])))
+
+
+def recover_everywhere(world) -> int:
+    """At start-up: :func:`recover_all_stranded` in the default workspace and
+    in every other workspace, each in its own scope. SQLite visits every
+    workspace file; Postgres the open-decisions index and the registry."""
+    from urllib.parse import unquote
+
+    from .paths import maverick_home, tenant_scope
+    from .world_model import WorldModel
+
+    total = recover_all_stranded(world)
+    if isinstance(world, WorldModel):
+        for store in sorted((maverick_home() / "tenants").glob("*/world.db")):
+            if str(store) == str(getattr(world, "path", "")):
+                continue
+            try:
+                with tenant_scope(tenant=unquote(store.parent.name)), \
+                        WorldModel(path=store) as tenant_world:
+                    total += recover_all_stranded(tenant_world)
+            except Exception:  # noqa: BLE001 -- one workspace must not stop the others
+                log.warning("answered-run recovery failed for one workspace", exc_info=True)
+        return total
+    known: set[str] = set(indexed_workspaces())
+    try:
+        from .tenant.registry import list_tenants
+
+        known |= {record.id for record in list_tenants()}
+    except Exception:  # noqa: BLE001 -- no registry: the index only
+        log.debug("workspace registry unavailable for answered-run recovery", exc_info=True)
+    for workspace in sorted(known):
+        try:
+            with tenant_scope(tenant=workspace):
+                total += recover_all_stranded(world)
+        except Exception:  # noqa: BLE001 -- one workspace must not stop the others
+            log.warning("answered-run recovery failed for one workspace", exc_info=True)
+    return total
 
 
 def dispatch_resume(world, goal_id: int) -> bool:

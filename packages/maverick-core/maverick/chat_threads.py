@@ -271,6 +271,9 @@ class ChatThreads:
         if changed.rowcount != 1:
             raise SubmissionConflict("This message is already running or cannot be resumed")
         self.store.execute(connection, "DELETE FROM signoffs WHERE goal_id=?", (goal_id,))
+        # The restart marker: recovery never starts a run whose restart is recent.
+        from .decision_requests import mark_dispatch
+        mark_dispatch(self.store, connection, goal_id)
 
     def resume(self, goal_id):
         """Reserve a restart, returning only an existing conversation binding.
@@ -278,12 +281,15 @@ class ChatThreads:
         Even an ordinary goal takes the root fence: its first explicit chat
         reply can establish membership concurrently with this restart.
         """
-        from .decision_requests import resume_refusal
+        from .decision_requests import claim_stranded, resume_refusal, stranded
 
         waiting = resume_refusal(self.world, goal_id)
         if waiting:
             raise SubmissionConflict(waiting)
-        with self._restart_transaction(goal_id) as (connection, binding, _status):
+        recoverable = stranded(self.world, goal_id)  # left pending after its answer
+        with self._restart_transaction(goal_id) as (connection, binding, status):
+            if status == "pending" and recoverable:
+                claim_stranded(self, connection, goal_id)
             if binding is not None:
                 self.require_idle(connection, binding.root_id, binding.owner, except_goal=goal_id)
             self._pending(connection, goal_id)
