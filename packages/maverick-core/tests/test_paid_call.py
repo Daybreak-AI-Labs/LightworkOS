@@ -76,8 +76,8 @@ def test_a_timed_out_retry_stops_at_the_limit(monkeypatch):
 
 
 def test_a_failed_send_charges_what_its_receipt_holds_once(monkeypatch, tmp_path):
-    # The provider receipt keeps the hold as an unknown cost and the run budget
-    # is charged the same amount, once.
+    # The provider receipt of the failed attempt is settled at the amount the
+    # run budget is charged, so each ledger counts it once.
     price = ToolCallPrice("replicate", "second", 0.01, 0.10)
     monkeypatch.setattr(paid_call, "tool_call_price", lambda _service: price)
     monkeypatch.setattr(paid_call, "max_unmetered_hold", lambda: 0.50)
@@ -95,8 +95,9 @@ def test_a_failed_send_charges_what_its_receipt_holds_once(monkeypatch, tmp_path
         receipts = cap.reservation_catalogue_for_work_item(
             "flow:paid-timeout", path=ledger).receipts
 
-    assert [r.state for r in receipts] == ["unknown"]
-    assert receipts[0].projected == pytest.approx(0.50)
+    assert [r.state for r in receipts] == ["settled"]
+    assert receipts[0].actual == pytest.approx(0.50)
+    assert receipts[0].operation["attempt_state"] == "failed"
     assert budget.dollars == pytest.approx(0.50)
     assert getattr(budget, "_reserved", 0.0) == 0.0
 
@@ -120,3 +121,29 @@ def test_a_zero_unit_price_holds_and_charges_nothing(monkeypatch):
     assert paid_call.charged_call("huggingface", send, budget=budget, label="Hugging Face",
                                   units={"request": 1}) == "ok"
     assert budget.dollars == pytest.approx(0.50)
+
+
+def test_a_failed_send_counts_once_against_the_organization_cap(monkeypatch):
+    # The organization's receipt is settled at the run's charge, so a $0.10
+    # timed-out search leaves $9.90 of a $10 daily cap, not $9.80.
+    from maverick.budget import budget_from_config
+    from maverick.orchestrator import _QuotaUsageSettlement
+    from maverick.tenant import provider_admission as organization
+    from maverick.tenant import registry
+
+    monkeypatch.setenv("MAVERICK_TENANT", "acme")
+    registry.create_tenant("acme", max_daily_dollars=10)
+    monkeypatch.setattr(cap, "caps_from_config", dict)
+    monkeypatch.setattr(cap, "_shared_world", lambda: None)
+    price = ToolCallPrice("tavily", None, 0.0, 0.10)
+    monkeypatch.setattr(paid_call, "tool_call_price", lambda _service: price)
+    budget = budget_from_config()
+    settlement = _QuotaUsageSettlement(principal="user:alice", budget=budget, domain=None)
+    with organization.run_scope(budget, "user:alice"):
+        with pytest.raises(httpx.ReadTimeout):
+            paid_call.charged_call("tavily", _failing(httpx.ReadTimeout("t")), budget=budget,
+                                   label="Tavily search", units={"request": 1})
+    settlement.record()
+    assert budget.dollars == pytest.approx(0.10)
+    assert registry.tenant_remaining_today("acme") == pytest.approx(9.90)
+

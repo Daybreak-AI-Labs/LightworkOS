@@ -69,12 +69,31 @@ def _never_sent(error: BaseException) -> bool:
         return False
 
 
-def _charge_if_sent(budget, price, held: float, error: BaseException) -> None:
+def _charge_if_sent(budget, price, held: float, error: BaseException,
+                    outcome: dict[str, Any]) -> None:
     """A ``send`` that raised ``error`` may have reached the service: charge
     everything ``held``, as for usage the reply never reported, so a retry
-    cannot spend it again. An error known to come before sending is free."""
-    if held > 0 and not _never_sent(error):
-        record_tool_dollars(budget, price, held, priced=False, unconfirmed=True)
+    cannot spend it again. An error known to come before sending is free.
+    ``outcome`` keeps what was charged, for the provider receipt."""
+    if held <= 0 or _never_sent(error):
+        outcome["free"] = True
+        return
+    try:
+        outcome["charge"] = record_tool_dollars(budget, price, held, priced=False,
+                                                unconfirmed=True)
+    except BudgetExceeded as exc:
+        outcome["charge"] = getattr(exc, "token_charge", None)
+        raise
+
+
+def _failure_receipt(outcome: dict[str, Any]):
+    """The provider receipt of a failed send: what the run was charged, $0
+    when it cost nothing, else unknown. Every ledger then counts it once."""
+    if outcome.get("charge") is not None:
+        return outcome["charge"].dollars, "estimated", outcome["charge"].pricing_evidence
+    if outcome.get("free"):
+        return 0.0, "estimated", None
+    return None, None, None
 
 
 def _remaining(budget) -> float | None:
@@ -155,7 +174,7 @@ def charged_call(
         try:
             result = send(max_units) if bounded else send()
         except BaseException as error:
-            _charge_if_sent(budget, price, projected, error)
+            _charge_if_sent(budget, price, projected, error, outcome)
             raise
         used = dict(units or {})
         measured = {} if measure is None else measure(result)
@@ -198,7 +217,8 @@ def charged_call(
     try:
         result = metered_provider_call(
             service, call, projected_dollars=projected, settlement=settlement,
-            organization_budget=budget, category=category,
+            organization_budget=budget, failure_settlement=lambda _error: _failure_receipt(outcome),
+            category=category,
             parent_category=parent_category or category, service=service,
             operation_id=operation_id, attempt_no=attempt_no,
         )
