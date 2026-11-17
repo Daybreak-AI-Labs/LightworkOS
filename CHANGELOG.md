@@ -756,6 +756,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   56 adds them when Lightwork starts as the table owner, so start once as the
   owner after upgrading. `maverick tenant backfill` now also assigns
   learning-store and approval-check records that have no workspace.
+- A Postgres database update that the login cannot run because it does not
+  own the tables now says so and changes nothing. Start Lightwork once as the
+  table owner, then again with the usual login.
 - `maverick tenant rls-preflight` no longer reports READY while row-level
   security hides records that have no workspace. The table owner now counts
   them with FORCE lifted in a rolled-back transaction; a login that cannot

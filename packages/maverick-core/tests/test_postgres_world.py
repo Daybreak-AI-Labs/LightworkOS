@@ -1906,6 +1906,23 @@ def test_v56_adds_row_policies_to_a_database_already_enforcing_them(postgres_tes
                 admin.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(role)))
 
 
+def test_a_pending_migration_as_a_login_that_does_not_own_the_tables_says_what_to_do(rls_login):
+    """Starting a newer version as a login that does not own the tables
+    explains how to finish the update instead of printing a traceback."""
+    import psycopg
+
+    if rls_login.owner:
+        pytest.skip("the owner can run the update")
+    from maverick.world_model_backends.postgres import PostgresWorldModel
+
+    with psycopg.connect(rls_login.admin, autocommit=True) as admin:
+        admin.execute("DELETE FROM schema_migrations WHERE version = 56")
+    with pytest.raises(RuntimeError, match="does not own") as raised:
+        PostgresWorldModel(dsn=rls_login.dsn)
+    assert "Start Lightwork once as the owner of the tables" in str(raised.value)
+    assert "Traceback" not in str(raised.value) and "psycopg" not in str(raised.value)
+
+
 def test_erasure_blocked_by_a_row_another_workspace_owns_says_so(rls_login):
     """A turn in one workspace's conversation that names another's task (it
     predates the policy that refuses it) stops that task's erasure. The

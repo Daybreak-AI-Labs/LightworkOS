@@ -1971,6 +1971,19 @@ class PostgresWorldModel:
         with self._tx() as cur:
             if self._migration_version(cur) == _PG_SCHEMA_VERSION:
                 return
+        try:
+            self._apply_pending_migrations()
+        except Exception as exc:
+            if getattr(exc, "sqlstate", None) != "42501":  # insufficient_privilege
+                raise
+            raise RuntimeError(
+                f"Lightwork needs to update its Postgres database to version {_PG_SCHEMA_VERSION}, "
+                "but this database login does not own the tables, so nothing was changed. "
+                "Start Lightwork once as the owner of the tables, then start it again "
+                "with this login."
+            ) from None
+
+    def _apply_pending_migrations(self) -> None:
         with self._tx() as cur:
             cur.execute("SELECT pg_advisory_xact_lock(%s)", (_MIGRATION_ADVISORY_LOCK,))
             # Re-read after waiting; an earlier replica may have upgraded it.
