@@ -24,12 +24,9 @@ def max_request_bytes() -> int:
     raw = os.environ.get("MAVERICK_DASHBOARD_MAX_REQUEST_MB", "").strip()
     value: object = raw or None
     if value is None:
-        try:
-            from maverick.config import load_config
+        from ._request_memo import memoized
 
-            value = ((load_config() or {}).get("dashboard") or {}).get("max_request_mb")
-        except Exception:  # noqa: BLE001 -- an unreadable config keeps the default cap
-            value = None
+        value = memoized("max_request_mb", _configured_max_request_mb)
     try:
         megabytes = float(value) if value not in (None, "") else DEFAULT_MAX_REQUEST_MB
     except (TypeError, ValueError):
@@ -37,6 +34,15 @@ def max_request_bytes() -> int:
     if not math.isfinite(megabytes) or megabytes <= 0:
         megabytes = DEFAULT_MAX_REQUEST_MB
     return int(megabytes * 1024 * 1024)
+
+
+def _configured_max_request_mb() -> object:
+    try:
+        from maverick.config import load_config
+
+        return ((load_config() or {}).get("dashboard") or {}).get("max_request_mb")
+    except Exception:  # noqa: BLE001 -- an unreadable config keeps the default cap
+        return None
 
 
 class _TooLarge(Exception):
