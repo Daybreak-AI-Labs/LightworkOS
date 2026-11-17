@@ -92,9 +92,8 @@ def test_return_path_helper_refuses_off_site_paths():
 def test_a_websocket_is_never_a_page_load():
     """A WebSocket refused with 401 passes through the same error handler;
     it has no ``method``, and must keep its refusal instead of crashing."""
-    from starlette.websockets import WebSocket
-
     from maverick_dashboard import browser_signin
+    from starlette.websockets import WebSocket
 
     scope = {"type": "websocket", "path": "/ws/firehose", "headers": [(b"accept", b"text/html")],
              "query_string": b"", "scheme": "ws", "server": ("127.0.0.1", 80), "client": ("127.0.0.1", 1)}
