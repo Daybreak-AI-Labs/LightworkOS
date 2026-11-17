@@ -182,7 +182,7 @@
       if (teams.length && !preferred && hash.startsWith('#case-')) { const original = await api('/cases/' + encodeURIComponent(hash.slice(6))); if (generation !== catalogGeneration) return; target = original.case.setup_id; }
       const linkedSetup = !preferred && (hash.startsWith('#case-') || hash.startsWith('#setup-')) ? setups.find(setup => setup.id === target) : null;
       chooseOptions($('st-team'), teams.map(team => [team.id, team.title]), linkedSetup ? linkedSetup.team_id : $('st-team').value, 'No permitted teams');
-      chooseOptions($('st-saved'), setups.map(setup => [setup.id, (teams.find(team => team.id === setup.team_id) || {}).title + ' — ' + setup.owner_label]), target, 'No saved teams yet');
+      chooseOptions($('st-saved'), setups.map(setup => [setup.id, (teams.find(team => team.id === setup.team_id) || {}).title + ' — ' + setup.owner_label]), target, 'No saved teams yet. Set up a team below.');
       showTeam(); await showSaved();
       if (generation !== catalogGeneration) return;
       retry.hidden = Boolean(teams.length);
