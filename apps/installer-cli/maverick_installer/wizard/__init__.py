@@ -1576,6 +1576,18 @@ def pick_budget() -> dict[str, Any]:
         "Choose No only if you accept that dollar limits may be under-counted",
         default=BOOLEAN_SETTINGS["budget.strict_pricing"].default,
     )
+    # Paid tool calls (speech, translation, search, hosted image models) are
+    # charged to the task's spending limit: at a price per service, else a
+    # per-call safety ceiling. Settings > Models changes both later.
+    budget["unpriced_tool_call_dollars"] = _prompt_positive_dollars(
+        "  Charge per paid tool call with no price set, in USD", default="0.10")
+    # A paid call priced per second or per terabyte holds at most this while
+    # it runs, and is charged it in full if it never reports its usage.
+    budget["max_unmetered_hold_dollars"] = _prompt_positive_dollars(
+        "  Most to hold while a paid call of unknown length runs, in USD", default="1.00")
+    tool_prices = _pick_tool_prices(budget["unpriced_tool_call_dollars"])
+    if tool_prices:
+        budget["tool_prices"] = tool_prices
     budget["guidance"] = _q_confirm(
         "  Show known budget headroom before work? This never changes execution limits.",
         default=BOOLEAN_SETTINGS["budget.guidance"].default)
@@ -1601,6 +1613,45 @@ def pick_budget() -> dict[str, Any]:
             budget["warning_thresholds"] = sorted(set(values))
             break
     return budget
+
+
+def _parse_tool_prices(raw: str) -> dict[str, dict[str, Any]]:
+    """``service=dollars/unit`` entries separated by commas; ValueError if any
+    entry names an unknown service or unit, or an amount outside 0..10,000."""
+    from maverick.budget import TOOL_PRICE_UNITS, paid_tool_services
+
+    services = paid_tool_services()
+    prices: dict[str, dict[str, Any]] = {}
+    for part in filter(None, (piece.strip() for piece in raw.split(","))):
+        service, _, rest = part.partition("=")
+        amount, _, unit = rest.partition("/")
+        service, unit = service.strip().lower(), unit.strip().lower()
+        dollars = float(amount)
+        if (service not in services or unit not in TOOL_PRICE_UNITS
+                or not math.isfinite(dollars) or not 0 <= dollars <= 10_000):
+            raise ValueError(part)
+        prices[service] = {"dollars": dollars, "per": unit}
+    return prices
+
+
+def _pick_tool_prices(ceiling: float) -> dict[str, dict[str, Any]]:
+    """Optional ``[budget.tool_prices]`` entries: a USD price per unit for a
+    paid tool service. A service left out is charged the per-call ceiling,
+    so search, the paid tool agents call most, is asked about first."""
+    from maverick.budget import PAID_TOOL_SERVICES, TOOL_PRICE_UNITS
+
+    while True:
+        raw = _q_text("  Prices for paid tool services, search first, as service=USD/unit separated "
+                      "by commas (for example tavily=PRICE/request, where PRICE is your rate in USD). "
+                      f"Unpriced, each search counts ${ceiling:.2f}. Leave blank to set them "
+                      "later in Settings",
+                      default="")
+        try:
+            return _parse_tool_prices(raw)
+        except ValueError:
+            console.print("[yellow]Services: " + ", ".join(PAID_TOOL_SERVICES)
+                          + ", or a pay-per-use connector's name. Units: "
+                          + ", ".join(TOOL_PRICE_UNITS) + ". Amounts from 0 to 10,000.[/yellow]")
 
 
 def pick_capabilities() -> dict[str, Any]:
@@ -4406,8 +4457,14 @@ def _cfg_core(
 ) -> list[str]:
     lines = ["[budget]"]
     for k, v in budget.items():
-        _emit_kv(lines, k, v)
+        if k != "tool_prices":
+            _emit_kv(lines, k, v)
     lines.append("")
+    if budget.get("tool_prices"):
+        lines.append("[budget.tool_prices]")
+        for service, entry in budget["tool_prices"].items():
+            lines.append(f'{service} = {{ dollars = {entry["dollars"]}, per = "{entry["per"]}" }}')
+        lines.append("")
     lines.append("[safety]")
     for k, v in safety.items():
         _emit_kv(lines, k, v)

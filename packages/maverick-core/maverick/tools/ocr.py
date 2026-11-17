@@ -14,6 +14,12 @@ Requires tesseract on PATH for the default backend; fail-loud with
 the install hint when missing. Set ``OCR_BACKEND=hf`` (and the
 ``HUGGINGFACE_API_TOKEN`` env) to route through the HF
 ``microsoft/trocr-base-printed`` (or any other HF OCR model) instead.
+
+The Hugging Face backend is a paid call charged to the run budget (kernel rule
+3) through ``_paid_call.charged_call``: one page, image or request, priced
+from ``[budget.tool_prices] huggingface``, else the per-call safety ceiling.
+A tool built with no run budget refuses it before anything is sent. Local
+tesseract is free.
 """
 from __future__ import annotations
 
@@ -26,6 +32,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from . import Tool
+from ._paid_call import STOP_SIGNALS, PaidCallRefused, charged_call
 
 log = logging.getLogger(__name__)
 
@@ -79,7 +86,7 @@ def _run_tesseract(path: str, lang: str, sandbox) -> str:
 
 
 
-def _run_hf(path: str, model: str) -> str:
+def _run_hf(path: str, model: str, budget=None) -> str:
     # This legacy backend consumes one operator-global token. It cannot express
     # per-principal grants, so an authenticated enterprise agent must not borrow
     # it. Local tesseract remains available and does not cross this boundary.
@@ -116,9 +123,9 @@ def _run_hf(path: str, model: str) -> str:
     if denial := enterprise_egress_denial(url, tool="ocr"):
         return f"ERROR: {denial}"
     from ._ssrf import BlockedHost, safe_client
-    try:
+    def send():
         with safe_client(url, timeout=60.0) as client:
-            r = client.post(
+            return client.post(
                 url,
                 headers={
                     "Authorization": f"Bearer {tok}",
@@ -126,6 +133,14 @@ def _run_hf(path: str, model: str) -> str:
                 },
                 content=blob,
             )
+
+    try:
+        r = charged_call("huggingface", send, budget=budget, label="Hugging Face OCR",
+                         units={"request": 1, "page": 1, "image": 1})
+    except STOP_SIGNALS:
+        raise
+    except PaidCallRefused as e:
+        return f"ERROR: {e}"
     except BlockedHost:
         return "ERROR: HF OCR endpoint was blocked by the SSRF policy"
     except Exception as e:  # noqa: BLE001
@@ -144,7 +159,7 @@ def _run_hf(path: str, model: str) -> str:
     return str(data)[:3000]
 
 
-def _op_extract(path: str, lang: str, backend: str, hf_model: str, sandbox) -> str:
+def _op_extract(path: str, lang: str, backend: str, hf_model: str, sandbox, budget=None) -> str:
     if not path:
         return "ERROR: extract requires path"
     workdir = Path(sandbox.workdir).resolve() if sandbox is not None else Path.cwd().resolve()
@@ -157,11 +172,12 @@ def _op_extract(path: str, lang: str, backend: str, hf_model: str, sandbox) -> s
     if not candidate.exists():
         return f"ERROR: file not found: {path}"
     if backend == "hf":
-        return _run_hf(str(candidate), hf_model or "microsoft/trocr-base-printed")
+        return _run_hf(str(candidate), hf_model or "microsoft/trocr-base-printed", budget)
     return _run_tesseract(str(candidate), lang or "eng", sandbox)
 
 
-def _op_extract_url(url: str, lang: str, backend: str, hf_model: str, sandbox) -> str:
+def _op_extract_url(url: str, lang: str, backend: str, hf_model: str, sandbox,
+                    budget=None) -> str:
     if not url:
         return "ERROR: extract_url requires url"
     parsed = urlparse(url)
@@ -205,7 +221,7 @@ def _op_extract_url(url: str, lang: str, backend: str, hf_model: str, sandbox) -
         f.write(bytes(buf))
         tmp = f.name
     try:
-        return _op_extract(tmp, lang, backend, hf_model, sandbox)
+        return _op_extract(tmp, lang, backend, hf_model, sandbox, budget)
     finally:
         try:
             os.unlink(tmp)
@@ -213,7 +229,7 @@ def _op_extract_url(url: str, lang: str, backend: str, hf_model: str, sandbox) -
             pass
 
 
-def _run(args: dict[str, Any], sandbox) -> str:
+def _run(args: dict[str, Any], sandbox, budget=None) -> str:
     op = args.get("op")
     if not op:
         return "ERROR: op is required"
@@ -230,18 +246,20 @@ def _run(args: dict[str, Any], sandbox) -> str:
     try:
         if op == "extract":
             return _op_extract(
-                (args.get("path") or "").strip(), lang, backend, hf_model, sandbox,
+                (args.get("path") or "").strip(), lang, backend, hf_model, sandbox, budget,
             )
         if op == "extract_url":
             return _op_extract_url(
-                (args.get("url") or "").strip(), lang, backend, hf_model, sandbox,
+                (args.get("url") or "").strip(), lang, backend, hf_model, sandbox, budget,
             )
+    except STOP_SIGNALS:
+        raise
     except Exception as e:
         return f"ERROR: ocr failed: {type(e).__name__}: {e}"
     return f"ERROR: unknown op {op!r}"
 
 
-def ocr(sandbox=None) -> Tool:
+def ocr(sandbox=None, *, budget=None) -> Tool:
     return Tool(
         name="ocr",
         description=(
@@ -253,5 +271,5 @@ def ocr(sandbox=None) -> Tool:
             "tesseract codes like 'eng' / 'eng+deu'."
         ),
         input_schema=_OCR_SCHEMA,
-        fn=lambda args: _run(args, sandbox),
+        fn=lambda args: _run(args, sandbox, budget),
     )

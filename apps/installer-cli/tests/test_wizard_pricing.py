@@ -44,6 +44,8 @@ def test_pick_budget_defaults_to_strict_pricing(monkeypatch):
     ]
     assert budget["guidance"] is True and budget["warnings"] is True
     assert budget["warning_thresholds"] == [0.8, 0.95, 1.0]
+    assert budget["unpriced_tool_call_dollars"] == 0.1 and "tool_prices" not in budget
+    assert budget["max_unmetered_hold_dollars"] == 1.0
 
 
 def test_pick_budget_preserves_explicit_legacy_estimate_opt_out(monkeypatch):
@@ -123,3 +125,26 @@ def test_list_values_keep_their_type_in_the_config_file():
     wizard._emit_kv(lines, "mixed", [0.5, 2, True, "text", "12345"])
 
     assert tomllib.loads("\n".join(lines))["mixed"] == [0.5, 2, True, "text", "12345"]
+
+
+def test_tool_prices_from_the_wizard_are_written_as_the_budget_reads_them(monkeypatch):
+    from maverick import budget as budget_mod
+    from maverick import config
+
+    answers = iter(["0.25", "deepl=0.001/character, tavily=0.5/request, openai_platform=0.25/request"])
+    seen = []
+    monkeypatch.setattr(wizard, "_q_text", lambda message, *, default="": (
+        seen.append(message) or next(answers) if "tool" in message else default))
+    monkeypatch.setattr(wizard, "_q_confirm", lambda *_args, **_kwargs: False)
+    budget = wizard.pick_budget()
+
+    written = tomllib.loads("\n".join(wizard._cfg_core(budget, {}, {})))
+    monkeypatch.setattr(config, "config_source_errors", lambda **_kwargs: [])
+    monkeypatch.setattr(config, "load_config", lambda *_args, **_kwargs: written)
+    assert budget_mod.tool_price_settings()[1] == 0.25
+    deepl = budget_mod.tool_call_price("deepl")
+    assert (deepl.dollars_per_unit, deepl.unit) == (0.001, "character")
+    assert budget_mod.tool_call_price("tavily").unit == "request"
+    # The same services as the Prices page, connectors included; search first.
+    assert budget_mod.tool_call_price("openai_platform").unit == "request"
+    assert "search first" in seen[1] and "tavily=PRICE/request" in seen[1]

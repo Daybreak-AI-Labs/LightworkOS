@@ -14,6 +14,11 @@ Auth: ``HUGGINGFACE_API_TOKEN`` (https://huggingface.co/settings/tokens).
 For public models inference can work unauthenticated, but is rate-
 limited; token grants the free tier limits + access to gated models
 the user has accepted licensing for.
+
+Every inference request is a paid call charged to the run budget (kernel rule
+3) through ``_paid_call.charged_call``: priced per request or image from
+``[budget.tool_prices] huggingface``, else the per-call safety ceiling. A tool
+built with no run budget refuses before anything is sent.
 """
 from __future__ import annotations
 
@@ -25,6 +30,7 @@ from urllib.parse import urlparse
 from ..fastjson import dumps_compact
 from ..governed_http import guarded_sender as _governed_sender
 from . import Tool, safe_path_segment
+from ._paid_call import STOP_SIGNALS, PaidCallRefused, charged_call
 
 log = logging.getLogger(__name__)
 
@@ -76,14 +82,14 @@ def _headers() -> dict[str, str]:
     return h
 
 
-def _post_json(model: str, payload: dict) -> tuple[int, Any]:
+def _post_json(model: str, payload: dict, budget) -> tuple[int, Any]:
     import httpx
-    r = _governed_sender(httpx.post)(
+    r = charged_call("huggingface", lambda: _governed_sender(httpx.post)(
         f"{_API_BASE}/{model}",
         json=payload,
         headers=_headers(),
         timeout=60.0,
-    )
+    ), budget=budget, label="Hugging Face", units={"request": 1})
     try:
         body = r.json()
     except ValueError:
@@ -91,16 +97,16 @@ def _post_json(model: str, payload: dict) -> tuple[int, Any]:
     return r.status_code, body
 
 
-def _post_bytes(model: str, blob: bytes, content_type: str) -> tuple[int, Any]:
+def _post_bytes(model: str, blob: bytes, content_type: str, budget) -> tuple[int, Any]:
     import httpx
     headers = _headers()
     headers["Content-Type"] = content_type
-    r = _governed_sender(httpx.post)(
+    r = charged_call("huggingface", lambda: _governed_sender(httpx.post)(
         f"{_API_BASE}/{model}",
         content=blob,
         headers=headers,
         timeout=60.0,
-    )
+    ), budget=budget, label="Hugging Face", units={"request": 1, "image": 1})
     try:
         body = r.json()
     except ValueError:
@@ -118,17 +124,17 @@ def _format_body(body: Any, *, max_chars: int = 3000) -> str:
     return out
 
 
-def _op_infer(model: str, inputs: Any, parameters: dict | None) -> str:
+def _op_infer(model: str, inputs: Any, parameters: dict | None, budget) -> str:
     payload: dict = {"inputs": inputs}
     if parameters:
         payload["parameters"] = parameters
-    code, body = _post_json(model, payload)
+    code, body = _post_json(model, payload, budget)
     if code >= 400:
         return f"ERROR: HF inference {code}: {_format_body(body, max_chars=400)}"
     return _format_body(body)
 
 
-def _op_image_classify(model: str, url: str) -> str:
+def _op_image_classify(model: str, url: str, budget) -> str:
     if not url:
         return "ERROR: image_classify requires url"
     parsed = urlparse(url)
@@ -160,19 +166,19 @@ def _op_image_classify(model: str, url: str) -> str:
     if len(r.content) > _MAX_IMAGE_FETCH_BYTES:
         return f"ERROR: image too large ({len(r.content)} bytes > {_MAX_IMAGE_FETCH_BYTES})"
     content_type = r.headers.get("content-type", "application/octet-stream")
-    code, body = _post_bytes(model, r.content, content_type)
+    code, body = _post_bytes(model, r.content, content_type, budget)
     if code >= 400:
         return f"ERROR: HF inference {code}: {_format_body(body, max_chars=400)}"
     return _format_body(body)
 
 
-def _op_summarize(model: str, text: str, parameters: dict | None) -> str:
+def _op_summarize(model: str, text: str, parameters: dict | None, budget) -> str:
     if not text.strip():
         return "ERROR: summarize requires non-empty text"
-    return _op_infer(model, text, parameters or {})
+    return _op_infer(model, text, parameters or {}, budget)
 
 
-def _run(args: dict[str, Any]) -> str:
+def _run(args: dict[str, Any], budget=None) -> str:
     op = args.get("op")
     if not op:
         return "ERROR: op is required"
@@ -192,11 +198,15 @@ def _run(args: dict[str, Any]) -> str:
             inputs = args.get("inputs")
             if inputs is None:
                 return "ERROR: infer requires inputs"
-            return _op_infer(model, inputs, parameters)
+            return _op_infer(model, inputs, parameters, budget)
         if op == "image_classify":
-            return _op_image_classify(model, args.get("url") or "")
+            return _op_image_classify(model, args.get("url") or "", budget)
         if op == "summarize":
-            return _op_summarize(model, args.get("text") or "", parameters)
+            return _op_summarize(model, args.get("text") or "", parameters, budget)
+    except STOP_SIGNALS:
+        raise
+    except PaidCallRefused as e:
+        return f"ERROR: {e}"
     except ImportError:
         return "ERROR: httpx not installed…195 tokens truncated…puter-use]'"
     except Exception as e:
@@ -204,7 +214,7 @@ def _run(args: dict[str, Any]) -> str:
     return f"ERROR: unknown op {op!r}"
 
 
-def huggingface() -> Tool:
+def huggingface(*, budget=None) -> Tool:
     return Tool(
         name="huggingface",
         description=(
@@ -214,5 +224,5 @@ def huggingface() -> Tool:
             "(optional but recommended)."
         ),
         input_schema=_HF_SCHEMA,
-        fn=_run,
+        fn=lambda args: _run(args, budget),
     )

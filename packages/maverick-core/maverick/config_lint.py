@@ -75,6 +75,10 @@ KNOWN_SCHEMA: dict[str, set[str] | None] = {
         # Deployment-wide spend ceilings per AI service (provider_cost_cap.py).
         "provider_caps",
         "provider_caps_period",
+        # Prices for paid tool calls and the per-call ceiling (budget.py).
+        "tool_prices",
+        "unpriced_tool_call_dollars",
+        "max_unmetered_hold_dollars",
     },
     "safety": {
         "profile",

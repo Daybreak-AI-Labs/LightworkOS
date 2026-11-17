@@ -289,7 +289,13 @@ def test_twilio_lookup_contains_traversal(monkeypatch):
         return 200, {}
 
     monkeypatch.setattr(twilio_tool, "_get", _fake_get)
-    twilio_tool._op_lookup({"phone": TRAVERSAL})
+    from maverick.budget import Budget
+    # A Twilio lookup is a paid call, charged to a run budget.
+    token = twilio_tool._BUDGET.set(Budget())
+    try:
+        twilio_tool._op_lookup({"phone": TRAVERSAL})
+    finally:
+        twilio_tool._BUDGET.reset(token)
     _assert_contained("/PhoneNumbers/", store["path"])
 
 

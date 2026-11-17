@@ -23,16 +23,20 @@ tool adds them in two tiers:
 All model-supplied paths are confined to the sandbox workspace (an
 unconfined read ships file bytes to Replicate = exfiltration; an unconfined
 write is arbitrary host write).
+
+A hosted edit is a paid Replicate prediction charged to the run budget
+(kernel rule 3) by ``replicate_tool.run_prediction``; a tool built with no
+run budget refuses it before anything is sent. Local edits are free.
 """
 
 from __future__ import annotations
 
 import base64
-import time
 from pathlib import Path
 from typing import Any
 
-from . import Tool
+from . import Tool, as_bool
+from ._paid_call import STOP_SIGNALS
 from .ffmpeg_tool import _safe_path
 
 _REMOTE_OPS = ("inpaint", "variation", "upscale")
@@ -107,38 +111,25 @@ def _model_for(op: str) -> str | None:
         return None
 
 
-def _predict(model: str, inp: dict[str, Any], wait: bool) -> str:
+def _predict(model: str, inp: dict[str, Any], wait: bool, budget=None) -> str:
     """Create a prediction (and optionally poll), via replicate_tool's
-    auth + request helpers so the HTTP shape stays in one place."""
-    from .replicate_tool import _fmt_prediction, _get, _post, _resolve_version
+    auth + request helpers so the HTTP shape and the charge stay in one place."""
+    from .replicate_tool import _resolve_version, prediction_reply, run_prediction
 
     version = _resolve_version(model)
     if not version:
         return f"ERROR: could not resolve version for model {model!r}"
-    code, data = _post("/predictions", {"version": version, "input": inp})
-    if code >= 400 or not isinstance(data, dict):
-        return f"ERROR: predict ({code}): {data}"
-    pid = data.get("id")
-    if not wait:
-        return (
-            f"created prediction {pid} (status={data.get('status')}); "
-            "poll with replicate predict_get"
-        )
-    deadline = time.time() + 90
-    while time.time() < deadline:
-        c2, p2 = _get(f"/predictions/{pid}")
-        if c2 >= 400 or not isinstance(p2, dict):
-            return f"ERROR: poll ({c2}): {p2}"
-        if p2.get("status") in ("succeeded", "failed", "canceled"):
-            return _fmt_prediction(p2)
-        time.sleep(2)
-    return f"prediction {pid} still running after 90s; use replicate predict_get to poll"
+    run = run_prediction(version, inp, wait, budget, label="Hosted image edit")
+    if run.code >= 400 or not isinstance(run.created, dict):
+        return f"ERROR: predict ({run.code}): {run.created}"
+    return prediction_reply(run, poll_hint="use replicate predict_get to poll",
+                            created_hint="; poll with replicate predict_get")
 
 
 # ---------- remote ops ----------
 
 
-def _op_remote(op: str, args: dict[str, Any], sandbox: Any) -> str:
+def _op_remote(op: str, args: dict[str, Any], sandbox: Any, budget=None) -> str:
     image = (args.get("image") or "").strip()
     if not image:
         return f"ERROR: {op} requires image"
@@ -168,7 +159,7 @@ def _op_remote(op: str, args: dict[str, Any], sandbox: Any) -> str:
             if not isinstance(scale, (int, float)) or isinstance(scale, bool) or scale <= 0:
                 return "ERROR: scale must be a positive number"
             inp["scale"] = scale
-    return _predict(model, inp, bool(args.get("wait")))
+    return _predict(model, inp, as_bool(args.get("wait")), budget)
 
 
 # ---------- local ops (Pillow, [computer-use] extra) ----------
@@ -246,7 +237,7 @@ def _op_rotate(args: dict[str, Any], sandbox: Any) -> str:
 # ---------- tool ----------
 
 
-def _run(args: dict[str, Any], sandbox: Any) -> str:
+def _run(args: dict[str, Any], sandbox: Any, budget=None) -> str:
     op = args.get("op")
     if not op:
         return "ERROR: op is required"
@@ -262,7 +253,9 @@ def _run(args: dict[str, Any], sandbox: Any) -> str:
     except ImportError:
         return "ERROR: httpx not installed."
     try:
-        return _op_remote(op, args, sandbox)
+        return _op_remote(op, args, sandbox, budget)
+    except STOP_SIGNALS:
+        raise
     except RuntimeError as e:  # missing REPLICATE_API_TOKEN
         return f"ERROR: {e}"
     except Exception as e:
@@ -299,7 +292,7 @@ _SCHEMA: dict[str, Any] = {
 }
 
 
-def image_edit(sandbox: Any = None) -> Tool:
+def image_edit(sandbox: Any = None, *, budget=None) -> Tool:
     return Tool(
         name="image_edit",
         description=(
@@ -311,5 +304,5 @@ def image_edit(sandbox: Any = None) -> Tool:
             "(degrees). For text-to-image GENERATION use the replicate tool."
         ),
         input_schema=_SCHEMA,
-        fn=lambda args: _run(args, sandbox),
+        fn=lambda args: _run(args, sandbox, budget),
     )

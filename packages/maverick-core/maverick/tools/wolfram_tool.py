@@ -16,6 +16,7 @@ from typing import Any
 from ..governed_http import guarded_redirect_get
 from ..governed_http import guarded_sender as _governed_sender
 from . import Tool
+from ._paid_call import STOP_SIGNALS, charged_call
 
 log = logging.getLogger(__name__)
 
@@ -91,7 +92,7 @@ def _op_full(query: str) -> str:
     return "\n".join(out) or "(no textual pods)"
 
 
-def _run(args: dict[str, Any]) -> str:
+def _run(args: dict[str, Any], budget=None) -> str:
     op = args.get("op")
     if not op:
         return "ERROR: op is required"
@@ -102,21 +103,23 @@ def _run(args: dict[str, Any]) -> str:
         import httpx  # noqa: F401
     except ImportError:
         return "ERROR: httpx not installed."
+    ops = {"short": _op_short, "spoken": _op_spoken, "full": _op_full}
+    if op not in ops:
+        return f"ERROR: unknown op {op!r}"
     try:
-        if op == "short":
-            return _op_short(query)
-        if op == "spoken":
-            return _op_spoken(query)
-        if op == "full":
-            return _op_full(query)
+        # Each op is one paid query, charged to the run budget (kernel rule 3)
+        # at [budget.tool_prices] wolfram, else the per-call safety ceiling.
+        return charged_call("wolfram", lambda: ops[op](query), budget=budget,
+                            label="Wolfram|Alpha", units={"request": 1})
+    except STOP_SIGNALS:
+        raise
     except RuntimeError as e:
         return f"ERROR: {e}"
     except Exception as e:
         return f"ERROR: Wolfram request failed: {type(e).__name__}: {e}"
-    return f"ERROR: unknown op {op!r}"
 
 
-def wolfram_tool() -> Tool:
+def wolfram_tool(*, budget=None) -> Tool:
     return Tool(
         name="wolfram",
         description=(
@@ -125,5 +128,5 @@ def wolfram_tool() -> Tool:
             "(conversational phrasing). Auth: WOLFRAM_APP_ID."
         ),
         input_schema=_WA_SCHEMA,
-        fn=_run,
+        fn=lambda args: _run(args, budget),
     )

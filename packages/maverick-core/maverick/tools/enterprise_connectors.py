@@ -10,6 +10,11 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from ..budget import (
+    MESSAGING_CONNECTOR_NAMES,
+    PAID_CONNECTOR_NAMES,
+    PER_LOOKUP_CONNECTOR_NAMES,
+)
 from ..catalog_schema import index_connector_specs
 from . import Tool
 from ._connector_specs import _GRAPHQL_SPECS, _SPECS
@@ -30,8 +35,17 @@ def _fill_env(spec: dict) -> dict:
     return spec
 
 
+# Pay-per-use services (budget.PAID_CONNECTOR_NAMES): a request other than a
+# GET is a paid call charged to the run budget (make_rest_tool ``paid``),
+# priced from [budget.tool_prices]. Per-lookup data services
+# (budget.PER_LOOKUP_CONNECTOR_NAMES) are charged for every request; SMS,
+# voice and email gateways (budget.MESSAGING_CONNECTOR_NAMES) for each send.
 for _spec in (*_SPECS, *_GRAPHQL_SPECS):
     _fill_env(_spec)
+    if _spec["name"] in PER_LOOKUP_CONNECTOR_NAMES:
+        _spec["paid"] = "all"
+    elif _spec["name"] in PAID_CONNECTOR_NAMES | MESSAGING_CONNECTOR_NAMES:
+        _spec["paid"] = True
 
 # Compile the authoritative catalog once. Duplicate names or invalid credential
 # metadata would otherwise silently overwrite a connector during setup.
@@ -563,11 +577,25 @@ def enterprise_connector_descriptors():
     )
 
 
-def enterprise_connectors() -> list[Tool]:
-    """Bind cheap tool views; instantiate each connector only on first use."""
-    from ._lazy import LazyTool
+def enterprise_connectors(*, budget=None) -> list[Tool]:
+    """Bind cheap tool views; instantiate each connector only on first use.
 
-    return [LazyTool(descriptor) for descriptor in enterprise_connector_descriptors()]
+    A paid connector is built with ``budget``, the run budget its requests are
+    charged to; without one its paid requests are refused.
+    """
+    import copy
+
+    from ._lazy import LazyTool
+    from ._rest_connector import make_rest_tool
+
+    tools: list[Tool] = []
+    for descriptor in enterprise_connector_descriptors():
+        if descriptor.factory_kwargs.get("paid"):
+            kwargs = copy.deepcopy(descriptor.factory_kwargs)
+            tools.append(LazyTool(descriptor, factory=lambda kw=kwargs: make_rest_tool(**kw, budget=budget)))
+        else:
+            tools.append(LazyTool(descriptor))
+    return tools
 
 
 # Bespoke (hand-written) strategic connectors live in their own modules, not in

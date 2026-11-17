@@ -5,6 +5,8 @@ import sys
 import types
 from unittest.mock import MagicMock
 
+from maverick.budget import Budget
+
 
 def _fake_httpx(monkeypatch, **methods):
     mod = types.ModuleType("httpx")
@@ -31,14 +33,14 @@ def _resp(status, body, *, text=None):
 
 def test_newsapi_requires_op():
     from maverick.tools.newsapi_tool import newsapi_tool
-    assert "op is required" in newsapi_tool().fn({})
+    assert "op is required" in newsapi_tool(budget=Budget()).fn({})
 
 
 def test_newsapi_missing_key(monkeypatch):
     monkeypatch.delenv("NEWSAPI_KEY", raising=False)
     _fake_httpx(monkeypatch, get=MagicMock())
     from maverick.tools.newsapi_tool import newsapi_tool
-    out = newsapi_tool().fn({"op": "top_headlines"})
+    out = newsapi_tool(budget=Budget()).fn({"op": "top_headlines"})
     assert "NEWSAPI_KEY" in out
 
 
@@ -50,5 +52,5 @@ def test_newsapi_search_renders(monkeypatch):
     ]}
     _fake_httpx(monkeypatch, get=MagicMock(return_value=_resp(200, body)))
     from maverick.tools.newsapi_tool import newsapi_tool
-    out = newsapi_tool().fn({"op": "search", "query": "ai"})
+    out = newsapi_tool(budget=Budget()).fn({"op": "search", "query": "ai"})
     assert "AI breakthrough" in out and "TechCrunch" in out

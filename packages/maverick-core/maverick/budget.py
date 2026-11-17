@@ -1043,6 +1043,266 @@ def record_tool_tokens(
     return charge
 
 
+# A paid tool call billed per request, message, page, character, image,
+# second or terabyte scanned is priced from [budget.tool_prices] (one entry per service:
+# dollars per unit and the unit). A service with no usable entry, or a call
+# whose unit is not known, is charged the per-call safety ceiling [budget]
+# unpriced_tool_call_dollars. No provider's price is written here.
+TOOL_PRICE_UNITS = ("request", "message", "page", "character", "image", "second", "terabyte")
+DEFAULT_UNPRICED_TOOL_CALL_DOLLARS = 0.10
+# The most a paid call whose cost is known only afterwards may hold, when the
+# service takes no limit and its length cannot be measured first
+# ([budget] max_unmetered_hold_dollars).
+DEFAULT_MAX_UNMETERED_HOLD_DOLLARS = 1.00
+_MAX_TOOL_UNIT_DOLLARS = 10_000.0
+_TOOL_PRICE_VERSION = "operator-tool-price-v1"
+_UNPRICED_TOOL_CEILING = "unpriced-tool-call-ceiling-v1"
+_UNREPORTED_TOOL_UNITS = "unreported-tool-units-v1"
+_TOOL_CEILING_WARNED: set[str] = set()
+
+# The paid tool services a [budget.tool_prices] entry prices, in plain words.
+# The pay-per-use connectors (tools.enterprise_connectors.PAID_CONNECTOR_NAMES)
+# are priced under their own names too.
+# Search comes first: it is the paid tool agents call most often.
+PAID_TOOL_SERVICES = {
+    "tavily": "Tavily search", "brave": "Brave search", "serpapi": "SerpAPI search",
+    "huggingface": "Hugging Face", "replicate": "Replicate", "deepl": "DeepL",
+    "libretranslate": "LibreTranslate on a public server",
+    "openai_whisper": "OpenAI speech-to-text", "groq_whisper": "Groq speech-to-text",
+    "openai_tts": "OpenAI text-to-speech", "elevenlabs": "ElevenLabs",
+    "wolfram": "Wolfram|Alpha", "newsapi": "NewsAPI", "bigquery": "BigQuery",
+    "twilio": "Twilio SMS, calls and lookups", "ses": "Amazon SES email",
+    "sns": "Amazon SNS messages",
+}
+
+# Generic REST connectors to pay-per-use services. A request other than a GET
+# is a paid call: AI inference and generation, media AI (transcription,
+# captions, avatar video, image editing), GPU rental (billed per hour after
+# the call, so only the per-call ceiling is seen), identity and background
+# checks. Subscription services (CRM, ERP, storage, messaging and so on) are
+# not charged per call.
+PAID_CONNECTOR_NAMES = frozenset({
+    "huggingface_inference", "replicate_ai", "openai_platform", "anthropic_api",
+    "cohere_ai", "mistral_ai", "stability_ai", "elevenlabs", "assemblyai",
+    "deepgram", "runwayml", "fal_ai", "together_ai", "fireworks_ai", "groq_cloud",
+    "perplexity_ai", "anyscale_endpoints", "baseten", "modal_labs", "banana_dev",
+    "deepinfra", "octoai", "clarifai", "nlp_cloud", "ai21_labs", "google_vertex_ai",
+    "azure_openai", "aws_sagemaker", "ibm_watsonx", "nvidia_nim", "scale_ai",
+    "runpod", "lambda_labs_cloud", "vast_ai", "coreweave", "predibase", "mosaicml",
+    "heygen", "synthesia", "remove_bg", "clipdrop", "rev_com", "deepset_cloud",
+    "ollama_cloud", "cerebrium", "beam_cloud", "paperspace_gradient", "otter_ai",
+    "happyscribe", "pictory", "opus_clip", "invideo", "relevance_ai", "dify_ai",
+    "chatbase", "vectara", "picsart", "descript", "threeplay_media", "trint", "veed",
+    "kapwing", "voltage_park", "wonderchat", "gumloop", "lindy_ai",
+    "stack_ai", "tinypng", "baidu", "telesign", "removebg", "dialogflow",
+    "amazon_lex", "pdfco", "ilovepdf", "smallpdf",
+    "prove_identity", "jumio", "onfido", "persona_kyc", "trulioo", "socure",
+    "middesk", "checkr", "sterling_check", "hireright", "goodhire",
+})
+# SMS, voice-call and transactional email gateways: each send costs money,
+# and an agent can send many, so a request other than a GET is charged (per
+# message or per request) even though the confirm gate also applies.
+MESSAGING_CONNECTOR_NAMES = frozenset({
+    "sendgrid", "mailjet", "mailgun", "postmark", "sparkpost", "vonage", "plivo",
+    "messagebird", "infobip", "sinch", "telnyx", "bandwidth", "africastalking",
+    "clickatell", "burstsms", "soprano_design", "smsglobal", "messagemedia",
+    "link_mobility", "esendex", "didww", "flowroute", "karix", "route_mobile",
+    "plum_voice", "callfire", "syniverse", "tanla_platforms", "valuefirst",
+    "seven_io", "dexatel", "termii", "smsapi_com", "bulksms", "gupshup", "msg91",
+    "textlocal", "whatsapp_business", "attentive", "postscript", "simpletexting",
+    "eztexting", "textmagic", "textedly", "slicktext", "tatango", "trumpia",
+})
+# Per-lookup data services: a GET is billed too (a credit or a lookup).
+PER_LOOKUP_CONNECTOR_NAMES = frozenset({
+    "shodan", "hunter", "clearbit", "zoominfo", "numverify", "semrush", "ahrefs",
+    "lusha", "rocketreach", "apollo", "censys", "imagga",
+})
+# GPU rentals: a call starts a machine billed by the hour; the run budget sees
+# only the per-call ceiling, never the hours.
+GPU_RENTAL_CONNECTOR_NAMES = frozenset({
+    "runpod", "vast_ai", "lambda_labs_cloud", "coreweave", "voltage_park",
+    "paperspace_gradient",
+})
+
+
+def paid_tool_services() -> dict[str, str]:
+    """Every service name a [budget.tool_prices] entry can price, with a label."""
+    services = dict(PAID_TOOL_SERVICES)
+    connectors = PAID_CONNECTOR_NAMES | PER_LOOKUP_CONNECTOR_NAMES | MESSAGING_CONNECTOR_NAMES
+    for name in sorted(connectors - set(services)):
+        services[name] = f"{name} connector"
+    return services
+
+
+def tool_route_label(route: str) -> str:
+    """``tool:<service>`` in plain words; any other route unchanged."""
+    if not route.startswith("tool:"):
+        return route
+    return paid_tool_services().get(route[5:], route[5:])
+
+
+def tool_ceiling_reason(service: str) -> str:
+    """Why a paid tool call's charge was the per-call safety ceiling."""
+    return (f". The charge for {tool_route_label('tool:' + service)} is the per-call "
+            "safety ceiling because it has no usable price. Set the service's price in "
+            "Settings > Models, under Prices for paid tool services")
+
+
+class ToolPricesUnavailable(RuntimeError):
+    """The settings that price paid tool calls cannot be read."""
+
+
+@dataclass(frozen=True, slots=True)
+class ToolCallPrice:
+    """How one paid tool service is charged: ``unit`` is ``None`` when no
+    usable price is set, so every call takes the ``ceiling``."""
+
+    service: str
+    unit: str | None
+    dollars_per_unit: float
+    ceiling: float
+
+    def cost(self, units: dict[str, float] | None) -> tuple[float, bool]:
+        """``(dollars, priced)`` for a call measured in ``units``.
+
+        ``priced`` is false when the ceiling applied: no price is set, or the
+        call's amount of the priced unit is not known.
+        """
+        amount = (units or {}).get(self.unit) if self.unit else None
+        if amount is None:
+            return self.ceiling, False
+        return _nonnegative_finite(amount, "tool usage") * self.dollars_per_unit, True
+
+
+def _tool_ceiling(value: object, default: float = DEFAULT_UNPRICED_TOOL_CALL_DOLLARS,
+                  key: str = "unpriced_tool_call_dollars") -> float:
+    """A [budget] dollar setting: a number (or its text) above 0."""
+    if value is None:
+        return default
+    try:
+        amount = float(value.strip()) if isinstance(value, str) else (
+            float(value) if isinstance(value, (int, float)) and not isinstance(value, bool)
+            else math.nan)
+    except ValueError:
+        amount = math.nan
+    if math.isfinite(amount) and 0 < amount <= _MAX_TOOL_UNIT_DOLLARS:
+        return amount
+    log.warning("[budget] %s must be a number above 0; using $%.2f", key, default)
+    return default
+
+
+def tool_price_entry(value: object) -> tuple[float, str] | None:
+    """``(dollars per unit, unit)`` from a [budget.tool_prices] entry, else None."""
+    if not isinstance(value, dict):
+        return None
+    dollars, unit = value.get("dollars"), value.get("per")
+    if (isinstance(dollars, bool) or not isinstance(dollars, (int, float))
+            or not math.isfinite(dollars) or not 0 <= dollars <= _MAX_TOOL_UNIT_DOLLARS
+            or unit not in TOOL_PRICE_UNITS):
+        return None
+    return float(dollars), str(unit)
+
+
+_TOOL_PRICES_UNREADABLE = (
+    "Lightwork cannot read its settings, so it cannot price paid tool calls; nothing "
+    "was sent. Fix the settings file that maverick doctor names, then try again")
+
+
+def tool_price_settings() -> tuple[dict[str, object], float]:
+    """The raw [budget.tool_prices] table and the per-call ceiling in force.
+
+    Raises :class:`ToolPricesUnavailable` when the configuration cannot be
+    read, the restrictive branch: guessing a price could charge less than an
+    administrator set, so paid tool calls are refused until it is readable.
+    """
+    try:
+        from .config import config_source_errors, get_budget_overrides
+
+        if config_source_errors(include_tenant=True):
+            raise ToolPricesUnavailable(_TOOL_PRICES_UNREADABLE)
+        section = get_budget_overrides() or {}
+    except ToolPricesUnavailable:
+        raise
+    except Exception as exc:
+        log.warning("tool prices are unreadable; refusing paid tool calls", exc_info=True)
+        raise ToolPricesUnavailable(_TOOL_PRICES_UNREADABLE) from exc
+    if not isinstance(section, dict):
+        raise ToolPricesUnavailable(_TOOL_PRICES_UNREADABLE)
+    prices = section.get("tool_prices")
+    return ((prices if isinstance(prices, dict) else {}),
+            _tool_ceiling(section.get("unpriced_tool_call_dollars")))
+
+
+def max_unmetered_hold() -> float:
+    """[budget] max_unmetered_hold_dollars (default $1.00). Raises
+    :class:`ToolPricesUnavailable` while the settings cannot be read."""
+    try:
+        from .config import config_source_errors, get_budget_overrides
+
+        if config_source_errors(include_tenant=True):
+            raise ToolPricesUnavailable(_TOOL_PRICES_UNREADABLE)
+        section = get_budget_overrides() or {}
+    except ToolPricesUnavailable:
+        raise
+    except Exception as exc:
+        raise ToolPricesUnavailable(_TOOL_PRICES_UNREADABLE) from exc
+    value = section.get("max_unmetered_hold_dollars") if isinstance(section, dict) else None
+    return _tool_ceiling(value, DEFAULT_MAX_UNMETERED_HOLD_DOLLARS, "max_unmetered_hold_dollars")
+
+
+def tool_call_price(service: str) -> ToolCallPrice:
+    """The price for one paid call to ``service`` (a [budget.tool_prices] key)."""
+    prices, ceiling = tool_price_settings()
+    entry = tool_price_entry(prices.get(service))
+    if entry is not None:
+        return ToolCallPrice(service, entry[1], entry[0], ceiling)
+    if service not in _TOOL_CEILING_WARNED:
+        _TOOL_CEILING_WARNED.add(service)
+        log.warning(
+            "%s has no usable price in [budget.tool_prices], so each paid call is "
+            "charged the safety ceiling of $%.2f. Set its price in Settings > Models, "
+            "under Prices for paid tool services.", service, ceiling,
+        )
+    return ToolCallPrice(service, None, 0.0, ceiling)
+
+
+def record_tool_dollars(
+    budget: Budget, price: ToolCallPrice, dollars: float, *, priced: bool,
+    unreported: bool = False,
+) -> TokenCharge:
+    """Charge one paid tool call's ``dollars`` to ``budget``.
+
+    ``priced`` is false when the safety ceiling set the amount; ``unreported``
+    marks a call whose priced unit the reply never gave, charged everything
+    it held. The cost line then names the fix. Raises as
+    :meth:`Budget.record_tokens` does.
+    """
+    route = f"tool:{price.service}"
+    if unreported:
+        quote = _estimate_policy_price(
+            route, (0.0, 0.0), source=f"config://budget.tool_prices.{price.service}",
+            confidence=0.0, version=_UNREPORTED_TOOL_UNITS, evidence_id=_UNREPORTED_TOOL_UNITS,
+            pricing_basis=f"The full hold: the reply did not report the {price.unit}s used",
+            applicability="Spend-limit charge for a paid tool call whose usage was not "
+                          "reported; the provider's invoice remains authoritative.")
+    elif priced:
+        quote = _estimate_policy_price(
+            route, (0.0, 0.0), source=f"config://budget.tool_prices.{price.service}",
+            confidence=0.0, version=_TOOL_PRICE_VERSION, evidence_id=_TOOL_PRICE_VERSION,
+            pricing_basis=f"Administrator-entered USD {price.dollars_per_unit:g} per {price.unit}",
+            applicability="Spend-limit charge for this paid tool service; the "
+                          "provider's invoice remains authoritative.")
+    else:
+        quote = _estimate_policy_price(
+            route, (0.0, 0.0), source="maverick://pricing-policy/unpriced-tool-call-ceiling",
+            confidence=0.0, version=_UNPRICED_TOOL_CEILING, evidence_id=_UNPRICED_TOOL_CEILING,
+            pricing_basis=f"Safety ceiling of USD {price.ceiling:g} per call with no usable price",
+            applicability="Spend-limit charge for a paid tool call with no price; "
+                          "the provider's invoice remains authoritative.")
+    with _attempt_price_scope(lambda _budget, _model: quote):
+        return budget.record_tokens(0, 0, model=route, cost_dollars=dollars)
+
+
 def _lookup_price(
     model: str | None,
     *,
@@ -1544,6 +1804,20 @@ class Budget:
                 f". Spend for {', '.join(models)} used the safety ceiling because "
                 "it has no price set. Set the model's price in Settings > Models, "
                 "under Prices for the models you use"
+            )
+        if tools := priced_by.get(_UNPRICED_TOOL_CEILING):
+            note += (
+                f". Spend for {', '.join(tool_route_label(t) for t in tools)} used the "
+                "per-call safety ceiling "
+                "because it has no usable price. Set the service's price in Settings > "
+                "Models, under Prices for paid tool services"
+            )
+        if tools := priced_by.get(_UNREPORTED_TOOL_UNITS):
+            note += (
+                f". {', '.join(tool_route_label(t) for t in tools)} did not report its real "
+                "usage, so the full amount held for it was charged. Set a price per request "
+                "for it in Settings > Models, under Prices for paid tool services, to be "
+                "charged per call instead"
             )
         return note
 
