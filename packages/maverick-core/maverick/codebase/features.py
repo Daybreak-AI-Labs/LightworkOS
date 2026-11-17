@@ -5,9 +5,12 @@
 cannot leave through an external tool. It then:
 
 1. commits the working copy's files host-side and pins that commit in a bundle;
-2. runs the repository's test command through the sandbox on a FRESH copy of
-   the pinned commit; failing tests go back to the author as a follow-up goal,
-   and the loop repeats for up to ``[codebase] repair_rounds`` rounds;
+2. runs the repository's tests through the sandbox on a FRESH copy of the
+   pinned commit, in tiers: the quick tier (``quick_test_command``, else the
+   full suite) after each author round, then, once it passes, the full suite
+   (``test_command``) and the gate (``gate_command``) on the same commit.
+   A failure in any of them goes back to the author as a follow-up goal, and
+   the loop repeats for up to ``[codebase] repair_rounds`` rounds;
 3. runs the independent checkers, when supplied (``[codebase] checkers``, one
    by default): each a separate goal with a fresh context and its own throwaway
    copy of the pinned commit, which tries to break the change and reports
@@ -17,12 +20,16 @@ cannot leave through an external tool. It then:
    Blockers from any checker go back to the author, confirmed repros are
    re-run on the repaired commit, then the checkers look again, for up to
    ``[codebase] check_rounds`` looks;
-4. runs the independent diff reviewer, when one is supplied;
-5. seals the proposal (diff, tests, rounds, findings, review, branch bundle) and
+4. runs the full suite and the gate again on the final commit when it
+   changed since they last ran, then the heavy tier (``heavy_test_command``,
+   tests that need services) in ``[codebase] checker_image`` only;
+5. runs the independent diff reviewer, when one is supplied;
+6. seals the proposal (diff, tests, rounds, findings, review, branch bundle) and
    parks a ``codebase_merge`` approval in the real approvals queue.
 
 Every round, the author's and the checker's, is charged to one budget, checked
-before the round starts; when it runs out the loop stops and the card says so.
+before the round starts and before each test tier runs; when it runs out the
+loop stops and the card says so.
 
 Nothing reaches the vault's default branch or any remote until a person
 approves: ``merge`` needs the approval, ``push`` needs it too. A denied approval
@@ -61,6 +68,15 @@ _IMAGE_SETUP_EXITS = (125, IMAGE_SETUP_EXIT)
 _MISSING_IMAGE = re.compile(r"no such image|image not known|unable to find image",
                             re.IGNORECASE)
 NO_CONTAINER_REASON = "the steps do not run in a container"
+TEST_TIMEOUT = 1800
+MAX_CHANGED_PATHS = 200
+# (tier, the repository's command for it, its name on the card)
+TIERS = (("quick", "quick_test_command", "Quick tests"), ("full", "test_command", "Tests"),
+         ("gate", "gate_command", "Other checks"),
+         ("heavy", "heavy_test_command", "Tests that need services"))
+NEEDS_IMAGE = "needs the checker image"
+BUDGET_REASON = "the spending limit ran out"
+SETUP_REASON = "its work area could not be set up"
 Runner = Callable[[int, Path], object]
 # (goal id of a fresh check task, its own throwaway copy of the pinned commit)
 # -> its report: text ending in a JSON object, or that object.
@@ -115,26 +131,32 @@ def _slug(text: str) -> str:
 def _brief(repo: vault.Repo, title: str, description: str) -> str:
     tests = (f"The test command is `{repo.test_command}`; run it and make it pass."
              if repo.test_command else "Add or update tests for the change where the repo has them.")
+    if repo.gate_command:
+        tests += f" Lightwork also runs `{repo.gate_command}` (lint and other gates); make it pass."
     return (f"Implement this change in the `{repo.name}` repository (your working directory "
             f"is a checkout of branch `{repo.default_branch}` on a new feature branch).\n\n"
             f"{title}\n\n{description}\n\n{tests} Edit files in place; do not push, publish "
             "or send the code anywhere -- a human reviews and merges your change.")
 
 
-def run_tests(repo: vault.Repo, work: Path, sandbox_factory=None) -> dict | None:
-    if not repo.test_command:
+def run_tests(repo: vault.Repo, work: Path, sandbox_factory=None,
+              command: str | None = None) -> dict | None:
+    """Run ``command`` (default: the repository's full test command) in
+    ``work`` through the sandbox."""
+    command = command or repo.test_command
+    if not command:
         return None
     if sandbox_factory is None:
         from ..sandbox import build_sandbox
         sandbox_factory = build_sandbox
     box = sandbox_factory(workdir=str(work))
     try:
-        result = box.exec(repo.test_command, timeout=1800)
+        result = box.exec(command, timeout=TEST_TIMEOUT)
     finally:
         _close(box)  # a container backend's leftovers end with the run
     output = (result.stdout or "") + (result.stderr or "")
     setup_failed = bool(getattr(result, "setup_failed", False))
-    return {"command": repo.test_command, "exit_code": result.exit_code,
+    return {"command": command, "exit_code": result.exit_code,
             "passed": result.exit_code == 0 and not setup_failed,
             "setup_failed": setup_failed, "output": output[-MAX_TEST_OUTPUT_CHARS:]}
 
@@ -243,7 +265,8 @@ def _repair_brief(repo: vault.Repo, title: str, description: str, problem: str) 
 def _tests_problem(tests: dict) -> str:
     from ..coding_mode import classify_failure
     kind, hint = classify_failure(tests["output"])
-    return (f"The test command `{tests['command']}` failed (exit code {tests['exit_code']}) "
+    what = "gate command" if tests.get("tier") == "gate" else "test command"
+    return (f"The {what} `{tests['command']}` failed (exit code {tests['exit_code']}) "
             "on your last version."
             + (f"\nDominant failure class: {kind}. {hint}" if kind != "other" else "")
             + f"\n\nRecent test output:\n{tests['output'][-MAX_REPAIR_OUTPUT_CHARS:]}")
@@ -384,7 +407,10 @@ class _Loop:
         self.run, self.checkers, self.sandbox_factory = run, checkers, sandbox_factory
         self.budget, self.check_rounds = budget, check_rounds
         self.repairs_left, self.repair_rounds = repair_rounds, repair_rounds
+        # self.tests: the last round tier's result (quick, else full); every
+        # tier's latest result, with the commit it ran on, is in self.results.
         self.head, self.bundle, self.tests = base, b"", None
+        self.results: dict[str, dict] = {}
         self.review_cut_short = False
         self.setup_failed = False  # a step's isolated work area could not be set up
         self.rounds: list[dict] = []
@@ -443,18 +469,96 @@ class _Loop:
                 _git(["bundle", "create", str(out), f"{self.base}..refs/heads/{self.branch}"],
                      git_dir=self.host)
                 bundle = out.read_bytes()
-            tests = self._test(head)
+            tests = self._round_tier(head)
         self.head, self.bundle, self.tests = head, bundle, tests
         self.rounds.append({"kind": kind, "goal_id": goal_id, "head": head})
 
-    def _test(self, head: str) -> dict | None:
-        if not self.repo.test_command or head == self.base:
-            return None
+    def _not_run(self, tier: str, head: str, command: str, reason: str) -> dict:
+        result = {"tier": tier, "command": command, "commit": head, "exit_code": None,
+                  "passed": False, "setup_failed": False, "output": "", "not_run": reason}
+        self.results[tier] = result
+        return result
+
+    def _run_tier(self, tier: str, head: str, command: str, box_factory=None) -> dict:
+        """One tier on a fresh copy of ``head`` in a contained step, exactly
+        as the tests always ran; ``budget.check()`` first."""
+        if not self._afford():
+            return self._not_run(tier, head, command, BUDGET_REASON)
         with vault.work_dir() as tmp, _step(tmp) as step:
             copy = _fresh_copy(self.host, tmp / "tests", head)
-            tests = {**run_tests(self.repo, copy, self.sandbox_factory), "commit": head}
+            if box_factory is not None:
+                self._for_image(copy)
+            result = run_tests(self.repo, copy, box_factory or self.sandbox_factory,
+                               command=command)
             self.setup_failed |= step["setup_failed"]
-            return tests
+        result = {**result, "tier": tier, "commit": head}
+        self.results[tier] = result
+        return result
+
+    def _round_tier(self, head: str) -> dict | None:
+        """After an author round: the quick tier when set, with ``{changed}``
+        filled in, else the full suite. More than MAX_CHANGED_PATHS changed
+        paths run the full suite instead (the quick command without them
+        when there is none)."""
+        quick, full = self.repo.quick_test_command, self.repo.test_command
+        if quick:
+            changed = self._changed(head)
+            if len(changed) <= MAX_CHANGED_PATHS:
+                return self._run_tier("quick", head, quick.replace(
+                    vault.CHANGED, " ".join(_quote_path(f) for f in changed)))
+            if not full:
+                return self._run_tier("quick", head, quick.replace(vault.CHANGED, ""))
+            self._not_run("quick", head, quick, f"more than {MAX_CHANGED_PATHS} files "
+                                                "changed, so the full tests ran instead")
+        return self._run_tier("full", head, full) if full else None
+
+    def _changed(self, head: str) -> list[str]:
+        return [f for f in _git(["diff", "--name-only", "--no-renames", "-z", self.base, head],
+                                git_dir=self.host).split("\0") if f]
+
+    def _candidate(self, head: str) -> dict | None:
+        """The full suite and the gate on ``head``, each at most once per
+        commit; the first one that failed in the change, or None."""
+        for tier, command in (("full", self.repo.test_command), ("gate", self.repo.gate_command)):
+            if not command:
+                continue
+            result = self.results.get(tier)
+            if not result or result["commit"] != head or result.get("not_run"):
+                result = self._run_tier(tier, head, command)
+            if not result["passed"]:
+                return result if _repairable(result) else None
+        return None
+
+    def finish(self) -> None:
+        """Before the card: the full suite and the gate again on the final
+        commit when it changed since they last ran, then the heavy tier."""
+        if self.head == self.base:
+            return
+        for tier, command in (("full", self.repo.test_command), ("gate", self.repo.gate_command)):
+            result = self.results.get(tier)
+            if (command and result and not result.get("not_run")
+                    and result["commit"] != self.head):
+                self._run_tier(tier, self.head, command)
+        command = self.repo.heavy_test_command
+        if not command:
+            return
+        if not self.image:
+            self._not_run("heavy", self.head, command, NEEDS_IMAGE)
+            return
+        if not self._afford():  # before starting any container
+            self._not_run("heavy", self.head, command, BUDGET_REASON)
+            return
+        problem = self._image_problem()
+        if problem:
+            self._not_run("heavy", self.head, command, problem)
+            return
+        try:
+            result = self._run_tier("heavy", self.head, command, box_factory=self._box)
+        except Exception as exc:  # noqa: BLE001 -- never run on this computer instead
+            self._not_run("heavy", self.head, command, f"it could not start ({type(exc).__name__})")
+            return
+        if result.get("exit_code") in _IMAGE_SETUP_EXITS:  # the image's own set-up failed
+            result.update(passed=False, setup_failed=True)
 
     def _repair(self, kind: str, problem: str) -> bool:
         """A follow-up goal for the author; False when the loop must stop."""
@@ -476,9 +580,19 @@ class _Loop:
         return True
 
     def repair_tests(self) -> None:
-        while (self.tests and not self.tests["passed"] and not self.stopped
-               and not self.tests.get("setup_failed")):  # nothing in the change to repair
-            if not self._repair("tests", _tests_problem(self.tests)):
+        """Repair until the round tier passes, then run the full suite and the
+        gate on the same pinned commit; a failure there is a repair too."""
+        while not self.stopped and self.head != self.base:
+            failed = self.tests
+            if failed is not None and not failed["passed"]:
+                if not _repairable(failed):  # nothing in the change to repair
+                    return
+            else:
+                failed = self._candidate(self.head)
+                if failed is None:
+                    return
+            kind = "gate" if failed.get("tier") == "gate" else "tests"
+            if not self._repair(kind, _tests_problem(failed)):
                 return
 
     def _box(self, workdir: str):
@@ -743,6 +857,53 @@ class _Loop:
             return "passed", "it passed"
         return "failed", ""
 
+    def tier_record(self) -> tuple[dict | None, dict, str | None]:
+        """(the full suite's result, each tier's state ON THE FINAL COMMIT,
+        the tiers' output). Only the full suite passing on the final commit
+        makes ``passed`` true; a quick pass never does."""
+        tiers, outputs = {}, []
+        for tier, key, label in TIERS:
+            command = getattr(self.repo, key)
+            result = self.results.get(tier)
+            if not command:
+                tiers[tier] = {"state": "not configured"}
+                continue
+            reason = None
+            if result is None or result["commit"] != self.head:
+                state, reason = "not run", self._why_not(result)
+            elif result.get("not_run") or result.get("setup_failed"):
+                state = "not run"
+                reason = result.get("not_run") or SETUP_REASON
+            else:
+                state = "passed" if result["passed"] else "failed"
+            tiers[tier] = {"state": state, "reason": reason, "command": command,
+                           "exit_code": None if result is None else result["exit_code"]}
+            if result is not None and result.get("output"):
+                outputs.append(f"--- {label}: `{result['command']}` ---\n{result['output']}")
+        tests = None
+        if self.repo.test_command:
+            full = self.results.get("full") or {}
+            tests = {"command": full.get("command", self.repo.test_command),
+                     "exit_code": full.get("exit_code"), "commit": full.get("commit"),
+                     "setup_failed": bool(full.get("setup_failed")),
+                     "passed": tiers["full"]["state"] == "passed",
+                     "ran": tiers["full"]["state"] in ("passed", "failed")}
+        return tests, tiers, "\n\n".join(outputs) or None
+
+    def _why_not(self, result: dict | None) -> str:
+        """Why a configured tier has no result on the final commit."""
+        if result is not None and result.get("not_run"):
+            return result["not_run"]
+        if result is not None:
+            return "it ran only on an earlier version"
+        if self.stopped == "budget":
+            return BUDGET_REASON
+        if self.stopped:
+            return "a repair round failed"
+        if self.repo.quick_test_command:
+            return "the quick tests did not pass, and no repair rounds were left"
+        return "the run stopped before it"
+
     def record(self) -> tuple[dict, dict]:
         check = dict(self.check)
         check["state"] = ("ran" if check["runs"] else "failed" if check["error"]
@@ -754,6 +915,19 @@ class _Loop:
                              for f in check["findings"]]
         return {"used": self.repair_rounds - self.repairs_left,
                 "allowed": self.repair_rounds}, check
+
+
+def _repairable(result: dict) -> bool:
+    """A tier that ran and failed: something in the change to repair (not a
+    work area that could not be set up, nor a tier that did not run)."""
+    return not result["passed"] and not result.get("setup_failed") \
+        and not result.get("not_run")
+
+
+def _quote_path(path: str) -> str:
+    """A changed path for ``{changed}``: shell-quoted, never read as an option."""
+    import shlex
+    return shlex.quote(f"./{path}" if path.startswith("-") else path)
 
 
 def _unconfirmed(f: dict) -> bool:
@@ -866,6 +1040,7 @@ def propose(world, name: str, title: str, description: str, run: Runner, *,
                                         owner=owner, execution_principal=owner)
             loop.author(goal_id, "author")
             loop.verify()
+            loop.finish()
             head, changed = loop.head, loop.head != base
             diff = files = None
             if changed:
@@ -881,14 +1056,13 @@ def propose(world, name: str, title: str, description: str, run: Runner, *,
         raise
     diff, files = diff or "", files or []
     review = _review(loop, reviewer, f"{title}\n\n{description}", diff)
-    tests = loop.tests
+    tests, tiers, tests_output = loop.tier_record()
     rounds, check = loop.record()
     proposal = {
         "id": pid, "repo": name, "title": title, "goal_id": goal_id, "branch": branch,
         "base": base, "head": head, "files": files, "diff": diff[:MAX_DIFF_CHARS],
         "diff_truncated": len(diff) > MAX_DIFF_CHARS, "diff_chars": len(diff),
-        "tests": None if tests is None else {k: v for k, v in tests.items() if k != "output"},
-        "tests_output": None if tests is None else tests["output"],
+        "tests": tests, "tiers": tiers, "tests_output": tests_output,
         "test_command": bool(repo.test_command), "repair_rounds": rounds,
         "isolation": "setup_failed" if loop.setup_failed else _isolation(on_host),
         "rounds": loop.rounds, "check": check, "stopped": loop.stopped,
@@ -969,6 +1143,8 @@ def _approval_detail(p: dict) -> str:
 
 
 _TESTS_GAP = "The repository's tests did not pass or are not configured."
+QUICK_ONLY_LINE = ("The quick tests passed, but a quick pass alone never counts as the "
+                   "tests passing.")
 HOST_LINE = ("These steps ran on this computer without a container or separate processes, "
              "so they were not isolated from each other.")
 HOST_GAP = "The steps were not isolated from each other on this computer."
@@ -990,7 +1166,58 @@ SAME_FAMILY_GAP = ("Every checker used the same kind of model as the author, so 
                    "share its blind spots.")
 
 
+def _tiers_evidence(tiers: dict) -> tuple[list[str], list[str]]:
+    """One line per test tier with its result on the version being approved.
+    Only the full suite passing there reads as the tests passing."""
+    def said(t: dict) -> str:
+        if t["state"] == "not run":
+            return f"not run ({t.get('reason')})"
+        return t["state"] if t["state"] == "not configured" else \
+            f"{t['state']} on the version you are approving (`{t.get('command')}`)"
+    full = tiers.get("full") or {"state": "not configured"}
+    if full["state"] in ("passed", "failed"):
+        lines = [f"Tests: {full['state'].upper()}. Lightwork ran `{full.get('command')}` on the "
+                 "exact version you are approving."]
+    elif full.get("reason") == SETUP_REASON:
+        lines = ["Tests: not run. The isolated work area could not be set up."]
+    elif full["state"] == "not run":
+        lines = [f"Tests: not run on the version you are approving ({full.get('reason')})."]
+    else:
+        lines = ["Tests: not configured. Lightwork has no full test command for this project."]
+    gaps = [] if full["state"] == "passed" else [_TESTS_GAP]
+    if full["state"] != "passed" and (tiers.get("quick") or {}).get("state") == "passed":
+        lines.append(QUICK_ONLY_LINE)
+    for tier, _, label in TIERS:
+        t = tiers.get(tier) or {"state": "not configured"}
+        if tier == "full":
+            continue
+        lines.append(f"{label}: {said(t)}.")
+        if t["state"] == "failed":
+            gaps.append(f"{label} failed on the version you are approving.")
+        elif t["state"] == "not run" and tier != "quick":  # a quick tier never counts
+            gaps.append(f"{label} did not run on the version you are approving "
+                        f"({t.get('reason')}).")
+    return lines, gaps
+
+
+def tier_summary(p: dict) -> str:
+    """Each test tier's result on the final version in one sentence (Copilot);
+    empty for a proposal saved before tiers existed."""
+    tiers = p.get("tiers")
+    if not isinstance(tiers, dict):
+        return ""
+    parts = []
+    for tier, _, label in TIERS:
+        t = tiers.get(tier) or {"state": "not configured"}
+        name = "all tests" if tier == "full" else label.lower()
+        parts.append(f"{name} {t['state']}"
+                     + (f" ({t.get('reason')})" if t["state"] == "not run" else ""))
+    return "On the final version: " + "; ".join(parts) + "."
+
+
 def _tests_evidence(p: dict) -> tuple[list[str], list[str]]:
+    if isinstance(p.get("tiers"), dict):
+        return _tiers_evidence(p["tiers"])
     tests = p.get("tests")
     if tests is None:
         return ["Tests: not configured. Nothing ran this project's tests."], [_TESTS_GAP]
@@ -1116,8 +1343,10 @@ def evidence(p: dict) -> dict:
     reason the change is not fully checked; it is empty only when the tests
     passed on the approved commit and the checker looked at that commit and
     left no blocker open. Proposals saved before repair rounds and the checker
-    existed read as not checked."""
+    existed read as not checked. ``tests`` is the test lines alone (one per
+    tier), for answers too short for every line."""
     lines, gaps = _tests_evidence(p)
+    tests = list(lines)
     isolation = p.get("isolation")
     if isolation in ("host", "namespace"):
         lines.append(HOST_LINE if isolation == "host" else NAMESPACE_LINE)
@@ -1140,7 +1369,7 @@ def evidence(p: dict) -> dict:
     check_lines, check_gaps = _check_evidence(p)
     check = p.get("check") or {}
     many = len(check.get("checkers") or ()) > 1
-    return {"lines": lines + check_lines, "gaps": gaps + check_gaps,
+    return {"lines": lines + check_lines, "gaps": gaps + check_gaps, "tests": tests,
             "findings": [_finding_line(f, many) for f in check.get("findings") or []]}
 
 
@@ -1451,7 +1680,8 @@ def default_reviewer(*, budget=None) -> Reviewer:
 
 __all__ = ["checker_sandbox", "default_checker", "default_checkers", "default_reviewer",
            "default_runner", "evidence", "feature_budget", "find", "list_proposals",
-           "loop_settings", "merge", "propose", "push", "run_tests", "settle", "status"]
+           "loop_settings", "merge", "propose", "push", "run_tests", "settle", "status",
+           "tier_summary"]
 
 
 def _check_word(check: dict, head: str) -> str:
@@ -1470,7 +1700,9 @@ def summary(world) -> dict:
     """Read-only projection for the dashboard: repositories and proposals, never
     code, diffs or test output."""
     repos = [{"name": r.name, "default_branch": r.default_branch, "head": r.head[:12],
-              "protect": r.protect, "tests": bool(r.test_command), "updated_at": r.updated_at}
+              "protect": r.protect, "tests": bool(r.test_command),
+              "test_tiers": [tier for tier, key, _ in TIERS if getattr(r, key)],
+              "updated_at": r.updated_at}
              for r in vault.list_repos()]
     proposals = []
     for p in list_proposals()[:200]:
@@ -1481,6 +1713,8 @@ def summary(world) -> dict:
             "id": p["id"], "repo": p["repo"], "title": p["title"], "branch": p["branch"],
             "status": status(world, p), "files": len(p["files"]),
             "tests": None if tests is None else tests["passed"],
+            # False when the full suite did not run on the final commit.
+            "tests_ran": None if tests is None else tests.get("ran", True),
             "review": None if review is None else bool(review.get("approves")),
             "check": None if check is None else _check_word(check, p["head"]),
             "gaps": len(evidence(p)["gaps"]),

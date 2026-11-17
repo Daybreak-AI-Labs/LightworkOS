@@ -98,11 +98,19 @@ def test_live_code_checks_say_what_was_not_checked_under_admin_access(client, mo
                       "findings": [{"id": "1.1", "severity": "minor", "status": "not attempted",
                                     "what": "w", "evidence": "ran",
                                     "repro_state": "confirmed"}]}}
+    # Quick tests passed, but the spending limit stopped the full suite.
+    tiered = {"id": "3123456789abcdef", "repo": "billing", "title": "Tiered change",  # pragma: allowlist secret
+              "head": "d" * 40, "isolation": "container", "check": {"state": "off"},
+              "tests": {"command": "t", "passed": False, "ran": False},
+              "tiers": {"quick": {"state": "passed", "command": "q"},
+                        "full": {"state": "not run", "reason": "the spending limit ran out"},
+                        "gate": {"state": "not configured"},
+                        "heavy": {"state": "not run", "reason": "needs the checker image"}}}
     merged = dict(pending, id="fedcba9876543210", title="Old change")  # pragma: allowlist secret
     monkeypatch.setattr(api, "_copilot_model_route_status", lambda: pytest.fail("live records went to the provider route"))
     monkeypatch.setattr(dashboard_app, "_world", lambda: object())
     monkeypatch.setattr(vault, "enabled", lambda: True)
-    monkeypatch.setattr(features, "list_proposals", lambda: [pending, clean, twin, merged])
+    monkeypatch.setattr(features, "list_proposals", lambda: [pending, clean, twin, tiered, merged])
     monkeypatch.setattr(features, "status", lambda _world, p: "merged" if p is merged else "pending")
     allowed = {"admin": True}
     monkeypatch.setattr(live.auth, "has_permission", lambda _request, permission: allowed[permission])
@@ -115,6 +123,9 @@ def test_live_code_checks_say_what_was_not_checked_under_admin_access(client, mo
     assert "left no blocking problem open" not in result["reply"]
     assert features.SAME_FAMILY_GAP in result["reply"]
     assert "Lightwork re-ran 1 finding(s) itself and confirmed 1." in result["reply"]
+    assert ("On the final version: quick tests passed; all tests not run (the spending limit "
+            "ran out); other checks not configured; tests that need services not run (needs "
+            "the checker image).") in result["reply"]
     assert result["action_link"]["href"] == "/code"
     allowed["admin"] = False                     # the review panel needs an administrator
     refused = client.post("/api/v1/copilot", json=ask).json()

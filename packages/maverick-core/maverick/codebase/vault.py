@@ -50,6 +50,19 @@ class Repo:
     token_env: str | None = None
     head: str = ""
     updated_at: float = 0.0
+    # Test tiers (all optional; records saved before them load as unset).
+    # quick_test_command runs after each author round while repairing and may
+    # contain {changed}; gate_command (lint and other gates) runs with the
+    # full suite on the final candidate; heavy_test_command (tests that need
+    # services) runs there only in [codebase] checker_image.
+    quick_test_command: str | None = None
+    gate_command: str | None = None
+    heavy_test_command: str | None = None
+
+
+COMMANDS = ("test_command", "quick_test_command", "gate_command", "heavy_test_command")
+CHANGED = "{changed}"
+MAX_COMMAND_CHARS = 2000
 
 
 def enabled() -> bool:
@@ -188,9 +201,29 @@ def _private_tmp(prefix: str) -> Path:
     return tmp
 
 
+def check_commands(given: dict[str, str | None]) -> dict[str, str | None]:
+    """Checked test-tier commands: blank means unset; only the quick tier
+    may name ``{changed}``."""
+    out: dict[str, str | None] = {}
+    for key, value in given.items():
+        if key not in COMMANDS:
+            raise VaultError(f"unknown command {key!r}")
+        if value is not None and not isinstance(value, str):
+            raise VaultError(f"{key} must be text")
+        value = (value or "").strip() or None
+        if value and (len(value) > MAX_COMMAND_CHARS or "\0" in value):
+            raise VaultError(f"{key} must be plain text of at most {MAX_COMMAND_CHARS} characters")
+        if value and CHANGED in value and key != "quick_test_command":
+            raise VaultError(f"only the quick test command can use {CHANGED}")
+        out[key] = value
+    return out
+
+
 def register(name: str, source: str, *, default_branch: str | None = None,
              test_command: str | None = None, protect: str = "block",
-             token_env: str | None = None, timeout: int = _GIT_TIMEOUT) -> Repo:
+             token_env: str | None = None, timeout: int = _GIT_TIMEOUT,
+             quick_test_command: str | None = None, gate_command: str | None = None,
+             heavy_test_command: str | None = None) -> Repo:
     """Import a repository (every branch and tag) into the vault.
 
     ``timeout`` bounds each network step (the dashboard uses a short one)."""
@@ -198,6 +231,10 @@ def register(name: str, source: str, *, default_branch: str | None = None,
         raise VaultError("name: lowercase letters, digits, '.', '_' and '-' (max 64)")
     if protect not in PROTECT:
         raise VaultError(f"protect must be one of {PROTECT}")
+    commands = check_commands({"test_command": test_command,
+                          "quick_test_command": quick_test_command,
+                          "gate_command": gate_command,
+                          "heavy_test_command": heavy_test_command})
     source = _check_source(source)
     with cross_process_lock(_registry_path(), strict=True):
         if name in _load():
@@ -213,7 +250,8 @@ def register(name: str, source: str, *, default_branch: str | None = None,
             head = _store_bundle(name, host, branch)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
-        repo = Repo(name, source, branch, test_command, protect, token_env, head, time.time())
+        repo = Repo(name, source, branch, protect=protect, token_env=token_env, head=head,
+                    updated_at=time.time(), **commands)
         registry = _load()
         registry[name] = asdict(repo)
         _save(registry)
@@ -239,6 +277,13 @@ def update_registry(name: str, **changes) -> Repo:
         registry[name].update(changes)
         _save(registry)
         return Repo(**registry[name])
+
+
+def set_commands(name: str, **commands: str | None) -> Repo:
+    """Change a repository's test-tier commands (``test_command``,
+    ``quick_test_command``, ``gate_command``, ``heavy_test_command``); a blank
+    value clears one. Only the named commands change."""
+    return update_registry(name, **check_commands(commands))
 
 
 @contextmanager
@@ -365,6 +410,6 @@ def export(name: str, dest: Path) -> Path:
     return dest
 
 
-__all__ = ["PROTECT", "Repo", "VaultError", "checkout", "clone_work", "commit_back",
-           "enabled", "export", "get", "host_repo", "list_repos", "register", "sync",
-           "update_registry"]
+__all__ = ["COMMANDS", "PROTECT", "Repo", "VaultError", "check_commands", "checkout", "clone_work",
+           "commit_back", "enabled", "export", "get", "host_repo", "list_repos", "register",
+           "set_commands", "sync", "update_registry"]

@@ -133,8 +133,9 @@ def _code_checks(request):
         gaps = features.evidence(p)["gaps"]
         state = (" ".join(["Not fully checked:", *gaps[:3]]) if gaps else
                  "The tests passed and the independent check left no blocking problem open.")
+        tiers = features.tier_summary(p)
         parts.append(f"{i}. {_bounded(p['title'])} in {_bounded(p['repo'], 64)}. {state}"
-                     + _code_reruns(p))
+                     + (f" {tiers}" if tiers else "") + _code_reruns(p))
     if parts:
         reply = (f"Checked the proposed code changes {_checked_at()}. Waiting for approval: "
                  f"{len(rows)}. {' '.join(parts)}")

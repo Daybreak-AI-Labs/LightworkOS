@@ -1663,3 +1663,219 @@ def test_the_image_check_hands_over_a_subfolder_not_the_private_work_folder(monk
     # The private lw-work-* folder stays root-only; only a folder inside it is handed over.
     assert handed == boxed and len(handed) == 1
     assert handed[0].parent.name.startswith("lw-work-")
+
+
+# -- test tiers: quick while repairing, full and gate on the final candidate,
+#    heavy only in the checker image --
+
+class _Recording(_Sandbox):
+    """The tests' sandbox, recording every command it runs on this computer."""
+    ran: list = []
+
+    def exec(self, cmd, timeout=None):
+        type(self).ran.append(cmd)
+        return super().exec(cmd, timeout)
+
+
+def _recording():
+    return type("Rec", (_Recording,), {"ran": []})
+
+
+def _with_test(work):
+    """A passing app.py, plus a changed test file the quick tier can select."""
+    _passing(work)
+    (work / "test_app.py").write_text((work / "test_app.py").read_text() + "\n# touched\n")
+
+
+def _failing_with_test(work):
+    _failing(work)
+    (work / "test_app.py").write_text((work / "test_app.py").read_text() + "\n# touched\n")
+
+
+def _tier_lines(p):
+    return [line for line in features.evidence(p)["lines"]
+            if line.split(":")[0] in ("Tests", "Quick tests", "Other checks",
+                                      "Tests that need services")]
+
+
+def test_the_quick_tier_runs_in_repairs_with_the_changed_paths(upstream, tmp_path):
+    vault.register("pricing", str(upstream), test_command="python -m pytest -q",
+                   quick_test_command="python -m pytest -q {changed}")
+    world = WorldModel(tmp_path / "world.db")
+    box = _recording()
+    run, calls = _rounds(_failing_with_test, _with_test)
+    p = features.propose(world, "pricing", "Discount", "", run, sandbox_factory=box,
+                         repair_rounds=2)
+    quick = "python -m pytest -q app.py test_app.py"
+    # Quick after each author round; the full suite only once the quick tier passed.
+    assert box.ran == [quick, quick, "python -m pytest -q"] and len(calls) == 2
+    assert {t: v["state"] for t, v in p["tiers"].items()} == {
+        "quick": "passed", "full": "passed", "gate": "not configured", "heavy": "not configured"}
+    assert p["tests"]["passed"] and features.evidence(p)["gaps"] == [features._UNCHECKED_GAP]
+    assert _tier_lines(p)[:2] == [
+        "Tests: PASSED. Lightwork ran `python -m pytest -q` on the exact version you are approving.",
+        "Quick tests: passed on the version you are approving "
+        "(`python -m pytest -q {changed}`)."]
+
+
+def test_quick_tests_that_pass_but_a_failing_full_suite_go_back_to_the_author(upstream,
+                                                                             tmp_path):
+    vault.register("pricing", str(upstream), test_command="python -m pytest -q",
+                   quick_test_command="python -c pass")
+    world = WorldModel(tmp_path / "world.db")
+    box = _recording()
+    run, calls = _rounds(_failing, _passing)
+    p = features.propose(world, "pricing", "Discount", "", run, sandbox_factory=box,
+                         repair_rounds=2)
+    assert box.ran == ["python -c pass", "python -m pytest -q"] * 2 and len(calls) == 2
+    repair = world.get_goal(calls[1]["goal_id"]).description
+    assert "The test command `python -m pytest -q` failed" in repair
+    assert [r["kind"] for r in p["rounds"]] == ["author", "tests"]
+    assert p["tests"]["passed"] and p["repair_rounds"]["used"] == 1
+
+
+def test_a_failing_gate_goes_back_to_the_author(upstream, tmp_path):
+    vault.register("pricing", str(upstream), test_command="python -m pytest -q",
+                   gate_command="python lint.py")
+    world = WorldModel(tmp_path / "world.db")
+    box = _recording()
+
+    def sloppy(work):
+        _passing(work)
+        (work / "lint.py").write_text("raise SystemExit('style problem in app.py')\n")
+
+    def tidy(work):
+        (work / "lint.py").write_text("pass\n")
+    run, calls = _rounds(sloppy, tidy)
+    p = features.propose(world, "pricing", "Discount", "", run, sandbox_factory=box,
+                         repair_rounds=2)
+    assert box.ran == ["python -m pytest -q", "python lint.py"] * 2 and len(calls) == 2
+    repair = world.get_goal(calls[1]["goal_id"]).description
+    assert "The gate command `python lint.py` failed" in repair and "style problem" in repair
+    assert "python lint.py" in world.get_goal(p["goal_id"]).description   # the author knew
+    assert [r["kind"] for r in p["rounds"]] == ["author", "gate"]
+    assert p["tiers"]["gate"]["state"] == "passed" and features.evidence(p)["gaps"] == [features._UNCHECKED_GAP]
+
+
+def test_a_full_suite_the_budget_stopped_never_reads_as_passing(upstream, tmp_path):
+    from maverick.budget import Budget
+    vault.register("pricing", str(upstream), test_command="python -m pytest -q",
+                   quick_test_command="python -c pass")
+    world = WorldModel(tmp_path / "world.db")
+    budget = Budget(max_tool_calls=1)
+
+    class CostlyQuick(_Recording):
+        ran: list = []
+
+        def exec(self, cmd, timeout=None):
+            budget.tool_calls += 1                              # the quick run tips it over
+            return super().exec(cmd, timeout)
+
+    def spend(work):
+        budget.tool_calls = 1                                   # at the cap, not over it
+        _passing(work)
+    run, _ = _rounds(spend)
+    p = features.propose(world, "pricing", "Discount", "", run, budget=budget,
+                         sandbox_factory=CostlyQuick, repair_rounds=2)
+    assert CostlyQuick.ran == ["python -c pass"]                # the full suite never ran
+    assert p["tiers"]["quick"]["state"] == "passed"
+    assert p["tiers"]["full"] == {"state": "not run", "reason": "the spending limit ran out",
+                                  "command": "python -m pytest -q", "exit_code": None}
+    assert p["tests"]["passed"] is False and p["tests"]["ran"] is False
+    card = _card(world, p)
+    text = " ".join(card["parameter_summary"])
+    assert "PASSED" not in text and "Tests: not run on the version you are approving " \
+        "(the spending limit ran out)." in text
+    assert features.QUICK_ONLY_LINE in card["parameter_summary"]
+    assert features._TESTS_GAP in card["unresolved_assumptions"]
+    row = features.summary(world)["proposals"][0]
+    assert row["tests"] is False and row["tests_ran"] is False and row["gaps"] >= 1
+
+
+def test_heavy_tests_without_the_checker_image_do_not_run(upstream, tmp_path):
+    vault.register("pricing", str(upstream), test_command="python -m pytest -q",
+                   heavy_test_command="python -m pytest -q -m postgres")
+    world = WorldModel(tmp_path / "world.db")
+    box = _recording()
+    run, _ = _rounds(_passing)
+    p = features.propose(world, "pricing", "Discount", "", run, sandbox_factory=box)
+    assert box.ran == ["python -m pytest -q"]                   # never on this computer
+    assert p["tiers"]["heavy"]["state"] == "not run"
+    assert p["tiers"]["heavy"]["reason"] == features.NEEDS_IMAGE
+    assert "Tests that need services: not run (needs the checker image)." in _tier_lines(p)
+    assert ("Tests that need services did not run on the version you are approving "
+            "(needs the checker image).") in _card(world, p)["unresolved_assumptions"]
+    assert "tests that need services not run (needs the checker image)" in \
+        features.tier_summary(p)
+
+
+def test_heavy_tests_run_in_the_checker_image_on_the_final_commit(upstream, tmp_path,
+                                                                  monkeypatch):
+    vault.register("pricing", str(upstream), test_command="python -m pytest -q",
+                   heavy_test_command="python -m pytest -q -m postgres")
+    world = WorldModel(tmp_path / "world.db")
+    _settings(monkeypatch, checker_image="lw-check:1")
+    in_image: list = []
+
+    class Image:
+        def __init__(self, workdir):
+            self.workdir = workdir
+
+        def exec(self, cmd, timeout=None):
+            app = Path(self.workdir) / "app.py"
+            in_image.append((cmd, app.read_text() if app.exists() else ""))
+            return type("R", (), {"stdout": "1 passed", "stderr": "", "exit_code": 0})()
+    monkeypatch.setattr(features, "image_sandbox", lambda image, workdir: Image(workdir))
+    box = _recording()
+    run, _ = _rounds(_passing)
+    p = features.propose(world, "pricing", "Discount", "", run, sandbox_factory=box)
+    assert box.ran == ["python -m pytest -q"]                   # the heavy tier never ran here
+    assert [cmd for cmd, _ in in_image] == ["true", "python -m pytest -q -m postgres"]
+    assert "def discount" in in_image[1][1]                     # on a copy of the final commit
+    assert p["tiers"]["heavy"]["state"] == "passed" and features.evidence(p)["gaps"] == [features._UNCHECKED_GAP]
+    assert "1 passed" in p["tests_output"]
+
+
+def test_a_repository_record_from_before_tiers_still_loads(upstream, tmp_path):
+    import json
+    vault.register("pricing", str(upstream), test_command="python -m pytest -q")
+    path = vault._registry_path()
+    registry = json.loads(path.read_text())
+    for key in ("quick_test_command", "gate_command", "heavy_test_command"):
+        del registry["pricing"][key]                            # as the earlier release wrote it
+    path.write_text(json.dumps(registry))
+    repo = vault.get("pricing")
+    assert repo.test_command == "python -m pytest -q" and repo.quick_test_command is None
+    assert [r.name for r in vault.list_repos()] == ["pricing"]
+    world = WorldModel(tmp_path / "world.db")
+    run, _ = _rounds(_passing)
+    p = features.propose(world, "pricing", "Discount", "", run, sandbox_factory=_Sandbox)
+    assert p["tests"]["passed"] and p["tiers"]["quick"] == {"state": "not configured"}
+    assert vault.set_commands("pricing", gate_command="python -c pass").gate_command
+    with pytest.raises(vault.VaultError, match="only the quick test command"):
+        vault.set_commands("pricing", test_command="pytest {changed}")
+
+
+def test_a_workspace_cannot_change_a_repositorys_commands(upstream, tmp_path, monkeypatch):
+    from click.testing import CliRunner
+    from maverick import config, paths
+    from maverick.cli import main
+    monkeypatch.setattr(config, "get_codebase",
+                        lambda: {"enable": True, "default_protect": "block"})
+    run = CliRunner().invoke
+    out = run(main, ["code", "add", "pricing", str(upstream), "--test", "python -m pytest -q",
+                     "--quick-test", "python -m pytest -q {changed}"])
+    assert out.exit_code == 0, out.output
+    out = run(main, ["code", "set", "pricing", "--gate", "python lint.py", "--quick-test", ""])
+    assert out.exit_code == 0 and "gate   python lint.py" in out.output, out.output
+    assert "quick  (not set)" in out.output
+    token = paths.set_tenant("team-a")                          # a workspace's own scope
+    try:
+        with pytest.raises(vault.VaultError, match="no repository"):
+            vault.set_commands("pricing", test_command="true")
+        assert run(main, ["code", "set", "pricing", "--test", "true"]).exit_code != 0
+    finally:
+        paths.reset_tenant(token)
+    repo = vault.get("pricing")
+    assert (repo.test_command, repo.quick_test_command, repo.gate_command) == (
+        "python -m pytest -q", None, "python lint.py")
