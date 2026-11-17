@@ -852,22 +852,29 @@ MIGRATIONS.append((54, ["ALTER TABLE goals ADD COLUMN IF NOT EXISTS heartbeat_at
 MIGRATIONS.append((55, _DECISION_REQUEST_SCHEMA_PG))
 
 # v56: row policies for every table that holds a workspace's records.
-# Events and episodes get a ``tenant_id`` copied from their goal (filled here
-# with any FORCE on ``goals`` lifted for the statement, so an owner the policy
-# applies to still sees every goal) and kept in step by triggers. On a database
-# that already enforces row-level security (``goals`` is forced), the tables
-# that had no policy get one; a database without it is left alone, and turning
-# it on later installs every policy (``_apply_rls``). Run by the table owner.
+# Events and episodes get a ``tenant_id`` copy of their goal's, kept in step
+# by triggers from here on. The column has no default, so adding it is cheap;
+# filling it for existing rows rewrites every row, so that happens only where
+# row-level security is on. A database that already forces it on ``goals``
+# is filled here, in this transaction (with that FORCE lifted for the fill),
+# and the tables that had no policy get one. Elsewhere nothing is rewritten:
+# turning row-level security on later fills the copy in short batches
+# (``_fill_stamped_tenants``) before ``_apply_rls`` installs any policy.
+# Run by the table owner.
 _V56_RLS_TABLES = ("approval_checks", *_RLS_RAW_TENANT_TABLES, *_RLS_STAMPED_TABLES,
                    *_RLS_CHILD_TABLES)
+_V56_FORCED = ("EXISTS (SELECT 1 FROM pg_class WHERE oid = 'goals'::regclass "
+               "AND relrowsecurity AND relforcerowsecurity)")
 MIGRATIONS.append((56, [
     *(f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS tenant_id TEXT" for t in _RLS_STAMPED_TABLES),
-    "DO $$ DECLARE forced boolean; BEGIN "
-    "SELECT relforcerowsecurity INTO forced FROM pg_class WHERE oid = 'goals'::regclass; "
-    "IF forced THEN ALTER TABLE goals NO FORCE ROW LEVEL SECURITY; END IF; "
-    + "".join(f"UPDATE {t} c SET tenant_id = g.tenant_id FROM goals g WHERE g.id = c.goal_id "
-              "AND c.tenant_id IS DISTINCT FROM g.tenant_id; " for t in _RLS_STAMPED_TABLES)
-    + "IF forced THEN ALTER TABLE goals FORCE ROW LEVEL SECURITY; END IF; END $$",
+    f"DO $$ BEGIN IF {_V56_FORCED} THEN "
+    "ALTER TABLE goals NO FORCE ROW LEVEL SECURITY; "
+    + "".join(f"ALTER TABLE {t} NO FORCE ROW LEVEL SECURITY; UPDATE {t} c SET tenant_id = g.tenant_id FROM goals g WHERE g.id = c.goal_id "
+              "AND c.tenant_id IS DISTINCT FROM g.tenant_id; "
+              f"CREATE INDEX IF NOT EXISTS idx_pg_{t}_tenant ON {t}(tenant_id); "
+              f"ALTER TABLE {t} FORCE ROW LEVEL SECURITY; "
+              for t in _RLS_STAMPED_TABLES)
+    + "ALTER TABLE goals FORCE ROW LEVEL SECURITY; END IF; END $$",
     "CREATE OR REPLACE FUNCTION mvk_stamp_goal_tenant() RETURNS trigger LANGUAGE plpgsql AS $$ "
     "BEGIN NEW.tenant_id := (SELECT g.tenant_id FROM goals g WHERE g.id = NEW.goal_id); "
     "RETURN NEW; END; $$",
@@ -885,10 +892,7 @@ MIGRATIONS.append((56, [
     "AFTER UPDATE OF tenant_id ON goals FOR EACH ROW "
     "WHEN (OLD.tenant_id IS DISTINCT FROM NEW.tenant_id) "
     "EXECUTE FUNCTION mvk_goal_tenant_follows(); END IF; END $$",
-    *(f"CREATE INDEX IF NOT EXISTS idx_pg_{t}_tenant ON {t}(tenant_id)" for t in _RLS_STAMPED_TABLES),
-    *("DO $$ BEGIN "
-      "IF EXISTS (SELECT 1 FROM pg_class WHERE oid = 'goals'::regclass "
-      "AND relrowsecurity AND relforcerowsecurity) "
+    *(f"DO $$ BEGIN IF {_V56_FORCED} "
       f"AND NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = '{table}'::regclass "
       "AND polname = 'mvk_tenant_isolation') THEN "
       f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY; "
@@ -897,6 +901,9 @@ MIGRATIONS.append((56, [
       "END IF; END $$"
       for table in _V56_RLS_TABLES),
 ]))
+#: Rows of an event or episode table filled per transaction when row-level
+#: security is turned on (``PostgresWorldModel._fill_stamped_tenants``).
+_STAMP_FILL_BATCH = 10_000
 
 _PG_SCHEMA_VERSION = MIGRATIONS[-1][0]
 
@@ -1836,6 +1843,48 @@ class PostgresWorldModel:
                 "knowingly without backfilling, set MAVERICK_PG_RLS=1 explicitly."
             )
 
+    def _fill_stamped_tenants(self) -> None:
+        """Fill the events' and episodes' tenant copy before a policy reads it.
+
+        Runs when row-level security is turned on for a store migration 56
+        did not fill. Each batch of ``_STAMP_FILL_BATCH`` ids is its own short
+        transaction, so no lock is held for long; rows written meanwhile are
+        stamped by the trigger. Only a login that can install the policies
+        fills: any other is refused by ``_apply_rls`` as before.
+        """
+        try:
+            with self._tx() as cur:
+                cur.execute(
+                    "SELECT r.rolsuper OR r.rolbypassrls OR pg_get_userbyid(c.relowner) = r.rolname "
+                    "FROM pg_roles r, pg_class c WHERE r.rolname = current_user "
+                    "AND c.oid = 'goals'::regclass")
+                row = cur.fetchone()
+        except Exception:  # unreadable catalog: the policy step reports the problem
+            return
+        if not (row and row[0]):
+            return
+        for table in _RLS_STAMPED_TABLES:
+            with self._tx() as cur:
+                cur.execute(f"SELECT COALESCE(max(id), 0) FROM {table}")
+                top = int(cur.fetchone()[0])
+            for low in range(0, top, _STAMP_FILL_BATCH):
+                self._fill_stamped_batch(table, low, low + _STAMP_FILL_BATCH)
+            with self._tx() as cur:
+                cur.execute(f"CREATE INDEX IF NOT EXISTS idx_pg_{table}_tenant ON {table}(tenant_id)")
+
+    def _fill_stamped_batch(self, table: str, low: int, high: int) -> None:
+        with self._tx() as cur:
+            cur.execute("SELECT relname FROM pg_class WHERE relforcerowsecurity "
+                        "AND oid IN ('goals'::regclass, %s::regclass)", (table,))
+            forced = [row[0] for row in cur.fetchall()]
+            for name in forced:  # the owner must see every row; restored before commit
+                cur.execute(f"ALTER TABLE {name} NO FORCE ROW LEVEL SECURITY")
+            cur.execute(f"UPDATE {table} c SET tenant_id = g.tenant_id FROM goals g "
+                        "WHERE g.id = c.goal_id AND c.id > %s AND c.id <= %s "
+                        "AND c.tenant_id IS DISTINCT FROM g.tenant_id", (low, high))
+            for name in forced:
+                cur.execute(f"ALTER TABLE {name} FORCE ROW LEVEL SECURITY")
+
     def _apply_rls(self) -> None:
         """Enable Postgres Row-Level Security on the tenant-scoped tables.
 
@@ -1849,6 +1898,8 @@ class PostgresWorldModel:
         fail-closed policy; otherwise RLS startup raises instead of silently
         running without database-enforced tenant isolation.
         """
+        if not all(self._rls_policy_is_active(t) for t in _RLS_STAMPED_TABLES):
+            self._fill_stamped_tenants()
         for table in (*_RLS_TABLES, *_RLS_CHILD_TABLES):
             if self._rls_policy_is_active(table):
                 continue

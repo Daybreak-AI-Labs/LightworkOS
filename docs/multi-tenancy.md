@@ -261,16 +261,24 @@ workspace) before turning RLS on; until then the check is not READY.
   tenant policy. A test creates these tables, lists every table in the schema,
   and fails when one is in none of these lists.
 - **Cost.** Measured on 200,000 goals, 100,000 episodes and 100,000 events.
-  The workspace spend total took 50-65 ms with the policies and 55-70 ms
-  without them; counting a workspace's events took 7 ms (9-16 ms without).
-  Saving an event costs about 4 microseconds more. A child table that checks
-  its parent costs one index probe per row: reading 50 rows of one goal took
-  0.14 ms instead of 0.08 ms.
-- **Upgrading a database that already has RLS on.** Migration 56 adds the new
-  policies when the table owner starts Lightwork. A login that does not own
-  the tables cannot run it, so start once as the owner after upgrading. On a
-  database without RLS it changes nothing; turning RLS on later installs every
-  policy.
+  The workspace spend total took 47-50 ms with the policies and 42-47 ms
+  without them; counting a workspace's events took 17-20 ms (13-14 ms
+  without). Saving an event costs about 4 microseconds more. A child table
+  that checks its parent costs one index probe per row: reading 50 rows of
+  one goal took 0.14 ms instead of 0.08 ms.
+- **Upgrading.** Migration 56 runs when the table owner starts Lightwork; a
+  login that does not own the tables cannot run it, so start once as the
+  owner after upgrading. It adds an empty `tenant_id` column to `goal_events`
+  and `episodes` and the triggers that fill it for new rows. Copying each
+  existing row's workspace into it costs about 10-13 microseconds a row, so
+  only installations that use RLS pay it:
+  - **RLS already on (forced).** Migration 56 fills both tables in one
+    transaction, with them and `goals` locked for writes. Allow about two
+    minutes per 10 million events and episodes, and upgrade in a quiet window.
+    It also installs the new policies.
+  - **RLS off.** Nothing is rewritten. Turning RLS on later fills the column
+    in batches of 10,000 rows, each its own short transaction, before any
+    policy that reads it is installed; then it installs every policy.
 - **The login matters.** A superuser or a role with `BYPASSRLS` skips every
   policy. Lightwork reports such a login in the readiness details and refuses
   to start with it in enterprise mode. Use a dedicated login that is neither.

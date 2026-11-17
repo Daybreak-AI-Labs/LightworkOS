@@ -1918,6 +1918,54 @@ def test_every_table_with_workspace_data_has_a_forced_row_policy(rls_login):
         _assert_each_workspace_sees_only_its_own(world, seeded)
 
 
+def test_v56_fills_the_event_tenant_copy_only_where_row_level_security_is_on(rls_login, monkeypatch):
+    """Without row-level security the upgrade only adds the column and the
+    triggers: existing events are not rewritten. Turning it on fills the copy
+    in short batches before the policy that reads it is installed."""
+    import psycopg
+    from maverick.world_model_backends import postgres as pg
+
+    if not rls_login.owner:
+        pytest.skip("the owner turns row-level security on")
+    with psycopg.connect(rls_login.admin, autocommit=True) as admin:
+        for table in (*pg._RLS_TABLES, *pg._RLS_CHILD_TABLES):  # back to a store without it
+            admin.execute(f"DROP POLICY IF EXISTS mvk_tenant_isolation ON {table}")
+            admin.execute(f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY")
+            admin.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")
+        for table in pg._RLS_STAMPED_TABLES:
+            admin.execute(f"DROP INDEX IF EXISTS idx_pg_{table}_tenant")
+        goal = admin.execute("INSERT INTO goals(title, created_at, updated_at, tenant_id) "
+                             "VALUES('g', 0, 0, 'rls_alpha') RETURNING id").fetchone()[0]
+        for number in range(5):
+            admin.execute("INSERT INTO goal_events(goal_id, agent, kind, content, ts) "
+                          "VALUES(%s, 'agent', 'note', %s, 0)", (goal, str(number)))
+        # What v55 left: events with no copy. Re-running v56 without RLS fills nothing.
+        admin.execute("ALTER TABLE goal_events DISABLE TRIGGER goal_events_goal_tenant")
+        admin.execute("UPDATE goal_events SET tenant_id = NULL")
+        admin.execute("ALTER TABLE goal_events ENABLE TRIGGER goal_events_goal_tenant")
+        with admin.cursor() as cur:
+            for statement in dict(pg.MIGRATIONS)[56]:
+                cur.execute(statement)
+        assert admin.execute("SELECT count(*) FROM goal_events WHERE tenant_id IS NULL"
+                             ).fetchone() == (6,)  # 5 here and the fixture's early event
+        assert admin.execute("SELECT to_regclass('idx_pg_goal_events_tenant')").fetchone() == (None,)
+    batches = []
+    real = pg.PostgresWorldModel._fill_stamped_batch
+    monkeypatch.setattr(pg, "_STAMP_FILL_BATCH", 2)
+    monkeypatch.setattr(pg.PostgresWorldModel, "_fill_stamped_batch",
+                        lambda self, table, low, high: batches.append(table) or real(self, table, low, high))
+    monkeypatch.setenv("MAVERICK_PG_RLS", "1")
+    with pg.PostgresWorldModel(dsn=rls_login.dsn) as world:
+        assert world._rls_policy_is_active("goal_events")
+    assert batches.count("goal_events") >= 3
+    with psycopg.connect(rls_login.admin, autocommit=True) as admin:
+        assert admin.execute("SELECT count(*) FROM goal_events e JOIN goals g ON g.id = e.goal_id "
+                             "WHERE e.tenant_id IS DISTINCT FROM g.tenant_id").fetchone() == (0,)
+        assert admin.execute("SELECT count(*) FROM goal_events WHERE goal_id = %s AND tenant_id = "
+                             "'rls_alpha'", (goal,)).fetchone() == (5,)
+        assert admin.execute("SELECT to_regclass('idx_pg_goal_events_tenant')").fetchone() != (None,)
+
+
 def test_v56_adds_row_policies_to_a_database_already_enforcing_them(postgres_test_dsn, monkeypatch):
     """A database at v55 with row-level security on and rows of two
     workspaces: the upgrade, run by the non-superuser owner without turning
@@ -1947,6 +1995,7 @@ def test_v56_adds_row_policies_to_a_database_already_enforcing_them(postgres_tes
             v55.setattr(pg, "_RLS_TABLES", tuple(t for t in pg._RLS_TABLES
                                                 if t not in _newly_covered_tables()))
             v55.setattr(pg, "_RLS_CHILD_TABLES", {})
+            v55.setattr(pg, "_RLS_STAMPED_TABLES", ())
             v55.setenv("MAVERICK_PG_RLS", "1")
             with pg.PostgresWorldModel(dsn=owner) as old:
                 assert old.schema_version == 55

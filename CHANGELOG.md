@@ -757,6 +757,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   owner after upgrading. `maverick tenant backfill` now also assigns
   learning-store and approval-check records that have no workspace. Vector
   memory and knowledge-store tables in the same database are not covered yet.
+  Migration 56 copies each event's and episode's workspace (about 10-13
+  microseconds a row) only where RLS is on. With RLS already forced it does
+  so while the tables are locked: allow about two minutes per 10 million
+  rows and upgrade in a quiet window. Turning RLS on later copies them in
+  short batches first.
 - `maverick tenant backfill` no longer stops when a learning record exists
   both without a workspace and in the target workspace: the workspace keeps
   its own, the other is left unchanged and listed by table and key. A
