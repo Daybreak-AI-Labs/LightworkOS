@@ -54,7 +54,7 @@ def test_the_queue_lists_the_decision_and_an_answer_resumes_the_run(env):
     response = client.post(f"/api/v1/decisions/{decision.id}/answer", json={"option": 2, "note": "Approved by sales."})
 
     assert response.status_code == 200, response.text
-    assert response.json()["message"] == "You chose “Send it”. The run continues with your choice."
+    assert response.json()["message"].startswith("You chose “Send it”. The run continues with your choice.")
     assert dr.get(world, decision.id).chosen == 2 and world.get_goal(goal).status == "pending"
     assert started == [goal]
 

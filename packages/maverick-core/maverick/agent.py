@@ -6428,7 +6428,13 @@ class Agent:
         """A filed decision pauses the run, even headless: nobody picks the
         recommendation for the person. A request that could not be saved stops
         the run here, before the model can act on its own choice."""
-        from .decision_requests import FLOW_MESSAGE, FLOW_STOP, NOT_RECORDED, STOP_KIND, STOP_MESSAGE
+        from .decision_requests import (
+            FLOW_MESSAGE,
+            FLOW_STOP,
+            NOT_RECORDED,
+            STOP_KIND,
+            STOP_MESSAGE,
+        )
 
         text = str(output)
         if NOT_RECORDED in text or FLOW_STOP in text:  # the tool's own result, inside its frame

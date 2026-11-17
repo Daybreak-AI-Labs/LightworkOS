@@ -514,3 +514,92 @@ def test_postgres_never_shows_a_no_workspace_decision_inside_a_named_workspace(p
         with tenant_scope(tenant="tenant-a"):
             assert dr.list_open(world) == [] and dr.get(world, legacy.id) is None
         assert [d.id for d in dr.list_open(world)] == [legacy.id]
+
+
+def test_a_decision_closes_when_its_run_ends(tmp_path):
+    world = _world(tmp_path)
+    gid, decision = _paused_goal(world)
+    world.set_goal_status(gid, "cancelled")
+
+    with pytest.raises(dr.DecisionRefused) as ended:
+        dr.answer(world, decision.id, 1, actor="alice", is_admin=False)
+
+    assert ended.value.reason == "ended" and "has ended" in ended.value.message
+    assert dr.get(world, decision.id).status == "closed" and dr.list_open(world) == []
+    assert world.get_goal(gid).status == "cancelled"
+
+
+def test_the_sweep_reaches_a_workspace_missing_from_the_registry(tmp_path):
+    from maverick.paths import maverick_home
+
+    store = maverick_home() / "tenants" / "api%3Aalice" / "world.db"
+    store.parent.mkdir(parents=True, mode=0o700)
+    store.parent.parent.chmod(0o700)
+    maverick_home().chmod(0o700)
+    world = WorldModel(path=store)
+    gid, decision = _paused_goal(world)
+
+    assert dr.sweep_once(now=decision.expires_at + 1) >= 1
+    assert dr.get(world, decision.id).status == "expired"
+    assert world.get_goal(gid).status == "failed"
+
+
+def test_postgres_sweep_expires_a_decision_in_an_unregistered_workspace(postgres_test_dsn,
+                                                                       monkeypatch):
+    from maverick.paths import tenant_scope
+    from maverick.world_model_backends.postgres import PostgresWorldModel
+
+    monkeypatch.setenv("MAVERICK_WORLD_BACKEND", "postgres")
+    with PostgresWorldModel(dsn=postgres_test_dsn) as world:
+        with tenant_scope(tenant="api:alice"):
+            gid = world.create_goal("per-user task", "", owner="alice")
+            world.set_goal_status(gid, "blocked")
+            decision = dr.request(world, gid, **dr.validate(_REQUEST))
+
+        assert dr.sweep_once(now=decision.expires_at + 1) == 1
+
+        with tenant_scope(tenant="api:alice"):
+            assert dr.get(world, decision.id).status == "expired"
+            assert world.get_goal(gid).status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_best_of_n_reports_a_pause_instead_of_a_finished_patch(tmp_path, monkeypatch):
+    from maverick.orchestrator import run_goal_best_of_n
+
+    monkeypatch.setenv("MAVERICK_CODING_MODE", "1")
+    monkeypatch.setenv("MAVERICK_BON_LADDER", "model_a:0.3,model_b:0.7")
+    world = _world(tmp_path)
+    gid = world.create_goal("fix the bug", "", owner="alice")
+    attempts = []
+
+    async def paused_attempt(llm, world_, budget, goal_id, **kwargs):
+        attempts.append(goal_id)
+        dr.request(world_, goal_id, **dr.validate(_REQUEST))
+        world_.set_goal_status(goal_id, "blocked", result="Waiting")
+        return "Paused: Waiting for a person to decide\\n--- a/x.py\\n+++ b/x.py\\n@@ -1 +1 @@\\n-x\\n+y\\n"
+    monkeypatch.setattr("maverick.orchestrator.run_goal", paused_attempt)
+
+    out = await run_goal_best_of_n(llm=None, world=world, budget=Budget(max_dollars=4.0, max_wall_seconds=120.0),
+                                   goal_id=gid, sandbox=LocalBackend(workdir=tmp_path), n=2)
+
+    assert out.startswith("Paused") and "DONE" not in out and attempts == [gid]
+    assert world.get_goal(gid).status == "blocked"
+
+
+def test_an_unreadable_decision_store_refuses_a_restart(tmp_path, monkeypatch):
+    world = _world(tmp_path)
+    gid = world.create_goal("tidy", "", owner="alice")
+
+    def broken(*_a, **_kw):
+        raise OSError("database unavailable")
+    monkeypatch.setattr(dr, "open_for_tree", broken)
+
+    assert "could not check" in dr.resume_refusal(world, gid)
+
+
+def test_the_answer_says_when_a_restart_repeats_finished_steps(monkeypatch):
+    monkeypatch.setenv("MAVERICK_DURABLE", "0")
+    assert "may run again" in dr.next_text({"next": "resumed"})
+    monkeypatch.setenv("MAVERICK_DURABLE", "1")
+    assert "may run again" not in dr.next_text({"next": "resumed"})

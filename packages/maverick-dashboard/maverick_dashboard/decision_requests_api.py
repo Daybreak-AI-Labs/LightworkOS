@@ -108,7 +108,7 @@ def outcome_message(outcome: dict[str, Any]) -> str:
     decision = outcome["decision"]
     label = (decision.option(decision.chosen) or {}).get("label", "")
     if outcome["resume"]:
-        return f"You chose “{label}”. The run continues with your choice."
+        return f"You chose “{label}”. The run continues with your choice." + dr.restart_repeats_note()
     return f"You chose “{label}”. {dr.next_text(outcome)}"
 
 

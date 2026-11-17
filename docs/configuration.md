@@ -198,8 +198,12 @@ decision_admin_areas    = ["governance"]
 # An unanswered decision expires after this long and the run stops without
 # choosing an option (checked every five minutes, and when the task or a
 # decision is read). A workspace file may add areas or shorten this wait,
-# never remove an area. A flow step cannot wait for a decision yet: inside a
-# flow, request_decision is refused and the step reports the choice instead.
+# never remove an area. A flow step cannot wait for a decision yet: a step
+# that needs one stops without a retry, and the flow takes the step's error
+# route or stops there, showing the question. When a run ends (cancelled,
+# done or failed) its open decisions are closed. With [durable] enabled off
+# (the default) a run restarted after an answer begins again, so steps it
+# already finished, including a subagent's side effects, may run again.
 # Decision rows are deleted with their goal on erasure; erasure receipts do
 # not list them, because receipts already on disk name a fixed set of stores.
 decision_expiry_hours   = 72

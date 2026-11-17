@@ -5027,8 +5027,13 @@ tested without spawning py-spy.
   included), no other tool runs in that turn or later, and the run cannot finish,
   restart or be resumed while a decision of the goal or a sub-goal is open.
   Expiry is checked every five minutes by the dashboard and `maverick serve`,
-  and when the task is read. Inside a flow step `request_decision` is refused:
-  flows do not wait for a decision yet. Decision rows are deleted with their
+  and when the task is read; a run that ends closes its open decisions. A flow
+  step that needs a decision stops without a retry and the flow takes the step's
+  error route or stops, showing the question (flows do not wait for a decision
+  yet). A run bound to its own access key is not restarted after an answer: the
+  queue and the task say who must start it again. With durable checkpoints off
+  (`[durable] enabled`, the default) a restarted run begins again, so finished
+  steps may repeat. Decision rows are deleted with their
   goal; erasure receipts do not list them, so receipts already on disk stay valid.
 - **Web dashboard** — run list, plan-tree, chat at `/chat`,
   [root conversation summaries and shared durable SSE replay](./dashboard-read-models.md)

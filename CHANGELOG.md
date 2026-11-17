@@ -660,7 +660,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   question no longer restart a run that is still waiting for a decision.
   Answer the decision first; `maverick resume` exits 2 until you do.
 - Inside a flow step, a run cannot stop to ask for a decision yet: the step
-  is told to report the choice a person must make instead.
+  stops without a retry, and the flow takes the step's error route or stops
+  there, showing the question.
+- A run restarted after a decision begins again from the start unless durable
+  checkpoints are on, so steps it already finished (including a subagent's
+  side effects) may run again. Turn on `[durable] enabled` to continue where
+  it stopped; the answer's confirmation says so.
 
 ### Fixed
 

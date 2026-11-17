@@ -127,7 +127,7 @@ class DecisionRefused(Exception):
 
     _STATUS = {"not_found": 404, "not_open": 409, "expired": 409, "not_permitted": 403,
                "admin_required": 403, "self_answer": 403, "invalid_option": 422,
-               "cannot_resume": 409, "unavailable": 503}
+               "cannot_resume": 409, "unavailable": 503, "ended": 409}
 
     def __init__(self, reason: str, message: str) -> None:
         super().__init__(message)
@@ -622,6 +622,15 @@ def answer(world, decision_id: int, option: int, *, actor: str, is_admin: bool,
     if current.status == "open" and current.expires_at <= now:
         expire_due(world, now=now)
         current = get(world, decision_id) or current
+    if current.status == "open":
+        goal = world.get_goal(current.goal_id)
+        if goal is None or goal.status in ENDED:
+            close_ended(world, now=now, goal_id=current.goal_id)
+            raise DecisionRefused("ended", "This run has ended, so this decision no longer "
+                                  "applies. Nothing changed.")
+    if current.status == "closed":
+        raise DecisionRefused("ended", "This run has ended, so this decision no longer "
+                              "applies. Nothing changed.")
     if current.status == "expired":
         raise DecisionRefused("expired", "This decision expired before anyone answered it. "
                               "The run stopped without choosing an option.")
@@ -704,7 +713,57 @@ def next_text(outcome: dict[str, Any]) -> str:
     """The plain sentence every surface shows after an answer."""
     if outcome.get("next") == "manual":
         return "Your answer was saved. " + str(outcome.get("restart") or STARTER_RESTARTS)
-    return _NEXT_TEXT.get(str(outcome.get("next") or ""), _NEXT_TEXT["waiting"])
+    text = _NEXT_TEXT.get(str(outcome.get("next") or ""), _NEXT_TEXT["waiting"])
+    return text + restart_repeats_note()
+
+
+def restart_repeats_note() -> str:
+    """With durable checkpoints off (the default) a restarted run begins again,
+    so a person is told that finished steps may run again."""
+    try:
+        from .checkpoint import enabled
+
+        if enabled():
+            return ""
+    except Exception:  # noqa: BLE001 -- unknown: say the cautious thing
+        log.debug("checkpoint setting unreadable", exc_info=True)
+    return (" The run starts again from its beginning, so steps it already finished may run "
+            "again. Turn on durable checkpoints ([durable] enabled) to continue where it stopped.")
+
+
+ENDED = ("cancelled", "done", "completed", "failed", "error")
+
+
+def close_ended(world, *, now: float | None = None, goal_id: int | None = None) -> list[int]:
+    """Close the open decisions of runs that have ended (cancelled, done,
+    failed): nobody can answer for a run that will not continue."""
+    from .audit import audit_event
+
+    now = time.time() if now is None else float(now)
+    marks = ",".join("?" for _ in ENDED)
+    where, params = f"d.status = 'open' AND g.status IN ({marks})", tuple(ENDED)
+    if goal_id is not None:
+        where, params = where + " AND d.goal_id = ?", (*ENDED, int(goal_id))
+    try:
+        ended = _select(world, where, params)
+    except Exception:  # noqa: BLE001 -- a store without the table has nothing to close
+        log.debug("ended-run decision read failed", exc_info=True)
+        return []
+    closed: list[int] = []
+    store = _store(world)
+    for decision in ended:
+        with store.transaction(f"decision-request:{decision.goal_id}") as connection:
+            changed = store.execute(
+                connection,
+                "UPDATE decision_requests SET status = 'closed', decided_by = ?, decided_at = ? "
+                "WHERE id = ? AND status = 'open'",
+                ("system:run-ended", now, decision.id))
+            if changed.rowcount != 1:
+                continue
+            audit_event("decision_closed", agent="system:run-ended", goal_id=decision.goal_id,
+                        decision_id=decision.id, area=decision.area)
+        closed.append(decision.id)
+    return closed
 
 
 def expire_due(world, *, now: float | None = None, goal_id: int | None = None) -> list[int]:
@@ -716,6 +775,7 @@ def expire_due(world, *, now: float | None = None, goal_id: int | None = None) -
     from .audit import audit_event
 
     now = time.time() if now is None else float(now)
+    close_ended(world, now=now, goal_id=goal_id)
     try:
         where, params = "d.status = 'open' AND d.expires_at <= ?", (now,)
         if goal_id is not None:
@@ -752,32 +812,73 @@ SWEEP_SECONDS = 300.0
 
 
 def sweep_once(*, now: float | None = None) -> int:
-    """Expire past-due decisions in the default workspace and every
-    provisioned workspace, so a team that only uses chat still sees a run
-    stop on time. Returns how many expired. Never raises."""
-    from .world_model import close_world_if_owned, open_world
+    """Expire past-due decisions (and close those of ended runs) in every
+    workspace that has one, each inside its own workspace, so a team that only
+    uses chat still sees a run stop on time. Returns how many expired.
 
-    workspaces: list[str | None] = [None]
+    SQLite keeps one file per workspace, so every workspace file is visited.
+    Postgres keeps them together: the open decisions themselves name the
+    workspaces to visit (a per-user workspace need not be registered)."""
+    from .world_model import WorldModel, close_world_if_owned, open_world
+
+    now = time.time() if now is None else float(now)
     try:
-        from .tenant.registry import list_tenants
+        world = open_world()
+    except Exception:  # noqa: BLE001 -- no store yet: nothing to sweep
+        log.debug("decision sweep could not open the world store", exc_info=True)
+        return 0
+    try:
+        if isinstance(world, WorldModel):
+            return _sweep_sqlite(world, now)
+        return _sweep_postgres(world, now)
+    finally:
+        close_world_if_owned(world)
 
-        workspaces += [record.id for record in list_tenants()]
-    except Exception:  # noqa: BLE001 -- no registry: the default workspace only
-        log.debug("workspace list unavailable for decision expiry", exc_info=True)
-    total = 0
-    for workspace in workspaces:
+
+def _sweep_sqlite(world, now: float) -> int:
+    from .paths import maverick_home
+    from .world_model import WorldModel
+
+    total = _sweep_one(world, now)
+    seen = {str(getattr(world, "path", ""))}
+    for store in sorted((maverick_home() / "tenants").glob("*/world.db")):
+        if str(store) in seen:
+            continue
         try:
-            from .paths import tenant_scope
-
-            with tenant_scope(tenant=workspace):
-                world = open_world()
-                try:
-                    total += len(expire_due(world, now=now))
-                finally:
-                    close_world_if_owned(world)
+            with WorldModel(path=store) as tenant_world:
+                total += _sweep_one(tenant_world, now)
         except Exception:  # noqa: BLE001 -- one workspace must not stop the others
             log.warning("decision expiry failed for one workspace", exc_info=True)
     return total
+
+
+def _sweep_postgres(world, now: float) -> int:
+    from urllib.parse import unquote
+
+    from .paths import tenant_scope
+
+    marks = ",".join("?" for _ in ENDED)
+    rows = world.query(
+        "SELECT DISTINCT g.tenant_id FROM decision_requests d JOIN goals g ON g.id = d.goal_id "
+        f"WHERE d.status = 'open' AND (d.expires_at <= ? OR g.status IN ({marks}))",
+        (now, *ENDED), system=True)
+    total = 0
+    for row in rows:
+        segment = row[0]
+        try:
+            with tenant_scope(tenant=unquote(segment) if segment else None):
+                total += _sweep_one(world, now)
+        except Exception:  # noqa: BLE001 -- one workspace must not stop the others
+            log.warning("decision expiry failed for one workspace", exc_info=True)
+    return total
+
+
+def _sweep_one(world, now: float) -> int:
+    try:
+        return len(expire_due(world, now=now))
+    except Exception:  # noqa: BLE001 -- one workspace must not stop the others
+        log.warning("decision expiry failed for one workspace", exc_info=True)
+        return 0
 
 
 _SWEEPER: threading.Thread | None = None
@@ -809,9 +910,10 @@ def resume_refusal(world, goal_id: int, *, now: float | None = None) -> str:
     expire_due(world, now=now, goal_id=goal_id)
     try:
         waiting = open_for_tree(world, goal_id)
-    except Exception:  # noqa: BLE001 -- a store without the table has no decisions
-        log.debug("decision lookup failed", exc_info=True)
-        return ""
+    except Exception:  # noqa: BLE001 -- unknown is not "nothing waits": fail closed
+        log.warning("decision lookup failed before a restart", exc_info=True)
+        return ("Lightwork could not check this run for open decisions, so it was not "
+                "restarted. Try again in a moment.")
     if not waiting:
         return ""
     first = waiting[0]

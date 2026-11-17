@@ -2288,6 +2288,20 @@ def _decision_start_refusal(world: Any, goal_id: int) -> str:
     return ""
 
 
+def _paused_for_decision(world: Any, goal_id: int) -> bool:
+    """Whether this goal's last run stopped for a decision (waiting on one, or
+    unable to file it). Unreadable state counts as paused."""
+    from . import decision_requests
+
+    if decision_requests.run_state(world, goal_id) is not None:
+        return True
+    try:
+        return bool(decision_requests.open_for_tree(world, goal_id))
+    except Exception:  # noqa: BLE001 -- unknown means do not treat the attempt as done
+        log.warning("decision lookup failed after a best-of-N attempt", exc_info=True)
+        return True
+
+
 def _settle_decision_result(*, result: Any, world: WorldModel, goal_id: int,
                             lifecycle: _RunLifecycle) -> str | None:
     """A run waiting on a person's decision, or stopped because its decision
@@ -3690,6 +3704,10 @@ async def run_goal_best_of_n(
         except BudgetExceeded:
             cap_reached = True
 
+        if _paused_for_decision(world, goal_id):
+            # The attempt is waiting for a person: its partial changes are not
+            # a candidate, and no later attempt may act before the answer.
+            return answer
         from pathlib import Path as _Path
         workdir = _Path(getattr(sandbox, "workdir", "."))
         # Answer-diff is PRIMARY (FINAL: is canonical). When the agent edited
