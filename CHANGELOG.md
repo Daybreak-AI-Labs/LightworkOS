@@ -757,9 +757,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   approved. Protection is checked again at merge, push and renew: a change
   that became protected after it was built must be built again. Set the
   model and the paths you care about.
-- An approval that needs two or more people now counts names with case and
-  spacing ignored: `user:Alice` and `user:alice` are one person, and the
-  requester spelt differently is still the requester.
+- An approval that needs two or more people now counts names with case,
+  spacing and character width ignored: `user:Alice`, `user:alice` and
+  `user:Ａｌｉｃｅ` are one person, and the requester spelt differently is
+  still the requester.
 - No agent, API key or automation can approve a code change any more, and
   Copilot cannot approve a protected one: approve those on the Approvals page.
 - Feature runs on the repository the running Lightwork was installed from

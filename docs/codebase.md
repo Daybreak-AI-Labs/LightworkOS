@@ -227,7 +227,9 @@ maverick code export payments ./payments   # plaintext clone for the owner
    The answer is saved, and the last answer closes that step (`cancelled`):
    its private copy of the code is gone, so start a new code change. No
    restart path (`maverick resume`, a chat reply, the supervisor, a run
-   start) takes up a code change's step or a goal below it.
+   start) takes up a code change's step: every step is marked before it
+   runs and starts only inside the change's own loop, and a goal an agent
+   made below one starts only if it never ran.
 14. `sync` fetches upstream as `upstream/*` and never overwrites vault work:
    - a branch behind upstream fast-forwards;
    - a branch ahead of upstream (approved merges not pushed yet) is kept;
@@ -254,7 +256,9 @@ when the change merges, pushes or asks for approval again (`renew`), from
 the patterns in force then and whether the project is now the running
 installation's own repository. A change that was not built as a protected
 one but is one now is refused: build it again so it gets a second checker
-and two approvers. A protected change differs in three ways:
+and two approvers. The re-check covers what the merge brings in (from the
+merge base with the current main branch) as well as the change itself, and
+a change whose base is no longer in the main branch is refused outright. A protected change differs in three ways:
 
 1. **The card says so first.** Its first lines say the change is protected,
    list the matching paths (the first 10) and say who must approve.
@@ -265,10 +269,12 @@ and two approvers. A protected change differs in three ways:
    (organisation-only), with no provider failover: if that model cannot
    answer, the check did not happen. Its family must differ from the
    author's and from every normal checker's. The family is read from the
-   model's own name after any gateway (`openrouter:anthropic/claude-…`,
+   model's own name, which must start with a known model name after any
+   gateway or organisation (`openrouter:anthropic/claude-…`,
    `bedrock:anthropic.claude…` and `vertex:claude-…` are all Anthropic),
-   else from a first-party provider prefix; a name Lightwork cannot place
-   (`my-local`) cannot be compared. If it is unset, shares a family, cannot
+   else from a first-party provider prefix. A name Lightwork cannot place
+   (`my-local`), or one naming two vendors' models (a distillation), cannot
+   be compared. If it is unset, shares a family, cannot
    be compared, or did not look at the final version (the spending limit, an
    error), the change **cannot be approved**: the card, the Code page
    (`Cannot be approved`) and Copilot say exactly why, and `maverick code
@@ -281,7 +287,8 @@ and two approvers. A protected change differs in three ways:
    or `[security] allow_self_approval` say. `merge` and `push` (push uses
    the same approval) check again that two different people signed in with
    their own accounts approved, not the starter. Names are compared with
-   case and spacing ignored, so `user:Alice` and `user:alice` are one person
+   case, spacing and character width ignored (Unicode NFKC), so
+   `user:Alice`, `user:alice` and `user:Ａｌｉｃｅ` are one person
    (this applies to every approval that needs two or more people). A
    protected change started without a named person (the command line, or a
    dashboard with no sign-in) **cannot be approved**, because Lightwork
