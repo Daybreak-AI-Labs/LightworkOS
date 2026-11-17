@@ -479,7 +479,7 @@
           <br><span class="assurance-muted">{% if rule_count %}{{ rule_count }} rule{{ '' if rule_count == 1 else 's' }}{% else %}No rules linked{% endif %}</span>
         </th>
         <td>{{ MRA_STATUS.get(row.status|default("pending_review", true), row.status|humanize) }}</td>
-        <td>{{ row.control_ids|default([], true)|map('humanize')|join(", ") or "None linked" }}</td>
+        <td>{{ row.control_ids|default([], true)|map('known_label')|join(", ") or "None linked" }}</td>
         <td><ul class="assurance-citations">
           {% for citation in row.citations|default([], true) %}
             <li><a href="{{ citation.record_url|default(citation.url, true) }}"

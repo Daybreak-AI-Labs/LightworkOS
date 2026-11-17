@@ -227,6 +227,14 @@ LABELS = {
 }
 
 
+def known_label(value: object) -> str:
+    """A whole identifier's label from :data:`LABELS`, else the value as
+    written: for codes that are already a name (a control such as
+    ``AI-DISCLOSURE-01``) where word-by-word humanizing would mangle them."""
+    raw = "" if value is None else str(value)
+    return LABELS.get(raw.strip().lower(), raw)
+
+
 def humanize(value: object) -> str:
     """A generic enum/slug (status, risk level, action, kind) rendered as a
     readable label: underscores/hyphens become spaces, the first letter is
@@ -251,5 +259,6 @@ __all__ = [
     "role_description",
     "permission_label",
     "humanize",
+    "known_label",
     "LABELS",
 ]

@@ -147,7 +147,7 @@
   {% if global_admin %}
   <p><a class="btn" href="/users/departures">Review employee departure</a> Deactivation and retained-work handoffs are separate from resetting a role.</p>
   <section class="panel"><h2>Access for people without an assigned role</h2>
-    <p>Anyone who signs in without an assigned role gets <strong>{{ first_login.role | role_label }}</strong>.{% if role_descriptions.get(first_login.role) %} {{ role_descriptions[first_login.role] }}{% endif %}
+    <p>Anyone who signs in without an assigned role gets <strong>{{ first_login.role | role_label }}</strong>.{% if role_descriptions is defined and role_descriptions.get(first_login.role) %} {{ role_descriptions[first_login.role] }}{% endif %}
     Departments: <strong>{% if first_login.departments is none %}Every department{% else %}{{ first_login.departments | join(', ') or 'None' }}{% endif %}</strong>.
     A role you assign, a verified group mapping or a workspace membership replaces this. Tool and task limits still apply.</p>
     {% if first_login.conservative %}<p>The viewer/no-department baseline is in effect.</p>{% else %}

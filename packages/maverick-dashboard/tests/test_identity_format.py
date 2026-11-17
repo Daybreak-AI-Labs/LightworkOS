@@ -94,3 +94,9 @@ def test_humanize_names_regulations_and_tools_from_one_label_table(raw, label):
     # Mangled identifiers ("Ec article 50", "Omb m 25 22", "Kv memory") never
     # reach a customer: whole identifiers map through one label table.
     assert humanize(raw) == label
+
+
+def test_known_label_keeps_codes_that_are_already_names():
+    from maverick_dashboard.identity_format import known_label
+    assert known_label("eu_ai_act_article_50") == "EU AI Act, Article 50"
+    assert known_label("AI-DISCLOSURE-01") == "AI-DISCLOSURE-01"

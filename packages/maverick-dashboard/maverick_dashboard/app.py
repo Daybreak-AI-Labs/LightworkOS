@@ -226,6 +226,7 @@ templates.env.filters["identity"] = _idfmt.humanize_principal
 templates.env.filters["role_label"] = _idfmt.role_label
 templates.env.filters["permission_label"] = _idfmt.permission_label
 templates.env.filters["humanize"] = _idfmt.humanize
+templates.env.filters["known_label"] = _idfmt.known_label
 from .approval_labels import action_label as _approval_action_label  # noqa: E402
 
 templates.env.globals["approval_action_label"] = _approval_action_label
