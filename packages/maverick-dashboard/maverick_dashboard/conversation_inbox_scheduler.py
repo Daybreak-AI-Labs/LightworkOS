@@ -203,7 +203,7 @@ def _loop():
 
     wait = _ACTIVE_WAIT
     while not _scheduler_stop.is_set():
-        busy = True
+        busy = False  # a pass that fails is retried on the idle schedule
         try:
             # One configuration read per pass while the files are unchanged
             # (the request scope's rule), instead of four full reads per

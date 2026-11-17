@@ -75,3 +75,32 @@ def test_each_cycle_shares_one_configuration_read(monkeypatch):
     finally:
         observer._scheduler_stop.clear()
     assert seen == [True]
+
+
+def test_a_failing_pass_is_retried_on_the_idle_schedule(monkeypatch):
+    calls = []
+
+    def failing():
+        calls.append(1)
+        raise RuntimeError("backend unavailable")
+
+    waits = []
+
+    class _Wake:
+        def wait(self, seconds):
+            waits.append(seconds)
+            if len(waits) == 3:
+                observer._scheduler_stop.set()
+            return False
+
+        def clear(self):
+            pass
+
+    monkeypatch.setattr(observer, "cycle", failing)
+    monkeypatch.setattr(observer, "_wake", _Wake())
+    observer._scheduler_stop.clear()
+    try:
+        observer._loop()
+    finally:
+        observer._scheduler_stop.clear()
+    assert waits == [3, 6, 12]
