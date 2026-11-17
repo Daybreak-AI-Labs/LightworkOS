@@ -15,6 +15,7 @@
     rejected: "Rejected",
     expired: "Approval request lapsed",
     unrequested: "Needs an approval request",
+    decision: "Waiting for a person’s decision",
     merged: "Merged",
     empty: "No changes were made",
     conflict: "No longer fits the latest code"

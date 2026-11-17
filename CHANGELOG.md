@@ -805,6 +805,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Erasure receipts are now issued as `lightwork.erasure-receipt.v3`, which
   also counts a run's decision requests before deletion. Receipts issued as v2
   keep verifying against the stores they listed; nothing needs re-issuing.
+- A code change whose round or checker asks a person to decide now stops at
+  once: nothing half done is committed or offered for approval, and its
+  status reads "Waiting for a person's decision". Answer it, then start a
+  new code change; the answer never restarts the old step.
 
 ### Fixed
 

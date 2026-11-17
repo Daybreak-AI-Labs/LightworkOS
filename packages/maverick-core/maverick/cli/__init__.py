@@ -5349,9 +5349,13 @@ def resume(ctx, goal_id_arg, goal_id, max_depth: int, max_dollars, max_wall_seco
         # and still exits 0, which a script can't detect (export exits 2 here).
         click.echo(f"no such goal #{goal_id}. See `maverick status`.", err=True)
         sys.exit(2)
-    from ..decision_requests import expire_due, open_for_tree
+    from ..decision_requests import expire_due, feature_start_refusal, open_for_tree
 
     expire_due(world, goal_id=goal_id)
+    refused = feature_start_refusal(world, goal_id)
+    if refused:  # a code change's step runs only inside its own private copy
+        click.echo(f"cannot resume goal #{goal_id}: {refused}")
+        sys.exit(2)
     waiting = open_for_tree(world, goal_id)
     if waiting:
         click.echo(f"cannot resume goal #{goal_id}: it is waiting for "

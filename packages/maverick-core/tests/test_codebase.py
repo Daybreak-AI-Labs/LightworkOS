@@ -1931,3 +1931,90 @@ def test_test_output_shown_is_only_from_the_final_version():
     tests, tiers, output = features._Loop.tier_record(loop)
     assert tiers["full"]["state"] == "not run" and tests["ran"] is False
     assert "quick ok" in output and "3 passed" not in output   # never an earlier version's run
+
+
+# -- a feature-run step that asks a person to decide --
+
+def _ask(world, goal_id, question):
+    from maverick import decision_requests
+    world.set_goal_status(goal_id, "blocked")
+    return decision_requests.request(
+        world, goal_id, question=question, area="security", recommended=1,
+        reason="It changes who can sign in.",
+        options=[{"label": "Keep it", "effect": "Nothing changes."},
+                 {"label": "Change it", "effect": "Sign-in changes."}])
+
+
+def test_an_author_that_asks_for_a_decision_stops_the_run(upstream, tmp_path, monkeypatch):
+    from click.testing import CliRunner
+    from maverick import config, decision_requests, orchestrator
+    from maverick.budget import Budget
+    from maverick.chat_threads import ChatThreads
+    from maverick.cli import main
+    monkeypatch.setattr(decision_requests, "_announce", lambda world, decision: None)
+    vault.register("pricing", str(upstream), test_command="python -m pytest -q")
+    world = WorldModel(tmp_path / "world.db")
+    budget = Budget(max_tool_calls=10)
+    asked = {}
+
+    def author(goal_id, work):
+        _passing(work)
+        budget.record_tool_call()
+        assert decision_requests.resume_refusal(world, goal_id) == ""   # its own run starts
+        step = world.create_goal("step", "deep", parent_id=goal_id, owner="user:starter")
+        world.set_goal_status(goal_id, "blocked")
+        asked["root"], asked["d"] = goal_id, _ask(world, step, "May the change turn off sign-in?")
+    checks = []
+    p = features.propose(world, "pricing", "Discount", "", author, sandbox_factory=_Sandbox,
+                         checker=lambda gid, copy: checks.append(gid) or {"findings": []},
+                         owner="user:starter", budget=budget)
+    d, root = asked["d"], asked["root"]
+    assert p["status"] == "decision" and p["approval_id"] is None and checks == []
+    assert p["head"] == p["base"] and p["files"] == []        # its half-done round never committed
+    assert budget.tool_calls == 1                              # what it spent stays charged
+    facts = features.evidence(p)
+    assert facts["lines"][0] == ("Waiting for a person's decision: “May the change turn off "
+                                 "sign-in?”. Answer it on the Approvals page or with maverick "
+                                 f"decisions answer {d.id}, then start a new code change.")
+    assert features.DECISION_GAP in facts["gaps"]
+    assert features.status(world, features.find(p["id"])) == "decision"
+    with pytest.raises(vault.VaultError, match="wait for a person's decision"):
+        features.request_approval(world, features.find(p["id"]))
+    # No restart path takes the paused round back up outside its private copy.
+    assert decision_requests.resume_refusal(world, root) == decision_requests.FEATURE_RESTARTS
+    with pytest.raises(Exception, match="step of a code change"):
+        ChatThreads(world).resume(root)
+    assert orchestrator._decision_start_refusal(world, root).endswith(
+        decision_requests.FEATURE_RESTARTS)
+    monkeypatch.setattr(config, "get_codebase", lambda: {"enable": True})
+    monkeypatch.setattr("maverick.cli.open_world", lambda *a, **k: world, raising=False)
+    out = CliRunner().invoke(main, ["resume", "--goal-id", str(root)])
+    assert out.exit_code == 2 and "step of a code change" in out.output, out.output
+    # The answer is saved, but it never restarts the step: the step stops for good.
+    outcome = decision_requests.answer(world, d.id, 2, actor="user:starter", is_admin=True)
+    assert outcome["resume"] is False and outcome["next"] == "manual"
+    assert outcome["restart"] == decision_requests.FEATURE_RESTARTS
+    step = world.get_goal(d.goal_id)
+    assert step.status == "cancelled" and step.result == decision_requests.FEATURE_RESTARTS
+    # An origin that cannot be read refuses the restart.
+    monkeypatch.setattr(world, "tenant_query", lambda *a, **k: (_ for _ in ()).throw(OSError()))
+    assert "could not check" in decision_requests.resume_refusal(world, root)
+
+
+def test_a_checker_that_asks_for_a_decision_could_not_run(upstream, tmp_path, monkeypatch):
+    from maverick import decision_requests
+    monkeypatch.setattr(decision_requests, "_announce", lambda world, decision: None)
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    run, _ = _rounds(_passing)
+
+    def checker(gid, copy):
+        _ask(world, gid, "Should I report the pricing rule as a problem?")
+        return {"findings": []}                               # never read as a clean look
+    p = features.propose(world, "pricing", "Discount", "", run, checker=checker)
+    assert p["status"] == "decision" and p["approval_id"] is None
+    assert p["check"]["state"] == "failed" and p["check"]["error"] == features.ASKED_REASON
+    lines = features.evidence(p)["lines"]
+    assert lines[0].startswith("Waiting for a person's decision: “Should I report the pricing")
+    assert f"Independent check: could not run ({features.ASKED_REASON})." in lines
+    assert features.summary(world)["proposals"][0]["check"] == "failed"

@@ -77,6 +77,13 @@ TIERS = (("quick", "quick_test_command", "Quick tests"), ("full", "test_command"
 NEEDS_IMAGE = "needs the checker image"
 BUDGET_REASON = "the spending limit ran out"
 SETUP_REASON = "its work area could not be set up"
+# A run that asked a person to decide (decision_requests) stops the feature
+# run at once: its proposal waits for that answer and is never offered for
+# approval; after the answer, the person starts a new code change.
+ORIGIN_KIND = "codebase_feature"
+ASKED_REASON = "it asked a person to decide, so it could not finish"
+DECISION_GAP = ("The run stopped to wait for a person's decision, so this change cannot be "
+                "approved. Start a new code change after the answer.")
 Runner = Callable[[int, Path], object]
 # (goal id of a fresh check task, its own throwaway copy of the pinned commit)
 # -> its report: text ending in a JSON object, or that object.
@@ -391,6 +398,44 @@ def _finding(raw: object, fid: str, checker: int = 1) -> dict:
     return f
 
 
+class DecisionPending(Exception):
+    """A round's goal (or a goal below it) is waiting for a person's decision."""
+
+    def __init__(self, decisions: list, goal_id: int) -> None:
+        super().__init__("waiting for a person's decision")
+        self.decisions, self.goal_id = decisions, goal_id
+
+
+def _stop_if_waiting(world, goal_id: int) -> None:
+    """Stop the feature run when ``goal_id`` or a goal below it waits for a decision."""
+    from .. import decision_requests
+    decisions = decision_requests.open_for_tree(world, goal_id)
+    if decisions:
+        raise DecisionPending(decisions, goal_id)
+
+
+def _mark_step(world, goal_id: int, pid: str) -> None:
+    """Record a goal as a code-change step, before it runs; an origin it
+    already has is kept. A mark that cannot be written raises, so nothing
+    runs unmarked (decision_requests.feature_start_refusal)."""
+    if world.tenant_query("SELECT 1 FROM goal_origins o WHERE o.goal_id = ? AND "
+                          "{tenant_goal:o.goal_id}", (int(goal_id),)):
+        return
+    world.record_goal_origin(goal_id, ORIGIN_KIND, pid)
+
+
+@contextmanager
+def _in_loop(goal_id: int):
+    """This loop's own run of ``goal_id``: the one place a marked step starts."""
+    from .. import decision_requests
+    token = decision_requests.FEATURE_LOOP.set(
+        decision_requests.FEATURE_LOOP.get() | {int(goal_id)})
+    try:
+        yield
+    finally:
+        decision_requests.FEATURE_LOOP.reset(token)
+
+
 class _Loop:
     """One feature run's rounds. The author works in its own working copy; every
     author round is committed host-side and pinned before any repository code
@@ -452,9 +497,10 @@ class _Loop:
         succeeded, so a failed round leaves the last pin."""
         with vault.work_dir() as tmp, _step(tmp) as step:
             work = _fresh_copy(self.host, tmp / "work", self.head, self.branch)
-            with self._labelled():
+            with self._labelled(), _in_loop(goal_id):
                 self.run(goal_id, work)
             self.setup_failed |= step["setup_failed"]
+            _stop_if_waiting(self.world, goal_id)  # nothing it left half done is committed
             if not self._afford():
                 # A governed run returns normally when it hits the cap; what it
                 # left half done is never committed or offered.
@@ -573,7 +619,10 @@ class _Loop:
             _repair_brief(self.repo, self.title, self.description, problem),
             parent_id=root, owner=self.owner, execution_principal=self.owner)
         try:
+            _mark_step(self.world, gid, self.pid)
             self.author(gid, kind)
+        except DecisionPending:
+            raise
         except Exception as exc:  # noqa: BLE001 -- the last pinned version stands
             self.stopped = "budget" if isinstance(exc, BudgetExceeded) else "error"
             _fail_goal(self.world, gid, exc)
@@ -662,12 +711,18 @@ class _Loop:
         self.check["goal_ids"].append(gid)
         who = f"checker {n}: " if many else ""
         try:
+            _mark_step(self.world, gid, self.pid)
             with vault.work_dir() as tmp, _step(tmp) as step:
                 copy = _fresh_copy(self.host, tmp / "check", self.head)
                 self._for_image(copy)
-                with self._labelled():
+                with self._labelled(), _in_loop(gid):
                     out = checker(gid, copy)
                 self.setup_failed |= step["setup_failed"]
+            _stop_if_waiting(self.world, gid)  # never read as a clean look
+        except DecisionPending:
+            self.check["error"] = f"{who}{ASKED_REASON}"
+            self.check["checkers"][n - 1]["error"] = ASKED_REASON
+            raise
         except BudgetExceeded as exc:
             self.stopped = "budget"
             _fail_goal(self.world, gid, exc)
@@ -899,6 +954,8 @@ class _Loop:
             return "it ran only on an earlier version"
         if self.stopped == "budget":
             return BUDGET_REASON
+        if self.stopped == "decision":
+            return "the run stopped for a person's decision"
         if self.stopped:
             return "a repair round failed"
         if self.repo.quick_test_command:
@@ -1023,7 +1080,7 @@ def propose(world, name: str, title: str, description: str, run: Runner, *,
                 else [checker])
     pid = secrets.token_hex(8)
     branch = f"lightwork/{_slug(title)}-{pid[:6]}"
-    goal_id = None
+    goal_id, waiting = None, None
     try:
         with vault.host_repo(name) as host:
             base = _git(["rev-parse", "--verify", f"refs/heads/{repo.default_branch}"],
@@ -1039,9 +1096,15 @@ def propose(world, name: str, title: str, description: str, run: Runner, *,
             budget.check()
             goal_id = world.create_goal(f"[{name}] {title}", _brief(repo, title, description),
                                         owner=owner, execution_principal=owner)
-            loop.author(goal_id, "author")
-            loop.verify()
-            loop.finish()
+            _mark_step(world, goal_id, pid)
+            try:
+                loop.author(goal_id, "author")
+                loop.verify()
+                loop.finish()
+            except DecisionPending as pause:  # what was spent stays charged
+                loop.stopped = "decision"
+                waiting = [{"id": d.id, "goal_id": d.goal_id, "question": d.question}
+                           for d in pause.decisions]
             head, changed = loop.head, loop.head != base
             diff = files = None
             if changed:
@@ -1068,14 +1131,16 @@ def propose(world, name: str, title: str, description: str, run: Runner, *,
         "isolation": "setup_failed" if loop.setup_failed else _isolation(on_host),
         "rounds": loop.rounds, "check": check, "stopped": loop.stopped,
         "review_cut_short": loop.review_cut_short,
-        "review": review, "status": "empty" if not changed else "pending",
+        "review": review,
+        "status": "decision" if waiting else "empty" if not changed else "pending",
         "approval_id": None, "created_at": time.time(), "merged_at": None,
+        "decision": waiting,
     }
     if changed:
         atomic_write_bytes(_proposal_dir(name) / f"{pid}.bundle",
                            vault._seal(loop.bundle, f"codebase/{name}/proposal-bundle/{pid}"))
     _save(proposal)  # the work is kept even if parking its approval fails
-    if changed:
+    if changed and not waiting:
         try:
             request_approval(world, proposal)
         except Exception as exc:  # noqa: BLE001 -- `maverick code renew` parks it again
@@ -1106,6 +1171,8 @@ def request_approval(world, p: dict) -> int:
             p = {**p, **_load(p["repo"], p["id"])}  # the stored approval, not a stale copy
         except (OSError, ValueError, KeyError, VaultError):
             pass  # not saved yet (propose parks before its first read-back)
+        if p["status"] == "decision":
+            raise VaultError(DECISION_GAP)
         if p["status"] != "pending":
             raise VaultError(f"proposal {p['id']} is {p['status']}")
         appr = world.get_approval(p["approval_id"]) if p.get("approval_id") else None
@@ -1362,6 +1429,8 @@ def evidence(p: dict) -> dict:
     if stopped == "budget":
         lines.append("Stopped early: the spending limit ran out, so later rounds did not run.")
         gaps.append("The spending limit ran out before every round could run.")
+    elif stopped == "decision":
+        gaps.append(DECISION_GAP)
     elif stopped:
         lines.append("Stopped early: a repair round failed, so the last tested version is shown.")
         gaps.append("A repair round failed before every round could run.")
@@ -1370,8 +1439,18 @@ def evidence(p: dict) -> dict:
     check_lines, check_gaps = _check_evidence(p)
     check = p.get("check") or {}
     many = len(check.get("checkers") or ()) > 1
-    return {"lines": lines + check_lines, "gaps": gaps + check_gaps, "tests": tests,
+    return {"lines": decision_lines(p) + lines + check_lines, "gaps": gaps + check_gaps,
+            "tests": tests,
             "findings": [_finding_line(f, many) for f in check.get("findings") or []]}
+
+
+def decision_lines(p: dict) -> list[str]:
+    """What a code change that stopped for a person's decision waits for, and
+    what the person does next."""
+    return [f"Waiting for a person's decision: “{_safe_label(d.get('question'), 300)}”. "
+            "Answer it on the Approvals page or with maverick decisions answer "
+            f"{d.get('id')}, then start a new code change."
+            for d in p.get("decision") or ()]
 
 
 def _approval_card(p: dict, *, full: bool) -> str:
@@ -1429,7 +1508,7 @@ def _approval_card(p: dict, *, full: bool) -> str:
 
 
 def status(world, p: dict) -> str:
-    if p["status"] in ("merged", "empty", "conflict"):
+    if p["status"] in ("merged", "empty", "conflict", "decision"):
         return p["status"]
     appr = world.get_approval(p["approval_id"]) if p["approval_id"] else None
     if appr is None:
