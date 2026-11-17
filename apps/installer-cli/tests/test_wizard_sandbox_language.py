@@ -151,6 +151,6 @@ def test_ssh_asks_which_remote_computers_workspaces_may_choose(monkeypatch):
     from maverick_installer import wizard
 
     monkeypatch.setattr(wizard, "_q_confirm", lambda message, default=True: True)
-    monkeypatch.setattr(wizard, "_q_text", lambda *a, **k: "*@build.example.com, -oProxyCommand=x")
+    monkeypatch.setattr(wizard, "_q_text", lambda *a, **k: "*@build.example.com, -oProxyCommand=x, %r@h, u@[::1]")
     assert wizard._ask_workspace_servers({"backend": "ssh"}) == {
-        "backend": "ssh", "workspace_infrastructure": True, "workspace_hosts": ["*@build.example.com"]}
+        "backend": "ssh", "workspace_infrastructure": True, "workspace_hosts": ["*@build.example.com", "u@[::1]"]}

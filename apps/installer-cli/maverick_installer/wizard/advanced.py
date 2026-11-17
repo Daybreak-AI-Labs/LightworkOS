@@ -2137,7 +2137,11 @@ def _ask_workspace_servers(cfg: dict[str, Any]) -> dict[str, Any]:
     if cfg["backend"] == "ssh":
         hosts = _csv_list(_q_text("  Remote computers workspaces may choose (comma-separated, "
                                   "* matches any text, e.g. *@build.example.com)", default=""))
-        cfg["workspace_hosts"] = [h for h in hosts if not h.startswith("-")]
+        from maverick.config_contracts import SSH_DESTINATION_PATTERN
+
+        cfg["workspace_hosts"] = [h for h in hosts if re.fullmatch(SSH_DESTINATION_PATTERN, h)]
+        if len(cfg["workspace_hosts"]) < len(hosts):
+            console.print("[yellow]Left out entries that are not user@host or host:port.[/yellow]")
     return cfg
 
 

@@ -78,6 +78,17 @@ COLLECTOR_ADDRESS = (r"(" + HTTPS + r"|http://(localhost|127\.0\.0\.1|\[::1\])"
 KEY_ID = r"[A-Za-z0-9:/._-]{1,300}"
 REGION = r"[a-z]{2}(-[a-z]+)+-[0-9]{1,2}"
 VAULT_MOUNT = r"[A-Za-z0-9._-]{1,64}"
+# A remote computer a workspace may choose ([sandbox] host under
+# workspace_infrastructure): user@host or host, then an optional :port. Older
+# ssh clients hand the user name to a ProxyCommand or Match exec, so no
+# %, $, backtick, slash or second @. SSH_DESTINATION_PATTERN is the same shape
+# for the organisation's workspace_hosts, where * and ? stand for any text.
+_SSH_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+SSH_DESTINATION = (r"(?:[A-Za-z0-9._][A-Za-z0-9._-]{0,63}@)?(?:" + _SSH_LABEL + r"(?:\." + _SSH_LABEL
+                   + r")*|\[[0-9A-Fa-f:.]{2,45}\])(?::[0-9]{1,5})?")
+SSH_DESTINATION_PATTERN = (r"(?:[A-Za-z0-9._*?][A-Za-z0-9._*?-]{0,63}@)?"
+                           r"(?:[A-Za-z0-9*?][A-Za-z0-9.*?-]{0,252}|\[[0-9A-Fa-f:.*?]{1,45}\])"
+                           r"(?::[0-9*?]{1,5})?")
 SIEM_ADDRESS = r"(https?|tcp|udp|datadog|sentinel)://[^\s\"'<>]{1,300}"
 
 _CONTRACTS = (

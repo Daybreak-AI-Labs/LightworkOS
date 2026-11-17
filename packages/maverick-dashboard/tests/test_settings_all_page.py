@@ -9,6 +9,7 @@ unless the request confirms it.
 from __future__ import annotations
 
 import json
+import re
 import threading
 
 import pytest
@@ -707,3 +708,6 @@ def test_a_workspace_value_looser_than_the_organisation_shows_who_set_it(tmp_pat
     assert rows()["sandbox.kubeconfig"]["source_text"] == "Set by your organisation"
     assert "kubeconfig" not in config.load_config()["sandbox"]
     assert catalog.BY_ID["sandbox.workspace_hosts"].default == []
+    shape = re.compile(catalog.BY_ID["sandbox.workspace_hosts"].pattern)
+    assert all(shape.fullmatch(p) for p in ("*@build.example.com", "u@[::1]:22", "10.0.0.?"))
+    assert not any(shape.fullmatch(p) for p in ("*%r@x.example", "$(id)@x.example", "a@b@c", "ssh://x/y"))

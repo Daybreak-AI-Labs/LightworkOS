@@ -12,7 +12,12 @@ reads it; a value the environment sets (``env``) wins over this page.
 """
 from __future__ import annotations
 
-from maverick.config_contracts import BOOLEAN_SETTINGS, INTEGER_SETTINGS, TEXT_SETTINGS
+from maverick.config_contracts import (
+    BOOLEAN_SETTINGS,
+    INTEGER_SETTINGS,
+    SSH_DESTINATION_PATTERN,
+    TEXT_SETTINGS,
+)
 
 from .settings_catalog_patterns import HTTPS as _HTTPS
 
@@ -449,8 +454,8 @@ def _work_area(S, C) -> tuple:
           "one per entry. A star matches any text. With none listed, workspaces cannot choose.",
           "list", group, [], "maverick.policy_tighten", subgroup="Work area",
           item_label="Remote computer", item_hint="*@build.example.com",
-          pattern=r"[A-Za-z0-9*?@._:][A-Za-z0-9*?@._:/-]{0,199}",
-          item_error="a remote computer such as user@host, not starting with a dash", max_items=50,
+          pattern=SSH_DESTINATION_PATTERN,
+          item_error="a remote computer such as user@host or host:22", max_items=50,
           weaker="grow",
           warning="Workspaces will be able to send their commands to more remote computers."),
         S("sandbox", "runtime", "Stronger isolation program",

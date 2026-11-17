@@ -634,3 +634,22 @@ def test_a_workspace_cannot_reach_more_of_the_network(consumer, monkeypatch):
         enterprise.egress_permitted("https://evil.example/"), _ssrf.allow_private()))
     assert result == (True, "enterprise", ["hipaa"], False, False)
     assert {"enterprise.mode", "enterprise.allowed_hosts", "profile.name", "tools.fetch_allow_private"} <= ignored
+
+
+@pytest.mark.parametrize(("host", "applied"), [
+    ("$(touch /tmp/q)@build.example.com", False),
+    ("%h%r@build.example.com", False),
+    ("ssh://x@evil.com:22/@build.example.com", False),
+    ("`id`@build.example.com", False),
+    ("u@[::1]:22", True),
+    ("deploy@build.example.com", True),
+])
+def test_a_workspace_host_has_a_plain_shape_before_it_matches(consumer, host, applied):
+    """Older ssh clients pass a user name with % or $ to a ProxyCommand or
+    Match exec, so only user@host or host with a port is accepted."""
+    from maverick import config
+
+    org = '[sandbox]\nworkspace_infrastructure = true\nworkspace_hosts = ["*@build.example.com", "u@[::1]:22"]\n'
+    sandbox, ignored = consumer(org, f"[sandbox]\nhost = {json.dumps(host)}\n",
+                                lambda: config.load_config().get("sandbox", {}))
+    assert (sandbox.get("host") == host) is applied and ("sandbox.host" in ignored) is not applied

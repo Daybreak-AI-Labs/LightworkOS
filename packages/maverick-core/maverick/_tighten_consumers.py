@@ -554,13 +554,19 @@ def plain_name(key: str):
 
 def listed_host(allowed: object):
     """``[sandbox] host`` a workspace chooses, with the organisation's switch
-    on: only a destination matching one of the organisation's
-    ``workspace_hosts`` patterns (none when unset). The ssh backend refuses a
+    on: a plain ``user@host`` or ``host`` (:data:`config_contracts.SSH_DESTINATION`)
+    matching one of the organisation's ``workspace_hosts`` patterns (none when
+    unset); brackets in a pattern are literal. The ssh backend refuses a
     destination it could read as an option in any case."""
-    patterns = [p for p in allowed if isinstance(p, str)] if isinstance(allowed, list) else []
+    from .config_contracts import SSH_DESTINATION, SSH_DESTINATION_PATTERN
+
+    patterns = [re.sub(r"[][]", lambda bracket: f"[{bracket.group()}]", p)
+                for p in (allowed if isinstance(allowed, list) else [])
+                if isinstance(p, str) and re.fullmatch(SSH_DESTINATION_PATTERN, p)]
 
     def merge(upper: object, lower: object) -> tuple[Any, bool]:
-        if not isinstance(lower, str) or not any(fnmatch.fnmatchcase(lower, p) for p in patterns):
+        if (not isinstance(lower, str) or not re.fullmatch(SSH_DESTINATION, lower)
+                or not any(fnmatch.fnmatchcase(lower, p) for p in patterns)):
             return upper, True
         return lower, False
     return merge
