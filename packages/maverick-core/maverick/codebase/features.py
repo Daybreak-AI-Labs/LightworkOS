@@ -773,8 +773,8 @@ class _Loop:
         rec["model"] = str(model) if model else None
         rec["problem"] = _family_problem(rec["model"], _author_model(),
                                          [c.get("model") for c in self.check["checkers"]])
-        if rec["problem"] or checker is None:
-            return
+        if rec["problem"] or checker is None or not _named(self.owner):
+            return  # it could not be approved anyway: spend nothing on it
         if self.stopped or not self._afford():
             rec["reason"] = BUDGET_REASON if self.stopped in (None, "budget") else \
                 "the run stopped early"
@@ -1362,6 +1362,7 @@ def request_approval(world, p: dict) -> int:
         refusal = protected_refusal(p)
         if refusal:
             raise VaultError(refusal)
+        _check_current_protection(p)
         appr = world.get_approval(p["approval_id"]) if p.get("approval_id") else None
         if appr is not None and not (appr.status in ("pending", "approved")
                                      and _approval_expired(appr)):
@@ -1438,6 +1439,10 @@ PROTECTED_REFUSALS = {
     "uncompared": ("This change is protected, but Lightwork could not compare the second "
                    "checker's model with the others. It cannot be approved."),
 }
+NO_STARTER = ("This change is protected, but Lightwork does not know which person started it. "
+              "Someone else must approve it, so start it again from the Code page while signed in.")
+NEWLY_PROTECTED = ("Protected paths now cover this change, but it was not built as a protected "
+                   "change. Build the change again so it gets a second checker and two approvers.")
 NOT_LOOKED = ("This change is protected, but the second checker did not look at this version "
               "({reason}). It cannot be approved.")
 
@@ -1460,11 +1465,28 @@ def protected_refusal(p: dict) -> str | None:
     rec = p.get("protected")
     if not isinstance(rec, dict):
         return None
+    if not _named(p.get("owner")):
+        return NO_STARTER
     if rec.get("problem"):
         return PROTECTED_REFUSALS.get(rec["problem"], PROTECTED_REFUSALS["uncompared"])
     if rec.get("state") != "ran" or rec.get("commit") != p.get("head"):
         return NOT_LOOKED.format(reason=rec.get("reason") or "it did not run")
     return None
+
+
+def plain_refusal(exc: BaseException) -> str | None:
+    """The sentence of a governance refusal a person can act on (shown as
+    is by the dashboard), or None for any other error."""
+    text = str(exc)
+    plain = {TWO_PEOPLE, NEWLY_PROTECTED, SELF_REFUSAL, NO_STARTER, DECISION_GAP,
+             *PROTECTED_REFUSALS.values()}
+    return text if text in plain or text.startswith(NOT_LOOKED.split("(")[0]) else None
+
+
+def _named(principal: object) -> bool:
+    """A person signed in with their own account (``user:<name>``)."""
+    text = str(principal or "").strip()
+    return text.startswith("user:") and len(text) > len("user:")
 
 
 def protected_status(world, p: dict) -> str:
@@ -1500,7 +1522,8 @@ def _protected_evidence(p: dict) -> tuple[list[str], list[str], list[str]]:
         more = int(rec.get("count", len(paths))) - min(len(paths), 10)
         lines.append("Protected paths changed: " + ", ".join(_safe_label(x, 120) for x in paths[:10])
                      + (f", and {more} more." if more > 0 else "."))
-    lines.append(TWO_PEOPLE)
+    if _named(p.get("owner")):
+        lines.append(TWO_PEOPLE)
     refusal = protected_refusal(p)
     findings = list(rec.get("findings") or [])
     gaps = [refusal] if refusal else []
@@ -1819,6 +1842,33 @@ def _require_approved(world, p: dict) -> None:
             raise VaultError(problem)
 
 
+def _require_current_protection(p: dict, host: Path) -> None:
+    """Protection again, from the project's CURRENT protected paths and
+    whether it is now the running installation's own repository, against
+    base..head (both sides of a rename): a change that was not built as a
+    protected one, but is one now, never merges, pushes or asks for
+    approval on the strength of its single-approver checks."""
+    repo = vault.get(p["repo"])
+    self_repo = is_installation(repo, host)
+    if self_repo and not loop_settings()["allow_self_changes"]:
+        raise VaultError(SELF_REFUSAL)
+    if p.get("protected"):
+        return
+    paths = [f for f in _git(["diff", "--name-only", "--no-renames", "-z", p["base"], p["head"]],
+                             git_dir=host).split("\0") if f]
+    if self_repo or vault.protected_matches(repo.protected_paths, paths):
+        raise VaultError(NEWLY_PROTECTED)
+
+
+def _check_current_protection(p: dict) -> None:
+    """:func:`_require_current_protection` on a fresh host copy (renew)."""
+    if not (_proposal_dir(p["repo"]) / f"{p['id']}.bundle").exists():
+        return  # nothing to merge or push without its branch bundle
+    with vault.host_repo(p["repo"]) as host:
+        _fetch_proposal(p, host)
+        _require_current_protection(p, host)
+
+
 def _protected_approval_problem(world, p: dict, appr) -> str | None:
     """A protected change merges or pushes only on the votes of two distinct
     named people, neither the person who started it, whatever surface they
@@ -1857,6 +1907,7 @@ def merge(world, pid: str) -> dict:
     with cross_process_lock(vault._bundle_path(p["repo"]), strict=True), \
             vault.host_repo(p["repo"]) as host:
         _fetch_proposal(p, host)
+        _require_current_protection(p, host)
         work = vault.clone_work(host, host.parent / "merge-work", repo.default_branch)
         _git(["fetch", "-q", str(host), f"refs/heads/{p['branch']}:refs/heads/{p['branch']}"],
              cwd=work)
@@ -1900,6 +1951,7 @@ def push(world, pid: str) -> str:
     repo = vault.get(p["repo"])
     with vault.host_repo(p["repo"]) as host:
         _fetch_proposal(p, host)
+        _require_current_protection(p, host)
         _git(["push", "-q", repo.source, f"refs/heads/{p['branch']}:refs/heads/{p['branch']}"],
              git_dir=host, token_env=repo.token_env)
     return p["branch"]

@@ -109,6 +109,7 @@ def test_live_code_checks_say_what_was_not_checked_under_admin_access(client, mo
     merged = dict(pending, id="fedcba9876543210", title="Old change")  # pragma: allowlist secret
     # A protected change with no second checker, and a run waiting for a decision.
     guarded = dict(pending, id="4123456789abcdef", title="Guarded change", approval_id=None,  # pragma: allowlist secret
+                   owner="user:starter",
                    protected={"paths": [".github/ci.yml"], "count": 1, "self": False,
                               "model": None, "problem": "unset", "state": "not run"})
     paused = dict(pending, id="5123456789abcdef", title="Paused change",  # pragma: allowlist secret

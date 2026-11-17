@@ -2062,7 +2062,7 @@ def test_the_second_checker_runs_only_for_protected_changes_and_is_charged(upstr
     assert calls == []                                         # not protected: never runs
     run, _ = _rounds(_passing)
     p = features.propose(world, "pricing", "Discount", "", run, checker=normal,
-                         protected_checker=second, budget=budget)
+                         protected_checker=second, budget=budget, owner="user:starter")
     assert len(calls) == 1 and budget.tool_calls == 1          # charged to the run's budget
     gid, copy = calls[0]
     assert "Protected check" in world.get_goal(gid).title and not copy.exists()
@@ -2081,7 +2081,7 @@ def test_the_second_checker_runs_only_for_protected_changes_and_is_charged(upstr
         return {"findings": []}
     normal_spends.model = "gemini:normal-checker"
     q = features.propose(world, "pricing", "Discount", "", run, checker=normal_spends,
-                         protected_checker=second, budget=spent)
+                         protected_checker=second, budget=spent, owner="user:starter")
     assert calls == [] and q["approval_id"] is None
     assert features.protected_refusal(q) == features.NOT_LOOKED.format(
         reason=features.BUDGET_REASON)
@@ -2100,7 +2100,7 @@ def test_an_unset_or_same_family_second_checker_cannot_be_approved(upstream, tmp
                             (_second("openai:x")[0], None)):
         run, _ = _rounds(_passing)
         p = features.propose(world, "pricing", "Discount", "", run, checker=normal,
-                             protected_checker=second)
+                             protected_checker=second, owner="user:starter")
         assert p["protected"]["problem"] == problem
         if problem is None:
             assert p["approval_id"] and features.status(world, p) == "pending"
@@ -2315,3 +2315,49 @@ def test_copilot_words_say_what_a_protected_change_still_needs(upstream, tmp_pat
     assert "0 of 2 so far" in said and "openai:second-model, looked at this version" in said
     world.decide_approval(p["approval_id"], "approved", decided_by="user:alice")
     assert "1 of 2 so far" in features.protected_status(world, p)
+
+
+# -- repair round 1 --
+
+def test_protection_is_checked_again_when_merging_pushing_and_renewing(upstream, tmp_path,
+                                                                        monkeypatch):
+    monkeypatch.setattr(features, "_author_model", lambda: "anthropic:author-model")
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    run, _ = _rounds(_passing)
+    p = features.propose(world, "pricing", "Discount", "", run, owner="user:starter",
+                         protected_checker=_second()[0])
+    run, _ = _rounds(_passing)
+    q = features.propose(world, "pricing", "Discount", "", run, owner="user:starter",
+                         protected_checker=_second()[0])
+    assert p["protected"] is None and q["protected"] is None
+    vault.set_protected_paths("pricing", ["app.py"])           # an administrator adds a path
+    assert world.decide_approval(p["approval_id"], "approved", decided_by="user:starter")
+    for act in (features.merge, features.push):
+        with pytest.raises(vault.VaultError) as refused:
+            act(world, p["id"])
+        assert str(refused.value) == features.NEWLY_PROTECTED
+    stored = features._load("pricing", q["id"])
+    stored["approval_id"] = None                                # its approval failed to park
+    features._save(stored)
+    with pytest.raises(vault.VaultError) as refused:
+        features.request_approval(world, features.find(q["id"]))
+    assert str(refused.value) == features.NEWLY_PROTECTED
+    assert "lightwork/" not in subprocess.run(["git", "branch"], cwd=upstream,
+                                              capture_output=True, text=True).stdout
+
+
+def test_a_protected_change_with_no_named_starter_cannot_be_approved(upstream, tmp_path,
+                                                                     monkeypatch):
+    _protected_repo(upstream, monkeypatch)
+    world = WorldModel(tmp_path / "world.db")
+    second, calls = _second()
+    for owner in ("", "operator"):                             # the command line; no sign-in
+        run, _ = _rounds(_passing)
+        p = features.propose(world, "pricing", "Discount", "", run, protected_checker=second,
+                             owner=owner)
+        assert p["approval_id"] is None and features.status(world, p) == "blocked"
+        assert features.protected_refusal(p) == features.NO_STARTER
+        lines = features.evidence(p)["lines"]
+        assert features.NO_STARTER in lines and features.TWO_PEOPLE not in lines
+    assert calls == []                                         # no second check it cannot use

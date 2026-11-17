@@ -349,8 +349,8 @@ async def merge_proposal(request: Request, pid: str) -> dict:
     try:
         merged = await run_in_threadpool(features.merge, world, pid)
     except vault.VaultError as exc:
-        if str(exc) == features.TWO_PEOPLE:
-            raise HTTPException(status_code=409, detail=features.TWO_PEOPLE) from exc
+        if features.plain_refusal(exc):
+            raise HTTPException(status_code=409, detail=features.plain_refusal(exc)) from exc
         clean = "no longer merges cleanly" in str(exc)
         raise HTTPException(status_code=409, detail=(
             "This change no longer fits the latest code. Ask Lightwork to build it again."
@@ -371,8 +371,8 @@ async def push_proposal(request: Request, pid: str) -> dict:
     try:
         branch = await run_in_threadpool(features.push, world, pid)
     except vault.VaultError as exc:
-        if str(exc) == features.TWO_PEOPLE:
-            raise HTTPException(status_code=409, detail=features.TWO_PEOPLE) from exc
+        if features.plain_refusal(exc):
+            raise HTTPException(status_code=409, detail=features.plain_refusal(exc)) from exc
         raise HTTPException(status_code=502, detail=(
             "Lightwork could not send this change to the original project. Check that "
             "Lightwork is allowed to write there.")) from exc
@@ -392,6 +392,8 @@ async def renew_proposal(request: Request, pid: str) -> dict:
     try:
         aid = await run_in_threadpool(features.request_approval, world, p)
     except (vault.VaultError, ValueError) as exc:
+        if features.plain_refusal(exc):
+            raise HTTPException(status_code=409, detail=features.plain_refusal(exc)) from exc
         raise HTTPException(status_code=409, detail=(
             "This change already has an open approval request, or it is no longer "
             "waiting for one.")) from exc
