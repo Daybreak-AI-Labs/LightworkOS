@@ -663,7 +663,7 @@ def answer(world, decision_id: int, option: int, *, actor: str, is_admin: bool,
     except Exception as exc:  # noqa: BLE001 -- never guess where the run came from
         raise DecisionRefused("unavailable", FEATURE_UNKNOWN) from exc
     resumable = resume_kwargs(world.get_goal(current.goal_id)) is not None and not feature
-    resume = False
+    resume = finishing = False
     waiting = 0
     try:
         with threads._restart_transaction(current.goal_id) as (connection, binding, status):
@@ -681,6 +681,10 @@ def answer(world, decision_id: int, option: int, *, actor: str, is_admin: bool,
                 connection, "SELECT COUNT(*) FROM questions WHERE goal_id = ? AND answer IS NULL",
                 (current.goal_id,)).fetchone()[0])
             resume = status == "blocked" and int(waiting) == 0 and resumable
+            # A run still finishing holds its lease, so a restart now would be
+            # refused as busy: it continues itself once it exits (after_run).
+            finishing = resume and _run_finishing(world, current.goal_id)
+            resume = resume and not finishing
             if resume:
                 if binding is not None:
                     threads.require_idle(connection, binding.root_id, binding.owner,
@@ -707,7 +711,7 @@ def answer(world, decision_id: int, option: int, *, actor: str, is_admin: bool,
     label = (current.option(option) or {}).get("label", "")
     _timeline(world, current.goal_id, f"{recorded} chose “{label}” for: {current.question}")
     decided = get(world, decision_id) or current
-    following = ("resumed" if resume else
+    following = ("resumed" if resume else "finishing" if finishing else
                  "manual" if not int(waiting) and not resumable else "waiting")
     outcome: dict[str, Any] = {"decision": decided, "resume": resume, "next": following}
     if following == "manual":
@@ -733,6 +737,7 @@ def _manual_restart(world, current: Decision, label: str, *, feature: bool) -> s
 _NEXT_TEXT = {
     "resumed": "The run continues with this choice.",
     "waiting": "The run continues once its other decisions and questions are answered.",
+    "finishing": "The run is still stopping. It continues with this choice once it has stopped.",
 }
 
 
@@ -1114,10 +1119,12 @@ NOBODY_RESTARTS = ("Another system started this run, so no person can restart it
 _FEATURE_ORIGIN = "codebase_feature"
 FEATURE_RESTARTS = ("This was a step of a code change, so it does not continue by itself. "
                     "Start a new code change to use your answer.")
-FEATURE_UNKNOWN = ("Lightwork could not check where this run came from, so your answer was "
-                   "not saved. Try again in a moment.")
-FEATURE_UNKNOWN_RESTART = ("Lightwork could not check where this run came from, so it was not "
-                           "restarted. Try again in a moment.")
+FEATURE_UNKNOWN = ("Lightwork could not read its record of which runs belong to a code change, "
+                   "so your answer was not saved. Check that the database can be read, then "
+                   "try again.")
+FEATURE_UNKNOWN_RESTART = ("Lightwork could not read its record of which runs belong to a code "
+                           "change, so it did not start this run. Check that the database can "
+                           "be read, then try again.")
 #: The goals a code change's own loop is running right now (set by
 #: ``maverick.codebase.features`` around each round and check): only there may
 #: a goal marked as a code-change step start.
@@ -1193,25 +1200,46 @@ def restart_note(goal, world=None) -> str:
     return NOBODY_RESTARTS if _started_by_system(goal, world) else STARTER_RESTARTS
 
 
-CONTINUE = "continue"
 ANSWERED_EARLY = "A person answered this run's decision before it paused. Your answer was saved."
-CONTINUES = ("A person answered this run's decision before it paused. "
-             "The run continues with that choice.")
+STRANDED_RESULT = ("Lightwork stopped before this run could continue after its decision was "
+                   "answered. It continues with that answer now.")
+
+
+def _run_finishing(world, goal_id: int) -> bool:
+    """Whether a run of this goal still holds its execution lease: it is
+    running or finishing. A restart now would be refused as busy."""
+    from .task_execution_guard import TaskBusy, lease
+
+    try:
+        with lease(world, goal_id):
+            return False
+    except TaskBusy:
+        return True
+    except Exception:  # noqa: BLE001 -- unknown: restart as before; the run start re-checks
+        log.debug("execution lease probe failed", exc_info=True)
+        return False
+
+
+def _answered_and_free(world, goal_id: int) -> bool:
+    """A run that may continue by itself after an answer: a decision of its own
+    was answered, nothing it waits for is still open, and Lightwork restarts it."""
+    if _feature_step(goal_id, world) or resume_kwargs(world.get_goal(goal_id)) is None:
+        return False
+    return any(d.status == "answered" for d in for_goal(world, goal_id))
 
 
 def continue_answered(world, goal_id: int) -> bool:
-    """For a run that just set itself ``blocked`` after filing a decision: when
-    the answer arrived first (it found the run still active, so it restarted
-    nothing), move the run back to ``pending`` and start it once this run has
-    exited (:func:`start_continued`). Serialised with :func:`answer` by the
-    same per-goal transaction, so exactly one of them restarts the run. False
-    when something still waits, the run is not one Lightwork restarts, or
-    another path already restarted it."""
+    """After a run that filed a decision has exited and released its lease:
+    when the answer arrived while it was still running or finishing (so the
+    answer restarted nothing), move it from ``blocked`` back to ``pending``
+    and start it with that answer. The move is the single claim: it runs in
+    the per-goal transaction :func:`answer` uses, and only from ``blocked``,
+    so exactly one of them starts the run."""
     from .attachment_submissions import SubmissionConflict
     from .chat_threads import ChatThreads
 
     try:
-        if _feature_step(goal_id, world) or resume_kwargs(world.get_goal(goal_id)) is None:
+        if not _answered_and_free(world, goal_id):
             return False
         threads = ChatThreads(world)
         store = threads.store
@@ -1228,18 +1256,66 @@ def continue_answered(world, goal_id: int) -> bool:
     except (SubmissionConflict, DecisionRefused):
         return False
     except Exception:  # noqa: BLE001 -- it stays blocked; a person can still restart it
-        log.warning("goal #%s was not continued after an early answer", goal_id, exc_info=True)
+        log.warning("goal #%s was not continued after its answer", goal_id, exc_info=True)
         return False
-    mark_run(world, goal_id, CONTINUE)
+    dispatch_resume(world, goal_id)
     return True
 
 
-def start_continued(world, goal_id: int) -> None:
-    """After a run exits: start it again when :func:`continue_answered` moved it
-    back to ``pending``."""
-    if run_state(world, goal_id) == CONTINUE:
-        clear_run(world, goal_id)
-        dispatch_resume(world, goal_id)
+def after_run(world, goal_id: int) -> None:
+    """Called once a run has released its execution lease: continue it when
+    its decision was answered while it was still running or finishing."""
+    if run_state(world, goal_id) == WAITING:
+        continue_answered(world, goal_id)
+
+
+def stranded(world, goal_id: int, *, older_than: float | None = None) -> bool:
+    """Whether a ``pending`` run was left behind after its answer: a decision
+    of its own was answered, nothing waits, no run holds its lease, and it has
+    not moved for the orphan-reclaim window (a process stopped before it
+    could start the run)."""
+    from .world_model import reclaim_window_seconds
+
+    window = reclaim_window_seconds() if older_than is None else float(older_than)
+    try:
+        rows = world.tenant_query(
+            "SELECT g.status, g.updated_at FROM goals g WHERE g.id = ? AND "
+            "{tenant_exact:g.tenant_id}", (int(goal_id),))
+        if (not rows or str(rows[0][0]) != "pending"
+                or float(rows[0][1] or 0) > time.time() - window):
+            return False
+        return (_answered_and_free(world, goal_id) and not open_for_tree(world, goal_id)
+                and not world.open_questions(goal_id) and not _run_finishing(world, goal_id))
+    except Exception:  # noqa: BLE001 -- unknown: leave it to a person
+        log.debug("stranded-run check failed", exc_info=True)
+        return False
+
+
+def recover_stranded(world, goal_id: int, *, older_than: float | None = None) -> bool:
+    """Start a run :func:`stranded` left ``pending``. Moving it ``pending`` to
+    ``blocked`` (only one caller can) is the claim; the ordinary continuation
+    then starts it once."""
+    try:
+        if not stranded(world, goal_id, older_than=older_than) or not world.block_pending_goal(
+                int(goal_id), result=STRANDED_RESULT):
+            return False
+    except Exception:  # noqa: BLE001 -- recovery is best effort; a person can resume it
+        log.warning("goal #%s left after its answer was not recovered", goal_id, exc_info=True)
+        return False
+    return continue_answered(world, goal_id)
+
+
+def recover_all_stranded(world) -> int:
+    """At start-up: start every run left ``pending`` after its answer."""
+    try:
+        rows = world.tenant_query(
+            "SELECT DISTINCT g.id FROM goals g JOIN decision_requests d ON d.goal_id = g.id "
+            "WHERE {tenant_exact:g.tenant_id} AND g.status = 'pending' AND d.status = 'answered'",
+            ())
+    except Exception:  # noqa: BLE001 -- a store without the table has nothing to recover
+        log.debug("stranded-run lookup failed", exc_info=True)
+        return 0
+    return sum(1 for row in rows if recover_stranded(world, int(row[0])))
 
 
 def dispatch_resume(world, goal_id: int) -> bool:

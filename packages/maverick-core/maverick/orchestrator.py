@@ -2346,11 +2346,9 @@ def _settle_decision_result(*, result: Any, world: WorldModel, goal_id: int,
     text = (decision_requests.waiting_text(waiting) if waiting
             else decision_requests.ANSWERED_EARLY)
     world.set_goal_status(goal_id, "blocked", result=text)
-    # An answer that landed before this pause found the run active and
-    # restarted nothing: continue the run with that choice once it exits.
-    if filed and decision_requests.continue_answered(world, goal_id):
-        return decision_requests.CONTINUES
     if not waiting:
+        # Answered before this pause took effect: the run continues with that
+        # choice once it has released its lease (decision_requests.after_run).
         return text
     _fire_webhook("goal_waiting", {
         "goal_id": goal_id, "status": "blocked", "waiting_for": "decision",
@@ -3279,8 +3277,8 @@ async def run_goal(
         return f"BLOCKED: {exc}"
     finally:
         # After the execution lease is released, so the continued run can take it.
-        from .decision_requests import start_continued
-        start_continued(world, goal_id)
+        from .decision_requests import after_run
+        after_run(world, goal_id)
 
 
 def run_goal_sync(*args, **kwargs) -> str:

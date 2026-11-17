@@ -137,6 +137,67 @@ async def test_an_answer_that_lands_before_the_pause_continues_the_run(
     assert world.get_goal(gid).status == "done"
 
 
+@pytest.mark.asyncio
+async def test_an_answer_while_the_run_still_holds_its_lease_continues_it_once(
+        tmp_path, fake_llm, make_llm_response, monkeypatch):
+    import threading
+
+    from maverick import orchestrator
+
+    world = _world(tmp_path)
+    gid = world.create_goal("tidy the retention settings", "", owner="alice")
+    answered, outcomes, started = threading.Event(), [], []
+    settle = orchestrator._settle_decision_result
+
+    def person():
+        outcomes.append(dr.answer(world, dr.list_open(world)[0].id, 2, actor="alice",
+                                  is_admin=False))
+        answered.set()
+
+    def settled(**kwargs):  # blocked, but the run has not released its lease yet
+        out = settle(**kwargs)
+        threading.Thread(target=person).start()
+        assert answered.wait(10)
+        return out
+    monkeypatch.setattr(orchestrator, "_settle_decision_result", settled)
+    monkeypatch.setattr(dr, "dispatch_resume", lambda world, goal_id: started.append(goal_id))
+    fake_llm.scripted = [make_llm_response(text="A person must decide.", tool_calls=[
+        ToolCall(id="t1", name="request_decision", input=_REQUEST)])]
+
+    await _run(world, gid, fake_llm, tmp_path)
+
+    assert outcomes[0]["resume"] is False and outcomes[0]["next"] == "finishing"
+    assert "once it has stopped" in dr.next_text(outcomes[0])
+    assert world.get_goal(gid).status == "pending" and started == [gid]   # started once
+    assert dr.continue_answered(world, gid) is False and started == [gid]  # the claim is taken
+
+
+def test_a_run_left_pending_after_its_answer_is_recovered_once(tmp_path, monkeypatch):
+    from maverick.chat_threads import ChatThreads
+
+    monkeypatch.setattr("maverick.outcome_pilot_start_gate.require_work_item_admission",
+                        lambda *a: None)
+    started = []
+    monkeypatch.setattr(dr, "dispatch_resume", lambda world, goal_id: started.append(goal_id))
+    world = _world(tmp_path)
+    gid, decision = _paused_goal(world)
+    # The answer moved it to pending, then the process stopped before it started the run.
+    assert dr.answer(world, decision.id, 1, actor="alice", is_admin=False)["resume"] is True
+    assert dr.recover_all_stranded(world) == 0                 # too fresh: it may still start
+    with world._writing() as conn:
+        conn.execute("UPDATE goals SET updated_at = updated_at - 3600 WHERE id = ?", (gid,))
+    assert dr.recover_all_stranded(world) == 1 and started == [gid]
+    assert world.get_goal(gid).status == "pending"
+    assert dr.recover_all_stranded(world) == 0 and started == [gid]   # never twice
+    # The resume path takes a stranded run back too, and only once.
+    with world._writing() as conn:
+        conn.execute("UPDATE goals SET updated_at = updated_at - 3600 WHERE id = ?", (gid,))
+    ChatThreads(world).resume(gid)
+    assert world.get_goal(gid).status == "pending"
+    with pytest.raises(Exception, match="already running"):
+        ChatThreads(world).resume(gid)
+
+
 def test_a_person_without_authority_is_refused(tmp_path):
     world = _world(tmp_path)
     gid, decision = _paused_goal(world)

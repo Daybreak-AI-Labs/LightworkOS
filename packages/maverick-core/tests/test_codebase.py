@@ -1998,7 +1998,8 @@ def test_an_author_that_asks_for_a_decision_stops_the_run(upstream, tmp_path, mo
     assert step.status == "cancelled" and step.result == decision_requests.FEATURE_RESTARTS
     # An origin that cannot be read refuses the restart.
     monkeypatch.setattr(world, "tenant_query", lambda *a, **k: (_ for _ in ()).throw(OSError()))
-    assert "could not check" in decision_requests.resume_refusal(world, root)
+    assert decision_requests.resume_refusal(world, root) == \
+        decision_requests.FEATURE_UNKNOWN_RESTART
 
 
 def test_a_checker_that_asks_for_a_decision_could_not_run(upstream, tmp_path, monkeypatch):

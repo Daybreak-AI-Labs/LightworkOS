@@ -278,11 +278,13 @@ class ChatThreads:
         Even an ordinary goal takes the root fence: its first explicit chat
         reply can establish membership concurrently with this restart.
         """
-        from .decision_requests import resume_refusal
+        from .decision_requests import STRANDED_RESULT, resume_refusal, stranded
 
         waiting = resume_refusal(self.world, goal_id)
         if waiting:
             raise SubmissionConflict(waiting)
+        if stranded(self.world, goal_id):  # left pending after its answer: claim it back
+            self.world.block_pending_goal(int(goal_id), result=STRANDED_RESULT)
         with self._restart_transaction(goal_id) as (connection, binding, _status):
             if binding is not None:
                 self.require_idle(connection, binding.root_id, binding.owner, except_goal=goal_id)
