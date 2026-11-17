@@ -135,7 +135,7 @@ strict_pricing      = true
 
 # [budget.tool_prices]
 # One entry per paid tool service: USD per unit, and the unit (request, page,
-# character, image, second or terabyte scanned). Set search first: with no
+# message, character, image, second or terabyte scanned). Set search first: with no
 # price, 20 searches use a $2 task limit. Settings > Models, under Prices for
 # paid tool services, writes these too. A workspace may only raise them.
 # tavily = { dollars = 0.008, per = "request" }

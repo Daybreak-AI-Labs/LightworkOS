@@ -161,3 +161,30 @@ def test_replicate_priced_per_second_cannot_spend_past_the_limit(monkeypatch):
     assert "canceled" in out and posts[-1].endswith("/predictions/p1/cancel")
     assert held[0] == pytest.approx(0.15)
     assert budget.dollars == pytest.approx(0.15) and budget._reserved == 0
+
+
+def test_replicate_unreported_seconds_charge_everything_held_and_say_so(monkeypatch):
+    # Priced per second, a prediction not waited for never reports its
+    # seconds. It is charged everything the run had left, not the small
+    # per-call ceiling, and the cost line says why and how to fix it.
+    import os
+
+    import pytest
+    from maverick import config
+
+    home = os.environ["MAVERICK_HOME"]
+    os.makedirs(home, exist_ok=True)
+    with open(os.path.join(home, "config.toml"), "w", encoding="utf-8") as f:
+        f.write('[budget.tool_prices]\nreplicate = { dollars = 0.01, per = "second" }\n')
+    config.reset_config_cache()
+    monkeypatch.setenv("REPLICATE_API_TOKEN", "r8_xx")
+    _fake_httpx(monkeypatch, get=MagicMock(return_value=_resp(200, {"latest_version": {"id": "v1"}})),
+                post=MagicMock(return_value=_resp(201, {"id": "p1", "status": "starting"})))
+    from maverick.tools.replicate_tool import replicate_tool
+    budget = Budget(max_dollars=0.5)
+    assert "created prediction" in replicate_tool(budget=budget).fn({"op": "run", "model": "o/m", "input": {}})
+    assert budget.dollars == pytest.approx(0.5)
+    summary = budget.summary()
+    assert "Replicate did not report its real usage" in summary
+    assert "everything the run had left was charged" in summary
+    assert "Prices for paid tool services" in summary

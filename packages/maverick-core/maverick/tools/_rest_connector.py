@@ -500,8 +500,9 @@ def _charged_execute(name: str, execute, config, budget) -> str:
         return {} if attempt is not None and attempt.dispatch_may_have_happened else None
 
     try:
+        # One request is one send for an SMS or email gateway.
         return charged_call(name, execute, budget=budget, label=name,
-                            units={"request": 1}, measure=sent)
+                            units={"request": 1, "message": 1}, measure=sent)
     except PaidCallRefused as e:
         return f"ERROR: {e}"
 

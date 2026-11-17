@@ -72,8 +72,8 @@ def charged_call(
 
     ``units`` is what the call uses that is known before it is sent (one
     request, the characters in the text); ``measure`` reads more from the
-    reply (seconds of audio or compute, bytes scanned). A unit that stays
-    unknown is charged the per-call ceiling. ``measure`` returns ``None`` when
+    reply (seconds of audio or compute, bytes scanned). When the priced unit
+    never comes back, the call is charged everything it held. ``measure`` returns ``None`` when
     ``send`` stopped before anything was sent, so nothing is charged.
 
     When the priced unit is known only from the reply, the hold is all the
@@ -115,8 +115,14 @@ def charged_call(
             return result
         used.update({unit: amount for unit, amount in measured.items() if amount is not None})
         dollars, charged_as_priced = price.cost(used)
+        # The priced unit never came back: charge everything held (all the
+        # run had left), so the run stops on its limit rather than guess low.
+        unreported = price.unit is not None and used.get(price.unit) is None
+        if unreported:
+            dollars = projected
         try:
-            outcome["charge"] = record_tool_dollars(budget, price, dollars, priced=charged_as_priced)
+            outcome["charge"] = record_tool_dollars(budget, price, dollars, priced=charged_as_priced,
+                                                    unreported=unreported)
         except BudgetExceeded as exc:
             outcome["charge"] = getattr(exc, "token_charge", None)
             if outcome["charge"] is None:

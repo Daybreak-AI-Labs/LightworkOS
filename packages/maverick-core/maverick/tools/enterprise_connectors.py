@@ -10,7 +10,11 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from ..budget import PAID_CONNECTOR_NAMES, PER_LOOKUP_CONNECTOR_NAMES
+from ..budget import (
+    MESSAGING_CONNECTOR_NAMES,
+    PAID_CONNECTOR_NAMES,
+    PER_LOOKUP_CONNECTOR_NAMES,
+)
 from ..catalog_schema import index_connector_specs
 from . import Tool
 from ._connector_specs import _GRAPHQL_SPECS, _SPECS
@@ -34,12 +38,13 @@ def _fill_env(spec: dict) -> dict:
 # Pay-per-use services (budget.PAID_CONNECTOR_NAMES): a request other than a
 # GET is a paid call charged to the run budget (make_rest_tool ``paid``),
 # priced from [budget.tool_prices]. Per-lookup data services
-# (budget.PER_LOOKUP_CONNECTOR_NAMES) are charged for every request.
+# (budget.PER_LOOKUP_CONNECTOR_NAMES) are charged for every request; SMS,
+# voice and email gateways (budget.MESSAGING_CONNECTOR_NAMES) for each send.
 for _spec in (*_SPECS, *_GRAPHQL_SPECS):
     _fill_env(_spec)
     if _spec["name"] in PER_LOOKUP_CONNECTOR_NAMES:
         _spec["paid"] = "all"
-    elif _spec["name"] in PAID_CONNECTOR_NAMES:
+    elif _spec["name"] in PAID_CONNECTOR_NAMES | MESSAGING_CONNECTOR_NAMES:
         _spec["paid"] = True
 
 # Compile the authoritative catalog once. Duplicate names or invalid credential

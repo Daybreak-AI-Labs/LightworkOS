@@ -704,15 +704,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Hugging Face (and its OCR), Replicate and hosted image edits, DeepL,
   LibreTranslate on a public server, OpenAI and Groq speech-to-text, OpenAI
   and ElevenLabs speech, Wolfram|Alpha, NewsAPI, BigQuery (by terabytes
-  scanned when priced that way), and the pay-per-use connectors: AI, media
-  AI, identity and background checks on every request but a GET, per-lookup
-  data services (such as `shodan`, `hunter`, `zoominfo`) on every request.
-  Local engines, DuckDuckGo and servers on a private address are free.
+  scanned when priced that way), Twilio, Amazon SES and SNS sends, and the
+  pay-per-use connectors: AI, media AI, identity and background checks, and
+  SMS, voice and email gateways (such as `sendgrid`, `vonage`, `plivo`) on
+  every request but a GET; per-lookup data services (such as `shodan`,
+  `hunter`, `zoominfo`) on every request.
+- Not charged: subscription services (CRM, ERP, storage and the like), which
+  bill by plan, not by call; payments, shipping labels and stock-media
+  purchases, which move money under their own approval rather than spend a
+  task's budget; and local engines, DuckDuckGo and servers on a private
+  address, which are free.
 - A call whose price is known before it is sent is stopped if it would pass
   the limit. A call priced per second or per terabyte holds everything the
   run has left; BigQuery and a waited Replicate prediction are told to stop
   there. Otherwise such a call can still cost more than was left, and the
-  run stops right after it.
+  run stops right after it. If the reply does not report the seconds or
+  terabytes used, everything the run had left is charged, the cost line
+  says so, and the run stops on its limit; price such a service per
+  request to be charged per call instead.
 - GPU rentals (`runpod`, `vast_ai`, `lambda_labs_cloud`, `coreweave`,
   `voltage_park`, `paperspace_gradient`) start machines billed by the hour.
   The limit sees only the per-call charge, never those hours.
@@ -721,8 +730,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Set prices for the services you use first, starting with search, in
   Settings > Models, under Prices for paid tool services, the Copilot, the
   setup wizard, or `[budget.tool_prices]` (for example
-  `tavily = { dollars = 0.008, per = "request" }`; units are request, page,
-  character, image, second and terabyte). Change the $0.10 per call in All
+  `tavily = { dollars = 0.008, per = "request" }`; units are request,
+  message, page, character, image, second and terabyte). Change the $0.10 per call in All
   settings (`[budget] unpriced_tool_call_dollars`); a warning and the cost
   line name the services charged it. A workspace may only raise these
   prices. While settings cannot be read, paid tool calls are refused.

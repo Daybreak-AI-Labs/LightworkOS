@@ -1043,16 +1043,17 @@ def record_tool_tokens(
     return charge
 
 
-# A paid tool call billed per request, page, character, image, second or
-# terabyte scanned is priced from [budget.tool_prices] (one entry per service:
+# A paid tool call billed per request, message, page, character, image,
+# second or terabyte scanned is priced from [budget.tool_prices] (one entry per service:
 # dollars per unit and the unit). A service with no usable entry, or a call
 # whose unit is not known, is charged the per-call safety ceiling [budget]
 # unpriced_tool_call_dollars. No provider's price is written here.
-TOOL_PRICE_UNITS = ("request", "page", "character", "image", "second", "terabyte")
+TOOL_PRICE_UNITS = ("request", "message", "page", "character", "image", "second", "terabyte")
 DEFAULT_UNPRICED_TOOL_CALL_DOLLARS = 0.10
 _MAX_TOOL_UNIT_DOLLARS = 10_000.0
 _TOOL_PRICE_VERSION = "operator-tool-price-v1"
 _UNPRICED_TOOL_CEILING = "unpriced-tool-call-ceiling-v1"
+_UNREPORTED_TOOL_UNITS = "unreported-tool-units-v1"
 _TOOL_CEILING_WARNED: set[str] = set()
 
 # The paid tool services a [budget.tool_prices] entry prices, in plain words.
@@ -1066,6 +1067,8 @@ PAID_TOOL_SERVICES = {
     "openai_whisper": "OpenAI speech-to-text", "groq_whisper": "Groq speech-to-text",
     "openai_tts": "OpenAI text-to-speech", "elevenlabs": "ElevenLabs",
     "wolfram": "Wolfram|Alpha", "newsapi": "NewsAPI", "bigquery": "BigQuery",
+    "twilio": "Twilio SMS, calls and lookups", "ses": "Amazon SES email",
+    "sns": "Amazon SNS messages",
 }
 
 # Generic REST connectors to pay-per-use services. A request other than a GET
@@ -1091,6 +1094,19 @@ PAID_CONNECTOR_NAMES = frozenset({
     "prove_identity", "jumio", "onfido", "persona_kyc", "trulioo", "socure",
     "middesk", "checkr", "sterling_check", "hireright", "goodhire",
 })
+# SMS, voice-call and transactional email gateways: each send costs money,
+# and an agent can send many, so a request other than a GET is charged (per
+# message or per request) even though the confirm gate also applies.
+MESSAGING_CONNECTOR_NAMES = frozenset({
+    "sendgrid", "mailjet", "mailgun", "postmark", "sparkpost", "vonage", "plivo",
+    "messagebird", "infobip", "sinch", "telnyx", "bandwidth", "africastalking",
+    "clickatell", "burstsms", "soprano_design", "smsglobal", "messagemedia",
+    "link_mobility", "esendex", "didww", "flowroute", "karix", "route_mobile",
+    "plum_voice", "callfire", "syniverse", "tanla_platforms", "valuefirst",
+    "seven_io", "dexatel", "termii", "smsapi_com", "bulksms", "gupshup", "msg91",
+    "textlocal", "whatsapp_business", "attentive", "postscript", "simpletexting",
+    "eztexting", "textmagic", "textedly", "slicktext", "tatango", "trumpia",
+})
 # Per-lookup data services: a GET is billed too (a credit or a lookup).
 PER_LOOKUP_CONNECTOR_NAMES = frozenset({
     "shodan", "hunter", "clearbit", "zoominfo", "numverify", "semrush", "ahrefs",
@@ -1107,7 +1123,8 @@ GPU_RENTAL_CONNECTOR_NAMES = frozenset({
 def paid_tool_services() -> dict[str, str]:
     """Every service name a [budget.tool_prices] entry can price, with a label."""
     services = dict(PAID_TOOL_SERVICES)
-    for name in sorted((PAID_CONNECTOR_NAMES | PER_LOOKUP_CONNECTOR_NAMES) - set(services)):
+    connectors = PAID_CONNECTOR_NAMES | PER_LOOKUP_CONNECTOR_NAMES | MESSAGING_CONNECTOR_NAMES
+    for name in sorted(connectors - set(services)):
         services[name] = f"{name} connector"
     return services
 
@@ -1229,14 +1246,24 @@ def tool_call_price(service: str) -> ToolCallPrice:
 
 def record_tool_dollars(
     budget: Budget, price: ToolCallPrice, dollars: float, *, priced: bool,
+    unreported: bool = False,
 ) -> TokenCharge:
     """Charge one paid tool call's ``dollars`` to ``budget``.
 
-    ``priced`` is false when the safety ceiling set the amount; the cost line
-    then names the fix. Raises as :meth:`Budget.record_tokens` does.
+    ``priced`` is false when the safety ceiling set the amount; ``unreported``
+    marks a call whose priced unit the reply never gave, charged everything
+    it held. The cost line then names the fix. Raises as
+    :meth:`Budget.record_tokens` does.
     """
     route = f"tool:{price.service}"
-    if priced:
+    if unreported:
+        quote = _estimate_policy_price(
+            route, (0.0, 0.0), source=f"config://budget.tool_prices.{price.service}",
+            confidence=0.0, version=_UNREPORTED_TOOL_UNITS, evidence_id=_UNREPORTED_TOOL_UNITS,
+            pricing_basis=f"Everything held: the reply did not report the {price.unit}s used",
+            applicability="Spend-limit charge for a paid tool call whose usage was not "
+                          "reported; the provider's invoice remains authoritative.")
+    elif priced:
         quote = _estimate_policy_price(
             route, (0.0, 0.0), source=f"config://budget.tool_prices.{price.service}",
             confidence=0.0, version=_TOOL_PRICE_VERSION, evidence_id=_TOOL_PRICE_VERSION,
@@ -1762,6 +1789,13 @@ class Budget:
                 "per-call safety ceiling "
                 "because it has no usable price. Set the service's price in Settings > "
                 "Models, under Prices for paid tool services"
+            )
+        if tools := priced_by.get(_UNREPORTED_TOOL_UNITS):
+            note += (
+                f". {', '.join(tool_route_label(t) for t in tools)} did not report its real "
+                "usage, so everything the run had left was charged. Set a price per request "
+                "for it in Settings > Models, under Prices for paid tool services, to be "
+                "charged per call instead"
             )
         return note
 

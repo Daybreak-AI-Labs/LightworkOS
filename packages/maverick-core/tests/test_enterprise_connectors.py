@@ -475,7 +475,8 @@ def test_every_pay_per_use_and_per_lookup_connector_is_charged(monkeypatch):
     for name in ("heygen", "synthesia", "remove_bg", "clipdrop", "rev_com", "deepset_cloud",
                  "ollama_cloud", "cerebrium", "beam_cloud", "paperspace_gradient", "otter_ai",
                  "happyscribe", "pictory", "opus_clip", "invideo", "relevance_ai", "dify_ai",
-                 "chatbase", "vectara", "picsart", "descript", "threeplay_media", "runpod"):
+                 "chatbase", "vectara", "picsart", "descript", "threeplay_media", "runpod",
+                 "sendgrid", "mailgun", "postmark", "vonage", "plivo", "messagebird"):
         assert paid[name] is True, name
     for name in ("shodan", "hunter", "clearbit", "zoominfo", "numverify", "semrush",
                  "zoominfo_read", "clearbit_read"):

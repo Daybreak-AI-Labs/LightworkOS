@@ -1619,7 +1619,7 @@ def base_registry(
         ToolDescriptor("cloudflare", cloudflare_tool, True),
         ToolDescriptor("datadog", datadog_tool, True),
         ToolDescriptor("hubspot", hubspot_tool, True),
-        ToolDescriptor("twilio", twilio_tool, True),
+        ToolDescriptor("twilio", lambda: twilio_tool(budget=budget), True),
     ))
     reg.register(serial_tool())
     register_descriptors(reg, (ToolDescriptor("elasticsearch", elasticsearch_tool, True),))
@@ -1681,8 +1681,8 @@ def base_registry(
         # and dynamodb do.
         register_descriptors(reg, (
             ToolDescriptor("s3", s3_tool, True),
-            ToolDescriptor("ses", ses_tool, True),
-            ToolDescriptor("sns", sns_tool, True),
+            ToolDescriptor("ses", lambda: ses_tool(budget=budget), True),
+            ToolDescriptor("sns", lambda: sns_tool(budget=budget), True),
         ))
     register_descriptors(reg, (
         ToolDescriptor("trello", trello_tool, True),

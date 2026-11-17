@@ -305,7 +305,7 @@ def execute_remove_price(request, selection, arguments, review, operation_id):
 class ToolPrice(StrictInput):
     service: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9_]+$")
     dollars: float = Field(ge=0, le=10_000, allow_inf_nan=False)
-    per: str = Field(pattern=r"^(request|page|character|image|second|terabyte)$")
+    per: str = Field(pattern=r"^(request|message|page|character|image|second|terabyte)$")
     confirmed: bool = False
 
 

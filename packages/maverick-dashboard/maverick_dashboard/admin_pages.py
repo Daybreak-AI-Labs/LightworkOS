@@ -576,7 +576,8 @@ async def settings_self_hosted_free(request: Request) -> RedirectResponse:
 
 
 TOOL_PRICE_CONFIRM = "Confirm that you checked this service's own price before saving."
-TOOL_PRICE_UNIT_WORDS = {"request": "request", "page": "page", "character": "character",
+TOOL_PRICE_UNIT_WORDS = {"request": "request", "message": "message sent", "page": "page",
+                         "character": "character",
                          "image": "image", "second": "second of audio or compute",
                          "terabyte": "terabyte scanned"}
 
