@@ -176,6 +176,79 @@ def test_an_admin_sets_a_projects_test_commands_like_adding_it(client, monkeypat
     assert vault.get("core").gate_command == "bash lint.sh"            # nothing changed
 
 
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
+def test_copilot_reads_and_sets_test_commands_and_protected_paths_like_the_page(
+        client, monkeypatch, tmp_path):
+    from fastapi import HTTPException
+    from maverick.audit.reader import iter_events
+    from maverick.codebase import vault
+    from maverick_dashboard import code_actions_api
+    from maverick_dashboard import product_operations as registry
+    copilot = "/api/v1/copilot/product-operations"
+    _code_on(monkeypatch)
+    monkeypatch.setattr(registry, "_gate", lambda request: None)
+    monkeypatch.setattr(registry, "enabled_families", lambda: {"tasks"})
+    vault.register("core", str(_source_repo(tmp_path)), test_command="python -m pytest -q")
+    _as(monkeypatch, "admin")
+
+    def listed():
+        r = client.post(f"{copilot}/catalog", json={"page": "/code", "selection": {}})
+        assert r.status_code == 200, r.text
+        return r.json(), {o["id"]: o for o in r.json()["operations"]}
+
+    def prepare(operation, arguments):
+        catalog, ops = listed()
+        return client.post(f"{copilot}/prepare", json={
+            "page": "/code", "selection": {}, "operation": operation,
+            "context": catalog["context"], "revision": ops[operation]["revision"],
+            "arguments": arguments})
+
+    def audited():
+        return [e for e in iter_events(all_days=True) if e.get("action") == "set_commands"]
+    shown = prepare("code.checks.show", {})
+    assert shown.status_code == 200, shown.text
+    assert shown.json()["details"]["Code projects"] == [{
+        "Code project": "core", "Quick tests": "None", "All tests": "python -m pytest -q",
+        "Other checks": "None", "Tests that need services": "None", "Protected paths": "None"}]
+    args = {"name": "core", "quick_test_command": "", "test_command": "python -m pytest -q",
+            "gate_command": "bash lint.sh", "heavy_test_command": "",
+            "protected_paths": ".github, src/**/*.py"}
+    # The page's own refusals, before anything is confirmed.
+    for bad, detail in (({"protected_paths": "../outside"}, code_actions_api._PATHS_REFUSED),
+                        ({"gate_command": "lint {changed}"}, code_actions_api._COMMANDS_REFUSED)):
+        refused = prepare("code.checks.set", dict(args, **bad))
+        assert refused.status_code == 422 and refused.json()["detail"] == detail
+    review = prepare("code.checks.set", args)
+    assert review.status_code == 200, review.text
+    assert review.json()["changes"] == [
+        {"field": "Other checks", "before": "None", "after": "bash lint.sh"},
+        {"field": "Protected paths", "before": "None", "after": ".github, src/**/*.py"}]
+    assert vault.get("core").gate_command is None and not audited()
+    done = client.post(f"{copilot}/execute", json={"token": review.json()["token"], "confirmed": True})
+    assert done.status_code == 200 and done.json()["status"] == "confirmed", done.text
+    assert done.json()["details"]["Protected paths"] == ".github, src/**/*.py"   # read back
+    repo = vault.get("core")
+    assert (repo.gate_command, list(repo.protected_paths)) == ("bash lint.sh", [".github", "src/**/*.py"])
+    (row,) = audited()
+    assert row["protected_paths"] == [".github", "src/**/*.py"] and row["repo"] == "core"
+    # The same review again changes nothing and writes no second record.
+    again = client.post(f"{copilot}/execute", json={"token": review.json()["token"], "confirmed": True})
+    assert again.status_code == 409 and len(audited()) == 1
+    # A lower role is never offered it and cannot run it.
+    _as(monkeypatch, "operator")
+    assert not {"code.checks.show", "code.checks.set"} & set(listed()[1])
+    adapter = registry.adapters()["code.checks.set"]
+    with pytest.raises(HTTPException) as error:
+        adapter.execute(_request(), {}, dict(args, gate_command="x"), {}, "a" * 32)
+    assert error.value.status_code == 403 and vault.get("core").gate_command == "bash lint.sh"
+
+
+def _request():
+    from starlette.requests import Request
+    return Request({"type": "http", "method": "POST", "path": "/code",
+                    "headers": [(b"host", b"127.0.0.1")], "client": ("127.0.0.1", 1)})
+
+
 def test_code_actions_are_refused_while_the_vault_is_off(client):
     r = client.post("/api/v1/code/repos", json={"name": "x", "source": "https://example.com/x.git"})
     assert r.status_code == 503 and "turned off" in r.json()["detail"]

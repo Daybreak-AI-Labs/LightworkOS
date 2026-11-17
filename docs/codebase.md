@@ -248,7 +248,8 @@ within one folder, `**` crosses folders, a pattern that names a folder
 covers everything under it, and case is ignored. Set them with `maverick
 code set NAME --protected-path PATTERN` (repeat it; `--protected-path ""`
 clears the list) or with **Test commands and protected paths** on the Code
-page. Like the test commands, only an administrator changes them, the
+page, or ask Copilot on the Code page (the `tasks` Copilot action family).
+Like the test commands, only an administrator changes them, the
 change is audited, and a workspace changes only its own projects. Projects
 added before protected paths existed have none.
 
@@ -463,8 +464,10 @@ does. They are documentation, not built into the product.
 each proposal's files, test result, independent check outcome, review verdict
 and approval state. It reads one summary (`GET /api/v1/code/summary`) that
 never includes code, diffs or test output. **Test commands** on a
-repository (administrators) sets its test tiers. Copilot has no way to set
-them, as it has none for adding a repository. An administrator's review panel
+repository (administrators) sets its test tiers and protected paths. Copilot
+reads and changes them through the same function, with the same checks, a
+before-and-after review and the same audit record; it has no way to add a
+repository. An administrator's review panel
 opens with "What was checked", in the same words as the approval card. Ask
 Copilot "What was checked on the proposed code changes?" for the same points
 (administrators only, like the panel). Approve in the approvals queue; merges

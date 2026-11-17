@@ -226,18 +226,17 @@ async def repo_commands(request: Request, name: str) -> dict:
     return _commands(repo)
 
 
-@router.post("/code/repos/{name}/commands")
-async def set_repo_commands(request: Request, name: str, body: CommandsIn) -> dict:
-    """Change a code project's test commands and protected paths: the same
-    authority as adding one."""
+def check_commands_change(request: Request, name: str, given: dict,
+                          paths: list[str] | None):
+    """The checks for changing a code project's test commands and protected
+    paths, on the Code page and in Copilot: the administrator check, a known
+    project, and the vault's own limits. Returns the vault module."""
     require_permission(request, "admin")
     vault = _vault()
-    given = body.model_dump(exclude_none=True)
-    paths = given.pop("protected_paths", None)
     if not given and paths is None:
         raise HTTPException(status_code=422, detail="Enter at least one command to change.")
     try:
-        await run_in_threadpool(vault.get, name)
+        vault.get(name)
     except vault.VaultError as exc:
         raise HTTPException(status_code=404, detail="That code project was not found.") from exc
     try:
@@ -248,18 +247,34 @@ async def set_repo_commands(request: Request, name: str, body: CommandsIn) -> di
         vault.check_protected_paths(paths)
     except vault.VaultError as exc:
         raise HTTPException(status_code=422, detail=_PATHS_REFUSED) from exc
+    return vault
 
-    def _do():
-        repo = vault.set_commands(name, **given) if given else vault.get(name)
-        return repo if paths is None else vault.set_protected_paths(name, paths)
+
+def apply_commands_change(request: Request, name: str, given: dict,
+                          paths: list[str] | None) -> dict:
+    """Change a code project's test commands and protected paths: the Code
+    page's and Copilot's one path, with the same checks and audit record.
+    A missing command is kept, an empty one is cleared."""
+    vault = check_commands_change(request, name, given, paths)
     try:
-        repo = await run_in_threadpool(_do)
+        repo = vault.set_commands(name, **given) if given else vault.get(name)
+        if paths is not None:
+            repo = vault.set_protected_paths(name, paths)
     except vault.VaultError as exc:
         raise HTTPException(status_code=422, detail=_COMMANDS_REFUSED) from exc
     changed = sorted(given) + ([] if paths is None else ["protected_paths"])
     _audit(request, "set_commands", repo=name, changed=changed,
            **({} if paths is None else {"protected_paths": list(repo.protected_paths)}))
     return _commands(repo)
+
+
+@router.post("/code/repos/{name}/commands")
+async def set_repo_commands(request: Request, name: str, body: CommandsIn) -> dict:
+    """Change a code project's test commands and protected paths: the same
+    authority as adding one."""
+    given = body.model_dump(exclude_none=True)
+    paths = given.pop("protected_paths", None)
+    return await run_in_threadpool(apply_commands_change, request, name, given, paths)
 
 
 @router.post("/code/repos/{name}/sync")

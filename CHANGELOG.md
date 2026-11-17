@@ -967,6 +967,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   no provider failover, so the second checker's family check compares the
   models that answered. If such a model is down, that step stops; retry the
   change when it is back.
+- Copilot on the Code page can now show and change a code project's test
+  commands and protected paths, for administrators, with the page's checks
+  and audit record. Turn on the `tasks` Copilot action family to offer it.
 
 ### Fixed
 
