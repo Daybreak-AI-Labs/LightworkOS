@@ -271,7 +271,10 @@ a change whose base is no longer in the main branch is refused outright. A prote
    the same budget. Its model is `[codebase] protected_checker_model`
    (organisation-only), with no provider failover: if that model cannot
    answer, the check did not happen. Its family must differ from the
-   author's and from every normal checker's. The family is read from the
+   author's and from every normal checker's. So that those are the models
+   that answered, a run in a repository with protected paths (or in the
+   installation's own repository) uses no provider failover for any of
+   them: a model that cannot answer stops that step. The family is read from the
    model's own name, which must start with a known model name after any
    gateway or organisation (`openrouter:anthropic/claude-…`,
    `bedrock:anthropic.claude…` and `vertex:claude-…` are all Anthropic),

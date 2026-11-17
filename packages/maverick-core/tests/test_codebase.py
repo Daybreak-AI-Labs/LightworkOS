@@ -2495,6 +2495,35 @@ def test_the_second_checker_never_fails_over_to_another_model(monkeypatch, tmp_p
     assert seen == [("openai:second", []), ("openai:second", ["anthropic:claude-x"])]
 
 
+def test_a_protected_change_compares_the_models_that_served_it(upstream, tmp_path, monkeypatch):
+    # An OpenAI author and a Gemini checker that could fail over to Anthropic
+    # would make an Anthropic second checker's "different family" untrue: in a
+    # repository with protected paths, every participant runs with no failover.
+    from maverick import config, provider_failover
+    chains = {"provider_failover": {"chains": {
+        "openai:gpt-author": ["anthropic:claude-backup"],
+        "gemini:gemini-normal": ["anthropic:claude-backup"]}}}
+    monkeypatch.setattr(config, "load_config", lambda *a, **k: chains)
+    _protected_repo(upstream, monkeypatch)
+    monkeypatch.setattr(features, "_author_model", lambda: "openai:gpt-author")
+    world = WorldModel(tmp_path / "world.db")
+    served = []
+
+    def serve(model):  # the configured model is down: a chain, when there is one, answers
+        served.append((provider_failover.fallback_models(model) or [model])[0])
+    run, _ = _rounds(lambda work: (serve("openai:gpt-author"), _passing(work)))
+
+    def normal(gid, copy):
+        serve("gemini:gemini-normal")
+        return {"findings": []}
+    normal.model = "gemini:gemini-normal"
+    p = features.propose(world, "pricing", "Discount", "", run, checker=normal,
+                         protected_checker=_second("anthropic:claude-second")[0],
+                         owner="user:starter")
+    assert p["protected"]["problem"] is None
+    assert served == ["openai:gpt-author", "gemini:gemini-normal"]
+
+
 def test_a_paused_step_is_never_restarted_outside_its_private_copy(upstream, tmp_path,
                                                                     monkeypatch):
     from click.testing import CliRunner

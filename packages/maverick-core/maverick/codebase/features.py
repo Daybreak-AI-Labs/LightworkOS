@@ -1463,10 +1463,11 @@ def propose(world, name: str, title: str, description: str, run: Runner, *,
                                         owner=owner, execution_principal=owner)
             _mark_step(world, goal_id, pid)
             try:
-                loop.author(goal_id, "author")
-                loop.verify()
-                loop.protect()
-                loop.finish()
+                with _exact_models(repo, self_repo):
+                    loop.author(goal_id, "author")
+                    loop.verify()
+                    loop.protect()
+                    loop.finish()
             except DecisionPending as pause:  # what was spent stays charged
                 loop.stopped = "decision"
                 waiting = _hold(world, pause.decisions, pause.goal_id, pid)
@@ -1517,6 +1518,16 @@ def propose(world, name: str, title: str, description: str, run: Runner, *,
                     "proposal %s saved but its approval was not parked (%s); "
                     "run `maverick code renew %s`", pid, type(exc).__name__, pid)
     return proposal
+
+
+def _exact_models(repo: vault.Repo, self_repo: bool):
+    """No provider failover for a run whose change may turn out protected:
+    the second checker's family check compares configured models, so the
+    author and every normal checker must be answered by exactly theirs."""
+    from contextlib import nullcontext
+
+    from ..provider_failover import no_failover
+    return no_failover() if self_repo or repo.protected_paths else nullcontext()
 
 
 def _approval_expired(appr) -> bool:

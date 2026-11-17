@@ -962,6 +962,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   cannot turn task limits or strict pricing off, and may only add warning
   thresholds. A value it cannot use is ignored and listed by `maverick
   doctor`; raise a cap in the organisation's config.toml instead.
+- A code change in a repository with protected paths, or in the
+  installation's own repository, now runs its author and every checker with
+  no provider failover, so the second checker's family check compares the
+  models that answered. If such a model is down, that step stops; retry the
+  change when it is back.
 
 ### Fixed
 
