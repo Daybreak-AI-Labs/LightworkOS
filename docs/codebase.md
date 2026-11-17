@@ -7,6 +7,7 @@ the company's git host until a person approves the change.
 ```bash
 maverick code add payments https://git.example.com/acme/payments.git \
   --test "python -m pytest -q" --token-env ACME_GIT_TOKEN
+maverick code set payments --quick-test "python -m pytest -q {changed}" --gate "ruff check ."
 maverick code feature payments "Add refund reasons" -d "Store a reason code on every refund"
 maverick code proposals            # pending | approved | rejected | merged; gaps
 maverick code show <id>            # what was checked, diff, test output, review
@@ -56,13 +57,18 @@ maverick code export payments ./payments   # plaintext clone for the owner
    `failed` and nothing is proposed.
 3. The host commits the working tree's files and pins the branch to that exact
    commit. It bundles the branch before any repository code (tests) runs.
-   The repository's test command then runs through the sandbox on a **fresh
-   copy of the pinned commit** (no remote, deleted afterwards), never on the
-   author's working copy. Whatever the tests write never reaches the author
-   or the proposal. The test command must install what it needs: files the
-   agent left untracked or ignored are not in that copy.
+   The repository's tests then run through the sandbox on a **fresh copy of
+   the pinned commit** (no remote, deleted afterwards), never on the
+   author's working copy, in the tiers described under
+   [Test tiers](#test-tiers): the quick tier after each author round (the
+   full suite when there is none). Whatever the tests write never reaches
+   the author or the proposal. A test command must install what it needs:
+   files the agent left untracked or ignored are not in that copy.
 4. **Repair rounds.** If the tests fail, the failing output goes back to the
-   author as a follow-up goal (a child of the feature goal). Every author
+   author as a follow-up goal (a child of the feature goal). Once the quick
+   tier passes, the full suite and the gate run on the same pinned commit;
+   a failure there goes back to the author too, from the same rounds and
+   budget. Every author
    round works in a fresh copy of the pinned head at a new random path,
    made after the previous step ended and removed once committed, so
    nothing a test run or a checker wrote carries over (files the author left
@@ -216,12 +222,75 @@ maverick code export payments ./payments   # plaintext clone for the owner
      nothing;
    - new upstream branches and tags are added.
 
+## Test tiers
+
+Each repository has up to four test commands. All are optional and belong
+to the repository, not to `[codebase]`: set them with `maverick code add`,
+change them with `maverick code set NAME --quick-test ... --test ...
+--gate ... --heavy-test ...` (an empty value clears one), or with **Test
+commands** on the Code page. Changing them needs the same authority as
+adding the repository: the command line on the server, or an
+administrator on the Code page. A workspace changes only the repositories
+in its own vault, and a workspace's `config.toml` cannot set them.
+Repositories added before tiers existed keep running their one test
+command as before.
+
+| Tier | Command | When it runs |
+| --- | --- | --- |
+| Quick | `quick_test_command` | After each author round while repairing. `{changed}` becomes the paths the change touches (relative, shell-quoted, deletions included). With more than 200, the full suite runs instead. |
+| Full | `test_command` | Once the quick tier passes, on the same commit; again on the final commit if it changed since. Without a quick tier it runs after each author round. |
+| Gate | `gate_command` | With the full suite: lint and other gates. The author's brief names it. |
+| Heavy | `heavy_test_command` | Tests that need services (a database, a browser), on the final commit, only in `[codebase] checker_image`. Without the image it reads "not run (needs the checker image)"; it never runs on this computer. |
+
+Every tier runs on a fresh copy of the pinned commit in a contained step,
+and `budget.check()` runs before each one: a tier the spending limit
+stopped reads "not run (the spending limit ran out)". After the last author
+round, before the card is written, the full suite and the gate run again if
+the commit changed since they last ran, then the heavy tier.
+
+The card has one line per tier with its result on the final commit:
+passed, failed, not run (with the reason) or not configured. "Tests:
+PASSED" appears only when the full suite passed on that commit. A quick
+pass alone never counts, and when the full suite did not run (the spending
+limit, or the repair rounds ran out before the quick tier passed) the card
+says so and lists it as a gap. A failing quick tier, a gate or heavy tier
+that did not pass or did not run, are gaps too. `maverick code show`
+prints each tier's output; Copilot's answer about proposed code changes
+names each tier's result.
+
+### Lightwork's own repository
+
+These commands mirror this repository's CI: a quick selected run on each
+change, everything before merge. They assume the work area (for example the
+checker image) has the packages installed as `.devcontainer/post-create.sh`
+does. They are documentation, not built into the product.
+
+- Quick: `scripts/select_pr_tests.py` writes the selection to a JSON file
+  (its standard output is a summary), so read the paths from there:
+
+  ```bash
+  python3 scripts/select_pr_tests.py --files {changed} --output .lw-tests.json >/dev/null && python3 -m pytest -q -n 2 $(python3 -c 'import json; print(" ".join(json.load(open(".lw-tests.json"))["paths"]))')
+  ```
+
+  A change the selector maps to the full suite (or to nothing) gives no
+  paths, so pytest runs every test: it errs toward running more.
+- Full: `python3 -m pytest -q -n auto --dist loadfile -m "not heavy_concurrency"`
+- Gate: `bash scripts/pre-push-lint.sh`
+- Heavy: the live-Postgres files the CI `postgres` job runs, with
+  `MAVERICK_PG_DSN` from the checker image:
+
+  ```bash
+  python3 -m pytest -q --timeout=180 $(sed -n '/POSTGRES_TEST_FILES: >-/,/^    services:/p' .github/workflows/ci.yml | grep -o 'packages/[^ ]*\.py')
+  ```
+
 ## Dashboard
 
 **Operate → Code** (`/code`, operate permission) lists vaulted repositories and
 each proposal's files, test result, independent check outcome, review verdict
 and approval state. It reads one summary (`GET /api/v1/code/summary`) that
-never includes code, diffs or test output. An administrator's review panel
+never includes code, diffs or test output. **Test commands** on a
+repository (administrators) sets its test tiers. Copilot has no way to set
+them, as it has none for adding a repository. An administrator's review panel
 opens with "What was checked", in the same words as the approval card. Ask
 Copilot "What was checked on the proposed code changes?" for the same points
 (administrators only, like the panel). Approve in the approvals queue; merges
