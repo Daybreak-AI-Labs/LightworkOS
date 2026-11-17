@@ -1139,6 +1139,88 @@ def _review(loop: _Loop, reviewer: Reviewer | None, brief: str, diff: str) -> di
         return None
 
 
+SELF_REFUSAL = ("This code project is the Lightwork installation that runs these changes, so "
+                "Lightwork will not change it. Run the factory from a separate installation "
+                "pinned to a released version.")
+
+
+def _installation_checkout(package_dir: Path | None = None) -> Path | None:
+    """The git checkout the running ``maverick`` package was imported from
+    (an editable or source install), or None: a wheel lives in
+    ``site-packages``, outside any checkout, even inside a checkout's venv."""
+    if package_dir is None:
+        import maverick
+        package_dir = Path(maverick.__file__).resolve().parent
+    for folder in (package_dir, *package_dir.parents):
+        if folder.name in ("site-packages", "dist-packages"):
+            return None
+        if (folder / ".git").exists():
+            return folder
+    return None
+
+
+def _same_place(url: str) -> str:
+    """A git address reduced to host and path (scheme, user, port, ``.git``
+    and case of the host dropped), or a local path resolved."""
+    from urllib.parse import urlsplit
+    text = url.strip()
+    scp = re.fullmatch(r"(?:[^@/\s]+@)?([^:/\s]+):(?!//)(.+)", text)
+    if "://" in text:
+        parts = urlsplit(text)
+        if parts.scheme == "file":
+            return str(Path(parts.path).resolve())
+        host, path = (parts.hostname or "").lower(), parts.path
+    elif scp and not Path(text).exists():
+        host, path = scp.group(1).lower(), scp.group(2)
+    else:
+        return str(Path(text).expanduser().resolve())
+    path = path.strip("/")
+    return f"{host}/{path.removesuffix('.git')}"
+
+
+def _roots(git_dir: Path | None = None, cwd: Path | None = None, ref: str = "HEAD") -> set[str]:
+    try:
+        return set(_git(["rev-list", "--max-parents=0", ref], git_dir=git_dir, cwd=cwd).split())
+    except VaultError:
+        return set()
+
+
+def is_installation(repo: vault.Repo, host: Path) -> bool:
+    """Whether ``repo`` is the source of the running installation: the
+    installed ``maverick`` package is imported from a git checkout (not a
+    wheel) and that checkout is the repository's source path, has a remote
+    at the same address, or shares a first commit with the vaulted default
+    branch (a mirror, a fork or another address of the same history)."""
+    checkout = _installation_checkout()
+    if checkout is None:
+        return False
+    places = {_same_place(str(checkout))}
+    try:
+        remotes = _git(["config", "--get-regexp", r"^remote\..*\.url$"], cwd=checkout)
+    except VaultError:
+        remotes = ""
+    places |= {_same_place(line.split(None, 1)[1]) for line in remotes.splitlines()
+               if len(line.split(None, 1)) == 2}
+    if _same_place(repo.source) in places:
+        return True
+    ours = _roots(git_dir=host, ref=f"refs/heads/{repo.default_branch}")
+    return bool(ours & _roots(cwd=checkout))
+
+
+def self_change_refusal(name: str) -> str | None:
+    """The plain refusal when ``name`` is the running installation's own
+    repository and ``[codebase] allow_self_changes`` is off; otherwise None."""
+    if loop_settings()["allow_self_changes"]:
+        return None
+    try:
+        repo = vault.get(name)
+        with vault.host_repo(name) as host:
+            return SELF_REFUSAL if is_installation(repo, host) else None
+    # failure-policy: fail_open -- an early answer only; propose() checks again and refuses
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _hold(world, decisions: list, pid: str) -> list[dict]:
     """The decisions a feature run stopped for, as the proposal records them.
     Each waiting goal is marked as a feature-run step, so an answer never
@@ -1184,10 +1266,14 @@ def propose(world, name: str, title: str, description: str, run: Runner, *,
         with vault.host_repo(name) as host:
             base = _git(["rev-parse", "--verify", f"refs/heads/{repo.default_branch}"],
                         git_dir=host).strip()
+            self_repo = is_installation(repo, host)
+            if self_repo and not settings["allow_self_changes"]:
+                raise VaultError(SELF_REFUSAL)
             loop = _Loop(world, repo, host, base=base, branch=branch, pid=pid,
                          title=title, description=description, owner=owner, run=run,
                          checkers=checkers, sandbox_factory=sandbox_factory, budget=budget,
                          on_host=on_host, protected_checker=protected_checker,
+                         self_repo=self_repo,
                          repair_rounds=max(0, int(settings["repair_rounds"] if repair_rounds
                                                   is None else repair_rounds)),
                          check_rounds=max(1, int(settings["check_rounds"] if check_rounds

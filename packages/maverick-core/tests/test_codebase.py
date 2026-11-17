@@ -2261,3 +2261,47 @@ def test_a_checker_that_asks_for_a_decision_could_not_run(upstream, tmp_path, mo
     assert lines[0].startswith("Waiting for a person's decision: “Should I report the pricing")
     assert f"Independent check: could not run ({features.ASKED_REASON})." in lines
     assert features.summary(world)["proposals"][0]["check"] == "failed"
+
+
+# -- not changing the Lightwork that runs the factory --
+
+def test_the_installations_own_repository_is_refused_then_protected(upstream, tmp_path,
+                                                                    monkeypatch):
+    install = tmp_path / "install"                             # a source checkout of it
+    subprocess.run(["git", "clone", "-q", str(upstream), str(install)], check=True)
+    package = install / "packages" / "maverick-core" / "maverick"
+    package.mkdir(parents=True)
+    assert features._installation_checkout(package) == install
+    wheel = install / ".venv" / "lib" / "python3.12" / "site-packages" / "maverick"
+    wheel.mkdir(parents=True)
+    assert features._installation_checkout(wheel) is None      # a wheel in its venv is not
+    monkeypatch.setattr(features, "_installation_checkout", lambda package_dir=None: install)
+    monkeypatch.setattr(features, "_author_model", lambda: "anthropic:author-model")
+    world = WorldModel(tmp_path / "world.db")
+    mirror = tmp_path / "mirror.git"                            # same history, another address
+    subprocess.run(["git", "clone", "-q", "--bare", str(upstream), str(mirror)], check=True)
+    vault.register("pricing", str(upstream))
+    vault.register("mirror", str(mirror))
+    other = tmp_path / "other"
+    other.mkdir()
+    _sh("init", "-q", "-b", "main", cwd=other)
+    (other / "x.py").write_text("x = 1\n")
+    _sh("add", "-A", cwd=other)
+    _sh("commit", "-q", "-m", "other", cwd=other)
+    vault.register("other", str(other))
+    for name in ("pricing", "mirror"):
+        assert features.self_change_refusal(name) == features.SELF_REFUSAL
+        run, calls = _rounds(_passing)
+        with pytest.raises(vault.VaultError) as refused:
+            features.propose(world, name, "Discount", "", run)
+        assert str(refused.value) == features.SELF_REFUSAL and calls == []
+    assert features.self_change_refusal("other") is None
+    # Allowed by the organisation: every such change is protected, whole repository.
+    _settings(monkeypatch, allow_self_changes=True)
+    assert features.self_change_refusal("pricing") is None
+    run, _ = _rounds(lambda work: (work / "notes.md").write_text("idea\n"))
+    p = features.propose(world, "pricing", "Notes", "", run, protected_checker=_second()[0],
+                         owner="user:starter")
+    assert p["protected"]["self"] is True and p["protected"]["paths"] == []
+    assert features.evidence(p)["lines"][0] == features.SELF_LINE
+    assert world.get_approval(p["approval_id"]).approvals_required == 2

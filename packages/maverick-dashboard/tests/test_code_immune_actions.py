@@ -222,11 +222,15 @@ def test_start_a_change_runs_the_kernel_swarm_in_the_background(client, monkeypa
     monkeypatch.setattr(pre, "_routed_configuration_missing", lambda cfg: {})
     calls = []
     monkeypatch.setattr(code_actions_api, "_run_feature", lambda *a: calls.append(a))
+    from maverick.codebase import features
+    monkeypatch.setattr(features, "self_change_refusal", lambda name: None)
     r = client.post("/api/v1/code/features", json={"repo": "core", "title": " Add a button ",
                                                    "max_dollars": 5})
     assert r.status_code == 202
     assert calls == [("core", "Add a button", "", 5.0, "", None)]
-    from maverick.codebase import features
+    monkeypatch.setattr(features, "self_change_refusal", lambda name: features.SELF_REFUSAL)
+    r = client.post("/api/v1/code/features", json={"repo": "core", "title": "Again"})
+    assert r.status_code == 409 and r.json()["detail"] == features.SELF_REFUSAL
     monkeypatch.setattr(features, "container_refusal", lambda: features.CONTAINER_REQUIRED)
     r = client.post("/api/v1/code/features", json={"repo": "core", "title": "Again"})
     assert r.status_code == 409 and "must run in a container" in r.json()["detail"]
