@@ -306,6 +306,10 @@ def _suggestions_enabled() -> bool:
 
 templates.env.globals["suggestions_enabled"] = _suggestions_enabled
 
+from . import governance_sections as _governance_sections  # noqa: E402
+
+_governance_sections.register(templates.env)
+
 
 from .i18n import t as _i18n_t  # noqa: E402
 from .themes import custom_themes, theme_color, theme_css  # noqa: E402

@@ -1,7 +1,7 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 const {JSDOM}=require('jsdom');const base=path.join(__dirname,'../../maverick_dashboard');
 const {shell: loadShell} = require("./_shell");
-const html=fs.readFileSync(path.join(base,'templates/_ai_business_intake.html'),'utf8');
+const html=fs.readFileSync(path.join(base,'templates/_ai_business_intake.html'),'utf8').replace(/\{\{[\s\S]*?\}\}/g,'');
 const source=fs.readFileSync(path.join(base,'static/lightwork-ai-business-intake.js'),'utf8');
 const context='a'.repeat(64),id='ABI-'+'b'.repeat(24);
 const fields=[
@@ -13,8 +13,8 @@ const fields=[
   {path:'regulatory_context.high_risk_domains',label:'High-risk areas',kind:'multiple',group:'Signals',required:true,choices:['education','employment']},
 ];
 const at=(object,name)=>name.split('.').reduce((a,b)=>a?.[b],object);
-async function fixture(t,{intercept=()=>undefined,initial=null,canEdit=true}={}){
-  const dom=new JSDOM(html,{url:'https://lightwork.test/governance',runScripts:'outside-only'});t.after(()=>dom.window.close());const w=dom.window,calls=[];w.TextEncoder=TextEncoder;w.confirm=()=>true;let saved=initial;
+async function fixture(t,{intercept=()=>undefined,initial=null,canEdit=true,page=html}={}){
+  const dom=new JSDOM(page,{url:'https://lightwork.test/governance',runScripts:'outside-only'});t.after(()=>dom.window.close());const w=dom.window,calls=[];w.TextEncoder=TextEncoder;w.confirm=()=>true;let saved=initial;
   const record=(answers,revision=1,status='draft')=>({id,revision,status,context,use_case_name:answers.use_case_name||'',submission:answers,progress:{missing_fields:fields.filter(f=>f.required&&at(answers,f.path)===undefined).map(f=>f.path)}});
   w.fetch=async(url,options={})=>{const call={url,options,body:options.body?JSON.parse(options.body):undefined};calls.push(call);const injected=await intercept(call);if(injected!==undefined)return injected;
     let data;if(url.endsWith('/form'))data={context,fields:fields.map(field=>({choices:null,max_length:null,...field})),can_edit:canEdit,max_submission_bytes:16384};
@@ -46,3 +46,8 @@ for(const imported of [{unknown:{}},{data_context:{categories:[]}},{data_context
 test('an answers file that is not valid is refused in plain words and nothing changes',async t=>{const h=await fixture(t);h.change('use_case_name','Keep this');await importText(h,'not a file we know');assert.match(h.el('status').textContent,/isn't a Lightwork answers file/);assert.equal(h.field('use_case_name').querySelector('input').value,'Keep this');assert.equal(h.w.document.querySelector('pre'),null);assert.equal(h.w.document.querySelector('textarea#abi-import'),null);});
 test('a server refusal is shown as a plain sentence, never the raw server text',async t=>{const h=await fixture(t,{intercept:call=>call.options.method==='POST'?new Response('{"detail":"initial.purpose: String should have at most 4000 characters"}',{status:422}):undefined});await fill(h);await h.save();assert.doesNotMatch(h.el('status').textContent,/initial\.purpose|String should/);});
 test('a refused question load releases its response so the page can go quiet',async t=>{let released=0;const h=await fixture(t,{intercept:call=>call.url.endsWith('/form')?{ok:false,status:403,body:{cancel:async()=>{released+=1;}},json:async()=>({})}:undefined});assert.equal(released,1);assert.match(h.el('status').textContent,/Sign in again/);});
+
+// Live: a turned-off intake called its API, got 403 and said "Your sign-in or access changed".
+test('a turned-off intake section makes no requests',async t=>{const page=html.replace('<section id="ai-business-intake-panel"','<section id="ai-business-intake-panel" hidden data-feature-off="ai_business_intake"');const h=await fixture(t,{page});assert.equal(h.calls.length,0);});
+test('an intake turned off after the page loaded says so, not that sign-in changed',async t=>{const h=await fixture(t,{intercept:call=>call.url.endsWith('/form')?new Response('{"detail":"ai business intake is disabled ([ai_business_intake] enable)"}',{status:403,headers:{'X-Lightwork-Reason':'feature-off','X-Lightwork-Feature':'ai_business_intake'}}):undefined});assert.match(h.el('status').textContent,/AI business intake is turned off\. Ask an administrator to turn it on\./);assert.doesNotMatch(h.el('status').textContent,/sign-in|\[ai_business_intake\]/);});
+test('a failed first load does not move focus or scroll the page to the intake',async t=>{const h=await fixture(t,{intercept:call=>call.url.endsWith('/form')?new Response('<h1>Unavailable</h1>',{status:503}):undefined});assert.match(h.el('status').textContent,/service is unavailable/);assert.notEqual(h.w.document.activeElement,h.el('status'));});
