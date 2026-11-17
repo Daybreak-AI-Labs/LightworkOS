@@ -809,6 +809,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   once: nothing half done is committed or offered for approval, and its
   status reads "Waiting for a person's decision". Answer it, then start a
   new code change; the answer never restarts the old step.
+- An answer given in the moment before a run pauses for its decision now
+  continues the run with that choice; before, the run stayed paused with
+  nothing left to answer. Nothing to do.
 
 ### Fixed
 

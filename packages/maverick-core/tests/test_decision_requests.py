@@ -103,6 +103,40 @@ async def test_an_answer_resumes_the_run_with_the_chosen_option(
     assert world.get_goal(gid).status == "done"
 
 
+@pytest.mark.asyncio
+async def test_an_answer_that_lands_before_the_pause_continues_the_run(
+        tmp_path, fake_llm, make_llm_response, monkeypatch):
+    import threading
+
+    world = _world(tmp_path)
+    gid = world.create_goal("tidy the retention settings", "", owner="alice")
+    published, answered, outcomes, started = threading.Event(), threading.Event(), [], []
+
+    def person():  # answers on its own thread once the decision is published
+        published.wait(10)
+        decision = dr.list_open(world)[0]
+        outcomes.append(dr.answer(world, decision.id, 2, actor="alice", is_admin=False))
+        answered.set()
+
+    def announce(world, decision):  # the run is still active: it has not paused yet
+        published.set()
+        assert answered.wait(10)
+    threading.Thread(target=person).start()
+    monkeypatch.setattr(dr, "_announce", announce)
+    monkeypatch.setattr(dr, "dispatch_resume", lambda world, goal_id: started.append(goal_id))
+    fake_llm.scripted = [make_llm_response(text="A person must decide.", tool_calls=[
+        ToolCall(id="t1", name="request_decision", input=_REQUEST)])]
+
+    await _run(world, gid, fake_llm, tmp_path)
+
+    assert outcomes[0]["resume"] is False                    # it answered a run still active
+    assert world.get_goal(gid).status == "pending" and started == [gid]
+    fake_llm.scripted = [make_llm_response(text=t) for t in _FINISH]
+    await _run(world, gid, fake_llm, tmp_path)
+    assert '"option": 2' in str(fake_llm.calls[1].get("messages", ""))
+    assert world.get_goal(gid).status == "done"
+
+
 def test_a_person_without_authority_is_refused(tmp_path):
     world = _world(tmp_path)
     gid, decision = _paused_goal(world)

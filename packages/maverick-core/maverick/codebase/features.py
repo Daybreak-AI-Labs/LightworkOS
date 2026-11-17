@@ -407,9 +407,11 @@ class DecisionPending(Exception):
 
 
 def _stop_if_waiting(world, goal_id: int) -> None:
-    """Stop the feature run when ``goal_id`` or a goal below it waits for a decision."""
+    """Stop the feature run when ``goal_id`` or a goal below it asked a person
+    to decide. Each round's goals are new, so any decision in that tree was
+    asked in this round, even one answered before the round paused."""
     from .. import decision_requests
-    decisions = decision_requests.open_for_tree(world, goal_id)
+    decisions = decision_requests.for_tree(world, goal_id)
     if decisions:
         raise DecisionPending(decisions, goal_id)
 
@@ -1103,8 +1105,8 @@ def propose(world, name: str, title: str, description: str, run: Runner, *,
                 loop.finish()
             except DecisionPending as pause:  # what was spent stays charged
                 loop.stopped = "decision"
-                waiting = [{"id": d.id, "goal_id": d.goal_id, "question": d.question}
-                           for d in pause.decisions]
+                waiting = [{"id": d.id, "goal_id": d.goal_id, "question": d.question,
+                            "open": d.status == "open"} for d in pause.decisions]
             head, changed = loop.head, loop.head != base
             diff = files = None
             if changed:
@@ -1449,7 +1451,9 @@ def decision_lines(p: dict) -> list[str]:
     what the person does next."""
     return [f"Waiting for a person's decision: “{_safe_label(d.get('question'), 300)}”. "
             "Answer it on the Approvals page or with maverick decisions answer "
-            f"{d.get('id')}, then start a new code change."
+            f"{d.get('id')}, then start a new code change." if d.get("open", True) else
+            f"A person was asked to decide “{_safe_label(d.get('question'), 300)}” before "
+            "this step could finish. Start a new code change to use the answer."
             for d in p.get("decision") or ()]
 
 

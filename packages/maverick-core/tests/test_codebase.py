@@ -2018,3 +2018,23 @@ def test_a_checker_that_asks_for_a_decision_could_not_run(upstream, tmp_path, mo
     assert lines[0].startswith("Waiting for a person's decision: “Should I report the pricing")
     assert f"Independent check: could not run ({features.ASKED_REASON})." in lines
     assert features.summary(world)["proposals"][0]["check"] == "failed"
+
+
+def test_a_round_whose_decision_was_answered_before_it_paused_still_stops(upstream, tmp_path,
+                                                                           monkeypatch):
+    from maverick import decision_requests
+    monkeypatch.setattr(decision_requests, "_announce", lambda world, decision: None)
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+
+    def author(goal_id, work):
+        _passing(work)
+        world.set_goal_status(goal_id, "active")
+        d = _ask(world, goal_id, "Which way?")
+        world.set_goal_status(goal_id, "active")               # the answer lands before the pause
+        decision_requests.answer(world, d.id, 1, actor="user:starter", is_admin=True)
+    p = features.propose(world, "pricing", "Discount", "", author, owner="user:starter")
+    assert p["status"] == "decision" and p["head"] == p["base"] and p["approval_id"] is None
+    assert features.evidence(p)["lines"][0] == (
+        "A person was asked to decide “Which way?” before this step could finish. "
+        "Start a new code change to use the answer.")

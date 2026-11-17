@@ -429,13 +429,19 @@ def open_for_goal(world, goal_id: int) -> list[Decision]:
     return _select(world, "d.goal_id = ? AND d.status = 'open'", (int(goal_id),))
 
 
+_IN_TREE = ("d.goal_id IN (WITH RECURSIVE tree(id) AS ("
+            "SELECT CAST(? AS INTEGER) UNION SELECT c.id FROM goals c JOIN tree t ON c.parent_id = t.id) "
+            "SELECT id FROM tree)")
+
+
 def open_for_tree(world, goal_id: int) -> list[Decision]:
     """Open decisions of ``goal_id`` and every goal below it."""
-    return _select(
-        world,
-        "d.status = 'open' AND d.goal_id IN (WITH RECURSIVE tree(id) AS ("
-        "SELECT CAST(? AS INTEGER) UNION SELECT c.id FROM goals c JOIN tree t ON c.parent_id = t.id) "
-        "SELECT id FROM tree)", (int(goal_id),))
+    return _select(world, "d.status = 'open' AND " + _IN_TREE, (int(goal_id),))
+
+
+def for_tree(world, goal_id: int) -> list[Decision]:
+    """Every decision, in any state, of ``goal_id`` and every goal below it."""
+    return _select(world, _IN_TREE, (int(goal_id),))
 
 
 def for_goal(world, goal_id: int) -> list[Decision]:
@@ -1179,6 +1185,55 @@ def restart_note(goal, world=None) -> str:
     if goal is None or resume_kwargs(goal) is not None:
         return ""
     return NOBODY_RESTARTS if _started_by_system(goal, world) else STARTER_RESTARTS
+
+
+CONTINUE = "continue"
+ANSWERED_EARLY = "A person answered this run's decision before it paused. Your answer was saved."
+CONTINUES = ("A person answered this run's decision before it paused. "
+             "The run continues with that choice.")
+
+
+def continue_answered(world, goal_id: int) -> bool:
+    """For a run that just set itself ``blocked`` after filing a decision: when
+    the answer arrived first (it found the run still active, so it restarted
+    nothing), move the run back to ``pending`` and start it once this run has
+    exited (:func:`start_continued`). Serialised with :func:`answer` by the
+    same per-goal transaction, so exactly one of them restarts the run. False
+    when something still waits, the run is not one Lightwork restarts, or
+    another path already restarted it."""
+    from .attachment_submissions import SubmissionConflict
+    from .chat_threads import ChatThreads
+
+    try:
+        if _feature_step(goal_id, world) or resume_kwargs(world.get_goal(goal_id)) is None:
+            return False
+        threads = ChatThreads(world)
+        store = threads.store
+        with threads._restart_transaction(goal_id) as (connection, binding, status):
+            if status != "blocked" or threads._decisions_open(connection, goal_id) or int(
+                    store.execute(connection, "SELECT COUNT(*) FROM questions WHERE goal_id = ? "
+                                  "AND answer IS NULL", (goal_id,)).fetchone()[0]):
+                return False
+            if binding is not None:
+                threads.require_idle(connection, binding.root_id, binding.owner,
+                                     except_goal=goal_id)
+            _require_admission(goal_id)
+            threads._pending(connection, goal_id)
+    except (SubmissionConflict, DecisionRefused):
+        return False
+    except Exception:  # noqa: BLE001 -- it stays blocked; a person can still restart it
+        log.warning("goal #%s was not continued after an early answer", goal_id, exc_info=True)
+        return False
+    mark_run(world, goal_id, CONTINUE)
+    return True
+
+
+def start_continued(world, goal_id: int) -> None:
+    """After a run exits: start it again when :func:`continue_answered` moved it
+    back to ``pending``."""
+    if run_state(world, goal_id) == CONTINUE:
+        clear_run(world, goal_id)
+        dispatch_resume(world, goal_id)
 
 
 def dispatch_resume(world, goal_id: int) -> bool:
