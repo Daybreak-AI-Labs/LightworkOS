@@ -62,6 +62,15 @@ SENTINEL_ADDRESS = (
 )
 
 
+@pytest.fixture(autouse=True)
+def _checkbox_prompts_take_their_defaults(monkeypatch):
+    """Whole-wizard runs here answer every multi-choice prompt (such as the
+    areas where a run must ask a person to decide) with its default, as they
+    already do for the other prompt kinds."""
+    from maverick_installer import wizard as _wizard
+    monkeypatch.setattr(_wizard, "_q_checkbox", lambda message, choices, default=None: list(default or []))
+
+
 class _Answers:
     """Scripted answers for every prompt type; each entry is used once, by the first
     unused question containing its phrase. Any other question fails the test."""
