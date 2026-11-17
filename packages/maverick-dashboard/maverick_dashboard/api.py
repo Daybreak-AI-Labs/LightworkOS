@@ -1307,6 +1307,64 @@ def _rest_goal_limits(payload: GoalIn) -> dict[str, float | int]:
     }
 
 
+def task_limit_ceilings() -> dict[str, float]:
+    """The most one person may set for one task of their own.
+
+    The rule a stopped task's attempt limit follows: an operator-set
+    ceiling (Settings or ``[budget]``), else the REST upper bound. So a
+    person's own limit can narrow the workspace's limit, never pass it.
+    """
+    from maverick import runner
+
+    dollars = runner.configured_goal_ceiling_dollars()
+    seconds = runner.configured_goal_ceiling_wall_seconds()
+    return {"max_dollars": _REST_GOAL_MAX_DOLLARS if dollars is None else min(dollars, _REST_GOAL_MAX_DOLLARS),
+            "max_wall_seconds": (_REST_GOAL_MAX_WALL_SECONDS if seconds is None
+                                 else min(seconds, _REST_GOAL_MAX_WALL_SECONDS))}
+
+
+def person_task_limits(max_dollars: str = "", max_minutes: str = "") -> dict[str, float]:
+    """A person's own spending and time limit for one task, checked.
+
+    Empty fields keep the workspace limits. A value above
+    :func:`task_limit_ceilings` is refused, not silently lowered, so the
+    person sees the limit that applies. The run's ``Budget`` still enforces
+    the result (kernel rule 3); this only chooses its caps.
+    """
+    import math
+
+    ceilings = task_limit_ceilings()
+    limits: dict[str, float] = {}
+    errors: dict[str, str] = {}
+    for field, raw in (("max_dollars", max_dollars), ("max_minutes", max_minutes)):
+        text = (raw or "").strip()
+        if not text:
+            continue
+        try:
+            value = float(text)
+        except ValueError:
+            value = math.nan
+        dollars = field == "max_dollars"
+        ceiling = ceilings["max_dollars" if dollars else "max_wall_seconds"]
+        if dollars and not (math.isfinite(value) and value >= 0.01):
+            errors[field] = "Enter an amount in US dollars of at least $0.01, for example 1.50."
+        elif not dollars and not (math.isfinite(value) and value >= 1 and value == int(value)):
+            errors[field] = "Enter a whole number of minutes, at least 1."
+        elif (value if dollars else value * 60) > ceiling:
+            errors[field] = (f"Choose no more than ${ceiling:,.2f}, this workspace's limit for one task." if dollars
+                             else f"Choose no more than {ceiling / 60:g} minutes, this workspace's limit for one task.")
+        elif dollars:
+            limits["max_dollars"] = value
+        else:
+            limits["max_wall_seconds"] = value * 60
+    if errors:
+        from .product_errors import product_error
+
+        raise product_error(400, "task_limit", "Check the limits for this task. "
+                            "They can lower the workspace's limits but not raise them.", field_errors=errors)
+    return limits
+
+
 def _check_effect_guard(effect_guard):
     if effect_guard is not None:
         effect_guard()

@@ -1,6 +1,8 @@
 """Chat saves complete reviewed instructions and rejects oversized drafts."""
 from __future__ import annotations
 
+import re
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -181,3 +183,62 @@ def test_thread_page_shows_earlier_turns_the_composer_and_the_chat_list(chat_env
     assert f'href="/chat/goal/{root_id}"' not in page.split('id="content"')[0]
     landing = client.get("/chat").text
     assert f'href="/chat/goal/{new_id}"' in landing.split('id="content"')[0]
+
+
+# The owner asked that each person can set limits on their own tasks: the
+# composer's Add details offers a spending and a time limit that can only
+# narrow the workspace's own limits, and the run is dispatched under them.
+def test_chat_composer_offers_per_task_limits_with_the_effective_cap(chat_env, monkeypatch):
+    import maverick.runner as runner
+
+    monkeypatch.setattr(runner, "configured_max_dollars", lambda: 2.0)
+    monkeypatch.setattr(runner, "configured_max_wall_seconds", lambda: 1800.0)
+    monkeypatch.setattr(runner, "configured_goal_ceiling_dollars", lambda: 2.0)
+    monkeypatch.setattr(runner, "configured_goal_ceiling_wall_seconds", lambda: 1800.0)
+    client, _world, _calls = chat_env
+    page = client.get("/chat").text
+    assert 'name="max_dollars"' in page and 'name="max_minutes"' in page
+    assert 'max="2.00"' in page and 'max="30"' in page
+    text = re.sub(r"<[^>]+>", "", page)
+    assert "This task stops at $2.00 or 30 minutes, whichever comes first." in text
+    assert "The most you can set is $2.00 and 30 minutes." in text
+
+
+def test_chat_send_runs_under_the_persons_lower_task_limits(chat_env, monkeypatch):
+    import maverick.runner as runner
+    from maverick.attachment_submissions import SubmissionStore
+
+    monkeypatch.setattr(runner, "configured_goal_ceiling_dollars", lambda: 2.0)
+    monkeypatch.setattr(runner, "configured_goal_ceiling_wall_seconds", lambda: 1800.0)
+    client, world, calls = chat_env
+    response = client.post("/chat/send", data={"title": "Research pricing", "max_dollars": "1.25",
+                                               "max_minutes": "10"}, follow_redirects=False)
+    assert response.status_code == 303, response.text
+    (_title, _description, kwargs), = calls
+    assert kwargs["max_dollars"] == 1.25 and kwargs["max_wall_seconds"] == 600.0
+    goal = world.list_goals()[0]
+    # A recovered draft dispatches under the same reviewed limits.
+    detail = SubmissionStore(world).for_goal(goal.id)["detail"]
+    assert detail["task_limits"] == {"max_dollars": 1.25, "max_wall_seconds": 600.0}
+
+
+@pytest.mark.parametrize("field, value", [("max_dollars", "2.50"), ("max_minutes", "45"),
+                                          ("max_dollars", "0"), ("max_dollars", "abc")])
+def test_chat_send_refuses_a_task_limit_above_the_workspace_limit(chat_env, monkeypatch, field, value):
+    import maverick.runner as runner
+
+    monkeypatch.setattr(runner, "configured_goal_ceiling_dollars", lambda: 2.0)
+    monkeypatch.setattr(runner, "configured_goal_ceiling_wall_seconds", lambda: 1800.0)
+    client, world, calls = chat_env
+    response = client.post("/chat/send", data={"title": "Research pricing", field: value}, follow_redirects=False)
+    assert response.status_code in {400, 422}, response.text
+    assert field in response.text
+    assert not world.list_goals() and not calls
+
+
+def test_empty_task_limits_keep_the_workspace_defaults(chat_env):
+    client, _world, calls = chat_env
+    response = client.post("/chat/send", data={"title": "Research pricing", "max_dollars": " ",
+                                               "max_minutes": ""}, follow_redirects=False)
+    assert response.status_code == 303, response.text
+    assert "max_dollars" not in calls[0][2] and "max_wall_seconds" not in calls[0][2]

@@ -11488,6 +11488,7 @@ def chat_page(request: Request, compose: str = "") -> HTMLResponse:
     from maverick import flow
     from maverick.runner import configured_max_dollars, configured_max_wall_seconds
 
+    from .api import task_limit_ceilings
     from .onboarding_state import workspace_readiness
 
     compose_form = compose == "form"
@@ -11538,6 +11539,7 @@ def chat_page(request: Request, compose: str = "") -> HTMLResponse:
             "director_profiles": _director_choices(),
             "goal_max_dollars": configured_max_dollars(),
             "goal_max_wall_seconds": configured_max_wall_seconds(),
+            "task_limit_ceilings": task_limit_ceilings(),
             "flows_enabled": flow.enabled(),
             "can_enable_flows": has_global_permission(request, "admin") and "MAVERICK_FLOWS" not in os.environ,
             # What Lightwork can do (examples for the person's department) and
@@ -11741,8 +11743,18 @@ def _dispatch_goal(request: Request, bg: BackgroundTasks, goal_id: int, *, conve
                 raise HTTPException(409, "Your specialist access changed. Reopen Chat and review the current choices before starting.")
     current_start_guard()
     kwargs["effect_guard"] = current_start_guard
+    # Limits the person set for this task, bound into the submission so a
+    # recovered draft runs under them too. Each only narrows another cap.
+    from maverick.runner import clamp_task_limit
+
+    own = receipt.get("detail", {}).get("task_limits") or {}
+    if not isinstance(own, dict) or not set(own) <= {"max_dollars", "max_wall_seconds"}:
+        raise HTTPException(409, "This task's limits cannot be verified. Start a new task with the limits you want.")
+    max_dollars = clamp_task_limit(max_dollars, own.get("max_dollars"))
     if max_dollars is not None:
         kwargs["max_dollars"] = max_dollars
+    if own.get("max_wall_seconds") is not None:
+        kwargs["max_wall_seconds"] = own["max_wall_seconds"]
     if conversation_id is not None:
         kwargs["conversation_id"] = conversation_id
     user_id = execution_user_id_from_request(request)
@@ -11824,10 +11836,16 @@ async def chat_send(
     specialist_context: str = Form(""),
     specialist_revision: str = Form(""),
     value_opportunity: str = Form(""),
+    max_dollars: str = Form(""),
+    max_minutes: str = Form(""),
 ) -> RedirectResponse:
     _require_same_origin(request)
     require_permission(request, "operate")
     require_provider_or_400()
+    from .api import person_task_limits
+
+    # The person's own limits for this task: checked before anything is saved.
+    task_limits = person_task_limits(max_dollars, max_minutes)
     check_goal_rate_limit(request)
     from .task_model_selection_api import effect_guard as task_ai_guard
     from .task_model_selection_api import selection as select_task_ai
@@ -11904,6 +11922,7 @@ async def chat_send(
                            task_selection=task_selection,
                            specialist_selection={"name": chosen_specialist, "context": specialist_context,
                                                  "revision": specialist_revision} if chosen_specialist else None,
+                           task_limits=task_limits or None,
                            effect_guard=start_guard)
     start_guard()
     goal_id = receipt["goal_id"]

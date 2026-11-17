@@ -102,7 +102,7 @@ def publish_batch(world, goal_id, records):
 
 async def submit(world, files, *, token, owner, title, description, parent_id=None, domain="", project_id=None,
                  chat_text=None, chat_root_id=None, connection_references=None, task_selection=None,
-                 specialist_selection=None, effect_guard=None):
+                 specialist_selection=None, task_limits=None, effect_guard=None):
     async with stage_uploads(files) as records:
         files_manifest = manifest(records)
         fingerprint_values = [title, description, parent_id, domain, project_id, files_manifest]
@@ -112,12 +112,16 @@ async def submit(world, files, *, token, owner, title, description, parent_id=No
             fingerprint_values.append({"task_model_selection": task_selection})
         if specialist_selection is not None:
             fingerprint_values.append({"specialist_selection": specialist_selection})
+        if task_limits:
+            fingerprint_values.append({"task_limits": task_limits})
         fingerprint = hashlib.sha256(json.dumps(fingerprint_values,
                                                 sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         store = SubmissionStore(world)
         detail = {"task_model_selection": task_selection} if task_selection is not None else {}
         if specialist_selection is not None:
             detail["specialist_selection"] = specialist_selection
+        if task_limits:
+            detail["task_limits"] = task_limits
         try:
             receipt = await run_in_threadpool(store.create, token=token, fingerprint=fingerprint, owner=owner,
                                               title=title, description=description, manifest=files_manifest,
