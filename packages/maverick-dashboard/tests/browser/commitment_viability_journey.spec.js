@@ -29,7 +29,7 @@ test('Settings enables an owner review; native and Copilot decisions survive res
   test.setTimeout(120000);
   await context.setExtraHTTPHeaders({Origin:baseURL, 'X-Browser-Principal':'browser-reviewer'});
   await page.goto('/commitment-reviews');
-  await expect(page.getByText('Commitment reviews are off')).toBeVisible();
+  await expect(page.getByText('Commitment reviews are turned off.')).toBeVisible();
   // The page also offers the separate financial-comparison switch; open this review's own setting.
   await page.locator('#content a[href="/settings?focus=feature-commitment_viability"]').click();
   // Settings lists the feature; its switch is changed through the reviewed save in All settings.
