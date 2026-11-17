@@ -37,8 +37,9 @@ def _failing(error):
     (ConnectionRefusedError("refused"), False),
     (socket.gaierror("name does not resolve"), False),
     (EgressBlocked("api.example.com"), False),
-    (ValueError("governed requests require an absolute HTTP URL"), False),
-    (RuntimeError("Replicate requires REPLICATE_API_TOKEN."), False),
+    # A send that cannot say whether its request left: charged.
+    (ValueError("bad redirect"), True),
+    (RuntimeError("cannot tell"), True),
 ])
 def test_a_send_that_may_have_reached_the_service_is_charged_its_hold(
         monkeypatch, error, charged):
@@ -146,4 +147,29 @@ def test_a_failed_send_counts_once_against_the_organization_cap(monkeypatch):
     settlement.record()
     assert budget.dollars == pytest.approx(0.10)
     assert registry.tenant_remaining_today("acme") == pytest.approx(9.90)
+
+
+def test_a_refusal_before_any_request_is_not_charged(monkeypatch):
+    # The governed HTTP layer reports that no request left, whatever the
+    # error: a missing key while building the request, or an egress refusal.
+    from maverick import egress_guard
+    from maverick.governed_http import guarded_sender
+
+    _priced(monkeypatch)
+    budget = Budget(max_dollars=1.0)
+
+    def missing_key():
+        raise RuntimeError("the service needs a key")
+
+    def deny(_url):
+        raise EgressBlocked("api.example.com")
+
+    for send in (lambda: guarded_sender(httpx.post)("https://api.example.com/x",
+                                                    headers=missing_key()),
+                 lambda: guarded_sender(httpx.post)("https://api.example.com/x")):
+        monkeypatch.setattr(egress_guard, "_check", deny)
+        with pytest.raises((RuntimeError, EgressBlocked)):
+            paid_call.charged_call("replicate", send, budget=budget, label="Replicate",
+                                   units={"request": 1})
+    assert budget.dollars == 0.0 and getattr(budget, "_reserved", 0.0) == 0.0
 

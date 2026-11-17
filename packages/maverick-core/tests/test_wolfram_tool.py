@@ -69,3 +69,27 @@ def test_wolfram_query_is_charged_to_the_run_and_needs_a_budget(monkeypatch):
     assert budget.dollars == pytest.approx(DEFAULT_UNPRICED_TOOL_CALL_DOLLARS)
     out = wolfram_tool().fn({"op": "short", "query": "6*7"})
     assert out.startswith("ERROR") and "nothing was sent" in out and get.call_count == 1
+
+
+def test_wolfram_redirect_blocked_after_the_first_request_is_charged(monkeypatch):
+    # Wolfram answered, then its redirect to a private address was refused.
+    # A request left, so the call is charged whatever error the hop raised.
+    import httpx
+    import pytest
+
+    monkeypatch.setenv("WOLFRAM_APP_ID", "app")
+    sent = []
+
+    def get(url, **_kw):
+        sent.append(url)
+        response = httpx.Response(302, headers={"location": "http://169.254.169.254/latest"},
+                                  request=httpx.Request("GET", url))
+        response.next_request = httpx.Request("GET", "http://169.254.169.254/latest")
+        return response
+
+    monkeypatch.setattr(httpx, "get", get)
+    from maverick.tools.wolfram_tool import wolfram_tool
+    budget = Budget(max_dollars=1.0)
+    out = wolfram_tool(budget=budget).fn({"op": "short", "query": "2+2"})
+    assert out.startswith("ERROR") and len(sent) == 1
+    assert budget.dollars == pytest.approx(0.10) and budget._reserved == 0
