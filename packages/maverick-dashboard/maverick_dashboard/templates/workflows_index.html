@@ -114,7 +114,7 @@
     {% elif can_operate_workflows %}
     {{ empty_state('No templates yet',
                    'Reusable workflows you save appear here, ready to run, schedule or trigger. Draft the first one in the builder.',
-                   action_label='New workflow', action_href='/workflow-builder') }}
+                   action_label='New template', action_href='/workflow-builder') }}
     {% else %}
     {{ empty_state('No templates yet', 'Reusable workflows that people in your workspace save appear here.') }}
     {% endif %}
@@ -140,7 +140,7 @@
     {% elif can_operate_workflows %}
     {{ empty_state('No agent playbooks yet',
                    'Governed agents you build appear here. In the builder, choose “Agent playbook” to build the first one.',
-                   action_label='Open the builder', action_href='/workflow-builder') }}
+                   action_label='Open Workflow builder', action_href='/workflow-builder') }}
     {% else %}
     {{ empty_state('No agent playbooks yet', 'Governed agents that people in your workspace build appear here.') }}
     {% endif %}

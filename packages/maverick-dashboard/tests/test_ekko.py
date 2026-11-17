@@ -888,8 +888,8 @@ def test_recorder_tile_agrees_with_the_recording_state(tmp_path, monkeypatch):
         ({"enabled": True, "enrollment": {"active": True}, "session": {"state": "running"}}, "", "Waiting"),
         ({"enabled": True, "enrollment": {"active": True}, "session": {"state": "running"}}, "live", "Connected"),
     ]
-    script = source.group(0) + "console.log(JSON.stringify(%s.map(c => collectorTile(c[0], c[1]))));" % json.dumps(
-        [[status, state] for status, state, _ in cases])
+    inputs = json.dumps([[status, state] for status, state, _ in cases])
+    script = source.group(0) + f"console.log(JSON.stringify({inputs}.map(c => collectorTile(c[0], c[1]))));"
     result = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=30, check=False)  # noqa: S603
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == [word for _, _, word in cases]

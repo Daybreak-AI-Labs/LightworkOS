@@ -196,10 +196,10 @@
       grid-column: 2; grid-row: 1; display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2);
       min-height: var(--topbar-h); padding: var(--space-2) var(--space-5); border-bottom: 1px solid var(--border);
     }
-    .cs-topbar .topbar-utilities { display: flex; align-items: center; gap: var(--space-2); margin-inline-start: auto; }
+    .cs-topbar .topbar-utilities { display: flex; align-items: center; gap: var(--space-2); }
+    .cs-topbar__halt { margin-inline-start: auto; }
     @media (min-width: 861px) {
       .cs-topbar > #cs-menu, .cs-topbar__title, .cs-topbar__copilot, .cs-topbar > .personal-notification-link, .cs-topbar__new { display: none; }
-      .cs-topbar__halt { margin-inline-end: auto; }
     }
     /* ---- small screens: the sidebar becomes a drawer behind a Menu button ---- */
     .cs-backdrop { display: none; }
