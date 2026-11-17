@@ -644,15 +644,23 @@ def test_a_workspace_cannot_reach_more_of_the_network(consumer, monkeypatch):
     ("%h%r@build.example.com", False),
     ("ssh://x@evil.com:22/@build.example.com", False),
     ("`id`@build.example.com", False),
-    ("u@[::1]:22", True),
+    ("u@[::1]", True),
     ("deploy@build.example.com", True),
+    # ssh has no port syntax here: the port comes from ssh_args or ssh config.
+    ("deploy@build.example.com:22", False),
 ])
 def test_a_workspace_host_has_a_plain_shape_before_it_matches(consumer, host, applied):
     """Older ssh clients pass a user name with % or $ to a ProxyCommand or
     Match exec, so only user@host or host with a port is accepted."""
     from maverick import config
 
-    org = '[sandbox]\nworkspace_infrastructure = true\nworkspace_hosts = ["*@build.example.com", "u@[::1]:22"]\n'
+    org = '[sandbox]\nworkspace_infrastructure = true\nworkspace_hosts = ["*@build.example.com", "u@[::1]", "*@build.example.com:22"]\n'
     sandbox, ignored = consumer(org, f"[sandbox]\nhost = {json.dumps(host)}\n",
                                 lambda: config.load_config().get("sandbox", {}))
     assert (sandbox.get("host") == host) is applied and ("sandbox.host" in ignored) is not applied
+
+
+@pytest.mark.parametrize("invisible", ["\u200b", "\ufeff", "\u2060", "\u200c", " \u200b\t\ufeff "])
+def test_invisible_disclosure_text_cannot_turn_the_disclosure_off(load, invisible):
+    merged, reported, _ = load("compliance.disclosure_text", "Org text", invisible)
+    assert merged.get("disclosure_text") == "Org text" and reported

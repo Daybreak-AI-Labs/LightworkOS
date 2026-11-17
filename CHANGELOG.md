@@ -791,7 +791,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and Settings > Protected work area). When on in the organisation's
   settings, a workspace file may choose a `context` and `namespace` (plain
   names) in the organisation's own cluster settings file, and a `host` that
-  matches a `workspace_hosts` pattern such as `*@build.example.com`. Its
+  matches a `workspace_hosts` pattern such as `*@build.example.com` (no
+  port: it comes from the organisation's ssh_args or ssh config). Its
   kubeconfig, api_key, provider, extra_kubectl_args and ssh_args are still
   ignored: a cluster settings file or ssh option can run a program on this
   computer, and a key or provider reaches another service. The backend

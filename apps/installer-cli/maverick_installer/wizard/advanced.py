@@ -2141,7 +2141,8 @@ def _ask_workspace_servers(cfg: dict[str, Any]) -> dict[str, Any]:
 
         cfg["workspace_hosts"] = [h for h in hosts if re.fullmatch(SSH_DESTINATION_PATTERN, h)]
         if len(cfg["workspace_hosts"]) < len(hosts):
-            console.print("[yellow]Left out entries that are not user@host or host:port.[/yellow]")
+            console.print("[yellow]Left out entries that are not user@host or host. "
+                          "Set a port in the ssh connection options.[/yellow]")
     return cfg
 
 

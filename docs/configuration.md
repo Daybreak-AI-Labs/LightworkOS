@@ -223,9 +223,11 @@ timeout = 60
 # [governance], [safety], [capabilities], [sandbox], [approval], [security],
 # [codebase], [egress], [tenancy], [enterprise], [profile] and [compliance] is
 # ignored and listed by `maverick doctor`, as are [tools] deferred_loading,
-# fetch_allow_private, fetch_skip_scan and database_allow_url_arg. With this switch on (organisation file only), a workspace
-# may also choose a plain `context` and `namespace` in the organisation's own
-# cluster settings file, and a `host` matching a workspace_hosts pattern. Its
+# fetch_allow_private, fetch_skip_scan and database_allow_url_arg. With this
+# switch on (organisation file only), a workspace may also choose a plain
+# `context` and `namespace` in the organisation's own cluster settings file,
+# and a `host` (user@host or host, no port: set the port in ssh_args or your
+# ssh config) matching a workspace_hosts pattern. Its
 # kubeconfig, api_key, provider, extra_kubectl_args and ssh_args are always
 # ignored. Off while any settings file cannot be read.
 workspace_infrastructure = false

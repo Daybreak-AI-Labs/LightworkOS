@@ -451,11 +451,12 @@ def _work_area(S, C) -> tuple:
           warning="Each workspace's settings file can choose where in your cluster its commands run."),
         S("sandbox", "workspace_hosts", "Remote computers workspaces may choose",
           "Remote computers a workspace's settings file may choose when the switch above is on, "
-          "one per entry. A star matches any text. With none listed, workspaces cannot choose.",
+          "one per entry, as user@host or host. A star matches any text. Set the port in the "
+          "connection options. With none listed, workspaces cannot choose.",
           "list", group, [], "maverick.policy_tighten", subgroup="Work area",
           item_label="Remote computer", item_hint="*@build.example.com",
           pattern=SSH_DESTINATION_PATTERN,
-          item_error="a remote computer such as user@host or host:22", max_items=50,
+          item_error="a remote computer such as user@host, without a port", max_items=50,
           weaker="grow",
           warning="Workspaces will be able to send their commands to more remote computers."),
         S("sandbox", "runtime", "Stronger isolation program",

@@ -537,8 +537,14 @@ def compliance_profiles(upper: object, lower: object) -> tuple[Any, bool]:
 
 def disclosure_text(upper: object, lower: object) -> tuple[Any, bool]:
     """``[compliance] disclosure_text`` (maverick.compliance): a lower layer may
-    word the AI disclosure its own way, never empty it (empty turns it off)."""
-    if not isinstance(lower, str) or not lower.strip():
+    word the AI disclosure its own way, never empty it (empty turns it off).
+    Invisible format characters and spaces do not count: the text needs at
+    least one letter or digit."""
+    import unicodedata
+
+    visible = "" if not isinstance(lower, str) else "".join(
+        ch for ch in lower if unicodedata.category(ch) != "Cf" and not ch.isspace())
+    if not any(ch.isalnum() for ch in visible):
         raise ValueError("expected the disclosure text")
     return lower, False
 
