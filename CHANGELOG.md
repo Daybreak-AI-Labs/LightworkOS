@@ -962,6 +962,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   cannot turn task limits or strict pricing off, and may only add warning
   thresholds. A value it cannot use is ignored and listed by `maverick
   doctor`; raise a cap in the organisation's config.toml instead.
+- The database tool now compares where server names lead, not how they are
+  spelled, before it refuses Lightwork's own records database. Another name
+  for that server is refused, and the connection uses the address it checked.
+  A name it cannot look up in time is refused with "could not check": retry,
+  or ask your organisation to allow it.
 
 ### Fixed
 

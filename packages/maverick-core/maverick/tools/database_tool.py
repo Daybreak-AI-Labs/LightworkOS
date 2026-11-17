@@ -23,9 +23,11 @@ local database file (including this deployment's own world.db).
 ``DATABASE_URL`` is operator-set, so it bypasses the model-URL opt-in. An active
 capability host grant still limits its destinations.
 
-Neither may name Lightwork's own Postgres world database (the same host, port
-and database as the world DSN): its row policies trust a session setting that
-any SQL on the connection can change. Only the organisation can allow it, with
+Neither may name Lightwork's own Postgres world database (a host that leads to
+one of the world DSN's addresses, with the same port and database): its row
+policies trust a session setting that any SQL on the connection can change.
+Server names are looked up with a short limit; one that cannot be looked up is
+refused, and a libpq connection is held to the addresses checked. Only the organisation can allow it, with
 ``MAVERICK_DATABASE_ALLOW_WORLD_DATABASE=1`` or ``[tools]
 database_allow_world_database = true`` in its own settings, never a
 workspace's.
@@ -228,6 +230,12 @@ _UNCOMPARABLE_DENIAL = (
     "host and database, or ask your organisation to allow it with [tools] "
     "database_allow_world_database. The tool was not executed."
 )
+_UNCHECKED_DENIAL = (
+    "⚠ DENIED: Lightwork could not check whether this address is its own records database, "
+    "because it could not look up the server name in time. Try again, or ask your "
+    "organisation to allow it with [tools] database_allow_world_database. The tool was not "
+    "executed."
+)
 # libpq's environment defaults, which complete an address that leaves a part out.
 _PG_ENV_DEFAULTS = (("host", "PGHOST"), ("hostaddr", "PGHOSTADDR"), ("port", "PGPORT"),
                     ("dbname", "PGDATABASE"), ("user", "PGUSER"))
@@ -236,6 +244,11 @@ _PG_ENV_DEFAULTS = (("host", "PGHOST"), ("hostaddr", "PGHOSTADDR"), ("port", "PG
 class _Uncomparable(ValueError):
     """The address takes its server from a service definition this check
     cannot read, so it cannot be told apart from the world database."""
+
+
+class _Unchecked(ValueError):
+    """A server name that could not be looked up in time, or a connection
+    that cannot be held to the addresses the check looked up."""
 
 
 def _world_database_allowed() -> bool:
@@ -410,41 +423,119 @@ def _postgres_params(dsn: str) -> dict[str, str] | None:
     return params
 
 
-def _postgres_endpoints(dsn: str) -> set[tuple[str, str, str]]:
-    """``(host, port, database)`` for each server a Postgres DSN may reach."""
+#: Longest wait for looking up a server name in the world-database check.
+_LOOKUP_SECONDS = 2.0
+#: Postgres drivers built on libpq, which take ``hostaddr``.
+_LIBPQ_DRIVERS = frozenset({"", "psycopg", "psycopg2", "psycopg2cffi"})
+
+
+def _lookup(name: str) -> tuple[str, ...]:
+    """The addresses ``name`` leads to, in the resolver's order. The lookup
+    runs in a helper thread and is given up after :data:`_LOOKUP_SECONDS`;
+    no answer in time raises :class:`_Unchecked`."""
+    import socket
+    import threading
+
+    found: list[str] = []
+
+    def lookup() -> None:
+        with contextlib.suppress(OSError, UnicodeError):
+            found.extend(str(info[4][0]) for info in socket.getaddrinfo(
+                name, None, proto=socket.IPPROTO_TCP))
+
+    worker = threading.Thread(target=lookup, name="maverick-database-lookup", daemon=True)
+    worker.start()
+    worker.join(_LOOKUP_SECONDS)
+    if worker.is_alive() or not found:
+        raise _Unchecked(name)
+    return tuple(dict.fromkeys(found))
+
+
+def _destination(host: str) -> tuple[frozenset[str], tuple[str, ...]]:
+    """Where a host entry leads, as comparable names (see
+    :func:`_endpoint_host`), and the addresses a server name was looked up
+    to (empty for this computer, a socket or an address)."""
+    name = _endpoint_host(host)
+    if name == "local" or _ip(name) is not None:
+        return frozenset({name}), ()
+    addresses = _lookup(name)
+    return frozenset({name, *(_endpoint_host(a) for a in addresses)}), addresses
+
+
+def _postgres_targets(dsn: str) -> tuple[dict[str, str], list[tuple[str, str, str]]]:
+    """The completed libpq parameters of a Postgres DSN and ``(host, port,
+    database)`` for each server it may reach; empty for another database."""
     params = _postgres_params(dsn)
     if params is None:
-        return set()
+        return {}, []
     params = _complete_from_environment(params)
     database = params.get("dbname") or params.get("user") or ""
     ports = [p.strip() or "5432" for p in params.get("port", "").split(",")]
-    found = set()
+    found = []
     for key in ("host", "hostaddr"):
         for i, host in enumerate(params.get(key, "").split(",")):
             # No host at all is libpq's local socket.
             if host.strip() or (key == "host" and i == 0):
-                found.add((_endpoint_host(host), ports[min(i, len(ports) - 1)], database))
-    return found
+                found.append((host, ports[min(i, len(ports) - 1)], database))
+    return params, found
 
 
-def _world_database_denial(url: str) -> str | None:
-    """Refuse a URL that names the Postgres world database, unless the
-    organisation allows it. A URL that cannot be parsed is refused too."""
+def _pinned(url: str, params: dict[str, str], looked_up: dict[str, tuple[str, ...]]) -> dict[str, str]:
+    """libpq connect arguments that hold the connection to the addresses the
+    check looked up, one attempt per address, keeping each name for the
+    server certificate check. A later lookup cannot redirect it."""
+    if not looked_up or params.get("hostaddr"):
+        return {}  # nothing was looked up, or libpq already uses fixed addresses
+    if urlsplit(url).scheme.partition("+")[2].lower() not in _LIBPQ_DRIVERS:
+        raise _Unchecked(url)
+    ports = [p.strip() or "5432" for p in params.get("port", "").split(",")]
+    hosts: list[str] = []
+    addresses: list[str] = []
+    pinned_ports: list[str] = []
+    for i, host in enumerate(params.get("host", "").split(",")):
+        port = ports[min(i, len(ports) - 1)]
+        if port == "*":
+            raise _Unchecked(host)
+        reached = looked_up.get(host, ("",))  # "": libpq uses the host as given
+        hosts += [unquote(host)] * len(reached)
+        addresses += reached
+        pinned_ports += [port] * len(reached)
+    return {"host": ",".join(hosts), "hostaddr": ",".join(addresses),
+            "port": ",".join(pinned_ports)}
+
+
+def _world_database_check(url: str) -> tuple[str | None, dict[str, str]]:
+    """Refuse a URL that reaches the Postgres world database, unless the
+    organisation allows it; else the connect arguments that keep the
+    connection on the addresses checked. Server names are compared by the
+    addresses they lead to. A URL that cannot be parsed, or a name that
+    cannot be looked up, is refused too."""
     from ..world_model_backends.pg_rls import resolve_dsn
 
     world = resolve_dsn()
     if not world or _world_database_allowed():
-        return None
+        return None, {}
     try:
-        target = _postgres_endpoints(url)
-        if not target:
-            return None
-        world_endpoints = _postgres_endpoints(world)
+        params, target = _postgres_targets(url)
+        world_targets = _postgres_targets(world)[1] if target else []
     except Exception:  # noqa: BLE001 -- an address that cannot be compared is not opened
-        return _UNCOMPARABLE_DENIAL
-    same = any((host, database) == (w_host, w_database) and (port == w_port or "*" in (port, w_port))
-               for host, port, database in target for w_host, w_port, w_database in world_endpoints)
-    return _WORLD_DATABASE_DENIAL if same else None
+        return _UNCOMPARABLE_DENIAL, {}
+    looked_up: dict[str, tuple[str, ...]] = {}
+    try:
+        for host, port, database in target:
+            # Only a server with the world's port and database name can be it.
+            near = [w_host for w_host, w_port, w_database in world_targets
+                    if database == w_database and (port == w_port or "*" in (port, w_port))]
+            if not near:
+                continue
+            reached, addresses = _destination(host)
+            if any(reached & _destination(w_host)[0] for w_host in near):
+                return _WORLD_DATABASE_DENIAL, {}
+            if addresses:
+                looked_up[host] = addresses
+        return None, _pinned(url, params, looked_up)
+    except _Unchecked:
+        return _UNCHECKED_DENIAL, {}
 
 
 def _denial(host: str) -> str:
@@ -704,13 +795,14 @@ def _restore_mysql_select_limit(conn, previous: int) -> None:
             conn.invalidate()
 
 
-def _execute_query(sql, url, limit, needs_confirm, response_format):
+def _execute_query(sql, url, limit, needs_confirm, response_format, pinned=None):
     from sqlalchemy import create_engine
 
     engine = None
     with QueryExecution(mutation=needs_confirm) as execution:
         try:
-            engine = create_engine(url, connect_args=_postgres_connect_args(url))
+            engine = create_engine(url, connect_args={**_postgres_connect_args(url),
+                                                      **(pinned or {})})
             execution.check()
             with engine.connect() as conn:
                 return _query_connection(conn, sql, limit, needs_confirm, response_format, execution)
@@ -745,7 +837,10 @@ def _op_query(sql: str, url_arg: str, limit: int, confirm: bool,
         denial = _model_supplied_url_denial(url_arg, allow_hosts)
         if denial:
             return denial
-    denial = _host_denial(url, allow_hosts) or _world_database_denial(url)
+    denial = _host_denial(url, allow_hosts)
+    if denial:
+        return denial
+    denial, pinned = _world_database_check(url)
     if denial:
         return denial
     try:
@@ -754,7 +849,7 @@ def _op_query(sql: str, url_arg: str, limit: int, confirm: bool,
         return ("ERROR: sqlalchemy not installed. Run: pip install sqlalchemy plus the "
                 "driver (psycopg / pymysql / pyodbc / ...).")
     limit = max(1, min(limit, _max_rows()))
-    return _execute_query(sql, url, limit, needs_confirm, response_format)
+    return _execute_query(sql, url, limit, needs_confirm, response_format, pinned)
 
 
 def _run(args: dict[str, Any]) -> str:
