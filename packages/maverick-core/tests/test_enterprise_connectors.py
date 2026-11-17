@@ -534,10 +534,15 @@ def test_twin_specs_of_a_charged_service_are_charged_alike():
         match = re.search(r"https://([a-z0-9-]+(?:\.[a-z0-9-]+)+)", spec["description"])
         if match:
             hosts.setdefault(match.group(1), []).append(spec["name"])
+    # Hosts that serve free and paid products alike: Meta's Graph API carries
+    # WhatsApp Business (billed per message, charged) and Messenger, Workplace
+    # and Facebook pages (free). Add a host here only for such a split.
+    shared_hosts = {"graph.facebook.com"}
     mixed = {host: names for host, names in hosts.items()
-             if len(names) > 1 and len({paid[n] for n in names}) > 1}
+             if host not in shared_hosts and len(names) > 1 and len({paid[n] for n in names}) > 1}
     assert mixed == {}
-    for name in ("removebg", "dialogflow", "amazon_lex", "pdfco", "ilovepdf", "smallpdf"):
+    for name in ("removebg", "dialogflow", "amazon_lex", "pdfco", "ilovepdf", "smallpdf",
+                 "whatsapp_business"):
         assert paid[name], name
-    for name in ("luminance", "lexcheck", "floydhub"):
+    for name in ("luminance", "lexcheck", "floydhub", "messenger"):
         assert not paid[name], name

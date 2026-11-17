@@ -706,16 +706,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and ElevenLabs speech, Wolfram|Alpha, NewsAPI, BigQuery (by terabytes
   scanned when priced that way), Twilio, Amazon SES and SNS sends, and the
   pay-per-use connectors: AI, media AI, identity and background checks, and
-  SMS, voice and email gateways (such as `sendgrid`, `vonage`, `plivo`) on
+  SMS, voice, WhatsApp and email gateways (such as `sendgrid`, `vonage`,
+  `plivo`, `whatsapp_business`) on
   every request but a GET; per-lookup data services (such as `shodan`,
   `hunter`, `zoominfo`) on every request.
 - Not charged: subscription services (CRM, ERP, storage, contract review
   such as `luminance` and the like), which bill by plan, not by call;
   payments, shipping labels and stock-media purchases, which move money
-  under their own approval rather than spend a task's budget; connectors on
-  Meta's shared Graph API (`whatsapp_business`, `messenger`), where one
-  address serves free and paid calls alike; and local engines, DuckDuckGo
-  and servers on a private address, which are free.
+  under their own approval rather than spend a task's budget; and local
+  engines, DuckDuckGo and servers on a private address, which are free.
+  `whatsapp_business` is charged per message, though `messenger` on the
+  same Meta address is free.
 - A call whose price is known before it is sent is stopped if it would pass
   the limit. Speech-to-text priced per second holds the audio's length,
   read from the file first. Another call priced per second or per terabyte

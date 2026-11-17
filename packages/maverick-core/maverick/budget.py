@@ -1109,7 +1109,7 @@ MESSAGING_CONNECTOR_NAMES = frozenset({
     "link_mobility", "esendex", "didww", "flowroute", "karix", "route_mobile",
     "plum_voice", "callfire", "syniverse", "tanla_platforms", "valuefirst",
     "seven_io", "dexatel", "termii", "smsapi_com", "bulksms", "gupshup", "msg91",
-    "textlocal", "attentive", "postscript", "simpletexting",
+    "textlocal", "whatsapp_business", "attentive", "postscript", "simpletexting",
     "eztexting", "textmagic", "textedly", "slicktext", "tatango", "trumpia",
 })
 # Per-lookup data services: a GET is billed too (a credit or a lookup).
