@@ -1048,12 +1048,9 @@ def resume_refusal(world, goal_id: int, *, now: float | None = None) -> str:
     own decision, or a decision of a goal below it, is still open must wait
     for a person's answer, never for a Resume or a clarification answer."""
     expire_due(world, now=now, goal_id=goal_id)
-    try:
-        if _feature_step(goal_id, world):
-            return FEATURE_RESTARTS
-    except Exception:  # noqa: BLE001 -- unknown is not "an ordinary run": fail closed
-        log.warning("goal origin lookup failed before a restart", exc_info=True)
-        return FEATURE_UNKNOWN_RESTART
+    refused = feature_start_refusal(world, goal_id)
+    if refused:
+        return refused
     try:
         waiting = open_for_tree(world, goal_id)
     except Exception:  # noqa: BLE001 -- unknown is not "nothing waits": fail closed
@@ -1113,15 +1110,48 @@ FEATURE_UNKNOWN_RESTART = ("Lightwork could not check where this run came from, 
                            "restarted. Try again in a moment.")
 
 
-def _feature_step(goal_id: int, world) -> bool:
-    """Whether this goal, or a goal above it, is a step of a code change.
+#: The goals a code change's own loop is running right now (set by
+#: ``maverick.codebase.features`` around each round and check): only there may
+#: a goal marked as a code-change step start.
+FEATURE_LOOP: contextvars.ContextVar[frozenset[int]] = contextvars.ContextVar(
+    "decision_feature_loop", default=frozenset())
+
+
+def _feature_marks(goal_id: int, world) -> tuple[list[int], set[int]]:
+    """(this goal and the goals above it, those marked as code-change steps).
     Raises when the records cannot be read: callers decide what that means."""
     rows = world.tenant_query(
-        "SELECT o.kind FROM goal_origins o WHERE o.goal_id IN (WITH RECURSIVE up(id) AS ("
-        "SELECT CAST(? AS INTEGER) UNION SELECT g.parent_id FROM goals g JOIN up u ON g.id = u.id "
-        "WHERE g.parent_id IS NOT NULL) SELECT id FROM up) AND {tenant_goal:o.goal_id}",
-        (int(goal_id),))
-    return any(str(row[0]) == _FEATURE_ORIGIN for row in rows)
+        "WITH RECURSIVE up(id) AS (SELECT CAST(? AS INTEGER) UNION SELECT g.parent_id "
+        "FROM goals g JOIN up u ON g.id = u.id WHERE g.parent_id IS NOT NULL) "
+        "SELECT up.id, o.kind FROM up LEFT JOIN goal_origins o ON o.goal_id = up.id "
+        "WHERE {tenant_goal:up.id}", (int(goal_id),))
+    chain = [int(row[0]) for row in rows]
+    return chain, {int(row[0]) for row in rows if str(row[1] or "") == _FEATURE_ORIGIN}
+
+
+def _feature_step(goal_id: int, world) -> bool:
+    """Whether this goal, or a goal above it, is a step of a code change."""
+    return bool(_feature_marks(goal_id, world)[1])
+
+
+def feature_start_refusal(world, goal_id: int) -> str:
+    """Why a code change's step may not start here, or ``""``.
+
+    Every step is marked when the code change creates it, before it runs.
+    Inside the change's own loop it starts. Anywhere else (a resume, a chat
+    restart, the supervisor, an answered decision) a marked goal never starts
+    again, and a goal an agent created below one starts only if it never ran:
+    its private copy of the code is gone."""
+    try:
+        chain, marked = _feature_marks(goal_id, world)
+        if not marked or FEATURE_LOOP.get() & set(chain):
+            return ""
+        if int(goal_id) in marked:
+            return FEATURE_RESTARTS
+        return FEATURE_RESTARTS if world.list_episodes(limit=1, goal_id=int(goal_id)) else ""
+    except Exception:  # noqa: BLE001 -- unknown is not "an ordinary run": fail closed
+        log.warning("goal origin lookup failed before a restart", exc_info=True)
+        return FEATURE_UNKNOWN_RESTART
 
 
 def _started_by_system(goal, world) -> bool:

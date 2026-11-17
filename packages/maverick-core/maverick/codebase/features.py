@@ -490,7 +490,7 @@ class _Loop:
         succeeded, so a failed round leaves the last pin."""
         with vault.work_dir() as tmp, _step(tmp) as step:
             work = _fresh_copy(self.host, tmp / "work", self.head, self.branch)
-            with self._labelled():
+            with self._labelled(), _in_loop(goal_id):
                 self.run(goal_id, work)
             self.setup_failed |= step["setup_failed"]
             _stop_if_waiting(self.world, goal_id)  # nothing it left half done is committed
@@ -612,6 +612,7 @@ class _Loop:
             _repair_brief(self.repo, self.title, self.description, problem),
             parent_id=root, owner=self.owner, execution_principal=self.owner)
         try:
+            _mark_step(self.world, gid, self.pid)
             self.author(gid, kind)
         except DecisionPending:
             raise
@@ -728,17 +729,19 @@ class _Loop:
         the author's goal, transcript or reasoning."""
         files = [f for f in _git(["diff", "--name-only", "-z", self.base, self.head],
                                  git_dir=self.host).split("\0") if f]
-        return self.world.create_goal(
+        gid = self.world.create_goal(
             f"[{self.repo.name}] {what}",
             _check_brief(self.repo, self.title, self.description, self.base, files, earlier),
             owner=self.owner, execution_principal=self.owner)
+        _mark_step(self.world, gid, self.pid)
+        return gid
 
     def _check_copy(self, checker: Checker, gid: int) -> object:
         """Run ``checker`` on its own throwaway copy of the pinned head."""
         with vault.work_dir() as tmp, _step(tmp) as step:
             copy = _fresh_copy(self.host, tmp / "check", self.head)
             self._for_image(copy)
-            with self._labelled():
+            with self._labelled(), _in_loop(gid):
                 out = checker(gid, copy)
             self.setup_failed |= step["setup_failed"]
         _stop_if_waiting(self.world, gid)  # never read as a clean look
@@ -1281,15 +1284,25 @@ def self_change_refusal(name: str) -> str | None:
 
 
 def _mark_step(world, goal_id: int, pid: str) -> None:
-    """Record a goal as a feature-run step; an origin it already has is kept."""
+    """Record a goal as a code-change step, before it runs; an origin it
+    already has is kept. A mark that cannot be written raises, so nothing
+    runs unmarked (decision_requests.feature_start_refusal)."""
+    if world.tenant_query("SELECT 1 FROM goal_origins o WHERE o.goal_id = ? AND "
+                          "{tenant_goal:o.goal_id}", (int(goal_id),)):
+        return
+    world.record_goal_origin(goal_id, ORIGIN_KIND, pid)
+
+
+@contextmanager
+def _in_loop(goal_id: int):
+    """This loop's own run of ``goal_id``: the one place a marked step starts."""
+    from .. import decision_requests
+    token = decision_requests.FEATURE_LOOP.set(
+        decision_requests.FEATURE_LOOP.get() | {int(goal_id)})
     try:
-        if world.tenant_query("SELECT 1 FROM goal_origins o WHERE o.goal_id = ? AND "
-                              "{tenant_goal:o.goal_id}", (int(goal_id),)):
-            return
-        world.record_goal_origin(goal_id, ORIGIN_KIND, pid)
-    except Exception:  # noqa: BLE001 -- the decision still shows; restarts check ancestors
-        import logging
-        logging.getLogger(__name__).warning("feature run %s: goal #%s not marked", pid, goal_id)
+        yield
+    finally:
+        decision_requests.FEATURE_LOOP.reset(token)
 
 
 def _hold(world, decisions: list, goal_id: int, pid: str) -> list[dict]:
@@ -1298,7 +1311,12 @@ def _hold(world, decisions: list, goal_id: int, pid: str) -> list[dict]:
     so no answer or restart ever runs them outside their private copy
     (decision_requests.resume_refusal)."""
     for marked in dict.fromkeys([goal_id, *(d.goal_id for d in decisions)]):
-        _mark_step(world, marked, pid)
+        try:
+            _mark_step(world, marked, pid)
+        except Exception:  # noqa: BLE001 -- its round was marked before it ran
+            import logging
+            logging.getLogger(__name__).warning("feature run %s: goal #%s not marked", pid,
+                                                marked)
     return [{"id": d.id, "goal_id": d.goal_id, "question": d.question} for d in decisions]
 
 
@@ -1346,6 +1364,7 @@ def propose(world, name: str, title: str, description: str, run: Runner, *,
             budget.check()
             goal_id = world.create_goal(f"[{name}] {title}", _brief(repo, title, description),
                                         owner=owner, execution_principal=owner)
+            _mark_step(world, goal_id, pid)
             try:
                 loop.author(goal_id, "author")
                 loop.verify()

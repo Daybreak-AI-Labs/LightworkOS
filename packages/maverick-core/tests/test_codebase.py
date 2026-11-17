@@ -2563,3 +2563,34 @@ def test_a_change_whose_base_left_the_main_code_never_merges_or_pushes(upstream,
                 act(world, p["id"])
             assert str(refused.value) == features.BASE_MOVED, keep
     assert features.plain_refusal(vault.VaultError(features.BASE_MOVED)) == features.BASE_MOVED
+
+
+def test_every_feature_step_is_marked_before_it_runs(upstream, tmp_path, monkeypatch):
+    from maverick import decision_requests
+    monkeypatch.setattr(decision_requests, "_announce", lambda world, decision: None)
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    # A mark that cannot be written stops the run before anything runs.
+    real = world.record_goal_origin
+    monkeypatch.setattr(world, "record_goal_origin",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("disk")))
+    run, calls = _rounds(_passing)
+    with pytest.raises(OSError):
+        features.propose(world, "pricing", "Discount", "", run, owner="user:starter")
+    assert calls == []
+    monkeypatch.setattr(world, "record_goal_origin", real)
+    # Marking a sub-goal at the pause may fail: the step is still known, by its round.
+    asked = {}
+
+    def author(goal_id, work):
+        _passing(work)
+        assert decision_requests.resume_refusal(world, goal_id) == ""   # its own run starts
+        child = world.create_goal("child", "c", parent_id=goal_id, owner="user:starter")
+        asked["d"] = _ask(world, child, "Which way?")
+        monkeypatch.setattr(features, "_mark_step", lambda *a, **k: None)
+    p = features.propose(world, "pricing", "Discount", "", author, owner="user:starter")
+    d = asked["d"]
+    assert decision_requests.resume_refusal(world, p["goal_id"]) == \
+        decision_requests.FEATURE_RESTARTS
+    out = decision_requests.answer(world, d.id, 1, actor="user:starter", is_admin=True)
+    assert out["resume"] is False and world.get_goal(d.goal_id).status == "cancelled"
