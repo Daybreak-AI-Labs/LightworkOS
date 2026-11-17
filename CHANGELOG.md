@@ -810,9 +810,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and the cost line says the provider may have billed it. It counts once
   against the organization's daily cap. A call that never connected is not
   charged. Check the provider's invoice for the real cost.
-- A paid tool service priced at $0 per unit no longer holds or charges
-  anything, even when its replies do not report that unit. Before, it held
-  and charged up to `max_unmetered_hold_dollars` per call.
+- A paid tool service priced at $0 per second or per terabyte no longer
+  holds or charges anything, even when its replies do not report that unit.
+  Before, it held and charged up to `max_unmetered_hold_dollars` per call. A
+  $0 price for a count (message, image, page, character) makes only the
+  calls counted in it free; other calls to that service are charged as
+  before.
 
 ### Fixed
 

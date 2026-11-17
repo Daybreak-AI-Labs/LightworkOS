@@ -173,3 +173,17 @@ def test_a_refusal_before_any_request_is_not_charged(monkeypatch):
                                    units={"request": 1})
     assert budget.dollars == 0.0 and getattr(budget, "_reserved", 0.0) == 0.0
 
+
+@pytest.mark.parametrize("unit, units", [
+    ("message", {"request": 1}),           # a Twilio voice call or lookup
+    ("image", {"request": 1}),             # a Hugging Face text inference
+])
+def test_a_zero_price_for_another_unit_does_not_make_a_call_free(monkeypatch, unit, units):
+    _priced(monkeypatch, unit, 0.0, hold=0.50)
+    budget = Budget(max_dollars=1.0)
+    paid_call.charged_call("twilio", lambda: "ok", budget=budget, label="Twilio", units=units)
+    assert budget.dollars == pytest.approx(0.50)
+    budget = Budget(max_dollars=1.0)
+    paid_call.charged_call("twilio", lambda: "ok", budget=budget, label="Twilio",
+                           units={**units, unit: 2})
+    assert budget.dollars == 0.0

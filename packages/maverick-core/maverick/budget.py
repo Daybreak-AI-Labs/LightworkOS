@@ -1059,6 +1059,8 @@ _TOOL_PRICE_VERSION = "operator-tool-price-v1"
 _UNPRICED_TOOL_CEILING = "unpriced-tool-call-ceiling-v1"
 _UNREPORTED_TOOL_UNITS = "unreported-tool-units-v1"
 _UNCONFIRMED_TOOL_CALL = "unconfirmed-tool-call-v1"
+# Units every call to a service priced in them uses, reported or not.
+_UNITS_EVERY_CALL_USES = ("second", "terabyte")
 _TOOL_CEILING_WARNED: set[str] = set()
 
 # The paid tool services a [budget.tool_prices] entry prices, in plain words.
@@ -1186,12 +1188,14 @@ class ToolCallPrice:
         """``(dollars, priced)`` for a call measured in ``units``.
 
         ``priced`` is false when the ceiling applied: no price is set, or the
-        call's amount of the priced unit is not known. A zero rate costs
-        nothing, however much is used.
+        call's amount of the priced unit is not known. A zero rate for time or
+        data scanned costs nothing even when unreported, since every call uses
+        some; a zero rate for a count (messages, images) prices only calls
+        measured in it.
         """
-        if self.unit and self.dollars_per_unit == 0:
-            return 0.0, True
         amount = (units or {}).get(self.unit) if self.unit else None
+        if amount is None and self.dollars_per_unit == 0 and self.unit in _UNITS_EVERY_CALL_USES:
+            return 0.0, True
         if amount is None:
             return self.ceiling, False
         return _nonnegative_finite(amount, "tool usage") * self.dollars_per_unit, True
