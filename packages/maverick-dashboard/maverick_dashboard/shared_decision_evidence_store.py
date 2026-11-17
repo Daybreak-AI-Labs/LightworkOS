@@ -27,7 +27,7 @@ from .draft_api import context_for
 
 STORE = GovernedRecordStore("shared-decision-evidence", "SDE", "shared_decision_evidence")
 TTL = 600
-NOTICE = "This checks the choices and possible situations you entered, using your attributed reports. It does not independently verify business facts, reserve resources, send questions, or carry out a choice. Checking each case separately does not show that shared resources can fulfil all cases; enter combined requirements or use Promise reviews."
+NOTICE = "This checks the choices and possible situations you entered, using your attributed reports. It does not independently verify business facts, reserve resources, send questions, or carry out a choice. Checking each case separately does not show that shared resources can fulfil all cases; enter combined requirements or use Commitment reviews."
 CHECK_LIMIT = 100
 ACTION_LABELS = {"create": "New decision review", "edit": "Changed entered choices", "consent": "Source use allowed", "withdraw": "Source use withdrawn", "refresh": "Source reviewed again", "acquire": "Single observation reserved", "answer": "Operator observation recorded", "remove": "Decision review removed", "qualify": "Complete loss check", "acquire_batch": "Complete observation batch", "acknowledge": "Unconfirmed check acknowledged", "unconfirmed create": "New review admission unconfirmed"}
 

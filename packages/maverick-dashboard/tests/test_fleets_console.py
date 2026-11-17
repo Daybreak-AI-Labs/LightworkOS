@@ -81,7 +81,7 @@ def test_fleets_page_reachable(monkeypatch, tmp_path):
     r = _client().get("/fleets")
     assert r.status_code == 200
     # Shared hero h1 (page-title + hero-title classes) carries the page name.
-    assert ">Teams</h1>" in r.text
+    assert ">Agent teams</h1>" in r.text
 
 
 def test_recent_oversight_panel_shows_governance_holds(monkeypatch, tmp_path):

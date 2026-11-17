@@ -54,7 +54,7 @@ def test_page_renders_pieces():
     assert resp.status_code == 200
     html = resp.text
     assert html.count("<h1") == 1                       # exactly one page title
-    assert "Autonomous shoring" in html                 # hero title
+    assert "Work handoff" in html                       # hero title
     assert "Savings estimate" in html                    # the P&L summary
     assert "Book of Work" in html
     assert 'id="sh-form"' in html                       # add-a-function form
@@ -151,7 +151,7 @@ def test_page_in_nav_registry_after_savings():
     entry = next(p for p in ui_visibility.PAGES if p["path"] == "/shoring")
     assert entry["group"] == "Observe"
     assert entry["floor"] == "view"
-    assert entry["label"] == "Autonomous shoring"
+    assert entry["label"] == "Work handoff"
     # Ordered immediately after /savings (nav order = registry order).
     assert paths.index("/shoring") == paths.index("/savings") + 1
 

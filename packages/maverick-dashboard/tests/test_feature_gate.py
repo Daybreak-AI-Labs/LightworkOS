@@ -88,7 +88,7 @@ def test_a_browser_landing_on_a_turned_off_page_is_offered_turn_on(tmp_path):
     ("governed_document_vault_disabled", "governed_document_vault"),
     ({"code": "connections_disabled", "message": "Connections are turned off."}, "connections"),
     ("privacy_ops is not enabled", "privacy_ops"),
-    ("Promise reviews are off. An administrator can enable them in Settings.", None),
+    ("Commitment reviews are off. An administrator can enable them in Settings.", None),
 ])
 def test_refusal_text_that_says_off_is_classified(detail, section):
     headers = feature_gate.refusal_headers(detail)

@@ -68,6 +68,17 @@ def test_shell_has_quick_links_docs_link_and_halt_banner():
     assert "Work is not stopped" not in body
 
 
+def test_sidebar_lists_each_page_once():
+    # Most used and Pinned pages are shortcuts: the groups below them leave
+    # those pages out, so Chat, Tasks, Results and Settings appear once.
+    import re
+    for path in ("/goals", "/chat"):
+        body = _client().get(path).text
+        sidebar = re.search(r'<aside class="(?:sidebar|cs-side)" id="(?:sidebar|cs-side)".*?</aside>', body, re.DOTALL).group(0)
+        hrefs = re.findall(r'<li[^>]*><a href="(/[^"]*)"', sidebar)
+        assert hrefs and len(hrefs) == len(set(hrefs)), sorted(h for h in hrefs if hrefs.count(h) > 1)
+
+
 def test_chat_shell_and_error_page_carry_the_halt_banner():
     client = _client()
     assert 'id="halt-banner"' in client.get("/chat").text
@@ -346,3 +357,38 @@ def test_setup_checks_are_worded_as_outcomes():
     # Provider checks keep their wording (owned by the provider-readiness work).
     provider = _plain_check({"id": "provider", "label": "Model provider", "status": "blocked"}, frozenset())
     assert provider["fix_label"] == "Add an AI provider key"
+
+
+def test_chat_shell_matches_the_product_shell():
+    # Chat used a different shell: "New chat" instead of "New task", a plain
+    # "Lightwork" name, the emergency stop at the foot of the sidebar instead
+    # of in the top bar, and the main menu in a small inner scroll box.
+    import re
+    body = _client().get("/chat").text
+    side = re.search(r'<aside class="cs-side".*?</aside>', body, re.DOTALL).group(0)
+    top = re.search(r'<header class="cs-topbar">.*?</header>', body, re.DOTALL).group(0)
+    assert "New chat" not in body and "New task" in side
+    assert '<span class="brand__name">Lightwork</span>' in side
+    assert 'id="halt-pill"' in top and 'id="halt-pill"' not in side
+    assert 'href="/settings"' in top
+    assert 'class="cs-account"' not in body
+    assert ".cs-product { flex: none;" in body
+
+
+def test_chat_shell_phone_layout_keeps_one_top_row_and_the_greeting():
+    # On a phone the chat top bar wrapped into two rows of unlabeled icons,
+    # the greeting and suggestions sat out of view, and the mode picker
+    # looked like a "Run this task" button.
+    import re
+    body = _client().get("/chat").text
+    side = re.search(r'<aside class="cs-side".*?</aside>', body, re.DOTALL).group(0)
+    # Secondary actions move into the menu drawer on narrow screens, by name.
+    more = re.search(r'<nav class="cs-side__more"[^>]*>.*?</nav>', side, re.DOTALL).group(0)
+    for name in (">Docs<", ">Your account<"):
+        assert name in more, name
+    assert ".cs-topbar .topbar-utilities > :not(.help-menu):not(#prefs-menu) { display: none; }" in body
+    assert 'class="iconbtn cs-topbar__settings"' in body
+    # The greeting flows above the composer on a phone instead of being squeezed out.
+    assert ".cs-empty-state { min-height: 0; justify-content: flex-start;" in body
+    # The mode picker has a visible label, so it reads as a choice.
+    assert '<label for="authoring-kind" class="composer__mode-label">' in body

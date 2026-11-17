@@ -50,7 +50,7 @@ def call(function, *args):
         raise HTTPException(409, native.LOCAL_ONLY + " Nothing was saved or changed.") from exc
     except Exception as exc:
         log_store_failure(log, exc)
-        raise HTTPException(503, "Lightwork could not use its saved records, so the exact original result is uncertain. Read its retained request before any separate reviewed test; nothing will repeat automatically. An administrator can find the cause in the server log.") from exc
+        raise HTTPException(503, "Lightwork could not confirm how this check ended. Read the saved request before you run a new check; nothing runs again on its own. An administrator can find the cause in the server log.") from exc
 
 
 @router.get(API + "/choices")

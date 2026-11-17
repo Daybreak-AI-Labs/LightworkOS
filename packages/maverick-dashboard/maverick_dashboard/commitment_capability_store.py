@@ -28,7 +28,7 @@ FEATURE = "commitment_capability_learning"
 LOCAL_ONLY = ("Additional-work learning keeps its records only on a single-computer installation of Lightwork. "
               "This deployment uses a shared database, so these reviews are not available here.")
 TTL = 600
-NOTICE = "Review possible additions for this Promise review. All accepted work is checked together. Reported quantities, availability and permission are your team's assertions; local tests establish only what the selected saved rules return. Choose one consistent unit for all addition cost points and one effort-point scale within this Promise review. Points compare additions and limit tests or trial reports; they are not a charge. No purchase, reservation, acceptance or connected action occurs."
+NOTICE = "Review possible additions for this Commitment review. All accepted work is checked together. Reported quantities, availability and permission are your team's assertions; local tests establish only what the selected saved rules return. Choose one consistent unit for all addition cost points and one effort-point scale within this Commitment review. Points compare additions and limit tests or trial reports; they are not a charge. No purchase, reservation, acceptance or connected action occurs."
 ACTION_NAMES = {"create": "Entered additional-work review", "edit": "Replaced additional-work review", "report": "Recorded completed trial report",
     "test": "Ran local rule qualification", "scope": "Reviewed source permission", "withdraw": "Withdrew observation use",
     "release": "Released waiting for unknown result", "remove": "Removed current qualification"}
@@ -38,7 +38,7 @@ def authority(request, context=None, *, historical=False):
     auth.require_permission(request, "operate")
     actor, current = auth.caller_principal(request) or "local:dashboard", context_for(request)
     if context is not None and not hmac.compare_digest(context, current):
-        raise HTTPException(409, "Your account or workspace changed. Reload this Promise review.")
+        raise HTTPException(409, "Your account or workspace changed. Reload this Commitment review.")
     if not historical and (config.config_source_errors(include_tenant=True)
             or config.get_features().get("commitment_viability") is not True
             or config.get_features().get(FEATURE) is not True):
@@ -55,11 +55,11 @@ def _parent(request, identifier):
     try:
         row = promises.get(identifier, context)
     except LookupError as exc:
-        raise HTTPException(404, "This Promise review is unavailable.") from exc
+        raise HTTPException(404, "This Commitment review is unavailable.") from exc
     if row.get("owner") != actor:
-        raise HTTPException(404, "Only the owner can qualify additions using this Promise review.")
+        raise HTTPException(404, "Only the owner can qualify additions using this Commitment review.")
     if row.get("_audit_pending") or row.get("retirement"):
-        raise HTTPException(409, "The Promise review is archived or its original activity receipt is pending.")
+        raise HTTPException(409, "The Commitment review is archived or its original activity receipt is pending.")
     return row
 
 
@@ -243,7 +243,7 @@ def history(request):
     result = []
     for row in rows:
         if (row.get("actor"), row.get("context")) == (actor, context):
-            result.extend({"value": row["id"] + "|" + op, "label": receipt.get("parent_name", "Saved Promise review") + " · " + ACTION_NAMES[receipt["action"]] + " · " +
+            result.extend({"value": row["id"] + "|" + op, "label": receipt.get("parent_name", "Saved Commitment review") + " · " + ACTION_NAMES[receipt["action"]] + " · " +
                 ("Recorded result" if receipt["state"] == "confirmed" and not row.get("_audit_pending") else "Original result unknown")}
                 for op, receipt in _open(row)["operations"].items())
     authority(request, context, historical=True)
@@ -359,7 +359,7 @@ def _business_model_review(model, prefix):
 def _parent_business_review(parent):
     result = []
     labels = parent["labels"]
-    result.append({"label": "Promise review whose accepted work is protected", "after": parent["title"]})
+    result.append({"label": "Commitment review whose accepted work is protected", "after": parent["title"]})
     for order in parent["model"]["commitments"]:
         result.append({"label": "Accepted order · " + labels.get(order["id"], "Accepted work"), "after": "Due " + _review_value(order["due_at"], "due_at") +
             ". Entered requirements: " + "; ".join(str(part["units"]) + " units of " + labels.get(part["key"], part["kind"]) for part in order["demands"]) +
@@ -553,7 +553,7 @@ def apply(request, prepared, operation):
             return _guard_admission(request, prepared, context, deadline=deadline, source=source)
         guard()
         receipt = {"action": prepared["action"], "binding": digest(prepared), "actor": actor, "context": context,
-            "parent_name": prepared["parent_review"].get("title", "Saved Promise review"),
+            "parent_name": prepared["parent_review"].get("title", "Saved Commitment review"),
             "reviewed_parent": prepared["parent_binding"], "recorded_at": time.time(), "state": "unconfirmed", "business_verified": False}
         def complete(row, payload, result):
             payload["operations"][operation] = {**receipt, "state": "confirmed", "result": result,

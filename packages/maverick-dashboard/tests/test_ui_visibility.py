@@ -157,7 +157,7 @@ def test_nav_groups_per_role(monkeypatch, tmp_path):
     # Saved flows are the sidebar entry; creation starts from that page.
     assert "/workflows" in in_nav
     assert "/fleets" in in_nav
-    assert ui_visibility.page_for("/fleets")["label"] == "Teams"
+    assert ui_visibility.page_for("/fleets")["label"] == "Agent teams"
     assert "/goal-builder" not in in_nav and "/flows/designer" not in in_nav \
         and "/workflow-builder" not in in_nav
     # viewer: read-only pages only -- no run/build/admin surfaces, and the
@@ -580,8 +580,8 @@ def test_fresh_install_marks_switched_off_pages_for_administrators(monkeypatch, 
     [consent] = _sidebar_link(body, "/consent")
     assert 'aria-label="Consent and preferences (turned off)"' in consent
     assert '<span class="nav-off" aria-hidden="true">' in consent and ">Off</span>" in consent
-    tasks = _sidebar_link(body, "/goals")  # Most used and Work: pages that work stay plain
-    assert len(tasks) == 2 and not any("aria-label" in link or "nav-off" in link for link in tasks)
+    tasks = _sidebar_link(body, "/goals")  # listed once (Most used); pages that work stay plain
+    assert len(tasks) == 1 and not any("aria-label" in link or "nav-off" in link for link in tasks)
 
 
 def test_people_who_cannot_turn_a_module_on_get_no_link_to_it(monkeypatch, tmp_path):
@@ -625,3 +625,26 @@ def test_newly_registered_screens_join_the_matrix_like_other_folded_pages(monkey
     ui_visibility.set_visibility("/help", "viewer", False)
     assert "/help" not in {ln["href"] for g in ui_visibility.finder_pages("viewer") for ln in g["links"]}
     assert c.get("/help").status_code == 403
+
+
+@pytest.mark.parametrize("path,label", [
+    ("/fleets", "Agent teams"),
+    ("/commitment-reviews", "Commitment reviews"),
+    ("/run-tree", "Task branches"),
+    ("/shoring", "Work handoff"),
+])
+def test_nav_label_and_page_title_name_the_page_the_same_way(monkeypatch, tmp_path, path, label):
+    # A page's sidebar label, its heading and its browser title use one name
+    # that matches what the address says ("Teams" at /fleets read as a
+    # different page; so did "Commitment reviews" and "Branches").
+    import html as _html
+    import re
+
+    from maverick_dashboard import copilot_context, ui_visibility
+    page = next(p for p in ui_visibility.PAGES if p["path"] == path)
+    assert page["label"] == label
+    body = _client(monkeypatch, tmp_path).get(path).text
+    title = _html.unescape(re.search(r"<title>(.*?)</title>", body, re.DOTALL).group(1)).strip()
+    heading = _html.unescape(re.sub(r"<[^>]+>", "", re.search(r"<h1\b[^>]*>(.*?)</h1>", body, re.DOTALL).group(1))).strip()
+    assert title.startswith(label + " ·") and heading == label
+    assert copilot_context.context_for_page(path).title == label

@@ -862,3 +862,34 @@ def test_pilot_after_revoked_enrollment_asks_to_enroll_again(planning):
         "sample_id": "pilot-run-one", "manual_minutes": 30, "remaining_minutes": 6, "accepted": True})
     assert response.status_code == 409, response.text
     assert response.json()["detail"] == "Your enrollment for this device has ended. Enroll it again to continue."
+
+
+def test_recorder_tile_agrees_with_the_recording_state(tmp_path, monkeypatch):
+    """With recording Off, the recorder tile must not read "Waiting"."""
+    import json
+    import re
+    import shutil
+    import subprocess
+
+    _isolate(tmp_path, monkeypatch, enabled=False)
+    page = client.get("/ekko").text
+    assert '<div class="num" id="ekko-stat-collector">Waiting</div>' not in page
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is unavailable")
+    source = re.search(r"function collectorWord\(state\) \{.*?\n  \}\n.*?function collectorTile\(status, state\) \{.*?\n  \}\n",
+                       page, re.DOTALL)
+    assert source, "the recorder tile is derived from the recording state"
+    cases = [
+        ({"enabled": False}, "", "Off"),
+        ({"enabled": True, "enrollment": None}, "", "Not enrolled"),
+        ({"enabled": True, "enrollment": {"active": True}, "session": None}, "", "Not watching"),
+        ({"enabled": True, "enrollment": {"active": True}, "session": {"state": "paused"}}, "live", "Not watching"),
+        ({"enabled": True, "enrollment": {"active": True}, "session": {"state": "running"}}, "", "Waiting"),
+        ({"enabled": True, "enrollment": {"active": True}, "session": {"state": "running"}}, "live", "Connected"),
+    ]
+    inputs = json.dumps([[status, state] for status, state, _ in cases])
+    script = source.group(0) + f"console.log(JSON.stringify({inputs}.map(c => collectorTile(c[0], c[1]))));"
+    result = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=30, check=False)  # noqa: S603
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == [word for _, _, word in cases]

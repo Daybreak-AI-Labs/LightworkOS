@@ -8,7 +8,7 @@ Work
 	Code
 	My work
 	Workflow pilots
-	Promise reviews
+	Commitment reviews
 	Project team reviews
 	Selected deliverable bundles
 	Task handoffs
@@ -29,7 +29,7 @@ Work
 	Flow designer
 	Workflow builder
 	Automations
-	Teams
+	Agent teams
 	Starter teams
 	Help and diagnostics
 	Your notifications
@@ -59,11 +59,11 @@ Insights
 	Ekko
 	Oversight
 	Discovery
-	Branches
+	Task branches
 	Spend
 	Work value & opportunities
 	Savings
-	Autonomous shoring
+	Work handoff
 	Billing
 	Providers
 	Flow results

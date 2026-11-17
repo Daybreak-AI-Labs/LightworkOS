@@ -47,7 +47,7 @@ class OriginalInput(StrictInput):
 
 def selected(selection):
     if type(selection) is not dict or set(selection) != {"kind", "id"} or selection.get("kind") != "commitment_review" or not re_parent(selection.get("id")):
-        raise HTTPException(409, "Open the owned Promise review you want to compare.")
+        raise HTTPException(409, "Open the owned Commitment review you want to compare.")
     return selection["id"]
 
 

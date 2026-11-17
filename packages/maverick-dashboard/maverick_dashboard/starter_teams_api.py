@@ -26,9 +26,10 @@ router = APIRouter(prefix="/api/v1/starter-teams", tags=["starter-teams"], depen
 log = logging.getLogger(__name__)
 PURPOSE = "lightwork.starter-team-review.v1"
 TTL = 600
-NOTICE = ("Samples and record checks prepare findings without calling an AI service or opening sources. "
-          "Specialist workflows have a separate review and budget. Provider access and business outcomes "
-          "still require qualification. The setup cadence records a preference; it does not start recurring work.")
+NOTICE = ("Samples and record checks prepare findings without calling an AI service or opening your sources. "
+          "Specialist work has its own review and budget. Before you rely on a team, connect an AI provider "
+          "and check a few results against real work. How often to run is saved as a preference; "
+          "it does not start recurring work.")
 LOCAL_ONLY = ("Saved starter teams and their schedules are kept only on a single-computer installation of Lightwork. "
               "This deployment uses a shared database, so you can preview teams here but not save or schedule them.")
 PUBLIC_INPUT_ERRORS = frozenset({
@@ -105,7 +106,7 @@ def context(request: Request) -> ServiceContext:
     if config.config_source_errors(include_tenant=True):
         raise HTTPException(503, "Workspace settings are unavailable. Restore access and reload.")
     if not shoring.enabled():
-        raise HTTPException(409, "Autonomous shoring is turned off. Open its settings to continue.")
+        raise HTTPException(409, "Work handoff is turned off. Open its settings to continue.")
     tenant = current_tenant_id_strict()
     actor = auth.caller_principal(request)
     role = auth.caller_role(request)

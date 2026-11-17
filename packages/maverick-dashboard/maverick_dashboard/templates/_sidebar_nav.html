@@ -90,7 +90,13 @@
 </div>
   {% endif %}
 {% endif %}
+{# The groups list every other page once: a page already shown under Pinned
+   pages or Most used is not repeated below (Chat, Tasks, Results and
+   Settings used to appear twice). #}
+{% set _listed = _pin_hrefs + _quick_shown %}
 {% for _group in (nav_groups if nav_mode != 'areas' else []) %}
+  {% set _group_links = _group.links | rejectattr('href', 'in', _listed) | list %}
+  {% if _group_links %}
   <div class="navgrp">
     <button type="button" class="navgrp__toggle" data-grp="{{ _group.label }}"
             aria-expanded="true" aria-controls="navgrp-{{ loop.index0 }}">
@@ -98,11 +104,11 @@
       <svg class="navgrp__caret" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 L5 6.5 L8 3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
     <ul class="navgrp__items" id="navgrp-{{ loop.index0 }}">
-      {% for _link in _group.links %}
+      {% for _link in _group_links %}
         {% set _active = (_active_nav.href == _link.href) %}
-        {# A page that also sits in the Most used list carries its aria-current there. #}
-        <li>{{ _nav_link(_link, _active, _link.href not in _quick_shown) }}</li>
+        <li>{{ _nav_link(_link, _active, true) }}</li>
       {% endfor %}
     </ul>
   </div>
+  {% endif %}
 {% endfor %}{% if nav_mode == 'areas' and nav_areas %}{% include "_sidebar_areas.html" %}{% endif %}

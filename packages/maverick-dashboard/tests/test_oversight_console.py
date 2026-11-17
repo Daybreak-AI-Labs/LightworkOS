@@ -39,6 +39,11 @@ def test_oversight_page_renders_and_nav_link(monkeypatch, tmp_path):
     # Nav link is wired into the primary menu.
     assert 'href="/oversight"' in r.text
     assert ">Oversight<" in r.text
+    # Plain labels: the teams link uses the page's own name, and the rules
+    # tile and source notices never show a bare count label or raw state.
+    assert 'href="/fleets">Agent teams</a>' in r.text and "Teams of assistants" not in r.text
+    assert "Kinds of safety rule" not in r.text and "Safety rules that stepped in" in r.text
+    assert "name + ': ' + source.state" not in r.text
 
 
 def test_unifies_every_guardrail(monkeypatch, tmp_path):

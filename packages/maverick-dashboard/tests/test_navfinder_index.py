@@ -131,9 +131,10 @@ class _ShellLinks(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
         self.in_sidebar = 0
-        self.in_quick = 0  # the "Most used" shortcuts repeat links from the groups
+        self.in_quick = 0  # the "Most used" shortcuts (the groups leave them out)
         self.in_finder = 0
         self.sidebar_hrefs: list[str] = []
+        self.quick_hrefs: list[str] = []
         self.finder_hrefs: list[str] = []
 
     def handle_starttag(self, tag: str, attrs) -> None:
@@ -147,6 +148,8 @@ class _ShellLinks(HTMLParser):
         if tag != "a" or not values.get("href"):
             return
         classes = set((values.get("class") or "").split())
+        if self.in_sidebar and self.in_quick:
+            self.quick_hrefs.append(values["href"])
         if self.in_sidebar and not self.in_quick and "navquick" not in classes:
             self.sidebar_hrefs.append(values["href"])
         if self.in_finder and "data-navfinder-target" in values:
@@ -205,7 +208,10 @@ def test_rendered_finder_indexes_folded_pages_and_sidebar_does_not(monkeypatch, 
     # The workspace line at the top of the sidebar (base.html) links to the
     # active workspace; it is not a navigation entry.
     rail = [href for href in markup.sidebar_hrefs if href != "/workspace/tenant"]
-    assert rail == [href for href in _hrefs(ui_visibility.nav_groups(None)) if href not in unavailable]
+    # Each page once: the groups leave out the Most used shortcuts above them.
+    expected = [href for href in _hrefs(ui_visibility.nav_groups(None))
+                if href not in unavailable and href not in markup.quick_hrefs]
+    assert markup.quick_hrefs and rail == expected
 
 
 def test_registered_screens_stay_out_of_the_sidebar_and_mirror_their_route_floor():
