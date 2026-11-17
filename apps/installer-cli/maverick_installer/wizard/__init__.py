@@ -86,6 +86,7 @@ from .advanced import _ask_model_followups as _ask_model_followups
 from .advanced import _ask_regulated_deployment as _ask_regulated_deployment
 from .advanced import _ask_self_harness_evaluation_boundary as _ask_self_harness_evaluation_boundary
 from .advanced import _ask_self_harness_followups as _ask_self_harness_followups
+from .advanced import _ask_workspace_servers as _ask_workspace_servers
 from .advanced import _bad_network as _bad_network
 from .advanced import _cfg_advanced as _cfg_advanced
 from .advanced import _cfg_advanced_autonomy_and_workforce as _cfg_advanced_autonomy_and_workforce
@@ -2817,14 +2818,7 @@ def pick_sandbox() -> dict[str, Any]:
             )
             console.print(kubernetes_deny_all_manifest(cfg["namespace"]), highlight=False)
             console.print("\n  kubectl apply -f - <<'EOF' ... EOF   (paste the manifest above)\n")
-    if remote or backend == "kubernetes":
-        # Off unless chosen: a workspace's own settings file may then name its
-        # own cluster or remote computer, never weaker isolation or new options.
-        place = "remote computer" if remote else "cluster"
-        if _q_confirm(f"  Let each workspace's settings file choose its own {place}? "
-                      "Only say yes if you trust every workspace's settings.", default=False):
-            cfg["workspace_infrastructure"] = True
-    return cfg
+    return _ask_workspace_servers(cfg)
 
 
 def pick_research_execution() -> dict[str, Any]:

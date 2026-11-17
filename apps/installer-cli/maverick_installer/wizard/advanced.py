@@ -2118,6 +2118,22 @@ def _ask_chat_and_resource_followups(advanced: dict[str, Any]) -> None:
     _pick_swarm_scale(advanced)
 
 
+def _ask_workspace_servers(cfg: dict[str, Any]) -> dict[str, Any]:
+    """The sandbox step's last question, for clusters and remote computers.
+
+    Off unless chosen, and nothing is written for "no": a workspace's own
+    settings file may then name its own cluster or remote computer, never
+    weaker isolation or new connection options (``[sandbox]
+    workspace_infrastructure``)."""
+    if cfg.get("backend") not in ("kubernetes", "ssh"):
+        return cfg
+    place = "remote computer" if cfg["backend"] == "ssh" else "cluster"
+    if _q_confirm(f"  Let each workspace's settings file choose its own {place}? "
+                  "Only say yes if you trust every workspace's settings.", default=False):
+        cfg["workspace_infrastructure"] = True
+    return cfg
+
+
 def _ask_regulated_deployment(advanced: dict[str, Any]) -> None:
     """Signed tax-constants channel, data residency, disclosure and regulatory profiles."""
     # Tax-constants content channel: law changes ship as SIGNED bundles
