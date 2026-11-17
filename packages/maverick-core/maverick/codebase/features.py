@@ -1467,6 +1467,27 @@ def protected_refusal(p: dict) -> str | None:
     return None
 
 
+def protected_status(world, p: dict) -> str:
+    """Whether a proposal is protected and what it still needs (Copilot):
+    the approvals so far from people who count, and which second checker
+    looked, or why it cannot be approved. Empty when it is not protected."""
+    rec = p.get("protected")
+    if not isinstance(rec, dict):
+        return ""
+    what = ("Protected, because it changes Lightwork's own code" if rec.get("self") else
+            f"Protected, because it changes {rec.get('count', len(rec.get('paths') or []))} "
+            "protected path(s)")
+    refusal = protected_refusal(p)
+    if refusal:
+        return f"{what}. {refusal}"
+    state = (world.approval_state(p["approval_id"]) or {}) if p.get("approval_id") else {}
+    people = {str(a) for a in state.get("approvers") or () if str(a).startswith("user:")}
+    people.discard(str(p.get("owner") or ""))
+    return (f"{what}. It needs two different people to approve, not the person who started "
+            f"it: {min(len(people), PROTECTED_APPROVALS)} of {PROTECTED_APPROVALS} so far. "
+            f"The second checker, {rec.get('model')}, looked at this version.")
+
+
 def _protected_evidence(p: dict) -> tuple[list[str], list[str], list[str]]:
     """(the card's first lines, gaps, finding lines) for a protected change."""
     rec = p.get("protected")
@@ -2051,7 +2072,8 @@ def default_reviewer(*, budget=None) -> Reviewer:
 
 __all__ = ["checker_sandbox", "default_checker", "default_checkers", "default_protected_checker",
            "default_reviewer", "default_runner", "evidence", "feature_budget", "find",
-           "list_proposals", "loop_settings", "merge", "propose", "protected_refusal", "push",
+           "list_proposals", "loop_settings", "merge", "propose", "protected_refusal",
+           "protected_status", "push",
            "run_tests", "settle", "status", "tier_summary"]
 
 

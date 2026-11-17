@@ -508,6 +508,23 @@ def _pick_codebase(advanced: dict[str, Any]) -> None:
         "the tests, the checker and the agent share this computer.",
         default=False,
     )
+    _pick_codebase_protected(advanced)
+
+
+def _pick_codebase_protected(advanced: dict[str, Any]) -> None:
+    """The second, cross-family checker a change to a protected path needs,
+    and whether Lightwork may change the code it was installed from."""
+    model = str(_q_text(
+        "    Model for the second checker of protected code changes, a different kind of "
+        "model from the author's (blank = protected changes cannot be approved)",
+        default="") or "").strip()
+    if model:
+        advanced["codebase_protected_checker_model"] = model[:200]
+    advanced["codebase_allow_self_changes"] = _q_confirm(
+        "    Let Lightwork propose changes to the code it was installed from? (not "
+        "recommended; run the factory from a separate installation instead)",
+        default=False,
+    )
 
 
 def _pick_codebase_checkers(advanced: dict[str, Any]) -> None:
@@ -3324,6 +3341,11 @@ def _cfg_advanced_memory_and_immune(advanced: dict[str, Any]) -> list[str]:
             lines.append(f"checker_image = {_toml_str(advanced['codebase_checker_image'])}")
         if advanced.get("codebase_require_container"):
             lines.append("require_container = true")
+        if advanced.get("codebase_protected_checker_model"):
+            lines.append("protected_checker_model = "
+                         + _toml_str(advanced["codebase_protected_checker_model"]))
+        if advanced.get("codebase_allow_self_changes"):
+            lines.append("allow_self_changes = true")
     if advanced.get("ifc_mode"):
         lines.append("")
         lines.append("[ifc]")

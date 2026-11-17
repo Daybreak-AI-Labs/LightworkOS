@@ -1375,12 +1375,15 @@ def test_write_config_emits_codebase_when_enabled(tmp_path: Path, monkeypatch):
     parsed = _write_full_config(tmp_path, monkeypatch, advanced={
         "codebase_enable": True, "codebase_checkers": 2, "codebase_max_repros": 3,
         "codebase_checker_models": ["openai:gpt-x", "gemini:g-y"],
-        "codebase_checker_image": "lightwork/checker:1"})
+        "codebase_checker_image": "lightwork/checker:1",
+        "codebase_protected_checker_model": "openai:second", "codebase_allow_self_changes": True})
     assert parsed["codebase"] == {"enable": True, "default_protect": "block",
                                   "repair_rounds": 2, "checker": True, "check_rounds": 2,
                                   "checkers": 2, "max_repros": 3,
                                   "checker_models": ["openai:gpt-x", "gemini:g-y"],
-                                  "checker_image": "lightwork/checker:1"}
+                                  "checker_image": "lightwork/checker:1",
+                                  "protected_checker_model": "openai:second",
+                                  "allow_self_changes": True}
     parsed = _write_full_config(tmp_path, monkeypatch, advanced={})
     assert "codebase" not in parsed
 

@@ -127,18 +127,23 @@ def _code_checks(request):
     if not vault.enabled():
         return _answer("Code projects are turned off, so no code changes are waiting.", "/code", "Open Code", "Code")
     world = _world()
-    rows = [p for p in features.list_proposals() if features.status(world, p) == "pending"]
+    rows = [p for p in features.list_proposals()
+            if features.status(world, p) in ("pending", "blocked", "decision")]
     parts = []
     for i, p in enumerate(rows[:8], 1):
-        gaps = features.evidence(p)["gaps"]
+        waiting = features.decision_lines(p)
+        protected = features.protected_status(world, p)
+        gaps = [g for g in features.evidence(p)["gaps"] if g != features.protected_refusal(p)]
         state = (" ".join(["Not fully checked:", *gaps[:3]]) if gaps else
                  "The tests passed and the independent check left no blocking problem open.")
         tiers = features.tier_summary(p)
-        parts.append(f"{i}. {_bounded(p['title'])} in {_bounded(p['repo'], 64)}. {state}"
+        parts.append(f"{i}. {_bounded(p['title'])} in {_bounded(p['repo'], 64)}. "
+                     + "".join(f"{line} " for line in waiting[:1])
+                     + (f"{protected} " if protected else "") + state
                      + (f" {tiers}" if tiers else "") + _code_reruns(p))
     if parts:
-        reply = (f"Checked the proposed code changes {_checked_at()}. Waiting for approval: "
-                 f"{len(rows)}. {' '.join(parts)}")
+        reply = (f"Checked the proposed code changes {_checked_at()}. Waiting for approval or "
+                 f"a person: {len(rows)}. {' '.join(parts)}")
     else:
         reply = f"Checked the proposed code changes {_checked_at()}. None are waiting for approval."
     if len(rows) > 8:

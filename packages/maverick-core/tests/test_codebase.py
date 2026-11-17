@@ -2305,3 +2305,13 @@ def test_the_installations_own_repository_is_refused_then_protected(upstream, tm
     assert p["protected"]["self"] is True and p["protected"]["paths"] == []
     assert features.evidence(p)["lines"][0] == features.SELF_LINE
     assert world.get_approval(p["approval_id"]).approvals_required == 2
+
+
+def test_copilot_words_say_what_a_protected_change_still_needs(upstream, tmp_path, monkeypatch):
+    monkeypatch.delenv("MAVERICK_ALLOW_SELF_APPROVAL", raising=False)
+    world, p = _protected_proposal(upstream, tmp_path, monkeypatch)
+    said = features.protected_status(world, p)
+    assert said.startswith("Protected, because it changes 1 protected path(s).")
+    assert "0 of 2 so far" in said and "openai:second-model, looked at this version" in said
+    world.decide_approval(p["approval_id"], "approved", decided_by="user:alice")
+    assert "1 of 2 so far" in features.protected_status(world, p)
