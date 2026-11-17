@@ -805,6 +805,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Erasure receipts are now issued as `lightwork.erasure-receipt.v3`, which
   also counts a run's decision requests before deletion. Receipts issued as v2
   keep verifying against the stores they listed; nothing needs re-issuing.
+- Copilot on the Agent trust page can now list outside agents, check whether
+  one would be let in, change an app-added agent's limits, and turn blocking
+  on or off. Each runs the page's own checks. To offer them, choose Connections
+  in "Actions available through Copilot".
 
 ### Fixed
 

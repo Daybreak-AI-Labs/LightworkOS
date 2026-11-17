@@ -179,6 +179,7 @@ def _adapter_modules():
         product_operations_activation,
         product_operations_agent_activity,
         product_operations_agent_overrides,
+        product_operations_agent_trust,
         product_operations_answer_feedback,
         product_operations_applicability_regions,
         product_operations_approval_challenges,
@@ -461,6 +462,7 @@ def _adapter_modules():
         product_operations_continuous_evidence,
         product_operations_viewpoints,
         product_operations_partner_limits,
+        product_operations_agent_trust,
         product_operations_sensitive_data_exit,
     )
 

@@ -20,6 +20,8 @@
   limits file aside so the default limits apply (``--start-over``).
 
 Restoring a blocked agent (``maverick trust unrevoke``) already has an API.
+Each change runs one shared function, which Copilot also calls
+(``product_operations_agent_trust`` and ``product_operations_partner_limits``).
 """
 from __future__ import annotations
 
@@ -119,8 +121,17 @@ def _enforced_now() -> bool | None:
         return None
 
 
-@router.post("/enforcement")
-async def set_enforcement(request: Request, body: EnforcementIn):
+class ConfirmationNeeded(Exception):
+    """Turning blocking off lowers a protection and was not confirmed."""
+
+
+_PINNED = "Your installation controls this setting, so it cannot be changed here."
+
+
+def apply_enforcement(request: Request, enforced: bool, *, confirm: bool) -> None:
+    """Turn blocking of unlisted outside agents on or off. Shared by the page
+    and Copilot: installation administrators only, turning it off needs the
+    person's confirmation, and a change that cannot be recorded is undone."""
     require_global_permission(request, "admin")
     from maverick.audit import AuditRefused
 
@@ -129,63 +140,64 @@ async def set_enforcement(request: Request, body: EnforcementIn):
     from .settings_audit import record_setting_change
 
     setting = catalog.BY_ID["agent_trust.enforce"]
-    before = await run_in_threadpool(_enforced_now)
-    if not body.enforced and before is not False and not body.confirm:
+    before = _enforced_now()
+    if not enforced and before is not False and not confirm:
+        raise ConfirmationNeeded
+
+    settings_store.set_agent_trust_enforce(enforced)
+    effective = _enforced_now()
+    if effective is not enforced:
+        # Something with higher precedence pins it: leave the saved value
+        # matching what is really in force.
+        if effective is not None:
+            settings_store.set_agent_trust_enforce(effective)
+            _enforced_now()
+        raise HTTPException(status_code=409, detail=_PINNED)
+    if before is enforced:
+        return
+    try:
+        record_setting_change(
+            request, section="agent_trust", key="enforce", old=before, new=enforced,
+            confirmed=confirm and catalog.weakens(setting, before, enforced))
+    except AuditRefused as exc:
+        # No change without a record of it: put the previous value back.
+        if before is not None:
+            settings_store.set_agent_trust_enforce(before)
+            _enforced_now()
+        raise HTTPException(
+            status_code=503,
+            detail="The change could not be recorded, so it was undone.") from exc
+
+
+@router.post("/enforcement")
+async def set_enforcement(request: Request, body: EnforcementIn):
+    try:
+        await run_in_threadpool(lambda: apply_enforcement(request, body.enforced, confirm=body.confirm))
+    except ConfirmationNeeded:
+        from . import settings_catalog as catalog
+
+        setting = catalog.BY_ID["agent_trust.enforce"]
         return JSONResponse(
             {"detail": "confirmation required",
              "confirm": [{"id": setting.id, "label": setting.label, "warning": setting.warning}]},
             status_code=409, headers={"Cache-Control": "no-store"})
-
-    def write() -> bool:
-        settings_store.set_agent_trust_enforce(body.enforced)
-        effective = _enforced_now()
-        if effective is not body.enforced:
-            # Something with higher precedence pins it: leave the saved value
-            # matching what is really in force.
-            if effective is not None:
-                settings_store.set_agent_trust_enforce(effective)
-                _enforced_now()
-            return False
-        return True
-
-    if not await run_in_threadpool(write):
-        raise HTTPException(
-            status_code=409,
-            detail="Your installation controls this setting, so it cannot be changed here.")
-    if before is not body.enforced:
-        try:
-            await run_in_threadpool(
-                lambda: record_setting_change(
-                    request, section="agent_trust", key="enforce", old=before,
-                    new=body.enforced,
-                    confirmed=body.confirm and catalog.weakens(setting, before, body.enforced)))
-        except AuditRefused as exc:
-            # No change without a record of it: put the previous value back.
-            if before is not None:
-                await run_in_threadpool(settings_store.set_agent_trust_enforce, before)
-                await run_in_threadpool(_enforced_now)
-            raise HTTPException(
-                status_code=503,
-                detail="The change could not be recorded, so it was undone.") from exc
     return {"enforced": body.enforced}
 
 
-@router.post("/agents/{agent_id}/check")
-async def check_agent(request: Request, agent_id: str, body: CheckIn) -> dict:
+def check_access(request: Request, agent_id: str, body: CheckIn) -> dict:
+    """Replay the access decision for one agent without changing anything.
+    Shared by the page and Copilot; anyone who may view the page."""
     require_permission(request, "view")
     from maverick import agent_trust
 
     if not agent_trust.valid_agent_id(agent_id):
         raise HTTPException(status_code=404, detail="That agent is not on the list.")
-
-    def decide():
-        if body.direction == "outbound":
-            return agent_trust.decide_outbound(agent_id, enforced=True)
-        return agent_trust.decide_inbound(agent_id, requested_tools=body.tools,
-                                          max_risk=body.risk, enforced=True)
-
     try:
-        decision = await run_in_threadpool(decide)
+        if body.direction == "outbound":
+            decision = agent_trust.decide_outbound(agent_id, enforced=True)
+        else:
+            decision = agent_trust.decide_inbound(agent_id, requested_tools=body.tools,
+                                                  max_risk=body.risk, enforced=True)
     except agent_trust.AgentTrustError as exc:
         raise HTTPException(status_code=503, detail="The list of outside agents could not be read.") from exc
     return {"allowed": bool(decision.allowed),
@@ -193,8 +205,15 @@ async def check_agent(request: Request, agent_id: str, body: CheckIn) -> dict:
                                    if not decision.allowed else "This agent would be let in.")}
 
 
-@router.put("/agents/{agent_id}")
-async def update_agent(request: Request, agent_id: str, body: AgentLimitsIn) -> dict:
+@router.post("/agents/{agent_id}/check")
+async def check_agent(request: Request, agent_id: str, body: CheckIn) -> dict:
+    return await run_in_threadpool(check_access, request, agent_id, body)
+
+
+def apply_agent_limits(request: Request, agent_id: str, body: AgentLimitsIn) -> None:
+    """Change an app-managed agent's limits, keeping its connection tokens,
+    expiry and block state. Shared by the page and Copilot: workspace
+    administrators only, in the caller's workspace."""
     require_permission(request, "admin")
     from maverick import agent_trust
 
@@ -224,9 +243,14 @@ async def update_agent(request: Request, agent_id: str, body: AgentLimitsIn) -> 
             agent_trust._save_managed(kept)
 
     try:
-        await run_in_threadpool(write)
+        write()
     except agent_trust.AgentTrustError as exc:
         raise HTTPException(status_code=503, detail="The list of outside agents could not be saved.") from exc
+
+
+@router.put("/agents/{agent_id}")
+async def update_agent(request: Request, agent_id: str, body: AgentLimitsIn) -> dict:
+    await run_in_threadpool(apply_agent_limits, request, agent_id, body)
     return {"ok": True, "id": agent_id}
 
 
