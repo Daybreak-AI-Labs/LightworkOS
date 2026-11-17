@@ -555,3 +555,22 @@ def test_world_database_guard_reads_service_files_and_more_local_spellings(monke
         probe.close()
     if own and not own.startswith("127."):
         assert "records database" in run(f"postgresql+psycopg://u:p@{own}:5433/lightwork"), own
+
+
+def test_own_addresses_are_looked_up_once_per_process(monkeypatch):
+    # A slow or missing resolver must not delay every query: the host-name
+    # lookup runs once, with a short limit, and its answer is kept.
+    import socket
+
+    from maverick.tools import database_tool as tool
+
+    calls = []
+    monkeypatch.setattr(socket, "getaddrinfo",
+                        lambda *a, **k: calls.append(a) or [(0, 0, 0, "", ("192.0.2.77", 0))])
+    tool._own_addresses.cache_clear()
+    try:
+        assert tool._endpoint_host("192.0.2.77") == "local"
+        assert tool._endpoint_host("198.51.100.9") == "198.51.100.9"
+        assert len(calls) == 1
+    finally:
+        tool._own_addresses.cache_clear()

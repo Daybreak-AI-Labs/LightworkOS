@@ -904,6 +904,8 @@ MIGRATIONS.append((56, [
 #: Rows of an event or episode table filled per transaction when row-level
 #: security is turned on (``PostgresWorldModel._fill_stamped_tenants``).
 _STAMP_FILL_BATCH = 10_000
+#: Tries per fill batch when the tables stay busy for longer than 200 ms.
+_STAMP_FILL_ATTEMPTS = 5
 
 _PG_SCHEMA_VERSION = MIGRATIONS[-1][0]
 
@@ -1873,17 +1875,33 @@ class PostgresWorldModel:
                 cur.execute(f"CREATE INDEX IF NOT EXISTS idx_pg_{table}_tenant ON {table}(tenant_id)")
 
     def _fill_stamped_batch(self, table: str, low: int, high: int) -> None:
-        with self._tx() as cur:
-            cur.execute("SELECT relname FROM pg_class WHERE relforcerowsecurity "
-                        "AND oid IN ('goals'::regclass, %s::regclass)", (table,))
-            forced = [row[0] for row in cur.fetchall()]
-            for name in forced:  # the owner must see every row; restored before commit
-                cur.execute(f"ALTER TABLE {name} NO FORCE ROW LEVEL SECURITY")
-            cur.execute(f"UPDATE {table} c SET tenant_id = g.tenant_id FROM goals g "
-                        "WHERE g.id = c.goal_id AND c.id > %s AND c.id <= %s "
-                        "AND c.tenant_id IS DISTINCT FROM g.tenant_id", (low, high))
-            for name in forced:
-                cur.execute(f"ALTER TABLE {name} FORCE ROW LEVEL SECURITY")
+        """Fill one batch. Lifting FORCE queues an exclusive lock that other
+        queries wait behind, so the batch waits at most 200 ms for it and is
+        retried a few times before the start stops with a plain message."""
+        for attempt in range(_STAMP_FILL_ATTEMPTS):
+            try:
+                with self._tx() as cur:
+                    cur.execute("SET LOCAL lock_timeout = '200ms'")
+                    cur.execute("SELECT relname FROM pg_class WHERE relforcerowsecurity "
+                                "AND oid IN ('goals'::regclass, %s::regclass)", (table,))
+                    forced = [row[0] for row in cur.fetchall()]
+                    for name in forced:  # the owner must see every row; restored before commit
+                        cur.execute(f"ALTER TABLE {name} NO FORCE ROW LEVEL SECURITY")
+                    cur.execute(f"UPDATE {table} c SET tenant_id = g.tenant_id FROM goals g "
+                                "WHERE g.id = c.goal_id AND c.id > %s AND c.id <= %s "
+                                "AND c.tenant_id IS DISTINCT FROM g.tenant_id", (low, high))
+                    for name in forced:
+                        cur.execute(f"ALTER TABLE {name} FORCE ROW LEVEL SECURITY")
+                return
+            except Exception as exc:
+                if getattr(exc, "sqlstate", None) != "55P03":
+                    raise
+                time.sleep(0.5 * (attempt + 1))
+        raise RuntimeError(
+            f"Turning on row-level security stopped while copying each {table} row's "
+            "workspace, because goals was busy with other work. Nothing is lost: start "
+            "Lightwork again when it is quieter, and it carries on where it stopped."
+        )
 
     def _apply_rls(self) -> None:
         """Enable Postgres Row-Level Security on the tenant-scoped tables.

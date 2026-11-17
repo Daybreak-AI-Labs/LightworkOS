@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import contextlib
 import fnmatch
+import functools
 import ipaddress
 import logging
 import math
@@ -280,15 +281,31 @@ def _proc_addresses() -> set[str]:
     return found
 
 
-def _own_addresses() -> set[str]:
-    """This computer's own addresses, loopback or not."""
-    import socket
+#: Longest wait for the host-name lookup in :func:`_own_addresses`.
+_OWN_LOOKUP_SECONDS = 1.0
 
-    found = _proc_addresses()
-    with contextlib.suppress(OSError, UnicodeError):
-        for info in socket.getaddrinfo(socket.gethostname(), None):
-            found.add(str(info[4][0]).split("%", 1)[0])
-    return found
+
+@functools.lru_cache(maxsize=1)
+def _own_addresses() -> frozenset[str]:
+    """This computer's own addresses, loopback or not, looked up once per
+    process. The host-name lookup runs in a helper thread and is given up
+    after :data:`_OWN_LOOKUP_SECONDS`, so a slow resolver costs one short
+    wait, not one per query."""
+    import socket
+    import threading
+
+    found = set(_proc_addresses())
+    resolved: list[str] = []
+
+    def lookup() -> None:
+        with contextlib.suppress(OSError, UnicodeError):
+            resolved.extend(str(info[4][0]).split("%", 1)[0]
+                            for info in socket.getaddrinfo(socket.gethostname(), None))
+
+    worker = threading.Thread(target=lookup, name="maverick-own-addresses", daemon=True)
+    worker.start()
+    worker.join(_OWN_LOOKUP_SECONDS)
+    return frozenset(found | set(resolved))
 
 
 def _ip(host: str):
