@@ -233,8 +233,18 @@ _ACL_RISK = ("low", "medium", "high", (None, ""))
 # stricter direction, so only the organisation sets it: a lower layer's value
 # is ignored and reported.
 TENANT_RULES: dict[str, dict[str, tuple]] = {
-    # A workspace may charge paid tool calls more, never less.
+    # A workspace may lower a task's caps, never raise them (zero is a cap),
+    # keep them on, add warnings, and charge paid tool calls more, never less.
+    # The provider-cap period, self-tuning, receipts and the guidance switches
+    # have no rule: only the organisation sets them.
     "budget": {
+        **{key: _consumer(f"budget.{key}") for key in (
+            "max_dollars", "max_wall_seconds", "max_tool_calls", "max_input_tokens",
+            "max_output_tokens")},
+        "task_limits_enabled": _consumer("budget.task_limits_enabled", True),
+        "strict_pricing": _consumer("budget.strict_pricing", True),
+        "provider_caps": _consumer("budget.provider_caps", {}),
+        "warning_thresholds": _consumer("budget.warning_thresholds"),
         "unpriced_tool_call_dollars": ("minimum", 0.10, (), None),
         # The full hold is the charge when usage is not reported: only up.
         "max_unmetered_hold_dollars": ("minimum", 1.00, (), None),

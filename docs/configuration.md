@@ -232,9 +232,10 @@ backend = "local"                   # local | docker | ssh | podman | gvisor | d
 workdir = "~/maverick-workspace"
 timeout = 60
 # A workspace file (tenants/<name>/config.toml) may set only policy keys that
-# have a stricter direction, and only make them stricter; every other key in
-# [governance], [safety], [capabilities], [sandbox], [approval], [security],
-# [codebase], [egress], [tenancy], [enterprise], [profile] and [compliance] is
+# have a stricter direction, and only make them stricter (a [budget] cap only
+# lower); every other key in [budget], [governance], [safety], [capabilities],
+# [sandbox], [approval], [security], [codebase], [egress], [tenancy],
+# [enterprise], [profile] and [compliance] is
 # ignored and listed by `maverick doctor`, as are [tools] deferred_loading,
 # fetch_allow_private, fetch_skip_scan and database_allow_url_arg. With this
 # switch on (organisation file only), a workspace may also choose a plain

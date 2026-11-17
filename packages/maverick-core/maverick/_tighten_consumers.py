@@ -435,6 +435,97 @@ def tool_prices(upper: object, lower: object) -> tuple[Any, bool]:
     return merged, loosened
 
 
+def task_cap(key: str):
+    """``[budget] max_dollars`` and the other task caps, read as
+    ``budget._configured_task_limits`` reads them: unset is no cap, zero is a
+    cap of nothing, and anything else it refuses. A workspace may only lower
+    one; an organisation cap the budget cannot read stays the organisation's."""
+    from .budget import _BUDGET_KEY_TYPES
+    from .policy_tighten import Incomparable
+
+    caster = _BUDGET_KEY_TYPES[key]
+
+    def read(value: object) -> float:
+        if isinstance(value, bool) or isinstance(value, (dict, list, tuple)):
+            raise ValueError("expected a number")
+        try:
+            amount = float(caster(value))
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("expected a number") from exc
+        if not math.isfinite(amount) or amount < 0:
+            raise ValueError("expected a finite non-negative number")
+        return amount
+
+    def merge(upper: object, lower: object) -> tuple[Any, bool]:
+        low = read(lower)
+        if upper is None:
+            return lower, False
+        try:
+            up = read(upper)
+        except ValueError as exc:
+            raise Incomparable("the organisation's cap cannot be read") from exc
+        return (upper, True) if low > up else (lower, False)
+    return merge
+
+
+def _provider_caps(value: object) -> dict[str, float]:
+    """``provider_cost_cap.caps_from_config``: names in any case, positive
+    numbers only (zero or less is no cap)."""
+    from .provider_cost_cap import _canon
+
+    if not isinstance(value, dict):
+        raise ValueError("expected a table of caps")
+    caps: dict[str, float] = {}
+    for name, amount in value.items():
+        if isinstance(amount, bool) or not isinstance(amount, (int, float)):
+            raise ValueError("expected a number")
+        if _canon(name) and math.isfinite(amount) and amount > 0:
+            caps[_canon(name)] = float(amount)
+    return caps
+
+
+def provider_caps(upper: object, lower: object) -> tuple[Any, bool]:
+    """``[budget.provider_caps]``: a workspace may lower a service's cap or add
+    one, in any spelling, never raise or remove one."""
+    from .provider_cost_cap import _canon
+
+    if not isinstance(lower, dict):
+        raise ValueError("expected a table of caps")
+    up = _provider_caps(upper) if isinstance(upper, dict) else {}
+    merged, loosened = dict(up), False
+    for name, value in lower.items():
+        key, amount = _canon(name), _provider_caps({name: value}).get(_canon(name))
+        if key in up and (amount is None or amount > up[key]):
+            loosened = True
+        elif amount is not None:
+            merged[key] = amount
+    return merged, loosened
+
+
+def warning_thresholds(upper: object, lower: object) -> tuple[Any, bool]:
+    """``[budget] warning_thresholds`` as ``budget_guidance.policy`` reads
+    them: a workspace may add warnings, never remove the organisation's."""
+    from .config_contracts import NUMBER_LIST_SETTINGS
+    from .policy_tighten import Incomparable
+
+    contract = NUMBER_LIST_SETTINGS["budget.warning_thresholds"]
+
+    def read(value: object) -> list[float]:
+        if (not isinstance(value, list) or not value or len(value) > contract.max_items
+                or any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v)
+                       or not contract.minimum_exclusive < v <= contract.maximum for v in value)):
+            raise ValueError("expected warning thresholds")
+        return sorted(set(value))
+
+    low = read(lower)
+    try:
+        up = read(list(contract.default) if upper is None else upper)
+    except ValueError as exc:
+        raise Incomparable("the organisation's thresholds cannot be read") from exc
+    merged = read(sorted(set(up) | set(low)))
+    return merged, any(item not in low for item in up)
+
+
 def _switch(default: bool, *, protection: bool):
     """A switch whose consumer reads only ``true`` or ``false``; anything
     else is the consumer's default. A protection may only go to on, a
@@ -614,6 +705,12 @@ MERGES = {
     "codebase.protected_checker_model": organisation_only,
     "codebase.allow_self_changes": organisation_only,
     "budget.tool_prices": tool_prices,
+    "budget.provider_caps": provider_caps,
+    "budget.warning_thresholds": warning_thresholds,
+    "budget.task_limits_enabled": _switch(True, protection=True),
+    "budget.strict_pricing": _switch(True, protection=True),
+    **{f"budget.{key}": task_cap(key) for key in (
+        "max_dollars", "max_wall_seconds", "max_tool_calls", "max_input_tokens", "max_output_tokens")},
     "codebase.enable": _switch(False, protection=False),
     "approval.record_checks": _switch(True, protection=True),
     "approval.require_acknowledgement": _switch(True, protection=True),

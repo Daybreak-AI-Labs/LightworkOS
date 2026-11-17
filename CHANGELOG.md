@@ -957,6 +957,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A task an agent started inside a code change now runs only inside that
   code change. `maverick resume`, Resume, the Copilot, the queue and recovery
   refuse it and say to start a new code change.
+- A workspace file can lower but no longer raise budget caps: the spending,
+  time, action and word limits per task, and the caps per AI service. It
+  cannot turn task limits or strict pricing off, and may only add warning
+  thresholds. A value it cannot use is ignored and listed by `maverick
+  doctor`; raise a cap in the organisation's config.toml instead.
 
 ### Fixed
 

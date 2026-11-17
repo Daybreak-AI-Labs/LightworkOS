@@ -1847,6 +1847,26 @@ def test_a_tenant_overlay_can_only_tighten_organisation_policy(tmp_path, monkeyp
         "governance.require_human_min_risk", "capabilities.browser"]}
 
 
+def test_a_workspace_file_cannot_raise_the_organisations_budget_caps(tmp_path, monkeypatch):
+    from maverick import config
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    monkeypatch.delenv("MAVERICK_CONFIG", raising=False)
+    (tmp_path / "config.toml").write_text(
+        "[budget]\nmax_dollars = 2.0\nmax_wall_seconds = 600\n", encoding="utf-8")
+    tenant = tmp_path / "tenants" / "acme" / "config.toml"
+    tenant.parent.mkdir(parents=True)
+    tenant.write_text("[budget]\nmax_dollars = 20.0\nmax_wall_seconds = 300\n", encoding="utf-8")
+    config.reset_config_cache()
+    monkeypatch.setenv("MAVERICK_TENANT", "acme")
+
+    budget = config.load_config()["budget"]
+    assert budget["max_dollars"] == 2.0 and budget["max_wall_seconds"] == 300   # lowered only
+    assert config.tenant_ignored_settings() == {"budget.max_dollars"}
+    monkeypatch.delenv("MAVERICK_TENANT")
+    assert config.tenant_policy_loosenings() == {"acme": ["budget.max_dollars"]}
+
+
 def test_an_existing_workspace_file_with_now_ignored_settings_loads_and_lists_them(tmp_path, monkeypatch, capsys):
     from maverick import config, health
 

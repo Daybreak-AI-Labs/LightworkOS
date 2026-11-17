@@ -33,6 +33,21 @@ CASES = {
                                s={"deepl": {"dollars": 0.03, "per": "request"}},
                                l={"deepl": {"dollars": 0.01, "per": "request"}},
                                ul={"deepl": {"dollars": 0.01, "per": "request"}}),
+    # A workspace may lower a task's caps, never raise them; zero is a cap.
+    "budget.max_dollars": dict(os=5.0, s=2.0, ol=0, l=10.0, us=2.0),
+    "budget.max_wall_seconds": dict(os=1800, s=600, l=3600, us=600),
+    "budget.max_tool_calls": dict(os=50, s=20, l=100, us=20),
+    "budget.max_input_tokens": dict(os=100000, s=50000, l=200000, us=50000),
+    "budget.max_output_tokens": dict(os=20000, s=10000, l=40000, us=10000),
+    "budget.task_limits_enabled": _prot(True),
+    "budget.strict_pricing": _prot(True),
+    # Per AI service, in any spelling: lower or add a cap, never raise one.
+    "budget.provider_caps": dict(os={"anthropic": 50.0}, s={"Anthropic": 20.0, "openai": 10.0},
+                                 se={"anthropic": 20.0, "openai": 10.0}, l={"ANTHROPIC": 100.0},
+                                 us={"openai": 10.0}),
+    # Warnings may be added, never removed.
+    "budget.warning_thresholds": dict(os=[0.8, 1.0], s=[0.5, 0.8, 1.0], l=[1.0],
+                                      us=[0.5, 0.8, 0.95, 1.0], ul=[5]),
     # A deny-like list only grows: the tenant's names are added to the
     # organisation's, so only a value the consumer cannot read is ignored.
     "governance.deny_actions": dict(os=["shell"], s=["browser"], se=["shell", "browser"], l="shell", us=["shell"]),
@@ -268,6 +283,33 @@ def consumer(tmp_path, monkeypatch):
             monkeypatch.delenv("MAVERICK_TENANT")
 
     return run
+
+
+def test_a_workspace_can_lower_but_never_raise_a_task_budget(consumer, monkeypatch):
+    from maverick.budget import resolve_budget_caps
+    from maverick.provider_cost_cap import caps_from_config
+
+    for name in ("MAVERICK_BUDGET_DOLLARS", "MAVERICK_BILLING_STRICT"):
+        monkeypatch.delenv(name, raising=False)
+
+    def ask():
+        return resolve_budget_caps(), caps_from_config()
+
+    org = ("[budget]\nmax_dollars = 5.0\nmax_wall_seconds = 600\nmax_tool_calls = 0\n"
+           "[budget.provider_caps]\nanthropic = 50.0\n")
+    raised = ("[budget]\nmax_dollars = 50.0\nmax_wall_seconds = 6000\nmax_tool_calls = 10\n"
+              "task_limits_enabled = false\n[budget.provider_caps]\nANTHROPIC = 500.0\n")
+    (caps, providers), ignored = consumer(org, raised, ask)
+    assert caps == {"max_dollars": 5.0, "max_wall_seconds": 600.0, "max_tool_calls": 0}
+    assert providers == {"anthropic": 50.0}
+    assert {"budget.max_dollars", "budget.max_wall_seconds", "budget.max_tool_calls",
+            "budget.task_limits_enabled", "budget.provider_caps"} <= ignored
+    lowered = "[budget]\nmax_dollars = 1.5\n[budget.provider_caps]\nAnthropic = 20.0\n"
+    (caps, providers), ignored = consumer(org, lowered, ask)
+    assert caps["max_dollars"] == 1.5 and providers == {"anthropic": 20.0} and not ignored
+    # An organisation cap the budget cannot read stays the organisation's.
+    _, ignored = consumer('[budget]\nmax_dollars = "lots"\n', lowered, lambda: None)
+    assert "budget.max_dollars" in ignored
 
 
 def test_a_workspace_cannot_turn_on_self_approval_or_run_as_root(consumer, monkeypatch):
@@ -536,6 +578,9 @@ def test_the_unruled_key_list_comes_from_the_code():
     assert {"sandbox.image", "sandbox.kubeconfig", "safety.receipt_key", "capabilities.deferred_tools",
             "approval.undo_grace_seconds", "sandbox.workspace_infrastructure"} <= set(keys)
     assert "sandbox.tool" not in keys and "approval.record_checks" not in keys
+    assert {f"budget.{key}" for key in ("guidance", "warnings", "self_tuning", "receipts",
+                                        "provider_caps_period")} <= set(keys)
+    assert not {"budget.max_dollars", "budget.strict_pricing"} & set(keys)
 
 
 @pytest.mark.parametrize("key", _unruled_keys())
