@@ -8,6 +8,7 @@ rule. Chat cards use the kernel path with the stricter chat rule.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response
@@ -17,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .auth import caller_principal, has_permission, require_permission
 
 router = APIRouter(tags=["decisions"])
+log = logging.getLogger(__name__)
 
 
 class AnswerIn(BaseModel):
@@ -42,7 +44,7 @@ def is_admin(request: Request) -> bool:
 def _row(decision: dr.Decision, who: str, admin: bool, world) -> dict[str, Any]:
     reason, sentence = dr.refusal(decision, who, is_admin=admin)
     return {**decision.public(), "can_answer": not reason, "why_not": sentence,
-            "restart_note": dr.restart_note(world.get_goal(decision.goal_id))}
+            "restart_note": dr.restart_note(world.get_goal(decision.goal_id), world)}
 
 
 def visible(request: Request, world=None) -> list[dr.Decision]:
@@ -55,10 +57,28 @@ def visible(request: Request, world=None) -> list[dr.Decision]:
     return [d for d in dr.list_open(world) if admin or d.requested_by == who]
 
 
+def waiting_count(request: Request, world=None) -> int:
+    """How many open decisions this person can read: the Approvals header and
+    sidebar count them with the approval requests. Unreadable counts as none."""
+    try:
+        return len(visible(request, world))
+    except HTTPException:
+        return 0
+    except Exception:  # noqa: BLE001 -- a count never breaks the page
+        log.warning("decision count unavailable", exc_info=True)
+        return 0
+
+
 def selected(request: Request, decision_id: int, world=None) -> dr.Decision:
     """One open decision this person may read, or a plain 404."""
+    world = world if world is not None else _world()
     found = next((d for d in visible(request, world) if d.id == int(decision_id)), None)
     if found is None:
+        closed = dr.get(world, int(decision_id))
+        if (closed is not None and closed.status == "closed"
+                and (is_admin(request) or closed.requested_by == actor(request))):
+            raise HTTPException(409, "This run has ended, so this decision no longer applies. "
+                                     "Nothing changed.")
         raise HTTPException(404, "This decision is no longer waiting, or it is not yours to read.")
     return found
 

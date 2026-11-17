@@ -410,17 +410,21 @@ def test_a_past_due_decision_expires_without_anyone_looking(tmp_path, monkeypatc
     assert world.get_goal(gid).status == "failed"
 
 
-@pytest.mark.parametrize("principal, says", [
-    ("key:nightly-report", "Only whoever started this run can start it again"),
-    ("federation:peer-1", "no person can restart it"),
-    ("agent:governance-reviewer", "no person can restart it"),
+@pytest.mark.parametrize("principal, origin, says", [
+    ("key:nightly-report", None, "Only whoever started this run can start it again."),
+    # A fleet agent a person started from the dashboard: not "another system".
+    ("agent:fleet.reviewer", None, "Only whoever started this run can start it again."),
+    ("federation:peer-1", "federation", "no person can restart it"),
+    ("a2a", None, "no person can restart it"),
 ])
-def test_a_run_bound_to_its_own_key_says_who_restarts_it(tmp_path, principal, says):
+def test_a_run_bound_to_its_own_key_says_who_restarts_it(tmp_path, principal, origin, says):
     world = _world(tmp_path)
     gid = world.create_goal("tidy", "", owner="alice", execution_principal=principal)
+    if origin:
+        world.record_goal_origin(gid, origin, "peer-1")
     world.set_goal_status(gid, "blocked")
     decision = dr.request(world, gid, **dr.validate(_REQUEST))
-    assert says in dr.restart_note(world.get_goal(gid))  # shown before anyone answers
+    assert says in dr.restart_note(world.get_goal(gid), world)  # shown before anyone answers
 
     outcome = dr.answer(world, decision.id, 1, actor="alice", is_admin=False)
 

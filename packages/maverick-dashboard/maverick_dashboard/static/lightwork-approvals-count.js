@@ -12,7 +12,8 @@
     return source.replace(/\{([a-z]+)\}/g, function (whole, name) { return values && name in values ? String(values[name]) : whole; });
   }
   function refresh() {
-    var open = queue.querySelectorAll(':scope > article.approval-item').length + (parseInt(box.dataset.flowCount, 10) || 0);
+    var open = queue.querySelectorAll(':scope > article.approval-item').length + (parseInt(box.dataset.flowCount, 10) || 0)
+      + (parseInt(box.dataset.decisionCount, 10) || 0);
     var hidden = parseInt(box.dataset.privateCount, 10) || 0;
     var checked = box.dataset.coverage === 'current';
     var name = box.querySelector('.hero-statebox__row strong');
@@ -30,4 +31,6 @@
     }
   }
   new MutationObserver(refresh).observe(queue, {childList: true});
+  // lightwork-decisions.js updates the count when decisions load or are answered.
+  new MutationObserver(refresh).observe(box, {attributes: true, attributeFilter: ['data-decision-count']});
 }());

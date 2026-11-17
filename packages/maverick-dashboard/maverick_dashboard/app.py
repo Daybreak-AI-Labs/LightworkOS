@@ -10142,6 +10142,9 @@ def approvals_page(request: Request, view: str = "") -> HTMLResponse:
 
     all_view = _all_decisions_view(request, view)
     world = _world()
+    from .decision_requests_api import waiting_count
+
+    decision_count = waiting_count(request, world)
     pending = list(world.pending_approvals())
     approvals = [row for row in pending if can_read_approval(request, row, world)]
     flow_approvals = pending_for_request(request)
@@ -10161,6 +10164,7 @@ def approvals_page(request: Request, view: str = "") -> HTMLResponse:
             "flow_approvals": flow_approvals["items"],
             "flow_approval_coverage": flow_approvals["coverage"],
             "private_count": len(pending) - len(approvals),
+            "decision_count": decision_count,
             "private_cards": private,
             "viewer_role": _approval_viewer_role(request),
             # Link to Content access only when asking for a card read is on.

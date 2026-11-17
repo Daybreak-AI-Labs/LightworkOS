@@ -12339,7 +12339,10 @@ def approvals_waiting_count(request: Request, response: Response) -> dict:
     opened = {a.id for a in pending if can_read_approval(request, a, w)}
     # A private request still waits on someone the rules let decide it in chat.
     private = waiting_in_chat([a for a in pending if a.id not in opened], _supervisor(request) or "")
-    return {"waiting": len(opened) + private + len(pending_for_request(request)["items"])}
+    from .decision_requests_api import waiting_count
+
+    return {"waiting": len(opened) + private + len(pending_for_request(request)["items"])
+            + waiting_count(request, w)}
 
 
 def _approval_api_row(approval) -> dict:

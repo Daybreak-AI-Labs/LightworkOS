@@ -123,3 +123,31 @@ def test_the_queue_says_who_restarts_a_run_bound_to_its_own_key(env):
 
     assert rows[waiting.id]["restart_note"] == dr.STARTER_RESTARTS
     assert rows[_decision.id]["restart_note"] == ""
+
+
+def test_the_approvals_page_counts_waiting_decisions(env):
+    client, _world, _goal, _decision, _who, _started = env
+
+    page = client.get("/approvals")
+    count = client.get("/api/v1/approvals/waiting-count").json()
+
+    assert page.status_code == 200
+    assert "1 request waiting" in page.text and "All clear" not in page.text
+    import re
+
+    shown = re.sub(r"<script\b.*?</script>", "", page.text, flags=re.DOTALL)
+    assert "Nothing needs your decision right now" not in shown
+    assert "No actions waiting for approval" in shown
+    assert 'data-decision-count="1"' in page.text and count["waiting"] == 1
+
+
+def test_an_ended_run_says_so_and_a_stranger_still_gets_the_generic_refusal(env):
+    client, world, goal, decision, who, _started = env
+    world.set_goal_status(goal, "cancelled")
+
+    owner = client.post(f"/api/v1/decisions/{decision.id}/answer", json={"option": 1})
+    who["principal"] = "user:mallory"
+    stranger = client.post(f"/api/v1/decisions/{decision.id}/answer", json={"option": 1})
+
+    assert owner.status_code == 409 and "This run has ended" in owner.text
+    assert stranger.status_code == 404 and "not yours to read" in stranger.text

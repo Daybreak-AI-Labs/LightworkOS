@@ -695,7 +695,7 @@ def answer(world, decision_id: int, option: int, *, actor: str, is_admin: bool,
                  "manual" if not int(waiting) and not resumable else "waiting")
     outcome: dict[str, Any] = {"decision": decided, "resume": resume, "next": following}
     if following == "manual":
-        outcome["restart"] = restart_note(world.get_goal(current.goal_id)) or STARTER_RESTARTS
+        outcome["restart"] = restart_note(world.get_goal(current.goal_id), world) or STARTER_RESTARTS
         goal = world.get_goal(current.goal_id)
         if goal is not None and goal.status == "blocked":
             world.set_goal_status(current.goal_id, "blocked", result=(
@@ -1069,22 +1069,39 @@ def resume_kwargs(goal) -> dict[str, Any] | None:
     return {"user_id": None if user == "local" else user}
 
 
-#: Principals of runs that another system started (an A2A peer, a federated
-#: workspace, a governance or other automated agent): no person restarts them.
-_SYSTEM_PRINCIPALS = ("a2a", "federation", "federation-goal", "federated", "agent",
-                      "governance", "external", "external_agents", "grpc-command")
-STARTER_RESTARTS = "Only whoever started this run can start it again after the answer."
+#: How a run was started, from its records, when no person started it: the
+#: ``goal_origins`` kinds written by federation admission and by external agent
+#: run reports, and the A2A capability's own principal (``a2a_tasks``).
+_SYSTEM_ORIGINS = frozenset({"federation", "external_run"})
+_A2A_PRINCIPAL = "a2a"
+STARTER_RESTARTS = "Only whoever started this run can start it again."
 NOBODY_RESTARTS = ("Another system started this run, so no person can restart it here. "
                    "The answer is saved for the record.")
 
 
-def restart_note(goal) -> str:
+def _started_by_system(goal, world) -> bool:
+    if str(getattr(goal, "execution_principal", "") or "") == _A2A_PRINCIPAL:
+        return True
+    if world is None:
+        return False
+    try:
+        rows = world.tenant_query(
+            "SELECT o.kind FROM goal_origins o WHERE o.goal_id = ? AND {tenant_goal:o.goal_id}",
+            (int(goal.id),))
+    except Exception:  # noqa: BLE001 -- unknown origin: the neutral sentence
+        log.debug("goal origin unreadable", exc_info=True)
+        return False
+    return any(str(row[0]) in _SYSTEM_ORIGINS for row in rows)
+
+
+def restart_note(goal, world=None) -> str:
     """For a run Lightwork cannot restart after an answer (bound to its own
-    access key): who can. ``""`` for a run that restarts by itself."""
+    access key): who can, decided from the run's records (its origin, or the
+    A2A capability), never from the shape of its principal. ``""`` for a run
+    that restarts by itself."""
     if goal is None or resume_kwargs(goal) is not None:
         return ""
-    kind = str(getattr(goal, "execution_principal", "") or "").split(":", 1)[0].strip().lower()
-    return NOBODY_RESTARTS if kind in _SYSTEM_PRINCIPALS else STARTER_RESTARTS
+    return NOBODY_RESTARTS if _started_by_system(goal, world) else STARTER_RESTARTS
 
 
 def dispatch_resume(world, goal_id: int) -> bool:

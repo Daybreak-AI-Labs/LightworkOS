@@ -6,6 +6,8 @@
   var root = document.getElementById('decision-requests');
   if (!root || typeof window.mvFetchJSON !== 'function') return;
   var list = root.querySelector('[data-decision-list]');
+  var stateBox = document.getElementById('approvals-current-state');
+  function count(n) { if (stateBox) stateBox.dataset.decisionCount = String(Math.max(0, n)); }
   var status = root.querySelector('[data-decision-status]');
 
   function el(tag, cls, text) {
@@ -50,12 +52,14 @@
     });
     form.appendChild(set);
     var noteId = 'decision-' + d.id + '-note';
+    var noteField = el('div', 'field decision-note', null);
     var noteLabel = el('label', null, 'Note for the run (optional)');
     noteLabel.htmlFor = noteId;
-    var note = el('textarea');
-    note.id = noteId; note.maxLength = 2000; note.rows = 2;
+    var note = el('textarea', 'textarea', null);
+    note.id = noteId; note.maxLength = 2000; note.rows = 3;
     if (!d.can_answer) note.disabled = true;
-    form.appendChild(noteLabel); form.appendChild(note);
+    noteField.appendChild(noteLabel); noteField.appendChild(note);
+    form.appendChild(noteField);
     var actions = el('div', 'approval-actions', null);
     var send = el('button', 'btn', 'Send my choice');
     send.type = 'submit';
@@ -87,6 +91,7 @@
           timeout: 15000}, 'send your choice');
         said.textContent = result.message;
         set.disabled = true; note.disabled = true;
+        if (stateBox) count((parseInt(stateBox.dataset.decisionCount, 10) || 1) - 1);
       } catch (error) {
         said.textContent = error.message;
         send.disabled = false;
@@ -102,6 +107,7 @@
       list.textContent = '';
       (data.decisions || []).forEach(function (d) { list.appendChild(card(d)); });
       root.hidden = !(data.decisions || []).length;
+      count((data.decisions || []).length);
     } catch (error) {
       root.hidden = false;
       status.textContent = 'Decisions could not be loaded. Refresh this page.';
