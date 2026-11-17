@@ -93,7 +93,7 @@ test("a failed request rejects with plain words from mvErrorText, never the serv
   });
   w.fetch = async () => respond(403, { detail: "off" }, { "X-Lightwork-Reason": "feature-off", "X-Lightwork-Feature-Label": "Ekko" });
   await assert.rejects(w.mvFetchJSON("/api/v1/x", {}, "open Ekko"), (error) => {
-    assert.match(error.message, /^Could not open Ekko\. Ekko is turned off\./);
+    assert.match(error.message, /^Could not open Ekko\. Ekko: turned off\./);
     assert.ok(w.mvFeatureOff(error), "the error still tells a page the feature is off");
     return true;
   });

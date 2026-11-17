@@ -65,7 +65,7 @@ def test_page_fails_closed_and_template_uses_safe_dom(page_client) -> None:
     )
     assert disabled.status_code == 200
     assert 'data-module-gate="consent_preferences.scanner.notice_proposals"' in disabled.text
-    assert "Disclosure suggestions is turned off." in disabled.text
+    assert "Disclosure suggestions: turned off." in disabled.text
     assert "[consent_preferences.scanner.notice_proposals]" not in disabled.text
 
     template = (

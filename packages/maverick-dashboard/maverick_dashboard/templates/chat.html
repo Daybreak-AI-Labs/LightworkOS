@@ -234,7 +234,7 @@
 {% if not model_route_ready %}
 <p class="cs-dock__note" id="composer-readiness" role="status">{{ ui(workspace.reason) }}</p>
 {% elif workspace.verdict == 'needs_test' %}
-<p class="cs-dock__note" id="composer-readiness" role="status">{{ ui(workspace.reason) }}{% if workspace.next_action %} <a href="{{ workspace.next_action.href }}">{{ ui(workspace.next_action.label) }}</a>{% endif %} {{ ui('You can still start a task.') }}</p>
+<p class="cs-dock__note" id="composer-readiness" role="status">{{ ui(workspace.reason) }}{% if workspace.next_action %} <a href="{{ workspace.next_action.href }}">{{ ui(workspace.next_action.label) }}</a>.{% endif %} {{ ui('You can still start a task.') }}</p>
 {% else %}
 <p class="cs-dock__note">{{ ui('Check spending limits and approval settings before starting. Some actions may need your approval.') }}</p>
 {% endif %}

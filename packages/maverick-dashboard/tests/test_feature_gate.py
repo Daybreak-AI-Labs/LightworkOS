@@ -45,7 +45,7 @@ def test_saving_a_rights_form_property_while_the_form_is_off_says_it_is_off():
         "name": "Shop", "organisation": "Acme", "contact_email": "privacy@acme.example",
         "jurisdictions": ["eu_gdpr"], "request_types": ["access"]})
     _off(r, "privacy_automation.public_rights_form", "Rights request form")
-    assert r.json()["detail"] == "Rights request form is turned off."
+    assert r.json()["detail"] == "Rights request form: turned off."
 
 
 def test_the_breach_planner_says_it_is_off_and_can_be_turned_on():
@@ -79,7 +79,7 @@ def test_a_browser_landing_on_a_turned_off_page_is_offered_turn_on(tmp_path):
     config.reset_config_cache()
     page = client.get(f"/privacy/dsar/{request['id']}", headers={"Accept": "text/html"})
     assert page.status_code == 403
-    assert "The privacy register is turned off" in page.text
+    assert "The privacy register: turned off" in page.text
     assert "Permission required" not in page.text
 
 
@@ -107,3 +107,14 @@ def test_refusal_text_that_says_off_is_classified(detail, section):
 ])
 def test_refusals_about_the_person_are_left_alone(detail):
     assert feature_gate.refusal_headers(detail) == {}
+
+
+def test_turned_off_wording_reads_right_for_plural_names():
+    # Live: "Code projects is turned off.", "Policy packs is turned off."
+    assert feature_gate.feature_off("policy_packs").detail == "Policy packs: turned off."
+    assert feature_gate.feature_off("").detail == "This feature is turned off."
+    from maverick_dashboard.app import templates
+
+    banner = templates.env.from_string(
+        '{% from "_module_gate.html" import module_gate %}{{ module_gate("codebase", "Code projects") }}').render()
+    assert "Code projects: turned off." in banner and "is turned off" not in banner

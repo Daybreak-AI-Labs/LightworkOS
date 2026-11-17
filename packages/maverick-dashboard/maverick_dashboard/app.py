@@ -3599,7 +3599,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
 
             gate = "off"
             label = unquote(headers.get(feature_gate.LABEL_HEADER, ""))
-            title = f"{label} is turned off" if label else "This page is turned off"
+            title = f"{label}: turned off" if label else "This page is turned off"
             message = (
                 "This feature is turned off for your workspace, or its settings "
                 "could not be read. An administrator can turn it on in Settings."
