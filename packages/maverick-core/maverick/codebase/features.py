@@ -497,7 +497,7 @@ class _Loop:
 
     def _round_tier(self, head: str) -> dict | None:
         """After an author round: the quick tier when set, with ``{changed}``
-        filled in, else the full suite. More than MAX_CHANGED_PATHS changed
+        filled in (paths in that version, deletions left out), else the full suite. More than MAX_CHANGED_PATHS changed
         paths run the full suite instead (the quick command without them
         when there is none)."""
         quick, full = self.repo.quick_test_command, self.repo.test_command
@@ -513,8 +513,9 @@ class _Loop:
         return self._run_tier("full", head, full) if full else None
 
     def _changed(self, head: str) -> list[str]:
-        return [f for f in _git(["diff", "--name-only", "--no-renames", "-z", self.base, head],
-                                git_dir=self.host).split("\0") if f]
+        # Paths in the version being tested: never a deleted or renamed-away one.
+        return [f for f in _git(["diff", "--name-only", "--no-renames", "--diff-filter=d",
+                                 "-z", self.base, head], git_dir=self.host).split("\0") if f]
 
     def _candidate(self, head: str) -> dict | None:
         """The full suite and the gate on ``head``, each at most once per
@@ -878,7 +879,7 @@ class _Loop:
                 state = "passed" if result["passed"] else "failed"
             tiers[tier] = {"state": state, "reason": reason, "command": command,
                            "exit_code": None if result is None else result["exit_code"]}
-            if result is not None and result.get("output"):
+            if result is not None and result.get("output") and result["commit"] == self.head:
                 outputs.append(f"--- {label}: `{result['command']}` ---\n{result['output']}")
         tests = None
         if self.repo.test_command:

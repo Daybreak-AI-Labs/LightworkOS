@@ -717,8 +717,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   happen only when the steps run in a container, and a fix that only
   makes the re-run pass waits for a later look to confirm it.
 - A code project can now have test tiers: quick tests run after each
-  repair round (`{changed}` lists the changed files), and the full tests
-  plus other checks run on the finished change; a failure goes back to the
+  repair round (`{changed}`, unquoted, lists the changed files that still
+  exist, so the command must accept any path), and the full tests plus
+  other checks run on the finished change; a failure goes back to the
   author. Tests that need services run only in `[codebase] checker_image`.
   Set them with `maverick code add|set --quick-test --gate --heavy-test`
   or "Test commands" on the Code page. The approval card shows one line

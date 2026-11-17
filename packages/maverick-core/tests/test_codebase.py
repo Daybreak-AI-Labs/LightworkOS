@@ -1879,3 +1879,55 @@ def test_a_workspace_cannot_change_a_repositorys_commands(upstream, tmp_path, mo
     repo = vault.get("pricing")
     assert (repo.test_command, repo.quick_test_command, repo.gate_command) == (
         "python -m pytest -q", None, "python lint.py")
+
+
+# -- test tiers, repair round 1: what {changed} holds, what a command may
+#    contain, and output from earlier versions --
+
+def test_changed_paths_leave_out_deleted_and_renamed_away_files(upstream, tmp_path):
+    vault.register("pricing", str(upstream), test_command="python -m pytest -q",
+                   quick_test_command="python check_paths.py {changed}")
+    world = WorldModel(tmp_path / "world.db")
+    box = _recording()
+
+    def rename_and_note(work):
+        _passing(work)
+        (work / "test_app.py").rename(work / "test_price.py")
+        (work / "NOTES.md").write_text("notes\n")
+        # Fails on any path that is not in the copy (a deleted or renamed-away file).
+        (work / "check_paths.py").write_text(
+            "import os, sys\nsys.exit(0 if all(os.path.exists(p) for p in sys.argv[1:]) else 1)\n")
+    run, calls = _rounds(rename_and_note)
+    p = features.propose(world, "pricing", "Rename", "", run, sandbox_factory=box,
+                         repair_rounds=2)
+    assert box.ran[0] == "python check_paths.py NOTES.md app.py check_paths.py test_price.py"
+    assert len(calls) == 1 and p["tiers"]["quick"]["state"] == "passed"
+    assert p["tiers"]["full"]["state"] == "passed"
+
+
+def test_a_command_must_be_plain_text_with_an_unquoted_placeholder(upstream):
+    vault.register("pricing", str(upstream))
+    for bad in ('pytest "{changed}"', "pytest '{changed}'", 'run "a {changed} b"'):
+        with pytest.raises(vault.VaultError, match="not inside quotes"):
+            vault.set_commands("pricing", quick_test_command=bad)
+    for bad in ("pytest -q\nrm -rf x", "pytest\t-q", "pytest\x1b[2J", "pytest\x85",
+                "pytest ‮q-", "pytest ⁦x⁩", "pytest\x7f", "pytest\u2028x", " pytest\t"):
+        with pytest.raises(vault.VaultError, match="plain text"):
+            vault.set_commands("pricing", test_command=bad)
+    ok = vault.set_commands("pricing", quick_test_command="x 'a b' \"c\" {changed} 'it''s'")
+    assert ok.quick_test_command.endswith("{changed} 'it''s'")
+
+
+def test_test_output_shown_is_only_from_the_final_version():
+    from types import SimpleNamespace
+    repo = vault.Repo("pricing", "src", "main", test_command="python -m pytest -q",
+                      quick_test_command="python -c pass")
+    loop = SimpleNamespace(repo=repo, head="b" * 40, stopped=None, results={
+        "quick": {"command": "python -c pass", "commit": "b" * 40, "passed": True,
+                  "exit_code": 0, "output": "quick ok"},
+        "full": {"command": "python -m pytest -q", "commit": "a" * 40, "passed": True,
+                 "exit_code": 0, "output": "3 passed"}})
+    loop._why_not = lambda result: features._Loop._why_not(loop, result)
+    tests, tiers, output = features._Loop.tier_record(loop)
+    assert tiers["full"]["state"] == "not run" and tests["ran"] is False
+    assert "quick ok" in output and "3 passed" not in output   # never an earlier version's run

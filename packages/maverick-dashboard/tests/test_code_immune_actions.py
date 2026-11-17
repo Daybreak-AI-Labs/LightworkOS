@@ -142,6 +142,7 @@ def test_code_actions_need_admin(client, monkeypatch):
 @pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
 def test_an_admin_sets_a_projects_test_commands_like_adding_it(client, monkeypatch, tmp_path):
     from maverick.codebase import vault
+    from maverick_dashboard import code_actions_api
     _code_on(monkeypatch)
     vault.register("core", str(_source_repo(tmp_path)), test_command="python -m pytest -q")
     url = "/api/v1/code/repos/core/commands"
@@ -153,6 +154,14 @@ def test_an_admin_sets_a_projects_test_commands_like_adding_it(client, monkeypat
         "gate_command": "bash lint.sh", "heavy_test_command": ""}
     refused = client.post(url, json={"gate_command": "lint {changed}"})
     assert refused.status_code == 422 and "quick tests" in refused.json()["detail"]
+    # One limit and one message for every command, on both forms.
+    long = "x" * 2001
+    for path, body in ((url, {"test_command": long}),
+                       ("/api/v1/code/repos", {"name": "y", "source": "https://example.com/y.git",
+                                               "test_command": long})):
+        refused = client.post(path, json=body)
+        assert refused.status_code == 422 and refused.json()["detail"] == \
+            code_actions_api._COMMANDS_REFUSED, path
     assert client.post("/api/v1/code/repos/nope/commands", json={"gate_command": "x"}).status_code == 404
     assert client.get("/api/v1/code/summary").json()["repos"][0]["test_tiers"] == ["quick", "gate"]
 

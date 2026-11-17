@@ -7,7 +7,7 @@ the company's git host until a person approves the change.
 ```bash
 maverick code add payments https://git.example.com/acme/payments.git \
   --test "python -m pytest -q" --token-env ACME_GIT_TOKEN
-maverick code set payments --quick-test "python -m pytest -q {changed}" --gate "ruff check ."
+maverick code set payments --quick-test "./scripts/quick-tests.sh {changed}" --gate "ruff check ."
 maverick code feature payments "Add refund reasons" -d "Store a reason code on every refund"
 maverick code proposals            # pending | approved | rejected | merged; gaps
 maverick code show <id>            # what was checked, diff, test output, review
@@ -237,10 +237,22 @@ command as before.
 
 | Tier | Command | When it runs |
 | --- | --- | --- |
-| Quick | `quick_test_command` | After each author round while repairing. `{changed}` becomes the paths the change touches (relative, shell-quoted, deletions included). With more than 200, the full suite runs instead. |
+| Quick | `quick_test_command` | After each author round while repairing. `{changed}` becomes the paths the change touches that exist in that version (relative, shell-quoted; deleted and renamed-away paths are left out). With more than 200, the full suite runs instead. |
 | Full | `test_command` | Once the quick tier passes, on the same commit; again on the final commit if it changed since. Without a quick tier it runs after each author round. |
 | Gate | `gate_command` | With the full suite: lint and other gates. The author's brief names it. |
 | Heavy | `heavy_test_command` | Tests that need services (a database, a browser), on the final commit, only in `[codebase] checker_image`. Without the image it reads "not run (needs the checker image)"; it never runs on this computer. |
+
+`{changed}` lists every changed file, not only tests: documentation,
+data and source files too. So the quick command must accept any path. A
+plain `pytest -q {changed}` does not: it fails when a change touches only
+`app.py` or adds `NOTES.md`, and then repair rounds are spent on something
+the author cannot fix. Pass the paths to a script that picks the tests
+instead, as the example for this repository below does. Write `{changed}`
+on its own, never inside quotes: each path is already quoted, and inside
+double quotes the shell would run what a file name contains. Lightwork
+refuses a quoted placeholder. Commands are one line of plain text, at most
+2,000 characters: control characters (tab and newline included) and
+bidirectional override characters are refused.
 
 Every tier runs on a fresh copy of the pinned commit in a contained step,
 and `budget.check()` runs before each one: a tier the spending limit
@@ -255,7 +267,7 @@ pass alone never counts, and when the full suite did not run (the spending
 limit, or the repair rounds ran out before the quick tier passed) the card
 says so and lists it as a gap. A failing quick tier, a gate or heavy tier
 that did not pass or did not run, are gaps too. `maverick code show`
-prints each tier's output; Copilot's answer about proposed code changes
+prints the output of each tier that ran on the final commit; Copilot's answer about proposed code changes
 names each tier's result.
 
 ### Lightwork's own repository

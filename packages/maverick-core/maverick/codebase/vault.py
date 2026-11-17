@@ -63,6 +63,11 @@ class Repo:
 COMMANDS = ("test_command", "quick_test_command", "gate_command", "heavy_test_command")
 CHANGED = "{changed}"
 MAX_COMMAND_CHARS = 2000
+# One line of plain text: no C0 or C1 control character (tab and newline
+# included; ordinary spaces separate words), no DEL, no line or paragraph
+# separator, and no bidirectional override or isolate that could make a
+# command read differently from what runs.
+_NOT_PLAIN = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029\u202a-\u202e\u2066-\u2069]")
 
 
 def enabled() -> bool:
@@ -210,13 +215,37 @@ def check_commands(given: dict[str, str | None]) -> dict[str, str | None]:
             raise VaultError(f"unknown command {key!r}")
         if value is not None and not isinstance(value, str):
             raise VaultError(f"{key} must be text")
-        value = (value or "").strip() or None
-        if value and (len(value) > MAX_COMMAND_CHARS or "\0" in value):
-            raise VaultError(f"{key} must be plain text of at most {MAX_COMMAND_CHARS} characters")
+        if value and _NOT_PLAIN.search(value):  # before strip(), which drops some of them
+            raise VaultError(f"{key} must be plain text on one line, at most "
+                             f"{MAX_COMMAND_CHARS} characters")
+        value = (value or "").strip(" ") or None
+        if value and len(value) > MAX_COMMAND_CHARS:
+            raise VaultError(f"{key} must be plain text on one line, at most "
+                             f"{MAX_COMMAND_CHARS} characters")
         if value and CHANGED in value and key != "quick_test_command":
             raise VaultError(f"only the quick test command can use {CHANGED}")
+        if value and _quoted_placeholder(value):
+            raise VaultError(f"put {CHANGED} on its own, not inside quotes: each path is "
+                             "already quoted, and inside quotes a file name could run commands")
         out[key] = value
     return out
+
+
+def _quoted_placeholder(command: str) -> bool:
+    """Whether ``{changed}`` appears inside single or double quotes (where the
+    shell would expand what the quoted paths contain)."""
+    quote, i = "", 0
+    while i < len(command):
+        if command.startswith(CHANGED, i) and quote:
+            return True
+        ch = command[i]
+        if ch == "\\" and quote != "'":
+            i += 2
+            continue
+        if ch in "'\"" and quote in ("", ch):
+            quote = "" if quote else ch
+        i += 1
+    return False
 
 
 def register(name: str, source: str, *, default_branch: str | None = None,

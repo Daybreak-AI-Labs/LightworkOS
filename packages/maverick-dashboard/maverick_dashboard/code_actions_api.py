@@ -55,20 +55,21 @@ class RepoIn(BaseModel):
     name: str = Field(min_length=1, max_length=64)
     source: str = Field(min_length=1, max_length=2000)
     branch: str | None = Field(default=None, max_length=200)
-    test_command: str | None = Field(default=None, max_length=500)
-    quick_test_command: str | None = Field(default=None, max_length=2000)
-    gate_command: str | None = Field(default=None, max_length=2000)
-    heavy_test_command: str | None = Field(default=None, max_length=2000)
+    # Test commands: vault.check_commands is their one limit and message.
+    test_command: str | None = None
+    quick_test_command: str | None = None
+    gate_command: str | None = None
+    heavy_test_command: str | None = None
     protect: str = "block"
 
 
 class CommandsIn(BaseModel):
     """A code project's test commands; a missing one is kept, an empty one
-    is cleared."""
-    test_command: str | None = Field(default=None, max_length=2000)
-    quick_test_command: str | None = Field(default=None, max_length=2000)
-    gate_command: str | None = Field(default=None, max_length=2000)
-    heavy_test_command: str | None = Field(default=None, max_length=2000)
+    is cleared. vault.check_commands is their one limit and message."""
+    test_command: str | None = None
+    quick_test_command: str | None = None
+    gate_command: str | None = None
+    heavy_test_command: str | None = None
 
 
 class FeatureIn(BaseModel):
@@ -193,8 +194,9 @@ async def add_repo(request: Request, body: RepoIn) -> dict:
     _audit(request, "add_repo", repo=repo.name)
     return {"name": repo.name, "default_branch": repo.default_branch}
 
-_COMMANDS_REFUSED = ("Lightwork could not save these commands. Keep each one under 2,000 "
-                     "characters, and list the changed files only in the quick tests.")
+_COMMANDS_REFUSED = ("Lightwork could not save these commands. Keep each one to a single line "
+                     "of at most 2,000 characters. Only the quick tests can list the changed "
+                     "files, and not inside quotes.")
 
 
 def _commands(repo) -> dict:

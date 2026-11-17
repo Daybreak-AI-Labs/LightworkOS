@@ -33,7 +33,8 @@ def _tier_options(func):
                      help="Command that runs the full test suite (on the final version)."),
         click.option("--quick-test", "quick_test_command", default=None,
                      help="Quick tests after each author round while repairing; {changed} "
-                          "becomes the changed paths."),
+                          "(unquoted) becomes the changed paths that still exist. They are "
+                          "not only tests, so the command must accept any path."),
         click.option("--gate", "gate_command", default=None,
                      help="Lint and other gates, run with the full suite on the final version."),
         click.option("--heavy-test", "heavy_test_command", default=None,

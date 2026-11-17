@@ -364,7 +364,7 @@
     catch (error) { fail(failure(error, "open the test commands")); return; }
     var values = await window.mvForm("Test commands for " + name, [
       { key: "quick_test_command", label: "Quick tests (optional)", default: current.quick_test_command, allowEmpty: true,
-        help: "Lightwork runs these after each change while it fixes problems. Write {changed} where the changed files go." },
+        help: "Lightwork runs these after each change while it fixes problems. Write {changed}, not in quotes, where the changed files go. The command must accept any file, not only tests." },
       { key: "test_command", label: "All tests (optional)", default: current.test_command, allowEmpty: true,
         help: "Lightwork runs these on the finished change. Only these passing counts as the tests passing." },
       { key: "gate_command", label: "Other checks (optional)", default: current.gate_command, allowEmpty: true,
