@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import secrets
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from maverick import crypto_at_rest
+from maverick.governed_records import GovernedRecordLocalOnly
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import commitment_economic_alternatives_store as native
@@ -15,6 +17,7 @@ from .tools_ops_api import same_origin
 router = APIRouter(tags=["commitment-economic-alternatives"])
 PURPOSE = "lightwork.commitment-economic-alternatives-review.v1"
 API = "/api/v1/commitment-economic-alternatives"
+log = logging.getLogger(__name__)
 
 
 class ReviewIn(BaseModel):
@@ -42,8 +45,11 @@ def call(function, *args):
         raise
     except (ValueError, TypeError, KeyError) as exc:
         raise HTTPException(422, "Check the complete entered review or supported financial comparison. Unknown outcomes are not alternatives; no fields were truncated.") from exc
+    except GovernedRecordLocalOnly as exc:
+        raise HTTPException(409, native.LOCAL_ONLY + " Nothing was saved or changed.") from exc
     except Exception as exc:
-        raise HTTPException(503, "The exact original result is uncertain. Read its retained request before any separate reviewed test; nothing will repeat automatically.") from exc
+        log.warning("commitment economic alternatives %s failed: %s", getattr(function, "__name__", "operation"), type(exc).__name__, exc_info=True)
+        raise HTTPException(503, "Lightwork could not use its saved records, so the exact original result is uncertain. Read its retained request before any separate reviewed test; nothing will repeat automatically. An administrator can find the cause in the server log.") from exc
 
 
 @router.get(API + "/choices")

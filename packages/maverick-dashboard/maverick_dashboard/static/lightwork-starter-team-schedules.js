@@ -83,7 +83,7 @@
       options($('sts-saved'), schedules.map(row => [row.id, teamName(setups.find(item => item.id === row.setup_id)) + ' - ' + new Date(row.start_at * 1000).toISOString().slice(0, 16).replace('T', ' ') + ' UTC']), preferred || old, 'No reviewed schedules');
       $('sts-create-review').disabled = !setups.length;
       await showSchedule($('sts-saved').value !== old || !$('sts-tables').children.length);
-      message(schedules.length + ' reviewed schedules. Each run still needs its own approved evidence package.'); restore();
+      message(current.message || (schedules.length + ' reviewed schedules. Each run still needs its own approved evidence package.')); restore();
     } catch (error) { generation += 1; schedules = []; account = ''; $('sts-inbox').hidden = true; $('sts-history').replaceChildren(); $('sts-create-review').disabled = true; $('sts-tick').disabled = true; $('sts-pause').disabled = true; options($('sts-saved'), [], '', 'Unavailable'); message(error.message); }
   }
   async function review(action, arguments_) {

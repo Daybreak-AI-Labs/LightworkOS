@@ -14,7 +14,7 @@
   }
   async function refreshHistory() {
     if (historyBusy) return; historyBusy = true;
-    try { const value = await historical('/history'); $('ccl-history-select').replaceChildren(new Option('Choose an exact original request', '')); value.choices.forEach(row => $('ccl-history-select').add(new Option(row.label, row.value))); $('ccl-history-message').textContent = value.choices.length ? 'Only your own retained originals are listed. Current model or source permission is not granted by reading.' : 'No retained qualification requests are available to this account and workspace.'; }
+    try { const value = await historical('/history'); $('ccl-history-select').replaceChildren(new Option('Choose an exact original request', '')); value.choices.forEach(row => $('ccl-history-select').add(new Option(row.label, row.value))); $('ccl-history-message').textContent = value.message || (value.choices.length ? 'Only your own retained originals are listed. Current model or source permission is not granted by reading.' : 'No retained qualification requests are available to this account and workspace.'); }
     catch (error) { $('ccl-history-message').textContent = error.message; } finally { historyBusy = false; }
   }
   if (historyRoot) {

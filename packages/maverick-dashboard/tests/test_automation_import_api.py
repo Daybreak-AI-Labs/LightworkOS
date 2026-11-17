@@ -409,3 +409,61 @@ def test_not_imported_workflow_name_has_no_control_characters():
     detail = response.json()["detail"]
     assert "\x1b" not in detail and "\x07" not in detail
     assert "Fort ]0;FORGED nightly was not imported" in detail
+
+
+def test_an_empty_import_history_is_an_empty_list():
+    response = _client().get(API + "/history")
+    assert response.status_code == 200, response.text
+    assert response.json()["choices"] == [] and "available" not in response.json()
+
+
+@pytest.fixture
+def shared_deployment(monkeypatch):
+    from maverick import governed_records
+    # The real deployment selector; no database is opened.
+    monkeypatch.setenv("MAVERICK_WORLD_BACKEND", "postgres")
+    monkeypatch.setenv("MAVERICK_PG_DSN", "postgresql://example.invalid/never")
+    governed_records._reset_process_authority_pin_for_testing()
+    yield
+    governed_records._reset_process_authority_pin_for_testing()
+
+
+def test_a_shared_deployment_says_plainly_that_import_history_is_not_kept_here(shared_deployment):
+    response = _client().get(API + "/history")
+    assert response.status_code == 200, response.text
+    value = response.json()
+    assert value["choices"] == [] and value["available"] is False
+    assert "single-computer installation" in value["message"]
+    original = _client().get(API + "/original/AIR-" + "0" * 32)
+    assert original.status_code == 409, original.text
+    assert "single-computer installation" in original.json()["detail"]
+
+
+def test_a_real_import_store_failure_stays_closed_and_is_logged(monkeypatch, caplog):
+    import logging
+
+    from maverick import governed_records
+    from maverick_dashboard import automation_imports
+
+    class Broken:
+        def list(self, **_kwargs):
+            raise governed_records.GovernedRecordBackendError("shared governed-record schema is incompatible")
+
+    monkeypatch.setattr(automation_imports, "records", Broken)
+    with caplog.at_level(logging.WARNING, logger=automation_imports.__name__):
+        response = _client().get(API + "/history")
+    assert response.status_code == 503
+    assert response.json()["detail"].startswith("Import information is unavailable.")
+    logged = [row for row in caplog.records if row.name == automation_imports.__name__]
+    assert logged and logged[0].exc_info is not None
+
+
+def test_copilot_says_plainly_that_import_history_is_not_kept_on_a_shared_deployment(shared_deployment, monkeypatch):
+    from maverick_dashboard import product_operations
+
+    monkeypatch.setattr(product_operations, "enabled_families", lambda: {"schedules"})
+    response = _client().post("/api/v1/copilot/product-operations/catalog", json={"page": "/automations"})
+    assert response.status_code == 200, response.text
+    items = {row["id"]: row for row in response.json()["operations"]}
+    original = items["automations.import_original"]
+    assert original["available"] is False and "single-computer installation" in original["blocked"]

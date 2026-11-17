@@ -188,6 +188,14 @@ class GovernedRecordCapacityError(GovernedRecordBackendError):
     """A bounded governed namespace has no admission slot for a new identity."""
 
 
+class GovernedRecordLocalOnly(GovernedRecordBackendError):
+    """A single-computer record collection was opened on a shared deployment.
+
+    Raised before any I/O, so a caller can say the feature is unavailable on
+    this deployment instead of reporting a store outage.
+    """
+
+
 class _GovernedRecordValidationError(ValueError):
     """Controlled validation diagnostic safe to cross the provider boundary."""
 
@@ -1963,6 +1971,12 @@ class GovernedRecordStore:
         # otherwise a caller could select local in configuration while writing
         # a supposedly mandatory authority through an unrelated shared object.
         if selection.kind != required:
+            if required == "local":
+                raise GovernedRecordLocalOnly(
+                    f"{self.record_type} records are kept only on a "
+                    "single-computer installation; this deployment stores "
+                    "governed records in shared Postgres"
+                )
             raise GovernedRecordBackendError(
                 "governed-record deployment authority changed after store selection"
             )
@@ -2520,6 +2534,7 @@ __all__ = [
     "GovernedRecordBackend",
     "GovernedRecordBackendError",
     "GovernedRecordCapacityError",
+    "GovernedRecordLocalOnly",
     "GovernedMutationFence",
     "GovernedRecordStore",
     "LocalGovernedRecordBackend",

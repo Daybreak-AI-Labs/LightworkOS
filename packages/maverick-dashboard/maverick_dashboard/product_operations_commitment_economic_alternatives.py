@@ -118,7 +118,7 @@ def _fields(action, request, value):
 def snapshot(request, selection, *, action):
     value = native.history(request) if action in {"history", "original"} else native.view(request, selected(selection))
     return Snapshot(digest(value), "Owned Promise, additional-work sources and exact financial assumptions", native.NOTICE,
-        fields=_fields(action, request, value))
+        fields=_fields(action, request, value), blocked=value.get("message", "") if action in {"history", "original"} else "")
 
 
 def prepare(request, selection, arguments, *, action):

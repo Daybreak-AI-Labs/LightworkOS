@@ -319,3 +319,46 @@ def test_tick_preview_matches_approval_order_and_active_item():
     schedule["active_item_id"] = "active"
     material, _ = schedules._tick_material(Workflow(), schedule)
     assert material["expected_item_id"] == "active"
+
+
+def test_shared_deployment_lists_no_schedules_and_says_why(web, monkeypatch, caplog):
+    import logging
+
+    from maverick import governed_records
+
+    client, state = web
+    # The real deployment selector; no database is opened.
+    monkeypatch.setenv("MAVERICK_WORLD_BACKEND", "postgres")
+    monkeypatch.setenv("MAVERICK_PG_DSN", "postgresql://example.invalid/never")
+    governed_records._reset_process_authority_pin_for_testing()
+    listed = client.get(BASE)
+    assert listed.status_code == 200, listed.text
+    value = listed.json()
+    assert value["schedules"] == [] and value["preview_only"] is True
+    assert "single-computer installation" in value["message"]
+    assert value["context"] == digest(state["context"].binding())
+    # Any other schedule operation refuses plainly instead of reporting an outage.
+    with caplog.at_level(logging.WARNING, logger=native.__name__):
+        items = client.get(BASE + "/SCH-unknown/items")
+        reviewed = _review(client, state, "schedule", _args(state))
+    for refused in (items, reviewed):
+        assert refused.status_code == 409, refused.text
+        assert "single-computer installation" in refused.json()["detail"]
+    assert not [row for row in caplog.records if row.levelno >= logging.WARNING and row.name == native.__name__]
+
+
+def test_a_real_schedule_store_failure_stays_closed_and_is_logged(web, monkeypatch, caplog):
+    import logging
+
+    client, _ = web
+
+    def broken(_request):
+        raise OSError("state volume is read-only")
+
+    monkeypatch.setattr(schedules, "available_schedules", broken)
+    with caplog.at_level(logging.WARNING, logger=native.__name__):
+        response = client.get(BASE)
+    assert response.status_code == 503
+    assert response.json()["detail"].startswith("The work store is unavailable.")
+    logged = [row for row in caplog.records if row.name == native.__name__]
+    assert logged and logged[0].exc_info is not None

@@ -239,8 +239,15 @@ def _result(value):
 def read_schedules(request: Request):
     from .starter_team_scheduler import worker_status
 
-    return native._response(native.call(lambda: {"schedules": available_schedules(request),
-        "context": digest(native.context(request).binding()), "notice": NOTICE, "worker": worker_status()}))
+    def read():
+        if native._deployment_backend_kind() == "postgres":
+            # Matches the Starter teams catalog: schedules are not kept on a
+            # shared deployment, so there is nothing to list and no store to open.
+            return {"schedules": [], "context": digest(native.context(request).binding()), "notice": NOTICE,
+                    "worker": worker_status(), "preview_only": True, "message": native.LOCAL_ONLY}
+        return {"schedules": available_schedules(request),
+                "context": digest(native.context(request).binding()), "notice": NOTICE, "worker": worker_status()}
+    return native._response(native.call(read))
 
 
 @router.get("/{schedule_id}/items")

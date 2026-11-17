@@ -4,6 +4,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import logging
 import math
 import secrets
 import time
@@ -21,11 +22,14 @@ from . import auth
 from .product_operations import StrictInput
 
 router = APIRouter(prefix="/api/v1/starter-teams", tags=["starter-teams"])
+log = logging.getLogger(__name__)
 PURPOSE = "lightwork.starter-team-review.v1"
 TTL = 600
 NOTICE = ("Samples and record checks prepare findings without calling an AI service or opening sources. "
           "Specialist workflows have a separate review and budget. Provider access and business outcomes "
           "still require qualification. The setup cadence records a preference; it does not start recurring work.")
+LOCAL_ONLY = ("Saved starter teams and their schedules are kept only on a single-computer installation of Lightwork. "
+              "This deployment uses a shared database, so you can preview teams here but not save or schedule them.")
 PUBLIC_INPUT_ERRORS = frozenset({
     "A selected specialist is unavailable; review its setup in Agent Factory",
     "A selected specialist needs setup in Agent Factory before it can run",
@@ -345,7 +349,7 @@ def public_outcome(value):
 
 
 def call(operation):
-    from maverick.governed_records import RecordConflict
+    from maverick.governed_records import GovernedRecordLocalOnly, RecordConflict
     from pydantic import ValidationError
 
     try:
@@ -359,8 +363,11 @@ def call(operation):
     except (ValueError, KeyError, ValidationError) as exc:
         detail = str(exc) if str(exc) in PUBLIC_INPUT_ERRORS else "Check the selected team, required fields and input columns, then review again."
         raise HTTPException(422, detail) from exc
+    except GovernedRecordLocalOnly as exc:
+        raise HTTPException(409, LOCAL_ONLY + " Nothing was saved or changed.") from exc
     except (OSError, RuntimeError) as exc:
-        raise HTTPException(503, "The work store is unavailable. Check the original result before retrying.") from exc
+        log.warning("starter team operation failed: %s", type(exc).__name__, exc_info=True)
+        raise HTTPException(503, "The work store is unavailable. Check the original result before retrying. An administrator can find the cause in the server log.") from exc
 
 
 def _response(value):
