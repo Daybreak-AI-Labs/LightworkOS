@@ -5451,6 +5451,10 @@ def resume(ctx, goal_id_arg, goal_id, max_depth: int, max_dollars, max_wall_seco
         max_wall_seconds=max_wall_seconds,
     )
     _apply_resume_spend(world, goal_id, bud)
+    from ..goal_resume import respend_notice
+
+    if notice := respend_notice(world, goal_id):
+        click.echo(notice)
     # Honor the configured [sandbox] backend on resume too, rather than
     # falling back to run_goal's default local backend and ignoring a user who
     # configured docker/podman. --sandbox overrides it, so an operator who ran
