@@ -385,6 +385,9 @@ def _configure_postgres(request, monkeypatch):
                                        password=params.get("password"), host=params["host"],
                                        port=int(params["port"]), database=params["dbname"])
     monkeypatch.setenv("DATABASE_URL", url.render_as_string(hide_password=False))
+    # The fixture also names this database as Lightwork's records database,
+    # which the tool refuses; here it is an ordinary customer database.
+    monkeypatch.delenv("MAVERICK_PG_DSN", raising=False)
     return psycopg, dsn
 
 
@@ -505,6 +508,7 @@ def test_psycopg2_statement_deadline_and_fresh_next_query(request, monkeypatch):
                                        password=params.get("password"), host=params["host"],
                                        port=int(params["port"]), database=params["dbname"])
     monkeypatch.setenv("DATABASE_URL", url.render_as_string(hide_password=False))
+    monkeypatch.delenv("MAVERICK_PG_DSN", raising=False)  # not Lightwork's records here
     # Qualify a statement deadline, not first-import/native-driver startup.
     # Warm the real dialect with its own fresh connection before the unchanged
     # 150ms budget; the measured call still opens and owns another connection.
