@@ -180,16 +180,16 @@ def _saved_word(saved: str) -> str:
             "Google sign-in": "Google sign-in"}.get(saved, "Key")
 
 
-def _provider_row(name: str, label: str, cfg: dict[str, Any], roles: list[str]) -> dict[str, Any]:
-    from maverick.config import provider_configuration_state
-
+def _provider_row(name: str, label: str, cfg: dict[str, Any], roles: list[str],
+                  state: dict[str, Any]) -> dict[str, Any]:
     from .integration_readiness import provider_readiness
 
-    state = provider_configuration_state(name)
     providers = cfg.get("providers")
     table = (providers.get(name) if isinstance(providers, dict) else None) or {}
     configured, saved = _configured(name, state, table if isinstance(table, dict) else {})
-    readiness = provider_readiness(name, configured=configured)
+    # The same table get_provider_config would read again from the same files.
+    material = providers.get(name, {}) if isinstance(providers, dict) else None
+    readiness = provider_readiness(name, configured=configured, material=material)
     live = readiness["live"]
     runtime = readiness["runtime"]
     row: dict[str, Any] = {
@@ -309,7 +309,7 @@ def workspace_readiness() -> dict[str, Any]:
     verdict with a plain reason, so no page can crash on it or invent a
     different answer."""
     try:
-        from maverick.config import config_source_errors, load_config
+        from maverick.config import config_source_errors, load_config, provider_configuration_states
         from maverick.providers import KNOWN_PROVIDERS
 
         cfg = load_config() or {}
@@ -317,8 +317,10 @@ def workspace_readiness() -> dict[str, Any]:
             return _unavailable("Lightwork's settings could not be read. Open Settings to repair them.")
         roles = _roles_by_provider(cfg)
         labels = provider_labels()
+        states = provider_configuration_states(KNOWN_PROVIDERS)
         rows = [
-            _provider_row(name, labels.get(name, name.replace("_", " ").title()), cfg, roles.get(name, []))
+            _provider_row(name, labels.get(name, name.replace("_", " ").title()), cfg, roles.get(name, []),
+                          states[str(name).strip().lower()])
             for name in KNOWN_PROVIDERS
         ]
     except Exception:  # noqa: BLE001 -- a readiness read never takes a page down
