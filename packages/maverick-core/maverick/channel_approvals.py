@@ -443,10 +443,12 @@ def separate_approver_refusal(world: Any, approval: Any, who: str) -> str:
     Rejecting is never refused. Every surface asks this one question: the
     Approvals page disables its Approve button with the sentence, and
     :func:`record_vote` refuses the vote with it."""
+    from .safety.dual_control import person_key, separate_approver_applies, separate_approver_mode
+
     requester = " ".join(str(getattr(approval, "requested_by", "") or "").split())
-    if not requester or requester != " ".join(str(who or "").split()):
+    # One person spelt two ways (``user:Sam`` / ``user:sam``) is still the requester.
+    if not requester or person_key(requester) != person_key(who):
         return ""
-    from .safety.dual_control import separate_approver_applies, separate_approver_mode
 
     always = getattr(approval, "provenance", None) in ALWAYS_SEPARATE_PROVENANCES
     if not always and not separate_approver_applies(getattr(approval, "risk", ""),

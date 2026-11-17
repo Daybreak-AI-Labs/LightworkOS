@@ -129,6 +129,18 @@ def allow_self_approval() -> bool:
     return bool(v)
 
 
+def person_key(principal: object) -> str:
+    """One person's identity for quorum counting and the requester bar:
+    whitespace collapsed and case folded, so ``user:Alice`` and
+    ``user:alice`` are one person (never two votes, never "someone else")."""
+    return " ".join(str(principal or "").split()).casefold()
+
+
+def distinct_people(principals) -> int:
+    """How many different people (by :func:`person_key`) are in ``principals``."""
+    return len({key for key in map(person_key, principals) if key})
+
+
 SEPARATE_APPROVER_MODES = CHOICE_SETTINGS["approval.separate_approver"].options
 _SEPARATE_APPROVER_RISKS = frozenset({"high", "critical"})
 
@@ -172,5 +184,6 @@ def separate_approver_applies(risk: str | None, approvals_required: object = 1) 
             and _coerce_int(approvals_required, 1) <= 1)
 
 
-__all__ = ["SEPARATE_APPROVER_MODES", "allow_self_approval", "required_approvals",
+__all__ = ["SEPARATE_APPROVER_MODES", "allow_self_approval", "distinct_people", "person_key",
+           "required_approvals",
            "separate_approver_applies", "separate_approver_mode"]

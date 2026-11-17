@@ -1568,9 +1568,10 @@ def protected_status(world, p: dict) -> str:
     refusal = protected_refusal(p)
     if refusal:
         return f"{what}. {refusal}"
+    from ..safety.dual_control import person_key
     state = (world.approval_state(p["approval_id"]) or {}) if p.get("approval_id") else {}
-    people = {str(a) for a in state.get("approvers") or () if str(a).startswith("user:")}
-    people.discard(str(p.get("owner") or ""))
+    people = {person_key(a) for a in state.get("approvers") or () if _named(a)}
+    people.discard(person_key(p.get("owner")))
     return (f"{what}. It needs two different people to approve, not the person who started "
             f"it: {min(len(people), PROTECTED_APPROVALS)} of {PROTECTED_APPROVALS} so far. "
             f"The second checker, {rec.get('model')}, looked at this version.")
@@ -1939,9 +1940,10 @@ def _protected_approval_problem(world, p: dict, appr) -> str | None:
     """A protected change merges or pushes only on the votes of two distinct
     named people, neither the person who started it, whatever surface they
     voted on."""
+    from ..safety.dual_control import person_key
     state = world.approval_state(appr.id) or {}
-    people = {str(a) for a in state.get("approvers") or () if str(a).startswith("user:")}
-    people.discard(str(p.get("owner") or ""))
+    people = {person_key(a) for a in state.get("approvers") or () if _named(a)}
+    people.discard(person_key(p.get("owner")))
     if (appr.provenance != PROTECTED_PROVENANCE
             or int(appr.approvals_required or 1) < PROTECTED_APPROVALS
             or len(people) < PROTECTED_APPROVALS):

@@ -2469,3 +2469,70 @@ def test_a_paused_step_is_never_restarted_outside_its_private_copy(upstream, tmp
         == ["schedule"]
     monkeypatch.setattr(world, "tenant_query", lambda *a, **k: (_ for _ in ()).throw(OSError()))
     assert "could not check" in decision_requests.resume_refusal(world, root)
+
+
+def test_one_person_spelt_two_ways_is_still_one_person(upstream, tmp_path, monkeypatch):
+    import maverick.audit as audit
+    from maverick.channel_approvals import ChannelApprovalRefused, record_vote
+    monkeypatch.setattr(audit, "record", lambda kind, **fields: True)
+    monkeypatch.delenv("MAVERICK_ALLOW_SELF_APPROVAL", raising=False)
+    world, p = _protected_proposal(upstream, tmp_path, monkeypatch)
+    aid = p["approval_id"]
+    for starter in ("user:Starter", "user:STARTER"):            # the starter, spelt differently
+        assert world.decide_approval(aid, "approved", decided_by=starter) is False
+        with pytest.raises(ChannelApprovalRefused):
+            record_vote(world, aid, "approved", starter)
+    assert world.decide_approval(aid, "approved", decided_by="user:alice")
+    assert world.decide_approval(aid, "approved", decided_by="user:ALICE")
+    record_vote(world, aid, "approved", "user:Alice")
+    state = world.approval_state(aid)
+    assert state["status"] == "pending" and state["approved_count"] == 1
+    assert "1 of 2 so far" in features.protected_status(world, p)
+    event = record_vote(world, aid, "approved", "user:bob")      # a second person: quorum
+    assert event.final_status == "approved"
+
+
+@pytest.fixture
+def pg_world(monkeypatch):
+    import os
+    import uuid
+    dsn = os.environ.get("MAVERICK_PG_DSN")
+    if not dsn:
+        pytest.skip("MAVERICK_PG_DSN is not set")
+    psycopg = pytest.importorskip("psycopg")
+    from maverick.world_model_backends.postgres import PostgresWorldModel
+    from psycopg import sql
+    from psycopg.conninfo import make_conninfo
+    db = "mvk_codebase_" + uuid.uuid4().hex
+    with psycopg.connect(dsn, autocommit=True) as admin:
+        admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(db)))
+    own = make_conninfo(dsn, dbname=db)
+    monkeypatch.setenv("MAVERICK_PG_DSN", own)
+    try:
+        yield PostgresWorldModel(own)
+    finally:
+        with psycopg.connect(dsn, autocommit=True) as admin:
+            admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(db)))
+
+
+def test_two_people_on_postgres_never_the_starter_or_one_person_twice(upstream, monkeypatch,
+                                                                       pg_world):
+    import maverick.audit as audit
+    from maverick.channel_approvals import ChannelApprovalRefused, record_vote
+    monkeypatch.setattr(audit, "record", lambda kind, **fields: True)
+    monkeypatch.delenv("MAVERICK_ALLOW_SELF_APPROVAL", raising=False)
+    _protected_repo(upstream, monkeypatch)
+    run, _ = _rounds(_passing)
+    p = features.propose(pg_world, "pricing", "Discount", "", run,
+                         protected_checker=_second()[0], owner="user:starter")
+    aid = p["approval_id"]
+    for who in ("user:starter", "user:STARTER", "agent:x", "operator"):
+        with pytest.raises(ChannelApprovalRefused):
+            record_vote(pg_world, aid, "approved", who)
+    assert pg_world.decide_approval(aid, "approved", decided_by="user:Starter") is False
+    record_vote(pg_world, aid, "approved", "user:alice")
+    record_vote(pg_world, aid, "approved", "user:ALICE")
+    assert pg_world.approval_state(aid)["approved_count"] == 1
+    with pytest.raises(vault.VaultError, match="must approve"):
+        features.merge(pg_world, p["id"])
+    assert record_vote(pg_world, aid, "approved", "user:bob").final_status == "approved"
