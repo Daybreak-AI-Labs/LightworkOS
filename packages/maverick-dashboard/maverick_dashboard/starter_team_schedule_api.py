@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timezone
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from maverick import crypto_at_rest
 from maverick.governed_operations import digest
 from pydantic import Field
@@ -15,8 +15,10 @@ from pydantic import Field
 from . import auth
 from . import starter_teams_api as native
 from .product_operations import StrictInput
+from .store_failures import remember_route
 
-router = APIRouter(prefix="/api/v1/starter-team-schedules", tags=["starter-team-schedules"])
+router = APIRouter(prefix="/api/v1/starter-team-schedules", tags=["starter-team-schedules"],
+                   dependencies=[Depends(remember_route)])
 PURPOSE = "lightwork.starter-team-schedule-review.v1"
 TTL = 600
 NOTICE = ("Schedules can dispatch only individually reviewed evidence packages within their "

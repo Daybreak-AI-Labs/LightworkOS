@@ -64,7 +64,7 @@ def test_other_operations_on_a_shared_deployment_refuse_plainly_not_as_an_outage
 
 def test_a_real_store_failure_stays_closed_and_is_logged(client, monkeypatch, caplog):
     def broken(**_kwargs):
-        raise governed_records.GovernedRecordBackendError("shared governed-record schema is incompatible")
+        raise governed_records.GovernedRecordBackendError("schema check failed on postgresql://app:hunter2@db.internal/lw")  # pragma: allowlist secret
 
     monkeypatch.setattr(store.STORE, "list", broken)
     with caplog.at_level(logging.WARNING, logger=api.__name__):
@@ -72,5 +72,8 @@ def test_a_real_store_failure_stays_closed_and_is_logged(client, monkeypatch, ca
     assert response.status_code == 503
     assert "server log" in response.json()["detail"]
     logged = [row for row in caplog.records if row.name == api.__name__]
-    assert logged and logged[0].exc_info is not None
-    assert "history" in logged[0].getMessage()
+    assert len(logged) == 1 and logged[0].exc_info is None
+    line = logged[0].getMessage()
+    assert "\n" not in line and "hunter2" not in line
+    assert "route=GET /api/v1/commitment-economic-alternatives/history" in line and "workspace=" in line
+    assert "error=GovernedRecordBackendError: schema check failed" in line

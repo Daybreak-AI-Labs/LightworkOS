@@ -353,7 +353,10 @@ def test_a_real_schedule_store_failure_stays_closed_and_is_logged(web, monkeypat
     client, _ = web
 
     def broken(_request):
-        raise OSError("state volume is read-only")
+        try:
+            raise TimeoutError("lock wait on /state/starter_team_schedules.lock")
+        except TimeoutError as exc:
+            raise OSError("state volume is read-only") from exc
 
     monkeypatch.setattr(schedules, "available_schedules", broken)
     with caplog.at_level(logging.WARNING, logger=native.__name__):
@@ -361,4 +364,8 @@ def test_a_real_schedule_store_failure_stays_closed_and_is_logged(web, monkeypat
     assert response.status_code == 503
     assert response.json()["detail"].startswith("The work store is unavailable.")
     logged = [row for row in caplog.records if row.name == native.__name__]
-    assert logged and logged[0].exc_info is not None
+    assert len(logged) == 1 and logged[0].exc_info is None
+    line = logged[0].getMessage()
+    assert "route=GET /api/v1/starter-team-schedules" in line
+    assert "workspace=" in line and "error=OSError: state volume is read-only" in line
+    assert "caused by TimeoutError: lock wait" in line and "\n" not in line

@@ -447,7 +447,7 @@ def test_a_real_import_store_failure_stays_closed_and_is_logged(monkeypatch, cap
 
     class Broken:
         def list(self, **_kwargs):
-            raise governed_records.GovernedRecordBackendError("shared governed-record schema is incompatible")
+            raise governed_records.GovernedRecordBackendError("schema check failed on postgresql://app:hunter2@db.internal/lw")  # pragma: allowlist secret
 
     monkeypatch.setattr(automation_imports, "records", Broken)
     with caplog.at_level(logging.WARNING, logger=automation_imports.__name__):
@@ -455,7 +455,11 @@ def test_a_real_import_store_failure_stays_closed_and_is_logged(monkeypatch, cap
     assert response.status_code == 503
     assert response.json()["detail"].startswith("Import information is unavailable.")
     logged = [row for row in caplog.records if row.name == automation_imports.__name__]
-    assert logged and logged[0].exc_info is not None
+    assert len(logged) == 1 and logged[0].exc_info is None
+    line = logged[0].getMessage()
+    assert "\n" not in line and "hunter2" not in line
+    assert "route=GET /api/v1/automation-imports/history" in line and "workspace=" in line
+    assert "error=GovernedRecordBackendError: schema check failed" in line
 
 
 def test_copilot_says_plainly_that_import_history_is_not_kept_on_a_shared_deployment(shared_deployment, monkeypatch):

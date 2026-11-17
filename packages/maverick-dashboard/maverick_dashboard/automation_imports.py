@@ -26,6 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from . import auth, tools_ops_api
 from .draft_api import context_for
 from .plain_labels import datetime_text
+from .store_failures import log_store_failure
 
 log = logging.getLogger(__name__)
 PAGE = "/automations#auto-import-h"
@@ -630,5 +631,5 @@ def native_call(function):
     except GovernedRecordLocalOnly as exc:
         raise HTTPException(409, LOCAL_ONLY + " Nothing was saved or changed.") from exc
     except Exception as exc:
-        log.warning("automation import operation failed: %s", type(exc).__name__, exc_info=True)
+        log_store_failure(log, exc)
         raise HTTPException(503, "Import information is unavailable. Entered work was kept; read the original record if a save was submitted. Nothing repeats automatically. An administrator can find the cause in the server log.") from exc

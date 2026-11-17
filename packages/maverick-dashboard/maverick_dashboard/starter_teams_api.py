@@ -11,7 +11,7 @@ import time
 from datetime import date
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from maverick import crypto_at_rest, shoring
 from maverick.governed_operations import ServiceContext, digest
@@ -20,8 +20,9 @@ from pydantic import ConfigDict, Field
 
 from . import auth
 from .product_operations import StrictInput
+from .store_failures import log_store_failure, remember_route
 
-router = APIRouter(prefix="/api/v1/starter-teams", tags=["starter-teams"])
+router = APIRouter(prefix="/api/v1/starter-teams", tags=["starter-teams"], dependencies=[Depends(remember_route)])
 log = logging.getLogger(__name__)
 PURPOSE = "lightwork.starter-team-review.v1"
 TTL = 600
@@ -366,7 +367,7 @@ def call(operation):
     except GovernedRecordLocalOnly as exc:
         raise HTTPException(409, LOCAL_ONLY + " Nothing was saved or changed.") from exc
     except (OSError, RuntimeError) as exc:
-        log.warning("starter team operation failed: %s", type(exc).__name__, exc_info=True)
+        log_store_failure(log, exc)
         raise HTTPException(503, "The work store is unavailable. Check the original result before retrying. An administrator can find the cause in the server log.") from exc
 
 

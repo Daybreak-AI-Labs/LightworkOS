@@ -15,7 +15,7 @@ from fnmatch import fnmatchcase
 from typing import Any
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from maverick import config, crypto_at_rest
 from maverick.governed_operations import digest
@@ -26,8 +26,10 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from . import auth
 from .draft_api import context_for
 from .scalar_wire import exact_integers
+from .store_failures import remember_route
 
-router = APIRouter(prefix="/api/v1/copilot/product-operations", tags=["copilot-product-operations"])
+router = APIRouter(prefix="/api/v1/copilot/product-operations", tags=["copilot-product-operations"],
+                   dependencies=[Depends(remember_route)])
 TTL = 600
 PURPOSE = "lightwork.product-operation.v1"
 LOCAL_ONLY = ("This action keeps its records only on a single-computer installation of Lightwork. "
