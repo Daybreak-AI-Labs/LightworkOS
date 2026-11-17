@@ -22,9 +22,9 @@
 {% set cmv_lede %}Review how two accepted orders share reported stock and working capacity before a buying or delivery window closes. See what is known, what is uncertain, and which conditional choice needs an owner's decision.{% endset %}
 {{ hero('Operations', 'Commitment reviews', lede=cmv_lede, compact=true) }}
 {% if not review_enabled %}
-<section class="panel"><h2>Commitment reviews are off</h2>
-  <p>{% if review_admin %}Enable Commitment reviews in <a href="/settings?focus=feature-commitment_viability">Settings</a> to start using this pilot.{% else %}Ask an administrator to enable Commitment reviews in Settings.{% endif %}</p>
-</section>
+{# Off is one compact line that says who can turn it on. #}
+<p class="mg-banner" role="status"><strong>Commitment reviews are turned off.</strong>
+  <span class="mg-copy">{% if review_admin %}Turn them on in <a href="/settings?focus=feature-commitment_viability">Settings</a>.{% else %}Ask an administrator to turn them on.{% endif %}</span></p>
 {% else %}
 <div id="cmv-enabled" data-context="{{ review_context }}">
   <p id="cmv-message" role="status" aria-live="polite" tabindex="-1"></p>

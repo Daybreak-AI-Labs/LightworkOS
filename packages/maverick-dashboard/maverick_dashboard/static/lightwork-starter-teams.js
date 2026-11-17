@@ -109,7 +109,7 @@
         const evidence = element('button', 'Download specialist run evidence', 'btn'); evidence.type = 'button';
         evidence.addEventListener('click', () => { const url = URL.createObjectURL(new Blob([JSON.stringify(runtime, null, 2)], {type: 'application/json'})); const link = element('a'); link.href = url; link.download = 'starter-team-runtime.json'; link.click(); URL.revokeObjectURL(url); });
         progress.appendChild(evidence);
-        progress.appendChild(element('p', 'Review the full deliverable before accepting a business result. A recorded run does not establish provider or customer qualification.'));
+        progress.appendChild(element('p', 'Review the full deliverable before accepting a business result. A finished run does not by itself show that the result is right for your business.'));
       } catch (error) { progress.replaceChildren(element('p', error.message)); } finally { check.disabled = false; }
     });
     form.addEventListener('submit', event => { event.preventDefault(); review('runtime', {case_id: row.id, max_dollars: Number(budget.value), max_wall_seconds: Number(wall.value)}); });

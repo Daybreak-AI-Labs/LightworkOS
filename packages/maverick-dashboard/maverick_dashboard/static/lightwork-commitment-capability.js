@@ -4,17 +4,17 @@
   const actionNames = {create:'Entered additional-work review',edit:'Replaced additional-work review',report:'Recorded completed trial report',test:'Ran local rule qualification',scope:'Reviewed source permission',withdraw:'Withdrew observation use',release:'Released waiting for unknown result',remove:'Removed current qualification'};
   const historyRoot = $('ccl-history');
   let historyContext = '', historyBusy = false, historyGeneration = 0;
-  function clearHistory() { historyGeneration++; historyContext = ''; $('ccl-history-select').replaceChildren(new Option('Refresh your own originals', '')); $('ccl-history-result').replaceChildren(); }
+  function clearHistory() { historyGeneration++; historyContext = ''; $('ccl-history-select').replaceChildren(new Option('Choose Refresh list to see your checks', '')); $('ccl-history-result').replaceChildren(); }
   async function historical(path) {
     const stamp = historyGeneration;
     const value = await window.mvFetchJSON(api + path, {cache:'no-store', plainDetail:true, onAccess:clearPrivate, accessStatuses:[401,403,404]}, 'read your exact original qualification result');
-    if (stamp !== historyGeneration) throw new Error('The selected context changed. Refresh your own original requests.');
-    if (historyContext && historyContext !== value.context) { clearPrivate(); throw new Error('Your account or workspace changed. Refresh your own original requests.'); }
+    if (stamp !== historyGeneration) throw new Error('The selected account or workspace changed. Choose Refresh list.');
+    if (historyContext && historyContext !== value.context) { clearPrivate(); throw new Error('Your account or workspace changed. Choose Refresh list.'); }
     historyContext = value.context; return value;
   }
   async function refreshHistory() {
     if (historyBusy) return; historyBusy = true;
-    try { const value = await historical('/history'); $('ccl-history-select').replaceChildren(new Option('Choose an exact original request', '')); value.choices.forEach(row => $('ccl-history-select').add(new Option(row.label, row.value))); $('ccl-history-message').textContent = value.choices.length ? 'Only your own retained originals are listed. Current model or source permission is not granted by reading.' : 'No retained qualification requests are available to this account and workspace.'; }
+    try { const value = await historical('/history'); $('ccl-history-select').replaceChildren(new Option('Choose an earlier check', '')); value.choices.forEach(row => $('ccl-history-select').add(new Option(row.label, row.value))); $('ccl-history-message').textContent = value.choices.length ? 'Only your own earlier checks are listed. Reading one does not give access to models or sources.' : 'You have no earlier checks in this account and workspace.'; }
     catch (error) { $('ccl-history-message').textContent = error.message; } finally { historyBusy = false; }
   }
   if (historyRoot) {

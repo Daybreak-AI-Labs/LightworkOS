@@ -9,7 +9,7 @@
   let model = null, offset = 0, busy = false, generation = 0, expired = false;
   const labels = {connection_attention:"Your connections needing attention",task_attention:"Your task questions and recovery",approval:"Approvals",flow_approval:"Flow approvals",evidence_source_approval:"Evidence source approvals",signoff:"Result approvals",assessment:"Assessments",project_review:"Project reviews",vendor_reconciliation:"Actions to double-check in other apps"};
   const ACTIONS = {"jira.create":"Create a Jira issue"};
-  Object.assign(labels, {lifecycle_review:"Vendor lifecycle reviews",drop_authority_review:"DROP authority reviews",
+  Object.assign(labels, {lifecycle_review:"Vendor lifecycle reviews",drop_authority_review:"Data-broker deletion (DROP) changes",
     trust_center_review:"Trust Center access reviews",disclosure_review:"Privacy notice update reviews"});
   const OBSERVATIONS = {
     execution_attempt: { recorded: "Lightwork recorded the attempt" },

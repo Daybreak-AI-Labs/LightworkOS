@@ -9,10 +9,12 @@
   {{ hero('Software development', 'Code',
           lede='Code projects Lightwork works on, and the changes its agents have proposed. Nothing is merged
                 or sent anywhere until a person approves the change.') }}
+  {# Off: the one notice says who can turn it on; the tiles and tables that
+     would only repeat "turned off" are left out until it is on. #}
   {% if not module_on %}
   {{ module_gate('codebase', 'Code projects',
                  detail='Keep copies of your company’s code inside Lightwork so its agents can propose changes for a person to approve.') }}
-  {% endif %}
+  {% else %}
   <p class="muted" id="ic-status" role="status" aria-live="polite">Loading.</p>
   <p class="danger-text" id="ic-error" role="alert" aria-live="assertive"></p>
 
@@ -92,6 +94,7 @@
     <div id="code-review-body"></div>
   </section>
   <noscript><p class="panel">This page needs JavaScript turned on.</p></noscript>
+  {% endif %}
 </div>
 {% endblock %}
-{% block scripts_extra %}<script src="/static/lightwork-code.js"></script>{% endblock %}
+{% block scripts_extra %}{% if module_on %}<script src="/static/lightwork-code.js"></script>{% endif %}{% endblock %}

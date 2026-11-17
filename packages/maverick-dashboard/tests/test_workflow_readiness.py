@@ -28,8 +28,10 @@ def test_every_readiness_link_is_a_registered_page():
 def test_readiness_renders_limits_and_never_equates_enablement_with_acceptance():
     response = TestClient(app, base_url="http://127.0.0.1", headers={"Origin": "http://127.0.0.1"}).get("/workflow-readiness")
     assert response.status_code == 200
-    assert "does not prove it works for your business" in response.text
-    assert "Needs a real-world check" in response.text
+    # Honest without undermining: what was checked, and what to try first.
+    assert "Turning a feature on does not prove" not in response.text
+    assert "Each card says what Lightwork checks and what to try with your own work" in response.text
+    assert "Tested; try it on your work" in response.text and "Needs a real-world check" not in response.text
     assert "Turned off in Settings" in response.text
     assert "Turn on in Settings" in response.text
     from test_support.plain_language import developer_terms
@@ -54,7 +56,7 @@ def test_supplier_catalog_points_to_setup_and_reports_unsupported_profile(monkey
     monkeypatch.setenv("MAVERICK_REPLICA_COUNT", "2")
     row = next(row for row in readiness.for_request(None) if row["href"] == "/third-party/vendor-onboarding")
     assert row["configuration"] != "Open the page to choose an owner and connect Jira"
-    assert row["stage_label"] == "Needs a real-world check"
+    assert row["stage_label"] == "Tested; try it on your work"
 
 
 def test_turned_off_page_explains_and_links_admins_to_settings(tmp_path):

@@ -3,6 +3,7 @@
   const list=document.getElementById('account-inventory-list'), status=document.getElementById('account-inventory-status');
   if (!list) return;
   let serial=0, context=null, lost=false;
+  const STATES={disabled:'are turned off','administrator-only':'are shown only to administrators',unavailable:'could not be read right now'};
   const node=(tag,text)=>{ const item=document.createElement(tag); item.textContent=text; return item; };
   const clear=()=>{serial++;lost=true;list.replaceChildren();document.getElementById('account-qualification-list')?.replaceChildren();status.textContent='Account access changed. Reload after selecting your workspace.';};
   document.addEventListener('lightwork:connection-access-lost',clear);
@@ -34,8 +35,11 @@
         const dependencies=node('a','Review used-by information');dependencies.href=account.used_by_href||'/connections';item.append(dependencies,node('br',''));
         const link=node('a','Review or repair this account'); link.href=account.credential_kind==='automation'?'/automations#oauth-connect':'/connections';item.append(link);list.append(item);
       });
+      // A source that is off or limited to administrators is not missing data.
       const gaps=data.coverage.filter(item=>item.state!=='available');
-      status.textContent=(data.accounts.length ? data.accounts.length+' accounts listed. ' : gaps.length ? 'Account coverage is incomplete. ' : 'No accounts are connected. ')+gaps.map(item=>item.domain+': '+item.state.replace(/-/g,' ')).join('; ');
+      const unread=gaps.some(item=>item.state==='unavailable');
+      const notes=gaps.map(item=>item.domain+' '+(STATES[item.state]||'could not be checked')+'.');
+      status.textContent=[data.accounts.length ? data.accounts.length+' accounts listed.' : unread ? 'Some accounts could not be listed.' : 'No accounts are connected.'].concat(notes).join(' ');
     }catch(_){if(attempt===serial){list.replaceChildren();status.textContent='Account inventory is unavailable. Refresh before setting up a replacement account.';}}
     finally{clearTimeout(timer);}
   }

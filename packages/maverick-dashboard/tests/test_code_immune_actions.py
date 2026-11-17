@@ -73,6 +73,10 @@ def test_code_page_is_plain_and_offers_turn_on_when_off(client):
     assert "maverick code" not in page and "[codebase]" not in page
     assert 'data-module-gate="codebase"' in page and "Code projects is turned off" in text
     assert "Add a code project" not in text  # nothing to add to until it is on
+    # Off is one compact notice: no zero tiles or empty tables that end in
+    # "turned off" again below it.
+    assert 'id="ic-repo-rows"' not in page and "Proposed changes" not in text
+    assert "Waiting for approval" not in text and "/static/lightwork-code.js" not in page
 
 
 def test_code_page_offers_every_action_to_an_admin(client, monkeypatch):

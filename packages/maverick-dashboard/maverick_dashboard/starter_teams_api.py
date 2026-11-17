@@ -23,9 +23,10 @@ from .product_operations import StrictInput
 router = APIRouter(prefix="/api/v1/starter-teams", tags=["starter-teams"])
 PURPOSE = "lightwork.starter-team-review.v1"
 TTL = 600
-NOTICE = ("Samples and record checks prepare findings without calling an AI service or opening sources. "
-          "Specialist workflows have a separate review and budget. Provider access and business outcomes "
-          "still require qualification. The setup cadence records a preference; it does not start recurring work.")
+NOTICE = ("Samples and record checks prepare findings without calling an AI service or opening your sources. "
+          "Specialist work has its own review and budget. Before you rely on a team, connect an AI provider "
+          "and check a few results against real work. How often to run is saved as a preference; "
+          "it does not start recurring work.")
 PUBLIC_INPUT_ERRORS = frozenset({
     "A selected specialist is unavailable; review its setup in Agent Factory",
     "A selected specialist needs setup in Agent Factory before it can run",

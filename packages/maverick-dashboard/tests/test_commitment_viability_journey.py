@@ -493,3 +493,22 @@ def test_owner_checks_compare_non_ascii_account_names_instead_of_failing():
     assert reviews.retire(created["id"], context, owner, archive)["retired_by"] == owner
     with pytest.raises(RecordConflict):
         reviews.retire(created["id"], context, other, archive)
+
+
+def test_history_and_off_states_read_plainly(web, monkeypatch):
+    # The earlier-results sections name what they hold in plain words, and a
+    # turned-off feature is one short line, not a full section ending in a dead end.
+    import html as _html
+    import re
+    monkeypatch.setattr(config, "get_features", lambda: {"commitment_viability": False})
+    page = web.get("/commitment-reviews").text
+    text = _html.unescape(re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", re.sub(
+        r"<(script|style)\b.*?</\1>", " ", page.split("<main", 1)[1], flags=re.DOTALL))))
+    text = re.sub(r"\s+([.,])", r"\1", text)
+    for jargon in ("qualification results", "Load your own originals", "exact original",
+                   "this pilot", "Promise is archived", "Your exact original"):
+        assert jargon not in text, jargon
+    assert "Earlier additional-work checks" in text
+    assert "Commitment reviews are turned off." in text
+    assert "Turn them on in Settings." in text or "Ask an administrator to turn them on." in text
+    assert "<h2>Commitment reviews are off</h2>" not in page

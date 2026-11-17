@@ -43,7 +43,7 @@ def call(function, *args):
     except (ValueError, TypeError, KeyError) as exc:
         raise HTTPException(422, "Check the complete entered review or supported local rule test. Unknown outcomes are not observations; no fields were truncated.") from exc
     except Exception as exc:
-        raise HTTPException(503, "The exact original result is uncertain. Read its retained request before any separate reviewed test; nothing will repeat automatically.") from exc
+        raise HTTPException(503, "Lightwork could not confirm how this check ended. Read the saved request before you run a new check; nothing runs again on its own.") from exc
 
 
 @router.get(API + "/choices")
