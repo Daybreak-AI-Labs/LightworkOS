@@ -760,6 +760,8 @@
       // A goal that finished before this page loaded starts settled, so the
       // composer never flashes the working state on a finished chat.
       let done = {{ (not run_open|default(true))|tojson }};
+      // A finished task still needs to replay its stored history on this page.
+      let traceComplete = false;
       let pollDelay = 2000;
       let currentQuestionId = null, currentQuestionVersion = null, pendingClarification = null;
       let currentStatus = {{ goal.status|tojson }};
@@ -1069,6 +1071,7 @@
         // Answering the last open question restarts the run server-side; pick
         // the live stream back up so the page keeps following it in place.
         done = false;
+        traceComplete = false;
         setStatus('pending');
         showHaltCard(false);
         cancelBtn.disabled = false;
@@ -1511,6 +1514,7 @@
           pollQuestions();
         }
         if (d.terminal === true) {
+          traceComplete = true;
           done = true;
           cancelBtn.disabled = true;
           showApprovalWait(null);
@@ -1560,7 +1564,7 @@
         if (polling) return;
         polling = true;
         async function poll() {
-          if (!polling || (done && !force)) { polling = false; return; }
+          if (!polling || (traceComplete && !force)) { polling = false; return; }
           if (document.visibilityState === 'hidden') { pollTimer = setTimeout(poll, 5000); return; }
           const controller = new AbortController();
           const timeout = setTimeout(function () { controller.abort(); }, 12000);
@@ -1575,7 +1579,7 @@
             }
             if (!resp.ok) throw new Error('unavailable');
             applyPayload(await resp.json()); pollFailures = 0; force = false;
-            if (done) { polling = false; return; }
+            if (traceComplete) { polling = false; return; }
           } catch (_) {
             pollFailures++;
             showStreamError('Updates are unavailable. The task may still be running. Your draft has been kept. Refresh the page to see the latest.');
@@ -1698,10 +1702,10 @@
       var autoCollapsed = false;
       new MutationObserver(function () {
         refreshFromEvents();
-        if (!autoCollapsed && events.children.length >= 3 && !settle()) {
+        if (!settle() && !autoCollapsed && events.children.length >= 3) {
           activity.open = false; autoCollapsed = true;
         }
-      }).observe(events, { childList: true });
+      }).observe(events, { childList: true, attributes: true, attributeFilter: ['data-steps'] });
 
       if (status) new MutationObserver(settle).observe(status, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['data-status'] });
       // Handle a goal that loaded already-finished.

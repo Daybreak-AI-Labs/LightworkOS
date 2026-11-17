@@ -208,6 +208,7 @@ async def goal_stream(request, world, goal_id, *, since, lease, visible,
     cadence = StreamCadence(now, now, poll, max_poll, heartbeat, lifetime, poll)
     last, sent = since, 0
     last_result: str | None = None
+    last_status: str | None = None
     try:
         if sleep is None:
             sleep, stop_watching = _woken_sleep(world, goal_id)
@@ -225,11 +226,13 @@ async def goal_stream(request, world, goal_id, *, since, lease, visible,
                 return
             events = await run_in_threadpool(world.goal_events, goal_id, since_id=last, limit=max_batch)
             result_changed = legacy and (current.result or "") != last_result
-            if events or result_changed:
+            status_changed = legacy and current.status != last_status and current.status not in TERMINAL_RUN_STATUSES
+            if events or result_changed or status_changed:
                 if legacy:
                     if events:
                         last = events[-1].id
                     last_result = current.result or ""
+                    last_status = current.status
                     stop = stop_payload(current.status, current.result)
                     payload = {"status": current.status, "result": stop["message"] if stop else current.result or "",
                                "stop": stop,
@@ -261,7 +264,7 @@ async def goal_stream(request, world, goal_id, *, since, lease, visible,
                     payload = {"status": current.status, "next_id": last, "terminal": True}
                     yield f"event: end\ndata: {json.dumps(payload)}\n\n"
                 return
-            cadence.backoff(bool(events) or result_changed)
+            cadence.backoff(bool(events) or result_changed or status_changed)
             await sleep(cadence.delay(clock()))
     except asyncio.CancelledError:
         return

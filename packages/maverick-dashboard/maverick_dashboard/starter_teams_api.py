@@ -23,6 +23,7 @@ from .product_operations import StrictInput
 router = APIRouter(prefix="/api/v1/starter-teams", tags=["starter-teams"])
 PURPOSE = "lightwork.starter-team-review.v1"
 TTL = 600
+GENERIC_DEMO_ID = "generic_synthetic_demo"
 NOTICE = ("Samples and record checks prepare findings without calling an AI service or opening sources. "
           "Specialist workflows have a separate review and budget. Provider access and business outcomes "
           "still require qualification. The setup cadence records a preference; it does not start recurring work.")
@@ -380,15 +381,46 @@ def _deployment_backend_kind() -> str:
     return _selection().kind
 
 
+def _generic_synthetic_preview():
+    # A fixed example, separate from the department catalogue. No user input,
+    # workspace records, specialist permissions, services, or dispatch paths.
+    rows = [
+        {"id": "example-001", "source": "Bundled fictional example", "reviewer": "Demo reviewer"},
+        {"id": "example-002", "source": "Bundled fictional example", "reviewer": ""},
+    ]
+    findings = [{
+        "id": f"missing_reviewer:{row['id']}", "rule_id": "missing_reviewer",
+        "kind": "review_required", "title": "Reviewer not assigned", "row_id": row["id"],
+        "source": row["source"], "reason": "The fictional record has no assigned reviewer.",
+        "proposed_action": "Have the review coordinator assign a reviewer before proceeding.",
+        "owner_role": "Review coordinator", "status": "awaiting_human_review",
+    } for row in rows if not row["reviewer"]]
+    return {
+        "mode": "synthetic_preview", "saved": False,
+        "output": {
+            "schema": "lightwork.starter-team-synthetic-example.v1", "team_id": GENERIC_DEMO_ID,
+            "deliverable": "Synthetic example only. This result uses bundled fictional data and is not saved.",
+            "row_count": len(rows), "findings": findings,
+            "evidence": [{"row_id": row["id"], "source": row["source"], "record": row} for row in rows],
+            "handoffs": [], "input_sha256": digest(rows), "external_effects": [],
+            "usage": {"provider_calls": 0, "tool_calls": 0, "dollars": 0},
+            "business_acceptance": "pending_human_review",
+        },
+    }
+
+
 @router.get("")
 def read_catalog(request: Request):
     def read():
         teams = available_catalog(request)
         preview_only = _deployment_backend_kind() == "postgres"
+        ctx = context(request)
         result = {"teams": teams, "setups": [] if preview_only else service(request).list_setups(),
-                  "context": digest(context(request).binding()), "notice": NOTICE}
+                  "context": digest(ctx.binding()), "notice": NOTICE}
         if preview_only:
             result["preview_only"] = True
+            if ctx.human and not teams:
+                result["synthetic_demo"] = {"id": GENERIC_DEMO_ID, "label": "Generic synthetic example"}
         return result
     return _response(call(read))
 
@@ -399,9 +431,13 @@ def preview_fixture(request: Request, team_id: str):
     def read():
         from maverick.starter_team_checks import evaluate, get_team
 
-        context(request)
+        ctx = context(request)
         if _deployment_backend_kind() != "postgres":
             raise HTTPException(404, "Use the reviewed sample workflow for this deployment.")
+        if team_id == GENERIC_DEMO_ID:
+            if not ctx.human:
+                raise HTTPException(403, "Use a signed-in workspace session for the generic example.")
+            return _generic_synthetic_preview()
         team = get_team(team_id)
         require_team(request, team)
         sample = team["sample"]

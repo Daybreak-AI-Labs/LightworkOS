@@ -2,7 +2,7 @@
 {% block title %}Starter teams · Lightwork{% endblock %}
 {% block content %}
 {% from "_hero.html" import hero %}
-{% set hero_actions %}<a class="btn btn--primary" href="#st-catalog-title">Set up a team</a>{% endset %}
+{% set hero_actions %}<a class="btn btn--primary" href="#st-catalog-title">View available options</a>{% endset %}
 {{ hero('Autonomous shoring', 'Starter teams', subtitle='Start with a useful, bounded piece of work',
         lede='Choose a team, review its scope, try a sample, then check your approved records. Every result keeps its sources and the next work for a person.', actions=hero_actions) }}
 <style>
@@ -27,19 +27,20 @@
   <p>Samples demonstrate the included checks. Your records need their own review. Provider connections, specialist AI work and automatic operations require separate qualification.</p>
 </section>
 <p id="st-message" role="status" aria-live="polite">Loading your available teams…</p>
+<button id="st-catalog-retry" class="btn" type="button" hidden>Retry loading teams</button>
 <div class="st-layout">
   <section class="panel" aria-labelledby="st-catalog-title">
     <h2 id="st-catalog-title">Choose a team</h2>
     <label for="st-team">Business function</label>
-    <select class="select" id="st-team"><option value="">Loading…</option></select>
+    <select class="select" id="st-team" disabled><option value="">Loading…</option></select>
     <div id="st-details"></div>
     <div id="st-preview-panel" hidden>
       <p>This deployment supports unsaved synthetic previews only. Saved work, imports, specialists, and schedules are unavailable here.</p>
-      <button id="st-preview-submit" class="btn" type="button">Preview bundled sample</button>
+      <button id="st-preview-submit" class="btn" type="button" disabled>Preview bundled sample</button>
       <div id="st-preview-result" aria-live="polite"></div>
     </div>
   </section>
-  <section id="st-setup-panel" class="panel" aria-labelledby="st-setup-title">
+  <section id="st-setup-panel" class="panel" hidden aria-labelledby="st-setup-title">
     <h2 id="st-setup-title">Review your setup</h2>
     <p>You own the saved setup in this workspace. Name the person responsible for reviewing the work and define the records in scope.</p>
     <form id="st-setup-form" class="st-fields">
@@ -51,7 +52,13 @@
     </form>
   </section>
 </div>
-<section id="st-saved-panel" class="panel" aria-labelledby="st-saved-title">
+<section id="st-generic-demo" class="panel" aria-labelledby="st-generic-title" hidden>
+  <h2 id="st-generic-title">Generic synthetic example</h2>
+  <p>Try a check on fictional records. This is not a department team. It does not use AI, save anything, or connect to your workspace data.</p>
+  <button id="st-generic-submit" class="btn" type="button" disabled>Preview generic example</button>
+  <div id="st-generic-result" aria-live="polite"></div>
+</section>
+<section id="st-saved-panel" class="panel" hidden aria-labelledby="st-saved-title">
   <h2 id="st-saved-title">Your saved teams</h2>
   <label for="st-saved">Saved setup</label><select class="select" id="st-saved"><option value="">No saved teams yet</option></select>
   <p id="st-saved-state"></p>
@@ -66,13 +73,13 @@
     <div><button type="submit" class="btn" id="st-inputs-review">Review record checks</button></div>
   </form>
 </section>
-<section id="st-history-panel" class="panel" aria-labelledby="st-history-title"><h2 id="st-history-title">Saved results</h2><div id="st-history"><p>Choose a saved team to see its results.</p></div></section>
-{% include "_starter_team_schedules.html" %}
+<section id="st-history-panel" class="panel" hidden aria-labelledby="st-history-title"><h2 id="st-history-title">Saved results</h2><div id="st-history"><p>Choose a saved team to see its results.</p></div></section>
+<div id="st-schedules-panel" hidden>{% include "_starter_team_schedules.html" %}</div>
 <dialog id="st-review" class="st-dialog" aria-labelledby="st-review-title">
   <h2 id="st-review-title">Review the planned work</h2><dl id="st-review-content"></dl>
   <p id="st-review-message" role="status" aria-live="polite"></p>
   <div class="st-actions"><button type="button" class="btn" id="st-confirm">Confirm reviewed work</button><button type="button" class="btn" id="st-original" hidden>Check original result</button><button type="button" class="btn" id="st-cancel">Cancel</button></div>
 </dialog>
-<script nonce="{{ csp_script_nonce }}" src="/static/lightwork-starter-teams.js" defer></script>
-<script nonce="{{ csp_script_nonce }}" src="/static/lightwork-starter-team-schedules.js" defer></script>
+<script nonce="{{ csp_script_nonce }}" src="{{ static_url('lightwork-starter-team-schedules.js') }}" defer></script>
+<script nonce="{{ csp_script_nonce }}" src="{{ static_url('lightwork-starter-teams.js') }}" defer></script>
 {% endblock %}
