@@ -267,6 +267,7 @@ def collect(world) -> list[dict]:
             continue
         item["costs"].append({"id": f"episode:{episode.id}", "goal_id": episode.goal_id, "amount": amount(episode.cost_dollars),
                               "currency": "USD", "basis": "estimated", "at": episode.ended_at or episode.started_at,
+                              "_from": episode.started_at,
                               "complete": episode.ended_at is not None and amount(episode.cost_dollars) is not None,
                               "status": episode.outcome or "in progress"})
     # Retain observed conversation requests that have no Lightwork execution.
@@ -282,6 +283,8 @@ def collect(world) -> list[dict]:
         output[key]["sources"].append({"kind": "turn", "id": str(row[0]), "at": row[3]})
     for item in output.values():
         _provider_costs(item)
+        for cost in item["costs"]:
+            cost.pop("_from", None)
         _flow_cost_residuals(item)
         for field in ("specialists", "agents", "processes", "actions"):
             item[field] = sorted(set(item[field]))
@@ -328,6 +331,24 @@ def _period_start(period):
     return None
 
 
+def _period_bounds(period):
+    """The UTC [start, end) of a readable provider-cap period."""
+    start = _period_start(period)
+    day = datetime.fromtimestamp(start, timezone.utc)
+    if len(str(period)) == len("YYYY-MM-DD"):
+        return start, start + 86400
+    following = day.replace(year=day.year + 1, month=1) if day.month == 12 else day.replace(month=day.month + 1)
+    return start, following.timestamp()
+
+
+def _root(group, index):
+    """The representative of ``index`` in a union-find list, compressing the path."""
+    while group[index] != index:
+        group[index] = group[group[index]]
+        index = group[index]
+    return index
+
+
 def _provider_costs(item):
     """Receipts replace, never add to, their goal's episode estimate.
 
@@ -348,36 +369,47 @@ def _provider_costs(item):
                 item["cost_limitations"].append("Linked provider cost evidence is unavailable.")
             continue
         runtime = [cost for cost in item["costs"] if cost.get("goal_id") == gid]
-        by_period = defaultdict(list)
-        for cost in runtime:
-            stamp = datetime.fromtimestamp(cost["at"], timezone.utc)
-            by_period[stamp.strftime("%Y-%m")].append(cost)
-            by_period[stamp.strftime("%Y-%m-%d")].append(cost)
         readable = [receipt for receipt in receipts if _period_start(receipt.get("period")) is not None]
         if len(readable) < len(receipts):
             item["cost_limitations"].append("A linked provider receipt's period could not be read, so it was left out of the totals.")
         receipts = readable
+        # A runtime cost spans its episode's start to its end, so it overlaps
+        # every receipt period it touches. Receipts that share a runtime cost
+        # are reconciled together, once: an episode across midnight (or a
+        # month end) is netted against all of its receipts, not just the
+        # receipt for the day it ended.
+        overlapping = []
         for receipt in receipts:
-            at = _period_start(receipt["period"])
-            related = by_period.get(receipt["period"], [])
-            if related:
-                at = max(cost["at"] for cost in related)
+            low, high = _period_bounds(receipt["period"])
+            overlapping.append([cost for cost in runtime
+                                if min(cost.get("_from") or cost["at"], cost["at"]) < high and cost["at"] >= low])
+        group = list(range(len(receipts)))
+        first_receipt = {}
+        for index, costs in enumerate(overlapping):
+            for cost in costs:
+                group[_root(group, index)] = _root(group, first_receipt.setdefault(id(cost), index))
+        for receipt, costs in zip(receipts, overlapping, strict=True):
+            at = max((cost["at"] for cost in costs), default=_period_start(receipt["period"]))
             item["costs"].append({"id": "provider:" + receipt["reference"], "goal_id": gid,
                 "amount": receipt["actual"] if receipt["state"] == "settled" else None,
                 "currency": receipt["currency"], "basis": "measured" if receipt["basis"] in {"recorded", "reconciled"} else "estimated",
                 "at": at, "period": receipt["period"], "time_basis": "Allocated within native provider period; exact incurred date unavailable",
                 "complete": False, "status": receipt["state"], "invoice_verified": False})
-        periods = {receipt["period"] for receipt in receipts}
-        for period in periods:
-            related = by_period.get(period, [])
-            usd = [receipt for receipt in receipts if receipt["period"] == period and receipt["currency"] == "USD"]
+        groups = defaultdict(list)
+        for index in range(len(receipts)):
+            groups[_root(group, index)].append(index)
+        for members in groups.values():
+            related = list({id(cost): cost for index in members for cost in overlapping[index]}.values())
+            usd = [receipts[index] for index in members if receipts[index]["currency"] == "USD"]
             # With another currency, retain the runtime reference only in the
             # provenance drilldown; totals cannot make a currency conversion.
             known = sum(receipt["actual"] or 0 for receipt in usd if receipt["state"] == "settled")
             residual = max(0, sum(cost["amount"] or 0 for cost in related) - known) if usd else 0
-            item["costs"] = [cost for cost in item["costs"] if cost not in related]
+            removed = {id(cost) for cost in related}
+            item["costs"] = [cost for cost in item["costs"] if id(cost) not in removed]
             if residual:
-                item["costs"].append({"id": f"runtime-residual:{gid}:{period}", "goal_id": gid, "amount": residual,
+                periods = "+".join(sorted({receipts[index]["period"] for index in members}))
+                item["costs"].append({"id": f"runtime-residual:{gid}:{periods}", "goal_id": gid, "amount": residual,
                     "currency": "USD", "basis": "estimated", "at": max(cost["at"] for cost in related),
                     "complete": False, "status": "Unallocated runtime amount above linked provider receipts"})
         item["cost_limitations"].append("Provider receipts replace overlapping runtime estimates. Receipt day allocation and unmatched runtime residuals are estimated; invoice and call coverage remain incomplete.")
