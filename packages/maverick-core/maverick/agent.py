@@ -1587,7 +1587,6 @@ class _FinalVerification:
     attempted: bool = False
     skipped: bool = False
     skip_reason: str = ""
-    incomplete_reason: str = ""
 
 def _final_uncertainty_reasons(
     *,
@@ -1596,7 +1595,6 @@ def _final_uncertainty_reasons(
     disagreement: float,
     coding: bool,
     no_final_marker: bool = False,
-    verifier_incomplete_reason: str = "",
 ) -> list[str]:
     """Reasons the orchestrator cannot cleanly stand behind a FINAL.
 
@@ -1617,7 +1615,7 @@ def _final_uncertainty_reasons(
     if verifier_rejected:
         reasons.append("an internal self-check did not pass after one revision")
     if verifier_incomplete:
-        reasons.append(verifier_incomplete_reason or "verification did not finish within the budget")
+        reasons.append("verification did not finish within the budget")
     if reasons and disagreement >= 0.8:
         reasons.append(f"parallel attempts disagreed (entropy {disagreement:.2f})")
     return reasons
@@ -5968,14 +5966,12 @@ class Agent:
             self.ctx.last_verifier_confidence = verdict.confidence
         except BudgetExceeded:
             verdict = None
-            verification.incomplete_reason = "verification did not finish within the budget"
             # Say so in the record: a check that started but did not finish
             # must never read as "checked".
             bb.post(self.name, "verify",
                     "verifier did not complete (budget)")
         except Exception as e:  # pragma: no cover
             bb.post(self.name, "error", f"verifier failed: {e}")
-            verification.incomplete_reason = "the automated verifier was unavailable"
             verdict = None
         verification.verdict = verdict
         if verdict is not None and not verdict.accepts:
@@ -6083,13 +6079,12 @@ class Agent:
         elif verdict is not None:
             _vconf, _vcrit = verdict.confidence, verdict.critique
         elif verification.attempted:
-            _vconf, _vcrit = 0.0, verification.incomplete_reason or "verifier did not complete"
+            _vconf, _vcrit = 0.0, "verifier did not complete (budget)"
         else:
             _vconf, _vcrit = 1.0, ""
         _reasons = _final_uncertainty_reasons(
             verifier_rejected=False,
             verifier_incomplete=(verdict is None and verification.attempted),
-            verifier_incomplete_reason=verification.incomplete_reason,
             disagreement=float(
                 getattr(self.ctx, "last_disagreement", 0.0) or 0.0
             ),

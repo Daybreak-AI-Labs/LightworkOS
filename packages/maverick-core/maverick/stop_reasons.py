@@ -91,13 +91,6 @@ def _rx(*parts: str) -> re.Pattern[str]:
 # (kind, pattern, message, action, link, link_label) -- first match wins.
 _RULES: tuple[tuple[str, re.Pattern[str], str, str, str | None, str | None], ...] = (
     (
-        "evidence_delivery_blocked",
-        _rx(r"^AI evidence gateway withheld the generated output\."),
-        "Lightwork withheld the answer because its evidence checks could not be completed.",
-        "Ask a workspace administrator to review AI evidence recording before trying again.",
-        None, None,
-    ),
-    (
         "pilot_prepared",
         _rx(r"^Prepared for a workflow pilot\. Start this task after the pilot plan is frozen\.$"),
         "This task is ready for its workflow pilot.",

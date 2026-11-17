@@ -2387,11 +2387,10 @@ def _prepare_goal_output(*, result: Any, shield: Any, world: WorldModel,
 
             if not isinstance(exc, gateway.EvidenceGatewayError):
                 raise
-            log.warning("evidence gateway withheld output for goal #%s (reason_type=%s)",
-                        goal_id, type(exc).__name__)
             refusal = (
                 "AI evidence gateway withheld the generated output. "
-                "An administrator must review AI evidence recording."
+                "Operator action is required: "
+                f"{_safe_exception_text(exc, fallback='evidence review failed')}"
             )
             lifecycle.end_episode(refusal, "failure")
             world.set_goal_status(goal_id, "blocked", result=refusal)

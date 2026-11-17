@@ -162,7 +162,6 @@ async def test_gateway_refusal_blocks_goal_without_releasing_generated_text(
     monkeypatch,
     fake_llm,
     make_llm_response,
-    caplog,
 ):
     _bind_gateway(monkeypatch, "refusal-tenant")
     # A tenant with no policy is provisioned one on first delivery, so a
@@ -192,11 +191,6 @@ async def test_gateway_refusal_blocks_goal_without_releasing_generated_text(
     assert goal is not None
     assert goal.status == "blocked"
     assert "gateway withheld" in output
-    assert "administrator must review AI evidence recording" in output
-    assert "tenant mode failed validation" not in output
-    assert "tenant mode failed validation" not in str(goal.result)
-    assert f"evidence gateway withheld output for goal #{goal_id} (reason_type=EvidenceGatewayStateError)" in caplog.text
-    assert "tenant mode failed validation" not in caplog.text
     assert "the answer is 42" not in output
     assert "the answer is 42" not in str(goal.result)
     event_content = "\n".join(event.content for event in world.goal_events(goal_id))

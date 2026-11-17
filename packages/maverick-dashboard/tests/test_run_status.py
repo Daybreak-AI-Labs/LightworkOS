@@ -52,7 +52,6 @@ def test_status_words_cover_the_orchestrator_states():
     assert status_label("pending") == "Queued"
     assert status_label("blocked") == "Paused"
     assert status_label("blocked", "provider_connection") == "Stopped"
-    assert status_label("blocked", "evidence_delivery_blocked") == "Stopped"
     assert status_label("blocked", "spending_limit") == "Paused"
     assert status_label("cancelled") == "Stopped"
     assert status_label("done") == "Done"
