@@ -75,3 +75,34 @@ def test_doctor_does_not_look_for_records_without_a_workspace_on_sqlite(monkeypa
     monkeypatch.setattr(h, "_row", lambda *a, **k: rows.append(a))
     h._check_world_db()
     assert [r[1] for r in rows] == ["world-db"] and rows[0][0] == h.GREEN
+
+
+def _workspace(tenant_id, plan):
+    from maverick.tenant.registry import create_tenant
+    return create_tenant(tenant_id, plan=plan, allocate_suffix=True)
+
+
+def test_doctor_reports_the_owner_workspace_the_cli_uses(monkeypatch, tmp_path):
+    """After owner setup the CLI and dashboard share the owner's workspace."""
+    from maverick.billing import SELF_HOSTED_PLAN
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
+    monkeypatch.delenv("MAVERICK_CONFIG", raising=False)
+    rec = _workspace("local", SELF_HOSTED_PLAN)
+    res = CliRunner().invoke(main, ["doctor"])
+    assert str(tmp_path / "tenants" / rec.id / "world.db") in res.output
+    assert f"commands here use the {rec.id} workspace" in res.output
+
+
+def test_doctor_warns_when_cli_work_lands_outside_every_workspace(monkeypatch, tmp_path):
+    from maverick.billing import SELF_HOSTED_PLAN
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
+    monkeypatch.delenv("MAVERICK_CONFIG", raising=False)
+    _workspace("local", SELF_HOSTED_PLAN)
+    _workspace("acme", "free")
+    res = CliRunner().invoke(main, ["doctor"])
+    assert "commands here use the shared space" in res.output
+    assert "do not show in a workspace" in res.output

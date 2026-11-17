@@ -602,6 +602,25 @@ def _check_channels(cfg: dict) -> None:
             _row(GREEN, "channel:email", "stdlib only")
 
 
+def _check_cli_workspace() -> None:
+    """Which workspace commands here use, so CLI work is not lost to the
+    dashboard: owner setup's workspace is adopted when it is the only one."""
+    try:
+        from .paths import current_tenant_id
+        from .tenant.registry import list_tenants
+
+        tenant, workspaces = current_tenant_id(), list_tenants()
+    except Exception:  # pragma: no cover -- the doctor must never break
+        return
+    if tenant:
+        _row(GREEN, "workspace", f"commands here use the {tenant} workspace")
+    elif workspaces:
+        _row(YELLOW, "workspace",
+             f"commands here use the shared space; this installation has {len(workspaces)} workspaces",
+             fix="Tasks started here do not show in a workspace in the dashboard. Start them in the dashboard, "
+                 "or run the dashboard and these commands with MAVERICK_TENANT set to the same workspace.")
+
+
 def _check_world_db() -> None:
     # Open the SAME configured backend as the runtime. A local workspace path
     # can hold a healthy SQLite mirror while the deployment's authoritative
@@ -1070,6 +1089,7 @@ def diagnose() -> int:
     _check_sandbox(cfg)
     _check_file_work(cfg)
     _check_channels(cfg)
+    _check_cli_workspace()
     _check_world_db()
     _check_shield()
     _check_agent_trust()
