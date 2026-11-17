@@ -154,6 +154,7 @@ def code_feature(name, title, description, max_dollars, no_review, no_check) -> 
                              features.default_runner(budget=budget),
                              reviewer=None if no_review else features.default_reviewer(budget=budget),
                              checker=features.default_checkers(budget=budget) if check else None,
+                             protected_checker=features.default_protected_checker(budget=budget),
                              budget=budget)
     except vault.VaultError as exc:
         _fail(exc)
@@ -162,8 +163,9 @@ def code_feature(name, title, description, max_dollars, no_review, no_check) -> 
     if p["status"] == "empty":
         click.echo(f"proposal {p['id']}: the swarm made no change")
         return
+    refusal = features.protected_refusal(p)
     click.echo(f"proposal {p['id']} on {p['branch']}: {len(p['files'])} file(s); "
-               f"awaiting approval #{p['approval_id']}")
+               + (refusal or f"awaiting approval #{p['approval_id']}"))
     _echo_evidence(p)
 
 

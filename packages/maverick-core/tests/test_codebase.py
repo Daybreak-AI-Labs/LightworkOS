@@ -824,7 +824,10 @@ def test_a_proposal_saved_before_verified_runs_still_loads_and_shows(upstream, t
     lines = features.evidence(loaded)["lines"]
     assert "Tests: PASSED (`pytest`)." in lines and "Independent check: not run." in lines
     assert features.summary(world)["proposals"][0]["check"] is None
-    features.request_approval(world, loaded)                  # renew builds its card
+    aid = features.request_approval(world, loaded)            # renew builds its card
+    # Saved before protected paths: not protected, one approval as before.
+    assert world.get_approval(aid).approvals_required == 1
+    assert features.summary(world)["proposals"][0]["protected"] is False
     monkeypatch.setattr(config, "get_codebase",
                         lambda: {"enable": True, "default_protect": "block"})
     out = CliRunner().invoke(main, ["code", "show", old["id"]])
@@ -1989,3 +1992,162 @@ def test_the_factory_settings_are_read_strictly(tmp_path, monkeypatch):
         assert read("[codebase]\nallow_self_changes = true\n")[0] is False  # a source is unreadable
     finally:
         config.reset_config_cache()
+
+
+def _second(model="openai:second-model", report=None, charge=None):
+    """A stand-in for the second checker: records each look; ``charge`` is the
+    budget it spends from, as the real one does."""
+    calls = []
+
+    def look(gid, copy):
+        calls.append((gid, copy))
+        if charge is not None:
+            charge.record_tool_call()
+        return report or {"findings": []}
+    look.model = model
+    return look, calls
+
+
+def _protected_repo(upstream, monkeypatch, patterns=("app.py",)):
+    monkeypatch.setattr(features, "_author_model", lambda: "anthropic:author-model")
+    return vault.register("pricing", str(upstream), protected_paths=list(patterns))
+
+
+def test_a_rename_into_or_out_of_a_protected_path_is_protected(upstream, tmp_path, monkeypatch):
+    _protected_repo(upstream, monkeypatch, patterns=("app.py", "secure"))
+    world = WorldModel(tmp_path / "world.db")
+    second, _ = _second()
+
+    def out_of(work):                                           # app.py -> lib/app.py
+        (work / "lib").mkdir()
+        (work / "app.py").rename(work / "lib" / "app.py")
+
+    def into(work):                                             # test_app.py -> secure/
+        (work / "secure").mkdir()
+        (work / "test_app.py").rename(work / "secure" / "test_app.py")
+    for edit, matched in ((out_of, ["app.py"]), (into, ["secure/test_app.py"])):
+        run, _ = _rounds(edit)
+        p = features.propose(world, "pricing", "Move", "", run, protected_checker=second,
+                             owner="user:starter")
+        assert p["protected"]["paths"] == matched, p["files"]
+        facts = features.evidence(p)
+        assert facts["lines"][0] == features.PROTECTED_LINE.format(n=1)
+        assert f"Protected paths changed: {matched[0]}." in facts["lines"]
+        card = _card(world, p)
+        assert card["parameter_summary"][0] == features.PROTECTED_LINE.format(n=1)
+        appr = world.get_approval(p["approval_id"])
+        assert (appr.approvals_required, appr.requested_by, appr.provenance) == (
+            2, "user:starter", features.PROTECTED_PROVENANCE)
+    run, _ = _rounds(lambda work: (work / "notes.md").write_text("idea\n"))
+    plain = features.propose(world, "pricing", "Notes", "", run, protected_checker=second,
+                             owner="user:starter")
+    appr = world.get_approval(plain["approval_id"])
+    assert plain["protected"] is None and appr.approvals_required == 1
+    assert (appr.requested_by, appr.provenance) == ("agent:codebase", "codebase")
+
+
+def test_the_second_checker_runs_only_for_protected_changes_and_is_charged(upstream, tmp_path,
+                                                                            monkeypatch):
+    from maverick.budget import Budget
+    _protected_repo(upstream, monkeypatch)
+    world = WorldModel(tmp_path / "world.db")
+    budget = Budget(max_tool_calls=10)
+    finding = {"findings": [{"severity": "blocker", "what": "the price can go negative"}]}
+    second, calls = _second(report=finding, charge=budget)
+    normal = lambda gid, copy: {"findings": []}  # noqa: E731
+    normal.model = "gemini:normal-checker"
+    run, _ = _rounds(lambda work: (work / "notes.md").write_text("idea\n"))
+    features.propose(world, "pricing", "Notes", "", run, checker=normal,
+                     protected_checker=second, budget=budget)
+    assert calls == []                                         # not protected: never runs
+    run, _ = _rounds(_passing)
+    p = features.propose(world, "pricing", "Discount", "", run, checker=normal,
+                         protected_checker=second, budget=budget)
+    assert len(calls) == 1 and budget.tool_calls == 1          # charged to the run's budget
+    gid, copy = calls[0]
+    assert "Protected check" in world.get_goal(gid).title and not copy.exists()
+    assert p["protected"]["state"] == "ran" and p["protected"]["commit"] == p["head"]
+    facts = features.evidence(p)
+    assert "1 blocker(s) from the second checker are still open." in facts["gaps"]
+    assert any("Finding p.1 from the second checker, blocker" in f for f in facts["findings"])
+    assert features.protected_refusal(p) is None and p["approval_id"]
+    # With the budget spent, the second checker does not run: it cannot be approved.
+    run, _ = _rounds(_passing)
+    second, calls = _second()
+    spent = Budget(max_tool_calls=1)
+
+    def normal_spends(gid, copy):
+        spent.tool_calls = 5
+        return {"findings": []}
+    normal_spends.model = "gemini:normal-checker"
+    q = features.propose(world, "pricing", "Discount", "", run, checker=normal_spends,
+                         protected_checker=second, budget=spent)
+    assert calls == [] and q["approval_id"] is None
+    assert features.protected_refusal(q) == features.NOT_LOOKED.format(
+        reason=features.BUDGET_REASON)
+    assert features.status(world, q) == "blocked"
+
+
+def test_an_unset_or_same_family_second_checker_cannot_be_approved(upstream, tmp_path,
+                                                                   monkeypatch):
+    _protected_repo(upstream, monkeypatch)
+    world = WorldModel(tmp_path / "world.db")
+    normal = lambda gid, copy: {"findings": []}  # noqa: E731
+    normal.model = "gemini:normal-checker"
+    for second, problem in ((None, "unset"),
+                            (_second("anthropic:other")[0], "same_family"),      # the author's
+                            (_second("gemini:other")[0], "same_family"),         # a checker's
+                            (_second("openai:x")[0], None)):
+        run, _ = _rounds(_passing)
+        p = features.propose(world, "pricing", "Discount", "", run, checker=normal,
+                             protected_checker=second)
+        assert p["protected"]["problem"] == problem
+        if problem is None:
+            assert p["approval_id"] and features.status(world, p) == "pending"
+            continue
+        sentence = features.PROTECTED_REFUSALS[problem]
+        assert p["approval_id"] is None and features.status(world, p) == "blocked"
+        assert sentence in features.evidence(p)["lines"] and sentence in features.evidence(p)["gaps"]
+        with pytest.raises(vault.VaultError) as refused:
+            features.request_approval(world, p)
+        assert str(refused.value) == sentence
+
+
+def _protected_proposal(upstream, tmp_path, monkeypatch, world=None):
+    if world is None:
+        _protected_repo(upstream, monkeypatch)
+        world = WorldModel(tmp_path / "world.db")
+    run, _ = _rounds(_passing)
+    p = features.propose(world, "pricing", "Discount", "", run,
+                         protected_checker=_second()[0], owner="user:starter")
+    return world, p
+
+
+def test_a_protected_change_needs_two_distinct_people_never_the_starter(upstream, tmp_path,
+                                                                        monkeypatch):
+    monkeypatch.delenv("MAVERICK_ALLOW_SELF_APPROVAL", raising=False)
+    world, p = _protected_proposal(upstream, tmp_path, monkeypatch)
+    aid = p["approval_id"]
+    assert world.decide_approval(aid, "approved", decided_by="user:starter") is False
+    assert world.decide_approval(aid, "approved", decided_by="user:alice")
+    assert world.decide_approval(aid, "approved", decided_by="user:alice")  # once, not twice
+    assert features.status(world, features.find(p["id"])) == "pending"
+    for act in (features.merge, features.push):
+        with pytest.raises(vault.VaultError, match="must approve"):
+            act(world, p["id"])
+    # Even where the starter's own vote is let through, or an agent's, they never count.
+    monkeypatch.setenv("MAVERICK_ALLOW_SELF_APPROVAL", "1")
+    for other in ("user:starter", "agent:helper"):
+        _, q = _protected_proposal(upstream, tmp_path, monkeypatch, world=world)
+        world.decide_approval(q["approval_id"], "approved", decided_by="user:alice")
+        world.decide_approval(q["approval_id"], "approved", decided_by=other)
+        assert features.status(world, features.find(q["id"])) == "approved"
+        for act in (features.merge, features.push):
+            with pytest.raises(vault.VaultError) as refused:
+                act(world, q["id"])
+            assert str(refused.value) == features.TWO_PEOPLE
+    monkeypatch.delenv("MAVERICK_ALLOW_SELF_APPROVAL")
+    world.decide_approval(aid, "approved", decided_by="user:bob")
+    assert features.status(world, features.find(p["id"])) == "approved"
+    assert features.merge(world, p["id"])["status"] == "merged"
+    assert features.push(world, p["id"]) == p["branch"]

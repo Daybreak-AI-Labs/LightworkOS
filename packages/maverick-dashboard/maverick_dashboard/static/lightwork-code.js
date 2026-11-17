@@ -15,6 +15,7 @@
     rejected: "Rejected",
     expired: "Approval request lapsed",
     unrequested: "Needs an approval request",
+    blocked: "Cannot be approved",
     merged: "Merged",
     empty: "No changes were made",
     conflict: "No longer fits the latest code"
@@ -148,7 +149,8 @@
       tr.appendChild(el("td", null, testsText(p.tests, p.tests_ran)));
       tr.appendChild(el("td", null, checkText(p.check)));
       tr.appendChild(el("td", null, reviewText(p.review)));
-      tr.appendChild(el("td", null, STATUS[p.status] || human(p.status)));
+      tr.appendChild(el("td", null, (STATUS[p.status] || human(p.status)) +
+        (p.protected ? " · Protected: two people approve" : "")));
       var td = el("td");
       var wrap = el("div", "ic-actions");
       if (canAdmin) { wrap.appendChild(button("Review", "btn--ghost", function () { review(p.id); })); }

@@ -127,6 +127,7 @@ def _plain_state(world, p: dict) -> str:
 
 def _refuse_unapproved(world, p: dict) -> None:
     """Say, in words, why the kernel will refuse -- before asking it."""
+    from maverick.codebase import features
     state = _plain_state(world, p)
     if state == "merged":
         raise HTTPException(status_code=409, detail="This change is already merged.")
@@ -136,6 +137,8 @@ def _refuse_unapproved(world, p: dict) -> None:
             "then approve it in the approvals queue."))
     if state == "rejected":
         raise HTTPException(status_code=409, detail="This change was rejected in the approvals queue.")
+    if state == "blocked":
+        raise HTTPException(status_code=409, detail=features.protected_refusal(p))
     if state != "approved":
         raise HTTPException(status_code=409, detail=(
             "This change is still waiting for a person to approve it in the approvals queue."))
@@ -345,6 +348,8 @@ async def merge_proposal(request: Request, pid: str) -> dict:
     try:
         merged = await run_in_threadpool(features.merge, world, pid)
     except vault.VaultError as exc:
+        if str(exc) == features.TWO_PEOPLE:
+            raise HTTPException(status_code=409, detail=features.TWO_PEOPLE) from exc
         clean = "no longer merges cleanly" in str(exc)
         raise HTTPException(status_code=409, detail=(
             "This change no longer fits the latest code. Ask Lightwork to build it again."
@@ -365,6 +370,8 @@ async def push_proposal(request: Request, pid: str) -> dict:
     try:
         branch = await run_in_threadpool(features.push, world, pid)
     except vault.VaultError as exc:
+        if str(exc) == features.TWO_PEOPLE:
+            raise HTTPException(status_code=409, detail=features.TWO_PEOPLE) from exc
         raise HTTPException(status_code=502, detail=(
             "Lightwork could not send this change to the original project. Check that "
             "Lightwork is allowed to write there.")) from exc
@@ -378,6 +385,9 @@ async def renew_proposal(request: Request, pid: str) -> dict:
     from maverick.codebase import features
     p = await run_in_threadpool(_find, pid)
     world = _world()
+    refusal = features.protected_refusal(p)
+    if refusal:
+        raise HTTPException(status_code=409, detail=refusal)
     try:
         aid = await run_in_threadpool(features.request_approval, world, p)
     except (vault.VaultError, ValueError) as exc:
@@ -433,6 +443,8 @@ def _run_feature(repo: str, title: str, description: str, max_dollars: float | N
                          features.default_runner(budget=budget, user_id=user_id,
                                                  allowed_suites=suites),
                          reviewer=features.default_reviewer(budget=budget), checker=checker,
+                         protected_checker=features.default_protected_checker(
+                             budget=budget, user_id=user_id, allowed_suites=suites),
                          owner=owner, budget=budget)
     except Exception as exc:  # noqa: BLE001 -- the failed goal carries the outcome
         log.warning("code feature for %s did not finish (%s)", repo, type(exc).__name__)
