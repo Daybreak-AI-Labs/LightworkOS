@@ -752,8 +752,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   or the test commands dialog on the Code page). A change that touches one,
   counting both sides of a rename, needs a second checker from a different
   model family (`[codebase] protected_checker_model`) and two different
-  people to approve, never the person who started it. Without that checker
-  the change cannot be approved. Set the model and the paths you care about.
+  people to approve, never the person who started it. Without that checker,
+  or when the change was started without a signed-in person, it cannot be
+  approved. Protection is checked again at merge, push and renew: a change
+  that became protected after it was built must be built again. Set the
+  model and the paths you care about.
+- An approval that needs two or more people now counts names with case and
+  spacing ignored: `user:Alice` and `user:alice` are one person, and the
+  requester spelt differently is still the requester.
 - No agent, API key or automation can approve a code change any more, and
   Copilot cannot approve a protected one: approve those on the Approvals page.
 - Feature runs on the repository the running Lightwork was installed from

@@ -224,8 +224,10 @@ maverick code export payments ./payments   # plaintext clone for the owner
    the Code page and Copilot show the question and say to answer it on the
    Approvals page or with `maverick decisions answer ID`. A checker that
    asked reads "could not run", never clean. What was spent stays charged.
-   The answer is saved but never restarts that step, whose private copy of
-   the code is gone: start a new code change instead.
+   The answer is saved, and the last answer closes that step (`cancelled`):
+   its private copy of the code is gone, so start a new code change. No
+   restart path (`maverick resume`, a chat reply, the supervisor, a run
+   start) takes up a code change's step or a goal below it.
 14. `sync` fetches upstream as `upstream/*` and never overwrites vault work:
    - a branch behind upstream fast-forwards;
    - a branch ahead of upstream (approved merges not pushed yet) is kept;
@@ -247,8 +249,12 @@ added before protected paths existed have none.
 
 A change is **protected** when any path it changes matches, counting both
 sides of a rename (moving a file into or out of a protected folder both
-count). Protection is decided once, when the run finishes, with the
-patterns in force then. A protected change differs in three ways:
+count). Protection is decided when the run finishes, and decided again
+when the change merges, pushes or asks for approval again (`renew`), from
+the patterns in force then and whether the project is now the running
+installation's own repository. A change that was not built as a protected
+one but is one now is refused: build it again so it gets a second checker
+and two approvers. A protected change differs in three ways:
 
 1. **The card says so first.** Its first lines say the change is protected,
    list the matching paths (the first 10) and say who must approve.
@@ -256,8 +262,13 @@ patterns in force then. A protected change differs in three ways:
    independent checker looks at the final version: a fresh-context run on
    its own copy, with Lightwork re-running its repros as above, charged to
    the same budget. Its model is `[codebase] protected_checker_model`
-   (organisation-only). Its provider family must differ from the author's
-   and from every normal checker's. If it is unset, shares a family, cannot
+   (organisation-only), with no provider failover: if that model cannot
+   answer, the check did not happen. Its family must differ from the
+   author's and from every normal checker's. The family is read from the
+   model's own name after any gateway (`openrouter:anthropic/claude-…`,
+   `bedrock:anthropic.claude…` and `vertex:claude-…` are all Anthropic),
+   else from a first-party provider prefix; a name Lightwork cannot place
+   (`my-local`) cannot be compared. If it is unset, shares a family, cannot
    be compared, or did not look at the final version (the spending limit, an
    error), the change **cannot be approved**: the card, the Code page
    (`Cannot be approved`) and Copilot say exactly why, and `maverick code
@@ -269,8 +280,13 @@ patterns in force then. A protected change differs in three ways:
    person's vote on every surface, whatever `[approval] separate_approver`
    or `[security] allow_self_approval` say. `merge` and `push` (push uses
    the same approval) check again that two different people signed in with
-   their own accounts approved, not the starter. A run started from the
-   command line has no Lightwork identity, so any two people may approve it.
+   their own accounts approved, not the starter. Names are compared with
+   case and spacing ignored, so `user:Alice` and `user:alice` are one person
+   (this applies to every approval that needs two or more people). A
+   protected change started without a named person (the command line, or a
+   dashboard with no sign-in) **cannot be approved**, because Lightwork
+   cannot tell who must stay out: start it from the Code page while signed
+   in.
 
 Who may vote, on every surface (the Approvals page, Copilot, Slack, Teams,
 email; there is no approval vote over MCP, gRPC, flows or automations, and
@@ -282,6 +298,9 @@ auto-approve rules act on tool calls, never on a parked approval):
   approves it on the Approvals page;
 - a protected change takes only people signed in with their own account,
   so the shared no-sign-in "operator" identity never counts;
+- an ordinary (not protected) code change keeps today's single approval,
+  and on a dashboard without sign-in, or with the static dashboard token,
+  that approval is recorded as the shared `operator` identity;
 - one person voting twice, or on two channels, counts once.
 
 Other changes keep one approval, exactly as before. Proposals saved before
@@ -324,12 +343,21 @@ maverick code set lightwork \
   --protected-path packages/maverick-core/maverick/sandbox \
   --protected-path packages/maverick-core/maverick/audit \
   --protected-path packages/maverick-core/maverick/governance.py \
+  --protected-path packages/maverick-core/maverick/config.py \
+  --protected-path packages/maverick-core/maverick/world_model.py \
+  --protected-path packages/maverick-core/maverick/world_model_backends/postgres.py \
+  --protected-path packages/maverick-core/maverick/approval_vote_review.py \
+  --protected-path packages/maverick-core/maverick/decision_requests.py \
+  --protected-path packages/maverick-core/maverick/provider_failover.py \
   --protected-path packages/maverick-core/maverick/policy_tighten.py \
   --protected-path packages/maverick-core/maverick/_tighten_consumers.py \
   --protected-path packages/maverick-core/maverick/safety \
   --protected-path packages/maverick-core/maverick/channel_approvals.py \
   --protected-path packages/maverick-core/maverick/approval_cards.py \
   --protected-path packages/maverick-core/maverick/codebase \
+  --protected-path packages/maverick-dashboard/maverick_dashboard/approval_decisions.py \
+  --protected-path packages/maverick-dashboard/maverick_dashboard/auth.py \
+  --protected-path apps/installer-cli/maverick_installer \
   --protected-path packages/maverick-core/maverick/migrations.lock.json \
   --protected-path packages/maverick-core/maverick/evaluator_anchors.lock.json \
   --protected-path .github \
