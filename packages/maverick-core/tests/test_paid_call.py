@@ -99,3 +99,24 @@ def test_a_failed_send_charges_what_its_receipt_holds_once(monkeypatch, tmp_path
     assert receipts[0].projected == pytest.approx(0.50)
     assert budget.dollars == pytest.approx(0.50)
     assert getattr(budget, "_reserved", 0.0) == 0.0
+
+
+def test_a_zero_unit_price_holds_and_charges_nothing(monkeypatch):
+    # The reviewer's case: Hugging Face priced at $0 per second, which its
+    # replies never report. Nothing is held or charged, and a run with no
+    # money left may still make the call.
+    _priced(monkeypatch, "second", 0.0, hold=0.50)
+    budget = Budget(max_dollars=0.50)
+    held = []
+
+    def send():
+        held.append(getattr(budget, "_reserved", 0.0))
+        return "ok"
+
+    assert paid_call.charged_call("huggingface", send, budget=budget, label="Hugging Face",
+                                  units={"request": 1}) == "ok"
+    assert held == [0.0] and budget.dollars == 0.0
+    budget.dollars = 0.50
+    assert paid_call.charged_call("huggingface", send, budget=budget, label="Hugging Face",
+                                  units={"request": 1}) == "ok"
+    assert budget.dollars == pytest.approx(0.50)

@@ -134,7 +134,7 @@ def charged_call(
         raise PaidCallRefused(str(exc)) from exc
     projected, priced = price.cost(units)
     max_units = None
-    if price.unit is not None and (units or {}).get(price.unit) is None:
+    if price.unit is not None and not priced:
         remaining = _remaining(budget)
         if remaining is not None and remaining <= 0:
             raise BudgetExceeded(
@@ -168,7 +168,7 @@ def charged_call(
         dollars, charged_as_priced = price.cost(used)
         # The priced unit never came back: charge everything held (all the
         # run had left), so the run stops on its limit rather than guess low.
-        unreported = price.unit is not None and used.get(price.unit) is None
+        unreported = price.unit is not None and not charged_as_priced
         if unreported:
             dollars = projected
         try:

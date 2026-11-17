@@ -1186,8 +1186,11 @@ class ToolCallPrice:
         """``(dollars, priced)`` for a call measured in ``units``.
 
         ``priced`` is false when the ceiling applied: no price is set, or the
-        call's amount of the priced unit is not known.
+        call's amount of the priced unit is not known. A zero rate costs
+        nothing, however much is used.
         """
+        if self.unit and self.dollars_per_unit == 0:
+            return 0.0, True
         amount = (units or {}).get(self.unit) if self.unit else None
         if amount is None:
             return self.ceiling, False

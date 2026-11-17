@@ -809,6 +809,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   service (a read timeout, a failed poll) is now charged everything it held,
   and the cost line says the provider may have billed it. A call that never
   connected is not charged. Check the provider's invoice for the real cost.
+- A paid tool service priced at $0 per unit no longer holds or charges
+  anything, even when its replies do not report that unit. Before, it held
+  and charged up to `max_unmetered_hold_dollars` per call.
 
 ### Fixed
 
