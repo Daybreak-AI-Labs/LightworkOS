@@ -1389,13 +1389,17 @@ jobs:
         with:
           path: |
             ${{ runner.temp }}/fastembed
-            ~/.cache/ms-playwright
+            ${{ runner.temp }}/ms-playwright
           # The pins choose the browser build and the loader; embeddings.py
           # names the model.
           key: optional-heavy-${{ runner.os }}-${{ hashFiles('requirements/ci.txt', 'packages/maverick-core/maverick/skill/embeddings.py') }}
       - name: Fetch the FastEmbed model and the Playwright browser
+        # Both locations are explicit: the root conftest.py points HOME at a
+        # temporary directory, so Playwright's default ~/.cache/ms-playwright
+        # would not be found while the tests run.
         env:
           FASTEMBED_CACHE_PATH: ${{ runner.temp }}/fastembed
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/ms-playwright
         run: |
           # Both are no-ops when the cache above restored them.
           python -m playwright install --only-shell chromium
@@ -1403,6 +1407,7 @@ jobs:
       - name: Test Torch, FastEmbed and Playwright integrations
         env:
           FASTEMBED_CACHE_PATH: ${{ runner.temp }}/fastembed
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/ms-playwright
           HF_HUB_OFFLINE: "1"
         run: >-
           timeout --verbose --signal=ABRT --kill-after=30s 15m
@@ -1412,6 +1417,7 @@ jobs:
       - name: Test Torch, FastEmbed and Playwright integrations in the production security posture
         env:
           FASTEMBED_CACHE_PATH: ${{ runner.temp }}/fastembed
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/ms-playwright
           HF_HUB_OFFLINE: "1"
           MAVERICK_TEST_SECURE_DEFAULT: "1"
         run: >-

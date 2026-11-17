@@ -531,10 +531,17 @@ def test_optional_heavy_job_runs_every_file_that_needs_torch_fastembed_or_playwr
     fetch = next(step for step in job["steps"] if step.get("name", "").startswith("Fetch"))
     assert "playwright install --only-shell chromium" in fetch["run"]
     assert "--with-deps" not in fetch["run"]
+    # conftest.py moves HOME, so the browser and model locations are explicit
+    # and the same where they are fetched and where the tests read them.
+    locations = {name: fetch["env"][name] for name in ("FASTEMBED_CACHE_PATH", "PLAYWRIGHT_BROWSERS_PATH")}
+    assert not any(value.startswith("~") for value in locations.values())
+    cache = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/cache@"))
+    assert set(cache["with"]["path"].splitlines()) == set(locations.values())
 
     runs = [step for step in job["steps"] if "$OPTIONAL_HEAVY_TEST_FILES" in step.get("run", "")]
     assert [step["env"].get("MAVERICK_TEST_SECURE_DEFAULT") for step in runs] == [None, "1"]
     assert all(step["env"]["HF_HUB_OFFLINE"] == "1" for step in runs)
+    assert all({name: step["env"][name] for name in locations} == locations for step in runs)
     reports = [re.search(r"--junitxml=(\S+)", step["run"])[1] for step in runs]
     no_skip = next(step for step in job["steps"] if step.get("name") == "Fail on any skipped test")
     assert all(report in no_skip["run"] for report in reports)
