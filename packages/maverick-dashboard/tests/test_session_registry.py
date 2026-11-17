@@ -199,3 +199,32 @@ def test_a_refresh_another_process_wrote_does_not_throttle_this_one(monkeypatch)
     record = sr.get("s1")
     assert record.ip == "198.51.100.5" and record.last_seen == start + 40
 
+
+
+def test_a_refresh_the_caller_just_read_does_not_reach_the_store(monkeypatch):
+    # Every signed-in request reads its session record (current()) and then
+    # refreshes it. Right after sign-in, or after another process refreshed the
+    # row, the UPDATE matched nothing and was still a write transaction on
+    # every request until the window passed. The record the caller already
+    # holds says when the row was refreshed, so no second store access is needed.
+    start = time.time()
+    _register("s1", issued_at=start)              # signed in just now
+    clock = [start + 5]
+    monkeypatch.setattr(sr.time, "time", lambda: clock[0])
+    record = sr.current("s1", principal="user:alice")
+    calls = []
+    real_connect = sr._connect
+
+    def counting_connect():
+        calls.append(1)
+        return real_connect()
+
+    monkeypatch.setattr(sr, "_connect", counting_connect)
+    for _ in range(3):
+        sr.touch("s1", ip="198.51.100.4", last_seen=record.last_seen)
+    assert calls == []
+    clock[0] = start + 61                         # the window has passed: refresh
+    sr.touch("s1", ip="198.51.100.5", last_seen=record.last_seen)
+    assert calls == [1]
+    refreshed = sr.get("s1")
+    assert refreshed.ip == "198.51.100.5" and refreshed.last_seen == start + 61
