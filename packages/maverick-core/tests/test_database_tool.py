@@ -467,3 +467,46 @@ def test_world_database_is_refused_unless_the_organisation_allows_it(monkeypatch
     assert "DENIED" in run()
     monkeypatch.setenv("MAVERICK_DATABASE_ALLOW_WORLD_DATABASE", "1")
     assert "DENIED" not in run()  # it now tries to connect
+
+
+def _local_forms():
+    import socket
+
+    return [
+        "postgresql+psycopg://u:p@127.0.0.2:5433/lightwork",
+        "postgresql+psycopg://u:p@0.0.0.0:5433/lightwork",
+        "postgresql+psycopg://u:p@[0:0:0:0:0:0:0:1]:5433/lightwork",
+        "postgresql+psycopg://u:p@[::ffff:127.0.0.1]:5433/lightwork",
+        "postgresql+psycopg://u:p@LOCALHOST.:5433/lightwork",
+        f"postgresql+psycopg://u:p@{socket.gethostname()}:5433/lightwork",
+        "postgresql+psycopg://u:p@/lightwork?host=/var/run/postgresql&port=5433",
+    ]
+
+
+def test_world_database_guard_knows_every_spelling_of_this_computer(monkeypatch):
+    # The world DSN reaches this computer; every other way of naming it, and
+    # libpq's PG* defaults that complete a partial address, are the same server.
+    from maverick.tools.database_tool import database_tool
+
+    monkeypatch.setenv("MAVERICK_PG_DSN", "host=localhost port=5433 dbname=lightwork user=app")
+    monkeypatch.delenv("MAVERICK_DATABASE_ALLOW_WORLD_DATABASE", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("MAVERICK_DATABASE_ALLOW_URL_ARG", "1")
+    for name in ("PGHOST", "PGHOSTADDR", "PGPORT", "PGDATABASE", "PGUSER", "PGSERVICE"):
+        monkeypatch.delenv(name, raising=False)
+
+    def run(url):
+        return database_tool().fn({"op": "query", "sql": "SELECT 1", "url": url})
+
+    for url in _local_forms():
+        assert "records database" in run(url), url
+    monkeypatch.setenv("PGHOST", "localhost")
+    monkeypatch.setenv("PGPORT", "5433")
+    monkeypatch.setenv("PGDATABASE", "lightwork")
+    assert "records database" in run("postgresql+psycopg://u:p@/")
+    assert "records database" not in run("postgresql+psycopg://u:p@/reports")
+    # A service definition names a server this check cannot compare: refused.
+    monkeypatch.setenv("PGSERVICE", "lightwork")
+    assert "records database" in run("postgresql+psycopg://u:p@/")
+    assert "records database" in run("postgresql+psycopg://u:p@localhost/lightwork?service=other")
+    assert "records database" not in run("postgresql+psycopg://u:p@db.invalid/x?service=other")

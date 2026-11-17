@@ -276,9 +276,14 @@ workspace) before turning RLS on; until then the check is not READY.
   as the world DSN. Only the organisation can lift that, with
   `[tools] database_allow_world_database = true` in its own settings or
   `MAVERICK_DATABASE_ALLOW_WORLD_DATABASE=1`; a workspace's settings cannot.
-  If you lift it, give the tool a separate read-only login. The check compares
-  the address as written, so a different name for the same server is not
-  caught.
+  If you lift it, give the tool a separate read-only login. Every name for
+  this computer counts as the same host (`localhost`, any `127.x` address,
+  `0.0.0.0`, `::1` in any form, its host name, a socket path), and the
+  `PGHOST`, `PGPORT`, `PGDATABASE` and `PGUSER` defaults fill in what an
+  address leaves out. An address whose server comes from a service definition
+  (`service=` or `PGSERVICE`) without its own host and database is refused,
+  because the check cannot read it. Another DNS name or address for a remote
+  world server is not recognised.
 
 The webhook and deadline-alert tables (`webhook_subscriptions`,
 `webhook_deliveries`, `deadline_alerts`) store the workspace id as written

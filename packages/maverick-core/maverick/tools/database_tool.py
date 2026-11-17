@@ -221,7 +221,14 @@ _WORLD_DATABASE_DENIAL = (
     "change. Use a separate database, or ask your organisation to allow it with [tools] "
     "database_allow_world_database. The tool was not executed."
 )
-_LOCAL_HOSTS = frozenset({"", "localhost", "127.0.0.1", "::1"})
+# libpq's environment defaults, which complete an address that leaves a part out.
+_PG_ENV_DEFAULTS = (("host", "PGHOST"), ("hostaddr", "PGHOSTADDR"), ("port", "PGPORT"),
+                    ("dbname", "PGDATABASE"), ("user", "PGUSER"))
+
+
+class _Uncomparable(ValueError):
+    """The address takes its server from a service definition this check
+    cannot read, so it cannot be told apart from the world database."""
 
 
 def _world_database_allowed() -> bool:
@@ -240,9 +247,46 @@ def _world_database_allowed() -> bool:
         return False
 
 
+def _own_names() -> set[str]:
+    import socket
+
+    name = socket.gethostname().strip().rstrip(".").lower()
+    return {name, name.split(".", 1)[0]} - {""}
+
+
 def _endpoint_host(host: str) -> str:
-    host = host.strip().strip("[]").lower()
-    return "local" if host in _LOCAL_HOSTS or host.startswith("/") else host
+    """``local`` for every way of naming this computer: no host or a socket
+    path, ``localhost``, a loopback or unspecified address in any form
+    (``127.0.0.0/8``, ``0.0.0.0``, ``::1``, ``::ffff:127.0.0.1``), and its
+    own host name."""
+    host = host.strip().strip("[]").rstrip(".").lower()
+    if not host or host.startswith(("/", "@")) or host == "localhost" or host.endswith(".localhost"):
+        return "local"
+    try:
+        ip = ipaddress.ip_address(host.split("%", 1)[0])
+    except ValueError:
+        return "local" if host in _own_names() else host
+    ip = getattr(ip, "ipv4_mapped", None) or ip
+    return "local" if ip.is_loopback or ip.is_unspecified else str(ip)
+
+
+def _complete_from_environment(params: dict[str, str]) -> dict[str, str]:
+    """Fill what libpq would take from PG* variables. A service definition
+    (``service=`` or ``PGSERVICE``) may supply any missing part: without a
+    host or database the server is unknown; without a port, any port."""
+    if params.get("service") or os.environ.get("PGSERVICE"):
+        if not (params.get("host") or params.get("hostaddr")) or not params.get("dbname"):
+            raise _Uncomparable("service")
+        if not params.get("port"):
+            params["port"] = "*"
+    for key, env in _PG_ENV_DEFAULTS:
+        if not params.get(key):
+            params[key] = os.environ.get(env, "")
+    if not params.get("user"):
+        import getpass
+        with contextlib.suppress(Exception):
+            params["user"] = getpass.getuser()
+    return params
 
 
 def _postgres_params(dsn: str) -> dict[str, str] | None:
@@ -273,6 +317,7 @@ def _postgres_endpoints(dsn: str) -> set[tuple[str, str, str]]:
     params = _postgres_params(dsn)
     if params is None:
         return set()
+    params = _complete_from_environment(params)
     database = params.get("dbname") or params.get("user") or ""
     ports = [p.strip() or "5432" for p in params.get("port", "").split(",")]
     found = set()
@@ -299,7 +344,9 @@ def _world_database_denial(url: str) -> str | None:
         world_endpoints = _postgres_endpoints(world)
     except Exception:  # noqa: BLE001 -- an unreadable address is not opened
         return _WORLD_DATABASE_DENIAL
-    return _WORLD_DATABASE_DENIAL if target & world_endpoints else None
+    same = any((host, database) == (w_host, w_database) and (port == w_port or "*" in (port, w_port))
+               for host, port, database in target for w_host, w_port, w_database in world_endpoints)
+    return _WORLD_DATABASE_DENIAL if same else None
 
 
 def _denial(host: str) -> str:
@@ -600,7 +647,7 @@ def _op_query(sql: str, url_arg: str, limit: int, confirm: bool,
         denial = _model_supplied_url_denial(url_arg, allow_hosts)
         if denial:
             return denial
-    denial = _world_database_denial(url) or _host_denial(url, allow_hosts)
+    denial = _host_denial(url, allow_hosts) or _world_database_denial(url)
     if denial:
         return denial
     try:
