@@ -679,12 +679,28 @@ def _check_world_db() -> None:
         try:
             _row(GREEN, "world-db", f"{label} (schema v{w.schema_version})")
             if postgres:
+                _check_database_login(w)
                 _check_workspace_records(w)
         finally:
             close_world_if_owned(w)
     except Exception as e:
-        _row(RED, "world-db", f"open failed: {e}",
-             fix="check world-model backend credentials, connectivity, and storage permissions")
+        from .service_status import database_refusal
+
+        refusal = database_refusal(e)
+        _row(RED, "world-db", refusal or f"open failed: {e}",
+             fix="" if refusal else "check world-model backend credentials, connectivity, and storage permissions")
+
+
+def _check_database_login(world) -> None:
+    """A superuser or BYPASSRLS login opens the database, but shared records
+    refuse it, so every task stopped while world-db read healthy."""
+    problem = getattr(world, "login_bypasses_rls", None)
+    if not isinstance(problem, str) or not problem:
+        return
+    from .governed_records import PRIVILEGED_LOGIN_REFUSAL
+
+    _row(RED, "database login", f"{problem}; shared records refuse it, so every task stops",
+         fix=PRIVILEGED_LOGIN_REFUSAL)
 
 
 def _check_workspace_records(world) -> None:

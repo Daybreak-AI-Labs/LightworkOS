@@ -1283,8 +1283,14 @@ def test_postgres_runtime_role_must_not_bypass_rls(monkeypatch, attribute):
         connect=database.connect,
     )
     with tenant_scope(tenant="alpha"):
-        with pytest.raises(GovernedRecordBackendError, match="incompatible"):
+        with pytest.raises(GovernedRecordBackendError) as refused:
             backend.load("TRB-missing")
+    # Field finding: a superuser login read as "schema is incompatible" on
+    # every task. Name the login and the fix, as maverick doctor does.
+    message = str(refused.value)
+    assert "incompatible" not in message
+    assert "superuser" in message and "BYPASSRLS" in message
+    assert "NOSUPERUSER NOBYPASSRLS" in message
 
 
 def test_postgres_rechecks_rls_policy_drift_on_every_transaction(monkeypatch):

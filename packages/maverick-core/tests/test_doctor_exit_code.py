@@ -106,3 +106,19 @@ def test_doctor_warns_when_cli_work_lands_outside_every_workspace(monkeypatch, t
     res = CliRunner().invoke(main, ["doctor"])
     assert "commands here use the shared space" in res.output
     assert "do not show in a workspace" in res.output
+
+
+def test_doctor_fails_a_postgres_login_that_bypasses_row_security(monkeypatch, capsys):
+    """Doctor said world-db ✓ while every task failed on governed records,
+    which refuse a superuser or BYPASSRLS login."""
+    from types import SimpleNamespace
+
+    world = SimpleNamespace(schema_version=56, login_bypasses_rls="the Postgres login is a superuser")
+    monkeypatch.setattr("maverick.world_model_backends.is_postgres_configured", lambda: True)
+    monkeypatch.setattr("maverick.world_model.open_world", lambda: world)
+    monkeypatch.setattr("maverick.world_model.close_world_if_owned", lambda w: None)
+    h._FAILURES.clear()
+    h._check_world_db()
+    out = capsys.readouterr().out
+    assert "database login" in h._FAILURES
+    assert "every task" in out and "NOSUPERUSER NOBYPASSRLS" in out

@@ -3875,18 +3875,20 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
               reference, occurred_at, request.method, route,
               exc_info=(type(exc), exc, exc.__traceback__))
     headers = {"Cache-Control": "private, no-store", "X-Lightwork-Failure-Reference": reference}
-    from maverick.service_status import READ_ONLY_REFUSAL, is_read_only_error
+    from maverick.service_status import READ_ONLY_REFUSAL, database_refusal, is_read_only_error
 
     # A write refused by a read-only database says what broke, that
     # saved work is safe and what to do, never the database error itself.
+    # A database setup refusal shows the fix maverick doctor prints.
     read_only = is_read_only_error(exc)
-    status = 503 if read_only else 500
+    database_error = database_refusal(exc)
+    status = 503 if read_only or database_error else 500
     if _wants_html(request):
         try:
             return templates.TemplateResponse(
                 request, "500.html", {"failure_reference": reference, "failure_time": occurred_at,
                                       "uncertain_mutation": request.method not in {"GET", "HEAD"},
-                                      "read_only_error": read_only},
+                                      "read_only_error": read_only, "database_error": database_error},
                 status_code=status, headers=headers,
             )
         except Exception:
@@ -3898,7 +3900,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
                 f'<a href="/help?failure={reference}">Open Help</a></html>',
                 status_code=500, headers=headers,
             )
-    detail = READ_ONLY_REFUSAL if read_only else (
+    detail = READ_ONLY_REFUSAL if read_only else database_error or (
         "The request could not be completed. Check its current state before retrying a change.")
     return JSONResponse({"detail": detail, "failure_reference": reference, "occurred_at": occurred_at},
                         status_code=status, headers=headers)

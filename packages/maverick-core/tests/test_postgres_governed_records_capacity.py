@@ -437,3 +437,23 @@ def test_archived_delete_follows_a_concurrent_restore(
     finally:
         for name in (namespace, archived_namespace):
             _delete_test_rows(governed_record_dsn, tenant=tenant, namespace=name)
+
+
+def test_a_superuser_login_is_refused_with_the_fix(shared_encryption_authority):
+    """Field finding: a superuser login opened the database (doctor said
+    world-db ✓) but every task stopped on "shared governed-record schema is
+    incompatible". The refusal now names the login problem and the fix."""
+    import psycopg
+    from maverick.governed_records import GovernedRecordBackendError
+
+    del shared_encryption_authority
+    with psycopg.connect(_DSN, autocommit=True) as conn:
+        superuser, bypass = conn.execute(
+            "SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user").fetchone()
+    if not (superuser or bypass):
+        pytest.skip("this service's login is already least-privilege")
+    backend = PostgresGovernedRecordBackend("live_pg_privileged", "LPP", dsn=_DSN)
+    with tenant_scope(tenant="live-pg-privileged"), pytest.raises(GovernedRecordBackendError) as refused:
+        backend.load("LPP-missing")
+    assert "NOSUPERUSER NOBYPASSRLS" in str(refused.value)
+    assert "incompatible" not in str(refused.value)
