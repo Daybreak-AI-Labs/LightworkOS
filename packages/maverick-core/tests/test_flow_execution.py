@@ -735,3 +735,36 @@ class TestEvolve:
         monkeypatch.delenv("MAVERICK_FLOWS", raising=False)
         monkeypatch.setattr("maverick.config.get_flows", lambda: {"enable": False})
         assert evolve.maybe_propose(self._flow()) == []
+
+
+def test_flow_tool_step_charges_paid_tools_to_the_flow_allowance(tmp_path, monkeypatch):
+    # A flow's tool step gives paid tools a run budget of what is left of the
+    # flow's allowance, and their charges count toward the run's cost. A paid
+    # call that would pass the allowance is stopped before it is sent.
+    import pytest
+    from maverick import tools
+    from maverick.tools._paid_call import charged_call
+
+    _patch_home(tmp_path, monkeypatch)
+    monkeypatch.setattr("maverick.tool_authz.authorize", lambda *a, **k: None)
+    import importlib
+    risk_module = importlib.import_module("maverick.safety.tool_risk")
+    monkeypatch.setattr(risk_module, "_load_overrides", lambda: {"paid_fixture": "low"})
+    sent = []
+
+    def registry(*_args, budget=None, **_kwargs):
+        reg = tools.ToolRegistry(principal="reviewer")
+        reg.register(tools.Tool(
+            name="paid_fixture", description="Paid fixture", input_schema={"type": "object"},
+            fn=lambda args: charged_call("deepl", lambda: sent.append(1) or "translated",
+                                         budget=budget, label="DeepL", units={"request": 1})))
+        return reg
+
+    monkeypatch.setattr(tools, "base_registry", registry)
+    f = Flow(id="fT", name="f", start="a", max_dollars=0.15, nodes={
+        "a": FlowNode(id="a", kind=NODE_ACTION, tool="paid_fixture", output="r1", next="b"),
+        "b": FlowNode(id="b", kind=NODE_ACTION, tool="paid_fixture", output="r2")})
+    run = execution.execute(f, agent_runner=lambda brief, d: ("", None),
+                            action_runner=execution.default_action_runner(world=None))
+    assert run.data["r1"] == "translated" and "r2" not in run.data
+    assert sent == [1] and run.cost_dollars == pytest.approx(0.10)

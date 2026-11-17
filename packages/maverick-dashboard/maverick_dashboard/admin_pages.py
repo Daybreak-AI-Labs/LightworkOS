@@ -577,7 +577,8 @@ async def settings_self_hosted_free(request: Request) -> RedirectResponse:
 
 TOOL_PRICE_CONFIRM = "Confirm that you checked this service's own price before saving."
 TOOL_PRICE_UNIT_WORDS = {"request": "request", "page": "page", "character": "character",
-                         "image": "image", "second": "second of audio or compute"}
+                         "image": "image", "second": "second of audio or compute",
+                         "terabyte": "terabyte scanned"}
 
 
 def _tool_charge(entry: tuple[float, str] | None, ceiling: float) -> str:
@@ -589,7 +590,7 @@ def _tool_charge(entry: tuple[float, str] | None, ceiling: float) -> str:
 
 
 def _tool_price_choices() -> list[dict[str, str]]:
-    from maverick.tools._paid_call import paid_tool_services
+    from maverick.budget import paid_tool_services
 
     return [{"service": name, "label": label} for name, label in paid_tool_services().items()]
 
@@ -597,11 +598,21 @@ def _tool_price_choices() -> list[dict[str, str]]:
 def tool_price_states() -> list[dict]:
     """How each paid tool service is charged now, in the page's words: the
     named services, then any other service with a saved price."""
-    from maverick.budget import tool_price_entry, tool_price_settings
-    from maverick.tools._paid_call import PAID_TOOL_SERVICES, paid_tool_services
+    from maverick.budget import (
+        PAID_TOOL_SERVICES,
+        ToolPricesUnavailable,
+        paid_tool_services,
+        tool_price_entry,
+        tool_price_settings,
+    )
 
-    prices, ceiling = tool_price_settings()
     labels = paid_tool_services()
+    try:
+        prices, ceiling = tool_price_settings()
+    except ToolPricesUnavailable:
+        return [{"service": service, "label": labels[service], "priced": False,
+                 "charge": "Settings cannot be read: paid calls are refused"}
+                for service in PAID_TOOL_SERVICES]
     shown = [*PAID_TOOL_SERVICES, *sorted(k for k in prices if k in labels and k not in PAID_TOOL_SERVICES)]
     rows = []
     for service in shown:
@@ -618,8 +629,7 @@ def check_tool_price_input(request: Request, service: str, *, dollars: object, p
     service, a unit and a USD amount from 0 to 10,000. Saves nothing."""
     import math
 
-    from maverick.budget import TOOL_PRICE_UNITS
-    from maverick.tools._paid_call import paid_tool_services
+    from maverick.budget import TOOL_PRICE_UNITS, paid_tool_services
 
     auth.require_global_permission(request, "admin")
     if not confirmed:
@@ -643,9 +653,12 @@ def _tool_price_audit(data: dict, service: str) -> dict[str, object]:
 
 
 def _saved_tool_price(service: str):
-    from maverick.budget import tool_price_entry, tool_price_settings
+    from maverick.budget import ToolPricesUnavailable, tool_price_entry, tool_price_settings
 
-    return tool_price_entry(tool_price_settings()[0].get(service))
+    try:
+        return tool_price_entry(tool_price_settings()[0].get(service))
+    except ToolPricesUnavailable:
+        return None
 
 
 def _write_tool_price(request: Request, service: str, dollars: float | None, per: str = "") -> None:
@@ -684,7 +697,7 @@ def apply_tool_price(request: Request, service: str, *, dollars: object, per: ob
 
 def remove_tool_price(request: Request, service: str) -> dict:
     """Remove a saved tool price, so the service is charged the safety ceiling."""
-    from maverick.tools._paid_call import paid_tool_services
+    from maverick.budget import paid_tool_services
 
     auth.require_global_permission(request, "admin")
     if service not in paid_tool_services() or _saved_tool_price(service) is None:

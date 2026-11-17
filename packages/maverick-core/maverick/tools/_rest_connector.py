@@ -521,7 +521,7 @@ def make_rest_tool(
     keyless: bool = False,
     query_auth: str | None = None,
     default_base_url: str | None = None,
-    paid: bool = False,
+    paid: bool | str = False,
     budget=None,
 ) -> Tool:
     """Build a thin authenticated-REST ``Tool``.
@@ -558,8 +558,8 @@ def make_rest_tool(
     API resource prefixes. This is intended for credentialed finance APIs where
     GET-only is not, by itself, an adequate data-access boundary.
 
-    ``paid=True`` marks a pay-per-use AI service: every request other than a
-    GET is a paid call charged to ``budget`` (kernel rule 3) through
+    ``paid=True`` marks a pay-per-use service: every request other than a
+    GET (with ``paid="all"``, a per-lookup service, every request) is a paid call charged to ``budget`` (kernel rule 3) through
     ``_paid_call.charged_call``, priced per request from ``[budget.tool_prices]
     <name>``, else the per-call safety ceiling. A request that never left (a
     refused address, missing settings) is not charged, nor is a server on this
@@ -652,7 +652,7 @@ def make_rest_tool(
                 query_auth=query_auth,
             )
 
-        if not paid or op == "get":
+        if not paid or (op == "get" and paid != "all"):
             return execute()
         return _charged_execute(name, execute, _config, budget)
 

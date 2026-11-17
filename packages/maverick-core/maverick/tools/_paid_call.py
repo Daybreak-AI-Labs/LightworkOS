@@ -17,28 +17,19 @@ from collections.abc import Callable
 from typing import Any
 
 from ..budget import (
-    PAID_TOOL_SERVICES,
     BudgetExceeded,
+    ToolPricesUnavailable,
     UsageAccountingError,
     _is_private_endpoint,
     record_tool_dollars,
     tool_call_price,
+    tool_ceiling_reason,
 )
 from ..provider_cost_cap import (
     ProviderAccountingUnavailable,
     ProviderCapExceeded,
     metered_provider_call,
 )
-
-
-def paid_tool_services() -> dict[str, str]:
-    """Every service name a [budget.tool_prices] entry can price, with a label."""
-    from .enterprise_connectors import PAID_CONNECTOR_NAMES
-
-    services = dict(PAID_TOOL_SERVICES)
-    for name in sorted(PAID_CONNECTOR_NAMES - set(services)):
-        services[name] = f"{name} connector"
-    return services
 
 
 class PaidCallRefused(RuntimeError):
@@ -56,14 +47,22 @@ def is_free_backend(url: str | None) -> bool:
     return bool(url) and _is_private_endpoint(url)
 
 
+def _remaining(budget) -> float | None:
+    """Dollars left on ``budget`` after spend and holds; ``None`` with no cap."""
+    if budget.max_dollars is None:
+        return None
+    return budget.max_dollars - budget.dollars - getattr(budget, "_reserved", 0.0)
+
+
 def charged_call(
     service: str,
-    send: Callable[[], Any],
+    send: Callable[..., Any],
     *,
     budget,
     label: str,
     units: dict[str, float] | None = None,
     measure: Callable[[Any], dict[str, float | None]] | None = None,
+    bounded: bool = False,
     category: str = "inference",
     operation_id: str | None = None,
     attempt_no: int | None = None,
@@ -73,32 +72,51 @@ def charged_call(
 
     ``units`` is what the call uses that is known before it is sent (one
     request, the characters in the text); ``measure`` reads more from the
-    reply (seconds of audio or compute). A unit that stays unknown is charged
-    the per-call ceiling. ``measure`` returns ``None`` when ``send`` stopped
-    before anything was sent, so nothing is charged. Returns what ``send``
-    returned.
+    reply (seconds of audio or compute, bytes scanned). A unit that stays
+    unknown is charged the per-call ceiling. ``measure`` returns ``None`` when
+    ``send`` stopped before anything was sent, so nothing is charged.
+
+    When the priced unit is known only from the reply, the hold is all the
+    run has left, so no other paid call can spend the same money; the charge
+    is then settled to the real cost. With ``bounded``, ``send`` is called
+    with the most units that fit in that hold (``None`` when unlimited), for a
+    service that accepts a limit. Returns what ``send`` returned.
     """
     if budget is None:
         raise PaidCallRefused(
             f"{label} calls are charged to a run's spending limit, and this call has "
-            "none (a flow's tool step, for example). Call it from an agent step "
-            "instead; nothing was sent")
+            "none. Call it from an agent step or a flow with a spending allowance; "
+            "nothing was sent")
     budget.check()
-    price = tool_call_price(service)
-    projected, _priced = price.cost(units)
+    try:
+        price = tool_call_price(service)
+    except ToolPricesUnavailable as exc:
+        raise PaidCallRefused(str(exc)) from exc
+    projected, priced = price.cost(units)
+    max_units = None
+    if price.unit is not None and (units or {}).get(price.unit) is None:
+        remaining = _remaining(budget)
+        if remaining is not None:
+            if remaining <= 0:
+                raise BudgetExceeded(
+                    f"no spending left for {label}, whose cost is known only after it "
+                    f"runs (${budget.dollars:.2f} of ${budget.max_dollars:.2f} spent or held)")
+            projected = remaining
+            if price.dollars_per_unit > 0:
+                max_units = remaining / price.dollars_per_unit
     outcome: dict[str, Any] = {}
 
     def call():
-        result = send()
+        result = send(max_units) if bounded else send()
         used = dict(units or {})
         measured = {} if measure is None else measure(result)
         if measured is None:
             outcome["charge"] = None
             return result
         used.update({unit: amount for unit, amount in measured.items() if amount is not None})
-        dollars, priced = price.cost(used)
+        dollars, charged_as_priced = price.cost(used)
         try:
-            outcome["charge"] = record_tool_dollars(budget, price, dollars, priced=priced)
+            outcome["charge"] = record_tool_dollars(budget, price, dollars, priced=charged_as_priced)
         except BudgetExceeded as exc:
             outcome["charge"] = getattr(exc, "token_charge", None)
             if outcome["charge"] is None:
@@ -114,7 +132,12 @@ def charged_call(
             return 0.0, "estimated", None
         return charge.dollars, "estimated", charge.pricing_evidence
 
-    held = budget.reserve(projected)
+    try:
+        held = budget.reserve(projected)
+    except BudgetExceeded as exc:
+        if priced or price.unit is not None:
+            raise
+        raise BudgetExceeded(f"{exc}{tool_ceiling_reason(service)}") from exc
     try:
         result = metered_provider_call(
             service, call, projected_dollars=projected, settlement=settlement,

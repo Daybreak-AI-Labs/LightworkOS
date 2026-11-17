@@ -579,3 +579,31 @@ def test_hosted_speech_from_the_tool_is_charged_per_character_and_needs_a_budget
     assert out.startswith("ERROR") and "nothing was sent" in out and len(sent) == 1
     assert voice_mod._tts_elevenlabs("unmetered", None, tmp_path / "d.mp3") and len(sent) == 2
     assert budget.dollars == pytest.approx(0.011)
+
+
+def test_auto_speech_to_text_falls_back_to_local_when_the_run_cannot_pay(monkeypatch, tmp_path):
+    # With the default auto backend, a hosted service the run cannot pay for
+    # (here no run budget) is skipped for the local engine; a call that asks
+    # for the hosted service by name is refused instead.
+    from types import SimpleNamespace as NS
+
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    audio = tmp_path / "a.wav"
+    audio.write_bytes(b"RIFF")
+    created = []
+
+    class _OpenAI:
+        def __init__(self, **_kw):
+            self.audio = NS(transcriptions=NS(create=lambda **kw: created.append(kw) or NS(text="cloud")))
+
+    import sys
+    import types
+    fake = types.ModuleType("openai")
+    fake.OpenAI = _OpenAI
+    monkeypatch.setitem(sys.modules, "openai", fake)
+    monkeypatch.setattr(voice_mod, "_whisper_local", lambda p, lang: "local words")
+    tool = voice_mod.transcribe_audio(NS(workdir=str(tmp_path)))
+    assert "local words" in tool.fn({"source": "a.wav"})
+    out = tool.fn({"source": "a.wav", "backend": "openai"})
+    assert out.startswith("ERROR") and "nothing was sent" in out and created == []

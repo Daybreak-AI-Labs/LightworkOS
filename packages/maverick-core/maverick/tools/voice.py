@@ -41,7 +41,9 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
+from ..budget import BudgetExceeded
 from ..governed_http import guarded_sender as _governed_sender
+from ..provider_cost_cap import ProviderCapExceeded
 from . import Tool, safe_path_segment
 from ._paid_call import STOP_SIGNALS, PaidCallRefused, charged_call
 
@@ -110,6 +112,8 @@ _UNMETERED = object()
 _PAID_BUDGET: ContextVar[object] = ContextVar("voice_paid_budget", default=_UNMETERED)
 # Errors a backend must not turn into "try the next backend".
 _PASS_THROUGH = (*STOP_SIGNALS, PaidCallRefused)
+# A hosted call the run cannot pay for; ``auto`` then uses the local engine.
+_HOSTED_STOPS = (PaidCallRefused, BudgetExceeded, ProviderCapExceeded)
 
 
 def _paid(service: str, label: str, send, **metering):
@@ -513,6 +517,39 @@ def warm_up_local_stt(*, cancel: threading.Event | None = None) -> bool:
         _WARMING.clear()
 
 
+def _hosted_transcript(backend: str, path: Path, language: str | None):
+    """``(transcript, error line, stop)`` from the hosted services ``backend``
+    allows. With ``auto``, a hosted service the run cannot pay for (no run
+    budget, the spending limit, a provider cap) returns that stop instead of
+    raising it, so the caller can use the local engine."""
+    for name, call, failure in (
+            ("openai", _whisper_openai, "ERROR: OpenAI Whisper failed (check OPENAI_API_KEY)"),
+            ("groq", _whisper_groq, "ERROR: Groq Whisper failed (check GROQ_API_KEY)")):
+        if backend not in (name, "auto"):
+            continue
+        try:
+            out = call(path, language)
+        except _HOSTED_STOPS as e:
+            if backend != "auto":
+                raise
+            return None, "", e
+        if out is not None:
+            return out, "", None
+        if backend == name:
+            return None, failure, None
+    return None, "", None
+
+
+def _local_transcript(path: Path, language: str | None) -> str | None:
+    """The first local engine's transcript, or ``None`` when none is set up."""
+    out = _whisper_local(path, language)
+    if out is None:
+        out = _whisper_pywhispercpp(path, language)
+    if out is None:
+        out = _whisper_cpp(path, language)
+    return out
+
+
 def _run_transcribe_internal(args: dict[str, Any], *, budget: object = _UNMETERED) -> str:
     """Transcribe a trusted caller's file without granting a model host access.
 
@@ -574,18 +611,16 @@ def _run_transcribe_scoped(args: dict[str, Any], sandbox: Any = None, *,
         return (f"ERROR: speech-to-text is pinned to {pinned!r} by the operator; "
                 f"backend {backend!r} is not allowed")
 
-    if backend in ("openai", "auto"):
-        out = _whisper_openai(path, language)
-        if out is not None:
-            return confirmed_success_text(out)
-        if backend == "openai":
-            return "ERROR: OpenAI Whisper failed (check OPENAI_API_KEY)"
-    if backend in ("groq", "auto"):
-        out = _whisper_groq(path, language)
-        if out is not None:
-            return confirmed_success_text(out)
-        if backend == "groq":
-            return "ERROR: Groq Whisper failed (check GROQ_API_KEY)"
+    out, failure, hosted_stop = _hosted_transcript(backend, path, language)
+    if out is not None:
+        return confirmed_success_text(out)
+    if failure:
+        return failure
+    if hosted_stop is not None:
+        out = _local_transcript(path, language)
+        if out is None:
+            raise hosted_stop
+        return confirmed_success_text(out)
     if backend in ("local", "auto"):
         out = _whisper_local(path, language)
         if out is None:

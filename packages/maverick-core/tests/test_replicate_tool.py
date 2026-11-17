@@ -119,3 +119,45 @@ def test_replicate_wait_is_charged_for_the_seconds_it_ran(monkeypatch):
     assert budget.dollars == pytest.approx(0.025)
     assert "created prediction" in tool.fn({"op": "run", "model": "o/m", "input": {}})
     assert budget.dollars == pytest.approx(0.025 + DEFAULT_UNPRICED_TOOL_CALL_DOLLARS)
+
+
+def test_replicate_priced_per_second_cannot_spend_past_the_limit(monkeypatch):
+    # The seconds a prediction runs are known only afterwards. The call holds
+    # all the run has left, so nothing else can spend it, and a polled
+    # prediction is cancelled once it has used that much. The charge is the
+    # real time it ran.
+    import os
+
+    import pytest
+    from maverick import config
+
+    home = os.environ["MAVERICK_HOME"]
+    os.makedirs(home, exist_ok=True)
+    with open(os.path.join(home, "config.toml"), "w", encoding="utf-8") as f:
+        f.write('[budget.tool_prices]\nreplicate = { dollars = 0.01, per = "second" }\n')
+    config.reset_config_cache()
+    monkeypatch.setenv("REPLICATE_API_TOKEN", "r8_xx")
+    import maverick.tools.replicate_tool as rt
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(rt.time, "time", lambda: clock["now"])
+    monkeypatch.setattr(rt.time, "sleep", lambda s: clock.__setitem__("now", clock["now"] + 5))
+    budget = Budget(max_dollars=0.15)
+    held, posts = [], []
+
+    def get(url, **_kw):
+        if url.endswith("/models/o/m"):
+            return _resp(200, {"latest_version": {"id": "v1"}})
+        held.append(budget._reserved)
+        if any(u.endswith("/cancel") for u in posts):
+            return _resp(200, {"id": "p1", "status": "canceled", "metrics": {"predict_time": 15.0}})
+        return _resp(200, {"id": "p1", "status": "processing"})
+
+    def post(url, **_kw):
+        posts.append(url)
+        return _resp(201, {"id": "p1", "status": "starting"})
+
+    _fake_httpx(monkeypatch, get=MagicMock(side_effect=get), post=MagicMock(side_effect=post))
+    out = rt.replicate_tool(budget=budget).fn({"op": "run", "model": "o/m", "input": {}, "wait": True})
+    assert "canceled" in out and posts[-1].endswith("/predictions/p1/cancel")
+    assert held[0] == pytest.approx(0.15)
+    assert budget.dollars == pytest.approx(0.15) and budget._reserved == 0

@@ -462,3 +462,29 @@ def test_paid_ai_connector_charges_each_write_to_the_run_budget(monkeypatch):
     unbudgeted = next(t for t in enterprise_connectors() if t.name == "openai_platform")
     out = unbudgeted.fn({"op": "post", "path": "/v1/chat/completions", "body": {}, "confirm": True})
     assert out.startswith("ERROR") and "nothing was sent" in out and req.call_count == 3
+
+
+def test_every_pay_per_use_and_per_lookup_connector_is_charged(monkeypatch):
+    # Every pay-per-use connector charges its writes, and a per-lookup data
+    # service (billed per GET) charges its reads too, read-only seats included.
+    import pytest
+    from maverick.budget import DEFAULT_UNPRICED_TOOL_CALL_DOLLARS, Budget
+    from maverick.tools import enterprise_connectors as ec
+
+    paid = {d.name: d.factory_kwargs.get("paid") for d in ec.enterprise_connector_descriptors()}
+    for name in ("heygen", "synthesia", "remove_bg", "clipdrop", "rev_com", "deepset_cloud",
+                 "ollama_cloud", "cerebrium", "beam_cloud", "paperspace_gradient", "otter_ai",
+                 "happyscribe", "pictory", "opus_clip", "invideo", "relevance_ai", "dify_ai",
+                 "chatbase", "vectara", "picsart", "descript", "threeplay_media", "runpod"):
+        assert paid[name] is True, name
+    for name in ("shodan", "hunter", "clearbit", "zoominfo", "numverify", "semrush",
+                 "zoominfo_read", "clearbit_read"):
+        assert paid[name] == "all", name
+    assert not paid["bamboohr"]  # a subscription service is not charged per call
+
+    _set(monkeypatch)
+    req = MagicMock(return_value=_resp(200, {"ok": True}))
+    _fake_httpx(monkeypatch, request=req)
+    budget = Budget()
+    assert "ok" in _tool(paid="all", budget=budget).fn({"op": "get", "path": "/lookup"})
+    assert budget.dollars == pytest.approx(DEFAULT_UNPRICED_TOOL_CALL_DOLLARS)

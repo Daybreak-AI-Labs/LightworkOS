@@ -120,26 +120,35 @@ def _measured(result) -> dict[str, float | None]:
 def run_prediction(version: str, inp: dict, wait: bool, budget, *, label: str = "Replicate"):
     """Create one prediction and, with ``wait``, poll it for up to ~90s.
 
-    One paid call charged to ``budget``. Returns ``(code, created, final,
+    One paid call charged to ``budget``. When Replicate is priced per second,
+    a polled prediction is cancelled once it has run as long as the run's
+    remaining allowance pays for. Returns ``(code, created, final,
     poll_error)``: ``final`` is the finished prediction, or ``None`` when not
     waiting, still running or the poll failed (``poll_error`` says how).
     """
-    def send():
+    def send(max_units):
         code, data = _post("/predictions", {"version": version, "input": inp})
         if code >= 400 or not isinstance(data, dict) or not wait:
             return code, data, None, None
-        deadline = time.time() + 90
+        started = time.time()
+        deadline = started + 90
+        cancelled = False
         while time.time() < deadline:
             c2, p2 = _get(f"/predictions/{data.get('id')}")
             if c2 >= 400 or not isinstance(p2, dict):
                 return code, data, None, f"ERROR: poll ({c2}): {p2}"
             if p2.get("status") in ("succeeded", "failed", "canceled"):
                 return code, data, p2, None
+            if (max_units is not None and not cancelled
+                    and time.time() - started >= max_units):
+                # The run cannot pay for more seconds: stop the prediction.
+                _post(f"/predictions/{data.get('id')}/cancel", {})
+                cancelled = True
             time.sleep(2)
         return code, data, None, None
 
     return charged_call("replicate", send, budget=budget, label=label,
-                        units={"request": 1}, measure=_measured)
+                        units={"request": 1}, measure=_measured, bounded=True)
 
 
 def _fmt_prediction(p: dict) -> str:

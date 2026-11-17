@@ -700,25 +700,38 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   runs, turn on `[codebase] require_container` in Settings. A workspace can
   no longer weaken the `[codebase]` checks in its own config file.
 - Paid tool calls now count against the task's spending limit, so a capped
-  run can stop on tool spend. This covers Hugging Face (and its OCR),
-  Replicate and hosted image edits, DeepL, LibreTranslate on a public
-  server, OpenAI and Groq speech-to-text, OpenAI and ElevenLabs speech,
-  Tavily, Brave and SerpAPI search, and the pay-per-use AI connectors
-  (such as `openai_platform`) for every request but a GET. A call that
-  would pass the limit is stopped before it is sent. Local engines,
-  DuckDuckGo and servers on a private address are free.
-- Set each paid tool service's price in Settings > Models, under Prices for
-  paid tool services, the Copilot, the setup wizard, or
-  `[budget.tool_prices]` (for example
-  `deepl = { dollars = 0.00002, per = "character" }`; units are request,
-  page, character, image and second). A service with no price is charged
-  `[budget] unpriced_tool_call_dollars` per call (default $0.10, in All
-  settings); a warning and the cost line say so. A workspace may only
-  raise these prices.
-- A flow's tool step has no run budget, so it refuses these paid tools and
-  connectors: call them from an agent step. The dashboard microphone, its
-  read-aloud voice and `maverick voice` are not part of a run and are not
-  charged.
+  run can stop on tool spend. This covers search (Tavily, Brave, SerpAPI),
+  Hugging Face (and its OCR), Replicate and hosted image edits, DeepL,
+  LibreTranslate on a public server, OpenAI and Groq speech-to-text, OpenAI
+  and ElevenLabs speech, Wolfram|Alpha, NewsAPI, BigQuery (by terabytes
+  scanned when priced that way), and the pay-per-use connectors: AI, media
+  AI, identity and background checks on every request but a GET, per-lookup
+  data services (such as `shodan`, `hunter`, `zoominfo`) on every request.
+  Local engines, DuckDuckGo and servers on a private address are free.
+- A call whose price is known before it is sent is stopped if it would pass
+  the limit. A call priced per second or per terabyte holds everything the
+  run has left; BigQuery and a waited Replicate prediction are told to stop
+  there. Otherwise such a call can still cost more than was left, and the
+  run stops right after it.
+- GPU rentals (`runpod`, `vast_ai`, `lambda_labs_cloud`, `coreweave`,
+  `voltage_park`, `paperspace_gradient`) start machines billed by the hour.
+  The limit sees only the per-call charge, never those hours.
+- Upgrading: a new install's task limit is $2, and a paid tool with no price
+  set counts $0.10 per call, so 20 unpriced searches use the whole limit.
+  Set prices for the services you use first, starting with search, in
+  Settings > Models, under Prices for paid tool services, the Copilot, the
+  setup wizard, or `[budget.tool_prices]` (for example
+  `tavily = { dollars = 0.008, per = "request" }`; units are request, page,
+  character, image, second and terabyte). Change the $0.10 per call in All
+  settings (`[budget] unpriced_tool_call_dollars`); a warning and the cost
+  line name the services charged it. A workspace may only raise these
+  prices. While settings cannot be read, paid tool calls are refused.
+- A flow's tool step charges paid tools to what is left of the flow's
+  spending allowance, and adds them to the run's cost. The dashboard
+  microphone, its read-aloud voice, voice-only mode, chat attachments and
+  `maverick voice` are not part of a run and are not charged. With the
+  default `auto` speech-to-text, a hosted service the run cannot pay for
+  falls back to the local engine.
 
 ### Fixed
 

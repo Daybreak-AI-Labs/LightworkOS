@@ -130,9 +130,10 @@ def test_tool_prices_from_the_wizard_are_written_as_the_budget_reads_them(monkey
     from maverick import budget as budget_mod
     from maverick import config
 
-    answers = iter(["0.25", "deepl=0.00002/character, tavily=0.008/request"])
+    answers = iter(["0.25", "deepl=0.00002/character, tavily=0.008/request, openai_platform=0.02/request"])
+    seen = []
     monkeypatch.setattr(wizard, "_q_text", lambda message, *, default="": (
-        next(answers) if "tool" in message else default))
+        seen.append(message) or next(answers) if "tool" in message else default))
     monkeypatch.setattr(wizard, "_q_confirm", lambda *_args, **_kwargs: False)
     budget = wizard.pick_budget()
 
@@ -143,3 +144,6 @@ def test_tool_prices_from_the_wizard_are_written_as_the_budget_reads_them(monkey
     deepl = budget_mod.tool_call_price("deepl")
     assert (deepl.dollars_per_unit, deepl.unit) == (0.00002, "character")
     assert budget_mod.tool_call_price("tavily").unit == "request"
+    # The same services as the Prices page, connectors included; search first.
+    assert budget_mod.tool_call_price("openai_platform").unit == "request"
+    assert "search first" in seen[1] and seen[1].index("tavily") < seen[1].index("deepl")

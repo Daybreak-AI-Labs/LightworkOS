@@ -145,4 +145,12 @@ def test_hf_unpriced_call_is_charged_the_ceiling_and_says_so(monkeypatch, caplog
     assert budget.dollars == pytest.approx(2 * budget_mod.DEFAULT_UNPRICED_TOOL_CALL_DOLLARS)
     warnings = [r.getMessage() for r in caplog.records if "huggingface has no usable price" in r.getMessage()]
     assert len(warnings) == 1 and "Prices for paid tool services" in warnings[0]
-    assert "per-call safety ceiling" in budget.summary() and "tool:huggingface" in budget.summary()
+    assert "per-call safety ceiling" in budget.summary() and "Hugging Face" in budget.summary()
+    assert "tool:huggingface" not in budget.summary()
+    # A limit that the ceiling would pass refuses the first call, and says why.
+    capped = Budget(max_dollars=0.05)
+    with pytest.raises(budget_mod.BudgetExceeded) as refused:
+        huggingface(budget=capped).fn({"op": "infer", "model": "o/m", "inputs": "hi"})
+    assert "per-call safety ceiling" in str(refused.value) and "Hugging Face" in str(refused.value)
+    assert "Prices for paid tool services" in str(refused.value)
+    assert fake_httpx.post.call_count == 2

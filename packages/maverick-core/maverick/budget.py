@@ -1043,12 +1043,12 @@ def record_tool_tokens(
     return charge
 
 
-# A paid tool call billed per request, page, character, image or second is
-# priced from [budget.tool_prices] (one entry per service: dollars per unit
-# and the unit). A service with no usable entry, or a call whose unit is not
-# known, is charged the per-call safety ceiling [budget]
+# A paid tool call billed per request, page, character, image, second or
+# terabyte scanned is priced from [budget.tool_prices] (one entry per service:
+# dollars per unit and the unit). A service with no usable entry, or a call
+# whose unit is not known, is charged the per-call safety ceiling [budget]
 # unpriced_tool_call_dollars. No provider's price is written here.
-TOOL_PRICE_UNITS = ("request", "page", "character", "image", "second")
+TOOL_PRICE_UNITS = ("request", "page", "character", "image", "second", "terabyte")
 DEFAULT_UNPRICED_TOOL_CALL_DOLLARS = 0.10
 _MAX_TOOL_UNIT_DOLLARS = 10_000.0
 _TOOL_PRICE_VERSION = "operator-tool-price-v1"
@@ -1058,13 +1058,76 @@ _TOOL_CEILING_WARNED: set[str] = set()
 # The paid tool services a [budget.tool_prices] entry prices, in plain words.
 # The pay-per-use connectors (tools.enterprise_connectors.PAID_CONNECTOR_NAMES)
 # are priced under their own names too.
+# Search comes first: it is the paid tool agents call most often.
 PAID_TOOL_SERVICES = {
+    "tavily": "Tavily search", "brave": "Brave search", "serpapi": "SerpAPI search",
     "huggingface": "Hugging Face", "replicate": "Replicate", "deepl": "DeepL",
     "libretranslate": "LibreTranslate on a public server",
     "openai_whisper": "OpenAI speech-to-text", "groq_whisper": "Groq speech-to-text",
     "openai_tts": "OpenAI text-to-speech", "elevenlabs": "ElevenLabs",
-    "tavily": "Tavily search", "brave": "Brave search", "serpapi": "SerpAPI search",
+    "wolfram": "Wolfram|Alpha", "newsapi": "NewsAPI", "bigquery": "BigQuery",
 }
+
+# Generic REST connectors to pay-per-use services. A request other than a GET
+# is a paid call: AI inference and generation, media AI (transcription,
+# captions, avatar video, image editing), GPU rental (billed per hour after
+# the call, so only the per-call ceiling is seen), identity and background
+# checks. Subscription services (CRM, ERP, storage, messaging and so on) are
+# not charged per call.
+PAID_CONNECTOR_NAMES = frozenset({
+    "huggingface_inference", "replicate_ai", "openai_platform", "anthropic_api",
+    "cohere_ai", "mistral_ai", "stability_ai", "elevenlabs", "assemblyai",
+    "deepgram", "runwayml", "fal_ai", "together_ai", "fireworks_ai", "groq_cloud",
+    "perplexity_ai", "anyscale_endpoints", "baseten", "modal_labs", "banana_dev",
+    "deepinfra", "octoai", "clarifai", "nlp_cloud", "ai21_labs", "google_vertex_ai",
+    "azure_openai", "aws_sagemaker", "ibm_watsonx", "nvidia_nim", "scale_ai",
+    "runpod", "lambda_labs_cloud", "vast_ai", "coreweave", "predibase", "mosaicml",
+    "heygen", "synthesia", "remove_bg", "clipdrop", "rev_com", "deepset_cloud",
+    "ollama_cloud", "cerebrium", "beam_cloud", "paperspace_gradient", "otter_ai",
+    "happyscribe", "pictory", "opus_clip", "invideo", "relevance_ai", "dify_ai",
+    "chatbase", "vectara", "picsart", "descript", "threeplay_media", "trint", "veed",
+    "kapwing", "voltage_park", "floydhub", "wonderchat", "gumloop", "lindy_ai",
+    "stack_ai", "tinypng", "luminance", "lexcheck", "baidu", "telesign",
+    "prove_identity", "jumio", "onfido", "persona_kyc", "trulioo", "socure",
+    "middesk", "checkr", "sterling_check", "hireright", "goodhire",
+})
+# Per-lookup data services: a GET is billed too (a credit or a lookup).
+PER_LOOKUP_CONNECTOR_NAMES = frozenset({
+    "shodan", "hunter", "clearbit", "zoominfo", "numverify", "semrush", "ahrefs",
+    "lusha", "rocketreach", "apollo", "censys", "imagga",
+})
+# GPU rentals: a call starts a machine billed by the hour; the run budget sees
+# only the per-call ceiling, never the hours.
+GPU_RENTAL_CONNECTOR_NAMES = frozenset({
+    "runpod", "vast_ai", "lambda_labs_cloud", "coreweave", "voltage_park",
+    "paperspace_gradient",
+})
+
+
+def paid_tool_services() -> dict[str, str]:
+    """Every service name a [budget.tool_prices] entry can price, with a label."""
+    services = dict(PAID_TOOL_SERVICES)
+    for name in sorted((PAID_CONNECTOR_NAMES | PER_LOOKUP_CONNECTOR_NAMES) - set(services)):
+        services[name] = f"{name} connector"
+    return services
+
+
+def tool_route_label(route: str) -> str:
+    """``tool:<service>`` in plain words; any other route unchanged."""
+    if not route.startswith("tool:"):
+        return route
+    return paid_tool_services().get(route[5:], route[5:])
+
+
+def tool_ceiling_reason(service: str) -> str:
+    """Why a paid tool call's charge was the per-call safety ceiling."""
+    return (f". The charge for {tool_route_label('tool:' + service)} is the per-call "
+            "safety ceiling because it has no usable price. Set the service's price in "
+            "Settings > Models, under Prices for paid tool services")
+
+
+class ToolPricesUnavailable(RuntimeError):
+    """The settings that price paid tool calls cannot be read."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -1118,24 +1181,31 @@ def tool_price_entry(value: object) -> tuple[float, str] | None:
     return float(dollars), str(unit)
 
 
+_TOOL_PRICES_UNREADABLE = (
+    "Lightwork cannot read its settings, so it cannot price paid tool calls; nothing "
+    "was sent. Fix the settings file that maverick doctor names, then try again")
+
+
 def tool_price_settings() -> tuple[dict[str, object], float]:
     """The raw [budget.tool_prices] table and the per-call ceiling in force.
 
-    An unreadable configuration ignores every set price and charges the
-    default ceiling, the restrictive branch: a workspace's lower price must
-    not apply while its file cannot be checked.
+    Raises :class:`ToolPricesUnavailable` when the configuration cannot be
+    read, the restrictive branch: guessing a price could charge less than an
+    administrator set, so paid tool calls are refused until it is readable.
     """
     try:
         from .config import config_source_errors, get_budget_overrides
 
         if config_source_errors(include_tenant=True):
-            return {}, DEFAULT_UNPRICED_TOOL_CALL_DOLLARS
+            raise ToolPricesUnavailable(_TOOL_PRICES_UNREADABLE)
         section = get_budget_overrides() or {}
-    except Exception:
-        log.warning("tool prices are unreadable; charging the safety ceiling", exc_info=True)
-        return {}, DEFAULT_UNPRICED_TOOL_CALL_DOLLARS
+    except ToolPricesUnavailable:
+        raise
+    except Exception as exc:
+        log.warning("tool prices are unreadable; refusing paid tool calls", exc_info=True)
+        raise ToolPricesUnavailable(_TOOL_PRICES_UNREADABLE) from exc
     if not isinstance(section, dict):
-        return {}, DEFAULT_UNPRICED_TOOL_CALL_DOLLARS
+        raise ToolPricesUnavailable(_TOOL_PRICES_UNREADABLE)
     prices = section.get("tool_prices")
     return ((prices if isinstance(prices, dict) else {}),
             _tool_ceiling(section.get("unpriced_tool_call_dollars")))
@@ -1688,7 +1758,8 @@ class Budget:
             )
         if tools := priced_by.get(_UNPRICED_TOOL_CEILING):
             note += (
-                f". Spend for {', '.join(tools)} used the per-call safety ceiling "
+                f". Spend for {', '.join(tool_route_label(t) for t in tools)} used the "
+                "per-call safety ceiling "
                 "because it has no usable price. Set the service's price in Settings > "
                 "Models, under Prices for paid tool services"
             )

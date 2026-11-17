@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from ..budget import PAID_CONNECTOR_NAMES, PER_LOOKUP_CONNECTOR_NAMES
 from ..catalog_schema import index_connector_specs
 from . import Tool
 from ._connector_specs import _GRAPHQL_SPECS, _SPECS
@@ -30,21 +31,15 @@ def _fill_env(spec: dict) -> dict:
     return spec
 
 
-# Pay-per-use AI services: a request other than a GET is a paid call charged
-# to the run budget (make_rest_tool ``paid``), priced from [budget.tool_prices].
-PAID_CONNECTOR_NAMES = frozenset({
-    "huggingface_inference", "replicate_ai", "openai_platform", "anthropic_api",
-    "cohere_ai", "mistral_ai", "stability_ai", "elevenlabs", "assemblyai",
-    "deepgram", "runwayml", "fal_ai", "together_ai", "fireworks_ai", "groq_cloud",
-    "perplexity_ai", "anyscale_endpoints", "baseten", "modal_labs", "banana_dev",
-    "deepinfra", "octoai", "clarifai", "nlp_cloud", "ai21_labs", "google_vertex_ai",
-    "azure_openai", "aws_sagemaker", "ibm_watsonx", "nvidia_nim", "scale_ai",
-    "runpod", "lambda_labs_cloud", "vast_ai", "coreweave", "predibase", "mosaicml",
-})
-
+# Pay-per-use services (budget.PAID_CONNECTOR_NAMES): a request other than a
+# GET is a paid call charged to the run budget (make_rest_tool ``paid``),
+# priced from [budget.tool_prices]. Per-lookup data services
+# (budget.PER_LOOKUP_CONNECTOR_NAMES) are charged for every request.
 for _spec in (*_SPECS, *_GRAPHQL_SPECS):
     _fill_env(_spec)
-    if _spec["name"] in PAID_CONNECTOR_NAMES:
+    if _spec["name"] in PER_LOOKUP_CONNECTOR_NAMES:
+        _spec["paid"] = "all"
+    elif _spec["name"] in PAID_CONNECTOR_NAMES:
         _spec["paid"] = True
 
 # Compile the authoritative catalog once. Duplicate names or invalid credential

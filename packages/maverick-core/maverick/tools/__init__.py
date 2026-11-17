@@ -1645,7 +1645,7 @@ def base_registry(
         ToolDescriptor("oracle", oracle_tool, True),
         ToolDescriptor("sap", sap_tool, True),
         ToolDescriptor("workday", workday_tool, True),
-        ToolDescriptor("bigquery", bigquery_tool, True),
+        ToolDescriptor("bigquery", lambda: bigquery_tool(budget=budget), True),
         ToolDescriptor("dynamics", dynamics_tool, True),
     ))
     # The long tail of token-authed REST connectors (one spec each, built on
@@ -1688,8 +1688,8 @@ def base_registry(
         ToolDescriptor("trello", trello_tool, True),
         ToolDescriptor("confluence", confluence_tool, True),
         ToolDescriptor("replicate", lambda: replicate_tool(budget=budget), True),
-        ToolDescriptor("newsapi", newsapi_tool, True),
-        ToolDescriptor("wolfram", wolfram_tool, True),
+        ToolDescriptor("newsapi", lambda: newsapi_tool(budget=budget), True),
+        ToolDescriptor("wolfram", lambda: wolfram_tool(budget=budget), True),
         ToolDescriptor("dropbox", dropbox_tool, True),
         ToolDescriptor("msgraph", msgraph_tool, True),
         ToolDescriptor("gmail", gmail_tool, True),

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextvars import ContextVar
 from functools import wraps
 from typing import Any
 
@@ -19,7 +20,8 @@ class _MeteredAgentResult(tuple):
         return value
 
 
-def _budget_gated(agent_runner: AgentRunner, cap: float, per_call: float, spent: list) -> AgentRunner:
+def _budget_gated(agent_runner: AgentRunner, cap: float, per_call: float, spent: list,
+                  lock=None) -> AgentRunner:
     """Wrap an agent runner with a per-RUN aggregate spend ceiling. Each agent
     node is reserved at its worst-case per-node budget (``per_call``) against a
     shared, lock-guarded total; once the next reservation would exceed ``cap`` the
@@ -34,7 +36,7 @@ def _budget_gated(agent_runner: AgentRunner, cap: float, per_call: float, spent:
     retain their declared conservative reservation contract. A pre-dispatch
     refusal is a control stop, with no business result or learning outcome."""
     import threading
-    lock = threading.Lock()
+    lock = lock or threading.Lock()
 
     @wraps(agent_runner, updated=())
     def run(brief: str, data: dict, **kw) -> tuple:
@@ -70,4 +72,52 @@ def _spend_tracked(agent_runner: AgentRunner, per_call: float, spent: list) -> A
         with lock:
             spent[0] += per_call
         return agent_runner(brief, data, **kw)
+    return run
+
+
+# The run budget a flow's tool step charges paid tool calls to; the action
+# runner builds its tool registry with it.
+_STEP_BUDGET: ContextVar[Any] = ContextVar("flow_step_budget", default=None)
+
+
+def current_step_budget():
+    """The run budget of the flow tool step being run, else ``None``."""
+    return _STEP_BUDGET.get()
+
+
+def _tool_spend_metered(action_runner: Callable, cap: float | None, spent: list,
+                        lock=None) -> Callable:
+    """Give each tool step a run budget of what is left of the flow's
+    allowance, so a paid tool can run inside the flow's limit, and add what
+    the step spent to the run's total. With an allowance, a step holds
+    ``lock`` (shared with the agent gate) while it runs, so two paid steps
+    cannot spend the same remainder."""
+    import threading
+
+    from ..budget import Budget, BudgetExceeded
+    lock = lock or threading.Lock()
+
+    @wraps(action_runner, updated=())
+    def run(tool: str, params: dict, data: dict) -> tuple:
+        def step():
+            remaining = None if not cap or cap <= 0 else max(0.0, cap - spent[0])
+            budget = Budget(max_dollars=remaining)
+            token = _STEP_BUDGET.set(budget)
+            try:
+                return action_runner(tool, params, data)
+            except BudgetExceeded as exc:
+                if isinstance(exc, FlowBudgetExceeded):
+                    raise
+                # The step's paid call did not fit what was left of the flow's
+                # allowance: the run stops as budget-limited.
+                raise FlowBudgetExceeded(
+                    f"flow spending allowance reached (${cap or 0:g}): {exc}") from exc
+            finally:
+                _STEP_BUDGET.reset(token)
+                spent[0] += budget.dollars
+
+        if cap and cap > 0:
+            with lock:
+                return step()
+        return step()
     return run

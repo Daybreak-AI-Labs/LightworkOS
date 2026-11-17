@@ -173,3 +173,15 @@ def test_private_libretranslate_is_free_and_no_budget_refuses_deepl(monkeypatch)
     out = translate().fn({"op": "translate", "text": "hello", "target": "es"})
     assert out.startswith("ERROR") and "spending limit" in out and "nothing was sent" in out
     assert post.call_count == 1
+
+
+def test_paid_calls_are_refused_while_settings_cannot_be_read(monkeypatch):
+    # An unreadable configuration could hide a price the administrator set,
+    # so paid tool calls are refused with a plain message instead of guessed.
+    from maverick import config
+    from maverick.tools.translate import translate
+
+    post = _deepl_and_libre(monkeypatch)
+    monkeypatch.setattr(config, "config_source_errors", lambda **_kw: ["config.toml"])
+    out = translate(budget=Budget()).fn({"op": "translate", "text": "hello", "target": "es"})
+    assert out.startswith("ERROR") and "cannot read its settings" in out and post.call_count == 0
