@@ -95,7 +95,7 @@ SQLITE_SCHEMA: list[str] = [
     " admin_required INTEGER NOT NULL DEFAULT 0, requested_by TEXT NOT NULL DEFAULT '',"
     " status TEXT NOT NULL DEFAULT 'open', created_at REAL NOT NULL,"
     " expires_at REAL NOT NULL, chosen INTEGER, note TEXT, decided_by TEXT,"
-    " decided_at REAL)",
+    " decided_at REAL, resume_token TEXT, resume_dispatched_at REAL)",
     "CREATE INDEX IF NOT EXISTS idx_decision_requests_goal ON decision_requests(goal_id, status)",
     "CREATE INDEX IF NOT EXISTS idx_decision_requests_open ON decision_requests(status, expires_at)",
 ]
@@ -104,17 +104,6 @@ POSTGRES_SCHEMA: list[str] = [
     .replace(" REAL", " DOUBLE PRECISION")
     .replace("idx_decision_requests_", "idx_pg_decision_requests_")
     for statement in SQLITE_SCHEMA
-]
-
-#: v56: when, and under which token, the run was last moved back to start
-#: after an answer (``maverick.chat_threads.ChatThreads._pending``).
-DISPATCH_MARKER_SQLITE: list[str] = [
-    "ALTER TABLE decision_requests ADD COLUMN resume_token TEXT",
-    "ALTER TABLE decision_requests ADD COLUMN resume_dispatched_at REAL",
-]
-DISPATCH_MARKER_POSTGRES: list[str] = [
-    "ALTER TABLE decision_requests ADD COLUMN IF NOT EXISTS resume_token TEXT",
-    "ALTER TABLE decision_requests ADD COLUMN IF NOT EXISTS resume_dispatched_at DOUBLE PRECISION",
 ]
 
 #: Open decisions of a goal and every goal below it (one ``?``: the goal id).

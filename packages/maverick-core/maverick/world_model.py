@@ -31,7 +31,6 @@ from typing import Any
 from .approval_checks import SQLITE_SCHEMA as _APPROVAL_CHECK_SCHEMA
 from .attachment_submissions import SQLITE_SCHEMA as _ATTACHMENT_SUBMISSION_SCHEMA
 from .deadline_alerts import SQLITE_SCHEMA as _DEADLINE_ALERT_SCHEMA
-from .decision_requests import DISPATCH_MARKER_SQLITE as _DECISION_DISPATCH_MARKER
 from .decision_requests import SQLITE_SCHEMA as _DECISION_REQUEST_SCHEMA
 from .event_admission import SQLITE_SCHEMA as _EVENT_ADMISSION_SCHEMA
 from .event_admission import (
@@ -74,7 +73,7 @@ log = logging.getLogger(__name__)
 # intentional override from the untouched compatibility constant.
 _INITIAL_DEFAULT_DB = data_dir("world.db")
 DEFAULT_DB = _INITIAL_DEFAULT_DB
-SCHEMA_VERSION = 56
+SCHEMA_VERSION = 55
 DEFAULT_BUSY_TIMEOUT_MS = 5000
 WAL_SWITCH_BUSY_TIMEOUT_MS = 50
 WAL_SWITCH_RETRY_SECONDS = 5.0
@@ -463,9 +462,6 @@ def _bootstrap_schema(conn: sqlite3.Connection) -> str:
 
 
 MIGRATIONS: dict[int, list[str]] = {
-    # v56: when (and under which token) a run was last moved back to start
-    # after its decision was answered, so recovery never starts it twice.
-    56: _DECISION_DISPATCH_MARKER,
     # v55: a run's question for a person with options and a recommendation
     # (maverick.decision_requests). Rows are scoped through their goal.
     55: _DECISION_REQUEST_SCHEMA,
