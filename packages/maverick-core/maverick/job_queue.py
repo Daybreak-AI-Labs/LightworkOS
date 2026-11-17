@@ -189,7 +189,6 @@ class JobQueue:
     def _conn(self) -> Iterator[sqlite3.Connection]:
         c = sqlite3.connect(str(self.db_path), isolation_level=None)
         try:
-            c.execute("PRAGMA journal_mode=WAL")
             c.execute("PRAGMA busy_timeout=5000")
             c.row_factory = sqlite3.Row
             yield c
@@ -198,6 +197,9 @@ class JobQueue:
 
     def _ensure_schema(self) -> None:
         with self._conn() as c:
+            # WAL persists in the database. Set it during initialization,
+            # after configuring the busy timeout, not on each worker poll.
+            c.execute("PRAGMA journal_mode=WAL")
             from .schedule_definitions import SCHEMA as schedule_schema
             from .schedule_definitions import adopt_existing
 

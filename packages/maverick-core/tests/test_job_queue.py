@@ -4,8 +4,10 @@ fencing on complete() and fail().
 from __future__ import annotations
 
 import os
+import sqlite3
 import tempfile
 import time
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -71,6 +73,30 @@ def test_job_queue_enqueue_claim_complete(tmp_path):
     fetched = q.get(jid)
     assert fetched is not None
     assert fetched.status == "done"
+
+
+def test_worker_claim_does_not_reconfigure_persistent_wal(tmp_path, monkeypatch):
+    path = tmp_path / "jobs.db"
+    queue = JobQueue(db_path=path)
+    job_id = queue.enqueue("run_goal", {}, run_at=100.0)
+    connect = sqlite3.connect
+    statements = []
+
+    class RecordingConnection(sqlite3.Connection):
+        def execute(self, sql, *args, **kwargs):
+            statements.append(sql)
+            return super().execute(sql, *args, **kwargs)
+
+    with closing(connect(path)) as connection:
+        assert connection.execute("PRAGMA journal_mode").fetchone() == ("wal",)
+    monkeypatch.setattr(
+        sqlite3, "connect",
+        lambda *args, **kwargs: connect(*args, factory=RecordingConnection, **kwargs),
+    )
+
+    job = queue.claim(now=100.0)
+    assert job is not None and job.id == job_id
+    assert not any("journal_mode" in sql.lower() for sql in statements)
 
 
 def test_job_queue_claim_returns_none_when_empty(tmp_path):
