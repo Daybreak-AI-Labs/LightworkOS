@@ -171,6 +171,59 @@ def test_copilot_edits_an_agents_limits_like_the_page(client, monkeypatch, tmp_p
     assert (tmp_path / "agent_trust.json").read_text() == before
 
 
+def test_copilot_edit_form_loads_and_binds_the_selected_agent(client, monkeypatch, tmp_path):
+    # With several agents, the form shows the selected agent's own limits,
+    # and limits loaded for one agent are never saved to another.
+    from maverick_dashboard import product_operations_agent_trust as ops
+
+    _as(monkeypatch, "admin", "user:ada")
+    _register(client, "first-agent", max_dollars=100.0, allow_tools=["*"])
+    _register(client, "second-agent", max_dollars=1.0, deny_tools=["shell"], data_scopes=[])
+
+    def edit_form(selection):
+        listed = client.post(f"{COPILOT}/catalog", json={"page": "/trust", "selection": selection})
+        assert listed.status_code == 200, listed.text
+        row = next(item for item in listed.json()["operations"] if item["id"] == "trust.agents.edit")
+        return listed.json(), row, {f["name"]: f["value"] for f in row["fields"]}
+
+    _, _, shown = edit_form({})
+    assert (shown["agent"], shown["max_dollars"]) == ("first-agent", 100.0)
+    _, _, shown = edit_form({"agent": "second-agent"})
+    assert (shown["agent"], shown["max_dollars"], shown["deny_tools"]) == ("second-agent", 1.0, ["shell"])
+
+    # The first agent's limits submitted for the second agent are refused.
+    listed, row, shown = edit_form({})
+    first_limits = {k: v for k, v in shown.items() if k != "agent"}
+    before = (tmp_path / "agent_trust.json").read_text()
+    refused = client.post(f"{COPILOT}/prepare", json={
+        "page": "/trust", "selection": {}, "operation": "trust.agents.edit", "context": listed["context"],
+        "revision": row["revision"], "arguments": {**first_limits, "agent": "second-agent"}})
+    assert refused.status_code == 409 and "Nothing was changed" in refused.json()["detail"], refused.text
+    # A review prepared for the first agent cannot be applied to the second.
+    adapter = {a.id: a for a in ops.entries()}["trust.agents.edit"]
+    prepared = adapter.prepare(_request(), {}, {**first_limits, "agent": "first-agent", "max_dollars": 50.0})
+    assert prepared.native["agent"] == "first-agent" and prepared.native["revision"]
+    with pytest.raises(HTTPException) as error:
+        adapter.execute(_request(), {"agent": "second-agent"},
+                        {**first_limits, "agent": "second-agent", "max_dollars": 50.0}, prepared.native, "a" * 32)
+    assert error.value.status_code == 409
+    assert (tmp_path / "agent_trust.json").read_text() == before
+
+    # The second agent's own form, prepared and applied, changes only it.
+    listed, row, shown = edit_form({"agent": "second-agent"})
+    review = client.post(f"{COPILOT}/prepare", json={
+        "page": "/trust", "selection": {"agent": "second-agent"}, "operation": "trust.agents.edit",
+        "context": listed["context"], "revision": row["revision"],
+        "arguments": {**shown, "max_dollars": 2.0}})
+    assert review.status_code == 200, review.text
+    assert review.json()["changes"] == [{"field": "Spending limit per task", "before": "$1.00", "after": "$2.00"}]
+    done = _execute(client, review.json())
+    assert done.status_code == 200 and done.json()["status"] == "confirmed", done.text
+    saved = {e["id"]: e for e in json.loads((tmp_path / "agent_trust.json").read_text())}
+    assert (saved["first-agent"]["max_dollars"], saved["second-agent"]["max_dollars"]) == (100.0, 2.0)
+    assert saved["second-agent"]["deny_tools"] == ["shell"]
+
+
 def test_copilot_shows_the_page_and_checks_access_like_the_page(client, monkeypatch):
     from maverick import agent_trust
     from maverick_dashboard import product_operations_agent_trust as ops

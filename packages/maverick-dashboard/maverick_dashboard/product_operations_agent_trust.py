@@ -271,31 +271,55 @@ def _limit_fields(request, first: dict | None) -> list[dict]:
          "choices": [{"value": k, "label": v} for k, v in scopes.items()]}]
 
 
-def edit_snapshot(request, _selection):
+def _loaded_agent(state: dict, selection: dict) -> str:
+    """The agent whose limits fill the edit form: the one selected, else the
+    first agent set up in this app."""
+    choices = [c["value"] for c in _agent_choices(state, managed_only=True)]
+    chosen = selection.get("agent") if isinstance(selection, dict) else None
+    return chosen if chosen in choices else (choices[0] if choices else "")
+
+
+_OTHER_AGENT = ("These limits were loaded for another agent, or its limits changed. Load the selected "
+                "agent's current limits and review again. Nothing was changed.")
+
+
+def edit_snapshot(request, selection):
     native.require_permission(request, "admin")
     state = _state()
     choices = _agent_choices(state, managed_only=True)
-    first = _row(state, choices[0]["value"], managed_only=True) if choices else None
+    loaded = _loaded_agent(state, selection)
+    first = _row(state, loaded, managed_only=True) if loaded else None
     fields = [{"name": "agent", "label": "Agent", "kind": "select", "value": first["id"] if first else "",
                "choices": choices}, *_limit_fields(request, first)]
     return _snapshot(state, fields=fields, blocked="" if choices else
                      "No agent on the list was added in this app, so none can be edited here.")
 
 
-def edit_prepare(request, _selection, arguments):
+def edit_prepare(request, selection, arguments):
     native.require_permission(request, "admin")
-    row = _row(_state(), arguments["agent"], managed_only=True)
+    state = _state()
+    row = _row(state, arguments["agent"], managed_only=True)
+    if _loaded_agent(state, selection) != row["id"]:
+        raise HTTPException(409, _OTHER_AGENT)
     before, after = _words(row), _words(_limits_row(arguments))
     changes = [{"field": name, "before": before[name], "after": after[name]}
                for name in before if before[name] != after[name]]
     if not changes:
         raise HTTPException(422, "These limits are the same as now. Nothing was changed.")
     return Preview(f"Change the limits for {humanize(row['id'])}. Its connection, security key and block "
-                   "state stay as they are. Changes apply from its next task.", changes=changes)
+                   "state stay as they are. Changes apply from its next task.", changes=changes,
+                   native={"agent": row["id"], "revision": digest(row)})
 
 
-def edit_execute(request, _selection, arguments, _review, _operation):
+def edit_execute(request, selection, arguments, prepared, _operation):
+    native.require_permission(request, "admin")
     agent = arguments["agent"]
+    state = _state()
+    row = _row(state, agent, managed_only=True)
+    prepared = prepared or {}
+    if (prepared.get("agent") != agent or prepared.get("revision") != digest(row)
+            or _loaded_agent(state, selection) != agent):
+        raise HTTPException(409, _OTHER_AGENT)
     limits = _limits_row(arguments)
     native.apply_agent_limits(request, agent, native.AgentLimitsIn(
         direction=limits["direction"],
