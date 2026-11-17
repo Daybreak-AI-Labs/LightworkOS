@@ -150,11 +150,27 @@ WAITING, UNRECORDED = "waiting", "unrecorded"
 WAITING_RESULT = "ERROR: tool not executed (waiting for a person's decision)"
 _RUN_STATE: dict[int, tuple[Any, dict[int, str]]] = {}
 _RUN_LOCK = threading.Lock()
-#: Set while a flow step runs its agent goal; a flow does not wait for a person yet.
-IN_FLOW_STEP: contextvars.ContextVar[bool] = contextvars.ContextVar("decision_in_flow_step",
-                                                                    default=False)
-FLOW_REFUSAL = ("ERROR: a flow step cannot stop to ask a person yet. Do not decide this "
-                "yourself: finish the step with FINAL and say which choice a person must make.")
+FLOW = "flow"
+#: Set (to a list) while a flow step runs its agent goal. A flow does not wait
+#: for a person yet: a step that needs a decision collects its question here,
+#: stops, and the flow fails that step or takes its error route.
+IN_FLOW_STEP: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar(
+    "decision_in_flow_step", default=None)
+FLOW_STOP = "ERROR: decision needed in a flow step"
+FLOW_REFUSAL = (f"{FLOW_STOP}: a flow cannot wait for a person yet, so this step stops here "
+                "and the flow shows the question.")
+FLOW_MESSAGE = ("Stopped: this flow step needs a person to decide, and a flow cannot wait "
+                "for a decision yet.")
+
+
+class FlowDecisionNeeded(ValueError):
+    """A flow step's goal needed a person's decision. The flow does not retry
+    the step: it takes the step's error route, or stops and shows the question."""
+
+
+def flow_question_text(questions: list[str]) -> str:
+    return ("This step needs a person to decide: “" + questions[0] + "”. A flow cannot wait "
+            "for a decision yet, so the flow stopped at this step.")
 
 
 def _states(world, create: bool) -> dict[int, str] | None:
@@ -180,16 +196,21 @@ def mark_run(world, goal_id: int | None, state: str) -> None:
     if goal_id is None:
         return
     states = _states(world, True)
-    if states is not None and states.get(int(goal_id)) != UNRECORDED:
+    if states is not None and states.get(int(goal_id)) not in {UNRECORDED, FLOW}:
         states[int(goal_id)] = state
 
 
 def run_state(world, goal_id: int | None) -> str | None:
-    """``WAITING``, ``UNRECORDED`` or None for this goal's current run."""
+    """``WAITING``, ``UNRECORDED``, ``FLOW`` or None for this goal's current run."""
     if goal_id is None:
         return None
     states = _states(world, False)
     return states.get(int(goal_id)) if states else None
+
+
+def stop_message(state: str | None) -> str:
+    """The stop sentence for a run that may not go on (``UNRECORDED``/``FLOW``)."""
+    return FLOW_MESSAGE if state == FLOW else STOP_MESSAGE
 
 
 def clear_run(world, goal_id: int | None) -> None:
@@ -662,19 +683,27 @@ def answer(world, decision_id: int, option: int, *, actor: str, is_admin: bool,
     decided = get(world, decision_id) or current
     following = ("resumed" if resume else
                  "manual" if not int(waiting) and not resumable else "waiting")
-    return {"decision": decided, "resume": resume, "next": following}
+    outcome: dict[str, Any] = {"decision": decided, "resume": resume, "next": following}
+    if following == "manual":
+        outcome["restart"] = restart_note(world.get_goal(current.goal_id)) or STARTER_RESTARTS
+        goal = world.get_goal(current.goal_id)
+        if goal is not None and goal.status == "blocked":
+            world.set_goal_status(current.goal_id, "blocked", result=(
+                f"The decision “{current.question}” was answered: “{label}”. Your answer was "
+                f"saved. {outcome['restart']}"))
+    return outcome
 
 
 _NEXT_TEXT = {
     "resumed": "The run continues with this choice.",
     "waiting": "The run continues once its other decisions and questions are answered.",
-    "manual": ("This run uses its own access key, so Lightwork cannot restart it. "
-               "Ask whoever started it to start it again."),
 }
 
 
 def next_text(outcome: dict[str, Any]) -> str:
     """The plain sentence every surface shows after an answer."""
+    if outcome.get("next") == "manual":
+        return "Your answer was saved. " + str(outcome.get("restart") or STARTER_RESTARTS)
     return _NEXT_TEXT.get(str(outcome.get("next") or ""), _NEXT_TEXT["waiting"])
 
 
@@ -810,6 +839,24 @@ def resume_kwargs(goal) -> dict[str, Any] | None:
         return None
     user = principal[len("user:"):]
     return {"user_id": None if user == "local" else user}
+
+
+#: Principals of runs that another system started (an A2A peer, a federated
+#: workspace, a governance or other automated agent): no person restarts them.
+_SYSTEM_PRINCIPALS = ("a2a", "federation", "federation-goal", "federated", "agent",
+                      "governance", "external", "external_agents", "grpc-command")
+STARTER_RESTARTS = "Only whoever started this run can start it again after the answer."
+NOBODY_RESTARTS = ("Another system started this run, so no person can restart it here. "
+                   "The answer is saved for the record.")
+
+
+def restart_note(goal) -> str:
+    """For a run Lightwork cannot restart after an answer (bound to its own
+    access key): who can. ``""`` for a run that restarts by itself."""
+    if goal is None or resume_kwargs(goal) is not None:
+        return ""
+    kind = str(getattr(goal, "execution_principal", "") or "").split(":", 1)[0].strip().lower()
+    return NOBODY_RESTARTS if kind in _SYSTEM_PRINCIPALS else STARTER_RESTARTS
 
 
 def dispatch_resume(world, goal_id: int) -> bool:

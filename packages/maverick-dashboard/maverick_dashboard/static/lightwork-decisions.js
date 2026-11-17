@@ -73,6 +73,7 @@
     actions.appendChild(copilot);
     form.appendChild(actions);
     if (!d.can_answer && d.why_not) form.appendChild(el('p', 'muted', d.why_not));
+    if (d.restart_note) form.appendChild(el('p', 'muted', d.restart_note));
     var said = el('p'); said.setAttribute('role', 'status');
     form.appendChild(said);
     form.addEventListener('submit', async function (event) {

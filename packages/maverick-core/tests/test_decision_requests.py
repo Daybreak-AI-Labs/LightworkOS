@@ -410,29 +410,72 @@ def test_a_past_due_decision_expires_without_anyone_looking(tmp_path, monkeypatc
     assert world.get_goal(gid).status == "failed"
 
 
-def test_a_run_bound_to_its_own_key_is_named_as_needing_its_owner(tmp_path):
+@pytest.mark.parametrize("principal, says", [
+    ("key:nightly-report", "Only whoever started this run can start it again"),
+    ("federation:peer-1", "no person can restart it"),
+    ("agent:governance-reviewer", "no person can restart it"),
+])
+def test_a_run_bound_to_its_own_key_says_who_restarts_it(tmp_path, principal, says):
     world = _world(tmp_path)
-    gid = world.create_goal("tidy", "", owner="alice", execution_principal="agent:nightly")
+    gid = world.create_goal("tidy", "", owner="alice", execution_principal=principal)
     world.set_goal_status(gid, "blocked")
     decision = dr.request(world, gid, **dr.validate(_REQUEST))
+    assert says in dr.restart_note(world.get_goal(gid))  # shown before anyone answers
 
     outcome = dr.answer(world, decision.id, 1, actor="alice", is_admin=False)
 
     assert outcome["resume"] is False and outcome["next"] == "manual"
-    assert "cannot restart it" in dr.next_text(outcome)
+    assert says in dr.next_text(outcome)
+    goal = world.get_goal(gid)
+    assert "Waiting for a person" not in goal.result
+    assert "was saved" in goal.result and says in goal.result
 
 
-def test_a_flow_step_cannot_stop_to_ask(tmp_path):
+def test_a_flow_step_that_needs_a_decision_stops_the_flow_on_its_error_route():
+    from maverick.flow import Flow, FlowNode
+    from maverick.flow.runner import STATUS_COMPLETED, STATUS_FAILED, run_flow
+
+    calls = []
+
+    def agent(node, brief, data):
+        calls.append(node.id)
+        if node.id == "a":
+            raise dr.FlowDecisionNeeded("This step needs a person to decide: Keep logs?")
+        return ("handled", 1.0)
+
+    def flow(on_error):
+        nodes = [FlowNode(id="a", kind="agent", brief="tidy", retries=3, next="c", on_error=on_error),
+                 FlowNode(id="b", kind="agent", brief="report", output="reported"),
+                 FlowNode(id="c", kind="agent", brief="go on", output="went_on")]
+        return Flow(id="f", name="f", start="a", nodes={n.id: n for n in nodes})
+
+    stopped = run_flow(flow(None), agent_fn=agent, action_fn=lambda *a: ("", None))
+    assert stopped.status == STATUS_FAILED and stopped.cursor == "a" and calls == ["a"]
+    assert "Keep logs?" in (stopped.error or "")
+    calls.clear()
+    routed = run_flow(flow("b"), agent_fn=agent, action_fn=lambda *a: ("", None))
+    assert routed.status == STATUS_COMPLETED and calls == ["a", "b"] and "went_on" not in routed.data
+
+
+def test_a_flow_steps_goal_that_asks_raises_instead_of_succeeding(tmp_path, monkeypatch):
+    from maverick import runner
+    from maverick.flow.execution import default_agent_runner
     from maverick.tools.request_decision import request_decision
 
     world = _world(tmp_path)
-    gid = world.create_goal("flow step", "", owner="alice")
-    token = dr.IN_FLOW_STEP.set(True)
-    try:
+
+    def run_goal_in_thread(gid, **_kw):
         out = request_decision(world, gid).fn(_REQUEST)
-    finally:
-        dr.IN_FLOW_STEP.reset(token)
-    assert out == dr.FLOW_REFUSAL and not dr.open_for_goal(world, gid)
+        assert out == dr.FLOW_REFUSAL
+        world.set_goal_status(gid, "done", result="FINAL: a person must choose")
+        return "done"
+    monkeypatch.setattr(runner, "run_goal_in_thread", run_goal_in_thread)
+
+    with pytest.raises(dr.FlowDecisionNeeded) as needed:
+        default_agent_runner(world, owner="alice")("tidy the logs", {})
+    assert _REQUEST["question"] in str(needed.value)
+    goals = [world.get_goal(i) for i in range(1, 3)]
+    assert [g.status for g in goals if g] == ["failed"] and not dr.list_open(world)
 
 
 def test_a_refused_audit_write_leaves_the_answer_unsaved_with_a_plain_503(tmp_path, monkeypatch):

@@ -39,9 +39,10 @@ def is_admin(request: Request) -> bool:
     return has_permission(request, "admin")
 
 
-def _row(decision: dr.Decision, who: str, admin: bool) -> dict[str, Any]:
+def _row(decision: dr.Decision, who: str, admin: bool, world) -> dict[str, Any]:
     reason, sentence = dr.refusal(decision, who, is_admin=admin)
-    return {**decision.public(), "can_answer": not reason, "why_not": sentence}
+    return {**decision.public(), "can_answer": not reason, "why_not": sentence,
+            "restart_note": dr.restart_note(world.get_goal(decision.goal_id))}
 
 
 def visible(request: Request, world=None) -> list[dr.Decision]:
@@ -118,7 +119,7 @@ def list_decisions(request: Request, response: Response) -> dict:
     world = _world()
     rows = visible(request, world)
     who, admin = actor(request), is_admin(request)
-    return {"decisions": [_row(d, who, admin) for d in rows]}
+    return {"decisions": [_row(d, who, admin, world) for d in rows]}
 
 
 @router.post("/decisions/{decision_id}/answer")

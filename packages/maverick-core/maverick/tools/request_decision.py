@@ -21,12 +21,15 @@ def request_decision(world, goal_id: int | None = None) -> Tool:
     def fn(args: dict) -> str:
         if goal_id is None:
             return "ERROR: a decision request needs a task; ask in plain text instead."
-        if dr.IN_FLOW_STEP.get():
-            return dr.FLOW_REFUSAL
         try:
             values = dr.validate(args)
         except ValueError as exc:
             return f"ERROR: {exc}. Fix the request and call request_decision again."
+        held = dr.IN_FLOW_STEP.get()
+        if held is not None:
+            held.append(values["question"])
+            dr.mark_run(world, goal_id, dr.FLOW)
+            return dr.FLOW_REFUSAL
         try:
             decision = dr.request(world, goal_id, **values)
         except dr.DecisionRecordError as exc:

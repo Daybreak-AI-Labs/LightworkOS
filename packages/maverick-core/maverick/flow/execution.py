@@ -531,7 +531,8 @@ def default_agent_runner(
 
         # A flow step does not wait for a person's decision yet: the step's
         # goal is told so instead of pausing and being retried as a failure.
-        in_flow = IN_FLOW_STEP.set(True)
+        questions: list[str] = []
+        in_flow = IN_FLOW_STEP.set(questions)
         try:
             from ..runner import run_goal_in_thread
             result = run_goal_in_thread(
@@ -551,6 +552,12 @@ def default_agent_runner(
             )
         finally:
             IN_FLOW_STEP.reset(in_flow)
+        if questions:
+            from ..decision_requests import FlowDecisionNeeded, flow_question_text
+
+            message = flow_question_text(questions)
+            world.set_goal_status(gid, "failed", result=message)
+            raise FlowDecisionNeeded(message)
         from ..run_outcome import GoalAdmissionRefused
 
         if (

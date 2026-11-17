@@ -6409,13 +6409,7 @@ class Agent:
         failed to): a subagent's request pauses its parent, a swarm sibling and
         the root alike. ``answered`` says this turn's tool results are already
         in ``messages``; otherwise each call is answered as not executed."""
-        from .decision_requests import (
-            STOP_KIND,
-            STOP_MESSAGE,
-            UNRECORDED,
-            WAITING_RESULT,
-            run_state,
-        )
+        from .decision_requests import STOP_KIND, WAITING, WAITING_RESULT, run_state, stop_message
 
         state = run_state(self.ctx.world, self.ctx.goal_id)
         if state is None:
@@ -6423,9 +6417,10 @@ class Agent:
         if not answered:
             results: list[dict] = []
             self._answer_pending_tool_uses(resp, messages, results, WAITING_RESULT)
-        if state == UNRECORDED:
-            return AgentResult(error=STOP_MESSAGE, role=self.role, name=self.name,
-                               stop_kind=STOP_KIND, stop_detail=STOP_MESSAGE)
+        if state != WAITING:
+            message = stop_message(state)
+            return AgentResult(error=message, role=self.role, name=self.name,
+                               stop_kind=STOP_KIND, stop_detail=message)
         return AgentResult(blocked_on_user=True, role=self.role, name=self.name)
 
     def _decision_outcome(self, bb, resp, tc, output, messages: list[dict],
@@ -6433,17 +6428,19 @@ class Agent:
         """A filed decision pauses the run, even headless: nobody picks the
         recommendation for the person. A request that could not be saved stops
         the run here, before the model can act on its own choice."""
-        from .decision_requests import NOT_RECORDED, STOP_KIND, STOP_MESSAGE
+        from .decision_requests import FLOW_MESSAGE, FLOW_STOP, NOT_RECORDED, STOP_KIND, STOP_MESSAGE
 
-        if NOT_RECORDED in str(output):  # the tool's own result, inside its output frame
+        text = str(output)
+        if NOT_RECORDED in text or FLOW_STOP in text:  # the tool's own result, inside its frame
+            message = FLOW_MESSAGE if FLOW_STOP in text else STOP_MESSAGE
             tool_results.append(self._make_tool_result(tc.id, output))
             self._answer_pending_tool_uses(
                 resp, messages, tool_results, "ERROR: tool not executed (decision not recorded)")
             if not messages or messages[-1].get("content") is not tool_results:
                 messages.append({"role": "user", "content": tool_results})
-            bb.post(self.name, "error", STOP_MESSAGE)
-            return AgentResult(error=STOP_MESSAGE, role=self.role, name=self.name,
-                               stop_kind=STOP_KIND, stop_detail=str(output)), False
+            bb.post(self.name, "error", message)
+            return AgentResult(error=message, role=self.role, name=self.name,
+                               stop_kind=STOP_KIND, stop_detail=text), False
         return None, not _tool_call_failed(output)
 
     def _record_tool_lineage(self, tc, output) -> None:

@@ -2295,11 +2295,12 @@ def _settle_decision_result(*, result: Any, world: WorldModel, goal_id: int,
     from . import decision_requests
 
     if result.error and result.stop_kind == decision_requests.STOP_KIND:
+        message = result.error
         lifecycle.end_episode("decision not recorded", "interrupted")
-        world.set_goal_status(goal_id, "blocked", result=decision_requests.STOP_MESSAGE)
+        world.set_goal_status(goal_id, "blocked", result=message)
         _fire_webhook("goal_finished", {"goal_id": goal_id, "status": "blocked",
-                                        "result": decision_requests.STOP_MESSAGE})
-        return decision_requests.STOP_MESSAGE
+                                        "result": message})
+        return message
     if result.error:
         return None
     # A run never finishes while a decision of this goal, or of a goal below

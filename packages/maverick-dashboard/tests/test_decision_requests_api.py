@@ -110,3 +110,16 @@ def test_reading_the_task_stops_a_run_whose_decision_expired(env, monkeypatch):
     body = client.get(f"/api/v1/goals/{goal}").json()
 
     assert body["status"] == "failed" and dr.get(world, decision.id).status == "expired"
+
+
+def test_the_queue_says_who_restarts_a_run_bound_to_its_own_key(env):
+    client, world, _goal, _decision, _who, _started = env
+    bound = world.create_goal("Nightly report", "", owner="user:alice",
+                              execution_principal="key:nightly")
+    world.set_goal_status(bound, "blocked")
+    waiting = dr.request(world, bound, **dr.validate(_REQUEST))
+
+    rows = {d["id"]: d for d in client.get("/api/v1/decisions").json()["decisions"]}
+
+    assert rows[waiting.id]["restart_note"] == dr.STARTER_RESTARTS
+    assert rows[_decision.id]["restart_note"] == ""
