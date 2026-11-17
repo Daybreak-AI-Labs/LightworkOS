@@ -25,13 +25,19 @@ def test_tenant_suspended_or_unknown_maps_to_workspaces():
     "over quota: Your spending limit of $5.00 per day has been reached ($6.00 spent today). "
     "An administrator can change it in Admin > Spending limits.",
     "Paused: the organization spending allowance cannot admit the next call.\nDetail: x",
-    "Stopped: budget exhausted ($1.00 of $1.00 cap). Raise the cap and resume: maverick resume 3",
 ])
 def test_real_spending_failures_get_the_spending_limit_advice(raw):
     stop = explain_stop(raw)
     assert stop.kind == "spending_limit"
     assert stop.link == "/spending-limits"
     assert "user:local" not in stop.message and "'acme'" not in stop.message
+
+
+def test_a_task_cap_points_to_the_task_limit_not_an_administrator():
+    stop = explain_stop("Stopped: budget exhausted ($1.00 of $1.00 cap). Raise the cap and resume: maverick resume 3")
+    assert stop.kind == "spending_limit"
+    assert stop.link == "/settings#settings-task-limit"
+    assert "administrator" not in stop.action
 
 
 def test_workspace_failure_is_not_mistaken_for_a_spending_limit():

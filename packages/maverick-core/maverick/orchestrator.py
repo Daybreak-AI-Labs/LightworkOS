@@ -369,33 +369,15 @@ def _unpriced_model_message(exc: BaseException, goal_id: Any) -> str:
     )
 
 
-def _budget_exceeded_message(budget: Any, goal_id: Any) -> str:
-    """Sentence-style cap message a non-engineer can read, with resume advice."""
-    limits = []
-    if budget.max_dollars is not None:
-        limits.append(f"${budget.dollars:.2f} of ${budget.max_dollars:.2f} cap")
-    if budget.max_wall_seconds is not None:
-        limits.append(f"{budget.elapsed():.0f}s of {budget.max_wall_seconds:.0f}s")
-    for used, cap, label in (
-        (budget.input_tokens, budget.max_input_tokens, "input tokens"),
-        (budget.output_tokens, budget.max_output_tokens, "output tokens"),
-        (budget.tool_calls, budget.max_tool_calls, "tool calls"),
-    ):
-        if cap is not None:
-            limits.append(f"{used} of {cap} {label}")
-    command = f"maverick resume {goal_id}"
-    if budget.max_dollars is not None:
-        command += " --max-dollars <higher>"
-    elif budget.max_wall_seconds is not None:
-        command += " --max-wall-seconds <higher>"
-    return (
-        f"Stopped: this goal hit your spending or time limit "
-        f"({', '.join(limits) or 'a configured usage limit'}).\n"
-        "Your recorded work and usage are retained. Raise the applicable limit "
-        "or remove configured task limits in Settings, then resume saved work. "
-        "Organization spending controls still apply.\n"
-        f"Resume with a higher cap: {command}"
-    )
+def _budget_exceeded_message(budget: Any, goal_id: Any, detail: str = "") -> str:
+    """Sentence-style cap message a non-engineer can read, with resume advice.
+
+    ``detail`` is the ``BudgetExceeded`` text: it names the refused call's
+    estimate and any safety ceiling, which the meter alone cannot show.
+    """
+    from .stop_reasons import budget_stop_text
+
+    return budget_stop_text(budget, goal_id, detail)
 
 
 def _usage_accounting_message(detail: str, goal_id: Any) -> str:
@@ -431,7 +413,7 @@ def _budget_stop_message(budget: Any, goal_id: Any, error: BudgetExceeded) -> st
         )
     if isinstance(error, UnpricedModelError):
         return _unpriced_model_message(error, goal_id)
-    return _budget_exceeded_message(budget, goal_id)
+    return _budget_exceeded_message(budget, goal_id, str(error))
 
 
 def _review_checkpoint_message(detail: str, goal_id: Any) -> str:
@@ -2223,7 +2205,7 @@ def _handle_root_error(*, result: Any, world: WorldModel, goal: Any, goal_id: in
         message = (
             _organization_budget_message(result.stop_detail, goal_id)
             if result.stop_kind == "organization_budget"
-            else _budget_exceeded_message(budget, goal_id)
+            else _budget_exceeded_message(budget, goal_id, result.stop_detail)
         )
         lifecycle.end_episode(result.stop_kind, "interrupted")
         world.set_goal_status(goal_id, "blocked", result=message)
@@ -2266,7 +2248,7 @@ def _handle_root_error(*, result: Any, world: WorldModel, goal: Any, goal_id: in
         # A sub-agent's call was refused by the budget reservation;
         # surface the same friendly cap message as a top-level
         # BudgetExceeded, not the generic "ran into an error".
-        return _budget_exceeded_message(budget, goal_id)
+        return _budget_exceeded_message(budget, goal_id, (result.error or "")[len("budget exceeded:"):])
     return (
         f"Stopped: the assistant ran into an error and couldn't finish.\n"
         f"Detail: {result.error}\n"

@@ -33,12 +33,12 @@ async def test_budget_exhaustion_gives_helpful_message(tmp_path: Path, fake_llm)
         sandbox=LocalBackend(workdir=tmp_path), max_depth=1,
     )
 
-    assert "hit your spending or time limit" in out
+    assert "hit your spending limit" in out
     assert "--max-dollars" in out
     assert "ran into an error" not in out
     # The message reports spend AGAINST the configured cap, not spend alone, so
     # the user can see how far over they went and what the limit was.
-    assert "$5.00 of $0.01 cap" in out
+    assert "$5.00 of $0.01 cap used" in out
     assert world.get_goal(gid).status == "blocked"
     assert world.get_goal(gid).result == out
 
@@ -196,3 +196,93 @@ class TestErrorMessageVoice:
         assert "1 question" in out
         assert "What's your timezone?" in out
         assert "maverick answer" in out
+
+
+# The real reason for a budget stop lived only in the event log: the CLI said
+# "$1.16 of $2.00 cap" and "raise the applicable limit", while the kernel knew
+# the next call was projected to $2.02 and that an unpriced paid tool's safety
+# ceiling set its estimate. The stop message must carry those facts.
+_PROJECTED_CEILING_DETAIL = (
+    "projected $2.02 > $2.00 (spent $1.16 + in-flight $0.01 + est $0.85 for this call)"
+    ". Spend for Tavily search used the per-call safety ceiling because it has no "
+    "usable price. Set the service's price in Settings > Models, under Prices for "
+    "paid tool services"
+)
+
+
+def _spent_budget(dollars=1.16, cap=2.0):
+    budget = Budget(max_dollars=cap, max_wall_seconds=1800)
+    with budget._lock:
+        budget.dollars = dollars
+    return budget
+
+
+def test_projected_stop_message_states_cap_spend_and_next_call():
+    from maverick.budget import BudgetExceeded
+    from maverick.orchestrator import _budget_stop_message
+
+    out = _budget_stop_message(_spent_budget(), 4, BudgetExceeded(_PROJECTED_CEILING_DETAIL))
+    assert "$2.00" in out and "$1.16" in out
+    assert "estimated at $0.85" in out and "$2.02" in out
+    assert "Tavily search" in out and "safety ceiling" in out
+    assert "Prices for paid tool services" in out
+    assert "administrator" not in out
+    assert "maverick resume 4 --max-dollars" in out
+
+
+def test_agent_swallowed_budget_detail_reaches_the_stop_message():
+    """The agent returns ``stop_kind="budget"`` with ``str(exc)``; that detail
+    must reach the message, not be replaced by spent-of-cap alone."""
+    from maverick.orchestrator import _budget_exceeded_message
+
+    out = _budget_exceeded_message(_spent_budget(), 4, _PROJECTED_CEILING_DETAIL)
+    assert "estimated at $0.85" in out and "Tavily search" in out
+
+
+def test_dashboard_stop_reason_names_the_real_cause():
+    from maverick.budget import BudgetExceeded
+    from maverick.orchestrator import _budget_stop_message
+    from maverick.stop_reasons import explain_stop
+
+    out = _budget_stop_message(_spent_budget(), 4, BudgetExceeded(_PROJECTED_CEILING_DETAIL))
+    stop = explain_stop(out)
+    assert stop.kind == "spending_limit"
+    text = f"{stop.message} {stop.action}"
+    assert "$2.00" in text and "$1.16" in text and "$0.85" in text
+    assert "Tavily search" in text
+    assert "administrator" not in text
+    assert stop.link == "/settings#settings-tool-prices"
+
+
+def test_dashboard_task_cap_stop_points_to_the_task_limit_setting():
+    from maverick.budget import BudgetExceeded
+    from maverick.orchestrator import _budget_stop_message
+    from maverick.stop_reasons import explain_stop
+
+    detail = "projected $2.10 > $2.00 (spent $1.80 + est $0.30 for this call)"
+    stop = explain_stop(_budget_stop_message(_spent_budget(1.8), 7, BudgetExceeded(detail)))
+    assert stop.kind == "spending_limit"
+    assert "$2.00" in stop.message and "$1.80" in stop.message and "$0.30" in stop.message
+    assert "administrator" not in stop.action
+    assert stop.link == "/settings#settings-task-limit"
+
+
+def test_time_limit_stop_is_a_limit_not_an_internal_error():
+    from maverick.budget import BudgetExceeded
+    from maverick.orchestrator import _budget_stop_message
+    from maverick.stop_reasons import explain_stop
+
+    budget = Budget(max_wall_seconds=1800)
+    out = _budget_stop_message(budget, 9, BudgetExceeded("wall time 1800s >= 1800s"))
+    assert "time limit" in out and "30 minutes" in out
+    stop = explain_stop(out)
+    assert stop.kind == "spending_limit"
+    assert "time limit" in stop.message and "administrator" not in stop.action
+
+
+def test_organization_allowance_stop_still_names_an_administrator():
+    from maverick.stop_reasons import explain_stop
+
+    stop = explain_stop("Paused: the organization spending allowance cannot admit the next call.")
+    assert stop.kind == "spending_limit"
+    assert "administrator" in stop.action

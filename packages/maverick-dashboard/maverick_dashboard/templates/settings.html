@@ -484,7 +484,7 @@
     <p><a href="/settings/voice-unlock">{{ ui('Voice unlock: record your voice so spoken requests are checked against it') }}</a></p>
   </section>
 
-  <div class="section-head" data-settings-group="general"><h2>Spending per task</h2></div>
+  <div class="section-head" data-settings-group="general" id="settings-task-limit"><h2>Spending per task</h2></div>
   <div class="panel" data-settings-group="general">
     <p class="muted settings-lead">
       Choose whether Lightwork stops a single task that goes over a set amount.
@@ -554,7 +554,10 @@
     <p class="muted settings-foot" role="note">Right now:
       {% if limit_mode == 'off' %}tasks have no spending limit of their own.
       {% elif limit_mode == 'amount' %}each task stops after spending {{ budget | money }}.
-      {% else %}each task follows your installation's standard limits.{% endif %}</p>
+      {% else %}each task follows your installation's standard limits{% if standard_task_limits %}: it stops after
+        {%- if standard_task_limits.dollars is not none %} spending {{ standard_task_limits.dollars | money }}{% endif %}
+        {%- if standard_task_limits.dollars is not none and standard_task_limits.time %} or{% endif %}
+        {%- if standard_task_limits.time %} running for {{ standard_task_limits.time }}{% endif %}{% endif %}.{% endif %}</p>
   </div>
 
   <div class="section-head" data-settings-group="integrations" id="settings-integrations"><h2>Provider keys</h2></div>
