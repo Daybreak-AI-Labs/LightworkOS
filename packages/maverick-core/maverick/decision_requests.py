@@ -646,8 +646,11 @@ def answer(world, decision_id: int, option: int, *, actor: str, is_admin: bool,
     recorded = recorded_as or actor or "unknown"
     threads = ChatThreads(world)
     store = threads.store
-    resumable = (resume_kwargs(world.get_goal(current.goal_id)) is not None
-                 and not _feature_step(current.goal_id, world))
+    try:
+        feature = _feature_step(current.goal_id, world)
+    except Exception as exc:  # noqa: BLE001 -- never guess where the run came from
+        raise DecisionRefused("unavailable", FEATURE_UNKNOWN) from exc
+    resumable = resume_kwargs(world.get_goal(current.goal_id)) is not None and not feature
     resume = False
     waiting = 0
     try:
@@ -696,13 +699,23 @@ def answer(world, decision_id: int, option: int, *, actor: str, is_admin: bool,
                  "manual" if not int(waiting) and not resumable else "waiting")
     outcome: dict[str, Any] = {"decision": decided, "resume": resume, "next": following}
     if following == "manual":
-        outcome["restart"] = restart_note(world.get_goal(current.goal_id), world) or STARTER_RESTARTS
-        goal = world.get_goal(current.goal_id)
-        if goal is not None and goal.status == "blocked":
-            world.set_goal_status(current.goal_id, "blocked", result=(
-                f"The decision “{current.question}” was answered: “{label}”. Your answer was "
-                f"saved. {outcome['restart']}"))
+        outcome["restart"] = _manual_restart(world, current, label, feature=feature)
     return outcome
+
+
+def _manual_restart(world, current: Decision, label: str, *, feature: bool) -> str:
+    """After the last answer of a run Lightwork does not restart: who can."""
+    if feature:
+        # A code change's step ran in a private copy that is gone: it stops here.
+        world.set_goal_status(current.goal_id, "cancelled", result=FEATURE_RESTARTS)
+        return FEATURE_RESTARTS
+    restart = restart_note(world.get_goal(current.goal_id), world) or STARTER_RESTARTS
+    goal = world.get_goal(current.goal_id)
+    if goal is not None and goal.status == "blocked":
+        world.set_goal_status(current.goal_id, "blocked", result=(
+            f"The decision “{current.question}” was answered: “{label}”. Your answer was "
+            f"saved. {restart}"))
+    return restart
 
 
 _NEXT_TEXT = {
@@ -1036,6 +1049,12 @@ def resume_refusal(world, goal_id: int, *, now: float | None = None) -> str:
     for a person's answer, never for a Resume or a clarification answer."""
     expire_due(world, now=now, goal_id=goal_id)
     try:
+        if _feature_step(goal_id, world):
+            return FEATURE_RESTARTS
+    except Exception:  # noqa: BLE001 -- unknown is not "an ordinary run": fail closed
+        log.warning("goal origin lookup failed before a restart", exc_info=True)
+        return FEATURE_UNKNOWN_RESTART
+    try:
         waiting = open_for_tree(world, goal_id)
     except Exception:  # noqa: BLE001 -- unknown is not "nothing waits": fail closed
         log.warning("decision lookup failed before a restart", exc_info=True)
@@ -1088,14 +1107,20 @@ FEATURE_RESTARTS = ("This was a step of a code change, so it does not continue b
                     "Start a new code change to use your answer.")
 
 
+FEATURE_UNKNOWN = ("Lightwork could not check where this run came from, so your answer was "
+                   "not saved. Try again in a moment.")
+FEATURE_UNKNOWN_RESTART = ("Lightwork could not check where this run came from, so it was not "
+                           "restarted. Try again in a moment.")
+
+
 def _feature_step(goal_id: int, world) -> bool:
-    try:
-        rows = world.tenant_query(
-            "SELECT o.kind FROM goal_origins o WHERE o.goal_id = ? AND {tenant_goal:o.goal_id}",
-            (int(goal_id),))
-    except Exception:  # noqa: BLE001 -- unknown origin: never restart it
-        log.debug("goal origin unreadable", exc_info=True)
-        return True
+    """Whether this goal, or a goal above it, is a step of a code change.
+    Raises when the records cannot be read: callers decide what that means."""
+    rows = world.tenant_query(
+        "SELECT o.kind FROM goal_origins o WHERE o.goal_id IN (WITH RECURSIVE up(id) AS ("
+        "SELECT CAST(? AS INTEGER) UNION SELECT g.parent_id FROM goals g JOIN up u ON g.id = u.id "
+        "WHERE g.parent_id IS NOT NULL) SELECT id FROM up) AND {tenant_goal:o.goal_id}",
+        (int(goal_id),))
     return any(str(row[0]) == _FEATURE_ORIGIN for row in rows)
 
 
@@ -1119,8 +1144,11 @@ def restart_note(goal, world=None) -> str:
     access key): who can, decided from the run's records (its origin, or the
     A2A capability), never from the shape of its principal. ``""`` for a run
     that restarts by itself."""
-    if goal is not None and world is not None and _feature_step(goal.id, world):
-        return FEATURE_RESTARTS
+    try:
+        if goal is not None and world is not None and _feature_step(goal.id, world):
+            return FEATURE_RESTARTS
+    except Exception:  # noqa: BLE001 -- the ordinary sentence; answer() refuses on its own
+        log.debug("goal origin unreadable", exc_info=True)
     if goal is None or resume_kwargs(goal) is not None:
         return ""
     return NOBODY_RESTARTS if _started_by_system(goal, world) else STARTER_RESTARTS

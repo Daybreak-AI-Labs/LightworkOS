@@ -2241,7 +2241,7 @@ def test_an_author_that_asks_for_a_decision_stops_the_run(upstream, tmp_path, mo
     outcome = decision_requests.answer(world, d.id, 2, actor="user:starter", is_admin=True)
     assert outcome["resume"] is False and outcome["next"] == "manual"
     assert outcome["restart"] == decision_requests.FEATURE_RESTARTS
-    assert world.get_goal(d.goal_id).status == "blocked"
+    assert world.get_goal(d.goal_id).status == "cancelled"     # the step stops for good
 
 
 def test_a_checker_that_asks_for_a_decision_could_not_run(upstream, tmp_path, monkeypatch):
@@ -2424,3 +2424,48 @@ def test_the_second_checker_never_fails_over_to_another_model(monkeypatch, tmp_p
     normal = features.default_checker(budget=None, model="openai:second")
     normal(1, tmp_path)
     assert seen == [("openai:second", []), ("openai:second", ["anthropic:claude-x"])]
+
+
+def test_a_paused_step_is_never_restarted_outside_its_private_copy(upstream, tmp_path,
+                                                                    monkeypatch):
+    from click.testing import CliRunner
+    from maverick import config, decision_requests, orchestrator
+    from maverick.chat_threads import ChatThreads
+    from maverick.cli import main
+    monkeypatch.setattr(decision_requests, "_announce", lambda world, decision: None)
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    world.record_goal_origin(world.create_goal("scheduled", "x"), "schedule", "nightly")
+    asked = {}
+
+    def author(goal_id, work):
+        _passing(work)
+        step = world.create_goal("step", "deep", parent_id=goal_id, owner="user:starter")
+        world.set_goal_status(goal_id, "blocked")
+        asked["root"], asked["d"] = goal_id, [_ask(world, step, f"Question {i}?") for i in range(6)]
+    p = features.propose(world, "pricing", "Discount", "", author, owner="user:starter")
+    assert len(p["decision"]) == 6                              # every decision is held
+    root = asked["root"]
+    for d in asked["d"][:-1]:
+        decision_requests.answer(world, d.id, 1, actor="user:starter", is_admin=True)
+    last = decision_requests.answer(world, asked["d"][-1].id, 1, actor="user:starter",
+                                    is_admin=True)
+    assert last["resume"] is False and last["restart"] == decision_requests.FEATURE_RESTARTS
+    step = world.get_goal(asked["d"][0].goal_id)
+    assert step.status == "cancelled" and step.result == decision_requests.FEATURE_RESTARTS
+    # No restart path takes the paused round back up.
+    assert decision_requests.resume_refusal(world, root) == decision_requests.FEATURE_RESTARTS
+    with pytest.raises(Exception, match="step of a code change"):
+        ChatThreads(world).resume(root)
+    assert orchestrator._decision_start_refusal(world, root).endswith(
+        decision_requests.FEATURE_RESTARTS)
+    monkeypatch.setattr(config, "get_codebase", lambda: {"enable": True})
+    monkeypatch.setattr("maverick.cli.open_world", lambda *a, **k: world, raising=False)
+    out = CliRunner().invoke(main, ["resume", "--goal-id", str(root)])
+    assert out.exit_code == 2 and "step of a code change" in out.output, out.output
+    # An existing origin is never overwritten, and an unreadable one is an error.
+    assert [r[0] for r in world.tenant_query(
+        "SELECT kind FROM goal_origins WHERE goal_id = 1 AND {tenant_goal:goal_id}", ())] \
+        == ["schedule"]
+    monkeypatch.setattr(world, "tenant_query", lambda *a, **k: (_ for _ in ()).throw(OSError()))
+    assert "could not check" in decision_requests.resume_refusal(world, root)

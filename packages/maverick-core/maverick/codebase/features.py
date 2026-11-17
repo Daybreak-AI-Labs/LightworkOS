@@ -407,9 +407,9 @@ def _finding(raw: object, fid: str, checker: int | str = 1) -> dict:
 class DecisionPending(Exception):
     """A round's goal (or a goal below it) is waiting for a person's decision."""
 
-    def __init__(self, decisions: list) -> None:
+    def __init__(self, decisions: list, goal_id: int) -> None:
         super().__init__("waiting for a person's decision")
-        self.decisions = decisions
+        self.decisions, self.goal_id = decisions, goal_id
 
 
 def _waiting(world, goal_id: int) -> list:
@@ -421,7 +421,7 @@ def _waiting(world, goal_id: int) -> list:
 def _stop_if_waiting(world, goal_id: int) -> None:
     decisions = _waiting(world, goal_id)
     if decisions:
-        raise DecisionPending(decisions)
+        raise DecisionPending(decisions, goal_id)
 
 
 class _Loop:
@@ -1280,20 +1280,26 @@ def self_change_refusal(name: str) -> str | None:
         return None
 
 
-def _hold(world, decisions: list, pid: str) -> list[dict]:
+def _mark_step(world, goal_id: int, pid: str) -> None:
+    """Record a goal as a feature-run step; an origin it already has is kept."""
+    try:
+        if world.tenant_query("SELECT 1 FROM goal_origins o WHERE o.goal_id = ? AND "
+                              "{tenant_goal:o.goal_id}", (int(goal_id),)):
+            return
+        world.record_goal_origin(goal_id, ORIGIN_KIND, pid)
+    except Exception:  # noqa: BLE001 -- the decision still shows; restarts check ancestors
+        import logging
+        logging.getLogger(__name__).warning("feature run %s: goal #%s not marked", pid, goal_id)
+
+
+def _hold(world, decisions: list, goal_id: int, pid: str) -> list[dict]:
     """The decisions a feature run stopped for, as the proposal records them.
-    Each waiting goal is marked as a feature-run step, so an answer never
-    restarts it outside its private copy (decision_requests.answer)."""
-    held = []
-    for d in decisions[:5]:
-        try:
-            world.record_goal_origin(d.goal_id, ORIGIN_KIND, pid)
-        except Exception:  # noqa: BLE001 -- the decision still shows; the proposal says it
-            import logging
-            logging.getLogger(__name__).warning("feature run %s: goal #%s not marked", pid,
-                                                d.goal_id)
-        held.append({"id": d.id, "goal_id": d.goal_id, "question": d.question})
-    return held
+    The round's goal and every waiting goal are marked as feature-run steps,
+    so no answer or restart ever runs them outside their private copy
+    (decision_requests.resume_refusal)."""
+    for marked in dict.fromkeys([goal_id, *(d.goal_id for d in decisions)]):
+        _mark_step(world, marked, pid)
+    return [{"id": d.id, "goal_id": d.goal_id, "question": d.question} for d in decisions]
 
 
 def propose(world, name: str, title: str, description: str, run: Runner, *,
@@ -1346,7 +1352,8 @@ def propose(world, name: str, title: str, description: str, run: Runner, *,
                 loop.protect()
                 loop.finish()
             except DecisionPending as pause:  # what was spent stays charged
-                loop.stopped, waiting = "decision", _hold(world, pause.decisions, pid)
+                loop.stopped = "decision"
+                waiting = _hold(world, pause.decisions, pause.goal_id, pid)
             head, changed = loop.head, loop.head != base
             diff = files = None
             if changed:
