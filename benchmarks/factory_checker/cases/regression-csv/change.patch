@@ -1,0 +1,34 @@
+diff --git a/report.py b/report.py
+index 24657bf..46df4b2 100644
+--- a/report.py
++++ b/report.py
+@@ -1,12 +1,9 @@
+ """Write rows of dicts as CSV text."""
+-import csv
+-import io
+ 
+ 
+-def to_csv(rows):
++def to_csv(rows, delimiter=","):
+     """CSV text with a header line from the first row's keys."""
+-    out = io.StringIO()
+-    writer = csv.DictWriter(out, fieldnames=list(rows[0]), lineterminator="\n")
+-    writer.writeheader()
+-    writer.writerows(rows)
+-    return out.getvalue()
++    keys = list(rows[0])
++    lines = [delimiter.join(keys)]
++    lines += [delimiter.join(str(row[k]) for k in keys) for row in rows]
++    return "\n".join(lines) + "\n"
+diff --git a/report_test.py b/report_test.py
+index 9f56b0f..0d2ccea 100644
+--- a/report_test.py
++++ b/report_test.py
+@@ -3,3 +3,7 @@ from report import to_csv
+ 
+ def test_header_and_rows():
+     assert to_csv([{"a": 1, "b": 2}]) == "a,b\n1,2\n"
++
++
++def test_semicolons():
++    assert to_csv([{"a": 1, "b": 2}], delimiter=";") == "a;b\n1;2\n"

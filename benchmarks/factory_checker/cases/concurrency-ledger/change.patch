@@ -1,0 +1,37 @@
+diff --git a/ledger.py b/ledger.py
+index af6372a..cbfbe7f 100644
+--- a/ledger.py
++++ b/ledger.py
+@@ -6,6 +6,7 @@ class Ledger:
+     def __init__(self):
+         self._lock = threading.Lock()
+         self._balance = 0
++        self.history = []
+ 
+     def _read(self):
+         return self._balance
+@@ -17,7 +18,8 @@ class Ledger:
+         """Add ``amount``; safe to call from several threads at once."""
+         with self._lock:
+             new = self._read() + amount
+-            self._write(new)
++        self._write(new)
++        self.history.append(amount)
+         return new
+ 
+     @property
+diff --git a/ledger_test.py b/ledger_test.py
+index bf62722..f36b1f1 100644
+--- a/ledger_test.py
++++ b/ledger_test.py
+@@ -6,3 +6,10 @@ def test_adds():
+     ledger.add(2)
+     ledger.add(3)
+     assert ledger.balance == 5
++
++
++def test_keeps_history():
++    ledger = Ledger()
++    ledger.add(2)
++    ledger.add(-1)
++    assert ledger.history == [2, -1]

@@ -1,0 +1,12 @@
+{
+  "id": "concurrency-ledger",
+  "title": "Keep a history of ledger changes",
+  "description": "Ledger.add() in ledger.py should also record each amount in a history list. Writes can be slow, so hold the lock as briefly as possible.",
+  "verdict": "defect",
+  "defect": {
+    "kind": "concurrency",
+    "file": "ledger.py",
+    "repro": "python repro.py",
+    "why": "The write moved outside the lock, so two threads can read the same balance and one update is lost."
+  }
+}

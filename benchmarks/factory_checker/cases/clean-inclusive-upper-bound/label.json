@@ -1,0 +1,8 @@
+{
+  "id": "clean-inclusive-upper-bound",
+  "title": "Make between() match its documentation",
+  "description": "between() in ranges.py is documented as inclusive at both ends, but it excludes the upper bound. Make the code match the documentation.",
+  "verdict": "clean",
+  "looks_like": "off-by-one",
+  "why": "The request asks for the inclusive bound the docstring promises; the new test pins both ends."
+}

@@ -1,0 +1,43 @@
+diff --git a/settings.py b/settings.py
+index 2e55218..b30bea4 100644
+--- a/settings.py
++++ b/settings.py
+@@ -3,6 +3,14 @@ import json
+ from pathlib import Path
+ 
+ 
++class ConfigError(ValueError):
++    """A settings file that is not valid JSON. A ValueError, so callers that
++    caught the JSON error before still catch it."""
++
++
+ def load(path):
+     """The settings in ``path``."""
+-    return json.loads(Path(path).read_text())
++    try:
++        return json.loads(Path(path).read_text())
++    except json.JSONDecodeError as exc:
++        raise ConfigError(f"{path} is not valid JSON: {exc}") from exc
+diff --git a/settings_test.py b/settings_test.py
+index fb01673..48decad 100644
+--- a/settings_test.py
++++ b/settings_test.py
+@@ -1,7 +1,17 @@
+-from settings import load
++import pytest
++from settings import ConfigError, load
+ 
+ 
+ def test_loads(tmp_path):
+     f = tmp_path / "s.json"
+     f.write_text('{"a": 1}')
+     assert load(f) == {"a": 1}
++
++
++def test_names_the_broken_file(tmp_path):
++    f = tmp_path / "s.json"
++    f.write_text("{")
++    with pytest.raises(ConfigError, match="s.json"):
++        load(f)
++    with pytest.raises(ValueError):
++        load(f)

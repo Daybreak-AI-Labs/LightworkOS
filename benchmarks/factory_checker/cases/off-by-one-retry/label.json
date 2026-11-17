@@ -1,0 +1,12 @@
+{
+  "id": "off-by-one-retry",
+  "title": "Wait between retries",
+  "description": "retry() in retry.py calls fn again straight away. Add a delay between attempts (sleep is passed in so tests do not wait). Keep the number of attempts.",
+  "verdict": "defect",
+  "defect": {
+    "kind": "off-by-one",
+    "file": "retry.py",
+    "repro": "python repro.py",
+    "why": "range(1, attempts) runs attempts - 1 times, so a function that succeeds on its last allowed attempt now fails."
+  }
+}

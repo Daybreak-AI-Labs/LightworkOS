@@ -1,0 +1,31 @@
+diff --git a/uploads.py b/uploads.py
+index 2f29f82..33f9879 100644
+--- a/uploads.py
++++ b/uploads.py
+@@ -3,7 +3,7 @@ from pathlib import Path
+ 
+ 
+ def read_upload(root, name):
+-    """The bytes of upload ``name`` in folder ``root``; plain file names only."""
+-    if not name or "/" in name or "\\" in name or name in (".", ".."):
++    """The bytes of upload ``name`` in folder ``root``; sub-folders allowed."""
++    if not name or name.startswith("/"):
+         raise ValueError(f"not an upload name: {name!r}")
+     return (Path(root) / name).read_bytes()
+diff --git a/uploads_test.py b/uploads_test.py
+index 160fc44..0c667ed 100644
+--- a/uploads_test.py
++++ b/uploads_test.py
+@@ -7,6 +7,12 @@ def test_reads_an_upload(tmp_path):
+     assert read_upload(tmp_path, "a.txt") == b"hi"
+ 
+ 
++def test_reads_from_a_sub_folder(tmp_path):
++    (tmp_path / "reports").mkdir()
++    (tmp_path / "reports" / "2024.csv").write_bytes(b"x")
++    assert read_upload(tmp_path, "reports/2024.csv") == b"x"
++
++
+ def test_refuses_an_absolute_name(tmp_path):
+     with pytest.raises(ValueError):
+         read_upload(tmp_path, "/etc/hostname")

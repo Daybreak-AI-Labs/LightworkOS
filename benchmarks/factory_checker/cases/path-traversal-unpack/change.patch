@@ -1,0 +1,36 @@
+diff --git a/unpack.py b/unpack.py
+index bbc017a..06439bd 100644
+--- a/unpack.py
++++ b/unpack.py
+@@ -3,12 +3,12 @@ from pathlib import Path
+ 
+ 
+ def extract(members, dest):
+-    """Write each name -> bytes in ``members`` under ``dest``; refuse a name
+-    that would land outside it."""
+-    dest = Path(dest).resolve()
++    """Write each name -> bytes in ``members`` under ``dest``. Names ending
++    with '/' are folder entries and are skipped."""
++    dest = Path(dest)
+     for name, data in members.items():
+-        target = (dest / name).resolve()
+-        if not target.is_relative_to(dest) or target == dest:
+-            raise ValueError(f"unsafe member name: {name!r}")
++        if name.endswith("/"):
++            continue
++        target = dest / name
+         target.parent.mkdir(parents=True, exist_ok=True)
+         target.write_bytes(data)
+diff --git a/unpack_test.py b/unpack_test.py
+index 94f42d7..45adf96 100644
+--- a/unpack_test.py
++++ b/unpack_test.py
+@@ -4,3 +4,8 @@ from unpack import extract
+ def test_writes_members(tmp_path):
+     extract({"a.txt": b"1", "sub/b.txt": b"2"}, tmp_path)
+     assert (tmp_path / "sub" / "b.txt").read_bytes() == b"2"
++
++
++def test_skips_folder_entries(tmp_path):
++    extract({"sub/": b"", "sub/c.txt": b"3"}, tmp_path)
++    assert (tmp_path / "sub" / "c.txt").read_bytes() == b"3"

@@ -1,0 +1,40 @@
+diff --git a/fetch.py b/fetch.py
+index 8250db7..f5dc146 100644
+--- a/fetch.py
++++ b/fetch.py
+@@ -1,4 +1,5 @@
+ """Fetch a JSON document through an injected getter."""
++import json
+ 
+ 
+ class FetchError(Exception):
+@@ -6,8 +7,9 @@ class FetchError(Exception):
+ 
+ 
+ def fetch_json(get, url):
+-    """``get(url)`` returns (status, body). The body on 200; FetchError otherwise."""
+-    status, body = get(url)
+-    if status != 200:
+-        raise FetchError(f"{url} answered {status}")
+-    return body
++    """``get(url)`` returns (status, body). The parsed body."""
++    _status, body = get(url)
++    try:
++        return json.loads(body)
++    except ValueError as exc:
++        raise FetchError(f"{url} did not answer with JSON") from exc
+diff --git a/fetch_test.py b/fetch_test.py
+index b5fd094..c09e11d 100644
+--- a/fetch_test.py
++++ b/fetch_test.py
+@@ -2,8 +2,8 @@ import pytest
+ from fetch import FetchError, fetch_json
+ 
+ 
+-def test_returns_the_body():
+-    assert fetch_json(lambda url: (200, '{"a": 1}'), "u") == '{"a": 1}'
++def test_returns_the_parsed_body():
++    assert fetch_json(lambda url: (200, '{"a": 1}'), "u") == {"a": 1}
+ 
+ 
+ def test_not_found_is_an_error():

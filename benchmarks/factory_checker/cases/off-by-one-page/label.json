@@ -1,0 +1,12 @@
+{
+  "id": "off-by-one-page",
+  "title": "Let page() work on sequences without slicing",
+  "description": "Our LazyRows class supports len() and indexing but not slicing. Rewrite page() in pages.py so it only uses len() and indexing, with the same results.",
+  "verdict": "defect",
+  "defect": {
+    "kind": "off-by-one",
+    "file": "pages.py",
+    "repro": "python repro.py",
+    "why": "The end bound uses len(items) - 1, so the last item of the sequence is never returned: the final page loses its last item."
+  }
+}

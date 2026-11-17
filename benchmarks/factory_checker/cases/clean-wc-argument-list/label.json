@@ -1,0 +1,8 @@
+{
+  "id": "clean-wc-argument-list",
+  "title": "Count lines with wc for large files",
+  "description": "count_lines() in counting.py reads the whole file into Python. Use 'wc -l' instead, which is faster on very large files.",
+  "verdict": "clean",
+  "looks_like": "shell-injection",
+  "why": "The command is an argument list with no shell, so a file name cannot run anything; '--' keeps a leading dash from reading as an option."
+}

@@ -1,0 +1,8 @@
+{
+  "id": "clean-guarded-subfolders",
+  "title": "Allow uploads in sub-folders",
+  "description": "read_upload() in uploads.py only reads files directly in the upload folder. Allow names with sub-folders, like 'reports/2024.csv'.",
+  "verdict": "clean",
+  "looks_like": "path-traversal",
+  "why": "The resolved target must stay inside the resolved root, which also covers '..' and links that point out."
+}

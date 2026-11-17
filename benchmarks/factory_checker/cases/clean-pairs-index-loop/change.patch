@@ -1,0 +1,14 @@
+diff --git a/series.py b/series.py
+index 9b82b76..da68c0d 100644
+--- a/series.py
++++ b/series.py
+@@ -3,4 +3,8 @@
+ 
+ def increases(values):
+     """How many times a value is larger than the one before it."""
+-    return sum(1 for a, b in zip(values, values[1:], strict=False) if b > a)
++    count = 0
++    for i in range(len(values) - 1):
++        if values[i + 1] > values[i]:
++            count += 1
++    return count
