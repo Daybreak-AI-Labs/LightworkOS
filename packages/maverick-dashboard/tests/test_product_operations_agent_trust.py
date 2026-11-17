@@ -125,7 +125,7 @@ def test_copilot_turns_blocking_on_and_off_like_the_page(client, monkeypatch, au
     assert [r for r in audit_rows if r["kind"] == EventKind.SETTING_CHANGED] == changed
 
 
-def test_copilot_edits_an_agents_limits_like_the_page(client, monkeypatch, tmp_path):
+def test_copilot_edits_an_agents_limits_like_the_page(client, monkeypatch, tmp_path, audit_rows):
     from maverick_dashboard import product_operations_agent_trust as ops
 
     _as(monkeypatch, "admin", "user:ada")
@@ -148,6 +148,8 @@ def test_copilot_edits_an_agents_limits_like_the_page(client, monkeypatch, tmp_p
     page = client.put("/api/v1/trust/agents/by-page", json={**limits, "pubkey": "ab" * 32, "max_wall_seconds": 600})
     assert page.status_code == 200, page.text
 
+    assert [c for c in _changes(audit_rows) if c[0] == "limits_changed"] == [
+        ("limits_changed", "by-copilot", "user:ada"), ("limits_changed", "by-page", "user:ada")]
     # The same saved result as the page, connection tokens and key kept.
     entries = {e["id"]: e for e in json.loads((tmp_path / "agent_trust.json").read_text())}
     assert {**entries["by-copilot"], "id": "by-page"} == entries["by-page"]
@@ -205,3 +207,87 @@ def test_copilot_shows_the_page_and_checks_access_like_the_page(client, monkeypa
     with pytest.raises(HTTPException) as error:
         adapter.prepare(_request(), {}, {"agent": "partner-copilot", "direction": "inbound", "tool": "", "risk": None})
     assert error.value.status_code == 403
+
+
+def _changes(rows):
+    from maverick.audit import EventKind
+
+    return [(r["action"], r["trusted_agent"], r["actor"]) for r in rows if r["kind"] == EventKind.AGENT_TRUST_CHANGED]
+
+
+def test_copilot_adds_and_removes_an_agent_like_the_page(client, monkeypatch, tmp_path, audit_rows):
+    from maverick_dashboard import product_operations_agent_trust as ops
+
+    _as(monkeypatch, "admin", "user:ada")
+    limits = {"direction": "inbound", "allow_tools": ["research"], "deny_tools": [], "max_risk": "low",
+              "max_dollars": 2.0, "data_scopes": [], "pubkey": "ab" * 32}
+    review = _review(client, "trust.agents.add", {"name": "Partner Copilot", **limits, "max_minutes": None})
+    assert review.status_code == 200, review.text
+    assert {"field": "Direction", "before": "", "after": "It may contact us"} in review.json()["changes"]
+    done = _execute(client, review.json())
+    assert done.status_code == 200 and done.json()["status"] == "confirmed", done.text
+    assert done.json()["details"]["Status"] == "Active"
+    assert client.post("/api/v1/trust/agents", json={"id": "by-page", **limits}).status_code == 201
+    entries = {e["id"]: e for e in json.loads((tmp_path / "agent_trust.json").read_text())}
+    assert {**entries["partner-copilot"], "id": "by-page"} == entries["by-page"]
+    assert _execute(client, review.json()).status_code == 409   # the same review again
+    taken = _review(client, "trust.agents.add", {"name": "Partner Copilot", **limits, "max_minutes": None})
+    assert taken.status_code == 409 and "already on the list" in taken.json()["detail"]
+
+    # Removing says what stops working and needs confirming.
+    unconfirmed = _review(client, "trust.agents.remove", {"agent": "partner-copilot"})
+    assert unconfirmed.status_code == 409 and "Confirm" in unconfirmed.json()["detail"]
+    removal = _review(client, "trust.agents.remove", {"agent": "partner-copilot", "confirmed": True})
+    assert "turned away" in removal.json()["summary"] and "deleted" in removal.json()["summary"]
+    gone = _execute(client, removal.json())
+    assert gone.status_code == 200 and gone.json()["details"] == {"On the list": "No"}, gone.text
+    assert client.delete("/api/v1/trust/agents/by-page").status_code == 204
+    assert json.loads((tmp_path / "agent_trust.json").read_text()) == []
+    assert _execute(client, removal.json()).status_code == 409
+    assert _changes(audit_rows) == [("added", "partner-copilot", "user:ada"), ("added", "by-page", "user:ada"),
+                                    ("removed", "partner-copilot", "user:ada"), ("removed", "by-page", "user:ada")]
+
+    _register(client, "kept-agent")
+    _as(monkeypatch, "viewer", "user:bob")
+    offered = {o["id"] for o in _catalog(client)["operations"]}
+    assert not offered & {"trust.agents.add", "trust.agents.remove"}
+    by_id = {a.id: a for a in ops.entries()}
+    for operation, arguments in (("trust.agents.add", ops.NewAgent(name="Other").model_dump()),
+                                 ("trust.agents.remove", {"agent": "kept-agent", "confirmed": True})):
+        with pytest.raises(HTTPException) as error:
+            by_id[operation].execute(_request(), {}, arguments, {}, "a" * 32)
+        assert error.value.status_code == 403
+    assert [e["id"] for e in json.loads((tmp_path / "agent_trust.json").read_text())] == ["kept-agent"]
+
+
+def test_copilot_blocks_and_unblocks_an_agent_like_the_page(client, monkeypatch, tmp_path, audit_rows):
+    from maverick import agent_trust
+    from maverick_dashboard import product_operations_agent_trust as ops
+
+    _as(monkeypatch, "admin", "user:ada")
+    _register(client, "partner-copilot")
+    unconfirmed = _review(client, "trust.agents.block", {"agent": "partner-copilot"})
+    assert unconfirmed.status_code == 409 and "Confirm" in unconfirmed.json()["detail"]
+    review = _review(client, "trust.agents.block", {"agent": "partner-copilot", "confirmed": True})
+    assert "turned away" in review.json()["summary"]
+    assert review.json()["changes"] == [{"field": "Partner copilot", "before": "Active", "after": "Blocked"}]
+    done = _execute(client, review.json())
+    assert done.status_code == 200 and done.json()["details"] == {"Status": "Blocked"}, done.text
+    assert agent_trust.decide_inbound("partner-copilot", enforced=True).rule == "revoked"
+    assert _execute(client, review.json()).status_code == 409   # the same review again
+
+    restore = _review(client, "trust.agents.unblock", {"agent": "partner-copilot"})
+    assert restore.json()["changes"] == [{"field": "Partner copilot", "before": "Blocked", "after": "Active"}]
+    assert _execute(client, restore.json()).json()["details"] == {"Status": "Active"}
+    assert not json.loads((tmp_path / "agent_trust.json").read_text())[0]["revoked"]
+    assert _changes(audit_rows) == [("added", "partner-copilot", "user:ada"), ("blocked", "partner-copilot", "user:ada"),
+                                    ("unblocked", "partner-copilot", "user:ada")]
+
+    _as(monkeypatch, "viewer", "user:bob")
+    offered = {o["id"] for o in _catalog(client)["operations"]}
+    assert not offered & {"trust.agents.block", "trust.agents.unblock"}
+    adapter = {a.id: a for a in ops.entries()}["trust.agents.block"]
+    with pytest.raises(HTTPException) as error:
+        adapter.execute(_request(), {}, {"agent": "partner-copilot", "confirmed": True}, {}, "a" * 32)
+    assert error.value.status_code == 403
+    assert not json.loads((tmp_path / "agent_trust.json").read_text())[0]["revoked"]

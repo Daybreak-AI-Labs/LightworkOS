@@ -809,6 +809,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   one would be let in, change an app-added agent's limits, and turn blocking
   on or off. Each runs the page's own checks. To offer them, choose Connections
   in "Actions available through Copilot".
+- Adding, editing, blocking, unblocking or removing an outside agent on the
+  Agent trust page (or through Copilot, which now offers all five) writes an
+  `agent_trust_changed` audit record first; if it cannot be written, nothing
+  changes. Include this event in any audit export filters you maintain.
+- Saving an outside agent's limits now keeps its security key on file unless
+  a new key is pasted or "Remove the key on file" is ticked. Before, saving an
+  edit without re-pasting the key removed it: re-add any key lost that way.
 
 ### Fixed
 

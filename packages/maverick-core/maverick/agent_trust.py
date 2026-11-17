@@ -887,7 +887,25 @@ def _keep_unrequested_ceilings(clean: dict, prior: dict | None, agent_id: str) -
             clean[field] = current[field]
 
 
-def put_agent(entry: dict, *, preserve_existing_identity: bool = False) -> TrustedAgent:
+class ChangeNotRecorded(RuntimeError):
+    """The audit row for a registry change could not be written."""
+
+
+def record_change(action: str, agent_id: str, actor: str | None) -> None:
+    """Write the audit row for a registry change before it is saved. Called
+    under the registry lock; ``actor=None`` (callers that audit on their own)
+    records nothing. A refused or failed write stops the change."""
+    if actor is None:
+        return
+    from .audit import EventKind, audit_event
+
+    if not audit_event(EventKind.AGENT_TRUST_CHANGED, agent="agent_trust", action=action,
+                       trusted_agent=agent_id, actor=actor):
+        raise ChangeNotRecorded("the change could not be recorded in the audit log, so it was not made")
+
+
+def put_agent(entry: dict, *, preserve_existing_identity: bool = False,
+              actor: str | None = None) -> TrustedAgent:
     """Add or replace a managed agent (by ``id``). Returns the parsed agent.
 
     Validates via :func:`_agent_from_entry`; raises :class:`AgentTrustError` on a
@@ -935,11 +953,12 @@ def put_agent(entry: dict, *, preserve_existing_identity: bool = False) -> Trust
         if len(entries) >= _MAX_AGENTS:
             raise AgentTrustError("managed registry is at capacity")
         entries.append(clean)
+        record_change("added" if prior is None else "replaced", agent.id, actor)
         _save_managed(entries)
     return persisted
 
 
-def remove_agent(agent_id: str) -> bool:
+def remove_agent(agent_id: str, *, actor: str | None = None) -> bool:
     """Delete a managed agent by id. Returns True if one was removed.
 
     A revoked overlay that shadows a config-defined agent is the revocation of
@@ -957,6 +976,7 @@ def remove_agent(agent_id: str) -> bool:
                 "server's config file, so removing its app-managed entry would "
                 "make it trusted again. Restore it through the revocation "
                 "workflow first, or remove it from the config file.")
+        record_change("removed", agent_id, actor)
         _save_managed(kept)
     return True
 
@@ -969,7 +989,7 @@ def _config_defines(agent_id: str) -> bool:
         isinstance(item, dict) and str(item.get("id") or "") == agent_id for item in raw)
 
 
-def set_revoked(agent_id: str, revoked: bool) -> bool:
+def set_revoked(agent_id: str, revoked: bool, *, actor: str | None = None) -> bool:
     """Mark a managed agent revoked / unrevoked. Returns True if it existed."""
     with _managed_locked():
         entries = _load_managed()
@@ -979,6 +999,7 @@ def set_revoked(agent_id: str, revoked: bool) -> bool:
                 e["revoked"] = bool(revoked)
                 found = True
         if found:
+            record_change("blocked" if revoked else "unblocked", agent_id, actor)
             _save_managed(entries)
     return found
 

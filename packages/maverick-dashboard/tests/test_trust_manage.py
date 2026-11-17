@@ -86,7 +86,7 @@ def test_unmanaged_agent_actions_explain_the_config_file():
 def test_remove_that_would_lift_a_revocation_is_a_conflict(monkeypatch):
     from maverick import agent_trust
 
-    def _refuse(agent_id):
+    def _refuse(agent_id, **_kwargs):
         raise agent_trust.RevokedAgentRemovalRefused("would make it trusted again")
 
     monkeypatch.setattr(agent_trust, "remove_agent", _refuse)
@@ -314,3 +314,56 @@ def test_partner_request_limit_is_shown_and_raised_by_an_administrator(tmp_path,
     assert client.post("/api/v1/trust/federation/limits/start-over", json={}).status_code == 403
     assert client.post("/api/v1/trust/federation/limits/storage", json={"limit": 5}).status_code == 403
     config.reset_config_cache()
+
+
+def test_every_change_to_the_list_is_recorded_with_who_made_it(monkeypatch, audit_rows):
+    from maverick.audit import EventKind
+    from maverick_dashboard import auth, rbac
+
+    rbac.set_role("user:ada", "admin")
+    monkeypatch.setattr(auth, "caller_principal", lambda request: "user:ada")
+    audit_rows.clear()
+    assert _register().status_code == 201
+    assert client.put("/api/v1/trust/agents/partner-copilot", json={"direction": "both"}).status_code == 200
+    for revoked in (True, False):
+        assert client.post("/api/v1/trust/agents/partner-copilot/revoke", json={"revoked": revoked}).status_code == 200
+    assert client.delete("/api/v1/trust/agents/partner-copilot").status_code == 204
+    changes = [r for r in audit_rows if r["kind"] == EventKind.AGENT_TRUST_CHANGED]
+    assert [r["action"] for r in changes] == ["added", "limits_changed", "blocked", "unblocked", "removed"]
+    assert {(r["trusted_agent"], r["actor"]) for r in changes} == {("partner-copilot", "user:ada")}
+
+
+def test_a_change_that_cannot_be_recorded_is_not_made(tmp_path, monkeypatch):
+    import json
+
+    import maverick.audit as audit
+
+    assert _register().status_code == 201
+    before = (tmp_path / "agent_trust.json").read_text()
+    monkeypatch.setattr(audit, "audit_event", lambda kind, **payload: False)
+    assert client.put("/api/v1/trust/agents/partner-copilot", json={"direction": "both"}).status_code == 503
+    assert client.post("/api/v1/trust/agents/partner-copilot/revoke", json={"revoked": True}).status_code == 503
+    assert client.delete("/api/v1/trust/agents/partner-copilot").status_code == 503
+    assert _register(id="another-agent").status_code == 503
+    assert (tmp_path / "agent_trust.json").read_text() == before
+    assert [e["id"] for e in json.loads(before)] == ["partner-copilot"]
+
+
+def test_saving_an_edit_keeps_the_security_key_unless_it_is_removed(tmp_path):
+    import json
+
+    key = "ab" * 32
+    assert _register(pubkey=key).status_code == 201
+    # The page sends an empty key field when nobody pastes a new one.
+    for body in ({"direction": "both"}, {"direction": "both", "pubkey": ""}):
+        assert client.put("/api/v1/trust/agents/partner-copilot", json=body).status_code == 200
+        assert json.loads((tmp_path / "agent_trust.json").read_text())[0]["pubkey"] == key
+    assert client.put("/api/v1/trust/agents/partner-copilot",
+                      json={"pubkey": "cd" * 32}).status_code == 200
+    assert json.loads((tmp_path / "agent_trust.json").read_text())[0]["pubkey"] == "cd" * 32
+    assert client.put("/api/v1/trust/agents/partner-copilot",
+                      json={"pubkey": "cd" * 32, "remove_key": True}).status_code == 422
+    assert client.put("/api/v1/trust/agents/partner-copilot", json={"remove_key": True}).status_code == 200
+    assert "pubkey" not in json.loads((tmp_path / "agent_trust.json").read_text())[0]
+    page = client.get("/trust").text
+    assert "The key on file is kept" in page and 'name="remove_key"' in page

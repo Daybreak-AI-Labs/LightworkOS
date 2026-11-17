@@ -1,11 +1,12 @@
 """Copilot reads the Agent trust page and makes its changes through the
 page's own functions in ``trust_page_api``: the same permission checks, the
 same setting record and the same saved result, read back afterwards.
-Partner request limits are in ``product_operations_partner_limits``. Adding,
-blocking, unblocking and removing an agent (the ``/api/v1/trust/agents``
-routes in ``api.py``) have no Copilot operation yet."""
+Partner request limits are in ``product_operations_partner_limits``. Every
+change to the list writes its audit row before it is saved."""
 from __future__ import annotations
 
+import re
+import unicodedata
 from typing import Literal
 
 from fastapi import HTTPException
@@ -39,8 +40,7 @@ class Check(StrictInput):
     risk: Literal["low", "medium", "high"] | None = None
 
 
-class Limits(StrictInput):
-    agent: str = Field(min_length=1, max_length=128)
+class _LimitFields(StrictInput):
     direction: Literal["inbound", "outbound", "both"] = "both"
     allow_tools: list[str] = Field(default_factory=list, max_length=256)
     deny_tools: list[str] = Field(default_factory=list, max_length=256)
@@ -48,6 +48,24 @@ class Limits(StrictInput):
     max_dollars: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     max_minutes: float | None = Field(default=None, ge=0, le=525_600, allow_inf_nan=False)
     data_scopes: list[str] = Field(default_factory=list, max_length=256)
+
+
+class Limits(_LimitFields):
+    agent: str = Field(min_length=1, max_length=128)
+
+
+class NewAgent(_LimitFields):
+    name: str = Field(min_length=1, max_length=60)
+    pubkey: str = Field(default="", max_length=64)
+    max_risk: Literal["low", "medium", "high"] | None = "low"
+
+
+class Chosen(StrictInput):
+    agent: str = Field(min_length=1, max_length=128)
+
+
+class Confirmed(Chosen):
+    confirmed: bool = False
 
 
 def _names(values) -> str:
@@ -222,13 +240,11 @@ def _limits_row(arguments: dict) -> dict:
             "data_scopes": arguments["data_scopes"]}
 
 
-def edit_snapshot(request, _selection):
+def _limit_fields(request, first: dict | None) -> list[dict]:
+    """The page's limit controls, filled from ``first`` (an agent row) or
+    the page's defaults for a new agent."""
     from .app import _trust_context
 
-    native.require_permission(request, "admin")
-    state = _state()
-    choices = _agent_choices(state, managed_only=True)
-    first = _row(state, choices[0]["value"], managed_only=True) if choices else None
     page = _trust_context(request)
     tools = [{"value": value, "label": label} for value, label in page["tool_choices"]]
     areas = page["area_choices"]
@@ -236,9 +252,7 @@ def edit_snapshot(request, _selection):
     for group in areas.get("groups", []):
         scopes.update({value: label for value, label in group.get("options", [])})
     minutes = first["max_wall_seconds"] if first else None
-    fields = [
-        {"name": "agent", "label": "Agent", "kind": "select", "value": first["id"] if first else "",
-         "choices": choices},
+    return [
         {"name": "direction", "label": "Direction", "kind": "select", "value": first["direction"] if first else "both",
          "choices": [{"value": k, "label": v} for k, v in _DIRECTION.items()]},
         {"name": "allow_tools", "label": "Tools it may use (choose none for all tools)", "kind": "multiselect",
@@ -246,7 +260,7 @@ def edit_snapshot(request, _selection):
         {"name": "deny_tools", "label": "Tools it may never use", "kind": "multiselect",
          "value": first["deny_tools"] if first else [], "choices": tools},
         {"name": "max_risk", "label": "Highest-risk actions allowed", "kind": "select",
-         "value": (first["max_risk"] if first and first["max_risk"] != "unbounded" else "high"),
+         "value": (first["max_risk"] if first and first["max_risk"] != "unbounded" else "high") if first else "low",
          "choices": [{"value": k, "label": _RISK[k]} for k in ("low", "medium", "high")]},
         {"name": "max_dollars", "label": "Spending limit per task in dollars (empty means no limit)",
          "kind": "number", "value": first["max_dollars"] if first else None},
@@ -255,6 +269,15 @@ def edit_snapshot(request, _selection):
         {"name": "data_scopes", "label": "Data it may read (none chosen means no access)", "kind": "multiselect",
          "value": first["data_scopes"] if first else [],
          "choices": [{"value": k, "label": v} for k, v in scopes.items()]}]
+
+
+def edit_snapshot(request, _selection):
+    native.require_permission(request, "admin")
+    state = _state()
+    choices = _agent_choices(state, managed_only=True)
+    first = _row(state, choices[0]["value"], managed_only=True) if choices else None
+    fields = [{"name": "agent", "label": "Agent", "kind": "select", "value": first["id"] if first else "",
+               "choices": choices}, *_limit_fields(request, first)]
     return _snapshot(state, fields=fields, blocked="" if choices else
                      "No agent on the list was added in this app, so none can be edited here.")
 
@@ -275,12 +298,154 @@ def edit_execute(request, _selection, arguments, _review, _operation):
     agent = arguments["agent"]
     limits = _limits_row(arguments)
     native.apply_agent_limits(request, agent, native.AgentLimitsIn(
-        pubkey=_state()["keys"].get(agent, ""), direction=limits["direction"],
+        direction=limits["direction"],
         allow_tools=arguments["allow_tools"], deny_tools=limits["deny_tools"],
         max_risk=arguments["max_risk"], max_dollars=limits["max_dollars"],
         max_wall_seconds=limits["max_wall_seconds"], data_scopes=limits["data_scopes"]))
     saved = _row(_state(), agent, managed_only=True)
     return Outcome("confirmed", f"The limits for {humanize(agent)} are saved.", _words(saved))
+
+
+# -- add, block, unblock, remove -------------------------------------------
+
+def _slug(name: str) -> str:
+    """The page's id for a new agent's name (``slug`` in trust.html)."""
+    text = unicodedata.normalize("NFKD", name.lower())
+    return re.sub(r"[^a-z0-9]+", "-", text).strip("-")[:60] or "agent"
+
+
+def add_snapshot(request, _selection):
+    native.require_permission(request, "admin")
+    fields = [{"name": "name", "label": "Name", "kind": "text", "value": "", "max_length": 60},
+              *_limit_fields(request, None),
+              {"name": "pubkey", "label": "Security key from the agent's provider (optional)", "kind": "text",
+               "value": "", "max_length": 64}]
+    return _snapshot(_state(), fields=fields)
+
+
+def add_prepare(request, _selection, arguments):
+    from maverick import agent_trust
+
+    native.require_permission(request, "admin")
+    agent = _slug(arguments["name"])
+    if any(row["id"] == agent for row in _state()["agents"]):
+        raise HTTPException(409, "An agent with this name is already on the list. Change its limits instead.")
+    if arguments["pubkey"].strip() and not agent_trust._PUBKEY_RE.fullmatch(arguments["pubkey"].strip()):
+        raise HTTPException(422, "That security key is not valid. Nothing was changed.")
+    after = _words(_limits_row(arguments))
+    return Preview(f"Add {humanize(agent)} to the list. While blocking is on, it may work with Lightwork "
+                   "only within these limits.", changes=[{"field": name, "before": "", "after": value}
+                                                         for name, value in after.items()])
+
+
+def add_execute(request, _selection, arguments, _review, _operation):
+    from .api_schemas import TrustAgentIn
+
+    limits = _limits_row(arguments)
+    agent = native.register_agent(request, TrustAgentIn(
+        id=_slug(arguments["name"]), pubkey=arguments["pubkey"].strip(), direction=limits["direction"],
+        allow_tools=arguments["allow_tools"], deny_tools=limits["deny_tools"], max_risk=arguments["max_risk"],
+        max_dollars=limits["max_dollars"], max_wall_seconds=limits["max_wall_seconds"],
+        data_scopes=limits["data_scopes"]))
+    row = _row(_state(), agent, managed_only=True)
+    return Outcome("confirmed", f"{humanize(agent)} is on the list.",
+                   {"Agent": humanize(agent), "Status": _status(row), **_words(row)})
+
+
+def _choose_snapshot(request, *, revoked: bool | None, confirm: str = "", empty: str):
+    native.require_permission(request, "admin")
+    state = _state()
+    choices = [c for c in _agent_choices(state, managed_only=True)
+               if revoked is None or _row(state, c["value"], managed_only=True)["revoked"] is revoked]
+    fields = [{"name": "agent", "label": "Agent", "kind": "select",
+               "value": choices[0]["value"] if choices else "", "choices": choices}]
+    if confirm:
+        fields.append({"name": "confirmed", "label": confirm, "kind": "boolean", "value": False})
+    return _snapshot(state, fields=fields, blocked="" if choices else empty)
+
+
+def _chosen(request, arguments, *, revoked: bool | None, needs_confirming: str = "") -> dict:
+    native.require_permission(request, "admin")
+    row = _row(_state(), arguments["agent"], managed_only=True)
+    if revoked is not None and row["revoked"] is not revoked:
+        raise HTTPException(409, f"{humanize(row['id'])} is {'not ' if revoked else 'already '}blocked. "
+                                 "Nothing was changed.")
+    if needs_confirming and not arguments.get("confirmed"):
+        raise HTTPException(409, needs_confirming)
+    return row
+
+
+_CONFIRM_BLOCK = "Confirm that this agent is turned away from its next contact. Nothing was changed."
+_CONFIRM_REMOVE = "Confirm that this agent's limits and connection details are deleted. Nothing was changed."
+
+
+def block_snapshot(request, _selection):
+    return _choose_snapshot(request, revoked=False, empty="No agent added in this app can be blocked now.",
+                            confirm="I understand this agent is turned away from its next contact.")
+
+
+def block_prepare(request, _selection, arguments):
+    row = _chosen(request, arguments, revoked=False, needs_confirming=_CONFIRM_BLOCK)
+    name = humanize(row["id"])
+    return Preview(f"Block {name}. It is turned away from its next contact, and we stop contacting it. "
+                   "Its limits and connection details are kept, so you can unblock it later.",
+                   changes=[{"field": name, "before": _status(row), "after": "Blocked"}])
+
+
+def _blocked_outcome(agent: str, message: str) -> Outcome:
+    return Outcome("confirmed", message, {"Status": _status(_row(_state(), agent, managed_only=True))})
+
+
+def block_execute(request, _selection, arguments, _review, _operation):
+    if not arguments["confirmed"]:
+        raise HTTPException(409, _CONFIRM_BLOCK)
+    native.set_agent_blocked(request, arguments["agent"], True)
+    return _blocked_outcome(arguments["agent"], f"{humanize(arguments['agent'])} is blocked.")
+
+
+def unblock_snapshot(request, _selection):
+    return _choose_snapshot(request, revoked=True, empty="No agent added in this app is blocked.")
+
+
+def _unblocked_status(row: dict) -> str:
+    """A blocked row hides whether its access has also run out."""
+    import time
+
+    expires = row.get("expires_at")
+    return "Expired" if isinstance(expires, (int, float)) and time.time() >= expires else "Active"
+
+
+def unblock_prepare(request, _selection, arguments):
+    row = _chosen(request, arguments, revoked=True)
+    name = humanize(row["id"])
+    return Preview(f"Unblock {name}. It can work with Lightwork again within its limits.",
+                   changes=[{"field": name, "before": "Blocked", "after": _unblocked_status(row)}])
+
+
+def unblock_execute(request, _selection, arguments, _review, _operation):
+    native.set_agent_blocked(request, arguments["agent"], False)
+    return _blocked_outcome(arguments["agent"], f"{humanize(arguments['agent'])} is unblocked.")
+
+
+def remove_snapshot(request, _selection):
+    return _choose_snapshot(request, revoked=None, empty="No agent on the list was added in this app.",
+                            confirm="I understand this agent's limits and connection details are deleted.")
+
+
+def remove_prepare(request, _selection, arguments):
+    row = _chosen(request, arguments, revoked=None, needs_confirming=_CONFIRM_REMOVE)
+    name = humanize(row["id"])
+    return Preview(f"Remove {name} from the list. Its limits and connection details are deleted. "
+                   "While blocking is on, it is turned away from its next contact.",
+                   changes=[{"field": name, "before": "On the list", "after": "Removed"}])
+
+
+def remove_execute(request, _selection, arguments, _review, _operation):
+    if not arguments["confirmed"]:
+        raise HTTPException(409, _CONFIRM_REMOVE)
+    native.remove_managed_agent(request, arguments["agent"])
+    listed = any(row["id"] == arguments["agent"] for row in _state()["agents"])
+    return Outcome("confirmed", f"{humanize(arguments['agent'])} was removed.", {"On the list": "Yes" if listed else "No"})
 
 
 def entries():
@@ -294,6 +459,14 @@ def entries():
         Adapter("trust.agents.edit", "Change an outside agent's limits", _FAMILY, "/trust", _PAGES,
                 Limits, edit_snapshot, edit_prepare, edit_execute,
                 aliases=("edit agent limits", "change what an outside agent may do")),
+        Adapter("trust.agents.add", "Add an outside agent", _FAMILY, "/trust", _PAGES,
+                NewAgent, add_snapshot, add_prepare, add_execute, aliases=("add an outside agent", "add an agent")),
+        Adapter("trust.agents.block", "Block an outside agent", _FAMILY, "/trust", _PAGES,
+                Confirmed, block_snapshot, block_prepare, block_execute, aliases=("block an agent", "block agent")),
+        Adapter("trust.agents.unblock", "Unblock an outside agent", _FAMILY, "/trust", _PAGES,
+                Chosen, unblock_snapshot, unblock_prepare, unblock_execute, aliases=("unblock an agent",)),
+        Adapter("trust.agents.remove", "Remove an outside agent from the list", _FAMILY, "/trust", _PAGES,
+                Confirmed, remove_snapshot, remove_prepare, remove_execute, aliases=("remove an agent",)),
         Adapter("trust.enforcement.set", "Turn blocking of unlisted agents on or off", _FAMILY, "/trust",
                 _PAGES, Enforcement, enforcement_snapshot, enforcement_prepare, enforcement_execute,
                 aliases=("turn on blocking", "turn off blocking", "block unlisted agents")),

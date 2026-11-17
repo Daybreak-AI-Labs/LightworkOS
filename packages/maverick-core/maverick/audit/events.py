@@ -260,6 +260,10 @@ class EventKind:
     # payload: peer:str, direction:str (inbound|outbound), rule:str, reason:str,
     # correlation_id:str ("" when none).
     AGENT_TRUST_DENIED = "agent_trust_denied"
+    # An app-managed entry in the Agent Trust registry changed, written before
+    # the change is saved. payload: action (added|replaced|limits_changed|
+    # blocked|unblocked|removed), trusted_agent:str, actor:str.
+    AGENT_TRUST_CHANGED = "agent_trust_changed"
     # Agent Control Plane: an operator verb (suspend / resume / contain /
     # release / attenuate / halt / clear-halt) applied to a governed principal
     # from the console or `maverick control-plane`. payload: verb:str,
