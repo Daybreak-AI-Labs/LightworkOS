@@ -818,6 +818,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The Approvals page, its API and the Copilot now always find your own
   waiting decisions, even behind more than 200 of other people's; before,
   yours could be hidden and answering one by its number said it was gone.
+- A paid tool call that fails after its request may have reached the
+  service (a read timeout, a failed poll) is now charged everything it held,
+  and the cost line says the provider may have billed it. It counts once
+  against the organization's daily cap. A call that never connected is not
+  charged. Check the provider's invoice for the real cost.
+- A paid tool service priced at $0 per second or per terabyte no longer
+  holds or charges anything, even when its replies do not report that unit.
+  Before, it held and charged up to `max_unmetered_hold_dollars` per call. A
+  $0 price for a count (message, image, page, character) makes only the
+  calls counted in it free; other calls to that service are charged as
+  before.
 
 ### Fixed
 

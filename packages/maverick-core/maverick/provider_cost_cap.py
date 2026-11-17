@@ -1649,6 +1649,7 @@ def metered_provider_call(
     service: str | None = None,
     settlement=None,
     organization_budget=None,
+    failure_settlement=None,
 ):
     """Bracket one synchronous physical provider call with a durable receipt.
 
@@ -1660,7 +1661,9 @@ def metered_provider_call(
     A cost known only from the reply is given by ``settlement``: called with
     the callback's result, it returns ``(actual_dollars, cost_basis,
     pricing_evidence)``. ``organization_budget`` is the run budget the call is
-    charged to, as :func:`reserve` takes it.
+    charged to, as :func:`reserve` takes it. ``failure_settlement`` does the
+    same for a callback that raised: called with the error, it gives the cost
+    the caller charged for it, or ``(None, None, None)`` when that is unknown.
     """
 
     if not callable(callback):
@@ -1697,7 +1700,11 @@ def metered_provider_call(
     except BaseException as error:
         if hold is not None:
             try:
-                settle(hold, None, attempt_state=_failed_attempt_state(error))
+                actual, basis, evidence = (
+                    (None, None, None) if failure_settlement is None
+                    else failure_settlement(error))
+                settle(hold, actual, cost_basis=basis, pricing_evidence=evidence,
+                       attempt_state=_failed_attempt_state(error))
             except Exception as accounting_error:
                 raise ProviderAccountingUnavailable from accounting_error
         raise

@@ -8,10 +8,61 @@ the redirect helper additionally validates and pins network redirect targets.
 """
 from __future__ import annotations
 
-from collections.abc import Callable
-from contextlib import nullcontext
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 from typing import Any
 from urllib.parse import urlsplit
+
+# Whether the requests made inside one paid call may have left this machine:
+# ``reported`` once the call used this layer, ``sent`` once a request may have.
+_DISPATCH: ContextVar[dict[str, bool] | None] = ContextVar("governed_dispatch", default=None)
+
+
+@contextmanager
+def dispatch_tracking() -> Iterator[dict[str, bool]]:
+    """Track, for the code run inside, whether a governed request may have left."""
+    state = {"reported": False, "sent": False}
+    token = _DISPATCH.set(state)
+    try:
+        yield state
+    finally:
+        _DISPATCH.reset(token)
+
+
+def note_dispatch(sent: bool) -> None:
+    """Record that a governed request is being made, and whether it may have left."""
+    state = _DISPATCH.get()
+    if state is not None:
+        state["reported"] = True
+        state["sent"] = state["sent"] or sent
+
+
+def never_connected(error: BaseException) -> bool:
+    """Whether a request that raised ``error`` never reached the service: no
+    connection was made, or the address could not be used."""
+    import socket
+
+    if isinstance(error, (ConnectionRefusedError, socket.gaierror)):
+        return True
+    try:
+        import httpx
+
+        return isinstance(error, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout,
+                                  httpx.UnsupportedProtocol, httpx.InvalidURL))
+    except Exception:  # failure-policy: fail_closed -- cannot tell, so it may have connected
+        return False
+
+
+def send_noting_dispatch(send: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """Make one request with ``send``, noting whether it may have left."""
+    try:
+        response = send(*args, **kwargs)
+    except BaseException as error:
+        note_dispatch(not never_connected(error))
+        raise
+    note_dispatch(True)
+    return response
 
 
 def _absolute_http_target(url: Any) -> str:
@@ -54,7 +105,11 @@ def guarded_sender(send: Callable[..., Any]) -> Callable[..., Any]:
 
     Acquiring the sender at the call site preserves client configuration and
     test adapters; the policy check always precedes the delegated effect.
+    Acquiring it inside :func:`dispatch_tracking` reports whether a request
+    left, so a failure before then is known not to have been sent.
     """
+    note_dispatch(False)
+
     def guarded(url: str, *args: Any, **kwargs: Any) -> Any:
         # A bound HTTPX client can enable redirects on the client itself, so
         # the absence of a per-request flag does not imply a one-hop request.
@@ -72,7 +127,7 @@ def guarded_sender(send: Callable[..., Any]) -> Callable[..., Any]:
         from .egress_guard import _check
 
         _check(target)
-        return send(url, *args, **kwargs)
+        return send_noting_dispatch(send, url, *args, **kwargs)
 
     return guarded
 
@@ -87,6 +142,8 @@ def guarded_redirect_get(
     network redirect is checked under the private-network setting, and a
     direct one is pinned to the checked address before sending.
     """
+    note_dispatch(False)
+
     def guarded(url: str, *args: Any, **kwargs: Any) -> Any:
         if require_https and urlsplit(str(url)).scheme.lower() != "https":
             raise ValueError("HTTPS is required for this request")

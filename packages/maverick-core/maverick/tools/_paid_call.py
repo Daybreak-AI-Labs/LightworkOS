@@ -26,6 +26,7 @@ from ..budget import (
     tool_call_price,
     tool_ceiling_reason,
 )
+from ..governed_http import dispatch_tracking, never_connected
 from ..provider_cost_cap import (
     ProviderAccountingUnavailable,
     ProviderCapExceeded,
@@ -46,6 +47,48 @@ STOP_SIGNALS = (BudgetExceeded, ProviderCapExceeded, ProviderAccountingUnavailab
 def is_free_backend(url: str | None) -> bool:
     """Whether ``url`` is on this machine or a private network, so it is free."""
     return bool(url) and _is_private_endpoint(url)
+
+
+def _never_sent(error: BaseException, dispatch: dict[str, bool]) -> bool:
+    """Whether ``send`` raised ``error`` before any request left this machine.
+
+    A send through the governed HTTP layer reports that itself, whatever the
+    error. For any other send, only a refusal here or a connection never made
+    counts as not sent; anything else may have reached the service.
+    """
+    if dispatch["reported"]:
+        return not dispatch["sent"]
+    from ..enterprise import EgressBlocked
+    from ._ssrf import BlockedHost
+
+    return isinstance(error, (PaidCallRefused, EgressBlocked, BlockedHost)) or never_connected(error)
+
+
+def _charge_if_sent(budget, price, held: float, error: BaseException,
+                    dispatch: dict[str, bool], outcome: dict[str, Any]) -> None:
+    """A ``send`` that raised ``error`` may have reached the service: charge
+    everything ``held``, as for usage the reply never reported, so a retry
+    cannot spend it again. A send known to have sent nothing is free.
+    ``outcome`` keeps what was charged, for the provider receipt."""
+    if held <= 0 or _never_sent(error, dispatch):
+        outcome["free"] = True
+        return
+    try:
+        outcome["charge"] = record_tool_dollars(budget, price, held, priced=False,
+                                                unconfirmed=True)
+    except BudgetExceeded as exc:
+        outcome["charge"] = getattr(exc, "token_charge", None)
+        raise
+
+
+def _failure_receipt(outcome: dict[str, Any]):
+    """The provider receipt of a failed send: what the run was charged, $0
+    when it cost nothing, else unknown. Every ledger then counts it once."""
+    if outcome.get("charge") is not None:
+        return outcome["charge"].dollars, "estimated", outcome["charge"].pricing_evidence
+    if outcome.get("free"):
+        return 0.0, "estimated", None
+    return None, None, None
 
 
 def _remaining(budget) -> float | None:
@@ -79,7 +122,9 @@ def charged_call(
     request, the characters in the text); ``measure`` reads more from the
     reply (seconds of audio or compute, bytes scanned). When the priced unit
     never comes back, the call is charged everything it held. ``measure`` returns ``None`` when
-    ``send`` stopped before anything was sent, so nothing is charged.
+    ``send`` stopped before anything was sent, so nothing is charged. When
+    ``send`` raises after a request may have left, the call is charged
+    everything it held; it is not charged when no request left.
 
     When the priced unit is known only from the reply, the call holds what
     it may cost: the smaller of what the run has left and ``[budget]
@@ -103,7 +148,7 @@ def charged_call(
         raise PaidCallRefused(str(exc)) from exc
     projected, priced = price.cost(units)
     max_units = None
-    if price.unit is not None and (units or {}).get(price.unit) is None:
+    if price.unit is not None and not priced:
         remaining = _remaining(budget)
         if remaining is not None and remaining <= 0:
             raise BudgetExceeded(
@@ -121,7 +166,12 @@ def charged_call(
     outcome: dict[str, Any] = {}
 
     def call():
-        result = send(max_units) if bounded else send()
+        with dispatch_tracking() as dispatch:
+            try:
+                result = send(max_units) if bounded else send()
+            except BaseException as error:
+                _charge_if_sent(budget, price, projected, error, dispatch, outcome)
+                raise
         used = dict(units or {})
         measured = {} if measure is None else measure(result)
         if measured is None:
@@ -133,7 +183,7 @@ def charged_call(
         dollars, charged_as_priced = price.cost(used)
         # The priced unit never came back: charge everything held (all the
         # run had left), so the run stops on its limit rather than guess low.
-        unreported = price.unit is not None and used.get(price.unit) is None
+        unreported = price.unit is not None and not charged_as_priced
         if unreported:
             dollars = projected
         try:
@@ -163,7 +213,8 @@ def charged_call(
     try:
         result = metered_provider_call(
             service, call, projected_dollars=projected, settlement=settlement,
-            organization_budget=budget, category=category,
+            organization_budget=budget, failure_settlement=lambda _error: _failure_receipt(outcome),
+            category=category,
             parent_category=parent_category or category, service=service,
             operation_id=operation_id, attempt_no=attempt_no,
         )

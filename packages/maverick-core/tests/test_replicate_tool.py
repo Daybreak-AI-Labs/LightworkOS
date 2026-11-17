@@ -223,3 +223,25 @@ def test_replicate_per_second_is_cancelled_at_its_hold_and_settles_a_slow_cancel
     assert "Waited for the result" in out and "priced per second" in out
     assert "cancelled at the spending hold after 20 s" in out and "canceled" in out
     assert budget.dollars == pytest.approx(0.195)
+
+
+def test_replicate_poll_that_cannot_connect_is_still_charged(monkeypatch):
+    # The prediction was created, so a poll that then cannot connect is not
+    # a request that was never sent: the reply says the poll failed, and the
+    # created prediction is charged.
+    import httpx
+    import pytest
+
+    rt, _clock = _replicate_clock(monkeypatch)
+
+    def get(url, **_kw):
+        if url.endswith("/models/o/m"):
+            return _resp(200, {"latest_version": {"id": "v1"}})
+        raise httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr(httpx, "get", get)
+    monkeypatch.setattr(httpx, "post", lambda url, **_kw: _resp(201, {"id": "p1"}))
+    budget = Budget(max_dollars=1.0)
+    out = rt.replicate_tool(budget=budget).fn({"op": "run", "model": "o/m", "input": {}, "wait": True})
+    assert "poll failed" in out and "p1" in out
+    assert budget.dollars == pytest.approx(0.10) and budget._reserved == 0

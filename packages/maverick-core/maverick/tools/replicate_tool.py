@@ -158,8 +158,7 @@ def run_prediction(version: str, inp: dict, wait: bool, budget, *,
     notes = ([f"Waited for the result to measure its cost, because {label} is priced per "
               "second."] if per_second and not wait else [])
 
-    def send(max_units):
-        code, data = _post("/predictions", {"version": version, "input": inp})
+    def follow(code, data, max_units):
         if code >= 400 or not isinstance(data, dict) or not waited:
             return PredictionRun(code, data, None, None, " ".join(notes), waited)
         pid = data.get("id")
@@ -190,6 +189,17 @@ def run_prediction(version: str, inp: dict, wait: bool, budget, *,
                 return PredictionRun(code, data, p2, None, " ".join(notes), waited)
         notes.append("Replicate has not confirmed that it stopped.")
         return PredictionRun(code, data, None, None, " ".join(notes), waited)
+
+    def send(max_units):
+        code, data = _post("/predictions", {"version": version, "input": inp})
+        try:
+            return follow(code, data, max_units)
+        except Exception as exc:  # failure-policy: fail_closed -- reported, and charged
+            # Created, so a failure while polling or cancelling it is not a
+            # failure to send: it is reported, and the call is charged.
+            return PredictionRun(code, data, None, (
+                f"ERROR: poll failed ({type(exc).__name__}); use predict_get to check "
+                f"prediction {data.get('id')}"), " ".join(notes), waited)
 
     return charged_call("replicate", send, budget=budget, label=label,
                         units={"request": 1}, measure=_measured, bounded=True)
