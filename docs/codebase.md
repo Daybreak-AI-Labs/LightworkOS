@@ -229,7 +229,10 @@ maverick code export payments ./payments   # plaintext clone for the owner
    restart path (`maverick resume`, a chat reply, the supervisor, a run
    start) takes up a code change's step: every step is marked before it
    runs and starts only inside the change's own loop, and a goal an agent
-   made below one starts only if it never ran.
+   made below one starts only if it never ran and its change is still being
+   built. When a change ends, every goal still waiting below its steps is
+   cancelled. While a change is built the Code page shows it as "Being
+   built"; one whose process died reads "Stopped before it finished".
 14. `sync` fetches upstream as `upstream/*` and never overwrites vault work:
    - a branch behind upstream fast-forwards;
    - a branch ahead of upstream (approved merges not pushed yet) is kept;
@@ -273,8 +276,9 @@ a change whose base is no longer in the main branch is refused outright. A prote
    gateway or organisation (`openrouter:anthropic/claude-…`,
    `bedrock:anthropic.claude…` and `vertex:claude-…` are all Anthropic),
    else from a first-party provider prefix. A name Lightwork cannot place
-   (`my-local`), or one naming two vendors' models (a distillation), cannot
-   be compared. If it is unset, shares a family, cannot
+   (`my-local`, or `openai:my-ft`: a provider prefix alone never decides),
+   or one naming two vendors' models (a distillation), cannot be compared.
+   OpenAI's fine-tune form `ft:<base model>:…` reads as its base model. If it is unset, shares a family, cannot
    be compared, or did not look at the final version (the spending limit, an
    error), the change **cannot be approved**: the card, the Code page
    (`Cannot be approved`) and Copilot say exactly why, and `maverick code

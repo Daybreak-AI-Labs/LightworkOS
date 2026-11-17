@@ -317,7 +317,9 @@ def test_embedded_repositories_are_refused_and_failed_runs_close_their_goal(
     with pytest.raises(RuntimeError):
         features.propose(world, "pricing", "Boom", "", run)
     assert world.get_goal(seen["goal_id"]).status == "failed"
-    assert features.list_proposals("pricing") == []
+    # A run that raised leaves only a stopped record, never offered for approval.
+    assert [(x["status"], x["approval_id"]) for x in features.list_proposals("pricing")] == \
+        [("stopped", None)] * 2
 
 
 def test_truncated_diffs_are_flagged_to_the_approver(upstream, tmp_path, monkeypatch):
@@ -780,7 +782,9 @@ def test_a_round_that_overruns_the_budget_is_never_offered(upstream, tmp_path):
     with pytest.raises(vault.VaultError, match="spending limit ran out"):
         features.propose(world, "pricing", "C", "", run, budget=budget, checker=None)
     assert world.get_goal(calls[0]["goal_id"]).status == "failed"
-    assert [x["title"] for x in features.list_proposals()] == ["D", "B", "A"]
+    assert [(x["title"], x["status"]) for x in features.list_proposals()
+            if x["status"] != "stopped"] == [("D", "pending"), ("B", "pending"), ("A", "pending")]
+    assert [x["title"] for x in features.list_proposals() if x["status"] == "stopped"] == ["C"]
 
 
 def test_the_checker_cannot_change_the_proposal(upstream, tmp_path):
