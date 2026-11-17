@@ -1522,13 +1522,20 @@ def _enforce_workspace_policies(connection, principal) -> None:
 
 def _bind_principal(connection, principal):
     """The only phase that mutates request identity or the task's tenant pin."""
-    if connection is not None and principal is not None:
-        connection.state.principal = principal
-        from .device_pairing import bind as bind_device
-        if not bind_device(connection, principal):
-            _pin_tenant_from_principal(connection, principal)
+    if _bind_identity(connection, principal):
         _enforce_workspace_policies(connection, principal)
     return principal
+
+
+def _bind_identity(connection, principal) -> bool:
+    """Set the identity and tenant pin; True when workspace policies apply."""
+    if connection is None or principal is None:
+        return False
+    connection.state.principal = principal
+    from .device_pairing import bind as bind_device
+    if not bind_device(connection, principal):
+        _pin_tenant_from_principal(connection, principal)
+    return True
 
 
 def require_principal(
@@ -1591,7 +1598,13 @@ async def require_principal_in_request_context(
     resolved at binding, so cached keys never become an authorization grant.
     """
     principal = await _verify_off_loop(request, websocket)
-    return _bind_principal(request if request is not None else websocket, principal)
+    connection = request if request is not None else websocket
+    if _bind_identity(connection, principal):
+        # The policies read the configuration (the workspace's overlay once the
+        # tenant is pinned, which the thread's copied context carries): keep
+        # that file I/O off the event loop.
+        await run_in_threadpool(_enforce_workspace_policies, connection, principal)
+    return principal
 
 
 async def require_websocket_principal_in_context(websocket: WebSocket):
