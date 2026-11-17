@@ -8,7 +8,9 @@ from __future__ import annotations
 from maverick import flow
 from maverick.flow import store
 
-from .auth import api_key_permissions, caller_principal, goal_owner_filter, has_permission
+# Resolve auth helpers at call time: this module is imported lazily, and a
+# by-name import would keep whatever ``auth`` held at that first import.
+from . import auth
 
 SOURCE_LIMIT = 2000
 
@@ -16,7 +18,7 @@ SOURCE_LIMIT = 2000
 def _actor(request) -> str:
     from .auth import auth_genuinely_off
 
-    return caller_principal(request) or ("local:dashboard" if auth_genuinely_off() else "")
+    return auth.caller_principal(request) or ("local:dashboard" if auth_genuinely_off() else "")
 
 
 def _assigned_to_actor(run, actor: str) -> bool:
@@ -56,14 +58,14 @@ def _assignee_fields_current(run) -> bool:
 
 def assigned_review_allowed(request, run) -> bool:
     """A named assignee may see only the current approval, never the owner's run."""
-    allowed = (has_permission(request, "operate", api_scope="approvals:decide")
-               if api_key_permissions(request) is not None
-               else has_permission(request, "operate"))
+    allowed = (auth.has_permission(request, "operate", api_scope="approvals:decide")
+               if auth.api_key_permissions(request) is not None
+               else auth.has_permission(request, "operate"))
     if (run is None or run.status != "paused_approval"
             or not allowed):
         return False
     # Local auth-off access already uses the ordinary owner/legacy path.
-    actor = caller_principal(request)
+    actor = auth.caller_principal(request)
     if not _assigned_to_actor(run, actor or ""):
         return False
     from . import automation_queue as aq
@@ -78,9 +80,9 @@ def assigned_review_allowed(request, run) -> bool:
 
 def pending_for_request(request, *, limit: int = SOURCE_LIMIT) -> dict:
     """Return only pauses this caller can actually review, with honest coverage."""
-    allowed = (has_permission(request, "operate", api_scope="approvals:decide")
-               if api_key_permissions(request) is not None
-               else has_permission(request, "operate"))
+    allowed = (auth.has_permission(request, "operate", api_scope="approvals:decide")
+               if auth.api_key_permissions(request) is not None
+               else auth.has_permission(request, "operate"))
     if not allowed:
         return {"items": [], "coverage": "unavailable"}
     if not flow.enabled():
@@ -90,7 +92,7 @@ def pending_for_request(request, *, limit: int = SOURCE_LIMIT) -> dict:
         # A principal-less installation token can inspect some local work,
         # but cannot produce an attributable human approval decision.
         return {"items": [], "coverage": "current"}
-    owner = goal_owner_filter(request)
+    owner = auth.goal_owner_filter(request)
     return _pending_for_actor(actor, owner=owner, request=request, limit=limit)
 
 
