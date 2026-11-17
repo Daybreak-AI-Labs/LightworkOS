@@ -603,3 +603,94 @@ def test_the_answer_says_when_a_restart_repeats_finished_steps(monkeypatch):
     assert "may run again" in dr.next_text({"next": "resumed"})
     monkeypatch.setenv("MAVERICK_DURABLE", "1")
     assert "may run again" not in dr.next_text({"next": "resumed"})
+
+
+def _workspace_world(name):
+    from maverick.paths import tenant_scope
+    from maverick.world_model import open_world
+
+    with tenant_scope(tenant=name):
+        world = open_world()
+        gid, decision = _paused_goal(world)
+    return world, gid, decision
+
+
+def test_the_sqlite_sweep_audits_each_expiry_in_its_own_workspace(tmp_path, monkeypatch):
+    import maverick.audit as audit
+    from maverick.paths import current_tenant_id
+
+    world, _gid, decision = _workspace_world("ws1")
+    written = []
+    monkeypatch.setattr(audit, "record",
+                        lambda kind, **kw: written.append((kind, current_tenant_id())) or True)
+
+    dr.sweep_once(now=decision.expires_at + 1)
+
+    assert ("decision_expired", "ws1") in written
+    assert dr.get(world, decision.id).status == "expired"
+
+
+def test_the_sqlite_sweep_visits_only_workspaces_with_open_decisions(tmp_path, monkeypatch):
+    from maverick.paths import tenant_scope
+    from maverick.world_model import open_world
+
+    world, _gid, decision = _workspace_world("ws1")
+    with tenant_scope(tenant="ws2"):
+        open_world().create_goal("nothing to decide", "")
+    assert dr.indexed_workspaces() == ["ws1"]
+    dr.sweep_once(now=decision.expires_at - 10)  # the catch-up scan of every workspace
+    visited = []
+    real = dr._sweep_one
+    monkeypatch.setattr(dr, "_sweep_one",
+                        lambda w, now: visited.append(Path(w.path).parent.name) or real(w, now))
+
+    dr.sweep_once(now=decision.expires_at + 1)
+
+    assert "ws2" not in visited and "ws1" in visited
+    assert dr.indexed_workspaces() == []  # nothing left open in ws1
+
+
+def test_postgres_sweep_under_forced_rls_reaches_known_workspaces(postgres_test_dsn, monkeypatch,
+                                                                  caplog):
+    import logging
+    import secrets
+
+    from maverick.paths import tenant_scope
+    from maverick.tenant.registry import create_tenant
+    from maverick.world_model_backends import postgres as pg
+    from maverick.world_model_backends.postgres import PostgresWorldModel
+    from psycopg import sql
+    from psycopg.conninfo import make_conninfo
+
+    role, password = "mvk_dec_" + secrets.token_hex(6), secrets.token_hex(24)
+    create_tenant("tenant-a")
+    with PostgresWorldModel(dsn=postgres_test_dsn) as admin:
+        decisions = {}
+        for workspace in ("tenant-a", "slack:U1"):
+            with tenant_scope(tenant=workspace):
+                gid = admin.create_goal("waiting task", "", owner="alice")
+                admin.set_goal_status(gid, "blocked")
+                decisions[workspace] = dr.request(admin, gid, **dr.validate(_REQUEST))
+        with admin._tx() as cur:
+            cur.execute(sql.SQL("CREATE ROLE {} LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD {}").format(
+                sql.Identifier(role), sql.Literal(password)))
+            cur.execute(sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(sql.Identifier(role)))
+            cur.execute(sql.SQL("GRANT ALL ON ALL TABLES IN SCHEMA public TO {}").format(sql.Identifier(role)))
+            cur.execute(sql.SQL("GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO {}").format(sql.Identifier(role)))
+        admin._apply_rls()
+        try:
+            monkeypatch.setenv("MAVERICK_PG_RLS", "1")
+            monkeypatch.setenv("MAVERICK_WORLD_BACKEND", "postgres")
+            monkeypatch.setenv("MAVERICK_PG_DSN", make_conninfo(postgres_test_dsn, user=role, password=password))
+            monkeypatch.setattr(pg, "_UNREBOUND_BACKENDS", set(), raising=False)
+            due = max(d.expires_at for d in decisions.values()) + 1
+            with caplog.at_level(logging.WARNING, logger="maverick.decision_requests"):
+                assert dr.sweep_once(now=due) == 2
+            assert "row-level security" in caplog.text
+            for workspace, decision in decisions.items():
+                with tenant_scope(tenant=workspace):
+                    assert dr.get(admin, decision.id).status == "expired"
+        finally:
+            with admin._tx() as cur:
+                cur.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(role)))
+                cur.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(role)))

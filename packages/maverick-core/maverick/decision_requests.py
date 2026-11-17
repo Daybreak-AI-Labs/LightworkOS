@@ -501,6 +501,7 @@ def request(world, goal_id: int, *, question: str, options: list[dict[str, str]]
         mark_run(world, goal_id, UNRECORDED)
         raise DecisionRecordError("the decision request could not be saved") from exc
     mark_run(world, goal_id, WAITING)
+    _index_workspace(world)
     decision = Decision(decision_id, int(goal_id), area, question, list(options), int(recommended),
                         reason, admin_required, goal.owner or "", "open", now, expires_at)
     _timeline(world, int(goal_id), f"Waiting for a person to decide: {question}")
@@ -835,41 +836,166 @@ def sweep_once(*, now: float | None = None) -> int:
         close_world_if_owned(world)
 
 
-def _sweep_sqlite(world, now: float) -> int:
+FULL_SCAN_SECONDS = 86400.0
+_FULL_SCANNED_HOMES: set[str] = set()
+
+
+def _index_path():
     from .paths import maverick_home
-    from .world_model import WorldModel
+
+    return maverick_home() / "decisions" / "open_workspaces.json"
+
+
+def _read_index() -> dict[str, Any]:
+    path = _index_path()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"workspaces": [], "full_scan_at": 0.0}
+    names = data.get("workspaces") if isinstance(data, dict) else None
+    return {"workspaces": sorted({n for n in names or [] if isinstance(n, str) and n}),
+            "full_scan_at": float(data.get("full_scan_at") or 0.0) if isinstance(data, dict) else 0.0}
+
+
+def _update_index(change) -> None:
+    """Read, change and write the workspace index under its lock."""
+    from .file_lock import atomic_write_text, cross_process_lock, ensure_private_directory
+
+    path = _index_path()
+    ensure_private_directory(path.parent)
+    with cross_process_lock(path):
+        data = _read_index()
+        change(data)
+        atomic_write_text(path, json.dumps({"workspaces": sorted(set(data["workspaces"])),
+                                            "full_scan_at": data["full_scan_at"]}))
+
+
+def _index_workspace(world) -> None:
+    """Remember that this workspace has an open decision, so the sweep visits
+    it without opening every workspace file (SQLite) and even when row-level
+    security hides other workspaces from a deployment-wide read (Postgres)."""
+    from .paths import current_tenant_id
+
+    del world
+    workspace = current_tenant_id()
+    if not workspace:
+        return  # the default workspace is visited on every sweep
+    try:
+        _update_index(lambda data: data["workspaces"].append(workspace))
+    except Exception:  # noqa: BLE001 -- the daily catch-up scan still finds it
+        log.warning("decision workspace index not updated", exc_info=True)
+
+
+def indexed_workspaces() -> list[str]:
+    """Workspaces the sweep visits besides the default one."""
+    return _read_index()["workspaces"]
+
+
+def _sweep_sqlite(world, now: float) -> int:
+    """Visit the default workspace and those the index names. Every workspace
+    file is scanned on the first sweep of a process and once a day after, to
+    catch a workspace whose index entry was lost."""
+    from urllib.parse import unquote
+
+    from .paths import _tenant_segment, maverick_home
 
     total = _sweep_one(world, now)
-    seen = {str(getattr(world, "path", ""))}
-    for store in sorted((maverick_home() / "tenants").glob("*/world.db")):
-        if str(store) in seen:
+    home, index = str(maverick_home()), _read_index()
+    full = home not in _FULL_SCANNED_HOMES or now - index["full_scan_at"] >= FULL_SCAN_SECONDS
+    tenants = maverick_home() / "tenants"
+    if full:
+        stores = sorted(tenants.glob("*/world.db"))
+    else:
+        stores = [tenants / _tenant_segment(name) / "world.db" for name in index["workspaces"]]
+    still_open: set[str] = set()
+    for store in stores:
+        if str(store) == str(getattr(world, "path", "")) or not store.is_file():
             continue
-        try:
-            with WorldModel(path=store) as tenant_world:
-                total += _sweep_one(tenant_world, now)
-        except Exception:  # noqa: BLE001 -- one workspace must not stop the others
-            log.warning("decision expiry failed for one workspace", exc_info=True)
+        workspace = unquote(store.parent.name)
+        visited, waiting = _sweep_workspace_file(store, workspace, now)
+        total += visited
+        if waiting:
+            still_open.add(workspace)
+    visited_names = {unquote(store.parent.name) for store in stores}
+
+    def change(data: dict[str, Any]) -> None:
+        data["workspaces"] = sorted((set(data["workspaces"]) - visited_names) | still_open)
+        if full:
+            data["full_scan_at"] = now
+    try:
+        _update_index(change)
+    except Exception:  # noqa: BLE001 -- the next catch-up scan rebuilds it
+        log.warning("decision workspace index not updated", exc_info=True)
+    if full:
+        _FULL_SCANNED_HOMES.add(home)
     return total
 
 
+def _sweep_workspace_file(store, workspace: str, now: float) -> tuple[int, bool]:
+    """Expire in one SQLite workspace file, with that workspace active so its
+    audit rows land in its own log. Returns ``(expired, still_open)``."""
+    from .paths import tenant_scope
+    from .world_model import WorldModel
+
+    try:
+        with tenant_scope(tenant=workspace), WorldModel(path=store) as tenant_world:
+            expired = _sweep_one(tenant_world, now)
+            return expired, bool(list_open(tenant_world, limit=1))
+    except Exception:  # noqa: BLE001 -- one workspace must not stop the others
+        log.warning("decision expiry failed for one workspace", exc_info=True)
+        return 0, True
+
+
 def _sweep_postgres(world, now: float) -> int:
+    """Visit every workspace that may hold a past-due decision, each in its own
+    scope: those a deployment-wide read finds, plus the registry's and the
+    index's. Under forced row-level security the deployment-wide read sees no
+    rows, so the registry and the index are what reach the workspaces."""
     from urllib.parse import unquote
 
     from .paths import tenant_scope
 
     marks = ",".join("?" for _ in ENDED)
-    rows = world.query(
-        "SELECT DISTINCT g.tenant_id FROM decision_requests d JOIN goals g ON g.id = d.goal_id "
-        f"WHERE d.status = 'open' AND (d.expires_at <= ? OR g.status IN ({marks}))",
-        (now, *ENDED), system=True)
-    total = 0
-    for row in rows:
-        segment = row[0]
+    try:
+        rows = world.query(
+            "SELECT DISTINCT g.tenant_id FROM decision_requests d JOIN goals g ON g.id = d.goal_id "
+            f"WHERE d.status = 'open' AND (d.expires_at <= ? OR g.status IN ({marks}))",
+            (now, *ENDED), system=True)
+    except Exception:  # noqa: BLE001 -- a refused system read falls back to known workspaces
+        log.warning("deployment-wide decision read failed; visiting known workspaces", exc_info=True)
+        rows = []
+    seen = {unquote(row[0]) if row[0] else None for row in rows}
+    known: set[str | None] = set(indexed_workspaces())
+    try:
+        from .tenant.registry import list_tenants
+
+        known |= {record.id for record in list_tenants()}
+    except Exception:  # noqa: BLE001 -- no registry: the index and the read only
+        log.debug("workspace registry unavailable for decision expiry", exc_info=True)
+    total, hidden, still_open = 0, 0, set()
+    for workspace in sorted(seen | known, key=lambda w: (w is None, w or "")):
         try:
-            with tenant_scope(tenant=unquote(segment) if segment else None):
-                total += _sweep_one(world, now)
+            with tenant_scope(tenant=workspace):
+                expired = _sweep_one(world, now)
+                if workspace is not None and list_open(world, limit=1):
+                    still_open.add(workspace)
         except Exception:  # noqa: BLE001 -- one workspace must not stop the others
             log.warning("decision expiry failed for one workspace", exc_info=True)
+            continue
+        total += expired
+        if workspace not in seen:
+            hidden += expired
+    if hidden and not seen:
+        log.warning("The deployment-wide decision read saw no workspaces (row-level security), "
+                    "but %d past-due decision(s) were found in known workspaces and expired.", hidden)
+    visited = {w for w in known if w}
+
+    def change(data: dict[str, Any]) -> None:
+        data["workspaces"] = sorted((set(data["workspaces"]) - visited) | still_open)
+    try:
+        _update_index(change)
+    except Exception:  # noqa: BLE001 -- the next sweep retries
+        log.warning("decision workspace index not updated", exc_info=True)
     return total
 
 
