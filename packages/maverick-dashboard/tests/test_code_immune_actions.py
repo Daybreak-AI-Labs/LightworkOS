@@ -71,7 +71,7 @@ def test_code_page_is_plain_and_offers_turn_on_when_off(client):
     assert developer_terms(page) == []
     text = visible_text(page)
     assert "maverick code" not in page and "[codebase]" not in page
-    assert 'data-module-gate="codebase"' in page and "Code projects is turned off" in text
+    assert 'data-module-gate="codebase"' in page and "Code projects: turned off" in text
     assert "Add a code project" not in text  # nothing to add to until it is on
 
 

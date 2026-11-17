@@ -2294,7 +2294,8 @@
       window.mvFeatureOffText = function (off) {
         var name = off && off.label ? off.label : '';
         var admin = document.body && document.body.getAttribute('data-global-admin') === '1';
-        return (name ? name + ' is turned off.' : 'This feature is turned off.') + ' ' +
+        // "Name: turned off." reads right for any name ("Policy packs is turned off" did not).
+        return (name ? name + ': turned off.' : 'This feature is turned off.') + ' ' +
           (admin ? 'You can turn it on in Settings.'
             : 'Ask an administrator to turn ' + (name ? 'on ' + lowerFirst(name) : 'it on') + '.');
       };
@@ -2313,7 +2314,7 @@
         gate.setAttribute('data-module-label', off.label);
         gate.setAttribute('data-mg-inline', '1');
         var head = document.createElement('strong');
-        head.textContent = prefix + off.label + ' is turned off.';
+        head.textContent = prefix + off.label + ': turned off.';
         var actions = document.createElement('span');
         actions.className = 'mg-actions mg-admin-only';
         var button = document.createElement('button');

@@ -176,7 +176,7 @@ def test_turned_off_feature_shows_the_standard_banner(client: TestClient, monkey
     monkeypatch.setattr(module_activation, "_module_switch_enabled", lambda _loaded, _section: False)
     off = client.get(ROUTE).text
     assert 'data-module-gate="consent_preferences.global_opt_out"' in off
-    assert "Global opt-out is turned off." in off
+    assert "Global opt-out: turned off." in off
     # The banner is the whole availability story: no check repeats it in red
     # below and no loader is left saying "Loading".
     main = off[off.index('id="global-opt-out-shell"'):off.index("<noscript>")]

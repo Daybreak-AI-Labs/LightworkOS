@@ -39,7 +39,7 @@ def test_page_exposes_full_publishing_lifecycle_and_default_off_boundary() -> No
     page = response.text
     assert "Banner and preference center" in page
     assert 'data-module-gate="consent_preferences.publishing"' in page
-    assert "Consent publishing is turned off." in page
+    assert "Consent publishing: turned off." in page
     assert "[consent_preferences.publishing] enable = true" not in page
     # Everything sits inside the natively disabled workbench while turned off.
     assert re.search(r'id="cpp-root"[^>]*disabled', page)

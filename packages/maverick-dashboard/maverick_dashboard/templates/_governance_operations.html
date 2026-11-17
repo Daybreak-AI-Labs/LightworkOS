@@ -27,9 +27,23 @@
       Sections load as you reach them.
     </span>
   </div>
+  {% set governance_off = governance_off_sections() %}
+  {% if governance_off %}
+  <details class="assurance-muted" data-governance-off>
+    <summary>{{ governance_off|length }} {{ 'tool here is' if governance_off|length == 1 else 'tools here are' }} turned off</summary>
+    <p>Turned-off tools are hidden on this page. {% if gateway_admin %}You can turn one on here; it takes effect right away.{% else %}Ask an administrator to turn on the ones you need.{% endif %}</p>
+    <ul>
+      {% for tool in governance_off %}
+      <li{% if gateway_admin and tool.switch %} data-module-gate="{{ tool.switch }}" data-module-label="{{ tool.label }}"{% endif %}>{{ tool.label }}{% if gateway_admin and tool.switch %}
+        <button type="button" class="btn btn--ghost mg-on" aria-label="Turn on {{ tool.label }}">Turn on</button>
+        <span class="mg-err" role="alert"></span>{% elif gateway_admin %}: turn it on in <a href="/settings/all">All settings</a>.{% endif %}</li>
+      {% endfor %}
+    </ul>
+  </details>
+  {% endif %}
 
   <div class="assurance-grid">
-    <section id="ai-literacy-panel" aria-labelledby="ai-literacy-title">
+    <section id="ai-literacy-panel"{{ governance_section_attrs("ai-literacy-panel") }} aria-labelledby="ai-literacy-title">
       <h3 id="ai-literacy-title">AI training records</h3>
       <p>Set the AI training each role or system needs, and check who is covered.</p>
       <details class="assurance-muted"><summary>What this does and doesn't prove</summary><p>You can set training requirements, check one
@@ -105,7 +119,7 @@
       {% endif %}
     </section>
 
-    <section id="article-73-panel" aria-labelledby="article-73-title">
+    <section id="article-73-panel"{{ governance_section_attrs("article-73-panel") }} aria-labelledby="article-73-title">
       <h3 id="article-73-title">Serious-incident deadlines (EU AI Act)</h3>
       <p>Track reporting deadlines for serious AI incidents and record each step.</p>
       <details class="assurance-muted"><summary>What this does and doesn't prove</summary><p>The clock is a scheduling aid derived from
@@ -197,7 +211,7 @@
   <div class="assurance-grid">
     {% include "_ai_business_intake.html" %}
 
-    <section id="ai-cost-roi-panel" aria-labelledby="ai-cost-roi-title">
+    <section id="ai-cost-roi-panel"{{ governance_section_attrs("ai-cost-roi-panel") }} aria-labelledby="ai-cost-roi-title">
       <h3 id="ai-cost-roi-title">AI cost and return</h3>
       <p>See what your AI costs and the return you expect.</p>
       <details class="assurance-muted"><summary>What this does and doesn't prove</summary><p>Reports separate measured billing facts from
@@ -240,7 +254,7 @@
   </div>
 
   <div class="assurance-grid">
-    <section id="ai-policy-management-panel" aria-labelledby="ai-policy-management-title">
+    <section id="ai-policy-management-panel"{{ governance_section_attrs("ai-policy-management-panel") }} aria-labelledby="ai-policy-management-title">
       <h3 id="ai-policy-management-title">AI use rules</h3>
       <p>Write rules for how AI may be used, allow exceptions, and check a use against them.</p>
       <details class="assurance-muted"><summary>What this does and doesn't prove</summary><p>You can see your workspace's rules, check a
@@ -256,7 +270,7 @@
         <thead><tr><th scope="col">Rules</th><th scope="col">Status</th><th scope="col">Version in use</th><th scope="col">Actions</th></tr></thead>
         <tbody id="ai-policy-management-policies"><tr><td colspan="4">Loading rules…</td></tr></tbody>
       </table></div>
-      {% if suggestions_enabled is defined and suggestions_enabled() %}{% from "_policy_suggestions.html" import policy_suggestions, policy_suggestions_script %}{{ policy_suggestions() }}{{ policy_suggestions_script() }}{% endif %}
+      {% if suggestions_enabled is defined and suggestions_enabled() and not governance_section_off("ai-policy-management-panel") %}{% from "_policy_suggestions.html" import policy_suggestions, policy_suggestions_script %}{{ policy_suggestions() }}{{ policy_suggestions_script() }}{% endif %}
       <div class="assurance-table"><table>
         <caption>Exceptions to the rules</caption>
         <thead><tr><th scope="col">Exception</th><th scope="col">Rules</th><th scope="col">Status</th><th scope="col">Ends</th><th scope="col">Actions</th></tr></thead>
@@ -355,7 +369,7 @@
       {% endif %}
     </section>
 
-    <section id="dynamic-risk-panel" aria-labelledby="dynamic-risk-title">
+    <section id="dynamic-risk-panel"{{ governance_section_attrs("dynamic-risk-panel") }} aria-labelledby="dynamic-risk-title">
       <h3 id="dynamic-risk-title">Live risk scores</h3>
       <p>See each AI system's latest risk score and what drives it.</p>
       <details class="assurance-muted"><summary>What this does and doesn't prove</summary><p>The score is worked out from the signals recorded for the
@@ -427,7 +441,7 @@
     </section>
   </div>
 
-  <section id="runtime-guardrails-panel" aria-labelledby="runtime-guardrails-title">
+  <section id="runtime-guardrails-panel"{{ governance_section_attrs("runtime-guardrails-panel") }} aria-labelledby="runtime-guardrails-title">
     <h3 id="runtime-guardrails-title">Try your safeguards</h3>
       <p>Test a prompt, answer or action against your safeguards before it goes out.</p>
       <details class="assurance-muted"><summary>What this does and doesn't prove</summary><p>The text you enter is checked against your
@@ -455,7 +469,7 @@
     <div id="runtime-guardrails-result" class="assurance-table" role="region" aria-label="Runtime safety check result" hidden></div>
   </section>
 
-  <section id="ai-explainability-panel" aria-labelledby="ai-explainability-title">
+  <section id="ai-explainability-panel"{{ governance_section_attrs("ai-explainability-panel") }} aria-labelledby="ai-explainability-title">
     <h3 id="ai-explainability-title">Explanations of AI decisions</h3>
       <p>Keep explanations of how an AI system reached its answers, and have them reviewed.</p>
       <details class="assurance-muted"><summary>What this does and doesn't prove</summary><p>Only an explanation file from a supported
@@ -504,7 +518,7 @@
     {% endif %}
   </section>
 
-  <section id="ai-insurability-panel" aria-labelledby="ai-insurability-title">
+  <section id="ai-insurability-panel"{{ governance_section_attrs("ai-insurability-panel") }} aria-labelledby="ai-insurability-title">
     <h3 id="ai-insurability-title">Evidence for insurers</h3>
       <p>Prepare an evidence profile of an AI system for insurers.</p>
       <details class="assurance-muted"><summary>What this does and doesn't prove</summary><p>A profile describes one AI system with approved evidence, and
@@ -563,7 +577,7 @@
     {% endif %}
   </section>
 
-  <section id="ai-conformity-panel" aria-labelledby="ai-conformity-title">
+  <section id="ai-conformity-panel"{{ governance_section_attrs("ai-conformity-panel") }} aria-labelledby="ai-conformity-title">
     <h3 id="ai-conformity-title">EU AI Act launch readiness</h3>
       <p>Collect what the EU AI Act asks for before a system goes to market.</p>
       <details class="assurance-muted"><summary>What this does and doesn't prove</summary><p>You record the evidence the EU AI Act asks for before a
@@ -673,7 +687,7 @@
     {% endif %}
   </section>
 
-  <section id="ai-regulated-package-workbench" aria-labelledby="ai-regulated-package-title">
+  <section id="ai-regulated-package-workbench"{{ governance_section_attrs("ai-regulated-package-workbench") }} aria-labelledby="ai-regulated-package-title">
     <h3 id="ai-regulated-package-title">Evidence packages for regulated uses</h3>
       <p>Prepare evidence packages for lending, hiring, insurance and bank model reviews.</p>
       <details class="assurance-muted"><summary>What this does and doesn't prove</summary><p>Each package gathers approved evidence for one regulated use,
@@ -732,7 +746,7 @@
     {% endif %}
   </section>
 
-  <section id="ai-benchmark-panel" aria-labelledby="ai-benchmark-title">
+  <section id="ai-benchmark-panel"{{ governance_section_attrs("ai-benchmark-panel") }} aria-labelledby="ai-benchmark-title">
     <h3 id="ai-benchmark-title">Compare with other organisations</h3>
       <p>Share summary figures to compare with other organisations — only if you choose to.</p>
       <details class="assurance-muted"><summary>What this does and doesn't prove</summary><p>Only summary figures are shared, only after a
@@ -826,7 +840,7 @@
     </details>
   </section>
 
-  <section id="ai-discovery-sensors-panel" aria-labelledby="ai-discovery-sensors-title">
+  <section id="ai-discovery-sensors-panel"{{ governance_section_attrs("ai-discovery-sensors-panel") }} aria-labelledby="ai-discovery-sensors-title">
     <h3 id="ai-discovery-sensors-title">AI discovery sensors</h3>
       <p>Manage the sensors that report which AI tools are in use.</p>
       <details class="assurance-muted"><summary>What this does and doesn't prove</summary><p>Here you keep the list of sensors that report which AI tools
@@ -1035,7 +1049,7 @@
     </details>
   </section>
 
-  <section id="ai-media-provenance-panel" aria-labelledby="ai-media-provenance-title">
+  <section id="ai-media-provenance-panel"{{ governance_section_attrs("ai-media-provenance-panel") }} aria-labelledby="ai-media-provenance-title">
     <h3 id="ai-media-provenance-title">Where media came from (C2PA)</h3>
       <p>Check and record where images, audio and video came from.</p>
       <details class="assurance-muted"><summary>What this does and doesn't prove</summary><p>Lightwork keeps only a fingerprint of each
@@ -1137,7 +1151,7 @@
     {% endif %}
   </section>
 
-  <section id="grc-outbound-panel" aria-labelledby="grc-outbound-title">
+  <section id="grc-outbound-panel"{{ governance_section_attrs("grc-outbound-panel") }} aria-labelledby="grc-outbound-title">
     <h3 id="grc-outbound-title">Send to ServiceNow or Archer</h3>
       <p>Send findings, accepted risks and incidents to ServiceNow or Archer.</p>
       <details class="assurance-muted"><summary>What this does and doesn't prove</summary><p>Preview shows exactly what would be sent and never sends
@@ -2018,7 +2032,8 @@
       delete policyActivate.dataset.confirmationPending;
     }
   });
-  if (window.LightworkPolicyExceptions && exceptionScope) window.LightworkPolicyExceptions.mount({
+  // Exception choices are read only while AI use rules are turned on.
+  if (window.LightworkPolicyExceptions && exceptionScope && !byId("ai-policy-management-panel")?.hasAttribute("data-feature-off")) window.LightworkPolicyExceptions.mount({
     scope: exceptionScope,
     collectScope: () => collectSlot("exception-scope"),
     write: (path, body) => sendJson(path, "POST", body),
@@ -3856,6 +3871,10 @@
     ["ai-media-provenance-panel", [loadMediaProvenanceCapabilities, loadMediaProvenanceRecords, loadReleaseReferences]],
     ["grc-outbound-panel", [loadGrcEvents, loadGrcSources]],
   ];
+  // A turned-off tool (data-feature-off, set by the server) is never called.
+  for (let index = panelLoaders.length - 1; index >= 0; index -= 1) {
+    if (byId(panelLoaders[index][0])?.hasAttribute("data-feature-off")) panelLoaders.splice(index, 1);
+  }
   const loadedPanels = new Set();
   let panelObserver = null;
   const loadPanel = item => {

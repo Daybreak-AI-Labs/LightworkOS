@@ -1,0 +1,6 @@
+{#- One Today source's cards (GET /today/sections/<source>); the page swaps
+    each element in by id. No page shell. -#}
+{% from "_today_cards.html" import today_card, decisions_reminder, today_sources with context %}
+{% if today_source == 'decisions' and today_decisions_allowed %}{{ decisions_reminder(today) }}{% endif %}
+{% for card in today_preferences['values']['today_cards'] %}{% if today_sources[card] == today_source and (card != 'decisions' or today_decisions_allowed) %}{{ today_card(card, today) }}{% endif %}
+{% endfor %}

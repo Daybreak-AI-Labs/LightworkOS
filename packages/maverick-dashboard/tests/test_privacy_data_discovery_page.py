@@ -98,7 +98,7 @@ def test_page_renders_fail_closed_gate_guidance(page_client: TestClient) -> None
     )
     assert response.status_code == 200
     assert 'data-module-gate="privacy_automation.data_discovery"' in response.text
-    assert "Finding personal data is turned off." in response.text
+    assert "Finding personal data: turned off." in response.text
     assert "privacy_automation.data_discovery.enable" not in response.text
     assert 'id="pdd-sources"' not in response.text
 

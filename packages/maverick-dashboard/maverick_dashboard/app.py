@@ -306,6 +306,10 @@ def _suggestions_enabled() -> bool:
 
 templates.env.globals["suggestions_enabled"] = _suggestions_enabled
 
+from . import governance_sections as _governance_sections  # noqa: E402
+
+_governance_sections.register(templates.env)
+
 
 from .i18n import t as _i18n_t  # noqa: E402
 from .themes import custom_themes, theme_color, theme_css  # noqa: E402
@@ -3521,15 +3525,14 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
         from .tenant_select_page import tenant_select_response
 
         return tenant_select_response(request, templates, detail=str(exc.detail))
-    if (
-        exc.status_code == 401
-        and _wants_html(request)
-        and request.method == "GET"
-    ):
+    from . import browser_signin
+
+    if exc.status_code == 401 and browser_signin.is_browser_navigation(request):
         # A browser navigating to a protected page with no valid session should
         # land on the sign-in flow, not a static "sign in required" page. Only
         # when a browser login provider is actually configured (OIDC); otherwise
         # fall through to the branded page below (there is nowhere to send them).
+        # Bearer, non-GET and API requests keep the JSON 401 (browser_signin).
         try:
             from maverick.oidc import login_enabled as _login_enabled
 
@@ -3537,15 +3540,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
         except Exception:  # pragma: no cover - never turn an auth error into a 500
             login_on = False
         if login_on:
-            from urllib.parse import quote
-
-            return_to = request.url.path
-            if request.url.query:
-                return_to = f"{return_to}?{request.url.query}"
-            return RedirectResponse(
-                f"/auth/login?return_to={quote(return_to, safe='')}",
-                status_code=302,
-            )
+            return RedirectResponse(browser_signin.sign_in_url(request), status_code=302)
         from .local_owner import claimed as local_owner_claimed
         from .local_passphrases import available as passphrase_sign_in
 
@@ -3604,7 +3599,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
 
             gate = "off"
             label = unquote(headers.get(feature_gate.LABEL_HEADER, ""))
-            title = f"{label} is turned off" if label else "This page is turned off"
+            title = f"{label}: turned off" if label else "This page is turned off"
             message = (
                 "This feature is turned off for your workspace, or its settings "
                 "could not be read. An administrator can turn it on in Settings."
