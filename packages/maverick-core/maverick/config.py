@@ -632,6 +632,26 @@ def dashboard_overrides_path() -> Path:
     return config_path().parent / DASHBOARD_OVERRIDES_BASENAME
 
 
+def raw_config_sources() -> list[dict]:
+    """Each config layer as written: ``${VAR}`` references unexpanded and
+    values the dashboard sealed still sealed. Unreadable layers read as empty
+    (the config checks report them)."""
+    paths = [config_path(), dashboard_overrides_path()]
+    overlay = os.environ.get(CONFIG_OVERLAY_ENV, "").strip()
+    if overlay:
+        paths.append(Path(overlay).expanduser())
+    tenant = tenant_config_path()
+    if tenant is not None:
+        paths.append(tenant)
+    sources = []
+    for path in paths:
+        try:
+            sources.append(_read_toml_raw(path))
+        except Exception:
+            sources.append({})
+    return sources
+
+
 def load_governed_records_config() -> dict:
     """Load only sources allowed to select the governed-record backend.
 
@@ -1145,6 +1165,55 @@ def tenant_policy_loosenings() -> dict[str, list[str]]:
         _, ignored, fixed = _tighten_tenant(upper, tenant)
         if ignored or fixed:
             found[path.parent.name] = ignored + [f"{key} (set by your organisation)" for key in fixed]
+    return found
+
+
+def _dotted_value(tree: object, dotted: str) -> tuple[bool, object]:
+    for part in dotted.split("."):
+        if not isinstance(tree, dict) or part not in tree:
+            return False, None
+        tree = tree[part]
+    return True, tree
+
+
+def _plain_value(value: object) -> str:
+    return f'"{value}"' if isinstance(value, str) else str(value).lower() if isinstance(value, bool) else str(value)
+
+
+def tenant_policy_reasons() -> dict[str, list[str]]:
+    """Why each ignored workspace value is ignored, one sentence per setting,
+    keyed by workspace folder: a value looser than the organisation's (the
+    organisation's applies), or one only the organisation sets."""
+    from .paths import maverick_home
+    root = maverick_home() / "tenants"
+    if not root.is_dir():
+        return {}
+    upper = load_global_config()
+    found: dict[str, list[str]] = {}
+    for path in sorted(root.glob("*/config.toml")):
+        try:
+            tenant = _load_config_file(path, interpolate=False)
+        except Exception:  # unreadable files are reported by the config checks
+            continue
+        _, ignored, fixed = _tighten_tenant(upper, tenant)
+        reasons = []
+        for key in ignored:
+            mine, here = _dotted_value(tenant, key)
+            theirs, there = _dotted_value(upper, key)
+            numbers = all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (here, there))
+            if mine and theirs and numbers and here > there:
+                reasons.append(f"{key} is {_plain_value(here)} in this workspace, higher than your "
+                               f"organisation's {_plain_value(there)}, so {_plain_value(there)} applies")
+            elif mine and theirs:
+                reasons.append(f"{key} is {_plain_value(here)} in this workspace, looser than your "
+                               f"organisation's {_plain_value(there)}, so {_plain_value(there)} applies")
+            else:
+                reasons.append(f"{key} in this workspace is looser than your organisation's setting, "
+                               "so your organisation's setting applies")
+        reasons += [f"{key} can only be set by your organisation, so this workspace's value is ignored"
+                    for key in fixed]
+        if reasons:
+            found[path.parent.name] = reasons
     return found
 
 

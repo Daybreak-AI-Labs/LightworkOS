@@ -4776,7 +4776,9 @@ def config_lint_cmd() -> None:
     except Exception as e:
         click.echo(f"could not load config: {e}", err=True)
         sys.exit(1)
-    findings = lint_config(cfg)
+    from ..config import raw_config_sources
+
+    findings = lint_config(cfg, raw_sources=raw_config_sources())
     click.echo(format_findings(findings))
     if any(getattr(f, "severity", "") == "error" for f in findings):
         sys.exit(1)

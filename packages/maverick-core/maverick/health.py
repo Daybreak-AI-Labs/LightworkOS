@@ -27,6 +27,9 @@ RED = click.style("✗", fg="red")
 # exit nonzero when the install is actually broken, so `maverick doctor &&
 # deploy` and CI health gates can tell a broken deployment from a healthy one.
 _FAILURES: list[str] = []
+# Warnings a person must act on (not failures): listed with the failures under
+# "need attention" without changing the exit code.
+_ATTENTION: list[str] = []
 
 
 def _is_outage(exc: BaseException) -> bool:
@@ -93,8 +96,9 @@ def _check_config_lint(cfg: dict) -> None:
     if not cfg:
         return  # no config / corrupt -- _check_config already reported it
     try:
+        from .config import raw_config_sources
         from .config_lint import lint_config
-        findings = lint_config(cfg)
+        findings = lint_config(cfg, raw_sources=raw_config_sources())
     except Exception:  # pragma: no cover -- linting must never break the doctor
         return
     if not findings:
@@ -124,9 +128,9 @@ def _check_policy_overlays() -> None:
     load; that part is ignored, and this lists it so an administrator can
     tidy the file."""
     try:
-        from .config import tenant_policy_loosenings
+        from .config import tenant_policy_reasons
         from .domain import clamped_workspace_domains
-        loosened = tenant_policy_loosenings()
+        loosened = tenant_policy_reasons()
         clamped = clamped_workspace_domains()
     except Exception:  # pragma: no cover -- the doctor must never break
         return
@@ -140,7 +144,10 @@ def _check_policy_overlays() -> None:
         if any(key.startswith(("enterprise.allowed_hosts", "enterprise.local_providers")) for key in keys):
             fix += (" A host or model server moved to the organisation's file is allowed for every workspace. "
                     "There is no way yet to allow one for a single workspace.")
-        _row(YELLOW, "workspace policy", f"{workspace}: ignored {', '.join(keys)}", fix=fix)
+        for i, reason in enumerate(keys):
+            _row(YELLOW, "workspace policy", f"{workspace}: {reason}", fix=fix if i == len(keys) - 1 else "")
+        if "workspace policy" not in _ATTENTION:
+            _ATTENTION.append("workspace policy")
     for name, reasons in sorted(clamped.items())[:8]:
         _row(YELLOW, "agent override", f"{name}: {'; '.join(reasons)}",
              fix="The looser part is ignored. Edit the override so it only narrows the built-in agent.")
@@ -167,21 +174,57 @@ def _sdk_import_failure(
     )
 
 
+def _anthropic_key() -> str:
+    """The Anthropic key runs use: the environment, else the key saved in
+    Settings or config (``[providers.anthropic] api_key``, already unsealed)."""
+    key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if key:
+        return key
+    try:
+        from . import config
+        value = (config.get_provider_config("anthropic") or {}).get("api_key")
+    except Exception:
+        return ""
+    value = value.strip() if isinstance(value, str) else ""
+    return "" if value.startswith("$") else value
+
+
+def _anthropic_roles() -> list[str]:
+    """Roles whose model is an Anthropic model (a spec with no provider is)."""
+    try:
+        from . import config
+        from .llm import ROLE_MODELS
+        roles = []
+        for role, default in ROLE_MODELS.items():
+            spec = str(config.get_role_model(role) or default)
+            if (spec.split(":", 1)[0].strip().lower() if ":" in spec else "anthropic") == "anthropic":
+                roles.append(role)
+        return roles
+    except Exception:
+        return []
+
+
 def _check_anthropic() -> None:
-    key = os.environ.get("ANTHROPIC_API_KEY", "")
+    key = _anthropic_key()
     if not key:
         # Not a failure when some OTHER provider is configured (env key,
-        # base-url env, or a [providers.<name>] table): a self-hosted
-        # Ollama/vLLM deployment is healthy with no Anthropic key at all.
+        # base-url env, or a [providers.<name>] table) and no role uses an
+        # Anthropic model: a self-hosted Ollama/vLLM deployment is healthy
+        # with no Anthropic key at all.
         try:
             from .config import any_provider_configured
             other = any_provider_configured()
         except Exception:
             other = False
-        if other:
+        roles = _anthropic_roles() if other else []
+        if other and roles:
+            shown = ", ".join(roles[:4]) + (f" and {len(roles) - 4} more" if len(roles) > 4 else "")
             _row(YELLOW, "anthropic",
-                 "ANTHROPIC_API_KEY not set (another provider is configured)",
-                 fix="fine unless a [models] role routes to an anthropic model")
+                 f"ANTHROPIC_API_KEY not set (another provider is configured); these roles use an Anthropic model: {shown}",
+                 fix="add the key in Lightwork Settings > AI services, or choose other models for those roles")
+            _ATTENTION.append("anthropic")
+        elif other:
+            _row(GREEN, "anthropic", "no Anthropic key; no role uses an Anthropic model")
         else:
             _row(RED, "anthropic", "ANTHROPIC_API_KEY not set",
                  fix="open Lightwork Settings > Models to connect an AI service")
@@ -1072,6 +1115,7 @@ def diagnose() -> int:
     failed (✗) checks. 0 == healthy. The CLI exits nonzero when this is
     nonzero so a deploy gate or CI can detect a broken install."""
     _FAILURES.clear()
+    _ATTENTION.clear()
     click.echo(click.style("Lightwork health check\n", bold=True))
     cfg = _check_config()
     _check_config_lint(cfg)
@@ -1097,11 +1141,15 @@ def diagnose() -> int:
     _check_governed_execution()
     _check_tls_cert_expiry()
     click.echo("")
-    if _FAILURES:
+    attention = _FAILURES + [label for label in _ATTENTION if label not in _FAILURES]
+    if attention:
         click.echo(click.style(
-            f"{len(_FAILURES)} check(s) need attention: " + ", ".join(_FAILURES),
-            fg="red") + "   Re-run after fixing:  maverick doctor")
+            f"{len(attention)} check(s) need attention: " + ", ".join(attention),
+            fg="red" if _FAILURES else "yellow") + "   Re-run after fixing:  maverick doctor")
+    if _FAILURES:
         return len(_FAILURES)
+    if attention:
+        return 0
     click.echo(click.style("Done.", fg="bright_black") + "  Re-run any time:  maverick doctor")
     return 0
 
