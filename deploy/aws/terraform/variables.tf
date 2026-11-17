@@ -148,6 +148,23 @@ variable "desired_count" {
   default     = 1
 }
 
+variable "efs_throughput_mode" {
+  description = "EFS throughput mode for the state volume: provisioned, elastic or bursting. Bursting gives a small volume only ~1 MiB/s once its credits run out."
+  type        = string
+  default     = "provisioned"
+
+  validation {
+    condition     = contains(["provisioned", "elastic", "bursting"], var.efs_throughput_mode)
+    error_message = "efs_throughput_mode must be provisioned, elastic or bursting."
+  }
+}
+
+variable "efs_provisioned_throughput_mibps" {
+  description = "Provisioned EFS throughput in MiB/s when efs_throughput_mode is provisioned (billed per MiB/s-month)."
+  type        = number
+  default     = 10
+}
+
 variable "task_cpu" {
   description = "Fargate task CPU units (1024 = 1 vCPU)."
   type        = string
