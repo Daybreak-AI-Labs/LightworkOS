@@ -755,7 +755,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and approval-check tables check their workspace column. Database migration
   56 adds them when Lightwork starts as the table owner, so start once as the
   owner after upgrading. `maverick tenant backfill` now also assigns
-  learning-store and approval-check records that have no workspace.
+  learning-store and approval-check records that have no workspace. Vector
+  memory and knowledge-store tables in the same database are not covered yet.
 - `maverick tenant backfill` no longer stops when a learning record exists
   both without a workspace and in the target workspace: the workspace keeps
   its own, the other is left unchanged and listed by table and key. A

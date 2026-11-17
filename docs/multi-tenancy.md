@@ -128,7 +128,7 @@ does not share every flow, A2A, audit, learning, and policy store. Keep one
 dashboard/serve replica and scale remote workers separately — see
 [`deploy/postgres/README.md`](https://github.com/Daybreak-AI-Labs/LightworkOS/blob/main/deploy/postgres/README.md). Row-level security
 (`MAVERICK_PG_RLS=1`) adds a database-side check of the tenant boundary on
-every table that holds a workspace's records; "What row-level security covers" below says
+every world-model table that holds a workspace's records; "What row-level security covers" below says
 what that includes and what it does not.
 
 ### Records saved before workspaces were used
@@ -230,33 +230,42 @@ workspace) before turning RLS on; until then the check is not READY.
 
 #### What row-level security covers
 
-- **Covered:** every table that holds a workspace's records. The 21 tables
-  with a tenant column (`goals`, `facts`, `conversations`, `approvals`,
+- **Covered:** every world-model table that holds a workspace's records (34
+  tables; migration 56 added 18 of them). The 21 tables with their own tenant
+  column (`goals`, `facts`, `conversations`, `approvals`,
   `processed_messages`, `projects`, `fact_history`, `erasure_receipts`,
   `approval_audit_outbox`, `attachment_submissions`, `event_goal_admissions`,
   `event_trigger_batches`, `webhook_subscriptions`, `webhook_deliveries`,
   `deadline_alerts`, `encryption_migrations`, `approval_checks` and the four
-  learning-store tables `harness_*`) compare it with the workspace. The 13
-  child tables with no tenant column (`goal_events`, `episodes`, `messages`,
-  `questions`, `artifacts`, `attachments`, `share_links`, `signoffs`,
-  `goal_origins`, `goal_mutation_receipts`, `decision_requests`,
+  learning-store tables `harness_*`) compare it with the workspace. `episodes`
+  and `goal_events` carry a copy of their goal's tenant, which database
+  triggers stamp from the goal on every write and carry along when the goal
+  is reassigned (backfill); a writer cannot set it. The other 11 child tables
+  (`messages`, `questions`, `artifacts`, `attachments`, `share_links`,
+  `signoffs`, `goal_origins`, `goal_mutation_receipts`, `decision_requests`,
   `approval_signoffs` and `turns`) check that their parent goal, approval or
-  conversation belongs to the workspace, by primary key. The policy is enabled
-  **and forced**, so it also applies to the role that owns the tables. A
-  statement with no tenant filter cannot read, change or delete another
-  tenant's rows, or rows with no tenant, and cannot move a row or add a child
-  row under another tenant's parent.
+  conversation belongs to the workspace, by primary key; a new turn must also
+  name a goal of the same workspace. The policy is enabled **and forced**, so
+  it also applies to the role that owns the tables. A statement with no tenant
+  filter cannot read, change or delete another tenant's rows, or rows with no
+  tenant, and cannot move a row or add a child row under another tenant's
+  parent.
 - **Not covered, on purpose:** the deployment-wide tables `halt`,
   `provider_spend`, `provider_cap_receipts`, `provider_operation_attempts`,
   `provider_operation_attempt_backfill`, `rate_events` and
-  `schema_migrations`. They hold no workspace's records. A test lists every
-  table in the schema and fails when a new one has neither a policy nor a
-  place on this list.
-- **Cost.** A child row costs one primary-key lookup of its parent. Reading
-  50 events of one goal took 0.14 ms instead of 0.08 ms on a test machine
-  (100,000 events, 200,000 goals). Counting all 100,000 events took 85 ms
-  instead of 13 ms; Lightwork's own reads go through the parent, so they
-  pay the small cost.
+  `schema_migrations`. They hold no workspace's records.
+- **Not covered yet:** tables other stores create on first use in the same
+  database. `mvk_vectors` (vector memory) and `knowledge_chunks` (the
+  knowledge store) hold workspace data and have no row policy; they rely on
+  their store's own filters. `governed_records` installs and forces its own
+  tenant policy. A test creates these tables, lists every table in the schema,
+  and fails when one is in none of these lists.
+- **Cost.** Measured on 200,000 goals, 100,000 episodes and 100,000 events.
+  The workspace spend total took 50-65 ms with the policies and 55-70 ms
+  without them; counting a workspace's events took 7 ms (9-16 ms without).
+  Saving an event costs about 4 microseconds more. A child table that checks
+  its parent costs one index probe per row: reading 50 rows of one goal took
+  0.14 ms instead of 0.08 ms.
 - **Upgrading a database that already has RLS on.** Migration 56 adds the new
   policies when the table owner starts Lightwork. A login that does not own
   the tables cannot run it, so start once as the owner after upgrading. On a

@@ -1542,6 +1542,36 @@ _GLOBAL_TABLES = frozenset({
     "rate_events",                           # dashboard rate-limit buckets, keyed by client
     "schema_migrations",                     # the migration ledger
 })
+#: Tables other stores create on first use in the same database. They hold
+#: workspace data but are not world tables, so the world's policies do not
+#: cover them.
+_OWN_POLICY_TABLES = frozenset({
+    "governed_records",   # its backend installs and forces its own tenant policy
+})
+_KNOWN_GAPS = frozenset({
+    "mvk_vectors",        # vector memory (maverick.vector_store.pgvector_store): no row policy yet
+    "knowledge_chunks",   # knowledge store (maverick_knowledge.store): no row policy yet
+})
+
+
+def _create_other_stores(admin_dsn, login_dsn):
+    """Create the tables other stores make on first use, where this server can."""
+    import psycopg
+    from maverick.governed_records import PostgresGovernedRecordBackend
+
+    with psycopg.connect(admin_dsn, autocommit=True) as admin:
+        role = admin.execute("SELECT %s::text", (psycopg.conninfo.conninfo_to_dict(login_dsn)["user"],)
+                             ).fetchone()[0]
+        admin.execute(psycopg.sql.SQL("GRANT CREATE ON SCHEMA public TO {}").format(
+            psycopg.sql.Identifier(role)))
+        vector = admin.execute("SELECT 1 FROM pg_available_extensions WHERE name = 'vector'").fetchone()
+    PostgresGovernedRecordBackend("inventory", "inv", dsn=login_dsn)._ensure_schema()
+    if vector:
+        from maverick.vector_store.pgvector_store import PgVectorStore
+        from maverick_knowledge.store import PgVectorStore as KnowledgeStore
+
+        PgVectorStore(dsn=admin_dsn)
+        KnowledgeStore(admin_dsn, dim=3)
 
 
 @pytest.fixture(params=["not_owner", "owner"])
@@ -1869,14 +1899,21 @@ def test_every_table_with_workspace_data_has_a_forced_row_policy(rls_login):
     import psycopg
     from maverick.world_model_backends.postgres import PostgresWorldModel
 
+    _create_other_stores(rls_login.admin, rls_login.dsn)
     with psycopg.connect(rls_login.admin, autocommit=True) as admin:
         tables = {row[0] for row in admin.execute(
             "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
             "WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p')").fetchall()}
+        own = dict(admin.execute(
+            "SELECT c.relname, c.relforcerowsecurity AND EXISTS (SELECT 1 FROM pg_policy p "
+            "WHERE p.polrelid = c.oid) FROM pg_class c WHERE c.relname = ANY(%s)",
+            (list(_OWN_POLICY_TABLES),)).fetchall())
         seeded = {tenant: _seed_workspace_rows(admin, tenant) for tenant in ("rls_alpha", "rls_beta")}
-    assert tables >= _GLOBAL_TABLES
+    assert tables >= _GLOBAL_TABLES | _OWN_POLICY_TABLES
+    assert all(own.values()), own
     with PostgresWorldModel(dsn=rls_login.dsn) as world:
-        unprotected = sorted(t for t in tables - _GLOBAL_TABLES if not world._rls_policy_is_active(t))
+        unprotected = sorted(t for t in tables - _GLOBAL_TABLES - _OWN_POLICY_TABLES - _KNOWN_GAPS
+                             if not world._rls_policy_is_active(t))
         assert unprotected == [], "a table with workspace data has no forced row policy"
         _assert_each_workspace_sees_only_its_own(world, seeded)
 
