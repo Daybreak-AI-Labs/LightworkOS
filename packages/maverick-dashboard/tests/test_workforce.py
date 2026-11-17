@@ -5,6 +5,8 @@ fixture points the world DB at a tmp path so these never touch the real one.
 """
 from __future__ import annotations
 
+import re
+
 import pytest
 from fastapi.testclient import TestClient
 from maverick_dashboard.app import app
@@ -230,8 +232,13 @@ def test_workforce_distinguishes_catalog_from_deployment(monkeypatch):
     r = client.get("/workforce")
 
     assert r.status_code == 200
-    assert "1 specialists deployed" in r.text
+    assert "1 specialist deployed" in r.text
     assert "2 are set up" in r.text
+    # The badge names what it counts, so "N departments" never reads as
+    # deployed teams beside "1 specialist deployed".
+    assert re.search(r"\d+ departments available", r.text)
+    assert re.search(r"You have set up 2 of the [\d,]+ apps Lightwork can connect to", r.text)
+    assert "connected apps are set up" not in r.text
     assert "specialists on staff" not in r.text
     assert "connectors wired" not in r.text
     assert "catalog specialists" in r.text

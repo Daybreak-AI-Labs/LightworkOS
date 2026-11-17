@@ -64,13 +64,16 @@
                lede=users_lede,
                actions=users_actions if (global_admin and invites_on) else '') %}
     {{ state('Current state',
-             (users | length ~ ' ' ~ ('person has' if users | length == 1 else 'people have') ~ ' a role')
+             (people_with_access ~ ' ' ~ ('person has' if people_with_access == 1 else 'people have') ~ ' access')
              if global_admin else
              (workspace_member_count ~ ' ' ~ ('member has' if workspace_member_count == 1 else 'members have') ~ ' a role in this workspace'),
              badge='Company sign-in on' if auth_on else 'Sign-in off',
              badge_class='ok' if auth_on else 'warn',
-             copy=(bootstrap_admins | length ~ ' administrator'
-                  ~ ('' if bootstrap_admins | length == 1 else 's') ~ ' set up during installation.')
+             copy=((('1 of them is an administrator' if bootstrap_admins | length == 1 else
+                     bootstrap_admins | length ~ ' of them are administrators') ~ ' set up during installation.')
+                   if global_admin else
+                   (bootstrap_admins | length ~ ' administrator'
+                    ~ ('' if bootstrap_admins | length == 1 else 's') ~ ' set up during installation.'))
                   if bootstrap_admins else
                   ('Membership changes here affect only this workspace.' if not global_admin else
                    'Department access below limits which departments each person works with.')) }}
@@ -143,10 +146,10 @@
 
   {% if global_admin %}
   <p><a class="btn" href="/users/departures">Review employee departure</a> Deactivation and retained-work handoffs are separate from resetting a role.</p>
-  <section class="panel"><h2>Installation first-login baseline</h2>
-    <p>Current fallback: <strong>{{ first_login.role | role_label }}</strong>, with powers {{ first_login.permissions | join(', ') }}.
+  <section class="panel"><h2>Access for people without an assigned role</h2>
+    <p>Anyone who signs in without an assigned role gets <strong>{{ first_login.role | role_label }}</strong>.{% if role_descriptions.get(first_login.role) %} {{ role_descriptions[first_login.role] }}{% endif %}
     Departments: <strong>{% if first_login.departments is none %}Every department{% else %}{{ first_login.departments | join(', ') or 'None' }}{% endif %}</strong>.
-    Explicit account assignments, verified group mappings and workspace memberships take precedence. Tool and task limits still apply.</p>
+    A role you assign, a verified group mapping or a workspace membership replaces this. Tool and task limits still apply.</p>
     {% if first_login.conservative %}<p>The viewer/no-department baseline is in effect.</p>{% else %}
     <p>Upgrades keep the existing choice. You can deliberately change the fallback to <strong>Viewer with no departments</strong>: view owned work, no new task runs and no department specialists until access is assigned.</p>
     <form action="/users/first-login-baseline" method="post" data-users-confirm="Apply viewer with no departments to the installation fallback? This also changes existing accounts that still inherit the default. Explicit roles and workspace memberships remain." data-users-ok="Apply reviewed baseline">

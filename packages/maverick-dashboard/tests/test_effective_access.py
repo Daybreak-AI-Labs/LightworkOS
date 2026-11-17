@@ -402,3 +402,22 @@ def test_an_ai_action_reports_every_resource_it_reached_not_just_the_fingerprint
     assert fields["resources_reached"] == 41                      # the blank one is not a resource
     assert len(fields["resource_fingerprints"]) == 5
     assert fields["resource_fingerprints"][0] == content_access.resource_fingerprint("a")
+
+
+def test_users_headline_counts_installation_administrators(client, monkeypatch):
+    # "1 person has a role" next to "2 administrators set up during
+    # installation" contradicted itself: the headline counts everyone with
+    # access, including the administrators named at installation.
+    from maverick_dashboard import rbac
+    monkeypatch.setenv("MAVERICK_DASHBOARD_ADMINS", "user:root@corp.com,user:ops@corp.com")
+    rbac.set_role("user:dana@corp.com", "operator")
+    text = visible_text(client.get("/users").text)
+    assert "3 people have access" in text
+    assert "2 of them are administrators set up during installation." in text
+    assert "1 person has a role" not in text
+
+
+def test_first_login_baseline_reads_plainly(client):
+    text = visible_text(client.get("/users").text)
+    assert "Current fallback" not in text and "with powers" not in text
+    assert "Anyone who signs in without an assigned role gets Viewer" in text

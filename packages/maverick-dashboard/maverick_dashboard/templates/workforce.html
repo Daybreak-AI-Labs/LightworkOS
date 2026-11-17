@@ -10,11 +10,12 @@
                      they\'ve delivered, and their performance reviews.',
                actions=workforce_actions if (can_create_goal and departments) else '') %}
     {{ state('Deployment state',
-             deployed_specialists ~ ' specialists deployed',
-             badge=departments | length ~ ' departments', badge_class='ok',
-             copy=pack_total ~ ' specialists are listed in the catalog. ' ~
-                  configured_connectors ~ ' of ' ~ connector_total ~
-                  ' connected apps are set up; whether each one is working is shown on Connections.') }}
+             deployed_specialists ~ (' specialist deployed' if deployed_specialists == 1 else ' specialists deployed'),
+             badge=departments | length ~ ' departments available',
+             badge_class='ok' if deployed_specialists else 'idle',
+             copy='The catalog offers ' ~ '{:,}'.format(pack_total) ~ ' specialists you can deploy. ' ~
+                  'You have set up ' ~ configured_connectors ~ ' of the ' ~ '{:,}'.format(connector_total) ~
+                  ' apps Lightwork can connect to; Connections shows whether each one works.') }}
   {% endcall %}
 
   <div class="bd-toolbar">

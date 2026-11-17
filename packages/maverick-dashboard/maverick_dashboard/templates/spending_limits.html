@@ -55,14 +55,16 @@
   {% set limits_actions %}<a class="btn btn--primary" href="#workspace-limit">Set a workspace limit</a>{% endset %}
   {% call hero('Administration', 'Spending limits',
                subtitle='Keep costs predictable',
-               lede='By default there is no limit on what people can spend. Set a limit for
-                     the whole workspace, a limit for everyone, or a limit for one person.
+               lede='By default there is no daily or monthly limit on what people can spend.
+                     Each task also stops at its own task limit'
+                     ~ (' (' ~ (task_cap | money) ~ ' per task, set in Settings)' if task_cap is not none else '')
+                     ~ '. Set a limit for the whole workspace, for everyone, or for one person.
                      When a limit is reached, new work pauses until the limit resets or you
                      raise it.',
                actions=limits_actions) %}
     {{ state('This month',
              (view.workspace_month | money) ~ ' spent',
-             badge=('Limited' if view.workspace else 'No limit'),
+             badge=('Limited' if view.workspace else 'No workspace limit'),
              badge_class=('warn' if view.workspace else 'ok'),
              copy=(view.workspace_today | money) ~ ' spent today across the workspace.') }}
   {% endcall %}

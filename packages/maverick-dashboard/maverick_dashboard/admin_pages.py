@@ -1476,6 +1476,9 @@ def _users_context(request: Request) -> dict:
             for principal, suites in grants.items()
         },
         "users": sorted(role_map.items()),
+        # Everyone with installation access: assigned roles plus the
+        # administrators named at installation (they hold no stored role).
+        "people_with_access": len(set(role_map) | set(bootstrap)),
         **_people_filter(request, role_map, labels),
         "standard_roles": {principal: standard_role(principal) for principal in role_map},
         "roles": rbac.known_roles(),
@@ -2156,8 +2159,15 @@ def spending_limits_page(request: Request, saved: str = "", error: str = "",
     except Exception:  # noqa: BLE001 -- the organization cap is informational here
         pass
     replay, replay_error = _limit_preview(preview, amount, period, principal)
+    try:
+        from maverick.runner import configured_max_dollars
+        task_cap = configured_max_dollars()
+    except Exception:  # noqa: BLE001 -- the per-task limit is informational here
+        task_cap = None
     return _app().templates.TemplateResponse(request, "spending_limits.html", {
         "view": view,
+        # The same per-task limit the chat composer shows ("Task limits").
+        "task_cap": task_cap,
         "alert_at": _alert_points(),
         "preview": replay, "preview_error": replay_error,
         "draft": {"scope": preview, "amount": amount, "period": period, "principal": principal},

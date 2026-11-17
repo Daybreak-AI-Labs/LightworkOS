@@ -448,7 +448,7 @@ window.LWBoard = (function () {
           if (retired || request !== generation || selectedDays !== days) return;
           cfg.render(D);
           updated = selectedDays + ' days, checked ' + now();
-          stamp('Showing ' + updated + ' · updates every minute');
+          stamp('Showing ' + updated + ' · checks again every minute');
         })
         .catch(function (e) {
           if (retired || request !== generation) return;

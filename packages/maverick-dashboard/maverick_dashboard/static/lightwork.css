@@ -635,6 +635,9 @@
       background: var(--muted-subtle); color: var(--muted);
     }
     .badge::before { content: ""; flex: none; width: 6px; height: 6px; border-radius: var(--radius-round); background: currentColor; }
+    /* A status pill in a table cell keeps its words on one line: a pill
+       wrapped across two lines reads as a clipped "Needs…" (My work). */
+    td > .badge { white-space: nowrap; }
     /* State modifiers accept the many status vocabularies the pages actually
        emit (goal/run/assessment/tool states, plus literal danger/warn used in
        templates), so an interpolated `badge {{ status }}` gets the right tint
