@@ -2536,3 +2536,30 @@ def test_two_people_on_postgres_never_the_starter_or_one_person_twice(upstream, 
     with pytest.raises(vault.VaultError, match="must approve"):
         features.merge(pg_world, p["id"])
     assert record_vote(pg_world, aid, "approved", "user:bob").final_status == "approved"
+
+
+def test_a_change_whose_base_left_the_main_code_never_merges_or_pushes(upstream, tmp_path,
+                                                                       monkeypatch):
+    monkeypatch.setattr(features, "_author_model", lambda: "anthropic:author-model")
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    run, _ = _rounds(_passing)
+    p = features.propose(world, "pricing", "Discount", "", run, owner="user:starter")
+    world.decide_approval(p["approval_id"], "approved", decided_by="user:lead")
+    with vault.host_repo("pricing") as host:                    # main is rewritten without base
+        tree = vault._git(["rev-parse", "HEAD^{tree}"], git_dir=host).strip()
+        orphan = vault._git(["commit-tree", tree, "-m", "rewritten"], git_dir=host,
+                            env=features._IDENTITY).strip()
+        vault._git(["update-ref", "refs/heads/keep", "refs/heads/main"], git_dir=host)
+        vault._git(["update-ref", "refs/heads/main", orphan], git_dir=host)
+        vault.commit_back("pricing", host)
+    for keep in (True, False):                                   # base kept on a side branch, or gone
+        if not keep:
+            with vault.host_repo("pricing") as host:
+                vault._git(["update-ref", "-d", "refs/heads/keep"], git_dir=host)
+                vault.commit_back("pricing", host)
+        for act in (features.merge, features.push):
+            with pytest.raises(vault.VaultError) as refused:
+                act(world, p["id"])
+            assert str(refused.value) == features.BASE_MOVED, keep
+    assert features.plain_refusal(vault.VaultError(features.BASE_MOVED)) == features.BASE_MOVED

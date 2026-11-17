@@ -1507,6 +1507,8 @@ PROTECTED_REFUSALS = {
 }
 NO_STARTER = ("This change is protected, but Lightwork does not know which person started it. "
               "Someone else must approve it, so start it again from the Code page while signed in.")
+BASE_MOVED = ("The project's main code no longer contains the version this change was built on. "
+              "Build the change again.")
 NEWLY_PROTECTED = ("Protected paths now cover this change, but it was not built as a protected "
                    "change. Build the change again so it gets a second checker and two approvers.")
 NOT_LOOKED = ("This change is protected, but the second checker did not look at this version "
@@ -1544,7 +1546,7 @@ def plain_refusal(exc: BaseException) -> str | None:
     """The sentence of a governance refusal a person can act on (shown as
     is by the dashboard), or None for any other error."""
     text = str(exc)
-    plain = {TWO_PEOPLE, NEWLY_PROTECTED, SELF_REFUSAL, NO_STARTER, DECISION_GAP,
+    plain = {TWO_PEOPLE, NEWLY_PROTECTED, SELF_REFUSAL, NO_STARTER, DECISION_GAP, BASE_MOVED,
              *PROTECTED_REFUSALS.values()}
     return text if text in plain or text.startswith(NOT_LOOKED.split("(")[0]) else None
 
@@ -1912,18 +1914,29 @@ def _require_approved(world, p: dict) -> None:
 def _require_current_protection(p: dict, host: Path) -> None:
     """Protection again, from the project's CURRENT protected paths and
     whether it is now the running installation's own repository, against
-    base..head (both sides of a rename): a change that was not built as a
-    protected one, but is one now, never merges, pushes or asks for
-    approval on the strength of its single-approver checks."""
+    both base..head and merge-base(current tip, head)..head (both sides of a
+    rename): a change that was not built as a protected one, but is one now,
+    never merges, pushes or asks for approval on the strength of its
+    single-approver checks. A change whose base is no longer in the main
+    code is refused outright."""
     repo = vault.get(p["repo"])
+    tip = _git(["rev-parse", "--verify", f"refs/heads/{repo.default_branch}"],
+               git_dir=host).strip()
+    if not vault._is_ancestor(host, p["base"], tip):
+        # A merge would bring in commits that nothing checked or approved.
+        raise VaultError(BASE_MOVED)
     self_repo = is_installation(repo, host)
     if self_repo and not loop_settings()["allow_self_changes"]:
         raise VaultError(SELF_REFUSAL)
     if p.get("protected"):
         return
-    paths = [f for f in _git(["diff", "--name-only", "--no-renames", "-z", p["base"], p["head"]],
-                             git_dir=host).split("\0") if f]
-    if self_repo or vault.protected_matches(repo.protected_paths, paths):
+    # What the merge brings in (from the merge base with the current tip),
+    # and the change as it was built (from its base).
+    since = {p["base"], _git(["merge-base", tip, p["head"]], git_dir=host).strip()}
+    paths = {f for start in since for f in _git(
+        ["diff", "--name-only", "--no-renames", "-z", start, p["head"]],
+        git_dir=host).split("\0") if f}
+    if self_repo or vault.protected_matches(repo.protected_paths, sorted(paths)):
         raise VaultError(NEWLY_PROTECTED)
 
 
@@ -1957,8 +1970,13 @@ def _fetch_proposal(p: dict, host: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="lw-prop-") as tmp:
         b = Path(tmp) / "p.bundle"
         b.write_bytes(vault._unseal(raw, f"codebase/{p['repo']}/proposal-bundle/{p['id']}"))
-        _git(["fetch", "-q", str(b), f"+refs/heads/{p['branch']}:refs/heads/{p['branch']}"],
-             git_dir=host)
+        try:
+            _git(["fetch", "-q", str(b), f"+refs/heads/{p['branch']}:refs/heads/{p['branch']}"],
+                 git_dir=host)
+        except VaultError as exc:
+            if "prerequisite" in str(exc):  # its base is no longer in the vault at all
+                raise VaultError(BASE_MOVED) from exc
+            raise
     tip = _git(["rev-parse", "--verify", f"refs/heads/{p['branch']}"], git_dir=host).strip()
     if tip != p["head"]:
         raise VaultError(f"proposal {p['id']} branch is not the approved commit; refused")
