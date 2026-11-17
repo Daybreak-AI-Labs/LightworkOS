@@ -398,6 +398,7 @@ jobs:
             --lockfile go/model-proxy/go.mod \
             --lockfile examples/clients/java/pom.xml \
             --lockfile demo/dsar-concierge/requirements-standalone.txt \
+            --lockfile deploy/checker/requirements.txt \
             --lockfile demo/environment-threat-hunter/requirements.txt \
             --lockfile demo/grc-concierge/requirements.txt \
             --lockfile demo/model-risk-ai-assurance-officer/requirements.txt \

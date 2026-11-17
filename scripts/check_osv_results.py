@@ -42,7 +42,7 @@ EXPECTED_LOCKFILES = frozenset({
     "go/model-proxy/go.mod", "examples/clients/java/pom.xml",
     "demo/dsar-concierge/requirements-standalone.txt", "demo/environment-threat-hunter/requirements.txt",
     "demo/grc-concierge/requirements.txt", "demo/model-risk-ai-assurance-officer/requirements.txt",
-    "demo/platform-threat-hunter/requirements.txt",
+    "demo/platform-threat-hunter/requirements.txt", "deploy/checker/requirements.txt",
 })
 _MOBILE_LOCK = "apps/mobile-companion/package-lock.json"
 #: Reviewed advisories whose only fixed releases break the pinned toolchain.
