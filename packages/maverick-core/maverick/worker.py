@@ -176,10 +176,16 @@ class Worker:
         max_attempts: int = 5,
         retry_after: float = 60.0,
         reclaim_lease: float = 3600.0,
+        idle_max: float | None = None,
     ) -> None:
         self._runtime_configuration_native = queue is None and db_path is None
         self.queue = queue or JobQueue(db_path=db_path)
         self.idle_sleep = float(idle_sleep)
+        # With idle_max, an idle worker sleeps until the earliest pending job
+        # is due (at most idle_max seconds), and a write to the queue from this
+        # process wakes it at once. Another process's enqueue is seen within
+        # idle_max. None keeps the plain backoff up to idle_sleep.
+        self.idle_max = float(idle_max) if idle_max is not None else None
         # After an empty claim the loop waits idle_backoff_start, doubling up
         # to idle_sleep while the queue stays empty, and starts over after a
         # job runs: a queued goal is picked up within ~0.2 s of an idle
@@ -367,6 +373,33 @@ class Worker:
 
     def stop(self) -> None:
         self._stop.set()
+        signal_work = getattr(self.queue, "signal_work", None)
+        if self.idle_max is not None and callable(signal_work):
+            signal_work()  # wake an idle worker waiting for work
+
+    def _work_generation(self) -> int | None:
+        """The queue's wake token when idle_max applies, else None."""
+        if self.idle_max is None:
+            return None
+        generation = getattr(self.queue, "work_generation", None)
+        if not (callable(generation) and callable(getattr(self.queue, "wait_for_work", None))
+                and callable(getattr(self.queue, "next_ready_at", None))):
+            return None
+        return generation()
+
+    def _wait_for_due_work(self, generation: int, backoff: float) -> None:
+        """Sleep until the earliest pending job is due, a write in this process
+        wakes the queue, or stop(); at least ``backoff``, at most idle_max."""
+        assert self.idle_max is not None
+        try:
+            ready_at = self.queue.next_ready_at()
+        except Exception:
+            log.exception("worker: could not read the next due job")
+            ready_at = None
+        timeout = self.idle_max if ready_at is None else ready_at - time.time()
+        timeout = min(max(timeout, backoff), max(self.idle_max, backoff))
+        if not self._stop.is_set():
+            self.queue.wait_for_work(generation, timeout)
 
     def _dispatch(self, job: Job) -> None:
         handler = self._handlers.get(job.kind)
@@ -609,14 +642,18 @@ class Worker:
                         log.exception("worker: periodic reclaim failed")
                     last_reclaim = now
                 ran = False
+                generation = self._work_generation()
                 try:
                     ran = self.run_once()
                 except Exception:
                     log.exception("worker: unexpected error in loop")
                 if not ran:
-                    # Idle: wait, but wake up cleanly on stop(); back off while
-                    # the queue stays empty.
-                    self._stop.wait(idle_wait)
+                    if generation is not None:
+                        self._wait_for_due_work(generation, idle_wait)
+                    else:
+                        # Idle: wait, but wake up cleanly on stop(); back off
+                        # while the queue stays empty.
+                        self._stop.wait(idle_wait)
                     idle_wait = min(idle_wait * 2.0, self.idle_sleep)
                 else:
                     idle_wait = self.idle_backoff_start
