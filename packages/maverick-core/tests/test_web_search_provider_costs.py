@@ -216,3 +216,15 @@ def test_paid_search_is_charged_to_the_run_and_duckduckgo_is_not(monkeypatch):
     monkeypatch.setenv("MAVERICK_SEARCH_BACKEND", "ddg")
     assert "[backend: ddg]" in search._run_search({"query": "q"}, budget)
     assert budget.dollars == pytest.approx(0.10)
+
+
+def test_every_paid_service_has_a_readable_name_not_its_connector_id():
+    # The Prices page lists these names; a raw id such as
+    # "anyscale_endpoints connector" is not plain language.
+    from maverick.budget import paid_tool_services
+
+    labels = paid_tool_services()
+    assert labels["anyscale_endpoints"] == "Anyscale Endpoints"
+    for service, label in labels.items():
+        assert "_" not in label, (service, label)
+        assert not label.endswith(" connector"), (service, label)

@@ -1129,9 +1129,28 @@ def paid_tool_services() -> dict[str, str]:
     """Every service name a [budget.tool_prices] entry can price, with a label."""
     services = dict(PAID_TOOL_SERVICES)
     connectors = PAID_CONNECTOR_NAMES | PER_LOOKUP_CONNECTOR_NAMES | MESSAGING_CONNECTOR_NAMES
+    names = _connector_display_names()
     for name in sorted(connectors - set(services)):
-        services[name] = f"{name} connector"
+        services[name] = names.get(name) or name.replace("_", " ").title()
     return services
+
+
+def _connector_display_names() -> dict[str, str]:
+    """Each connector's product name, as its spec's description starts
+    ("Anyscale Endpoints REST API. ..." -> "Anyscale Endpoints")."""
+    import re
+
+    try:
+        from .tools._connector_specs import _GRAPHQL_SPECS, _SPECS
+    except Exception:  # noqa: BLE001 -- labels fall back to the connector name
+        return {}
+    names: dict[str, str] = {}
+    for spec in (*_SPECS, *_GRAPHQL_SPECS):
+        head = re.split(r"\s+(?:REST|GraphQL)\s+API\b|\s*\(|\.\s", str(spec.get("description") or ""), maxsplit=1)[0]
+        head = re.sub(r"(?:\s+(?:REST|GraphQL|API))+\s*$", "", head.strip())
+        if spec.get("name") and 0 < len(head) <= 60:
+            names[str(spec["name"])] = head
+    return names
 
 
 def tool_route_label(route: str) -> str:
