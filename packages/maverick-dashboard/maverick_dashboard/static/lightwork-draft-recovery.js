@@ -82,20 +82,19 @@
     storageRefresh.textContent = 'Refresh storage summary'; storageRetire.textContent = 'Free discarded recovery space'; storageRetire.disabled = true;
     storage.append(storageTitle, storageStatus, storageRefresh, storageRetire); panel.append(storage);
     // Chat's dock needs one quiet readiness row. The same native controls stay
-    // available in its disclosure; unresolved recovery always opens in full.
-    var compact = options.compact === true, disclosure = null, disclosureTitle = null, automaticallyOpened = false, slowCheck = false, checkingSince = 0;
+    // available in its disclosure, which opens only when the person opens it.
+    var compact = options.compact === true, disclosure = null, disclosureTitle = null, announced = false, slowCheck = false, checkingSince = 0;
     if (compact) {
       disclosure = doc.createElement('details'); disclosureTitle = doc.createElement('summary');
       disclosure.className = 'draft-recovery__compact'; disclosureTitle.textContent = 'Draft recovery';
       disclosureTitle.style.cssText = 'cursor:pointer;color:var(--muted);font-size:var(--text-xs);line-height:1.5';
-      // Opened, the row floats above the composer: it opens by itself when
-      // recovery needs attention, and growing the dock in place pushed the
-      // conversation up (a 0.17 layout shift on phones).
+      // The row never opens by itself: a recovery problem only changes its
+      // words, so nothing moves while the person reads or types. Opened by the
+      // person, it sits in the page flow: a floating panel covered the budget
+      // note and suggestions above the composer and could not be closed.
       var disclosureBody = doc.createElement('div');
-      disclosure.style.position = 'relative';
-      disclosureBody.style.cssText = 'position:absolute;inset-inline:0;bottom:calc(100% + var(--space-1));z-index:var(--z-popover);' +
-        'max-height:min(44vh,24rem);overflow:auto;overflow-wrap:anywhere;padding:var(--space-3);background:var(--surface-1);' +
-        'border:1px solid var(--border);border-radius:var(--radius-md);box-shadow:var(--shadow-lg)';
+      disclosureBody.style.cssText = 'margin-top:var(--space-2);max-height:min(44vh,24rem);overflow:auto;overflow-wrap:anywhere;' +
+        'padding:var(--space-3);background:var(--surface-1);border:1px solid var(--border);border-radius:var(--radius-md)';
       while (panel.firstChild) disclosureBody.appendChild(panel.firstChild);
       if (options.information) disclosureBody.appendChild(options.information);
       disclosure.append(disclosureTitle, disclosureBody); panel.append(disclosure);
@@ -115,10 +114,6 @@
         }
         if (typeof root.requestAnimationFrame === 'function') root.requestAnimationFrame(shown);
       }, 300);
-      disclosureTitle.addEventListener('click', function (event) {
-        if (blocked || failed || pendingOperation) { event.preventDefault(); disclosure.open = true; }
-        else automaticallyOpened = false;
-      });
     }
     function storageControls() { storageRefresh.disabled = storageBusy; storageRetire.disabled = storageBusy || !storageSnapshot || !storageSnapshot.discarded; }
     async function storageCall(body) {
@@ -177,8 +172,10 @@
       disclosureTitle.textContent = failed ? 'Draft recovery needs attention' : blocked ? 'Recovery copy needs review' :
         pendingOperation ? 'Recovery save needs confirmation' : !initialized ? (slowCheck ? 'Checking draft recovery…' : 'Draft recovery') :
         running || changed ? 'Keeping unsent text…' : remote ? 'Unsent text protected' : 'Draft recovery ready';
-      if (attention && !disclosure.open) { automaticallyOpened = true; disclosure.open = true; }
-      else if (!attention && automaticallyOpened) { automaticallyOpened = false; disclosure.open = false; }
+      // Attention is shown in words, never by opening or holding the row open.
+      if (attention && !announced && root.mvAnnounce) root.mvAnnounce(disclosureTitle.textContent + '. Open Draft recovery to choose what to keep.');
+      announced = !!attention;
+      if (attention) disclosureTitle.style.color = 'var(--warn)'; else disclosureTitle.style.color = 'var(--muted)';
     }
     // The label a person sees for a stored field: the editor's own label for
     // that control when there is one, else the field name in words.
