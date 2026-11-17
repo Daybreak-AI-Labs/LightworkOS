@@ -27,9 +27,10 @@ def test_page_starts_with_no_limits_and_plain_controls(client):
     # "no limit" here never contradicts "Task limits: up to $X" there.
     from maverick.runner import configured_max_dollars
     cap = configured_max_dollars()
-    assert "Each task also stops at its own task limit" in text
     if cap is not None:
-        assert f"${cap:,.2f} per task" in text
+        assert f"Each task also stops at its own task limit: ${cap:,.2f} per task" in text
+    else:
+        assert "Tasks have no per-task limit either" in text
     for action in ("/spending-limits/workspace", "/spending-limits/default"):
         assert f'action="{action}"' in text
     assert "per task" in text and "per day" in text and "per month" in text
@@ -207,3 +208,13 @@ def test_saving_a_limit_is_recorded_in_the_audit_log(client, monkeypatch):
                     follow_redirects=False)
     assert r.status_code == 303
     assert events, "saving a spending limit must write an audit record"
+
+
+@pytest.mark.parametrize("cap,words", [
+    (25000.01, "Each task also stops at its own task limit: $25,000.01 per task"),
+    (None, "Tasks have no per-task limit either"),
+])
+def test_page_names_the_per_task_limit_the_composer_shows(client, monkeypatch, cap, words):
+    from maverick import runner
+    monkeypatch.setattr(runner, "configured_max_dollars", lambda: cap)
+    assert words in client.get("/spending-limits").text

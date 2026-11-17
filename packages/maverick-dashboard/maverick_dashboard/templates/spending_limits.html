@@ -56,9 +56,10 @@
   {% call hero('Administration', 'Spending limits',
                subtitle='Keep costs predictable',
                lede='By default there is no daily or monthly limit on what people can spend.
-                     Each task also stops at its own task limit'
-                     ~ (' (' ~ (task_cap | money) ~ ' per task, set in Settings)' if task_cap is not none else '')
-                     ~ '. Set a limit for the whole workspace, for everyone, or for one person.
+                     '
+                     ~ ('Each task also stops at its own task limit: ' ~ (task_cap | money) ~ ' per task, set in Settings.'
+                        if task_cap is not none else 'Tasks have no per-task limit either; you can set one in Settings.')
+                     ~ ' Set a limit for the whole workspace, for everyone, or for one person.
                      When a limit is reached, new work pauses until the limit resets or you
                      raise it.',
                actions=limits_actions) %}
