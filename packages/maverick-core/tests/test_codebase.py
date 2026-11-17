@@ -2361,3 +2361,21 @@ def test_a_protected_change_with_no_named_starter_cannot_be_approved(upstream, t
         lines = features.evidence(p)["lines"]
         assert features.NO_STARTER in lines and features.TWO_PEOPLE not in lines
     assert calls == []                                         # no second check it cannot use
+
+
+@pytest.mark.skipif(not hasattr(__import__("os"), "geteuid") or __import__("os").geteuid() != 0,
+                    reason="needs root to give the checkout to another user")
+def test_an_installation_owned_by_another_user_is_still_recognised(upstream, tmp_path,
+                                                                   monkeypatch):
+    install = tmp_path / "install"
+    subprocess.run(["git", "clone", "-q", str(upstream), str(install)], check=True)
+    _sh("remote", "set-url", "origin", "https://example.invalid/other/fork.git", cwd=install)
+    vault.register("pricing", str(upstream))
+    monkeypatch.setattr(features, "_installation_checkout", lambda package_dir=None: install)
+    subprocess.run(["chown", "-R", "65534:65534", str(install)], check=True)  # git: "dubious"
+    with vault.host_repo("pricing") as host:
+        assert features.is_installation(vault.get("pricing"), host)   # by its first commit
+        broken = install / "broken"
+        (install / ".git").rename(broken)
+        (install / ".git").write_text("gitdir: /nowhere\n")       # git cannot read it at all
+        assert features.is_installation(vault.get("pricing"), host)   # unknown: fail closed

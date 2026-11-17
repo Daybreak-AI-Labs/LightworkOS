@@ -1178,11 +1178,12 @@ def _same_place(url: str) -> str:
     return f"{host}/{path.removesuffix('.git')}"
 
 
-def _roots(git_dir: Path | None = None, cwd: Path | None = None, ref: str = "HEAD") -> set[str]:
-    try:
-        return set(_git(["rev-list", "--max-parents=0", ref], git_dir=git_dir, cwd=cwd).split())
-    except VaultError:
-        return set()
+def _roots(git_dir: Path | None = None, cwd: Path | None = None, ref: str = "HEAD",
+           safe: Path | None = None) -> set[str]:
+    """First commits of ``ref``; raises :class:`VaultError` when git cannot say."""
+    trust = ["-c", f"safe.directory={safe}"] if safe is not None else []
+    return set(_git([*trust, "rev-list", "--max-parents=0", ref], git_dir=git_dir,
+                    cwd=cwd).split())
 
 
 def is_installation(repo: vault.Repo, host: Path) -> bool:
@@ -1190,21 +1191,30 @@ def is_installation(repo: vault.Repo, host: Path) -> bool:
     installed ``maverick`` package is imported from a git checkout (not a
     wheel) and that checkout is the repository's source path, has a remote
     at the same address, or shares a first commit with the vaulted default
-    branch (a mirror, a fork or another address of the same history)."""
+    branch (a mirror, a fork or another address of the same history).
+
+    The checkout is read with ``safe.directory`` set to it, so one owned by
+    another user still answers; anything git cannot answer about a checkout
+    that was found counts as the installation (fail closed)."""
     checkout = _installation_checkout()
     if checkout is None:
         return False
-    places = {_same_place(str(checkout))}
+    if _same_place(repo.source) == _same_place(str(checkout)):
+        return True
     try:
-        remotes = _git(["config", "--get-regexp", r"^remote\..*\.url$"], cwd=checkout)
+        remotes = _git(["-c", f"safe.directory={checkout}", "remote", "-v"], cwd=checkout)
     except VaultError:
-        remotes = ""
-    places |= {_same_place(line.split(None, 1)[1]) for line in remotes.splitlines()
-               if len(line.split(None, 1)) == 2}
+        return True
+    places = {_same_place(line.split()[1]) for line in remotes.splitlines()
+              if len(line.split()) >= 2}
     if _same_place(repo.source) in places:
         return True
-    ours = _roots(git_dir=host, ref=f"refs/heads/{repo.default_branch}")
-    return bool(ours & _roots(cwd=checkout))
+    try:
+        ours = _roots(git_dir=host, ref=f"refs/heads/{repo.default_branch}")
+        theirs = _roots(cwd=checkout, safe=checkout)
+    except VaultError:
+        return True
+    return bool(ours & theirs)
 
 
 def self_change_refusal(name: str) -> str | None:
