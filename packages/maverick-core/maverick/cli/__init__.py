@@ -5349,12 +5349,24 @@ def resume(ctx, goal_id_arg, goal_id, max_depth: int, max_dollars, max_wall_seco
         # and still exits 0, which a script can't detect (export exits 2 here).
         click.echo(f"no such goal #{goal_id}. See `maverick status`.", err=True)
         sys.exit(2)
-    from ..decision_requests import expire_due, feature_start_refusal, open_for_tree
+    from ..decision_requests import (
+        expire_due,
+        feature_start_refusal,
+        for_goal,
+        open_for_tree,
+        restart_stranded,
+    )
 
     expire_due(world, goal_id=goal_id)
     refused = feature_start_refusal(world, goal_id)
     if refused:  # a code change's step runs only inside its own private copy
         click.echo(f"cannot resume goal #{goal_id}: {refused}")
+        sys.exit(2)
+    if (world.get_goal(goal_id).status == "pending"
+            and any(d.status == "answered" for d in for_goal(world, goal_id))
+            and not restart_stranded(world, goal_id)):
+        click.echo(f"cannot resume goal #{goal_id}: it is already starting again with "
+                   "its answer. Check it again in a minute.")
         sys.exit(2)
     waiting = open_for_tree(world, goal_id)
     if waiting:

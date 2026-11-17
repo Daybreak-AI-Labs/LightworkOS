@@ -745,10 +745,10 @@ class Server:
         # tenancy on, _reclaim_tenant_orphans() also sweeps every tenant's
         # own world.db (a crash strands goals there too).
         try:
-            from .decision_requests import recover_all_stranded
+            from .decision_requests import recover_everywhere
 
             # Before the reclaim below: a run left pending after its answer continues.
-            recover_all_stranded(self.world)
+            recover_everywhere(self.world)
         except Exception:  # pragma: no cover -- a person can still resume it
             log.exception("answered-run recovery failed on serve startup")
         try:

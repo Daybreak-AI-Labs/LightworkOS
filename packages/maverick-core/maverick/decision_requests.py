@@ -106,6 +106,17 @@ POSTGRES_SCHEMA: list[str] = [
     for statement in SQLITE_SCHEMA
 ]
 
+#: v56: when, and under which token, the run was last moved back to start
+#: after an answer (``maverick.chat_threads.ChatThreads._pending``).
+DISPATCH_MARKER_SQLITE: list[str] = [
+    "ALTER TABLE decision_requests ADD COLUMN resume_token TEXT",
+    "ALTER TABLE decision_requests ADD COLUMN resume_dispatched_at REAL",
+]
+DISPATCH_MARKER_POSTGRES: list[str] = [
+    "ALTER TABLE decision_requests ADD COLUMN IF NOT EXISTS resume_token TEXT",
+    "ALTER TABLE decision_requests ADD COLUMN IF NOT EXISTS resume_dispatched_at DOUBLE PRECISION",
+]
+
 #: Open decisions of a goal and every goal below it (one ``?``: the goal id).
 OPEN_IN_TREE_SQL = (
     "SELECT COUNT(*) FROM decision_requests WHERE status = 'open' AND goal_id IN ("
@@ -1201,8 +1212,6 @@ def restart_note(goal, world=None) -> str:
 
 
 ANSWERED_EARLY = "A person answered this run's decision before it paused. Your answer was saved."
-STRANDED_RESULT = ("Lightwork stopped before this run could continue after its decision was "
-                   "answered. It continues with that answer now.")
 
 
 def _run_finishing(world, goal_id: int) -> bool:
@@ -1269,44 +1278,103 @@ def after_run(world, goal_id: int) -> None:
         continue_answered(world, goal_id)
 
 
-def stranded(world, goal_id: int, *, older_than: float | None = None) -> bool:
-    """Whether a ``pending`` run was left behind after its answer: a decision
-    of its own was answered, nothing waits, no run holds its lease, and it has
-    not moved for the orphan-reclaim window (a process stopped before it
-    could start the run)."""
+def mark_dispatch(store, connection, goal_id: int) -> None:
+    """Inside the transaction that moves a run back to ``pending``: record when,
+    and under which token, on its answered decisions."""
+    import secrets
+
+    store.execute(connection, "UPDATE decision_requests SET resume_token = ?, "
+                  "resume_dispatched_at = ? WHERE goal_id = ? AND status = 'answered'",
+                  (secrets.token_hex(8), time.time(), int(goal_id)))
+
+
+def _window(older_than: float | None) -> float:
     from .world_model import reclaim_window_seconds
 
-    window = reclaim_window_seconds() if older_than is None else float(older_than)
+    return reclaim_window_seconds() if older_than is None else float(older_than)
+
+
+def _queued_elsewhere(goal_id: int) -> bool:
+    """Whether a queue or this process's runner may still hold the goal. Only
+    the in-process runner can be asked; a queue or remote worker owns its
+    pending goals durably, so they are never taken from it."""
+    from .runner import LocalThreadDispatcher, get_dispatcher, goal_submitted_here
+
+    return not isinstance(get_dispatcher(), LocalThreadDispatcher) or goal_submitted_here(goal_id)
+
+
+def stranded(world, goal_id: int, *, older_than: float | None = None) -> bool:
+    """Whether a ``pending`` run was left behind after its answer: a decision
+    of its own was answered, nothing waits, its last restart marker (if any)
+    and its last change are older than the orphan-reclaim window, and no queue
+    entry or lease holds it (a process stopped before it could start it)."""
+    cutoff = time.time() - _window(older_than)
     try:
         rows = world.tenant_query(
-            "SELECT g.status, g.updated_at FROM goals g WHERE g.id = ? AND "
+            "SELECT g.status, g.updated_at, (SELECT MAX(d.resume_dispatched_at) FROM "
+            "decision_requests d WHERE d.goal_id = g.id) FROM goals g WHERE g.id = ? AND "
             "{tenant_exact:g.tenant_id}", (int(goal_id),))
-        if (not rows or str(rows[0][0]) != "pending"
-                or float(rows[0][1] or 0) > time.time() - window):
+        if (not rows or str(rows[0][0]) != "pending" or float(rows[0][1] or 0) > cutoff
+                or float(rows[0][2] or 0) > cutoff):
             return False
         return (_answered_and_free(world, goal_id) and not open_for_tree(world, goal_id)
-                and not world.open_questions(goal_id) and not _run_finishing(world, goal_id))
+                and not world.open_questions(goal_id) and not _queued_elsewhere(goal_id)
+                and not _run_finishing(world, goal_id))
     except Exception:  # noqa: BLE001 -- unknown: leave it to a person
         log.debug("stranded-run check failed", exc_info=True)
         return False
 
 
+def claim_stranded(threads, connection, goal_id: int, *, older_than: float | None = None) -> bool:
+    """Inside a restart transaction, after :func:`stranded` said yes: take the
+    run back from ``pending`` to ``blocked`` (only one caller can), unless a
+    restart marker became recent meanwhile. The caller then restarts it."""
+    store = threads.store
+    marker = store.execute(connection, "SELECT MAX(resume_dispatched_at) FROM decision_requests "
+                           "WHERE goal_id = ?", (int(goal_id),)).fetchone()
+    if marker and float(marker[0] or 0) > time.time() - _window(older_than):
+        return False
+    scope, values = threads._scope("goals")
+    changed = threads._execute(connection, f"UPDATE goals SET status = 'blocked' WHERE id = ? "
+                               f"AND status = 'pending' AND {scope}", (int(goal_id), *values))
+    return changed.rowcount == 1
+
+
+def restart_stranded(world, goal_id: int, *, older_than: float | None = None) -> bool:
+    """Claim a run :func:`stranded` left ``pending`` and move it back to start,
+    with a new restart marker. True when this caller holds the restart and
+    must start it; False when it is not stranded or another caller won."""
+    from .chat_threads import ChatThreads
+
+    if not stranded(world, goal_id, older_than=older_than):
+        return False
+    threads = ChatThreads(world)
+    with threads._restart_transaction(goal_id) as (connection, binding, status):
+        if status != "pending" or not claim_stranded(threads, connection, goal_id,
+                                                     older_than=older_than):
+            return False
+        if binding is not None:
+            threads.require_idle(connection, binding.root_id, binding.owner,
+                                 except_goal=goal_id)
+        _require_admission(goal_id)
+        threads._pending(connection, goal_id)
+    return True
+
+
 def recover_stranded(world, goal_id: int, *, older_than: float | None = None) -> bool:
-    """Start a run :func:`stranded` left ``pending``. Moving it ``pending`` to
-    ``blocked`` (only one caller can) is the claim; the ordinary continuation
-    then starts it once."""
+    """Start, once, a run :func:`stranded` left ``pending``."""
     try:
-        if not stranded(world, goal_id, older_than=older_than) or not world.block_pending_goal(
-                int(goal_id), result=STRANDED_RESULT):
+        if not restart_stranded(world, goal_id, older_than=older_than):
             return False
     except Exception:  # noqa: BLE001 -- recovery is best effort; a person can resume it
         log.warning("goal #%s left after its answer was not recovered", goal_id, exc_info=True)
         return False
-    return continue_answered(world, goal_id)
+    dispatch_resume(world, goal_id)
+    return True
 
 
 def recover_all_stranded(world) -> int:
-    """At start-up: start every run left ``pending`` after its answer."""
+    """Start every run of this workspace left ``pending`` after its answer."""
     try:
         rows = world.tenant_query(
             "SELECT DISTINCT g.id FROM goals g JOIN decision_requests d ON d.goal_id = g.id "
@@ -1316,6 +1384,43 @@ def recover_all_stranded(world) -> int:
         log.debug("stranded-run lookup failed", exc_info=True)
         return 0
     return sum(1 for row in rows if recover_stranded(world, int(row[0])))
+
+
+def recover_everywhere(world) -> int:
+    """At start-up: :func:`recover_all_stranded` in the default workspace and
+    in every other workspace, each in its own scope. SQLite visits every
+    workspace file; Postgres the open-decisions index and the registry."""
+    from urllib.parse import unquote
+
+    from .paths import maverick_home, tenant_scope
+    from .world_model import WorldModel
+
+    total = recover_all_stranded(world)
+    if isinstance(world, WorldModel):
+        for store in sorted((maverick_home() / "tenants").glob("*/world.db")):
+            if str(store) == str(getattr(world, "path", "")):
+                continue
+            try:
+                with tenant_scope(tenant=unquote(store.parent.name)), \
+                        WorldModel(path=store) as tenant_world:
+                    total += recover_all_stranded(tenant_world)
+            except Exception:  # noqa: BLE001 -- one workspace must not stop the others
+                log.warning("answered-run recovery failed for one workspace", exc_info=True)
+        return total
+    known: set[str] = set(indexed_workspaces())
+    try:
+        from .tenant.registry import list_tenants
+
+        known |= {record.id for record in list_tenants()}
+    except Exception:  # noqa: BLE001 -- no registry: the index only
+        log.debug("workspace registry unavailable for answered-run recovery", exc_info=True)
+    for workspace in sorted(known):
+        try:
+            with tenant_scope(tenant=workspace):
+                total += recover_all_stranded(world)
+        except Exception:  # noqa: BLE001 -- one workspace must not stop the others
+            log.warning("answered-run recovery failed for one workspace", exc_info=True)
+    return total
 
 
 def dispatch_resume(world, goal_id: int) -> bool:

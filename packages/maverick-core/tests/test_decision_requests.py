@@ -172,30 +172,89 @@ async def test_an_answer_while_the_run_still_holds_its_lease_continues_it_once(
     assert dr.continue_answered(world, gid) is False and started == [gid]  # the claim is taken
 
 
-def test_a_run_left_pending_after_its_answer_is_recovered_once(tmp_path, monkeypatch):
-    from maverick.chat_threads import ChatThreads
-
+def _left_pending(world, monkeypatch, *, age=3600.0):
+    """A run its answer moved to pending, then the process stopped before the
+    run started: its last change and its restart marker are ``age`` old."""
     monkeypatch.setattr("maverick.outcome_pilot_start_gate.require_work_item_admission",
                         lambda *a: None)
+    gid, decision = _paused_goal(world)
+    assert dr.answer(world, decision.id, 1, actor="alice", is_admin=False)["resume"] is True
+    with world._writing() as conn:
+        conn.execute("UPDATE goals SET updated_at = updated_at - ? WHERE id = ?", (age, gid))
+        conn.execute("UPDATE decision_requests SET resume_dispatched_at = resume_dispatched_at - ? "
+                     "WHERE goal_id = ?", (age, gid))
+    return gid
+
+
+def test_a_run_left_pending_after_its_answer_is_recovered_once(tmp_path, monkeypatch):
+    from maverick import runner
+
     started = []
     monkeypatch.setattr(dr, "dispatch_resume", lambda world, goal_id: started.append(goal_id))
     world = _world(tmp_path)
-    gid, decision = _paused_goal(world)
-    # The answer moved it to pending, then the process stopped before it started the run.
-    assert dr.answer(world, decision.id, 1, actor="alice", is_admin=False)["resume"] is True
-    assert dr.recover_all_stranded(world) == 0                 # too fresh: it may still start
-    with world._writing() as conn:
-        conn.execute("UPDATE goals SET updated_at = updated_at - 3600 WHERE id = ?", (gid,))
+    fresh = _left_pending(world, monkeypatch, age=0.0)
+    assert dr.recover_all_stranded(world) == 0                  # its restart is recent
+    world.set_goal_status(fresh, "done")
+    gid = _left_pending(world, monkeypatch)
+    with runner._submitted_here(gid):                           # still queued for a slot here
+        assert dr.recover_all_stranded(world) == 0
     assert dr.recover_all_stranded(world) == 1 and started == [gid]
     assert world.get_goal(gid).status == "pending"
-    assert dr.recover_all_stranded(world) == 0 and started == [gid]   # never twice
-    # The resume path takes a stranded run back too, and only once.
-    with world._writing() as conn:
-        conn.execute("UPDATE goals SET updated_at = updated_at - 3600 WHERE id = ?", (gid,))
+    assert dr.recover_all_stranded(world) == 0 and started == [gid]   # its new marker holds it
+
+
+def test_resume_and_the_cli_take_back_a_run_left_pending_once(tmp_path, monkeypatch):
+    import maverick.cli as cli
+    from click.testing import CliRunner
+    from maverick import goal_resume
+    from maverick.chat_threads import ChatThreads
+    from maverick.goal_mutations import GoalMutationConflict
+    from maverick.world_model import open_world
+
+    db = tmp_path / "world.db"
+    world = open_world(db)
+    gid = _left_pending(world, monkeypatch)
+    updated = world.get_goal(gid).updated_at
+    reserve = dict(actor="alice", expected_updated_at=updated, expected_owner="alice",
+                   max_dollars=None, require_authority=lambda: None, require_admission=lambda: None)
+    result = goal_resume.reserve(world, gid, operation_id="a" * 32, **reserve)
+    assert result["admitted"] and world.get_goal(gid).status == "pending"
+    with pytest.raises(GoalMutationConflict):                   # the same review never twice
+        goal_resume.reserve(world, gid, operation_id="b" * 32, **reserve)
+    with pytest.raises(Exception, match="already running"):     # its marker is now recent
+        ChatThreads(world).resume(gid)
+    world.set_goal_status(gid, "done")
+    gid = _left_pending(world, monkeypatch)
     ChatThreads(world).resume(gid)
     assert world.get_goal(gid).status == "pending"
-    with pytest.raises(Exception, match="already running"):
-        ChatThreads(world).resume(gid)
+    world.set_goal_status(gid, "done")
+    gid = _left_pending(world, monkeypatch)
+    ran = []
+    import contextlib
+
+    monkeypatch.setattr(cli, "_require_llm_key", lambda: None)
+    monkeypatch.setattr(cli, "_cli_sandbox", lambda k, backend=None: contextlib.nullcontext())
+    monkeypatch.setattr(cli, "_kernel", lambda: type("K", (), {
+        "LLM": lambda self, model=None: None,
+        "run_goal_sync": lambda self, *a, **k: ran.append(a[3]) or "done"})())
+    out = CliRunner().invoke(cli.main, ["--db", str(db), "resume", str(gid)])
+    assert ran == [gid], out.output
+    out = CliRunner().invoke(cli.main, ["--db", str(db), "resume", str(gid)])
+    assert out.exit_code == 2 and "already starting again" in out.output and ran == [gid]
+
+
+def test_start_up_recovers_a_workspace_run_left_pending(tmp_path, monkeypatch):
+    from maverick.paths import _tenant_segment, tenant_scope
+
+    started = []
+    monkeypatch.setattr(dr, "dispatch_resume",
+                        lambda world, goal_id: started.append((current(), goal_id)))
+    from maverick.paths import current_tenant_id as current
+    store = tmp_path / "home" / "tenants" / _tenant_segment("team-a") / "world.db"
+    store.parent.mkdir(parents=True)
+    with tenant_scope(tenant="team-a"), WorldModel(path=store) as team:
+        gid = _left_pending(team, monkeypatch)
+    assert dr.recover_everywhere(_world(tmp_path)) == 1 and started == [("team-a", gid)]
 
 
 def test_a_person_without_authority_is_refused(tmp_path):

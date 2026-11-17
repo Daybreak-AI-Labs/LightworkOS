@@ -812,6 +812,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - An answer given in the moment before a run pauses for its decision now
   continues the run with that choice; before, the run stayed paused with
   nothing left to answer. Nothing to do.
+- A run left waiting to start after its decision was answered, because
+  Lightwork stopped first, now continues when Lightwork starts again, in
+  every workspace. Resume, the Copilot and `maverick resume` also accept it.
 - The Approvals page, its API and the Copilot now always find your own
   waiting decisions, even behind more than 200 of other people's; before,
   yours could be hidden and answering one by its number said it was gone.
