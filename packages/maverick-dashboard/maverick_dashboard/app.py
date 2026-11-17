@@ -1141,7 +1141,6 @@ def repair_default_workspace() -> None:
         log.exception("default workspace repair skipped")
 
 
-@asynccontextmanager
 def _start_decision_sweeper() -> None:
     """Past-due decisions stop their runs on time, even for a team that
     answers only in chat and never opens the Approvals page."""
@@ -1155,6 +1154,7 @@ def _start_decision_sweeper() -> None:
         log.exception("decision expiry sweep not started")
 
 
+@asynccontextmanager
 async def _lifespan(app: FastAPI):
     """Application lifespan: run startup tasks, then yield to serve.
 
