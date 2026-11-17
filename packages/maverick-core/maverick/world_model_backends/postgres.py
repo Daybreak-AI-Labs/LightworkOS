@@ -243,7 +243,7 @@ _TENANT_TABLES = ("goals", "facts", "conversations", "approvals", "processed_mes
 # later migrations, so they can't ride the v10 ALTER but MUST still be RLS-scoped
 # -- otherwise a PG deployment relying on "the database enforces the boundary"
 # leaves those two tables app-layer-only. Child tables (episodes/turns/...) carry
-# no tenant_id and remain FK-scoped through their parent goal.
+# no tenant_id; their policy checks the parent row (``_RLS_CHILD_TABLES``).
 _RLS_TABLES = (
     *_TENANT_TABLES,
     "projects",
@@ -257,6 +257,11 @@ _RLS_TABLES = (
     "webhook_deliveries",
     "deadline_alerts",
     "encryption_migrations",
+    "approval_checks",
+    "harness_addenda",
+    "harness_corpus",
+    "harness_line_meta",
+    "harness_transfer_tried",
 )
 # Tables whose tenant column is not called ``tenant_id``. The webhook and
 # deadline-alert tables (v42) scope rows by ``workspace``, which holds the RAW
@@ -268,7 +273,56 @@ _RLS_TENANT_COLUMN: dict[str, str] = {
     "webhook_subscriptions": "workspace",
     "webhook_deliveries": "workspace",
     "deadline_alerts": "workspace",
+    "approval_checks": "workspace",
 }
+# The learning-store tables keep the RAW tenant id in ``tenant_id``
+# (``learning_store._active_tenant``), so their policy also compares with
+# ``maverick.workspace``.
+_RLS_RAW_TENANT_TABLES = ("harness_addenda", "harness_corpus", "harness_line_meta",
+                          "harness_transfer_tried")
+# Child tables with no tenant column (v56). A row belongs to the workspace of
+# its parent row, so the policy looks the parent up by primary key: every
+# write already happens in the parent's scope, `maverick tenant backfill`
+# moves a parent's children with it, and no write path stamps a second copy
+# of the tenant that could drift. A read by parent id costs one index probe.
+_RLS_CHILD_TABLES: dict[str, tuple[str, str]] = {
+    "approval_signoffs": ("approvals", "approval_id"),
+    "artifacts": ("goals", "goal_id"),
+    "attachments": ("goals", "goal_id"),
+    "decision_requests": ("goals", "goal_id"),
+    "episodes": ("goals", "goal_id"),
+    "goal_events": ("goals", "goal_id"),
+    "goal_mutation_receipts": ("goals", "goal_id"),
+    "goal_origins": ("goals", "goal_id"),
+    "messages": ("goals", "goal_id"),
+    "questions": ("goals", "goal_id"),
+    "share_links": ("goals", "goal_id"),
+    "signoffs": ("goals", "goal_id"),
+    "turns": ("conversations", "conversation_id"),
+}
+
+
+def _rls_setting(table: str) -> str:
+    """The session setting ``table``'s policy compares its tenant with."""
+    raw = table in _RLS_TENANT_COLUMN or table in _RLS_RAW_TENANT_TABLES
+    return "maverick.workspace" if raw else "maverick.tenant"
+
+
+def _rls_policy_expr(table: str, setting: str | None = None) -> str:
+    """The row condition of ``table``'s ``mvk_tenant_isolation`` policy."""
+    if table in _RLS_CHILD_TABLES:
+        parent, key = _RLS_CHILD_TABLES[table]
+        return (f"EXISTS (SELECT 1 FROM {parent} p WHERE p.id = {table}.{key} "
+                "AND p.tenant_id = nullif(current_setting('maverick.tenant', true), ''))")
+    column = _RLS_TENANT_COLUMN.get(table, "tenant_id")
+    return f"{column} = nullif(current_setting('{setting or _rls_setting(table)}', true), '')"
+
+
+def _rls_policy_statement(table: str) -> str:
+    expr = _rls_policy_expr(table)
+    return f"CREATE POLICY mvk_tenant_isolation ON {table} USING ({expr}) WITH CHECK ({expr})"
+
+
 _TENANT_MIGRATION: list[str] = [
     f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS tenant_id TEXT;" for t in _TENANT_TABLES
 ] + [
@@ -780,6 +834,25 @@ MIGRATIONS.append((54, ["ALTER TABLE goals ADD COLUMN IF NOT EXISTS heartbeat_at
 # v55: decision requests, scoped through their goal like questions (mirrors SQLite v55).
 MIGRATIONS.append((55, _DECISION_REQUEST_SCHEMA_PG))
 
+# v56: on a database that already enforces row-level security (``goals`` is
+# forced), give the tables that had no row policy one: the learning store and
+# approval-check tables by their own tenant column, the child tables through
+# their parent row. A database without it is left alone; turning it on later
+# installs every policy (``_apply_rls``). Run by the table owner, like v54.
+_V56_RLS_TABLES = ("approval_checks", *_RLS_RAW_TENANT_TABLES, *_RLS_CHILD_TABLES)
+MIGRATIONS.append((56, [
+    "DO $$ BEGIN "
+    "IF EXISTS (SELECT 1 FROM pg_class WHERE oid = 'goals'::regclass "
+    "AND relrowsecurity AND relforcerowsecurity) "
+    f"AND NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = '{table}'::regclass "
+    "AND polname = 'mvk_tenant_isolation') THEN "
+    f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY; "
+    f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY; "
+    f"{_rls_policy_statement(table)}; "
+    "END IF; END $$"
+    for table in _V56_RLS_TABLES
+]))
+
 _PG_SCHEMA_VERSION = MIGRATIONS[-1][0]
 
 _MIGRATIONS_TABLE = (
@@ -826,6 +899,26 @@ def _active_workspace() -> str | None:
     the RLS policy on those tables compares the column with this value."""
     from ..paths import current_tenant_id_strict
     return current_tenant_id_strict()
+
+
+def bind_rls_scope(cur) -> None:
+    """Bind the open transaction on ``cur`` to the active workspace for the
+    row policies. With no workspace active, an impossible sentinel matches
+    no row."""
+    tenant = _active_tenant()
+    value = str(tenant) if tenant is not None else "__maverick_no_tenant__"
+    # The workspace-keyed tables store the raw id, which differs from the
+    # encoded segment for an id such as ``slack:U1``; both are bound in the
+    # same statement so neither can be left over from an earlier scope.
+    workspace = _active_workspace() if tenant is not None else None
+    raw = str(workspace) if workspace else "__maverick_no_tenant__"
+    # set_config(name, value, is_local=true) is the parameterizable form of
+    # SET LOCAL — transaction-scoped, cleared at commit/rollback.
+    cur.execute(
+        "SELECT set_config('maverick.tenant', %s, true), "
+        "set_config('maverick.workspace', %s, true)",
+        (value, raw),
+    )
 
 
 def _truthy(value: object) -> bool:
@@ -1632,20 +1725,7 @@ class PostgresWorldModel:
         """
         if not self._rls:
             return
-        tenant = _active_tenant()
-        value = str(tenant) if tenant is not None else "__maverick_no_tenant__"
-        # The workspace-keyed tables store the raw id, which differs from the
-        # encoded segment for an id such as ``slack:U1``; both are bound in the
-        # same statement so neither can be left over from an earlier scope.
-        workspace = _active_workspace() if tenant is not None else None
-        raw = str(workspace) if workspace else "__maverick_no_tenant__"
-        # set_config(name, value, is_local=true) is the parameterizable form of
-        # SET LOCAL — transaction-scoped, cleared at commit/rollback.
-        cur.execute(
-            "SELECT set_config('maverick.tenant', %s, true), "
-            "set_config('maverick.workspace', %s, true)",
-            (value, raw),
-        )
+        bind_rls_scope(cur)
 
     def _preflight_rls_or_die(self) -> None:
         """Refuse to boot when enterprise auto-on RLS would silently hide rows.
@@ -1719,7 +1799,7 @@ class PostgresWorldModel:
         fail-closed policy; otherwise RLS startup raises instead of silently
         running without database-enforced tenant isolation.
         """
-        for table in _RLS_TABLES:
+        for table in (*_RLS_TABLES, *_RLS_CHILD_TABLES):
             if self._rls_policy_is_active(table):
                 continue
             try:
@@ -1763,22 +1843,8 @@ class PostgresWorldModel:
                 ) from e
 
     @staticmethod
-    def _rls_setting(table: str) -> str:
-        """The session setting ``table``'s policy compares its column with."""
-        return "maverick.workspace" if table in _RLS_TENANT_COLUMN else "maverick.tenant"
-
-    @staticmethod
     def _rls_policy_sql(table: str) -> str:
-        column = _RLS_TENANT_COLUMN.get(table, "tenant_id")
-        setting = PostgresWorldModel._rls_setting(table)
-        return (
-            f"CREATE POLICY mvk_tenant_isolation ON {table} "
-            "USING ("
-            f"  {column} = nullif(current_setting('{setting}', true), '')"
-            ") WITH CHECK ("
-            f"  {column} = nullif(current_setting('{setting}', true), '')"
-            ")"
-        )
+        return _rls_policy_statement(table)
 
     def _rls_policy_is_active(self, table: str, *, cursor=None, setting: str | None = None) -> bool:
         """Verify FORCE and the complete stock policy before skipping DDL.
@@ -1815,9 +1881,15 @@ class PostgresWorldModel:
         policy = policies[0]
         if policy[3] != "*" or policy[4] is not True or list(policy[5] or ()) != [0]:
             return False
-        column = _RLS_TENANT_COLUMN.get(table, "tenant_id")
-        setting = setting or PostgresWorldModel._rls_setting(table)
-        expected = f"({column}=nullif(current_setting('{setting}'::text,true),''::text))"
+        if table in _RLS_CHILD_TABLES:
+            parent, key = _RLS_CHILD_TABLES[table]
+            expected = (f"(exists(select1from{parent}pwhere((p.id={table}.{key})and"
+                        "(p.tenant_id=nullif(current_setting('maverick.tenant'::text,true),"
+                        "''::text)))))")
+        else:
+            column = _RLS_TENANT_COLUMN.get(table, "tenant_id")
+            setting = setting or _rls_setting(table)
+            expected = f"({column}=nullif(current_setting('{setting}'::text,true),''::text))"
         return all("".join(str(expr).lower().split()) == expected for expr in policy[6:8])
 
     @staticmethod

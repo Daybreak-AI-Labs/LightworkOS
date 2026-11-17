@@ -179,3 +179,49 @@ def test_world_learning_store_isolates_tenants_on_live_postgres(monkeypatch, pos
                 "DELETE FROM harness_addenda WHERE tenant_id IN "
                 "('iso_alpha', 'iso_beta')"
             )
+
+
+@pytest.mark.skipif(not _DSN, reason="MAVERICK_PG_DSN not set (no Postgres service)")
+def test_world_learning_store_works_under_forced_row_level_security(monkeypatch, postgres_test_dsn):
+    """With row-level security on, the learning tables carry the world's row
+    policies. The store binds its transaction to the workspace, so each
+    workspace reads and writes its own rows as a login the policies apply
+    to, and raw SQL in one workspace's scope sees nothing of the other's."""
+    psycopg = pytest.importorskip("psycopg")
+    import uuid
+
+    from maverick.world_model_backends.postgres import PostgresWorldModel, bind_rls_scope
+    from psycopg import sql
+    from psycopg.conninfo import make_conninfo
+
+    role, password = "mvk_lrn_" + uuid.uuid4().hex[:10], uuid.uuid4().hex
+    monkeypatch.setenv("MAVERICK_PG_RLS", "1")
+    PostgresWorldModel(dsn=postgres_test_dsn).close()  # installs and forces the policies
+    with psycopg.connect(postgres_test_dsn, autocommit=True) as admin:
+        admin.execute(sql.SQL("CREATE ROLE {} LOGIN PASSWORD {} NOSUPERUSER NOBYPASSRLS").format(
+            sql.Identifier(role), sql.Literal(password)))
+        for grant in ("GRANT USAGE, CREATE ON SCHEMA public TO {}",
+                      "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {}"):
+            admin.execute(sql.SQL(grant).format(sql.Identifier(role)))
+    login = make_conninfo(postgres_test_dsn, user=role, password=password)
+    monkeypatch.setattr(ls, "_postgres", lambda: True)
+    monkeypatch.setenv("MAVERICK_PG_DSN", login)
+    # The world's migrations made the tables; the learning schema check needs
+    # the owner, which this login is not.
+    monkeypatch.setattr(ls, "_pg_schema_ready", {(os.getpid(), login)})
+    try:
+        _under("iso_alpha", ls.write_addenda_db, {"M": "alpha"})
+        _under("iso_beta", ls.write_addenda_db, {"M": "beta"})
+        assert _under("iso_alpha", ls.load_addenda_db) == {"M": "alpha"}
+        assert _under("iso_beta", ls.load_addenda_db) == {"M": "beta"}
+
+        def raw_rows():
+            with psycopg.connect(login) as conn, conn.cursor() as cur:
+                bind_rls_scope(cur)
+                cur.execute("SELECT block FROM harness_addenda")
+                return cur.fetchall()
+        assert _under("iso_alpha", raw_rows) == [("alpha",)]
+    finally:
+        with psycopg.connect(postgres_test_dsn, autocommit=True) as admin:
+            admin.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(role)))
+            admin.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(role)))

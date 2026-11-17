@@ -33,7 +33,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from .postgres import _RLS_TABLES, _RLS_TENANT_COLUMN
+from .postgres import _RLS_RAW_TENANT_TABLES, _RLS_TABLES, _RLS_TENANT_COLUMN
 
 _EMPTY_TENANT_TABLES = ("event_goal_admissions", "event_trigger_batches")
 # Unbound writers stamp the empty string, not NULL, in these tables (the event
@@ -58,13 +58,15 @@ def _stored_tenant(table: str, tenant_id: str) -> str:
     """The value the backend itself writes for ``tenant_id`` in ``table``.
 
     ``tenant_id`` columns hold the path-encoded segment
-    (``paths.current_tenant_strict``); the workspace-keyed tables hold the raw
-    id. Binding anything else assigns rows to a value no tenant queries with.
+    (``paths.current_tenant_strict``); the workspace-keyed and learning-store
+    tables hold the raw id. Binding anything else assigns rows to a value no
+    tenant queries with.
     """
     from ..paths import _tenant_segment, canonical_tenant_id
 
     canonical = canonical_tenant_id(tenant_id.strip())
-    return canonical if table in _RLS_TENANT_COLUMN else _tenant_segment(canonical)
+    raw = table in _RLS_TENANT_COLUMN or table in _RLS_RAW_TENANT_TABLES
+    return canonical if raw else _tenant_segment(canonical)
 
 def resolve_dsn(dsn: str | None = None) -> str:
     """Resolve the Postgres DSN: explicit arg > ``MAVERICK_PG_DSN`` > config

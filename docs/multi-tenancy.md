@@ -127,8 +127,8 @@ shares world-model rows and enables database-enforced tenant isolation, but it
 does not share every flow, A2A, audit, learning, and policy store. Keep one
 dashboard/serve replica and scale remote workers separately — see
 [`deploy/postgres/README.md`](https://github.com/Daybreak-AI-Labs/LightworkOS/blob/main/deploy/postgres/README.md). Row-level security
-(`MAVERICK_PG_RLS=1`) adds a database-side check of the tenant boundary on the
-tables that carry a tenant column; "What row-level security covers" below says
+(`MAVERICK_PG_RLS=1`) adds a database-side check of the tenant boundary on
+every table that holds a workspace's records; "What row-level security covers" below says
 what that includes and what it does not.
 
 ### Records saved before workspaces were used
@@ -213,20 +213,38 @@ some remain; a superuser still counts them.
 
 #### What row-level security covers
 
-- **Covered:** the 16 tables with a tenant column (`goals`, `facts`,
-  `conversations`, `approvals`, `processed_messages`, `projects`,
-  `fact_history`, `erasure_receipts`, `approval_audit_outbox`,
-  `attachment_submissions`, `event_goal_admissions`, `event_trigger_batches`,
-  `webhook_subscriptions`, `webhook_deliveries`, `deadline_alerts`,
-  `encryption_migrations`). The policy is enabled **and forced**, so it also
-  applies to the role that owns the tables. A statement with no tenant filter
-  cannot read, change or delete another tenant's rows there, or rows with no
-  tenant, and cannot move a row to another tenant.
-- **Not covered:** tables with no tenant column, among them `goal_events`,
-  `artifacts`, `questions`, `episodes`, `signoffs`, `turns`, `messages`,
-  `attachments` and `share_links`. They have no policy. Lightwork scopes them
-  through their parent goal or conversation in its own queries, and nothing in
-  the database stops a query that leaves that filter out.
+- **Covered:** every table that holds a workspace's records. The 21 tables
+  with a tenant column (`goals`, `facts`, `conversations`, `approvals`,
+  `processed_messages`, `projects`, `fact_history`, `erasure_receipts`,
+  `approval_audit_outbox`, `attachment_submissions`, `event_goal_admissions`,
+  `event_trigger_batches`, `webhook_subscriptions`, `webhook_deliveries`,
+  `deadline_alerts`, `encryption_migrations`, `approval_checks` and the four
+  learning-store tables `harness_*`) compare it with the workspace. The 13
+  child tables with no tenant column (`goal_events`, `episodes`, `messages`,
+  `questions`, `artifacts`, `attachments`, `share_links`, `signoffs`,
+  `goal_origins`, `goal_mutation_receipts`, `decision_requests`,
+  `approval_signoffs` and `turns`) check that their parent goal, approval or
+  conversation belongs to the workspace, by primary key. The policy is enabled
+  **and forced**, so it also applies to the role that owns the tables. A
+  statement with no tenant filter cannot read, change or delete another
+  tenant's rows, or rows with no tenant, and cannot move a row or add a child
+  row under another tenant's parent.
+- **Not covered, on purpose:** the deployment-wide tables `halt`,
+  `provider_spend`, `provider_cap_receipts`, `provider_operation_attempts`,
+  `provider_operation_attempt_backfill`, `rate_events` and
+  `schema_migrations`. They hold no workspace's records. A test lists every
+  table in the schema and fails when a new one has neither a policy nor a
+  place on this list.
+- **Cost.** A child row costs one primary-key lookup of its parent. Reading
+  50 events of one goal took 0.14 ms instead of 0.08 ms on a test machine
+  (100,000 events, 200,000 goals). Counting all 100,000 events took 85 ms
+  instead of 13 ms; Lightwork's own reads go through the parent, so they
+  pay the small cost.
+- **Upgrading a database that already has RLS on.** Migration 56 adds the new
+  policies when the table owner starts Lightwork. A login that does not own
+  the tables cannot run it, so start once as the owner after upgrading. On a
+  database without RLS it changes nothing; turning RLS on later installs every
+  policy.
 - **The login matters.** A superuser or a role with `BYPASSRLS` skips every
   policy. Lightwork reports such a login in the readiness details and refuses
   to start with it in enterprise mode. Use a dedicated login that is neither.
