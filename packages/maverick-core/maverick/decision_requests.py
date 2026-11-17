@@ -411,12 +411,13 @@ def _from_row(row, store) -> Decision:
     )
 
 
-def _select(world, where: str, params: tuple = ()) -> list[Decision]:
+def _select(world, where: str, params: tuple = (), *, limit: int | None = None) -> list[Decision]:
     store = _store(world)
     columns = ", ".join(f"d.{c.strip()}" for c in _COLUMNS.split(","))
     rows = world.tenant_query(
         f"SELECT {columns} FROM decision_requests d JOIN goals g ON g.id = d.goal_id "
-        f"WHERE {{tenant_exact:g.tenant_id}} AND {where} ORDER BY d.id", params)
+        f"WHERE {{tenant_exact:g.tenant_id}} AND {where} ORDER BY d.id"
+        + ("" if limit is None else f" LIMIT {max(1, int(limit))}"), params)
     return [_from_row(row, store) for row in rows]
 
 
@@ -448,8 +449,13 @@ def for_goal(world, goal_id: int) -> list[Decision]:
     return _select(world, "d.goal_id = ?", (int(goal_id),))
 
 
-def list_open(world, *, limit: int = 200) -> list[Decision]:
-    return _select(world, "d.status = 'open'")[: max(1, int(limit))]
+def list_open(world, *, limit: int = 200, requested_by: str | None = None) -> list[Decision]:
+    """Open decisions, oldest first; only ``requested_by``'s runs when given.
+    The filter runs in the query, before the limit."""
+    if requested_by is None:
+        return _select(world, "d.status = 'open'", limit=limit)
+    return _select(world, "d.status = 'open' AND d.requested_by = ?", (str(requested_by),),
+                   limit=limit)
 
 
 def _goal_scope(store, world, alias: str = "g") -> tuple[str, tuple]:

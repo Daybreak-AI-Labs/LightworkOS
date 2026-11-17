@@ -240,6 +240,13 @@ def test_postgres_keeps_a_decision_inside_its_named_workspace(postgres_test_dsn,
             assert hidden.value.reason == "not_found"
         with tenant_scope(tenant="tenant-a"):
             assert [d.id for d in dr.list_open(world)] == [decision.id]
+            # The owner filter runs in the query, before the limit.
+            other = world.create_goal("someone else's run", "", owner="bob")
+            world.set_goal_status(other, "blocked")
+            dr.request(world, other, **dr.validate(_REQUEST))
+            assert [d.id for d in dr.list_open(world, limit=1)] == [decision.id]
+            assert [d.requested_by for d in dr.list_open(world, limit=1, requested_by="bob")] \
+                == ["bob"]
             outcome = dr.answer(world, decision.id, 2, actor="alice", is_admin=False)
             assert outcome["resume"] and world.get_goal(gid).status == "pending"
             assert '"option": 2' in dr.brief_block(world, gid)

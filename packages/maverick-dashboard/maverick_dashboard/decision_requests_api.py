@@ -54,7 +54,7 @@ def visible(request: Request, world=None) -> list[dr.Decision]:
     world = world if world is not None else _world()
     dr.expire_due(world)
     who, admin = actor(request), is_admin(request)
-    return [d for d in dr.list_open(world) if admin or d.requested_by == who]
+    return dr.list_open(world, requested_by=None if admin else who)
 
 
 def waiting_count(request: Request, world=None) -> int:
@@ -70,17 +70,18 @@ def waiting_count(request: Request, world=None) -> int:
 
 
 def selected(request: Request, decision_id: int, world=None) -> dr.Decision:
-    """One open decision this person may read, or a plain 404."""
+    """One open decision this person may read, looked up by its id, or a plain 404."""
+    require_permission(request, "operate")
     world = world if world is not None else _world()
-    found = next((d for d in visible(request, world) if d.id == int(decision_id)), None)
-    if found is None:
-        closed = dr.get(world, int(decision_id))
-        if (closed is not None and closed.status == "closed"
-                and (is_admin(request) or closed.requested_by == actor(request))):
+    dr.expire_due(world)
+    found = dr.get(world, int(decision_id))
+    if found is not None and (is_admin(request) or found.requested_by == actor(request)):
+        if found.status == "open":
+            return found
+        if found.status == "closed":
             raise HTTPException(409, "This run has ended, so this decision no longer applies. "
                                      "Nothing changed.")
-        raise HTTPException(404, "This decision is no longer waiting, or it is not yours to read.")
-    return found
+    raise HTTPException(404, "This decision is no longer waiting, or it is not yours to read.")
 
 
 def answered_by_me(request: Request, decision_id: int, world=None) -> dr.Decision | None:

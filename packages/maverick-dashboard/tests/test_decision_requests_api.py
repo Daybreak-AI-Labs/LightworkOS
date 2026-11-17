@@ -151,3 +151,20 @@ def test_an_ended_run_says_so_and_a_stranger_still_gets_the_generic_refusal(env)
 
     assert owner.status_code == 409 and "This run has ended" in owner.text
     assert stranger.status_code == 404 and "not yours to read" in stranger.text
+
+
+def test_a_backlog_of_other_peoples_decisions_never_hides_your_own(env):
+    client, world, _goal, _decision, _who, _started = env
+    others = world.create_goal("Someone else's run", "", owner="user:bob")
+    world.set_goal_status(others, "blocked")
+    for _ in range(200):
+        dr.request(world, others, **dr.validate(_REQUEST))
+    mine = world.create_goal("My later run", "", owner="user:alice")
+    world.set_goal_status(mine, "blocked")
+    late = dr.request(world, mine, **dr.validate(_REQUEST))
+
+    listed = [d["id"] for d in client.get("/api/v1/decisions").json()["decisions"]]
+    assert late.id in listed and len(listed) == 2
+    assert native.selected(_request(), late.id).id == late.id
+    response = client.post(f"/api/v1/decisions/{late.id}/answer", json={"option": 1})
+    assert response.status_code == 200, response.text
