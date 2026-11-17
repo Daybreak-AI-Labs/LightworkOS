@@ -114,6 +114,10 @@
   {{ empty_state('No requests you can open',
                  "The waiting requests above come from colleagues' private tasks. Decisions on requests you made are listed further down.",
                  action_label='See decisions on your requests', action_href='#request-decision-history') }}
+  {% elif (decision_count | default(0)) %}
+  {{ empty_state('No actions waiting for approval',
+                 'The decisions above are waiting for you. Requests from agents that need a person to approve them appear here.',
+                 action_label='See decisions on your requests', action_href='#request-decision-history') }}
   {% else %}
   {{ empty_state('Nothing needs your decision right now',
                  'Requests from agents that need a person to approve them appear here. Decisions on requests you made are listed further down.',
@@ -290,8 +294,11 @@
     }
     function showEmptyIfNeeded() {
       if (queue.querySelector('article.approval-item')) return;
-      const title = 'Nothing needs your decision right now';
-      const body = 'Requests from agents that need a person to approve them appear here. Decisions on requests you made are listed further down.';
+      const state = document.getElementById('approvals-current-state');
+      const deciding = state && (parseInt(state.dataset.decisionCount, 10) || 0) > 0;
+      const title = deciding ? 'No actions waiting for approval' : 'Nothing needs your decision right now';
+      const body = deciding ? 'The decisions above are waiting for you. Requests from agents that need a person to approve them appear here.'
+        : 'Requests from agents that need a person to approve them appear here. Decisions on requests you made are listed further down.';
       let empty;
       if (window.mvEmpty) empty = window.mvEmpty(title, body, { label: 'See decisions on your requests', href: '#request-decision-history' });
       else { empty = document.createElement('p'); empty.className = 'muted'; empty.textContent = title + '.'; }

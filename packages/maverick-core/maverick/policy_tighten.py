@@ -38,6 +38,10 @@ import math
 from collections.abc import Sequence
 from typing import Any
 
+from .decision_requests import DEFAULT_ADMIN_AREAS as _DECISION_ADMIN_AREAS
+from .decision_requests import DEFAULT_AREAS as _DECISION_AREAS
+from .decision_requests import EXPIRY_CONTRACT as _DECISION_EXPIRY
+
 _RISK_ORDER = ("low", "medium", "high", None)
 
 
@@ -279,6 +283,14 @@ TENANT_RULES: dict[str, dict[str, tuple]] = {
         "cpus": _consumer("sandbox.cpus"),
         "long_command_timeout": _consumer("sandbox.long_command_timeout", 600),
         "timeout": _consumer("sandbox.timeout", 60),
+    },
+    # Decision requests (maverick.decision_requests): a workspace may add areas
+    # where a run must ask a person, or areas that need an administrator, and
+    # may shorten how long a decision waits; it may never remove an area.
+    "approval": {
+        "decision_areas": ("deny_list", list(_DECISION_AREAS), (), None),
+        "decision_admin_areas": ("deny_list", list(_DECISION_ADMIN_AREAS), (), None),
+        "decision_expiry_hours": ("limit", _DECISION_EXPIRY.default, (), None),
     },
     "security": {
         "allowed_tools": _consumer("security.allowed_tools"),

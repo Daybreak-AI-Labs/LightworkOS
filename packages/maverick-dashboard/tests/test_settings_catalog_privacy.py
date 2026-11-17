@@ -128,6 +128,10 @@ SAMPLES: dict[str, object] = {
     "consent_preferences.storage.dsn_secret_ref": "$ACME_CONSENT_DSN",  # pragma: allowlist secret
     # Letting the person who asked approve their own risky request loosens it.
     "approval.separate_approver": "never",
+    # Adding an area makes runs ask a person more often: a tightening.
+    "approval.decision_areas": ["security", "workspace_boundaries", "data_erasure_retention",
+                                "spending", "user_facing", "governance", "legal"],
+    "approval.decision_admin_areas": ["security", "governance"],
 }
 
 # Other settings a switch needs before the module's reader accepts it.
@@ -361,7 +365,10 @@ def _weaken(setting):
             return (shown - 1, shown)
         return (None, shown + 1)
     if setting.weaker == "shrink":
-        return (["gdpr", "eu_ai_act"], ["gdpr"])
+        if setting.id == "compliance.profiles":
+            return (["gdpr", "eu_ai_act"], ["gdpr"])
+        first, second = (value for value, _label in setting.choices[:2])
+        return ([first, second], [first])
     return (None, _sample(setting))
 
 

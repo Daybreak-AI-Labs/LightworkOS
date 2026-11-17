@@ -88,6 +88,13 @@ link and unlink is written to the audit log.
   while the undo window (`[approval] undo_grace_seconds`, default 30 s) is
   open; an undo returns the request to pending and the next decision is a
   new audit round. An expired or already decided request is refused.
+* **Decision cards** — when a run asks a person to choose, the question, its
+  options with what each does, the run's recommendation and the decide-by time
+  appear in the approvals channel with one button per option. Only the
+  person who started the run can answer from Slack; a decision that needs a
+  workspace administrator has no buttons and is answered on the dashboard.
+  The answer is audited as `decision_answered` with `channel = slack`, and the
+  run continues with the chosen option.
 * **Slash commands**: `/lightwork status`, `/lightwork approve <n> [confirm]`,
   `/lightwork reject <n> [confirm]`, `/lightwork undo <n>`,
   `/lightwork ask <what you need>`, `/lightwork link <code>`,

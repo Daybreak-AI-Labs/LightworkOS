@@ -1667,10 +1667,17 @@ def search_goals(request: Request, q: str, limit: int = 50, response: Response =
 
 @router.get("/goals/{goal_id}", response_model=GoalOut)
 def get_goal(request: Request, goal_id: int) -> GoalOut:
-    g = _world().get_goal(goal_id)
+    w = _world()
+    g = w.get_goal(goal_id)
     if g is None:
         raise HTTPException(status_code=404, detail="no such goal")
     assert_goal_access(request, g)
+    if g.status == "blocked":
+        # A run waiting on a decision that has expired stops when it is read.
+        from maverick.decision_requests import expire_due
+
+        if expire_due(w, goal_id=goal_id):
+            g = w.get_goal(goal_id) or g
     return _to_goal_out(g)
 
 
@@ -12332,7 +12339,10 @@ def approvals_waiting_count(request: Request, response: Response) -> dict:
     opened = {a.id for a in pending if can_read_approval(request, a, w)}
     # A private request still waits on someone the rules let decide it in chat.
     private = waiting_in_chat([a for a in pending if a.id not in opened], _supervisor(request) or "")
-    return {"waiting": len(opened) + private + len(pending_for_request(request)["items"])}
+    from .decision_requests_api import waiting_count
+
+    return {"waiting": len(opened) + private + len(pending_for_request(request)["items"])
+            + waiting_count(request, w)}
 
 
 def _approval_api_row(approval) -> dict:
@@ -14680,6 +14690,7 @@ from .data_use_provider_api import router as data_use_provider_router  # noqa: E
 from .data_use_provider_audit_api import (  # noqa: E402
     router as data_use_provider_audit_router,
 )
+from .decision_requests_api import router as decision_requests_router  # noqa: E402
 from .ediscovery_api import router as ediscovery_router  # noqa: E402
 from .finance_api import router as finance_operations_router  # noqa: E402
 from .governance_agent_cross_suite_context_api import (  # noqa: E402
@@ -14737,6 +14748,7 @@ from .trust_center_branding_api import router as trust_center_branding_router  #
 router.include_router(ai_governance_loop_router)
 router.include_router(flow_action_episodes_router)
 router.include_router(copilot_operations_router)
+router.include_router(decision_requests_router)
 from .intent_value_api import router as intent_value_router  # noqa: E402
 
 router.include_router(intent_value_router)

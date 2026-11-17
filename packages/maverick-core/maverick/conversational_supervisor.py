@@ -294,6 +294,11 @@ class Supervisor:
         if intent == "resume":
             if goal.status != "blocked":
                 return f"Goal {goal.id} is {goal.status}, not paused/blocked. Nothing changed."
+            from .decision_requests import resume_refusal
+
+            waiting = resume_refusal(self.world, goal.id)
+            if waiting:
+                return f"{waiting} Nothing changed."
             self.world.set_goal_status(goal.id, "pending")
             self.world.append_event(goal.id, "supervisor", "supervision", "resumed by operator")
             return f"Resumed goal {goal.id} ('{goal.title}') — set to pending."

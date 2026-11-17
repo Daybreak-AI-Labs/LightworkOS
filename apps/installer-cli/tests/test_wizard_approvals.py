@@ -4,14 +4,19 @@ from __future__ import annotations
 
 
 def test_pick_approvals_defaults(monkeypatch):
+    from maverick.decision_requests import DEFAULT_AREAS
     from maverick_installer import wizard
 
     monkeypatch.setattr(wizard, "_q_text", lambda *_a, **kw: kw["default"])
     monkeypatch.setattr(wizard, "_q_confirm", lambda *_a, **kw: kw["default"])
     monkeypatch.setattr(wizard, "_q_select", lambda *_a, **kw: kw["default"])
+    monkeypatch.setattr(wizard, "_q_checkbox", lambda *_a, **kw: kw["default"])
     assert wizard.pick_approvals() == {"undo_grace_seconds": 30, "require_acknowledgement": True,
                                        "separate_approver": "when_available",
-                                       "record_checks": True, "check_retention_days": 90}
+                                       "record_checks": True, "check_retention_days": 90,
+                                       "decision_areas": list(DEFAULT_AREAS),
+                                       "decision_admin_areas": ["governance"],
+                                       "decision_expiry_hours": 72}
 
 
 def test_pick_approvals_bounds_and_choices(monkeypatch):
@@ -20,9 +25,13 @@ def test_pick_approvals_bounds_and_choices(monkeypatch):
     monkeypatch.setattr(wizard, "_q_text", lambda *_a, **_kw: "99999")
     monkeypatch.setattr(wizard, "_q_confirm", lambda *_a, **_kw: False)
     monkeypatch.setattr(wizard, "_q_select", lambda _message, choices, **_kw: choices[1])
+    monkeypatch.setattr(wizard, "_q_checkbox", lambda _message, choices, **_kw: choices[:1])
     assert wizard.pick_approvals() == {"undo_grace_seconds": 3600, "require_acknowledgement": False,
                                        "separate_approver": "always",
-                                       "record_checks": False, "check_retention_days": 90}
+                                       "record_checks": False, "check_retention_days": 90,
+                                       "decision_areas": ["security"],
+                                       "decision_admin_areas": ["security"],
+                                       "decision_expiry_hours": 720}
     monkeypatch.setattr(wizard, "_q_text", lambda *_a, **_kw: "not a number")
     assert wizard.pick_approvals()["undo_grace_seconds"] == 30
 
@@ -40,6 +49,7 @@ def test_every_separate_approver_choice_is_a_mode_the_kernel_knows(monkeypatch):
     monkeypatch.setattr(wizard, "_q_text", lambda *_a, **kw: kw["default"])
     monkeypatch.setattr(wizard, "_q_confirm", lambda *_a, **kw: kw["default"])
     monkeypatch.setattr(wizard, "_q_select", remember)
+    monkeypatch.setattr(wizard, "_q_checkbox", lambda *_a, **kw: kw["default"])
     assert wizard.pick_approvals()["separate_approver"] == "never"
     assert tuple(choice.split()[0] for choice in offered) == SEPARATE_APPROVER_MODES
 
@@ -52,6 +62,7 @@ def test_the_step_says_how_long_a_risky_step_waits(monkeypatch):
     monkeypatch.setattr(wizard, "_q_text", lambda *_a, **kw: kw["default"])
     monkeypatch.setattr(wizard, "_q_confirm", lambda *_a, **kw: kw["default"])
     monkeypatch.setattr(wizard, "_q_select", lambda *_a, **kw: kw["default"])
+    monkeypatch.setattr(wizard, "_q_checkbox", lambda *_a, **kw: kw["default"])
     wizard.pick_approvals()
     text = " ".join(printed)
     assert "30 minutes" in text and "10 minutes" in text
@@ -76,6 +87,7 @@ def test_the_record_of_approval_checks_is_asked_and_bounded(monkeypatch):
 
     monkeypatch.setattr(wizard, "_q_confirm", lambda *_a, **_kw: True)
     monkeypatch.setattr(wizard, "_q_select", lambda *_a, **kw: kw["default"])
+    monkeypatch.setattr(wizard, "_q_checkbox", lambda *_a, **kw: kw["default"])
     monkeypatch.setattr(wizard, "_q_text", lambda *_a, **_kw: "99999")
     answers = wizard.pick_approvals()
     assert answers["record_checks"] is True and answers["check_retention_days"] == 3650
@@ -93,6 +105,7 @@ def test_shared_approval_contract_matches_wizard_and_settings_page(monkeypatch):
     monkeypatch.setattr(wizard, "_q_text", lambda *_a, **kw: kw["default"])
     monkeypatch.setattr(wizard, "_q_confirm", lambda *_a, **kw: kw["default"])
     monkeypatch.setattr(wizard, "_q_select", lambda *_a, **kw: kw["default"])
+    monkeypatch.setattr(wizard, "_q_checkbox", lambda *_a, **kw: kw["default"])
     answers = wizard.pick_approvals()
 
     for path, contract in INTEGER_SETTINGS.items():

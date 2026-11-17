@@ -1519,6 +1519,38 @@ def pick_approvals() -> dict[str, Any]:
         "record_checks": bool(record_checks),
         "check_retention_days": max(INTEGER_SETTINGS["approval.check_retention_days"].minimum,
                                     min(retention, INTEGER_SETTINGS["approval.check_retention_days"].maximum)),
+        **_pick_decision_requests(),
+    }
+
+
+def _pick_decision_requests() -> dict[str, Any]:
+    """``[approval] decision_*``: where a run must ask a person to decide,
+    which of those need an administrator, and how long a decision waits."""
+    from maverick.decision_requests import AREAS, DEFAULT_ADMIN_AREAS, DEFAULT_AREAS
+
+    contract = INTEGER_SETTINGS["approval.decision_expiry_hours"]
+    console.print()
+    console.print(
+        "[dim]A run can stop and ask a person to choose between options, with its "
+        "recommendation. In the areas you pick it must ask instead of deciding alone. "
+        "The run waits, spending nothing, until someone answers on the Approvals page, "
+        "in Slack or with the CLI. If nobody answers in time, the run stops.[/dim]"
+    )
+    titles = {f"{key} - {label}": key for key, label in AREAS.items()}
+    picked = _q_checkbox(
+        "  Areas where a run must ask a person to decide",
+        list(titles), default=[t for t, key in titles.items() if key in DEFAULT_AREAS])
+    admin = _q_checkbox(
+        "  Areas whose decisions need a workspace administrator",
+        list(titles), default=[t for t, key in titles.items() if key in DEFAULT_ADMIN_AREAS])
+    hours = _safe_int(
+        _q_text("  Hours a decision waits before the run stops", default=str(contract.default)),
+        default=contract.default,
+    )
+    return {
+        "decision_areas": [titles[t] for t in picked if t in titles],
+        "decision_admin_areas": [titles[t] for t in admin if t in titles],
+        "decision_expiry_hours": max(contract.minimum, min(hours, contract.maximum)),
     }
 
 

@@ -100,6 +100,7 @@ _INTEGER_CONTRACTS = (
     IntegerSettingContract("approval.undo_grace_seconds", 30, 0, 3600,
                            ("MAVERICK_APPROVAL_UNDO_GRACE_SECONDS",)),
     IntegerSettingContract("approval.check_retention_days", 90, 1, 3650),
+    IntegerSettingContract("approval.decision_expiry_hours", 72, 1, 720),
     IntegerSettingContract("agent_tests.max_cases_per_specialist", 20, 1, 200),
     IntegerSettingContract("agent_tests.canary_percent", 0, 0, 50),
     IntegerSettingContract("durable.keep_last", 5, 1, 100),

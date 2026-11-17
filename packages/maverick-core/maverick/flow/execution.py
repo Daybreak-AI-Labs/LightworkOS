@@ -527,6 +527,12 @@ def default_agent_runner(
         dollars = clamp_task_limit(budget_dollars, configured_max_dollars())
         dollars = clamp_task_limit(allowance, dollars)
         usage = []
+        from ..decision_requests import IN_FLOW_STEP
+
+        # A flow step does not wait for a person's decision yet: the step's
+        # goal is told so instead of pausing and being retried as a failure.
+        questions: list[str] = []
+        in_flow = IN_FLOW_STEP.set(questions)
         try:
             from ..runner import run_goal_in_thread
             result = run_goal_in_thread(
@@ -544,6 +550,14 @@ def default_agent_runner(
                 f"agent step failed: {type(e).__name__}: {_safe_failure(e)}", 0.0,
                 usage[-1] if usage else 0.0,
             )
+        finally:
+            IN_FLOW_STEP.reset(in_flow)
+        if questions:
+            from ..decision_requests import FlowDecisionNeeded, flow_question_text
+
+            message = flow_question_text(questions)
+            world.set_goal_status(gid, "failed", result=message)
+            raise FlowDecisionNeeded(message)
         from ..run_outcome import GoalAdmissionRefused
 
         if (
