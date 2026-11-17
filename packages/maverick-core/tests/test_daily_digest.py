@@ -666,3 +666,12 @@ def test_a_decider_sees_only_approvals_in_their_departments(tmp_path):
     # A person's own request always shows, whatever its department.
     own = compose_digest(world, "user:bob", can_decide=True, suites=frozenset({"hr"}))
     assert {row["id"] for row in own["approvals"]} == {finance, general}
+
+
+def test_a_request_from_the_same_person_spelt_differently_is_still_theirs(tmp_path):
+    from maverick.daily_digest import _approvals
+
+    world = _world(tmp_path)
+    world.create_approval("shell", risk="high", requested_by="user:Ｓａｍ")
+    rows = _approvals(world, "user:sam", can_decide=True, now=0.0)
+    assert [row["waiting_on"] for row in rows] == ["someone else"]

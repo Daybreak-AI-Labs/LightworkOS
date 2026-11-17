@@ -577,3 +577,27 @@ def test_copilot_cannot_approve_a_protected_code_change(client, monkeypatch, tmp
     assert refused.value.status_code == 403
     assert refused.value.detail == approval_decisions.CODE_COPILOT_REFUSED
     assert world.get_approval(aid).status == "pending"
+
+
+def test_copilot_and_my_work_read_the_requester_spelt_differently_as_the_requester(
+        client, monkeypatch, tmp_path):
+    from maverick_dashboard import app as dash_app
+    from maverick_dashboard import approval_queue_operations as native
+    from maverick_dashboard import me_api
+    from maverick_dashboard import product_operations_approvals as copilot
+    world = dash_app._world()
+    aid = world.create_approval("shell", risk="high", approvals_required=2,
+                                requested_by="user:Ｓａｍ")
+    row = world.get_approval(aid)
+    monkeypatch.delenv("MAVERICK_ALLOW_SELF_APPROVAL", raising=False)
+    monkeypatch.setattr(native, "owned", lambda request, approval_id, status=None: (world, row))
+    monkeypatch.setattr(native, "actor", lambda request: "user:sam")
+    monkeypatch.setattr(native, "public", lambda world, row, who: {})
+    monkeypatch.setattr(native, "revision", lambda world, row, who: "r1")
+    monkeypatch.setattr(copilot, "card_content", lambda row: {
+        "status": "current", "needs_typed_confirmation": False})
+    state = copilot.snapshot(object(), {"kind": "approval", "id": aid}, status="approved")
+    assert state.blocked == "You asked for this, so other people must approve it."
+    from maverick_dashboard import content_access
+    monkeypatch.setattr(content_access, "can_read_approval", lambda *a, **k: False)
+    assert me_api._waiting_on(object(), world, "user:sam", {"id": aid}, can_decide=False) == "others"

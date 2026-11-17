@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import HTTPException
 from maverick.approval_cards import digest
 from maverick.channel_approvals import CODE_PROTECTED_PROVENANCE, card_content
+from maverick.safety.dual_control import includes_person
 from pydantic import Field
 
 from . import approval_queue_operations as native
@@ -49,7 +50,8 @@ def snapshot(request, selection, *, status=None):
             from .approval_decisions import CODE_COPILOT_REFUSED
 
             blocked = CODE_COPILOT_REFUSED
-        elif status == "approved" and row.approvals_required > 1 and row.requested_by == who:
+        elif (status == "approved" and row.approvals_required > 1
+              and includes_person([row.requested_by], who)):
             from maverick.safety.dual_control import allow_self_approval
 
             if not allow_self_approval():
