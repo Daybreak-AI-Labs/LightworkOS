@@ -1994,7 +1994,7 @@ def test_the_factory_settings_are_read_strictly(tmp_path, monkeypatch):
         config.reset_config_cache()
 
 
-def _second(model="openai:second-model", report=None, charge=None):
+def _second(model="openai:gpt-second", report=None, charge=None):
     """A stand-in for the second checker: records each look; ``charge`` is the
     budget it spends from, as the real one does."""
     calls = []
@@ -2009,7 +2009,7 @@ def _second(model="openai:second-model", report=None, charge=None):
 
 
 def _protected_repo(upstream, monkeypatch, patterns=("app.py",)):
-    monkeypatch.setattr(features, "_author_model", lambda: "anthropic:author-model")
+    monkeypatch.setattr(features, "_author_model", lambda: "anthropic:claude-author")
     return vault.register("pricing", str(upstream), protected_paths=list(patterns))
 
 
@@ -2055,7 +2055,7 @@ def test_the_second_checker_runs_only_for_protected_changes_and_is_charged(upstr
     finding = {"findings": [{"severity": "blocker", "what": "the price can go negative"}]}
     second, calls = _second(report=finding, charge=budget)
     normal = lambda gid, copy: {"findings": []}  # noqa: E731
-    normal.model = "gemini:normal-checker"
+    normal.model = "gemini:gemini-normal"
     run, _ = _rounds(lambda work: (work / "notes.md").write_text("idea\n"))
     features.propose(world, "pricing", "Notes", "", run, checker=normal,
                      protected_checker=second, budget=budget)
@@ -2079,7 +2079,7 @@ def test_the_second_checker_runs_only_for_protected_changes_and_is_charged(upstr
     def normal_spends(gid, copy):
         spent.tool_calls = 5
         return {"findings": []}
-    normal_spends.model = "gemini:normal-checker"
+    normal_spends.model = "gemini:gemini-normal"
     q = features.propose(world, "pricing", "Discount", "", run, checker=normal_spends,
                          protected_checker=second, budget=spent, owner="user:starter")
     assert calls == [] and q["approval_id"] is None
@@ -2093,11 +2093,11 @@ def test_an_unset_or_same_family_second_checker_cannot_be_approved(upstream, tmp
     _protected_repo(upstream, monkeypatch)
     world = WorldModel(tmp_path / "world.db")
     normal = lambda gid, copy: {"findings": []}  # noqa: E731
-    normal.model = "gemini:normal-checker"
+    normal.model = "gemini:gemini-normal"
     for second, problem in ((None, "unset"),
-                            (_second("anthropic:other")[0], "same_family"),      # the author's
-                            (_second("gemini:other")[0], "same_family"),         # a checker's
-                            (_second("openai:x")[0], None)):
+                            (_second("anthropic:claude-other")[0], "same_family"),      # the author's
+                            (_second("gemini:gemini-other")[0], "same_family"),         # a checker's
+                            (_second("openai:gpt-x")[0], None)):
         run, _ = _rounds(_passing)
         p = features.propose(world, "pricing", "Discount", "", run, checker=normal,
                              protected_checker=second, owner="user:starter")
@@ -2276,7 +2276,7 @@ def test_the_installations_own_repository_is_refused_then_protected(upstream, tm
     wheel.mkdir(parents=True)
     assert features._installation_checkout(wheel) is None      # a wheel in its venv is not
     monkeypatch.setattr(features, "_installation_checkout", lambda package_dir=None: install)
-    monkeypatch.setattr(features, "_author_model", lambda: "anthropic:author-model")
+    monkeypatch.setattr(features, "_author_model", lambda: "anthropic:claude-author")
     world = WorldModel(tmp_path / "world.db")
     mirror = tmp_path / "mirror.git"                            # same history, another address
     subprocess.run(["git", "clone", "-q", "--bare", str(upstream), str(mirror)], check=True)
@@ -2312,7 +2312,7 @@ def test_copilot_words_say_what_a_protected_change_still_needs(upstream, tmp_pat
     world, p = _protected_proposal(upstream, tmp_path, monkeypatch)
     said = features.protected_status(world, p)
     assert said.startswith("Protected, because it changes 1 protected path(s).")
-    assert "0 of 2 so far" in said and "openai:second-model, looked at this version" in said
+    assert "0 of 2 so far" in said and "openai:gpt-second, looked at this version" in said
     world.decide_approval(p["approval_id"], "approved", decided_by="user:alice")
     assert "1 of 2 so far" in features.protected_status(world, p)
 
@@ -2321,7 +2321,7 @@ def test_copilot_words_say_what_a_protected_change_still_needs(upstream, tmp_pat
 
 def test_protection_is_checked_again_when_merging_pushing_and_renewing(upstream, tmp_path,
                                                                         monkeypatch):
-    monkeypatch.setattr(features, "_author_model", lambda: "anthropic:author-model")
+    monkeypatch.setattr(features, "_author_model", lambda: "anthropic:claude-author")
     vault.register("pricing", str(upstream))
     world = WorldModel(tmp_path / "world.db")
     run, _ = _rounds(_passing)
@@ -2398,10 +2398,14 @@ def test_the_second_checker_family_reads_through_gateways(upstream, tmp_path, mo
     family = features.model_family
     for model in ("anthropic:claude-x", "openrouter:anthropic/claude-3.5", "claude-3-opus",
                   "bedrock:us.anthropic.claude-3-5-sonnet", "vertex:claude-sonnet-4",
-                  "litellm:claude-haiku", "anthropic:author-model"):
+                  "litellm:claude-haiku", "anthropic:claude-author"):
         assert family(model) == "anthropic", model
     assert family("openrouter:openai/gpt-4o") == family("openai:o3-mini") == "openai"
-    assert family("vertex:gemini-2.5-pro") == family("gemini:other") == "google"
+    assert family("vertex:gemini-2.5-pro") == family("gemini:gemini-other") == "google"
+    # An unknown name never borrows its provider's family; a fine-tune reads as its base.
+    for unknown in ("openai:my-ft", "anthropic:author-model", "gemini:other"):
+        assert family(unknown) is None, unknown
+    assert family("ft:gpt-4o-mini:acme::abc123") == family("openai:ft:gpt-4o:acme:x:1") == "openai"
     assert family("ollama:llama3.1") == family("openai:llama-3-70b") == "meta"
     for unknown in ("my-local", "ollama:my-model", "openrouter:some/thing",
                     "openrouter:metaculus-bot", "azure:phind",              # no anchored name
@@ -2409,7 +2413,7 @@ def test_the_second_checker_family_reads_through_gateways(upstream, tmp_path, mo
                     "openrouter:deepseek/deepseek-r1-distill-llama-70b",
                     "openrouter:nousresearch/hermes-3-llama-3.1"):
         assert family(unknown) is None, unknown
-    assert family("openai:commander-x") == "openai"              # "commander" is not "command"
+    assert family("openai:commander-x") is None                  # "commander" is not "command"
     assert family("openrouter:x/command-a") == "cohere"
     assert family("groq:openai/gpt-oss-120b") == family("openai:o3") == "openai"
     _protected_repo(upstream, monkeypatch)                    # the author is anthropic:...
@@ -2560,7 +2564,7 @@ def test_two_people_on_postgres_never_the_starter_or_one_person_twice(upstream, 
 
 def test_a_change_whose_base_left_the_main_code_never_merges_or_pushes(upstream, tmp_path,
                                                                        monkeypatch):
-    monkeypatch.setattr(features, "_author_model", lambda: "anthropic:author-model")
+    monkeypatch.setattr(features, "_author_model", lambda: "anthropic:claude-author")
     vault.register("pricing", str(upstream))
     world = WorldModel(tmp_path / "world.db")
     run, _ = _rounds(_passing)

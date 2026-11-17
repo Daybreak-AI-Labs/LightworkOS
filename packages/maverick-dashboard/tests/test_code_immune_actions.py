@@ -500,10 +500,10 @@ def _protected_change(monkeypatch, tmp_path):
     from maverick.codebase import features, vault
     from maverick_dashboard import app as dash_app
     _code_on(monkeypatch)
-    monkeypatch.setattr(features, "_author_model", lambda: "anthropic:author")
+    monkeypatch.setattr(features, "_author_model", lambda: "anthropic:claude-author")
     vault.register("core", str(_source_repo(tmp_path)), protected_paths=["a.py"])
     second = lambda gid, copy: {"findings": []}  # noqa: E731
-    second.model = "openai:second"
+    second.model = "openai:gpt-second"
     world = dash_app._world()
     p = features.propose(world, "core", "Change the value", "",
                          lambda gid, work: (work / "a.py").write_text("VALUE = 2\n"),

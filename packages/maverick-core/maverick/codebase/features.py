@@ -1091,14 +1091,6 @@ def _checker_record(checker: Checker, n: int, author: str | None) -> dict:
     return {"n": n, "model": model, "same_family": same, "commit": None}
 
 
-# Gateways and hosts that serve other vendors' models: the family comes from
-# the model's own name after them, never from the gateway.
-_GATEWAYS = frozenset({
-    "openrouter", "bedrock", "vertex", "vertex_ai", "vertexai", "litellm", "azure", "azure_ai",
-    "together", "together_ai", "fireworks", "fireworks_ai", "groq", "ollama", "deepinfra",
-    "replicate", "anyscale", "perplexity", "cloudflare", "huggingface", "hf", "nvidia", "nim",
-    "sagemaker", "watsonx", "vllm", "tgi", "lmstudio", "cerebras", "sambanova", "baseten",
-    "openai_compatible", "openai-compatible", "custom", "local", "llamacpp", "llama_cpp"})
 # family -> the names its models start with (a whole name: followed by the
 # end, a separator or a version number, never more letters).
 _FAMILIES = {
@@ -1123,11 +1115,6 @@ _STEM = re.compile(r"(" + "|".join(sorted(map(re.escape, _NAME), key=len, revers
 _ORGS = frozenset({"anthropic", "openai", "google", "meta", "meta-llama", "mistralai", "mistral",
                    "deepseek", "deepseek-ai", "qwen", "alibaba", "cohere", "x-ai", "xai",
                    "microsoft", "amazon", "moonshotai", "z-ai", "zhipu", "ai21"})
-_PROVIDER_FAMILIES = {"anthropic": "anthropic", "claude": "anthropic", "openai": "openai",
-                      "google": "google", "gemini": "google", "mistral": "mistral",
-                      "cohere": "cohere", "xai": "xai", "deepseek": "deepseek"}
-
-
 def model_family(model: object) -> str | None:
     """The vendor family of a model spec, or None when it cannot be told.
 
@@ -1136,13 +1123,17 @@ def model_family(model: object) -> str | None:
     region and vendor (``us.anthropic.``): it must START with a known model
     name (``claude-``, ``gpt-``, ``o3``, ``gemini-``, ``llama3``...). A name
     that also names another vendor's model anywhere (a distillation) cannot
-    be compared. Without a known name, a first-party provider prefix
-    (``anthropic:``, ``openai:``) decides. Stricter than
+    be compared. A name it does not know cannot be compared either, whatever
+    its provider prefix (``openai:my-ft``); OpenAI's fine-tune form
+    ``ft:<base model>:...`` reads as its base model. Stricter than
     :func:`maverick.verifier._same_family`, which other callers keep."""
     text = str(model or "").strip().lower()
     if not text:
         return None
     provider, _, name = text.partition(":") if ":" in text else ("", "", text)
+    if provider == "ft" or name.startswith("ft:"):
+        # OpenAI's own fine-tune form, ft:<base model>:<org>:...: its base decides.
+        name = (name if provider == "ft" else name[3:]).split(":", 1)[0]
     name = name.rsplit("/", 1)[-1]
     name = re.sub(r"^(?:us|eu|apac|global|us-gov)\.", "", name)
     head, dot, rest = name.partition(".")
@@ -1151,14 +1142,10 @@ def model_family(model: object) -> str | None:
     found = _STEM.match(name)
     others = {_NAME[m.group(1)] for m in _STEM.finditer(name)
               if m.start() == 0 or name[m.start() - 1] in "-_.: "}
-    if found:
-        family = _NAME[found.group(1)]
-        return family if others <= {family} else None
-    if others:
-        return None
-    if provider and provider not in _GATEWAYS:
-        return _PROVIDER_FAMILIES.get(provider)
-    return None
+    if not found:
+        return None  # a name Lightwork does not know: never its provider's family
+    family = _NAME[found.group(1)]
+    return family if others <= {family} else None
 
 
 def _family_problem(model: str | None, author: str | None,
