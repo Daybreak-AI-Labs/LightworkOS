@@ -19,6 +19,9 @@ _MACHINE_PATHS = ("/api/", "/openapi", "/healthz", "/livez", "/readyz", "/metric
 
 def is_browser_navigation(request) -> bool:
     """Whether ``request`` is a top-level browser page load that may be redirected."""
+    # A WebSocket refusal reaches the same error handler and has no method.
+    if request.scope.get("type") != "http":
+        return False
     if request.method != "GET" or request.headers.get("authorization"):
         return False
     if route_path(request).startswith(_MACHINE_PATHS):

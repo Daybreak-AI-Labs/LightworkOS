@@ -45,7 +45,7 @@ def test_index_lists_user_templates_and_playbooks(monkeypatch, tmp_path):
     # only the overridden playbook with a workflow is "yours"
     assert "invoice-clerk" in t and "/workflow-builder?edit_agent=invoice-clerk" in t
     assert "vanilla" not in t
-    assert "New template or playbook" in t and "Create workflow" not in t and "Agent playbooks" in t
+    assert "Create template or playbook" in t and "Create workflow" not in t and "Agent playbooks" in t
 
 
 def test_index_empty_states(monkeypatch, tmp_path):
