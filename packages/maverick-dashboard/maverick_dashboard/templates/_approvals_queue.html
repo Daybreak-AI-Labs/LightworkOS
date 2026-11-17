@@ -112,16 +112,13 @@
   {# Private requests are waiting but this person can't open them: the note
      above says who can decide, so this list never reads as "all clear". #}
   {{ empty_state('No requests you can open',
-                 "The waiting requests above come from colleagues' private tasks. Decisions on requests you made are listed further down.",
-                 action_label='See decisions on your requests', action_href='#request-decision-history') }}
+                 "The waiting requests above come from colleagues' private tasks. Decisions on requests you made are listed further down.") }}
   {% elif (decision_count | default(0)) %}
   {{ empty_state('No actions waiting for approval',
-                 'The decisions above are waiting for you. Requests from agents that need a person to approve them appear here.',
-                 action_label='See decisions on your requests', action_href='#request-decision-history') }}
+                 'The decisions above are waiting for you. Requests from agents that need a person to approve them appear here.') }}
   {% else %}
   {{ empty_state('Nothing needs your decision right now',
-                 'Requests from agents that need a person to approve them appear here. Decisions on requests you made are listed further down.',
-                 action_label='See decisions on your requests', action_href='#request-decision-history') }}
+                 'Requests from agents that need a person to approve them appear here. Decisions on requests you made are listed further down.') }}
   {% endif %}
 {% endif %}
 </div>
@@ -300,7 +297,7 @@
       const body = deciding ? 'The decisions above are waiting for you. Requests from agents that need a person to approve them appear here.'
         : 'Requests from agents that need a person to approve them appear here. Decisions on requests you made are listed further down.';
       let empty;
-      if (window.mvEmpty) empty = window.mvEmpty(title, body, { label: 'See decisions on your requests', href: '#request-decision-history' });
+      if (window.mvEmpty) empty = window.mvEmpty(title, body);
       else { empty = document.createElement('p'); empty.className = 'muted'; empty.textContent = title + '.'; }
       queue.replaceChildren(empty);
     }

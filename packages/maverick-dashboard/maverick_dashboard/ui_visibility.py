@@ -106,7 +106,7 @@ PAGES: tuple[dict, ...] = (
      "floor": "view", "default": "view"},
     {"path": "/outcome-pilots", "label": "Workflow pilots", "group": "Operate",
      "icon": "bench", "floor": "operate", "default": "operate", "in_nav": False},
-    {"path": "/commitment-reviews", "label": "Promise reviews", "group": "Operate",
+    {"path": "/commitment-reviews", "label": "Commitment reviews", "group": "Operate",
      "aliases": "orders capacity deadlines options", "icon": "bench",
      "floor": "operate", "default": "operate"},
     {"path": "/research", "ready": False, "label": "Research lab", "aliases": "experiments candidates evaluation",
@@ -261,7 +261,8 @@ PAGES: tuple[dict, ...] = (
     },
     {
         "path": "/fleets",
-        "label": "Teams",
+        "label": "Agent teams",
+        "aliases": "Teams fleets",
         "group": "Operate",
         "icon": "fleets",
         "floor": "view",
@@ -304,8 +305,8 @@ PAGES: tuple[dict, ...] = (
     # Counterfactual review: forked runs and their branches under one root.
     {
         "path": "/run-tree",
-        "label": "Branches",
-        "aliases": "Run Tree",
+        "label": "Task branches",
+        "aliases": "Branches Run Tree",
         "group": "Observe",
         "icon": "eye",
         "floor": "view",
@@ -340,8 +341,8 @@ PAGES: tuple[dict, ...] = (
     # exception desk — the Shoring P&L (Savings) sits underneath it.
     {
         "path": "/shoring",
-        "label": "Autonomous shoring",
-        "aliases": "Hand a team's work to Lightwork",
+        "label": "Work handoff",
+        "aliases": "Hand a team's work to Lightwork Autonomous shoring",
         "group": "Observe",
         "icon": "fleets",
         "floor": "view",
@@ -1462,7 +1463,7 @@ PAGE_AREAS: dict[str, tuple[str, str]] = {
     "/code": ("Work", "Code changes"),
     "/me": ("Home", "Home"),
     "/outcome-pilots": ("Work", "Workflows"),
-    "/commitment-reviews": ("Work", "Promise reviews"),
+    "/commitment-reviews": ("Work", "Commitment reviews"),
     "/decision-evidence": ("Work", "Shared decision reviews"),
     "/learning/recheck-rules": ("Agents", "Learning"),
     "/learning/distinctions": ("Agents", "Learning"),
@@ -1720,7 +1721,7 @@ AREAS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("Ask", "/chat", ("Ask", "Conversations", "Start from a template", "My companion")),
     ("Home", "/today", ("Home",)),
     ("Work", "/goals", ("Tasks", "Business details", "Approvals", "Results", "Projects", "Workflows", "Automations",
-                        "Code changes", "Promise reviews", "Shared decision reviews",
+                        "Code changes", "Commitment reviews", "Shared decision reviews",
                         "Hand over a team's work")),
     ("Agents", "/workforce", ("Workforce", "Build an agent", "Skills", "Tools", "Knowledge", "Learning",
                               "Discover work to automate", "Response styles")),

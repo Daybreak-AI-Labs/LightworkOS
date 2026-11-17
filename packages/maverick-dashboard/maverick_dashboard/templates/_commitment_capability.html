@@ -1,7 +1,7 @@
 {% if capability_enabled %}
 <details id="ccl-panel" class="cmv-card" hidden>
   <summary><strong>Which additions could support more work?</strong></summary>
-  <p>Enter additional offers and possible material, work-capacity and shared setup requirements. Lightwork checks the offers together while protecting all accepted work in this Promise review.</p>
+  <p>Enter additional offers and possible material, work-capacity and shared setup requirements. Lightwork checks the offers together while protecting all accepted work in this Commitment review.</p>
   <p>Quantities, availability and permission remain your team's reports. A local test checks saved rules only. Nothing is bought, reserved, promised or sent to a connected service.</p>
   <p id="ccl-message" role="status" aria-live="polite"></p>
   <div id="ccl-results"></div>
@@ -27,7 +27,7 @@
         <label>Effort points per test or trial report<input class="input" name="test_cost" type="number" min="1" max="1000" value="1" required></label>
         <label>Review source permission again by<input class="input" name="expires_at" type="datetime-local" required></label>
       </div>
-      <p>Choose one effort-point scale for this Promise review. All its tests and trial reports share these allowances. A replacement or released wait does not refund points already used.</p>
+      <p>Choose one effort-point scale for this Commitment review. All its tests and trial reports share these allowances. A replacement or released wait does not refund points already used.</p>
       <label>Exact scope and basis of the reported facts and permission<textarea class="input" name="basis" minlength="10" maxlength="2000" rows="3" required></textarea></label>
       <label><input type="checkbox" name="consent" required> I authorize these displayed source reports for this review until the entered expiry. They are operator assertions and do not prove physical availability.</label>
       <button class="btn btn--primary" type="submit">Review these additional offers</button>
@@ -81,7 +81,7 @@
 {% endif %}
 <section id="ccl-history" class="panel cmv-card">
   <h2>Earlier additional-work qualification results</h2>
-  <p>Read your exact saved originals in this account and workspace, including after qualification is turned off or a Promise review is archived. This reads historical attribution and outcomes; it never repeats a test or grants current source permission.</p>
+  <p>Read your exact saved originals in this account and workspace, including after qualification is turned off or a Commitment review is archived. This reads historical attribution and outcomes; it never repeats a test or grants current source permission.</p>
   <p id="ccl-history-message" role="status" aria-live="polite"></p>
   <div class="cmv-actions"><label for="ccl-history-select">Your original qualification request</label><select class="input" id="ccl-history-select"><option value="">Load your own originals</option></select><button class="btn" type="button" id="ccl-history-refresh">Refresh original requests</button><button class="btn" type="button" id="ccl-history-read">Read this original result</button></div>
   <div id="ccl-history-result"></div>

@@ -130,7 +130,7 @@ def _context(request: Request, *, mutation: bool = False) -> str:
     require_permission(request, "operate")
     if (config.config_source_errors(include_tenant=True)
             or config.get_features().get("commitment_viability") is not True):
-        raise HTTPException(403, "Promise reviews are off. An administrator can enable them in Settings.")
+        raise HTTPException(403, "Commitment reviews are off. An administrator can enable them in Settings.")
     context = context_for(request)
     supplied = request.headers.get("X-Lightwork-Commitment-Context")
     if (mutation or supplied is not None) and not constant_time_equals(supplied or "", context):

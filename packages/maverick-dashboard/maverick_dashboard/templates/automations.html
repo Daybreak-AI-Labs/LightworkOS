@@ -46,7 +46,7 @@
              lede='Every way your workflows run without you — on a recurring
                    schedule, when another service sends an update, or when something new
                    appears in a connected source. Create them in the
-                   <a href="/workflow-builder">Workflow Builder</a>.' | safe,
+                   <a href="/workflow-builder">Workflow builder</a>.' | safe,
              actions=automation_actions if (scheduling_enabled or (all_off and can_admin)) else '') %}
   {{ state('Current state',
            automation_total ~ ' automation' ~ ('' if automation_total == 1 else 's') ~ ' configured',

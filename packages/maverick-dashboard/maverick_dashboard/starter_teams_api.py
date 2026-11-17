@@ -100,7 +100,7 @@ def context(request: Request) -> ServiceContext:
     if config.config_source_errors(include_tenant=True):
         raise HTTPException(503, "Workspace settings are unavailable. Restore access and reload.")
     if not shoring.enabled():
-        raise HTTPException(409, "Autonomous shoring is turned off. Open its settings to continue.")
+        raise HTTPException(409, "Work handoff is turned off. Open its settings to continue.")
     tenant = current_tenant_id_strict()
     actor = auth.caller_principal(request)
     role = auth.caller_role(request)

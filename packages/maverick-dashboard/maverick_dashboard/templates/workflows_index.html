@@ -19,7 +19,7 @@
   {% from "_hero.html" import hero, state %}
   {% from "_empty_state.html" import empty_state %}
   {% set workflow_actions %}
-    <a class="btn btn--primary" href="/workflow-builder">Create workflow</a>
+    <a class="btn btn--primary" href="/workflow-builder">New template or playbook</a>
     {% if flows_enabled %}<a class="btn" href="/flows/designer">New flow</a>{% endif %}
     {% if flows_enabled %}<a class="btn btn--ghost" href="/learning/examples">Learning examples</a>{% endif %}
   {% endset %}
@@ -74,7 +74,7 @@
     {% elif can_operate_workflows %}
     {{ empty_state('No flows yet',
                    'Flows you build appear here. Build your first flow in the visual designer. Copilot can explain the steps while you work.',
-                   action_label='Open the flow designer', action_href='/flows/designer') }}
+                   action_label='Open Flow designer', action_href='/flows/designer') }}
     {% else %}
     {{ empty_state('No flows yet', 'Flows that people in your workspace build appear here.') }}
     {% endif %}

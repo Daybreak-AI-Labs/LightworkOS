@@ -1,4 +1,4 @@
-"""Durable, bounded promise reviews through their native and Copilot controls."""
+"""Durable, bounded commitment reviews through their native and Copilot controls."""
 from __future__ import annotations
 
 import time

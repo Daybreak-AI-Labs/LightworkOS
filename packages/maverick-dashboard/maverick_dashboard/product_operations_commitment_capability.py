@@ -85,7 +85,7 @@ def _date(value):
 
 def selected(selection):
     if type(selection) is not dict or set(selection) != {"kind", "id"} or selection.get("kind") != "commitment_review":
-        raise HTTPException(409, "Open the owned Promise review whose accepted work this qualification must protect.")
+        raise HTTPException(409, "Open the owned Commitment review whose accepted work this qualification must protect.")
     return selection["id"]
 
 
@@ -118,7 +118,7 @@ def snapshot(request, selection, *, action):
             fields=[{"name": "original", "label": "Exact original request", "kind": "select", "required": True, "choices": value["choices"]}])
     if action == "author":
         value = native.author_handoff(request, selected(selection))
-        return Snapshot(digest(value), "The complete additional-work form for this owned Promise review",
+        return Snapshot(digest(value), "The complete additional-work form for this owned Commitment review",
             "Open the ordinary form for up to four offers, six possible additions and three possible requirements in each row. Your entered draft stays intact. Opening this form does not save or run anything.")
     value = native.view(request, selected(selection))
     fields = []
@@ -176,7 +176,7 @@ def prepare(request, selection, arguments, *, action):
 
 def outcome(value):
     return Outcome("confirmed" if value["confirmed"] else "unconfirmed", value["message"],
-        {"original_result": value["receipt"], "open": {"href": PAGE + "?review=" + value["parent"], "label": "Open this Promise review"}})
+        {"original_result": value["receipt"], "open": {"href": PAGE + "?review=" + value["parent"], "label": "Open this Commitment review"}})
 
 
 def execute(request, _selection, _arguments, prepared, operation):

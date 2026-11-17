@@ -3,7 +3,7 @@
 {% block content %}
 {% from "_hero.html" import hero %}
 {% set hero_actions %}<a class="btn btn--primary" href="#st-catalog-title">Set up a team</a>{% endset %}
-{{ hero('Autonomous shoring', 'Starter teams', subtitle='Start with a useful, bounded piece of work',
+{{ hero('Workforce', 'Starter teams', subtitle='Start with a useful, bounded piece of work',
         lede='Choose a team, review its scope, try a sample, then check your approved records. Every result keeps its sources and the next work for a person.', actions=hero_actions) }}
 <style>
   .st-layout { display:grid; grid-template-columns:minmax(15rem, 1fr) minmax(0, 2fr); gap:var(--space-4); }
@@ -20,7 +20,7 @@
   .st-dialog dd { margin-left:0; white-space:pre-wrap; overflow-wrap:anywhere; }
   @media (max-width:800px) { .st-layout { grid-template-columns:1fr; } }
 </style>
-<p><a href="/workforce">Workforce</a> · <a href="/agents">Agent Factory</a> · <a href="/shoring">Autonomous shoring</a></p>
+<p><a href="/workforce">Workforce</a> · <a href="/agents">Agent Factory</a> · <a href="/shoring">Work handoff</a></p>
 <section class="panel" aria-labelledby="st-boundary-title">
   <h2 id="st-boundary-title">What these teams can do today</h2>
   <p>{{ notice }}</p>

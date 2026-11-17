@@ -202,11 +202,11 @@
     <span class="composer__hint" id="composer-hint"></span>
     <label for="authoring-kind" class="sr-only">{{ ui('What should Lightwork create?') }}</label>
     <select id="authoring-kind" name="authoring_kind" class="composer__mode" aria-label="{{ ut('What should Lightwork create?') }}">
-      <option value="goal" lang="{{ ul('Run this task') }}">{{ ut('Run this task') }}</option>
+      <option value="goal" lang="{{ ul('Task') }}">{{ ut('Task') }}</option>
       {% if flows_enabled and can_create_goal %}
-      <option value="flow" lang="{{ ul('Draft a workflow') }}">{{ ut('Draft a workflow') }}</option>
+      <option value="flow" lang="{{ ul('Workflow draft') }}">{{ ut('Workflow draft') }}</option>
       {% endif %}
-      <option value="agent" lang="{{ ul('Draft an agent') }}">{{ ut('Draft an agent') }}</option>
+      <option value="agent" lang="{{ ul('Agent draft') }}">{{ ut('Agent draft') }}</option>
     </select>
     <button type="submit" id="send-btn" class="composer__send" aria-label="{{ ut('Start task') }}" lang="{{ ul('Start task') }}"{% if typical_cost %} aria-describedby="composer-typical-cost"{% endif %}>
       <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">

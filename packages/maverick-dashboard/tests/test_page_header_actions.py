@@ -69,7 +69,7 @@ def test_agent_and_workforce_cards_use_plain_buttons():
 MIGRATED_HEADERS = {
     "404.html": "'Page not found'", "500.html": "'Something went wrong'", "error.html": "title",
     "flow_run.html": "'Flow run'", "budget_guidance.html": "ui('Your budget before work starts')",
-    "commitment_viability.html": "'Promise reviews'", "content_access.html": "'Content access'",
+    "commitment_viability.html": "'Commitment reviews'", "content_access.html": "'Content access'",
     "conversations.html": "'My conversations'", "cost_reconciliation.html": "'Compare cost records'",
     "deliverable_bundles.html": "'Selected deliverable bundles'", "devices.html": "'Your paired devices'",
     "employee_activation.html": 'ui("Your first useful result")',

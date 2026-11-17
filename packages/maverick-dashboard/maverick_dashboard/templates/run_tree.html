@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ 'Branches · Task replay' if tab_host else 'Branches' }} · Lightwork{% endblock %}
+{% block title %}{{ 'Branches · Task replay' if tab_host else 'Task branches' }} · Lightwork{% endblock %}
 {% block content %}
 <style>
   /* Branches — scoped. The nesting is a plain <ul>/<li> so the tree reads in
@@ -19,7 +19,7 @@
   <h2>Branches</h2>
   <p class="muted">See what the agent chose next to what another way would have done. A branch starts a task again from one of its steps and keeps both versions side by side for review.</p>
   {% else %}
-  <h1 class="page-title">Branches</h1>
+  <h1 class="page-title">Task branches</h1>
   <p class="page-subtitle">See what the agent chose next to what another way would have done. A branch starts a task again from one of its steps and keeps both versions side by side for review.</p>
   {% endif %}
 
