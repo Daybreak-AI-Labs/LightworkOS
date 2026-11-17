@@ -1314,6 +1314,80 @@ def _in_loop(goal_id: int):
         decision_requests.FEATURE_LOOP.reset(token)
 
 
+RUNNING_LINE = "This change is still being built."
+STOPPED_LINE = ("This change stopped before it finished, for example because Lightwork "
+                "restarted. Start a new code change.")
+_DEFAULT_RUN_CAP = 24 * 3600.0
+
+
+def _running_record(pid: str, name: str, title: str, branch: str, base: str, owner: str,
+                    budget) -> dict:
+    """The record a change keeps while it is built, replaced by its proposal
+    when it ends; who runs it (this computer and process) and until when."""
+    import socket
+    now = time.time()
+    cap = getattr(budget, "max_wall_seconds", None)
+    return {"id": pid, "repo": name, "title": title, "goal_id": None, "branch": branch,
+            "base": base, "head": base, "files": [], "diff": "", "tests_output": None,
+            "tests": None, "review": None, "check": None, "status": "running",
+            "approval_id": None, "created_at": now, "merged_at": None,
+            "owner": owner or None, "protected": None, "decision": None,
+            "host": socket.gethostname(), "process": os.getpid(),
+            "deadline": now + (float(cap) if cap else _DEFAULT_RUN_CAP)}
+
+
+def _run_gone(p: dict) -> bool:
+    """Whether a change left \"running\" is no longer being built: its process
+    on this computer has ended, or, elsewhere, it is past its time cap."""
+    import socket
+    if p.get("host") == socket.gethostname() and isinstance(p.get("process"), int):
+        try:
+            os.kill(int(p["process"]), 0)
+        except ProcessLookupError:
+            return True
+        except OSError:  # it exists but is not ours to signal
+            return False
+        return False
+    return time.time() > float(p.get("deadline") or 0)
+
+
+def run_live(pid: str) -> bool:
+    """Whether change ``pid`` is being built right now (its record says
+    running, and the process building it is still there)."""
+    try:
+        p = find(pid)
+    except VaultError:
+        return False
+    return p.get("status") == "running" and not _run_gone(p)
+
+
+def _end_run(world, pid: str, record: dict | None) -> None:
+    """A change that raised: its record reads stopped, and nothing it queued starts."""
+    _close_queued(world, pid)
+    if record is not None:
+        try:
+            _save({**record, "status": "stopped"})
+        except Exception:  # noqa: BLE001 -- the process ending shows it as stopped anyway
+            pass
+
+
+def _close_queued(world, pid: str) -> None:
+    """Cancel every goal still waiting to start below this change's steps:
+    its private copy of the code is gone, so none of them may run now."""
+    from ..decision_requests import FEATURE_RESTARTS
+    try:
+        rows = world.tenant_query(
+            "WITH RECURSIVE down(id) AS (SELECT o.goal_id FROM goal_origins o WHERE o.kind = ? "
+            "AND o.ref = ? UNION SELECT g.id FROM goals g JOIN down d ON g.parent_id = d.id) "
+            "SELECT g.id FROM goals g JOIN down ON g.id = down.id WHERE g.status = 'pending' "
+            "AND {tenant_goal:g.id}", (ORIGIN_KIND, pid))
+        for row in rows:
+            world.set_goal_status(int(row[0]), "cancelled", result=FEATURE_RESTARTS)
+    except Exception:  # noqa: BLE001 -- the start check refuses them anyway
+        import logging
+        logging.getLogger(__name__).warning("feature run %s: queued goals not closed", pid)
+
+
 def _hold(world, decisions: list, goal_id: int, pid: str) -> list[dict]:
     """The decisions a feature run stopped for, as the proposal records them.
     The round's goal and every waiting goal are marked as feature-run steps,
@@ -1353,7 +1427,7 @@ def propose(world, name: str, title: str, description: str, run: Runner, *,
                 else [checker])
     pid = secrets.token_hex(8)
     branch = f"lightwork/{_slug(title)}-{pid[:6]}"
-    goal_id, waiting = None, None
+    goal_id, waiting, record = None, None, None
     try:
         with vault.host_repo(name) as host:
             base = _git(["rev-parse", "--verify", f"refs/heads/{repo.default_branch}"],
@@ -1361,6 +1435,8 @@ def propose(world, name: str, title: str, description: str, run: Runner, *,
             self_repo = is_installation(repo, host)
             if self_repo and not settings["allow_self_changes"]:
                 raise VaultError(SELF_REFUSAL)
+            record = _running_record(pid, name, title, branch, base, owner, budget)
+            _save(record)  # the Code page shows the change while it is built
             loop = _Loop(world, repo, host, base=base, branch=branch, pid=pid,
                          title=title, description=description, owner=owner, run=run,
                          checkers=checkers, sandbox_factory=sandbox_factory, budget=budget,
@@ -1391,10 +1467,12 @@ def propose(world, name: str, title: str, description: str, run: Runner, *,
     except BaseException as exc:
         if goal_id is not None:
             _fail_goal(world, goal_id, exc)
+        _end_run(world, pid, record)
         if isinstance(exc, BudgetExceeded):
             raise VaultError("the spending limit ran out before the first version was "
                              "finished; nothing was proposed") from exc
         raise
+    _close_queued(world, pid)
     diff, files = diff or "", files or []
     review = _review(loop, reviewer, f"{title}\n\n{description}", diff)
     tests, tiers, tests_output = loop.tier_record()
@@ -1542,6 +1620,12 @@ NEWLY_PROTECTED = ("Protected paths now cover this change, but it was not built 
                    "change. Build the change again so it gets a second checker and two approvers.")
 NOT_LOOKED = ("This change is protected, but the second checker did not look at this version "
               "({reason}). It cannot be approved.")
+
+
+def _run_lines(p: dict) -> list[str]:
+    if p.get("status") == "running":
+        return [STOPPED_LINE if _run_gone(p) else RUNNING_LINE]
+    return [STOPPED_LINE] if p.get("status") == "stopped" else []
 
 
 def decision_lines(p: dict) -> list[str]:
@@ -1846,7 +1930,7 @@ def evidence(p: dict) -> dict:
     check = p.get("check") or {}
     many = len(check.get("checkers") or ()) > 1
     first, protected_gaps, protected_findings = _protected_evidence(p)
-    first = decision_lines(p) + first
+    first = _run_lines(p) + decision_lines(p) + first
     return {"lines": first + lines + check_lines, "gaps": protected_gaps + gaps + check_gaps,
             "tests": tests, "protected": first,
             "findings": [_finding_line(f, many) for f in check.get("findings") or []]
@@ -1909,7 +1993,9 @@ def _approval_card(p: dict, *, full: bool) -> str:
 
 
 def status(world, p: dict) -> str:
-    if p["status"] in ("merged", "empty", "conflict", "decision"):
+    if p["status"] == "running":
+        return "stopped" if _run_gone(p) else "running"
+    if p["status"] in ("merged", "empty", "conflict", "decision", "stopped"):
         return p["status"]
     appr = world.get_approval(p["approval_id"]) if p["approval_id"] else None
     if appr is None:

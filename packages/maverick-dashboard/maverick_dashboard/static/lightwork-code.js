@@ -17,6 +17,8 @@
     unrequested: "Needs an approval request",
     blocked: "Cannot be approved",
     decision: "Waiting for a person’s decision",
+    running: "Being built",
+    stopped: "Stopped before it finished",
     merged: "Merged",
     empty: "No changes were made",
     conflict: "No longer fits the latest code"

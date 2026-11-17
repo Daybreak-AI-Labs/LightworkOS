@@ -2618,3 +2618,55 @@ def test_every_feature_step_is_marked_before_it_runs(upstream, tmp_path, monkeyp
         decision_requests.FEATURE_RESTARTS
     out = decision_requests.answer(world, d.id, 1, actor="user:starter", is_admin=True)
     assert out["resume"] is False and world.get_goal(d.goal_id).status == "cancelled"
+
+
+def test_queued_children_of_a_change_never_start_after_it_ends(upstream, tmp_path, monkeypatch):
+    from maverick import decision_requests as dr
+    monkeypatch.setattr(dr, "_announce", lambda world, decision: None)
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    got = {}
+
+    def author(goal_id, work):
+        _passing(work)
+        got["root"] = goal_id
+        got["queued"] = world.create_goal("queued child", "c", parent_id=goal_id,
+                                          owner="user:starter", execution_principal="user:starter")
+        asking = world.create_goal("asking child", "c", parent_id=goal_id, owner="user:starter",
+                                   execution_principal="user:starter")
+        got["d"] = _ask(world, asking, "Which way?")
+    features.propose(world, "pricing", "Discount", "", author, owner="user:starter")
+    queued = world.get_goal(got["queued"])
+    assert queued.status == "cancelled" and queued.result == dr.FEATURE_RESTARTS
+    later = world.create_goal("made later", "c", parent_id=got["root"], owner="user:starter")
+    assert dr.resume_refusal(world, later) == dr.FEATURE_RESTARTS   # never ran, but the change ended
+    assert world.get_goal(got["d"].goal_id).status == "blocked"      # still answerable
+
+
+def test_a_change_shows_while_it_runs_and_after_its_process_died(upstream, tmp_path, monkeypatch):
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    seen = {}
+
+    def author(goal_id, work):
+        _passing(work)
+        (only,) = features.list_proposals("pricing")
+        seen["during"] = (only["status"], features.status(world, only),
+                          features.evidence(only)["lines"][0])
+        seen["pid"] = only["id"]
+    p = features.propose(world, "pricing", "Discount", "", author, owner="user:starter")
+    assert seen["during"] == ("running", "running", features.RUNNING_LINE)
+    assert p["id"] == seen["pid"] and features.status(world, features.find(p["id"])) == "pending"
+    record = dict(features.find(p["id"]), status="running", process=2 ** 22 + 12345)
+    features._save(record)                                    # left running by a process now gone
+    assert features.status(world, features.find(p["id"])) == "stopped"
+    assert features.evidence(features.find(p["id"]))["lines"][0] == features.STOPPED_LINE
+    features._save(dict(record, host="elsewhere", deadline=1.0))     # another computer, past its cap
+    assert features.status(world, features.find(p["id"])) == "stopped"
+
+    def broken(goal_id, work):
+        raise RuntimeError("the run broke")
+    with pytest.raises(RuntimeError):
+        features.propose(world, "pricing", "Broken", "", broken, owner="user:starter")
+    gone = [q for q in features.list_proposals("pricing") if q["title"] == "Broken"]
+    assert [features.status(world, q) for q in gone] == ["stopped"]
