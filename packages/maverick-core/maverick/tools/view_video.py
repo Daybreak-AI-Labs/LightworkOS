@@ -162,7 +162,7 @@ def _extract_frames(src: str, timestamps: list[float], tmpdir: str, sandbox) -> 
     return frames
 
 
-def _transcribe_track(src: str, tmpdir: str, sandbox) -> str | None:
+def _transcribe_track(src: str, tmpdir: str, sandbox, budget=None) -> str | None:
     """Extract the audio track and transcribe it via the voice tool. None on failure."""
     audio = Path(tmpdir) / "audio.mp3"
     code, _o, _e = _run_cmd(
@@ -182,7 +182,8 @@ def _transcribe_track(src: str, tmpdir: str, sandbox) -> str | None:
         copy = Path(private) / "audio.mp3"
         with open(copy, "wb") as target:
             shutil.copyfileobj(staged, target)
-        text = _run_transcribe_internal({"source": str(copy)})
+        # A hosted speech service is charged to this run's budget.
+        text = _run_transcribe_internal({"source": str(copy)}, budget=budget)
     if not text or tool_result_failed(text):
         return None
     return text
@@ -240,7 +241,7 @@ def _run_view_video(args: dict[str, Any], sandbox, *, budget=None) -> str:
         frames = _extract_frames(src, timestamps, tmp, sandbox)
         if not frames:
             return f"ERROR: ffmpeg extracted no frames from {source!r}"
-        transcript = _transcribe_track(src, tmp, sandbox) if transcribe else None
+        transcript = _transcribe_track(src, tmp, sandbox, budget) if transcribe else None
     finally:
         # Never leave the staged frames and audio in the workspace.
         shutil.rmtree(tmp, ignore_errors=True)

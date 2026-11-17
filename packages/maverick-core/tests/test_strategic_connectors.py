@@ -11,6 +11,7 @@ import types
 from unittest.mock import MagicMock
 
 import pytest
+from maverick.budget import Budget
 
 
 def _fake_httpx(monkeypatch, **methods):
@@ -706,7 +707,7 @@ def test_bigquery_requires_config(monkeypatch):
     monkeypatch.delenv("BIGQUERY_PROJECT", raising=False)
     _fake_httpx(monkeypatch, post=MagicMock())
     from maverick.tools.bigquery_tool import bigquery_tool
-    out = bigquery_tool().fn({"op": "query", "sql": "select 1"})
+    out = bigquery_tool(budget=Budget()).fn({"op": "query", "sql": "select 1"})
     assert "ERROR" in out and "BIGQUERY" in out
 
 
@@ -720,7 +721,7 @@ def test_bigquery_select_runs(monkeypatch):
     }))
     _fake_httpx(monkeypatch, post=post)
     from maverick.tools.bigquery_tool import bigquery_tool
-    out = bigquery_tool().fn({"op": "query", "sql": "SELECT 42 AS n"})
+    out = bigquery_tool(budget=Budget()).fn({"op": "query", "sql": "SELECT 42 AS n"})
     assert "42" in out
     assert post.call_args.args[0].endswith("/projects/proj/queries")
 
@@ -731,7 +732,7 @@ def test_bigquery_write_needs_confirm(monkeypatch):
     post = MagicMock()
     _fake_httpx(monkeypatch, post=post)
     from maverick.tools.bigquery_tool import bigquery_tool
-    out = bigquery_tool().fn({"op": "query", "sql": "DELETE FROM d.t WHERE 1=1"})
+    out = bigquery_tool(budget=Budget()).fn({"op": "query", "sql": "DELETE FROM d.t WHERE 1=1"})
     assert "DRY RUN" in out
     post.assert_not_called()
 
@@ -742,7 +743,7 @@ def test_bigquery_multistatement_read_needs_confirm(monkeypatch):
     post = MagicMock()
     _fake_httpx(monkeypatch, post=post)
     from maverick.tools.bigquery_tool import bigquery_tool
-    out = bigquery_tool().fn({
+    out = bigquery_tool(budget=Budget()).fn({
         "op": "query",
         "sql": "SELECT 1; DELETE FROM d.t WHERE 1=1",
     })
@@ -756,7 +757,7 @@ def test_bigquery_trailing_semicolon_read_runs(monkeypatch):
     post = MagicMock(return_value=_resp(200, {"totalRows": "0"}))
     _fake_httpx(monkeypatch, post=post)
     from maverick.tools.bigquery_tool import bigquery_tool
-    out = bigquery_tool().fn({"op": "query", "sql": "SELECT ';' AS semi;"})
+    out = bigquery_tool(budget=Budget()).fn({"op": "query", "sql": "SELECT ';' AS semi;"})
     assert "ok" in out
     assert post.call_args.kwargs["json"]["query"] == "SELECT ';' AS semi;"
 
@@ -770,7 +771,7 @@ def test_bigquery_incomplete_job_is_not_reported_as_empty(monkeypatch):
     }))
     _fake_httpx(monkeypatch, post=post)
     from maverick.tools.bigquery_tool import bigquery_tool
-    out = bigquery_tool().fn({"op": "query", "sql": "SELECT * FROM d.big"})
+    out = bigquery_tool(budget=Budget()).fn({"op": "query", "sql": "SELECT * FROM d.big"})
     assert out.startswith("INDETERMINATE:")
     assert "still running" in out and "job_123" in out
 
@@ -806,3 +807,38 @@ def test_dynamics_create_needs_confirm(monkeypatch):
     out = dynamics_tool().fn({"op": "create", "entity": "accounts", "fields": {"name": "x"}})
     assert "DRY RUN" in out
     post.assert_not_called()
+
+
+def test_bigquery_is_charged_by_terabytes_scanned_within_what_is_left(monkeypatch):
+    # Priced per terabyte, a query is charged for the bytes the reply says it
+    # scanned, and asks BigQuery to refuse a scan past its hold: the smaller
+    # of what the run has left and [budget] max_unmetered_hold_dollars.
+    # A reply without byte counts is charged the per-call safety ceiling.
+    import os
+
+    from maverick import config
+    from maverick.budget import Budget
+    from maverick.tools.bigquery_tool import bigquery_tool
+
+    home = os.environ["MAVERICK_HOME"]
+    os.makedirs(home, exist_ok=True)
+    with open(os.path.join(home, "config.toml"), "w", encoding="utf-8") as f:
+        f.write('[budget.tool_prices]\nbigquery = { dollars = 5.0, per = "terabyte" }\n')
+    config.reset_config_cache()
+    monkeypatch.setenv("BIGQUERY_ACCESS_TOKEN", "t")
+    monkeypatch.setenv("BIGQUERY_PROJECT", "proj")
+    post = MagicMock(return_value=_resp(200, {"totalRows": "0", "totalBytesProcessed": "200000000000"}))
+    _fake_httpx(monkeypatch, post=post)
+    budget = Budget(max_dollars=2.0)
+    tool = bigquery_tool(budget=budget)
+    assert tool.fn({"op": "query", "sql": "select 1"}).startswith("ok")
+    assert post.call_args.kwargs["json"]["maximumBytesBilled"] == str(int(1.0 / 5.0 * 1e12))
+    assert budget.dollars == pytest.approx(1.0)
+    with open(os.path.join(home, "config.toml"), "w", encoding="utf-8") as f:
+        f.write("")
+    config.reset_config_cache()
+    post.return_value = _resp(200, {"totalRows": "0"})
+    assert tool.fn({"op": "query", "sql": "select 1"}).startswith("ok")
+    assert "maximumBytesBilled" not in post.call_args.kwargs["json"]
+    assert budget.dollars == pytest.approx(1.10)
+    assert bigquery_tool().fn({"op": "query", "sql": "select 1"}).startswith("ERROR")

@@ -129,6 +129,18 @@ task_limits_enabled = true
 # max_input_tokens  = 1000000
 # max_output_tokens = 200000
 strict_pricing      = true
+# Charged per paid tool call (speech, translation, search, hosted image models,
+# pay-per-use AI connectors) when [budget.tool_prices] has no price for it.
+# unpriced_tool_call_dollars = 0.10
+
+# [budget.tool_prices]
+# One entry per paid tool service: USD per unit, and the unit (request, page,
+# message, character, image, second or terabyte scanned). Set search first: with no
+# price, 20 searches use a $2 task limit. Settings > Models, under Prices for
+# paid tool services, writes these too. A workspace may only raise them.
+# tavily = { dollars = <your price>, per = "request" }
+# deepl = { dollars = <your price>, per = "character" }
+# bigquery = { dollars = <your price>, per = "terabyte" }
 
 [context]
 # Longest reply one model call may return, in tokens. The hold taken before

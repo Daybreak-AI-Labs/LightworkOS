@@ -435,3 +435,114 @@ def test_graphql_failure_never_echoes_low_entropy_active_token(monkeypatch):
 
     assert out == "ERROR: graphql (401): upstream request failed"
     assert "tok123" not in out
+
+
+def test_paid_ai_connector_charges_each_write_to_the_run_budget(monkeypatch):
+    # A pay-per-use AI connector's POST is a paid call charged to the run
+    # budget (the per-call safety ceiling with no price set); a GET is not
+    # charged, a server on a private address is free, and the registered
+    # connector without a run budget refuses before sending.
+    import pytest
+    from maverick.budget import DEFAULT_UNPRICED_TOOL_CALL_DOLLARS, Budget
+    from maverick.tools.enterprise_connectors import enterprise_connectors
+
+    _set(monkeypatch)
+    req = MagicMock(return_value=_resp(200, {"ok": True}))
+    _fake_httpx(monkeypatch, request=req)
+    budget = Budget()
+    tool = _tool(paid=True, budget=budget)
+    write = {"op": "post", "path": "/v1/run", "body": {"x": 1}, "confirm": True}
+    assert "ok" in tool.fn(write) and "ok" in tool.fn({"op": "get", "path": "/v1/models"})
+    assert budget.dollars == pytest.approx(DEFAULT_UNPRICED_TOOL_CALL_DOLLARS)
+    monkeypatch.setenv("ACME_BASE_URL", "http://192.168.1.20:8000")
+    assert "ok" in tool.fn(write) and req.call_count == 3
+    assert budget.dollars == pytest.approx(DEFAULT_UNPRICED_TOOL_CALL_DOLLARS)
+    monkeypatch.setenv("OPENAI_PLATFORM_BASE_URL", "https://api.openai.com")
+    monkeypatch.setenv("OPENAI_PLATFORM_TOKEN", "tok")
+    unbudgeted = next(t for t in enterprise_connectors() if t.name == "openai_platform")
+    out = unbudgeted.fn({"op": "post", "path": "/v1/chat/completions", "body": {}, "confirm": True})
+    assert out.startswith("ERROR") and "nothing was sent" in out and req.call_count == 3
+
+
+def test_every_pay_per_use_and_per_lookup_connector_is_charged(monkeypatch):
+    # Every pay-per-use connector charges its writes, and a per-lookup data
+    # service (billed per GET) charges its reads too, read-only seats included.
+    import pytest
+    from maverick.budget import DEFAULT_UNPRICED_TOOL_CALL_DOLLARS, Budget
+    from maverick.tools import enterprise_connectors as ec
+
+    paid = {d.name: d.factory_kwargs.get("paid") for d in ec.enterprise_connector_descriptors()}
+    for name in ("heygen", "synthesia", "remove_bg", "clipdrop", "rev_com", "deepset_cloud",
+                 "ollama_cloud", "cerebrium", "beam_cloud", "paperspace_gradient", "otter_ai",
+                 "happyscribe", "pictory", "opus_clip", "invideo", "relevance_ai", "dify_ai",
+                 "chatbase", "vectara", "picsart", "descript", "threeplay_media", "runpod",
+                 "sendgrid", "mailgun", "postmark", "vonage", "plivo", "messagebird"):
+        assert paid[name] is True, name
+    for name in ("shodan", "hunter", "clearbit", "zoominfo", "numverify", "semrush",
+                 "zoominfo_read", "clearbit_read"):
+        assert paid[name] == "all", name
+    assert not paid["bamboohr"]  # a subscription service is not charged per call
+
+    _set(monkeypatch)
+    req = MagicMock(return_value=_resp(200, {"ok": True}))
+    _fake_httpx(monkeypatch, request=req)
+    budget = Budget()
+    assert "ok" in _tool(paid="all", budget=budget).fn({"op": "get", "path": "/lookup"})
+    assert budget.dollars == pytest.approx(DEFAULT_UNPRICED_TOOL_CALL_DOLLARS)
+
+
+def test_a_per_second_connector_holds_a_bounded_amount_not_everything_left(monkeypatch):
+    # A paid call whose units are never reported holds at most
+    # [budget] max_unmetered_hold_dollars, so other calls on the same budget
+    # keep running, and is charged that full hold.
+    import os
+
+    import pytest
+    from maverick import config
+    from maverick.budget import DEFAULT_MAX_UNMETERED_HOLD_DOLLARS, Budget
+
+    home = os.environ["MAVERICK_HOME"]
+    os.makedirs(home, exist_ok=True)
+    with open(os.path.join(home, "config.toml"), "w", encoding="utf-8") as f:
+        f.write('[budget.tool_prices]\nacme = { dollars = 0.01, per = "second" }\n')
+    config.reset_config_cache()
+    _set(monkeypatch)
+    budget = Budget(max_dollars=5.0)
+    held = []
+
+    def request(*_a, **_k):
+        held.append(budget._reserved)
+        budget.release(budget.reserve(0.05))  # a sibling call still fits
+        return _resp(200, {"ok": True})
+
+    _fake_httpx(monkeypatch, request=MagicMock(side_effect=request))
+    out = _tool(paid=True, budget=budget).fn({"op": "post", "path": "/v1/run", "body": {}, "confirm": True})
+    assert "ok" in out and held == [pytest.approx(DEFAULT_MAX_UNMETERED_HOLD_DOLLARS)]
+    assert budget.dollars == pytest.approx(DEFAULT_MAX_UNMETERED_HOLD_DOLLARS)
+
+
+def test_twin_specs_of_a_charged_service_are_charged_alike():
+    # Two connectors for the same service host (such as remove_bg and
+    # removebg) must be charged the same way, so the next twin is caught.
+    import re
+
+    from maverick.tools import enterprise_connectors as ec
+
+    paid, hosts = {}, {}
+    for spec in ec._SPECS:
+        paid[spec["name"]] = bool(spec.get("paid"))
+        match = re.search(r"https://([a-z0-9-]+(?:\.[a-z0-9-]+)+)", spec["description"])
+        if match:
+            hosts.setdefault(match.group(1), []).append(spec["name"])
+    # Hosts that serve free and paid products alike: Meta's Graph API carries
+    # WhatsApp Business (billed per message, charged) and Messenger, Workplace
+    # and Facebook pages (free). Add a host here only for such a split.
+    shared_hosts = {"graph.facebook.com"}
+    mixed = {host: names for host, names in hosts.items()
+             if host not in shared_hosts and len(names) > 1 and len({paid[n] for n in names}) > 1}
+    assert mixed == {}
+    for name in ("removebg", "dialogflow", "amazon_lex", "pdfco", "ilovepdf", "smallpdf",
+                 "whatsapp_business"):
+        assert paid[name], name
+    for name in ("luminance", "lexcheck", "floydhub", "messenger"):
+        assert not paid[name], name

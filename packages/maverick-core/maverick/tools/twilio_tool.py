@@ -19,10 +19,12 @@ from __future__ import annotations
 import base64
 import logging
 import os
+from contextvars import ContextVar
 from typing import Any
 
 from ..governed_http import guarded_sender as _governed_sender
 from . import Tool, as_bool, safe_path_segment
+from ._paid_call import STOP_SIGNALS, charged_call
 
 log = logging.getLogger(__name__)
 
@@ -95,6 +97,17 @@ def _get(path: str, params: dict | None = None, lookups: bool = False) -> tuple[
         return r.status_code, r.text[:300]
 
 
+# The run budget of the call being run (set by the tool's entry point).
+_BUDGET: ContextVar[Any] = ContextVar("twilio_budget", default=None)
+
+
+def _paid(label: str, send, **units):
+    """One paid Twilio request (a message, a call, a lookup), charged to the
+    run budget at [budget.tool_prices] twilio, else the per-call ceiling."""
+    return charged_call("twilio", send, budget=_BUDGET.get(), label=label,
+                        units={"request": 1, **units})
+
+
 def _op_sms_send(args: dict) -> str:
     to = (args.get("to") or "").strip()
     body = (args.get("body") or "").strip()
@@ -105,7 +118,8 @@ def _op_sms_send(args: dict) -> str:
         return "ERROR: sms_send requires from_ or TWILIO_FROM_NUMBER"
     if not as_bool(args.get("confirm")):
         return "DRY RUN: would send SMS. Re-run with confirm=true."
-    code, data = _post("/Messages.json", {"To": to, "From": src, "Body": body})
+    code, data = _paid("Twilio SMS", lambda: _post("/Messages.json", {"To": to, "From": src, "Body": body}),
+                       message=1)
     if code >= 400 or not isinstance(data, dict):
         return f"ERROR: sms_send ({code}): {data}"
     return f"sent (sid={data.get('sid')} status={data.get('status')})"
@@ -140,7 +154,7 @@ def _op_call_create(args: dict) -> str:
         return "ERROR: call_create requires from_ or TWILIO_FROM_NUMBER"
     if not as_bool(args.get("confirm")):
         return "DRY RUN: would create call. Re-run with confirm=true."
-    code, data = _post("/Calls.json", {"To": to, "From": src, "Url": twiml})
+    code, data = _paid("Twilio calls", lambda: _post("/Calls.json", {"To": to, "From": src, "Url": twiml}))
     if code >= 400 or not isinstance(data, dict):
         return f"ERROR: call_create ({code}): {data}"
     return f"call created (sid={data.get('sid')} status={data.get('status')})"
@@ -153,11 +167,11 @@ def _op_lookup(args: dict) -> str:
     seg = safe_path_segment(phone)
     if seg is None:
         return "ERROR: lookup requires a valid phone"
-    code, data = _get(
+    code, data = _paid("Twilio lookups", lambda: _get(
         f"/PhoneNumbers/{seg}",
         {"Fields": "line_type_intelligence"},
         lookups=True,
-    )
+    ))
     if code == 404:
         return f"phone {phone!r} not found"
     if code >= 400 or not isinstance(data, dict):
@@ -173,7 +187,15 @@ def _op_lookup(args: dict) -> str:
     )
 
 
-def _run(args: dict[str, Any]) -> str:
+def _run(args: dict[str, Any], budget=None) -> str:
+    token = _BUDGET.set(budget)
+    try:
+        return _run_scoped(args)
+    finally:
+        _BUDGET.reset(token)
+
+
+def _run_scoped(args: dict[str, Any]) -> str:
     op = args.get("op")
     if not op:
         return "ERROR: op is required"
@@ -188,13 +210,15 @@ def _run(args: dict[str, Any]) -> str:
             "call_create": _op_call_create,
             "lookup":      _op_lookup,
         }.get(op, lambda a: f"ERROR: unknown op {op!r}")(args)
+    except STOP_SIGNALS:
+        raise
     except RuntimeError as e:
         return f"ERROR: {e}"
     except Exception as e:
         return f"ERROR: Twilio request failed: {type(e).__name__}: {e}"
 
 
-def twilio_tool() -> Tool:
+def twilio_tool(*, budget=None) -> Tool:
     return Tool(
         name="twilio",
         description=(
@@ -205,5 +229,5 @@ def twilio_tool() -> Tool:
             "TWILIO_FROM_NUMBER pre-fills From."
         ),
         input_schema=_TWILIO_SCHEMA,
-        fn=_run,
+        fn=lambda args: _run(args, budget),
     )

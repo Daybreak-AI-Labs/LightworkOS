@@ -10,6 +10,14 @@ Auth:
 
 ops:
   - query(sql, limit, confirm)
+
+Each query is a paid call charged to the run budget (kernel rule 3) through
+``_paid_call.charged_call``: priced from ``[budget.tool_prices] bigquery``,
+per terabyte scanned (``totalBytesProcessed``) or per request, else the
+per-call safety ceiling. Priced per terabyte, the request carries
+``maximumBytesBilled`` for what the run has left, so BigQuery refuses a
+query that would scan more. A tool built with no run budget refuses before
+anything is sent.
 """
 from __future__ import annotations
 
@@ -20,6 +28,7 @@ from typing import Any
 
 from ..governed_http import guarded_sender as _governed_sender
 from . import Tool, as_bool
+from ._paid_call import STOP_SIGNALS, charged_call
 from .sql_safety import has_unconfirmed_statement_separator
 
 log = logging.getLogger(__name__)
@@ -46,7 +55,19 @@ def _config() -> tuple[str, str]:
     return tok, proj
 
 
-def _op_query(sql: str, limit: int, confirm: bool) -> str:
+def _scanned(response) -> dict[str, float | None]:
+    """Terabytes the query scanned, from the reply; unknown when not given."""
+    try:
+        data = response.json()
+        scanned = int(data.get("totalBytesProcessed")) if isinstance(data, dict) else None
+    except (ValueError, TypeError):
+        scanned = None
+    if scanned is None and getattr(response, "status_code", 200) >= 400:
+        scanned = 0  # a refused query scans nothing
+    return {"terabyte": None if scanned is None else scanned / 1e12}
+
+
+def _op_query(sql: str, limit: int, confirm: bool, budget=None) -> str:
     if not sql:
         return "ERROR: query requires sql"
     is_read = sql.strip().lstrip("(").lower().startswith(_READ_PREFIXES)
@@ -58,9 +79,17 @@ def _op_query(sql: str, limit: int, confirm: bool) -> str:
     tok, proj = _config()
     import httpx
     url = f"https://bigquery.googleapis.com/bigquery/v2/projects/{proj}/queries"
-    r = _governed_sender(httpx.post)(url, headers={"Authorization": f"Bearer {tok}",
-                                 "Content-Type": "application/json"},
-                   json={"query": sql, "useLegacySql": False}, timeout=120.0)
+
+    def send(max_terabytes):
+        body: dict[str, Any] = {"query": sql, "useLegacySql": False}
+        if max_terabytes is not None:
+            body["maximumBytesBilled"] = str(int(max_terabytes * 1e12))
+        return _governed_sender(httpx.post)(url, headers={"Authorization": f"Bearer {tok}",
+                                            "Content-Type": "application/json"},
+                                            json=body, timeout=120.0)
+
+    r = charged_call("bigquery", send, budget=budget, label="BigQuery", units={"request": 1},
+                     measure=_scanned, bounded=True, category="retrieval")
     try:
         data = r.json()
     except ValueError:
@@ -86,7 +115,7 @@ def _op_query(sql: str, limit: int, confirm: bool) -> str:
     return "\n".join(out)
 
 
-def _run(args: dict[str, Any]) -> str:
+def _run(args: dict[str, Any], budget=None) -> str:
     op = args.get("op")
     if not op:
         return "ERROR: op is required"
@@ -97,7 +126,9 @@ def _run(args: dict[str, Any]) -> str:
     try:
         if op == "query":
             return _op_query((args.get("sql") or "").strip(),
-                             int(args.get("limit") or 50), as_bool(args.get("confirm")))
+                             int(args.get("limit") or 50), as_bool(args.get("confirm")), budget)
+    except STOP_SIGNALS:
+        raise
     except RuntimeError as e:
         return f"ERROR: {e}"
     except Exception as e:
@@ -105,7 +136,7 @@ def _run(args: dict[str, Any]) -> str:
     return f"ERROR: unknown op {op!r}"
 
 
-def bigquery_tool() -> Tool:
+def bigquery_tool(*, budget=None) -> Tool:
     return Tool(
         name="bigquery",
         description=(
@@ -114,5 +145,5 @@ def bigquery_tool() -> Tool:
             "BIGQUERY_PROJECT."
         ),
         input_schema=_SCHEMA,
-        fn=_run,
+        fn=lambda args: _run(args, budget),
     )

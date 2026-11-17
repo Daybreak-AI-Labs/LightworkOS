@@ -225,6 +225,13 @@ _ACL_RISK = ("low", "medium", "high", (None, ""))
 # A key not listed has no stricter direction (a path, an image, a key name or
 # a place the owner chooses to run work) and merges as an ordinary setting.
 TENANT_RULES: dict[str, dict[str, tuple]] = {
+    # A workspace may charge paid tool calls more, never less.
+    "budget": {
+        "unpriced_tool_call_dollars": ("minimum", 0.10, (), None),
+        # The full hold is the charge when usage is not reported: only up.
+        "max_unmetered_hold_dollars": ("minimum", 1.00, (), None),
+        "tool_prices": _consumer("budget.tool_prices", {}),
+    },
     "governance": {
         "deny_actions": _consumer("governance.deny_actions"),
         "require_human_actions": _consumer("governance.require_human_actions"),

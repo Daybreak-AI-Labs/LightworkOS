@@ -748,6 +748,60 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   checkpoints are on, so steps it already finished (including a subagent's
   side effects) may run again. Turn on `[durable] enabled` to continue where
   it stopped; the answer's confirmation says so.
+- Paid tool calls now count against the task's spending limit, so a capped
+  run can stop on tool spend. This covers search (Tavily, Brave, SerpAPI),
+  Hugging Face (and its OCR), Replicate and hosted image edits, DeepL,
+  LibreTranslate on a public server, OpenAI and Groq speech-to-text, OpenAI
+  and ElevenLabs speech, Wolfram|Alpha, NewsAPI, BigQuery (by terabytes
+  scanned when priced that way), Twilio, Amazon SES and SNS sends, and the
+  pay-per-use connectors: AI, media AI, identity and background checks, and
+  SMS, voice, WhatsApp and email gateways (such as `sendgrid`, `vonage`,
+  `plivo`, `whatsapp_business`) on
+  every request but a GET; per-lookup data services (such as `shodan`,
+  `hunter`, `zoominfo`) on every request.
+- Not charged: subscription services (CRM, ERP, storage, contract review
+  such as `luminance` and the like), which bill by plan, not by call;
+  payments, shipping labels and stock-media purchases, which move money
+  under their own approval rather than spend a task's budget; and local
+  engines, DuckDuckGo and servers on a private address, which are free.
+  `whatsapp_business` is charged per message, though `messenger` on the
+  same Meta address is free.
+- A call whose price is known before it is sent is stopped if it would pass
+  the limit. Speech-to-text priced per second holds what the file's size
+  allows at the lowest speech bitrate (a header's stated length is never
+  trusted for this) and is charged the seconds the service reports. Another
+  call priced per second or per terabyte holds the smaller of what the run
+  has left and `[budget] max_unmetered_hold_dollars` (default $1.00, in All
+  settings and the wizard; a workspace may only raise it), so other calls
+  keep running. BigQuery is told to stop at that hold. Replicate priced per
+  second is always waited for, and the reply says so; it is cancelled when
+  it reaches its hold, the reply gives its final state, and Replicate's
+  reported seconds settle the charge even if the cancel is slow. Unpriced
+  or priced per call, Replicate is never cancelled: a prediction still
+  running after 90 seconds is reported as still running. A call with no
+  limit can still cost more than it held, and the run stops right after
+  it. If the reply does not report the seconds or terabytes used, the full
+  hold is charged and the cost line says so; price such a service per
+  request to be charged per call instead.
+- GPU rentals (`runpod`, `vast_ai`, `lambda_labs_cloud`, `coreweave`,
+  `voltage_park`, `paperspace_gradient`) start machines billed by the hour.
+  The limit sees only the per-call charge, never those hours.
+- Upgrading: a new install's task limit is $2, and a paid tool with no price
+  set counts $0.10 per call, so 20 unpriced searches use the whole limit.
+  Set prices for the services you use first, starting with search, in
+  Settings > Models, under Prices for paid tool services, the Copilot, the
+  setup wizard, or `[budget.tool_prices]` (for example
+  `tavily = { dollars = <your price>, per = "request" }`; units are
+  request, message, page, character, image, second and terabyte). Change
+  the $0.10 per call in All settings (`[budget] unpriced_tool_call_dollars`); a warning and the cost
+  line name the services charged it. A workspace may only raise these
+  prices. While settings cannot be read, paid tool calls are refused.
+- A flow's tool step charges paid tools to what is left of the flow's
+  spending allowance, and adds them to the run's cost. The dashboard
+  microphone, its read-aloud voice, voice-only mode, chat attachments and
+  `maverick voice` are not part of a run and are not charged. With the
+  default `auto` speech-to-text, a hosted service the run cannot pay for
+  falls back to the local engine.
 
 ### Fixed
 
