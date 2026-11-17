@@ -1444,6 +1444,37 @@ def test_enterprise_and_multiple_replicas_fail_closed_without_shared_state(
         store.new_id()
 
 
+def test_local_only_store_on_a_postgres_deployment_says_it_is_local_only(
+    monkeypatch,
+):
+    from maverick.governed_records import GovernedRecordLocalOnly
+
+    # The deployment's world backend selects shared Postgres records. A store
+    # pinned to a single-computer installation must refuse before any
+    # connection, with a reason a caller can tell apart from an outage.
+    monkeypatch.setenv("MAVERICK_WORLD_BACKEND", "postgres")
+    monkeypatch.setenv("MAVERICK_PG_DSN", "postgresql://example.invalid/never")
+    store = GovernedRecordStore(
+        "test_local_only", "TLO", "test_record", required_backend="local",
+    )
+    with pytest.raises(GovernedRecordLocalOnly, match="single-computer") as captured:
+        store.list(limit=5)
+    assert isinstance(captured.value, GovernedRecordBackendError)
+    assert "example.invalid" not in str(captured.value)
+
+    # A Postgres-pinned store on a local deployment is still the generic
+    # authority mismatch, not a local-only refusal.
+    governed_records._reset_process_authority_pin_for_testing()
+    monkeypatch.delenv("MAVERICK_WORLD_BACKEND")
+    monkeypatch.delenv("MAVERICK_PG_DSN")
+    shared = GovernedRecordStore(
+        "test_shared_only", "TSO", "test_record", required_backend="postgres",
+    )
+    with pytest.raises(GovernedRecordBackendError) as mismatch:
+        shared.list(limit=5)
+    assert not isinstance(mismatch.value, GovernedRecordLocalOnly)
+
+
 def test_enterprise_config_remains_readable_before_postgres_is_provisioned(
     tmp_path,
     monkeypatch,

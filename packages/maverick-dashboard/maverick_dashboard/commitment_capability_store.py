@@ -17,7 +17,7 @@ from maverick.commitment_capability_learning import INPUTS, SCHEMA, evaluate, va
 from maverick.flow import runner
 from maverick.flow import store as flows
 from maverick.governed_operations import digest
-from maverick.governed_records import GovernedRecordStore
+from maverick.governed_records import GovernedRecordLocalOnly, GovernedRecordStore
 
 from . import auth
 from . import commitment_viability_store as promises
@@ -25,6 +25,8 @@ from .draft_api import context_for
 
 STORE = GovernedRecordStore("commitment-capability", "CCL", "commitment_capability", required_backend="local")
 FEATURE = "commitment_capability_learning"
+LOCAL_ONLY = ("Additional-work learning keeps its records only on a single-computer installation of Lightwork. "
+              "This deployment uses a shared database, so these reviews are not available here.")
 TTL = 600
 NOTICE = "Review possible additions for this Promise review. All accepted work is checked together. Reported quantities, availability and permission are your team's assertions; local tests establish only what the selected saved rules return. Choose one consistent unit for all addition cost points and one effort-point scale within this Promise review. Points compare additions and limit tests or trial reports; they are not a charge. No purchase, reservation, acceptance or connected action occurs."
 ACTION_NAMES = {"create": "Entered additional-work review", "edit": "Replaced additional-work review", "report": "Recorded completed trial report",
@@ -232,7 +234,10 @@ def original(request, identifier, operation, *, binding=None):
 
 def history(request):
     actor, context = authority(request, historical=True)
-    rows = STORE.list(limit=101)
+    try:
+        rows = STORE.list(limit=101)
+    except GovernedRecordLocalOnly:
+        return {"context": context, "choices": [], "available": False, "message": LOCAL_ONLY}
     if len(rows) > 100:
         raise HTTPException(409, "This workspace exceeds the one-hundred-review custody bound; no history was dropped.")
     result = []

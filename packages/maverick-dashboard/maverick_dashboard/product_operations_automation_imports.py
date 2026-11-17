@@ -35,7 +35,7 @@ def original_snapshot(request, selection):
     selected = selection.get("id") if selection.get("kind") == "automation_import_request" else ""
     return Snapshot(native.digest(value), "Your retained original automation imports", native.NOTICE, fields=[
         {"name": "request", "label": "Original import", "kind": "select", "required": True, "choices": value["choices"], "value": selected}],
-        blocked="No original import requests are retained for this account and workspace." if not value["choices"] else "")
+        blocked=value.get("message") or ("No original import requests are retained for this account and workspace." if not value["choices"] else ""))
 
 
 def original_prepare(request, _selection, arguments):

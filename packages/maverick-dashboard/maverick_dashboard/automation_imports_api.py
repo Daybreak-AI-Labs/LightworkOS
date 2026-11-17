@@ -4,15 +4,16 @@ from __future__ import annotations
 import json
 import secrets
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from maverick import crypto_at_rest
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 
 from . import automation_imports as native
+from .store_failures import remember_route
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(remember_route)])
 PURPOSE = "lightwork.automation-import-review.v1"
 
 

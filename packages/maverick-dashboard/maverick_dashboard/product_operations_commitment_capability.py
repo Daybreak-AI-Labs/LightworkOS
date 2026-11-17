@@ -115,7 +115,8 @@ def snapshot(request, selection, *, action):
     if action == "original":
         value = native.history(request)
         return Snapshot(digest(value), "Your retained qualification originals", "Reading an original never repeats a test or changes an allowance.",
-            fields=[{"name": "original", "label": "Exact original request", "kind": "select", "required": True, "choices": value["choices"]}])
+            fields=[{"name": "original", "label": "Exact original request", "kind": "select", "required": True, "choices": value["choices"]}],
+            blocked=value.get("message", ""))
     if action == "author":
         value = native.author_handoff(request, selected(selection))
         return Snapshot(digest(value), "The complete additional-work form for this owned Promise review",

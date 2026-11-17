@@ -19,13 +19,15 @@ from maverick.commitment_viability import assess
 from maverick.file_lock import cross_process_lock
 from maverick.flow import store as flows
 from maverick.governed_operations import digest
-from maverick.governed_records import GovernedRecordStore
+from maverick.governed_records import GovernedRecordLocalOnly, GovernedRecordStore
 
 from . import commitment_capability_store as capability
 from . import commitment_viability_store as promises
 
 STORE = GovernedRecordStore("commitment-economic-alternatives", "CEA", "commitment_economic_alternatives", required_backend="local")
 FEATURE, TTL, CHECK_LIMIT = "commitment_economic_alternatives", 600, 4
+LOCAL_ONLY = ("Financial comparisons keep their records only on a single-computer installation of Lightwork. "
+              "This deployment uses a shared database, so these comparisons are not available here.")
 NOTICE = "Compare combinations of entered additional offers and possible additions while protecting all accepted work. Every price, cost, customer permission and availability basis is a report, not an independently verified business fact. Reported contribution includes all costs you enter in one selected currency and unit. Cost points remain separate. Nothing is purchased, reserved, accepted or sent."
 ACTIONS = {"create": "Entered financial comparison", "edit": "Replaced financial assumptions", "check": "Compared conditional alternatives",
     "scope": "Reviewed use permission", "withdraw": "Withdrew financial use permission", "acknowledge": "Stopped waiting for an unknown original", "remove": "Removed current financial comparison"}
@@ -353,7 +355,10 @@ def recover(request, prepared, operation):
 
 def history(request):
     actor, context = authority(request, historical=True)
-    rows = STORE.list(limit=101)
+    try:
+        rows = STORE.list(limit=101)
+    except GovernedRecordLocalOnly:
+        return {"context": context, "choices": [], "available": False, "message": LOCAL_ONLY}
     if len(rows) > 100:
         raise HTTPException(409, "The complete original-history bound is exceeded; nothing was omitted.")
     values = [{"value": row["id"] + "|" + operation, "label": ACTIONS[receipt["action"]] + " · " + ("Recorded result" if receipt["state"] == "confirmed" and not row.get("_audit_pending") else "Original unknown")}
