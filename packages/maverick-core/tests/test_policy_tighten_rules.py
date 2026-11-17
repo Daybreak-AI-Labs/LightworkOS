@@ -146,6 +146,9 @@ CASES = {
     "profile.name": dict(os="standard", s="enterprise", ol="enterprise", l="standard", us="enterprise"),
     "compliance.profiles": dict(os=["hipaa"], s=["gdpr"], se=["hipaa", "gdpr"], l="hipaa", us=["gdpr"],
                                 ul=["no_such_profile"]),
+    # A workspace may word the AI disclosure its own way, never remove it.
+    "compliance.disclosure_text": dict(os="Org text", s="Workspace text", l="", us="Workspace text",
+                                       ul="  "),
     "codebase.enable": _perm(False),
     "codebase.default_protect": dict(os="approve", s="block", l="audit", ul="audit"),
     "codebase.checker": _prot(True),

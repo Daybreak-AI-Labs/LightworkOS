@@ -137,6 +137,9 @@ def _check_policy_overlays() -> None:
             fix += (" A moved work folder or image applies to every workspace. "
                     "For a separate folder, run that workspace's Lightwork with MAVERICK_WORKDIR set "
                     "and no workdir in the organisation's file.")
+        if any(key.startswith(("enterprise.allowed_hosts", "enterprise.local_providers")) for key in keys):
+            fix += (" A host or model server moved to the organisation's file is allowed for every workspace. "
+                    "There is no way yet to allow one for a single workspace.")
         _row(YELLOW, "workspace policy", f"{workspace}: ignored {', '.join(keys)}", fix=fix)
     for name, reasons in sorted(clamped.items())[:8]:
         _row(YELLOW, "agent override", f"{name}: {'; '.join(reasons)}",

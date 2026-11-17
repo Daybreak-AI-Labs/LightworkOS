@@ -535,6 +535,14 @@ def compliance_profiles(upper: object, lower: object) -> tuple[Any, bool]:
     return up + [key for key in added if key not in up], False
 
 
+def disclosure_text(upper: object, lower: object) -> tuple[Any, bool]:
+    """``[compliance] disclosure_text`` (maverick.compliance): a lower layer may
+    word the AI disclosure its own way, never empty it (empty turns it off)."""
+    if not isinstance(lower, str) or not lower.strip():
+        raise ValueError("expected the disclosure text")
+    return lower, False
+
+
 # kubectl reads these as a value after --context / -n, and the namespace also
 # inside a "namespace/pod:path" copy target: plain names only.
 _PLAIN_NAMES = {"namespace": re.compile(r"[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?"),
@@ -583,6 +591,7 @@ MERGES = {
     "egress.allow": host_allow,
     "tenancy.egress": tenant_planes,
     "compliance.profiles": compliance_profiles,
+    "compliance.disclosure_text": disclosure_text,
     "sandbox.run_as_user": run_as_user,
     "safety.consent_mode": consent_mode,
     **SCALARS,

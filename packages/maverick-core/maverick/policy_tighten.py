@@ -342,7 +342,10 @@ TENANT_RULES: dict[str, dict[str, tuple]] = {
     },
     "profile": {"name": ("rank", "standard", (tuple(_ENTERPRISE_ALIASES), (*_STANDARD_ALIASES, "")),
                          "standard")},
-    "compliance": {"profiles": _consumer("compliance.profiles")},
+    "compliance": {
+        "profiles": _consumer("compliance.profiles"),
+        "disclosure_text": _consumer("compliance.disclosure_text"),
+    },
     # maverick.config.get_codebase; the defaults mirror CODEBASE_LOOP_DEFAULTS.
     # An unreadable protection mode is read as "block".
     "codebase": {

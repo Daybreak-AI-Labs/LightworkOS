@@ -1879,3 +1879,7 @@ def test_an_existing_workspace_file_with_now_ignored_settings_loads_and_lists_th
     out = capsys.readouterr().out
     assert "sandbox.image (set by your organisation)" in out and "organisation's config.toml" in out
     assert "applies to every workspace" in out and "MAVERICK_WORKDIR" in out
+    tenant.write_text('[enterprise]\nallowed_hosts = ["crm.acme.example"]\n', encoding="utf-8")
+    health._check_policy_overlays()
+    out = capsys.readouterr().out
+    assert "enterprise.allowed_hosts" in out and "every workspace" in out and "no way yet" in out
