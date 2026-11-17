@@ -387,3 +387,12 @@ def test_a_failed_save_is_a_plain_refusal_on_every_route(tmp_path, monkeypatch):
                client.delete("/api/v1/trust/agents/partner-copilot")]
     assert [(r.status_code, r.json()["detail"]) for r in answers] == [(503, plain)] * 5
     assert (tmp_path / "agent_trust.json").read_text() == before
+
+
+def test_remove_key_box_sits_beside_its_label_and_hides_the_kept_note():
+    page = client.get("/trust").text
+    assert '<label id="tr-remove-key" class="mv-form__check" hidden><input type="checkbox" name="remove_key">' in page
+    assert ".tr-grid label:not(.mv-form__check)" in page
+    # Ticking the box swaps the "kept" note for one that says the key goes.
+    assert 'id="tr-pubkey-removed"' in page and "The key on file is removed when you save." in page
+    assert 'F("remove_key").addEventListener("change"' in page
