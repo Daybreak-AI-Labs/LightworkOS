@@ -970,6 +970,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Copilot on the Code page can now show and change a code project's test
   commands and protected paths, for administrators, with the page's checks
   and audit record. Turn on the `tasks` Copilot action family to offer it.
+- The database tool now compares where server names lead, not how they are
+  spelled, before it refuses Lightwork's own records database. Another name
+  for that server is refused, and the connection uses the address it checked.
+  A name it cannot look up in time is refused with "could not check": retry,
+  or ask your organisation to allow it.
+- Copilot's form for an outside agent's limits now shows the chosen agent's
+  own limits. After you choose another agent, select "Load selected agent's
+  current limits" before reviewing. A review made with one agent's limits is
+  refused for another agent; load that agent's limits and review again.
 
 ### Fixed
 

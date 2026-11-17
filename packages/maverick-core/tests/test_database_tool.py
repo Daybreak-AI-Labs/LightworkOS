@@ -574,3 +574,104 @@ def test_own_addresses_are_looked_up_once_per_process(monkeypatch):
         assert len(calls) == 1
     finally:
         tool._own_addresses.cache_clear()
+
+
+def _stub_resolver(monkeypatch, table, slow=()):
+    """Answer name lookups from ``table`` (name -> addresses); names in
+    ``slow`` hang; every other unknown name fails; this computer's own name
+    is still looked up for real."""
+    import socket
+    import time
+
+    from maverick.tools import database_tool as tool
+
+    tool._own_addresses()  # keep this computer's own addresses as they are
+    real = socket.getaddrinfo
+
+    def fake(host, *args, **kwargs):
+        if host in slow:
+            time.sleep(1)
+        if host in table:
+            return [(socket.AF_INET6 if ":" in a else socket.AF_INET, socket.SOCK_STREAM, 6, "", (a, 0))
+                    for a in table[host]]
+        if host == socket.gethostname():
+            return real(host, *args, **kwargs)
+        raise socket.gaierror(socket.EAI_NONAME, "Name or service not known")
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake)
+
+
+def test_world_database_guard_compares_looked_up_addresses(monkeypatch):
+    # Another name for the world database's server (a DNS or hosts-file
+    # alias) is the same server: the guard compares where names lead, not
+    # how they are spelled. A name it cannot look up in time is refused.
+    from maverick.tools import database_tool as tool
+
+    for name in ("PGHOST", "PGHOSTADDR", "PGPORT", "PGDATABASE", "PGUSER", "PGSERVICE"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("MAVERICK_DATABASE_ALLOW_WORLD_DATABASE", raising=False)
+    monkeypatch.setenv("MAVERICK_DATABASE_ALLOW_URL_ARG", "1")
+    monkeypatch.setattr(tool, "_LOOKUP_SECONDS", 0.05)
+    _stub_resolver(monkeypatch, {
+        "ip6-localhost": ["::1"],
+        "lightwork-db": ["192.0.2.10", "192.0.2.11"],
+        "db-alias": ["192.0.2.11"],
+    }, slow=("slow-db",))
+
+    def run(url):
+        return tool.database_tool().fn({"op": "query", "sql": "SELECT 1", "url": url})
+
+    monkeypatch.setenv("MAVERICK_PG_DSN", "host=localhost port=5433 dbname=lightwork user=app")
+    assert "is Lightwork's own" in run("postgresql+psycopg://u:p@ip6-localhost:5433/lightwork")
+    monkeypatch.setenv("MAVERICK_PG_DSN", "host=lightwork-db port=5432 dbname=lightwork user=app")
+    assert "is Lightwork's own" in run("postgresql+psycopg://u:p@db-alias/lightwork")
+    assert "is Lightwork's own" in run("postgresql+psycopg://u:p@192.0.2.10/lightwork")
+    for unknown in ("nowhere-db", "slow-db"):
+        out = run(f"postgresql+psycopg://u:p@{unknown}/lightwork")
+        assert "could not check" in out and "is Lightwork's own" not in out, unknown
+    # Another database or port on an unknown name is not the world database.
+    assert "DENIED" not in run("postgresql+psycopg://u:p@nowhere-db/reports")
+    # The organisation's switch still allows it.
+    monkeypatch.setenv("MAVERICK_DATABASE_ALLOW_WORLD_DATABASE", "1")
+    assert "DENIED" not in run("postgresql+psycopg://u:p@db-alias/lightwork")
+
+
+def test_world_database_guard_connects_to_the_address_it_checked(monkeypatch):
+    # A name that changes where it leads between the check and the connection
+    # must not redirect the connection: libpq is given the checked address,
+    # and the name stays for the server certificate check.
+    import psycopg
+    from maverick.tools import database_tool as tool
+
+    for name in ("PGHOST", "PGHOSTADDR", "PGPORT", "PGDATABASE", "PGUSER", "PGSERVICE"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("MAVERICK_DATABASE_ALLOW_WORLD_DATABASE", raising=False)
+    monkeypatch.setenv("MAVERICK_DATABASE_ALLOW_URL_ARG", "1")
+    monkeypatch.setenv("MAVERICK_PG_DSN", "host=lightwork-db port=5432 dbname=lightwork user=app")
+    table = {"lightwork-db": ["192.0.2.10"], "reports-db": ["198.51.100.9", "198.51.100.10"]}
+    _stub_resolver(monkeypatch, table)
+    seen = []
+
+    def connect(*args, **kwargs):
+        seen.append(kwargs)
+        raise psycopg.OperationalError("no server in tests")
+
+    real_check = tool._world_database_check
+
+    def check_then_move(url):
+        result = real_check(url)
+        table["reports-db"] = ["192.0.2.10"]  # the name now leads to the world database
+        return result
+
+    monkeypatch.setattr(psycopg, "connect", connect)
+    monkeypatch.setattr(tool, "_world_database_check", check_then_move)
+    out = tool.database_tool().fn({
+        "op": "query", "sql": "SELECT 1",
+        "url": "postgresql+psycopg://u:p@reports-db/lightwork?sslmode=verify-full",
+    })
+    assert out.startswith("ERROR"), out
+    assert seen and seen[0]["hostaddr"] == "198.51.100.9,198.51.100.10"
+    assert seen[0]["host"] == "reports-db,reports-db"
+    assert seen[0]["port"] == "5432,5432" and seen[0]["sslmode"] == "verify-full"
