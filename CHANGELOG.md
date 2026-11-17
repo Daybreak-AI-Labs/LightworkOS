@@ -764,14 +764,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `require_acknowledgement` only on; `[approval] separate_approver` only
   towards `always`; `[sandbox.tool.<name>]` may add denied hosts and narrow
   allowed hosts.
-- New `[sandbox] workspace_infrastructure` (off by default; wizard sandbox
-  step for clusters and remote computers, and Settings > Protected work
-  area). When on in the organisation's settings, a workspace file may name
-  its own provider, api_key, kubeconfig, context, namespace and host. It
-  still cannot weaken the backend, and its extra_kubectl_args and ssh_args
-  are ignored: these options can run commands on this computer, so only the
-  organisation's own list is used. The switch counts as off while any
-  settings file cannot be read.
+- New `[sandbox] workspace_infrastructure` and `workspace_hosts` (off and
+  empty by default; wizard sandbox step for clusters and remote computers,
+  and Settings > Protected work area). When on in the organisation's
+  settings, a workspace file may choose a `context` and `namespace` (plain
+  names) in the organisation's own cluster settings file, and a `host` that
+  matches a `workspace_hosts` pattern such as `*@build.example.com`. Its
+  kubeconfig, api_key, provider, extra_kubectl_args and ssh_args are still
+  ignored: a cluster settings file or ssh option can run a program on this
+  computer, and a key or provider reaches another service. The backend
+  cannot be weakened, and the switch counts as off while any settings file
+  cannot be read.
+- The ssh work area now always passes `--` before the remote computer and
+  refuses a destination that starts with a dash or holds spaces or control
+  characters, so a destination can never be read as an ssh option.
 
 ### Fixed
 

@@ -408,10 +408,8 @@ def run_as_user(upper: object, lower: object) -> tuple[Any, bool]:
 
 def organisation_only(upper: object, lower: object) -> tuple[Any, bool]:
     """``[codebase] checker_image`` and ``checker_models``: which image runs the
-    checks (and so decides every re-run's result) and which models check; and
-    the sandbox connection options a workspace may not choose even when it
-    names its own servers. Only the organisation sets them; a lower layer's
-    different value is ignored."""
+    checks (and so decides every re-run's result) and which models check. Only
+    the organisation sets them; a lower layer's different value is ignored."""
     return upper, lower != upper
 
 
@@ -469,6 +467,37 @@ def egress_rules(upper: object, lower: object) -> tuple[Any, bool]:
     return merged, loosened
 
 
+# kubectl reads these as a value after --context / -n, and the namespace also
+# inside a "namespace/pod:path" copy target: plain names only.
+_PLAIN_NAMES = {"namespace": re.compile(r"[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?"),
+                "context": re.compile(r"[A-Za-z0-9@._:][A-Za-z0-9@._:/-]{0,199}")}
+
+
+def plain_name(key: str):
+    """``[sandbox] context`` or ``namespace`` a workspace chooses, with the
+    organisation's switch on: any plain name in the organisation's own cluster
+    settings file; anything the cluster tools could read otherwise is ignored."""
+    def merge(upper: object, lower: object) -> tuple[Any, bool]:
+        if not isinstance(lower, str) or not _PLAIN_NAMES[key].fullmatch(lower):
+            raise ValueError("expected a plain name")
+        return lower, False
+    return merge
+
+
+def listed_host(allowed: object):
+    """``[sandbox] host`` a workspace chooses, with the organisation's switch
+    on: only a destination matching one of the organisation's
+    ``workspace_hosts`` patterns (none when unset). The ssh backend refuses a
+    destination it could read as an option in any case."""
+    patterns = [p for p in allowed if isinstance(p, str)] if isinstance(allowed, list) else []
+
+    def merge(upper: object, lower: object) -> tuple[Any, bool]:
+        if not isinstance(lower, str) or not any(fnmatch.fnmatchcase(lower, p) for p in patterns):
+            return upper, True
+        return lower, False
+    return merge
+
+
 MERGES = {
     "codebase.checker_image": organisation_only,
     "codebase.checker_models": organisation_only,
@@ -476,8 +505,6 @@ MERGES = {
     "approval.record_checks": _switch(True, protection=True),
     "approval.require_acknowledgement": _switch(True, protection=True),
     "sandbox.tool": egress_rules,
-    "sandbox.extra_kubectl_args": organisation_only,
-    "sandbox.ssh_args": organisation_only,
     "sandbox.run_as_user": run_as_user,
     "safety.consent_mode": consent_mode,
     **SCALARS,

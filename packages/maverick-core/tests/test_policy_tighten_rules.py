@@ -520,28 +520,36 @@ def test_the_organisation_switch_lets_a_workspace_name_its_own_work_area_servers
     def ask():
         return config.load_config().get("sandbox", {})
 
-    org = ('[sandbox]\nbackend = "kubernetes"\nnamespace = "org"\nextra_kubectl_args = ["--v=2"]\n'
-           'ssh_args = ["-p2222"]\n')
+    org = ('[sandbox]\nbackend = "kubernetes"\nnamespace = "org"\nkubeconfig = "/srv/org/kube"\n'
+           'extra_kubectl_args = ["--v=2"]\nssh_args = ["-p2222"]\n')
     tenant = ("[sandbox]\n" + _INFRASTRUCTURE + 'extra_kubectl_args = ["--v=2"]\n'
               'ssh_args = ["-oProxyCommand=sh"]\nbackend = "local"\nimage = "acme:1"\n')
-    infrastructure = {"sandbox.provider", "sandbox.api_key", "sandbox.kubeconfig", "sandbox.context",
-                      "sandbox.namespace", "sandbox.host", "sandbox.extra_kubectl_args"}
+    infrastructure = {"sandbox.context", "sandbox.namespace", "sandbox.host"}
+    # Never the workspace's: a cluster settings file can name a program this
+    # computer runs, a key or provider picks another service, options run here.
+    organisation_only = {"sandbox.provider", "sandbox.api_key", "sandbox.kubeconfig",
+                         "sandbox.extra_kubectl_args", "sandbox.ssh_args", "sandbox.backend", "sandbox.image"}
     # Off (the default): every one stays the organisation's and is listed.
     sandbox, ignored = consumer(org, tenant, ask)
     assert sandbox["namespace"] == "org" and "host" not in sandbox and sandbox["backend"] == "kubernetes"
-    assert infrastructure | {"sandbox.ssh_args", "sandbox.backend", "sandbox.image"} <= ignored
+    assert infrastructure | organisation_only <= ignored
     # The switch in a workspace file is itself ignored.
     sandbox, ignored = consumer(org, tenant + "workspace_infrastructure = true\n", ask)
     assert sandbox["namespace"] == "org" and "sandbox.workspace_infrastructure" in ignored
-    # On: the workspace names its own servers, but cannot weaken isolation or
-    # pass connection options the organisation has not given.
+    # On: the workspace picks a context and namespace in the organisation's
+    # cluster settings, and a remote computer only from the organisation's list.
     on = org + "workspace_infrastructure = true\n"
     sandbox, ignored = consumer(on, tenant, ask)
-    assert {k: sandbox[k] for k in ("provider", "namespace", "host", "kubeconfig")} == {
-        "provider": "e2b", "namespace": "acme", "host": "acme@build.example", "kubeconfig": "/srv/acme/kube"}
+    assert {k: sandbox[k] for k in ("context", "namespace", "kubeconfig")} == {
+        "context": "acme", "namespace": "acme", "kubeconfig": "/srv/org/kube"}
+    assert "host" not in sandbox and "provider" not in sandbox and "api_key" not in sandbox
     assert sandbox["extra_kubectl_args"] == ["--v=2"] and sandbox["ssh_args"] == ["-p2222"]
-    assert sandbox["backend"] == "kubernetes" and "image" not in sandbox
-    assert ignored == {"sandbox.ssh_args", "sandbox.backend", "sandbox.image"}
+    assert ignored == organisation_only | {"sandbox.host"}
+    sandbox, ignored = consumer(on + 'workspace_hosts = ["*@build.example"]\n', tenant, ask)
+    assert sandbox["host"] == "acme@build.example" and "sandbox.host" not in ignored
+    # A name the cluster tools could read as something else is ignored.
+    sandbox, ignored = consumer(on, '[sandbox]\nnamespace = "x/../y"\ncontext = "-v"\n', ask)
+    assert sandbox["namespace"] == "org" and {"sandbox.namespace", "sandbox.context"} <= ignored
     # While a settings file cannot be read, the switch counts as off.
     config.dashboard_overrides_path().parent.mkdir(parents=True, exist_ok=True)
     config.dashboard_overrides_path().write_text("[sandbox\n", encoding="utf-8")

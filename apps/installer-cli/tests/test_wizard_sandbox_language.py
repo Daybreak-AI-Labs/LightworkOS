@@ -145,3 +145,12 @@ def test_kubernetes_asks_whether_workspaces_may_name_their_own_cluster(monkeypat
     lines: list[str] = []
     wizard._emit_kv(lines, "workspace_infrastructure", cfg["workspace_infrastructure"])
     assert lines == ["workspace_infrastructure = true"]
+
+
+def test_ssh_asks_which_remote_computers_workspaces_may_choose(monkeypatch):
+    from maverick_installer import wizard
+
+    monkeypatch.setattr(wizard, "_q_confirm", lambda message, default=True: True)
+    monkeypatch.setattr(wizard, "_q_text", lambda *a, **k: "*@build.example.com, -oProxyCommand=x")
+    assert wizard._ask_workspace_servers({"backend": "ssh"}) == {
+        "backend": "ssh", "workspace_infrastructure": True, "workspace_hosts": ["*@build.example.com"]}

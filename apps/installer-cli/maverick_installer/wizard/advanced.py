@@ -2121,16 +2121,23 @@ def _ask_chat_and_resource_followups(advanced: dict[str, Any]) -> None:
 def _ask_workspace_servers(cfg: dict[str, Any]) -> dict[str, Any]:
     """The sandbox step's last question, for clusters and remote computers.
 
-    Off unless chosen, and nothing is written for "no": a workspace's own
-    settings file may then name its own cluster or remote computer, never
-    weaker isolation or new connection options (``[sandbox]
-    workspace_infrastructure``)."""
+    Off unless chosen, and nothing is written for "no". With yes, a
+    workspace's own settings file may pick a cluster and namespace in this
+    installation's cluster settings file, or a remote computer from the list
+    asked for here (``[sandbox] workspace_infrastructure`` and
+    ``workspace_hosts``). Cluster files, keys and options stay the
+    installation's."""
     if cfg.get("backend") not in ("kubernetes", "ssh"):
         return cfg
-    place = "remote computer" if cfg["backend"] == "ssh" else "cluster"
-    if _q_confirm(f"  Let each workspace's settings file choose its own {place}? "
-                  "Only say yes if you trust every workspace's settings.", default=False):
-        cfg["workspace_infrastructure"] = True
+    place = "remote computer" if cfg["backend"] == "ssh" else "cluster namespace"
+    if not _q_confirm(f"  Let each workspace's settings file choose its own {place}? "
+                      "Only say yes if you trust every workspace's settings.", default=False):
+        return cfg
+    cfg["workspace_infrastructure"] = True
+    if cfg["backend"] == "ssh":
+        hosts = _csv_list(_q_text("  Remote computers workspaces may choose (comma-separated, "
+                                  "* matches any text, e.g. *@build.example.com)", default=""))
+        cfg["workspace_hosts"] = [h for h in hosts if not h.startswith("-")]
     return cfg
 
 

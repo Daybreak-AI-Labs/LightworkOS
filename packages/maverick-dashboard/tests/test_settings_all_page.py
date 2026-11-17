@@ -699,5 +699,8 @@ def test_a_workspace_value_looser_than_the_organisation_shows_who_set_it(tmp_pat
     (home / "config.toml").write_text("[safety]\nscan_input = true\nscan_output = true\n"
                                       "[sandbox]\nworkspace_infrastructure = true\n", encoding="utf-8")
     config.reset_config_cache()
-    assert rows()["sandbox.kubeconfig"]["source_text"] != "Set by your organisation"
-    assert config.load_config()["sandbox"]["kubeconfig"] == "/srv/acme"
+    # Even then a cluster settings file stays the organisation's: it can name
+    # a program this computer runs.
+    assert rows()["sandbox.kubeconfig"]["source_text"] == "Set by your organisation"
+    assert "kubeconfig" not in config.load_config()["sandbox"]
+    assert catalog.BY_ID["sandbox.workspace_hosts"].default == []

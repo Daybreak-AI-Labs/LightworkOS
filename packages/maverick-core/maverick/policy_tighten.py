@@ -27,8 +27,8 @@ place that decides it:
 A key without a rule in a policy section is set by the organisation alone: a
 lower layer's value for it is ignored and reported, whatever it is. The one
 exception is the sandbox infrastructure keys (:data:`WORKSPACE_INFRASTRUCTURE`),
-which a workspace may name only when the organisation turns on ``[sandbox]
-workspace_infrastructure``.
+which a workspace may choose, within what the organisation set up, only when
+the organisation turns on ``[sandbox] workspace_infrastructure``.
 
 Keys whose consumer has its own parser (governance thresholds, approval
 counts, tool risk ratings, sandbox limits, ...) are compared by what that
@@ -340,19 +340,21 @@ TENANT_RULES: dict[str, dict[str, tuple]] = {
 
 _ACL_RULES = {key: TENANT_RULES["security"][key] for key in ("allowed_tools", "denied_tools", "max_risk")}
 
-_ORDINARY = ("ordinary", None, (), None)
-
 # [sandbox] keys that say where work runs. A workspace may set them only when
-# the organisation's ``[sandbox] workspace_infrastructure`` is on; the backend
-# kind still follows its own rule above. Connection options are handed to
-# kubectl and ssh on this computer, where options such as ProxyCommand or a
-# credential program run commands here, so only the organisation's own list
-# is ever used.
-WORKSPACE_INFRASTRUCTURE: dict[str, tuple] = {
-    **dict.fromkeys(("provider", "api_key", "kubeconfig", "context", "namespace", "host"), _ORDINARY),
-    "extra_kubectl_args": _consumer("sandbox.extra_kubectl_args"),
-    "ssh_args": _consumer("sandbox.ssh_args"),
-}
+# the organisation's ``[sandbox] workspace_infrastructure`` is on, and only
+# within what the organisation set up: a context and namespace in the
+# organisation's own cluster settings file, and a remote computer matching its
+# ``workspace_hosts``. The cluster settings file, keys, cloud provider and
+# connection options stay the organisation's: each can make this computer run
+# a program (a credential plugin, ProxyCommand) or reach another service.
+WORKSPACE_INFRASTRUCTURE = ("context", "namespace", "host")
+
+
+def _infrastructure_rules(sandbox: dict) -> dict[str, tuple]:
+    from ._tighten_consumers import listed_host, plain_name
+    return {"context": ("consumer", None, plain_name("context"), None),
+            "namespace": ("consumer", None, plain_name("namespace"), None),
+            "host": ("consumer", None, listed_host(sandbox.get("workspace_hosts")), None)}
 
 
 def workspace_infrastructure(sandbox: object) -> bool:
@@ -387,10 +389,6 @@ def _merge_key(rule: tuple | None, section: dict, key: str, value: object,
     if rule is None:  # no stricter direction: only the organisation sets it
         return False, None, "fixed"
     kind, default, order, unknown = rule
-    if kind == "ordinary":  # a key the organisation lets a workspace choose
-        if deep_merge is not None and isinstance(value, dict) and isinstance(section.get(key), dict):
-            return True, deep_merge(section[key], value), None
-        return True, value, None
     upper = section[key] if present else (default(section) if callable(default) else default)
     try:
         if kind == "risk":
@@ -444,7 +442,7 @@ def merge_tenant_section(name: str, upper: dict, lower: dict, deep_merge=None, *
     if infrastructure is None:
         infrastructure = name == "sandbox" and workspace_infrastructure(upper)
     if name == "sandbox" and infrastructure:
-        rules = {**WORKSPACE_INFRASTRUCTURE, **rules}
+        rules = {**_infrastructure_rules(upper), **rules}
     return _merge_rules(rules, f"{name}.", upper, lower, deep_merge)
 
 

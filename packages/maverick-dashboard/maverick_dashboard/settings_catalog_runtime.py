@@ -438,11 +438,21 @@ def _work_area(S, C) -> tuple:
         S("sandbox", "cross_run_pool", "Keep ready work areas between tasks",
           "Keep a clean work area ready so the next task starts faster.", "toggle", group,
           False, "maverick.sandbox", subgroup="Work area"),
-        S("sandbox", "workspace_infrastructure", "Let workspaces choose their own servers",
-          "A workspace's settings file may name its own cluster, remote computer or cloud work "
-          "area. It still cannot weaken isolation or add connection options.", "toggle", group,
-          False, "maverick.policy_tighten", subgroup="Work area", weaker=True,
-          warning="Each workspace's settings file can send its commands to servers it names."),
+        S("sandbox", "workspace_infrastructure", "Let workspaces choose where their work runs",
+          "A workspace's settings file may pick a cluster and namespace in your cluster settings "
+          "file, or a remote computer from the list below. Your cluster file, keys and options "
+          "stay yours.", "toggle", group, False, "maverick.policy_tighten", subgroup="Work area",
+          weaker=True,
+          warning="Each workspace's settings file can choose where in your cluster its commands run."),
+        S("sandbox", "workspace_hosts", "Remote computers workspaces may choose",
+          "Remote computers a workspace's settings file may choose when the switch above is on, "
+          "one per entry. A star matches any text. With none listed, workspaces cannot choose.",
+          "list", group, [], "maverick.policy_tighten", subgroup="Work area",
+          item_label="Remote computer", item_hint="*@build.example.com",
+          pattern=r"[A-Za-z0-9*?@._:][A-Za-z0-9*?@._:/-]{0,199}",
+          item_error="a remote computer such as user@host, not starting with a dash", max_items=50,
+          weaker="grow",
+          warning="Workspaces will be able to send their commands to more remote computers."),
         S("sandbox", "runtime", "Stronger isolation program",
           "The name of the isolation program used when the work area type is the stronger "
           "isolation option.", "text", group, "runsc", "maverick.sandbox",
