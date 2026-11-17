@@ -194,7 +194,7 @@ def test_world_learning_store_works_under_forced_row_level_security(monkeypatch,
     from psycopg import sql
     from psycopg.conninfo import make_conninfo
 
-    role, password = "mvk_lrn_" + uuid.uuid4().hex[:10], uuid.uuid4().hex
+    role, password = "mvk_lrn_" + uuid.uuid4().hex[:10], uuid.uuid4().hex  # pragma: allowlist secret -- random throwaway role
     monkeypatch.setenv("MAVERICK_PG_RLS", "1")
     PostgresWorldModel(dsn=postgres_test_dsn).close()  # installs and forces the policies
     with psycopg.connect(postgres_test_dsn, autocommit=True) as admin:

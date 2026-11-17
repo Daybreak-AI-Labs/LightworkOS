@@ -593,7 +593,7 @@ def test_a_workspace_value_for_a_key_without_a_rule_is_ignored(load, key):
 
 
 _INFRASTRUCTURE = (
-    'provider = "e2b"\napi_key = "acme-key"\nkubeconfig = "/srv/acme/kube"\ncontext = "acme"\n'
+    'provider = "e2b"\napi_key = "acme-key"\nkubeconfig = "/srv/acme/kube"\ncontext = "acme"\n'  # pragma: allowlist secret -- sample workspace file
     'namespace = "acme"\nhost = "acme@build.example"\n')
 
 

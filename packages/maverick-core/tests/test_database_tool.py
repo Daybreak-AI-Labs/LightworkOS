@@ -446,7 +446,7 @@ def test_world_database_is_refused_unless_the_organisation_allows_it(monkeypatch
     monkeypatch.setenv("MAVERICK_PG_DSN", "host=localhost port=5433 dbname=lightwork user=app")
     monkeypatch.delenv("MAVERICK_DATABASE_ALLOW_WORLD_DATABASE", raising=False)
     monkeypatch.setenv("MAVERICK_DATABASE_ALLOW_URL_ARG", "1")
-    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://reader:pw@127.0.0.1:5433/lightwork")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://reader:pw@127.0.0.1:5433/lightwork")  # pragma: allowlist secret -- synthetic test URL
 
     def run(url=""):
         return database_tool().fn({"op": "query", "sql": "SELECT 1", "url": url})
