@@ -1317,7 +1317,27 @@ def _in_loop(goal_id: int):
 RUNNING_LINE = "This change is still being built."
 STOPPED_LINE = ("This change stopped before it finished, for example because Lightwork "
                 "restarted. Start a new code change.")
-_DEFAULT_RUN_CAP = 24 * 3600.0
+
+
+def _proc_identity(pid: int) -> tuple[str, str] | None:
+    """(boot id, start time) of process ``pid`` from ``/proc``, so a reused
+    process number or a restarted computer never reads as the same process;
+    None where ``/proc`` cannot tell (another system, or no such process)."""
+    try:
+        boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+        stat = Path(f"/proc/{int(pid)}/stat").read_text()
+    except (OSError, ValueError):
+        return None
+    fields = stat.rsplit(")", 1)[-1].split()
+    return (boot, fields[19]) if len(fields) > 19 else None  # field 22: start time
+
+
+def _wall_cap(budget) -> float:
+    """The run's wall-time cap: the budget's, else the configured default."""
+    from ..runner import DEFAULT_MAX_WALL_SECONDS, goal_budget_defaults
+    cap = getattr(budget, "max_wall_seconds", None) or \
+        goal_budget_defaults()["max_wall_seconds"] or DEFAULT_MAX_WALL_SECONDS
+    return float(cap)
 
 
 def _running_record(pid: str, name: str, title: str, branch: str, base: str, owner: str,
@@ -1325,30 +1345,33 @@ def _running_record(pid: str, name: str, title: str, branch: str, base: str, own
     """The record a change keeps while it is built, replaced by its proposal
     when it ends; who runs it (this computer and process) and until when."""
     import socket
-    now = time.time()
-    cap = getattr(budget, "max_wall_seconds", None)
+    now, cap = time.time(), _wall_cap(budget)
+    identity = _proc_identity(os.getpid())
     return {"id": pid, "repo": name, "title": title, "goal_id": None, "branch": branch,
             "base": base, "head": base, "files": [], "diff": "", "tests_output": None,
             "tests": None, "review": None, "check": None, "status": "running",
             "approval_id": None, "created_at": now, "merged_at": None,
             "owner": owner or None, "protected": None, "decision": None,
             "host": socket.gethostname(), "process": os.getpid(),
-            "deadline": now + (float(cap) if cap else _DEFAULT_RUN_CAP)}
+            "boot_id": identity[0] if identity else None,
+            "process_start": identity[1] if identity else None,
+            "wall_cap": cap, "deadline": now + cap}
 
 
 def _run_gone(p: dict) -> bool:
-    """Whether a change left \"running\" is no longer being built: its process
-    on this computer has ended, or, elsewhere, it is past its time cap."""
+    """Whether a change left \"running\" is no longer being built: past its
+    time cap anywhere, or, on this computer, its process is not the very one
+    that started it (same boot, same process start time; a reused process
+    number or a restart does not count). Without ``/proc`` the cap decides."""
     import socket
-    if p.get("host") == socket.gethostname() and isinstance(p.get("process"), int):
-        try:
-            os.kill(int(p["process"]), 0)
-        except ProcessLookupError:
-            return True
-        except OSError:  # it exists but is not ours to signal
-            return False
+    if time.time() > float(p.get("deadline") or 0):
+        return True
+    if p.get("host") != socket.gethostname() or not isinstance(p.get("process"), int):
         return False
-    return time.time() > float(p.get("deadline") or 0)
+    now = _proc_identity(int(p["process"]))
+    if now is None:
+        return _proc_identity(os.getpid()) is not None  # /proc works: that process is gone
+    return now != (p.get("boot_id"), p.get("process_start"))
 
 
 def run_live(pid: str) -> bool:

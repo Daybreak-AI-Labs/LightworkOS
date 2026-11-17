@@ -2674,3 +2674,35 @@ def test_a_change_shows_while_it_runs_and_after_its_process_died(upstream, tmp_p
         features.propose(world, "pricing", "Broken", "", broken, owner="user:starter")
     gone = [q for q in features.list_proposals("pricing") if q["title"] == "Broken"]
     assert [features.status(world, q) for q in gone] == ["stopped"]
+
+
+def test_a_change_is_live_only_in_the_very_process_that_builds_it(upstream, tmp_path,
+                                                                  monkeypatch):
+    import os
+    import time as clock
+
+    from maverick import runner
+    vault.register("pricing", str(upstream))
+    world = WorldModel(tmp_path / "world.db")
+    run, _ = _rounds(_passing)
+    p = features.propose(world, "pricing", "Discount", "", run, owner="user:starter")
+    live = features._running_record(p["id"], "pricing", "Discount", p["branch"], p["base"],
+                                    "user:starter", None)
+    assert live["deadline"] > clock.time() and live["process"] == os.getpid()
+    # No cap given: the configured one.
+    cap = runner.goal_budget_defaults()["max_wall_seconds"] or runner.DEFAULT_MAX_WALL_SECONDS
+    assert live["wall_cap"] == cap and live["deadline"] == live["created_at"] + cap
+
+    def gone(**changes):
+        features._save({**live, **changes})
+        return features.status(world, features.find(p["id"])) == "stopped"
+    assert not gone()                                          # this very process, in time
+    sleeper = subprocess.Popen(["sleep", "30"])                # a reused process number
+    try:
+        assert gone(process=sleeper.pid)
+    finally:
+        sleeper.kill()
+    assert gone(boot_id="another-boot")                        # the computer restarted
+    assert gone(deadline=1.0)                                  # past its time cap, here too
+    monkeypatch.setattr(features, "_proc_identity", lambda pid: None)  # no /proc: the cap alone
+    assert not gone(process=4_000_000) and gone(process=4_000_000, deadline=1.0)
