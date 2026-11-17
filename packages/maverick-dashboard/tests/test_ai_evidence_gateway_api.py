@@ -763,3 +763,19 @@ def test_real_gateway_seed_receipt_and_packet_round_trip(monkeypatch):
     )
     assert verified_packet.status_code == 200, verified_packet.text
     assert verified_packet.json() == {"valid": True}
+
+
+def test_assurance_sections_name_regulations_not_identifiers(monkeypatch):
+    impact = {"id": "AII-" + ("b" * 32), "impact_id": "AII-" + ("b" * 32), "status": "pending_review",
+              "affected_asset_ids": [], "affected_policy_ids": ["p1"],
+              "control_ids": ["eu_ai_act_article_50"], "citations": []}
+    summary = dict(_install_gateway(monkeypatch).summary())
+    summary["framework_sources"] = ["ec_article_50", "ec_gpai_guidelines", "nist_ai_rmf_1_0", "omb_m_25_22"]
+    _install_gateway(monkeypatch, summary=lambda: summary, list_regulatory_impacts=lambda *, limit=100: [impact])
+    import html as _html
+    import re as _re
+    page = _html.unescape(_re.sub(r"\s+", " ", _re.sub(r"<[^>]+>", " ", client.get("/security/assurance").text)))
+    assert "EU AI Act, Article 50, EU guidelines for general-purpose AI models, NIST AI RMF 1.0, OMB M-25-22" in page
+    for raw in ("Ec article 50", "Omb m 25 22", "eu_ai_act_article_50", "rule(s)", "No AI system named "):
+        assert raw not in page
+    assert "No AI system linked yet" in page and "1 rule" in page
