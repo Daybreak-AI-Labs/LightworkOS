@@ -505,8 +505,53 @@ def test_world_database_guard_knows_every_spelling_of_this_computer(monkeypatch)
     monkeypatch.setenv("PGDATABASE", "lightwork")
     assert "records database" in run("postgresql+psycopg://u:p@/")
     assert "records database" not in run("postgresql+psycopg://u:p@/reports")
-    # A service definition names a server this check cannot compare: refused.
+    # A service definition this check cannot read: refused, and said so.
     monkeypatch.setenv("PGSERVICE", "lightwork")
-    assert "records database" in run("postgresql+psycopg://u:p@/")
+    assert "cannot tell whether" in run("postgresql+psycopg://u:p@/")
     assert "records database" in run("postgresql+psycopg://u:p@localhost/lightwork?service=other")
     assert "records database" not in run("postgresql+psycopg://u:p@db.invalid/x?service=other")
+
+
+def test_world_database_guard_reads_service_files_and_more_local_spellings(monkeypatch, tmp_path):
+    import socket
+
+    from maverick.tools.database_tool import database_tool
+
+    for name in ("PGHOST", "PGHOSTADDR", "PGPORT", "PGDATABASE", "PGUSER", "PGSERVICE", "PGSYSCONFDIR"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("MAVERICK_DATABASE_ALLOW_WORLD_DATABASE", raising=False)
+    monkeypatch.setenv("MAVERICK_DATABASE_ALLOW_URL_ARG", "1")
+    services = tmp_path / "pg_service.conf"
+    services.write_text("[lw]\nhost=localhost\nport=5433\ndbname=lightwork\n\n"
+                        "[reports]\nhost=localhost\nport=5433\ndbname=reports\n")
+    monkeypatch.setenv("PGSERVICEFILE", str(services))
+
+    def run(url):
+        return database_tool().fn({"op": "query", "sql": "SELECT 1", "url": url})
+
+    # The world DSN itself names a service: it is read from the service file.
+    monkeypatch.setenv("MAVERICK_PG_DSN", "service=lw user=app")
+    assert "records database" in run("postgresql+psycopg://u:p@localhost:5433/lightwork")
+    assert "records database" in run("postgresql+psycopg://u:p@/?service=lw")
+    assert "DENIED" not in run("postgresql+psycopg://u:p@/?service=reports")
+    assert "DENIED" not in run("postgresql+psycopg://u:p@localhost:5433/reports")
+    # A service that cannot be read is refused honestly, not called Lightwork's.
+    monkeypatch.setenv("MAVERICK_PG_DSN", "service=missing user=app")
+    out = run("postgresql+psycopg://u:p@localhost:5433/reports")
+    assert "cannot tell whether" in out and "is Lightwork's own" not in out
+
+    # More spellings of this computer.
+    monkeypatch.setenv("MAVERICK_PG_DSN", "host=localhost port=5433 dbname=lightwork user=app")
+    for host in ("127.1", "127.0.1", "2130706433", "%2Fvar%2Frun%2Fpostgresql"):
+        assert "records database" in run(f"postgresql+psycopg://u:p@{host}:5433/lightwork"), host
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.connect(("192.0.2.1", 9))  # no packet is sent; picks this computer's address
+        own = probe.getsockname()[0]
+    except OSError:
+        own = ""
+    finally:
+        probe.close()
+    if own and not own.startswith("127."):
+        assert "records database" in run(f"postgresql+psycopg://u:p@{own}:5433/lightwork"), own

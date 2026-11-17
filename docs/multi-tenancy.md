@@ -294,13 +294,16 @@ workspace) before turning RLS on; until then the check is not READY.
   `[tools] database_allow_world_database = true` in its own settings or
   `MAVERICK_DATABASE_ALLOW_WORLD_DATABASE=1`; a workspace's settings cannot.
   If you lift it, give the tool a separate read-only login. Every name for
-  this computer counts as the same host (`localhost`, any `127.x` address,
-  `0.0.0.0`, `::1` in any form, its host name, a socket path), and the
-  `PGHOST`, `PGPORT`, `PGDATABASE` and `PGUSER` defaults fill in what an
-  address leaves out. An address whose server comes from a service definition
-  (`service=` or `PGSERVICE`) without its own host and database is refused,
-  because the check cannot read it. Another DNS name or address for a remote
-  world server is not recognised.
+  this computer counts as the same host (`localhost`, any `127.x` address and
+  short forms such as `127.1`, `0.0.0.0`, `::1` in any form, its host name,
+  its other addresses, a socket path, percent-encoded or not). A service
+  definition (`service=` or `PGSERVICE`), in the address or in the world DSN,
+  is read from the service files libpq uses (`PGSERVICEFILE` or
+  `~/.pg_service.conf`, then the system file); the `PGHOST`, `PGPORT`,
+  `PGDATABASE` and `PGUSER` defaults fill in what is still missing. When a
+  service cannot be read and the server stays unknown, the tool refuses and
+  says it cannot tell whether the address is Lightwork's own database.
+  Another DNS name or address for a remote world server is not recognised.
 
 The webhook and deadline-alert tables (`webhook_subscriptions`,
 `webhook_deliveries`, `deadline_alerts`) store the workspace id as written
