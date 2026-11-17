@@ -1546,8 +1546,9 @@ PROTECTED_REFUSALS = {
     "uncompared": ("This change is protected, but Lightwork could not compare the second "
                    "checker's model with the others. It cannot be approved."),
 }
-NO_STARTER = ("This change is protected, but Lightwork does not know which person started it. "
-              "Someone else must approve it, so start it again from the Code page while signed in.")
+NO_STARTER = ("This change is protected, but it was started without a signed-in person, such as "
+              "from the command line. Someone else must approve it, so start it again from the "
+              "Code page while signed in.")
 BASE_MOVED = ("The project's main code no longer contains the version this change was built on. "
               "Build the change again.")
 NEWLY_PROTECTED = ("Protected paths now cover this change, but it was not built as a protected "

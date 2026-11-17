@@ -2361,6 +2361,19 @@ def test_a_protected_change_with_no_named_starter_cannot_be_approved(upstream, t
         lines = features.evidence(p)["lines"]
         assert features.NO_STARTER in lines and features.TWO_PEOPLE not in lines
     assert calls == []                                         # no second check it cannot use
+    # The command line passes no starter at all; the card says so plainly.
+    from click.testing import CliRunner
+    from maverick import config
+    from maverick.cli import main
+    monkeypatch.setattr(config, "get_codebase", lambda: {"enable": True})
+    monkeypatch.setattr("maverick.cli._require_llm_key", lambda: None)
+    monkeypatch.setattr("maverick.cli.open_world", lambda *a, **k: world)
+    seen = {}
+    monkeypatch.setattr(features, "propose", lambda *a, **k: seen.update(k) or {
+        "status": "empty", "id": "0" * 16})
+    assert CliRunner().invoke(main, ["code", "feature", "pricing", "T"]).exit_code == 0
+    assert "owner" not in seen                                  # no named person is passed
+    assert "command line" in features.NO_STARTER
 
 
 @pytest.mark.skipif(not hasattr(__import__("os"), "geteuid") or __import__("os").geteuid() != 0,
