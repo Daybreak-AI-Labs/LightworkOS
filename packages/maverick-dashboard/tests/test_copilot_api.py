@@ -117,9 +117,15 @@ def test_live_code_checks_say_what_was_not_checked_under_admin_access(client, mo
     monkeypatch.setattr(api, "_copilot_model_route_status", lambda: pytest.fail("live records went to the provider route"))
     monkeypatch.setattr(dashboard_app, "_world", lambda: object())
     monkeypatch.setattr(vault, "enabled", lambda: True)
+    building = dict(pending, id="6123456789abcdef", title="Building change", status="stopped")  # pragma: allowlist secret
+    running = dict(pending, id="7123456789abcdef", title="Running change", status="running",  # pragma: allowlist secret
+                   deadline=9e12)
     monkeypatch.setattr(features, "list_proposals",
-                        lambda: [pending, clean, twin, tiered, merged, guarded, paused])
-    states = {id(merged): "merged", id(guarded): "blocked", id(paused): "decision"}
+                        lambda: [pending, clean, twin, tiered, merged, guarded, paused, building,
+                                 running])
+    monkeypatch.setattr(features, "_run_gone", lambda p: False)
+    states = {id(merged): "merged", id(guarded): "blocked", id(paused): "decision",
+              id(building): "stopped", id(running): "running"}
     monkeypatch.setattr(features, "status", lambda _world, p: states.get(id(p), "pending"))
     allowed = {"admin": True}
     monkeypatch.setattr(live.auth, "has_permission", lambda _request, permission: allowed[permission])
@@ -138,6 +144,8 @@ def test_live_code_checks_say_what_was_not_checked_under_admin_access(client, mo
     assert ("Guarded change in billing. Protected, because it changes 1 protected path(s). "
             + features.PROTECTED_REFUSALS["unset"]) in result["reply"]
     assert "Waiting for a person's decision: “Keep the old rule?”" in result["reply"]
+    assert f"Building change in billing. {features.STOPPED_LINE}" in result["reply"]
+    assert f"Running change in billing. {features.RUNNING_LINE}" in result["reply"]
     assert result["action_link"]["href"] == "/code"
     allowed["admin"] = False                     # the review panel needs an administrator
     refused = client.post("/api/v1/copilot", json=ask).json()

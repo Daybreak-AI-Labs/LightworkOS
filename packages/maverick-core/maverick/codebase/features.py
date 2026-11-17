@@ -1645,7 +1645,8 @@ NOT_LOOKED = ("This change is protected, but the second checker did not look at 
               "({reason}). It cannot be approved.")
 
 
-def _run_lines(p: dict) -> list[str]:
+def run_lines(p: dict) -> list[str]:
+    """A change still being built, or stopped before it finished (Code page, Copilot)."""
     if p.get("status") == "running":
         return [STOPPED_LINE if _run_gone(p) else RUNNING_LINE]
     return [STOPPED_LINE] if p.get("status") == "stopped" else []
@@ -1953,7 +1954,7 @@ def evidence(p: dict) -> dict:
     check = p.get("check") or {}
     many = len(check.get("checkers") or ()) > 1
     first, protected_gaps, protected_findings = _protected_evidence(p)
-    first = _run_lines(p) + decision_lines(p) + first
+    first = run_lines(p) + decision_lines(p) + first
     return {"lines": first + lines + check_lines, "gaps": protected_gaps + gaps + check_gaps,
             "tests": tests, "protected": first,
             "findings": [_finding_line(f, many) for f in check.get("findings") or []]

@@ -128,9 +128,13 @@ def _code_checks(request):
         return _answer("Code projects are turned off, so no code changes are waiting.", "/code", "Open Code", "Code")
     world = _world()
     rows = [p for p in features.list_proposals()
-            if features.status(world, p) in ("pending", "blocked", "decision")]
+            if features.status(world, p) in ("pending", "blocked", "decision", "running", "stopped")]
     parts = []
     for i, p in enumerate(rows[:8], 1):
+        building = features.run_lines(p)  # the Code page's words for a change not finished
+        if building:
+            parts.append(f"{i}. {_bounded(p['title'])} in {_bounded(p['repo'], 64)}. {building[0]}")
+            continue
         waiting = features.decision_lines(p)
         protected = features.protected_status(world, p)
         gaps = [g for g in features.evidence(p)["gaps"] if g != features.protected_refusal(p)]
