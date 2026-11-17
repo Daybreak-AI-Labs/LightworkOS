@@ -1129,7 +1129,6 @@ def base_registry(
     _register_local_workspace_tool(reg, sandbox, list_dir, has_local_workdir)
     reg.register(shell(sandbox))
     reg.register(ask_user(world, goal_id=goal_id))
-    reg.register(request_decision(world, goal_id=goal_id))
     reg.register(list_attachments_tool(world, goal_id))
     from ..tool_result_artifacts import read_tool_result
 
@@ -1138,6 +1137,8 @@ def base_registry(
     _register_local_workspace_tool(reg, sandbox, repo_map, has_local_workdir)
     _register_local_workspace_tool(
         reg, sandbox, lambda sb: str_replace_editor(sb, goal_id=goal_id), has_local_workdir)
+    # After the first ten core tools, whose order limited provider catalogs rely on.
+    reg.register(request_decision(world, goal_id=goal_id))
     # Governed session kernel. Registered ONLY when the operator has turned
     # it on: an unregistered tool costs no catalog tokens and cannot be
     # called, so the default deployment is unchanged.

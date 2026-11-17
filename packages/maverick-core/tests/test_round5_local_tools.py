@@ -146,14 +146,18 @@ def test_hosted_voice_refuses_swapped_audio_parent(monkeypatch, tmp_path):
     monkeypatch.setenv("OPENAI_API_KEY", "synthetic")  # pragma: allowlist secret -- synthetic provider fixture
     monkeypatch.setattr(voice, "_default_stt_backend", lambda: "openai")
     monkeypatch.setattr(openai, "OpenAI", client)
-    result = voice.transcribe_audio(SimpleNamespace(workdir=root)).fn({"source": "audio/clip.wav"})
+    from maverick.budget import Budget
+
+    # A paid hosted call is charged to a run budget; one is passed here.
+    result = voice.transcribe_audio(SimpleNamespace(workdir=root), budget=Budget()).fn({"source": "audio/clip.wav"})
     assert result.startswith("ERROR")
     assert not sent
     folder.unlink()
     (root / "old-audio").rename(folder)
     monkeypatch.setattr(openai, "OpenAI", lambda **kw: SimpleNamespace(
         audio=SimpleNamespace(transcriptions=SimpleNamespace(create=upload))))
-    assert voice.transcribe_audio(SimpleNamespace(workdir=root)).fn({"source": "audio/clip.wav"}) == "transcribed"
+    assert voice.transcribe_audio(SimpleNamespace(workdir=root), budget=Budget()).fn(
+        {"source": "audio/clip.wav"}) == "transcribed"
     assert sent == [b"allowed"]
 
 
