@@ -1237,6 +1237,13 @@ def provider_configuration_state(provider: str) -> dict[str, Any]:
     tenant/operator value still wins. No credential value is returned.
     """
     name = str(provider or "").strip().lower()
+    return provider_configuration_states([name])[name]
+
+
+def provider_configuration_states(providers) -> dict[str, dict[str, Any]]:
+    """:func:`provider_configuration_state` for several providers, keyed by the
+    normalized name, from one read of each settings layer (a page listing every
+    provider read config.toml and the Settings overlay once per provider)."""
     _load_wizard_env()
     layers: list[tuple[str, Path | None]] = [
         ("config.toml", config_path()),
@@ -1247,11 +1254,9 @@ def provider_configuration_state(provider: str) -> dict[str, Any]:
         layers.append(("operator overlay", Path(operator_overlay).expanduser()))
     layers.append(("tenant config", tenant_config_path()))
 
-    effective: dict[str, Any] = {}
-    field_sources: dict[str, str] = {}
-    dashboard_set = False
     dashboard_path = dashboard_overrides_path()
     dashboard_layer = _load_config_file(dashboard_path) if dashboard_path.exists() else {}
+    loaded_layers: list[tuple[str, Any]] = []
     for source, path in layers:
         if path is None or not path.exists():
             continue
@@ -1263,6 +1268,20 @@ def provider_configuration_state(provider: str) -> dict[str, Any]:
             from .config_resets import apply_to_base
 
             loaded = apply_to_base(loaded, dashboard_layer)
+        loaded_layers.append((source, loaded))
+    source_errors = config_source_errors()
+    states: dict[str, dict[str, Any]] = {}
+    for provider in providers:
+        name = str(provider or "").strip().lower()
+        states[name] = _provider_state(name, loaded_layers, source_errors)
+    return states
+
+
+def _provider_state(name: str, loaded_layers: list[tuple[str, Any]], source_errors) -> dict[str, Any]:
+    effective: dict[str, Any] = {}
+    field_sources: dict[str, str] = {}
+    dashboard_set = False
+    for source, loaded in loaded_layers:
         providers = loaded.get("providers") if isinstance(loaded, dict) else None
         table = providers.get(name) if isinstance(providers, dict) else None
         if not isinstance(table, dict):
@@ -1318,7 +1337,7 @@ def provider_configuration_state(provider: str) -> dict[str, Any]:
         "dashboard_set": dashboard_set,
         "dashboard_can_set_api_key": key_source not in protected_sources,
         "dashboard_can_set_base_url": base_source not in protected_sources,
-        "source_errors": config_source_errors(),
+        "source_errors": dict(source_errors),
     }
 
 

@@ -307,3 +307,47 @@ def test_lockout_rail_runs_through_the_settings_api():
     assert resp.status_code == 409
     assert resp.json().get("lockout") is True
     assert "127.0.0.1" in resp.json()["message"]
+
+
+def test_the_async_sign_in_gate_checks_workspace_policies_off_the_event_loop(tmp_path, monkeypatch):
+    # The workspace address list and second-factor policy read the configuration;
+    # they ran on the event loop after the off-loop verification, so on network
+    # storage every signed-in request stalled every other one while they waited.
+    import asyncio
+    import threading
+
+    from maverick.oidc import VerifiedPrincipal
+    from maverick_dashboard import auth
+
+    _write_config(tmp_path, "[auth.ip_allowlist]\nworkspace_cidrs = [\"192.0.2.0/24\"]\n")
+    principal = VerifiedPrincipal(sub="a", issuer="oidc-session", audience="",
+                                  claims={"via": "session", "mfa": False})
+
+    async def verified(request, websocket):
+        return principal
+
+    monkeypatch.setattr(auth, "_verify_off_loop", verified)
+    checked_on: list[int] = []
+    real_allows = ip_allowlist.workspace_allows
+
+    def recording_allows(connection):
+        checked_on.append(threading.get_ident())
+        return real_allows(connection)
+
+    monkeypatch.setattr(ip_allowlist, "workspace_allows", recording_allows)
+
+    async def gate(host, path):
+        request = SimpleNamespace(client=SimpleNamespace(host=host), headers=Headers({}),
+                                  url=SimpleNamespace(path=path), state=SimpleNamespace())
+        loop_thread = threading.get_ident()
+        try:
+            return await auth.require_principal_in_request_context(request=request), loop_thread, request
+        except auth.HTTPException as exc:
+            return exc, loop_thread, request
+
+    refused, loop_thread, _ = asyncio.run(gate("203.0.113.7", "/metrics"))
+    assert isinstance(refused, auth.HTTPException) and refused.status_code == 403
+    assert refused.detail == ip_allowlist.BLOCKED_MESSAGE
+    assert checked_on and loop_thread not in checked_on
+    allowed, _, request = asyncio.run(gate("192.0.2.9", "/metrics"))
+    assert allowed is principal and request.state.principal is principal

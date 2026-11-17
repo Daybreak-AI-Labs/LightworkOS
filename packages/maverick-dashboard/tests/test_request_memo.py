@@ -121,9 +121,11 @@ def test_a_request_still_reads_policy_errors_variables_and_the_key_live(tmp_path
     config.dashboard_overrides_path().write_text(f'[providers.anthropic]\napi_key = "{token}"\n', encoding="utf-8")
     real = crypto_at_rest._load_or_create_key
     calls = []
+    armed = []  # the handler's own first read fails (not the request's priming read)
 
     def flaky():
-        calls.append(1)
+        if armed:
+            calls.append(1)
         if len(calls) == 1:
             raise crypto_at_rest.EncryptionUnavailable("the key file is held by its writer")
         return real()
@@ -137,6 +139,8 @@ def test_a_request_still_reads_policy_errors_variables_and_the_key_live(tmp_path
 
     @app.get("/x")
     def x():
+        armed.append(1)
+        config.reset_config_cache()  # drop the read the request primed before the handler
         seen = {"key": [api_key(), api_key()]}
         seen["value"] = [config.load_config()["probe"]["value"]]
         os.environ["MAVERICK_PROBE_VALUE"] = "two"
@@ -286,3 +290,109 @@ def test_a_page_reads_the_configuration_files_about_once(tmp_path, monkeypatch):
     finally:
         config.reset_config_cache()
         dashboard._world_cache.clear()
+
+
+def test_middleware_configuration_questions_are_answered_once_per_request(monkeypatch):
+    # The dashboard token, the trusted-proxy pin and the upload cap were each
+    # read from the configuration by several middlewares on every request, on
+    # the event loop: about 50 file checks per signed-in request there, each a
+    # server round trip when the state folder is on network storage, during
+    # which no other request could run.
+    from maverick import config, proxy_auth
+    from maverick_dashboard import _shared, ip_allowlist, request_size
+
+    monkeypatch.delenv("MAVERICK_DASHBOARD_TOKEN", raising=False)
+    monkeypatch.delenv("MAVERICK_DASHBOARD_MAX_REQUEST_MB", raising=False)
+    reads = {"global": 0, "proxy": 0, "config": 0}
+    real_global, real_load = config.load_global_config, config.load_config
+    monkeypatch.setattr(config, "load_global_config",
+                        lambda: reads.__setitem__("global", reads["global"] + 1) or real_global())
+    monkeypatch.setattr(config, "load_config",
+                        lambda *a, **k: reads.__setitem__("config", reads["config"] + 1) or real_load(*a, **k))
+    real_section = proxy_auth._section
+    monkeypatch.setattr(proxy_auth, "_section",
+                        lambda: reads.__setitem__("proxy", reads["proxy"] + 1) or real_section())
+    caps = []
+    real_cap = request_size._configured_max_request_mb
+    monkeypatch.setattr(request_size, "_configured_max_request_mb", lambda: caps.append(1) or real_cap())
+    app = FastAPI()
+    app.add_middleware(_request_memo.RequestMemoMiddleware)
+
+    @app.get("/x")
+    async def x():
+        for _ in range(5):
+            _shared.dashboard_token()
+            ip_allowlist._peer_is_trusted_proxy("10.0.0.7")
+            request_size.max_request_bytes()
+        ip_allowlist._peer_is_trusted_proxy("10.0.0.8")  # another peer is its own question
+        with _request_memo.fresh_configuration():  # a gate still reads the current files
+            _shared.dashboard_token()
+        return {}
+
+    client = TestClient(app, base_url="http://127.0.0.1")
+    # load_config itself calls load_global_config, and _section calls load_config.
+    def token_reads():
+        return reads["global"] - reads["config"]
+
+    assert client.get("/x").status_code == 200
+    assert token_reads() == 2  # once for the request, once for the gate
+    assert reads["proxy"] <= 4  # two peers: each pin and loopback fallback once
+    assert len(caps) == 1  # the upload cap
+    for key in reads:
+        reads[key] = 0
+    assert client.get("/x").status_code == 200
+    assert token_reads() == 2, "a new request reads the token again"
+
+
+def test_a_token_saved_between_requests_is_read_by_the_next_request(monkeypatch):
+    from maverick_dashboard import _shared
+
+    monkeypatch.delenv("MAVERICK_DASHBOARD_TOKEN", raising=False)
+    saved = {"token": "first-token"}  # pragma: allowlist secret
+    monkeypatch.setattr("maverick.config.load_global_config",
+                        lambda: {"dashboard": {"token": saved["token"]}})
+    app = FastAPI()
+    app.add_middleware(_request_memo.RequestMemoMiddleware)
+
+    @app.get("/x")
+    async def x():
+        return {"token": _shared.dashboard_token()}
+
+    client = TestClient(app, base_url="http://127.0.0.1")
+    assert client.get("/x").json() == {"token": "first-token"}
+    saved["token"] = "second-token"  # pragma: allowlist secret
+    assert client.get("/x").json() == {"token": "second-token"}
+    monkeypatch.setenv("MAVERICK_DASHBOARD_TOKEN", "env-token")  # pragma: allowlist secret
+    assert client.get("/x").json() == {"token": "env-token"}
+
+
+def test_the_request_configuration_is_read_off_the_event_loop(monkeypatch):
+    # Every middleware is an ``async def`` and runs on the event loop. The
+    # first configuration read of a request (files, at-rest key, decryption)
+    # ran there, so on network storage one request's file round trips stalled
+    # every other request. It now runs in the thread pool before the stack.
+    import threading
+
+    from maverick import config
+    from maverick_dashboard import _shared, request_size
+
+    monkeypatch.delenv("MAVERICK_DASHBOARD_TOKEN", raising=False)
+    monkeypatch.delenv("MAVERICK_DASHBOARD_MAX_REQUEST_MB", raising=False)
+    read_on: list[int] = []
+    real = config.load_global_config
+    monkeypatch.setattr(config, "load_global_config", lambda: read_on.append(threading.get_ident()) or real())
+    app = FastAPI()
+    app.add_middleware(_request_memo.RequestMemoMiddleware)
+    loop_thread: list[int] = []
+
+    @app.get("/x")
+    async def x():
+        loop_thread.append(threading.get_ident())
+        _shared.dashboard_token()
+        request_size.max_request_bytes()
+        return {}
+
+    client = TestClient(app, base_url="http://127.0.0.1")
+    assert client.get("/x").status_code == 200
+    assert read_on, "the request read its configuration"
+    assert loop_thread[0] not in read_on

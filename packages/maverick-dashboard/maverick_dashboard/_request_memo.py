@@ -85,6 +85,30 @@ class RequestMemoMiddleware:
         token = _SCOPE.set({})
         try:
             with kept_reads():
+                if scope["type"] == "http":
+                    from starlette.concurrency import run_in_threadpool
+
+                    await run_in_threadpool(_prime_request_configuration)
                 await self.app(scope, receive, send)
         finally:
             _SCOPE.reset(token)
+
+
+def _prime_request_configuration() -> None:
+    """Answer the questions every request's middlewares ask, in the thread pool.
+
+    The middlewares are ``async def`` and run on the event loop. Their first
+    configuration read (the files, the at-rest key, the saved secrets) blocked
+    every other request while it waited on the disk, which on a network file
+    system is many round trips. The thread shares this request's memo and kept
+    read (both are objects the copied context refers to), so the middlewares
+    then find the answers. A gate under :func:`fresh_configuration` still
+    reads the current files itself."""
+    try:
+        from ._shared import dashboard_token
+        from .request_size import max_request_bytes
+
+        dashboard_token()
+        max_request_bytes()
+    except Exception:  # noqa: BLE001 -- the middleware asks again and reports it
+        pass

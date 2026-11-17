@@ -221,8 +221,14 @@ def status(sid: str) -> bool | None:
     return record.active if record else None
 
 
-def touch(sid: str, *, ip: str = "", user_agent: str = "", activity: bool = False) -> None:
-    """Refresh last-seen (at most once a minute per session; never raises)."""
+def touch(sid: str, *, ip: str = "", user_agent: str = "", activity: bool = False,
+          last_seen: float | None = None) -> None:
+    """Refresh last-seen (at most once a minute per session; never raises).
+
+    ``last_seen`` is the stored value from a record the caller has just read
+    (:func:`current`). Inside the window the UPDATE below could match nothing,
+    so it is not sent: no write transaction per signed-in request right after
+    sign-in or after another process refreshed the row."""
     if not sid:
         return
     from .session_policy import idle_minutes
@@ -238,6 +244,8 @@ def touch(sid: str, *, ip: str = "", user_agent: str = "", activity: bool = Fals
     last = _TOUCHED.get(sid)
     if last is not None and now - last < interval:
         return  # This process wrote a refresh inside the window: the UPDATE would match nothing.
+    if last_seen is not None and now - last_seen < interval:
+        return  # The record just read was refreshed inside the window: the same.
     summary = user_agent_summary(user_agent) if user_agent else ""
     try:
         with _connect() as conn:

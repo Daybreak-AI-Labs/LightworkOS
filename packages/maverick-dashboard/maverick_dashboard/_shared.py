@@ -43,6 +43,14 @@ def dashboard_token() -> str:
     env = os.environ.get("MAVERICK_DASHBOARD_TOKEN", "")
     if env:
         return env
+    from ._request_memo import memoized
+
+    # Several middlewares ask on every request, on the event loop; one answer
+    # per request (a gate under fresh_configuration() still reads the files).
+    return memoized("dashboard_token", _saved_dashboard_token)
+
+
+def _saved_dashboard_token() -> str:
     try:
         from maverick.config import load_global_config
 

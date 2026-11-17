@@ -58,6 +58,34 @@ def _default_db() -> Path:
     return Path(DEFAULT_DB) if DEFAULT_DB is not None else data_dir("jobs.db")
 
 
+class _WorkSignal:
+    """Wakes this process's idle workers on a queue file when a write lands."""
+
+    __slots__ = ("condition", "generation")
+
+    def __init__(self) -> None:
+        self.condition = threading.Condition()
+        self.generation = 0
+
+
+# One signal per queue file, shared by every JobQueue handle on it in this
+# process (the dashboard's request threads and its worker threads).
+_WORK_SIGNALS: dict[str, _WorkSignal] = {}
+_WORK_SIGNALS_LOCK = threading.Lock()
+
+
+def _work_signal(path: Path) -> _WorkSignal:
+    try:
+        key = str(path.resolve())
+    except OSError:
+        key = str(path)
+    with _WORK_SIGNALS_LOCK:
+        signal = _WORK_SIGNALS.get(key)
+        if signal is None:
+            signal = _WORK_SIGNALS[key] = _WorkSignal()
+        return signal
+
+
 @dataclass
 class Job:
     id: int
@@ -183,6 +211,7 @@ class JobQueue:
             pass
         ensure_private_file(self.db_path)
         self._lock = threading.Lock()
+        self._work = _work_signal(self.db_path)
         self._ensure_schema()
 
     @contextmanager
@@ -193,7 +222,42 @@ class JobQueue:
             c.row_factory = sqlite3.Row
             yield c
         finally:
+            changed = c.total_changes
             c.close()
+            if changed and getattr(self, "_work", None) is not None:
+                # Any change may make a job claimable (an enqueue, a retry, a
+                # re-armed schedule). An empty claim changes nothing.
+                self.signal_work()
+
+    def work_generation(self) -> int:
+        """A token for :meth:`wait_for_work`; take it before looking for work."""
+        return self._work.generation
+
+    def signal_work(self) -> None:
+        """Wake this process's workers waiting on this queue file."""
+        with self._work.condition:
+            self._work.generation += 1
+            self._work.condition.notify_all()
+
+    def wait_for_work(self, generation: int, timeout: float) -> bool:
+        """Wait up to ``timeout`` seconds for a write to this queue file in this
+        process after ``generation`` was taken. True when one happened. A write
+        by another process is not seen here: callers bound ``timeout``."""
+        with self._work.condition:
+            return self._work.condition.wait_for(
+                lambda: self._work.generation != generation, timeout=max(0.0, timeout))
+
+    def next_ready_at(self) -> float | None:
+        """When the earliest job :meth:`claim` could pick becomes ready (a read,
+        no write lock), or None when there is none."""
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT MIN(run_at) FROM jobs WHERE status='pending' "
+                "AND (recurrence_id IS NULL OR attempts>0 OR EXISTS "
+                "(SELECT 1 FROM schedule_definitions WHERE id=jobs.recurrence_id AND state='active'))",
+            ).fetchone()
+        value = row[0] if row else None
+        return float(value) if value is not None else None
 
     def _ensure_schema(self) -> None:
         with self._conn() as c:

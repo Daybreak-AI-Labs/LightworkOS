@@ -840,6 +840,19 @@ def ensure_private_directory(path: str | Path) -> Path:
     # Its parent can exceed Win32's shorter CreateDirectory path limit, even
     # when the configured home and each individual path component are valid.
     io_path = Path(_windows_extended_path(path) if os.name == "nt" else path)
+    if os.name != "nt":
+        # An existing private directory (not a link, exact owner-only mode)
+        # needs nothing more: the mkdir and chmod below would each be a server
+        # round trip on a network file system, and this runs several times on
+        # every signed-in request. Anything else takes the full path below.
+        try:
+            info = io_path.lstat()
+        except OSError:
+            pass
+        else:
+            if (stat.S_ISDIR(info.st_mode) and not _unsafe_lock_alias(io_path, info)
+                    and stat.S_IMODE(info.st_mode) == 0o700):
+                return path
     io_path.mkdir(mode=0o700, parents=True, exist_ok=True)
     try:
         before = io_path.lstat()

@@ -390,6 +390,7 @@ def session_claims(payload: dict, request: Request, *, via: str) -> dict | None:
     session_registry.touch(
         sid, ip=str(getattr(client, "host", "") or ""),
         user_agent=request.headers.get("user-agent", ""),
+        last_seen=record.last_seen,
     )
     claims["sid"] = sid
     if payload.get("mfa") is True:

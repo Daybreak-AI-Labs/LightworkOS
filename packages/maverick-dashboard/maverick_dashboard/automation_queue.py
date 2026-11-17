@@ -2319,6 +2319,15 @@ def reconcile() -> None:
 
 # ---- lifecycle --------------------------------------------------------------
 
+def _idle_max() -> float:
+    """How long an idle automation thread may sleep before looking at the queue
+    again (``[automation] idle_poll_seconds``, default 60). Enqueues from this
+    process wake it at once and it wakes when the next job is due, so this only
+    bounds how late a job written by another process is seen."""
+    v = _cfg_int("automation", "idle_poll_seconds")
+    return float(max(2, min(600, v))) if v is not None else 60.0
+
+
 def _worker_count() -> int:
     v = _cfg_int("automation", "workers")
     return max(1, min(8, v)) if v else _DEFAULT_WORKERS
@@ -2350,7 +2359,7 @@ def start() -> bool:
             return not _worker_stopping
         _worker, _worker_threads = None, []
         from maverick.worker import Worker
-        w = Worker(queue=queue())
+        w = Worker(queue=queue(), idle_max=_idle_max())
         w.register(TICK_KIND, _handle_tick)
         w.register(DREAM_KIND, _handle_dream)
         w.register(FLYWHEEL_KIND, _handle_flywheel)

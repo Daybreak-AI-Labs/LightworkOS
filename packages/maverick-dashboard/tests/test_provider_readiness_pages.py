@@ -90,9 +90,9 @@ def test_provider_pages_assemble_one_readiness_snapshot(workspace, monkeypatch, 
         calls["workspace"] += 1
         return real_workspace()
 
-    def provider_once(name, *, configured):
+    def provider_once(name, *, configured, material=None):
         calls["provider"] += 1
-        return real_provider(name, configured=configured)
+        return real_provider(name, configured=configured, material=material)
 
     monkeypatch.setattr(provider_readiness, "workspace_readiness", workspace_once)
     monkeypatch.setattr(integration_readiness, "provider_readiness", provider_once)
