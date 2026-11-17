@@ -94,9 +94,9 @@ def save_benchmark(identifier, *, minutes, low_minutes, high_minutes, attributab
     item = definition(identifier)
     if item is None:
         raise ValueError("Choose a known business activity.")
-    for key, value in {"minutes": minutes, "low_minutes": low_minutes, "high_minutes": high_minutes,
-                       "review_minutes": review_minutes}.items():
-        number(value, key)
+    for label, value in {"Typical minutes": minutes, "Lowest minutes": low_minutes, "Highest minutes": high_minutes,
+                         "Review minutes": review_minutes}.items():
+        number(value, label)
     number(attributable_share, "Lightwork share", 1)
     if not low_minutes <= minutes <= high_minutes or not reason.strip():
         raise ValueError("Enter a range containing the estimate and explain the company assumption.")

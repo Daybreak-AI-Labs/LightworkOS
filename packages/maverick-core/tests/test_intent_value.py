@@ -562,6 +562,34 @@ def test_measured_receipts_replace_runtime_and_reprocessing_does_not_double_coun
     assert report(world)["totals"] == first["totals"]
 
 
+def test_day_period_receipts_replace_runtime_without_a_parse_error(world, monkeypatch):
+    # Provider caps default to UTC-day periods (YYYY-MM-DD); a month-only parser
+    # failed with "unconverted data remains: -16" and the whole report broke.
+    from datetime import datetime, timezone
+
+    from maverick import cost_provenance
+    identifier = goal(world, cost=2)
+    period = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    receipt = {"reference": "synthetic-day-receipt", "period": period, "state": "settled", "actual": 3,
+               "currency": "USD", "basis": "recorded"}
+    monkeypatch.setattr(cost_provenance, "for_goal", lambda gid: {"state": "available", "receipts": [receipt] if gid == identifier else []})
+    totals = report(world)["totals"]
+    assert totals["known_execution_costs"] == {"USD": 3}
+    assert totals["measured_costs"] == {"USD": 3}
+    assert totals["estimated_costs"] == {}
+
+
+def test_unreadable_receipt_period_is_a_limitation_not_a_failure(world, monkeypatch):
+    from maverick import cost_provenance
+    identifier = goal(world, cost=2)
+    receipt = {"reference": "synthetic-bad-period", "period": "2026-11-16T00:00:00-05:00", "state": "settled",
+               "actual": 3, "currency": "USD", "basis": "recorded"}
+    monkeypatch.setattr(cost_provenance, "for_goal", lambda gid: {"state": "available", "receipts": [receipt] if gid == identifier else []})
+    item = service.refresh(world)[0]
+    assert any("period could not be read" in text for text in item["source"]["cost_limitations"])
+    assert report(world)["totals"]["known_execution_costs"] == {"USD": 2}
+
+
 def test_unknown_receipt_retains_incurred_runtime_with_incomplete_net(world, monkeypatch):
     from datetime import datetime, timezone
 

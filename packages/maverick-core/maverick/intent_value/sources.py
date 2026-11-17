@@ -318,11 +318,22 @@ def _flow_cost_residuals(item):
     item["costs"] = retained
 
 
+def _period_start(period):
+    """The UTC start of a provider-cap period (``YYYY-MM-DD`` or ``YYYY-MM``), or None when unreadable."""
+    for fmt in ("%Y-%m-%d", "%Y-%m"):
+        try:
+            return datetime.strptime(str(period), fmt).replace(tzinfo=timezone.utc).timestamp()
+        except ValueError:
+            continue
+    return None
+
+
 def _provider_costs(item):
     """Receipts replace, never add to, their goal's episode estimate.
 
-    Receipt timestamps have month precision. Allocation within that month is
-    explicitly estimated; the receipt's native period remains inspectable.
+    Receipt periods are UTC days (``YYYY-MM-DD``, the provider-cap default) or
+    months (``YYYY-MM``). Allocation within that period is explicitly
+    estimated; the receipt's native period remains inspectable.
     Mixed instrumentation cannot prove all calls were admitted, so retain an
     unallocated runtime residual when it exceeds the receipt subtotal.
     """
@@ -339,16 +350,22 @@ def _provider_costs(item):
         runtime = [cost for cost in item["costs"] if cost.get("goal_id") == gid]
         by_period = defaultdict(list)
         for cost in runtime:
-            by_period[datetime.fromtimestamp(cost["at"], timezone.utc).strftime("%Y-%m")].append(cost)
+            stamp = datetime.fromtimestamp(cost["at"], timezone.utc)
+            by_period[stamp.strftime("%Y-%m")].append(cost)
+            by_period[stamp.strftime("%Y-%m-%d")].append(cost)
+        readable = [receipt for receipt in receipts if _period_start(receipt.get("period")) is not None]
+        if len(readable) < len(receipts):
+            item["cost_limitations"].append("A linked provider receipt's period could not be read, so it was left out of the totals.")
+        receipts = readable
         for receipt in receipts:
-            at = datetime.strptime(receipt["period"], "%Y-%m").replace(tzinfo=timezone.utc).timestamp()
+            at = _period_start(receipt["period"])
             related = by_period.get(receipt["period"], [])
             if related:
                 at = max(cost["at"] for cost in related)
             item["costs"].append({"id": "provider:" + receipt["reference"], "goal_id": gid,
                 "amount": receipt["actual"] if receipt["state"] == "settled" else None,
                 "currency": receipt["currency"], "basis": "measured" if receipt["basis"] in {"recorded", "reconciled"} else "estimated",
-                "at": at, "period": receipt["period"], "time_basis": "Allocated within native provider month; exact incurred date unavailable",
+                "at": at, "period": receipt["period"], "time_basis": "Allocated within native provider period; exact incurred date unavailable",
                 "complete": False, "status": receipt["state"], "invoice_verified": False})
         periods = {receipt["period"] for receipt in receipts}
         for period in periods:
