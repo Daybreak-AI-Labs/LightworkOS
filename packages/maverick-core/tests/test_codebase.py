@@ -2379,3 +2379,48 @@ def test_an_installation_owned_by_another_user_is_still_recognised(upstream, tmp
         (install / ".git").rename(broken)
         (install / ".git").write_text("gitdir: /nowhere\n")       # git cannot read it at all
         assert features.is_installation(vault.get("pricing"), host)   # unknown: fail closed
+
+
+def test_the_second_checker_family_reads_through_gateways(upstream, tmp_path, monkeypatch):
+    family = features.model_family
+    for model in ("anthropic:claude-x", "openrouter:anthropic/claude-3.5", "claude-3-opus",
+                  "bedrock:us.anthropic.claude-3-5-sonnet", "vertex:claude-sonnet-4",
+                  "litellm:claude-haiku", "anthropic:author-model"):
+        assert family(model) == "anthropic", model
+    assert family("openrouter:openai/gpt-4o") == family("openai:o3-mini") == "openai"
+    assert family("vertex:gemini-2.5-pro") == family("gemini:other") == "google"
+    assert family("ollama:llama3.1") == family("openai:llama-3-70b") == "meta"
+    for unknown in ("my-local", "ollama:my-model", "openrouter:some/thing"):
+        assert family(unknown) is None, unknown
+    _protected_repo(upstream, monkeypatch)                    # the author is anthropic:...
+    world = WorldModel(tmp_path / "world.db")
+    for model, problem in (("openrouter:anthropic/claude-3.5", "same_family"),
+                           ("bedrock:anthropic.claude-v2", "same_family"),
+                           ("vertex:claude-sonnet-4", "same_family"),
+                           ("my-local", "uncompared")):
+        run, _ = _rounds(_passing)
+        second, calls = _second(model)
+        p = features.propose(world, "pricing", "Discount", "", run, protected_checker=second,
+                             owner="user:starter")
+        assert p["protected"]["problem"] == problem and calls == [], model
+        assert p["approval_id"] is None
+
+
+def test_the_second_checker_never_fails_over_to_another_model(monkeypatch, tmp_path):
+    from maverick import config, orchestrator, provider_failover
+    from maverick import world_model as wm
+    chains = {"provider_failover": {"chains": {"openai:second": ["anthropic:claude-x"]}}}
+    monkeypatch.setattr(config, "load_config", lambda *a, **k: chains)
+    assert provider_failover.fallback_models("openai:second") == ["anthropic:claude-x"]
+    seen = []
+    monkeypatch.setattr(orchestrator, "run_goal_sync", lambda *a, **k: seen.append(
+        (k.get("orchestrator_model_override"), provider_failover.fallback_models("openai:second"))))
+    monkeypatch.setattr(wm, "open_world", lambda: object())
+    monkeypatch.setattr(wm, "close_world_if_owned", lambda world: None)
+    monkeypatch.setattr(features, "checker_sandbox", lambda workdir: object())
+    _settings(monkeypatch, protected_checker_model="openai:second")
+    checker = features.default_protected_checker(budget=None)
+    checker(1, tmp_path)
+    normal = features.default_checker(budget=None, model="openai:second")
+    normal(1, tmp_path)
+    assert seen == [("openai:second", []), ("openai:second", ["anthropic:claude-x"])]

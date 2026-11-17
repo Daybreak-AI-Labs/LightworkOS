@@ -1088,17 +1088,66 @@ def _checker_record(checker: Checker, n: int, author: str | None) -> dict:
     return {"n": n, "model": model, "same_family": same, "commit": None}
 
 
+# Gateways and hosts that serve other vendors' models: the family comes from
+# the model's own name after them, never from the gateway.
+_GATEWAYS = frozenset({
+    "openrouter", "bedrock", "vertex", "vertex_ai", "vertexai", "litellm", "azure", "azure_ai",
+    "together", "together_ai", "fireworks", "fireworks_ai", "groq", "ollama", "deepinfra",
+    "replicate", "anyscale", "perplexity", "cloudflare", "huggingface", "hf", "nvidia", "nim",
+    "sagemaker", "watsonx", "vllm", "tgi", "lmstudio", "cerebras", "sambanova", "baseten",
+    "openai_compatible", "openai-compatible", "custom", "local", "llamacpp", "llama_cpp"})
+# family -> name tokens (exact, or a prefix when three letters or more).
+_FAMILIES = (
+    ("anthropic", ("claude", "anthropic")),
+    ("openai", ("gpt", "chatgpt", "openai", "davinci", "o1", "o3", "o4")),
+    ("google", ("gemini", "gemma", "palm", "bison", "google")),
+    ("meta", ("llama", "meta")),
+    ("mistral", ("mistral", "mixtral", "codestral", "magistral", "ministral", "pixtral",
+                 "devstral")),
+    ("deepseek", ("deepseek",)),
+    ("alibaba", ("qwen", "qwq")),
+    ("cohere", ("command", "cohere", "aya")),
+    ("xai", ("grok", "xai")),
+    ("microsoft", ("phi",)),
+    ("amazon", ("nova", "titan", "amazon")),
+    ("moonshot", ("kimi", "moonshot")),
+)
+_PROVIDER_FAMILIES = {"anthropic": "anthropic", "claude": "anthropic", "openai": "openai",
+                      "google": "google", "gemini": "google", "mistral": "mistral",
+                      "cohere": "cohere", "xai": "xai", "deepseek": "deepseek"}
+
+
+def model_family(model: object) -> str | None:
+    """The vendor family of a model spec, read from the model's own name
+    after any gateway (``openrouter:anthropic/claude-…``,
+    ``bedrock:anthropic.claude…``, ``vertex:claude-…``), else from a
+    first-party provider prefix; None when it cannot be told. Stricter than
+    :func:`maverick.verifier._same_family`, which other callers keep."""
+    text = str(model or "").strip().lower()
+    if not text:
+        return None
+    provider, _, name = text.partition(":") if ":" in text else ("", "", text)
+    tokens = [t for t in re.split(r"[/:._\-\s@]+", name) if t]
+    for family, keys in _FAMILIES:
+        if any(t == k or (len(k) >= 3 and t.startswith(k)) for t in tokens for k in keys):
+            return family
+    if provider and provider not in _GATEWAYS:
+        return _PROVIDER_FAMILIES.get(provider)
+    return None
+
+
 def _family_problem(model: str | None, author: str | None,
                     checkers: list[str | None]) -> str | None:
     """Why the second checker cannot vouch for a protected change, or None:
-    unset | same_family (as the author or a normal checker) | uncompared."""
+    unset | same_family (as the author or a normal checker) | uncompared
+    (any family that cannot be told counts as not comparable)."""
     if not model:
         return "unset"
-    others = [author, *checkers]
-    if any(not other for other in others):
+    mine = model_family(model)
+    others = [model_family(o) for o in (author, *checkers)]
+    if mine is None or any(o is None for o in others):
         return "uncompared"
-    from ..verifier import _same_family
-    return "same_family" if any(_same_family(model, str(o)) for o in others) else None
+    return "same_family" if mine in others else None
 
 
 def _fail_goal(world, goal_id: int, exc: BaseException) -> None:
@@ -2063,13 +2112,15 @@ def checker_sandbox(workdir: str):
 
 def default_checker(*, budget, user_id: str | None = None,
                     allowed_suites: frozenset[str] | None = None,
-                    model: str | None = None) -> Checker:
+                    model: str | None = None, exact_model: bool = False) -> Checker:
     """The independent checker: a separate governed run with a fresh context,
     whose sandbox is its own throwaway copy of the pinned commit, charged to
     the feature run's ``budget``. Its run is a fresh context
     (:func:`maverick.tools.fresh_context_run`): no tool that reads past goals
     or shared memory, and no prior goals recalled into its brief. ``model``
-    defaults to :func:`checker_model`; the checker carries it as ``.model``."""
+    defaults to :func:`checker_model`; the checker carries it as ``.model``.
+    With ``exact_model`` no provider failover applies: when that model
+    cannot answer, the check does not happen."""
     chosen = model or checker_model()
 
     def check(goal_id: int, copy: Path) -> object:
@@ -2079,8 +2130,11 @@ def default_checker(*, budget, user_id: str | None = None,
         from ..world_model import close_world_if_owned, open_world
         world = open_world()
         box = checker_sandbox(str(copy))
+        from contextlib import nullcontext
+
+        from ..provider_failover import no_failover
         try:
-            with fresh_context_run():
+            with fresh_context_run(), (no_failover() if exact_model else nullcontext()):
                 return orchestrator.run_goal_sync(LLM(), world, budget, goal_id, sandbox=box,
                                                   user_id=user_id,
                                                   allowed_suites=allowed_suites,
@@ -2113,7 +2167,7 @@ def default_protected_checker(*, budget, user_id: str | None = None,
     if not model:
         return None
     return default_checker(budget=budget, user_id=user_id, allowed_suites=allowed_suites,
-                           model=model)
+                           model=model, exact_model=True)
 
 
 def default_reviewer(*, budget=None) -> Reviewer:
