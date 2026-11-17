@@ -222,8 +222,9 @@ decision_admin_areas    = ["governance"]
 # done or failed) its open decisions are closed. With [durable] enabled off
 # (the default) a run restarted after an answer begins again, so steps it
 # already finished, including a subagent's side effects, may run again.
-# Decision rows are deleted with their goal on erasure; erasure receipts do
-# not list them, because receipts already on disk name a fixed set of stores.
+# Decision rows are deleted with their goal on erasure and counted in the
+# signed pre-delete erasure receipt (schema v3); v2 receipts already on disk
+# keep verifying against the stores they listed.
 decision_expiry_hours   = 72
 
 [sandbox]

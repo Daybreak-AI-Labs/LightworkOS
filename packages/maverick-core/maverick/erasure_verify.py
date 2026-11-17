@@ -399,7 +399,9 @@ def verify_erasure(
             conversation_ids = list(manifest["conversation_ids"])
             goal_ids = list(manifest["goal_ids"])
             episode_ids = list(manifest["episode_ids"])
-            for store in RECEIPT_STORES:
+            # Each receipt is checked against the stores it promised when it
+            # was issued (a v2 receipt predates decision_requests).
+            for store in manifest["expected_stores"]:
                 stores[store] = _capture_count(
                     lambda store=store: counter(
                         store,

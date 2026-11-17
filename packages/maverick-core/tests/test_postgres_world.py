@@ -1221,6 +1221,11 @@ def test_erase_conversations_deletes_pg_rows(world, monkeypatch):
     )
     world.add_artifact(grandchild, "text", "report", "private artifact")
     world.ask("private question", goal_id=grandchild)
+    from maverick import decision_requests
+
+    decision_requests.request(world, grandchild, **decision_requests.validate({
+        "question": "private decision", "area": "security", "recommended": 1, "why": "private",
+        "options": [{"label": "Keep", "effect": "private"}, {"label": "Change", "effect": "private"}]}))
     world.create_share_link(grandchild, created_by="reviewer")
     world.record_goal_origin(grandchild, "webhook", "private-origin")
     world.set_goal_status(grandchild, "done", result="private result")
@@ -1535,7 +1540,7 @@ def test_rls_lets_a_tenant_with_an_encoded_id_use_its_workspace_rows(monkeypatch
 #: Row-level security does NOT filter them. A new table gets a policy
 #: (``_RLS_TABLES``) or a deliberate place in this list.
 _TABLES_WITHOUT_ROW_POLICY = frozenset({
-    "approval_checks", "approval_signoffs", "artifacts", "attachments", "episodes",
+    "approval_checks", "approval_signoffs", "artifacts", "attachments", "decision_requests", "episodes",
     "goal_events", "goal_mutation_receipts", "goal_origins", "halt", "harness_addenda",
     "harness_corpus", "harness_line_meta", "harness_transfer_tried", "messages",
     "provider_cap_receipts", "provider_operation_attempt_backfill",

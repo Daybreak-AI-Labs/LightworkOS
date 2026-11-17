@@ -802,6 +802,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `maverick voice` are not part of a run and are not charged. With the
   default `auto` speech-to-text, a hosted service the run cannot pay for
   falls back to the local engine.
+- Erasure receipts are now issued as `lightwork.erasure-receipt.v3`, which
+  also counts a run's decision requests before deletion. Receipts issued as v2
+  keep verifying against the stores they listed; nothing needs re-issuing.
 
 ### Fixed
 

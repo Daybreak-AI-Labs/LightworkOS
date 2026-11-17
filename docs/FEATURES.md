@@ -5033,8 +5033,9 @@ tested without spawning py-spy.
   yet). A run bound to its own access key is not restarted after an answer: the
   queue and the task say who must start it again. With durable checkpoints off
   (`[durable] enabled`, the default) a restarted run begins again, so finished
-  steps may repeat. Decision rows are deleted with their
-  goal; erasure receipts do not list them, so receipts already on disk stay valid.
+  steps may repeat. Decision rows are deleted with their goal and counted in
+  the signed pre-delete erasure receipt (receipt schema v3); receipts issued
+  under v2 keep verifying against their own store list.
 - **Web dashboard** — run list, plan-tree, chat at `/chat`,
   [root conversation summaries and shared durable SSE replay](./dashboard-read-models.md)
   (schema 37 root indexes; monotonic heartbeat deadlines), and an approval queue with
