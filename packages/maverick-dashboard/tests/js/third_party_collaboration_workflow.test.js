@@ -147,3 +147,22 @@ test("a list that cannot load says so with a retry instead of staying on Loading
   down = false; retry.click(); await ui.settle();
   assert.match(ui.el("tpc-invitations").textContent, /Acme Corp/);
 });
+
+test("the invitation list is asked for at once, not after the supporting lists answer", async (t) => {
+  // Each request waits on the server; asking for the list only after the
+  // assessments, questionnaires, vendors and sharing limits came back put two
+  // round trips before anything showed.
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  const ui = await fixture({ intercept: async (call) => {
+    if (!call.url.pathname.endsWith("/invitations")) await held;
+    return undefined;
+  } });
+  t.after(() => ui.window.close());
+  assert.ok(ui.calls.some((c) => c.method === "GET" && c.url.pathname.endsWith("/invitations")));
+  assert.match(ui.el("tpc-invitations").textContent, /Loading/);
+  release();
+  await ui.settle();
+  assert.match(ui.el("tpc-invitations").textContent, /Acme Corp/);
+  assert.match(ui.el("tpc-status").textContent, /Up to date/);
+});
