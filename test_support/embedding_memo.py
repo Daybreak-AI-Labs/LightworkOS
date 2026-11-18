@@ -52,6 +52,25 @@ def _embed_missing(real, missing: list[str], shared: Path) -> bool:
     return True
 
 
+def without_local_model(monkeypatch) -> None:
+    """Rank the roster the way a host without the optional local model does.
+
+    ``rank_specialists`` blends in semantic scores only when
+    ``maverick.skill.embeddings`` can load its model, and falls back to the
+    deterministic lexical index when it cannot. A test of the ranking logic,
+    the routes around it or input handling pins that fallback, so it asserts
+    the same thing whether or not FastEmbed is installed and never runs model
+    inference over the 2,031 shipped packs (minutes on a two-core runner).
+    The roster index is process-wide, so it is rebuilt here instead of reusing
+    one that another test built with the model.
+    """
+    from maverick import domain_router
+    from maverick.skill import embeddings
+
+    monkeypatch.setattr(embeddings, "_get_model", lambda: None)
+    monkeypatch.setattr(domain_router, "_CACHE", None)
+
+
 def reuse_embeddings(monkeypatch, tmp_path_factory) -> None:
     """Wrap ``maverick.skill.embeddings.embed`` with the run-wide memo."""
     from maverick.skill import embeddings

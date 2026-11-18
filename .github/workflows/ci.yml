@@ -1327,6 +1327,133 @@ jobs:
           python -m pytest -vvs --timeout=180 --timeout-method=signal
           packages/maverick-knowledge/tests/test_knowledge.py -k PgVectorLive
 
+  optional-heavy:
+    needs: select-tests
+    # Skipped on a pull request whose change set cannot affect this job (select-tests).
+    if: "${{ !cancelled() && !contains(needs.select-tests.outputs.jobs, '\"optional-heavy\": false') }}"
+    # The tests that need Torch, FastEmbed or Playwright. The `test` and
+    # `posture` legs do not install those three: on Linux the public Torch
+    # wheel pulls about 2.8 GiB of CUDA/Triton wheels into every slice,
+    # real FastEmbed inference over the specialist roster on a two-core slice
+    # ran past the 180-second test timeout, and `playwright install
+    # --with-deps` installs unpinned apt packages. Here they resolve from
+    # requirements/ci.txt like everything else, the browser is installed
+    # without --with-deps, and the model and browser are cached so the test
+    # steps run with HF_HUB_OFFLINE=1. This job is not a required check
+    # (.github/rulesets/protect-main.json): it runs on the merge queue's
+    # commit, on main, and on a pull request that reaches maverick-core.
+    #
+    # The files run twice, in the default test mode and in the production
+    # security posture, and the job fails if either run skips a test: a
+    # missing browser or model must not pass as a skip.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      # Every test file that needs one of the three: it calls
+      # pytest.importorskip on torch, fastembed or playwright. Plus
+      # test_compaction_hybrid.py, whose check that the hybrid picker never
+      # imports Torch only means something with Torch installed.
+      # test_select_pr_tests.py fails when such a file is missing here.
+      # test_qdrant_isolation_live.py also needs FastEmbed but skips without a
+      # live Qdrant server, which this job does not run.
+      OPTIONAL_HEAVY_TEST_FILES: >-
+        packages/maverick-core/tests/test_browser_pinned_egress.py
+        packages/maverick-core/tests/test_compaction_hybrid.py
+        packages/maverick-core/tests/test_domain_router_fastembed.py
+        packages/maverick-core/tests/test_learned_prm.py
+        packages/maverick-core/tests/test_qdrant_text_compat.py
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12.13"
+      - name: Install
+        run: |
+          set -x
+          python -m pip install --upgrade \
+            'pip==26.3' 'setuptools==84.2.1' 'wheel==0.48.0' \
+            'packaging==26.3'
+          # [qdrant] is qdrant-client + FastEmbed and [browser] is Playwright.
+          # Torch is the public PyPI build pinned in requirements/ci.txt (the
+          # audit job cannot resolve the CPU-only index build); --no-cache-dir
+          # keeps a second copy of its CUDA wheels off the runner's disk.
+          python -m pip install --no-cache-dir \
+            -e './packages/maverick-core[qdrant,browser]' torch \
+            pytest pytest-asyncio pytest-timeout
+          python -m pip check
+          python scripts/verify_constraint_closure.py
+      - name: Restore the FastEmbed model and the Playwright browser
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ${{ runner.temp }}/fastembed
+            ${{ runner.temp }}/ms-playwright
+          # The pins choose the browser build and the loader; embeddings.py
+          # names the model.
+          key: optional-heavy-${{ runner.os }}-${{ hashFiles('requirements/ci.txt', 'packages/maverick-core/maverick/skill/embeddings.py') }}
+      - name: Fetch the FastEmbed model and the Playwright browser
+        # Both locations are explicit: the root conftest.py points HOME at a
+        # temporary directory, so Playwright's default ~/.cache/ms-playwright
+        # would not be found while the tests run.
+        env:
+          FASTEMBED_CACHE_PATH: ${{ runner.temp }}/fastembed
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/ms-playwright
+        run: |
+          # Both are no-ops when the cache above restored them.
+          python -m playwright install --only-shell chromium
+          python -c "from maverick.skill import embeddings; assert embeddings._get_model() is not None, 'FastEmbed could not load ' + embeddings.MODEL_NAME"
+      - name: Test Torch, FastEmbed and Playwright integrations
+        env:
+          FASTEMBED_CACHE_PATH: ${{ runner.temp }}/fastembed
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/ms-playwright
+          HF_HUB_OFFLINE: "1"
+        run: >-
+          timeout --verbose --signal=ABRT --kill-after=30s 15m
+          python -m pytest -vv -rs --timeout=180 --timeout-method=signal
+          --junitxml=optional-heavy-results.xml
+          $OPTIONAL_HEAVY_TEST_FILES
+      - name: Test Torch, FastEmbed and Playwright integrations in the production security posture
+        env:
+          FASTEMBED_CACHE_PATH: ${{ runner.temp }}/fastembed
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/ms-playwright
+          HF_HUB_OFFLINE: "1"
+          MAVERICK_TEST_SECURE_DEFAULT: "1"
+        run: >-
+          timeout --verbose --signal=ABRT --kill-after=30s 15m
+          python -m pytest -vv -rs --timeout=180 --timeout-method=signal
+          --junitxml=optional-heavy-secure-results.xml
+          $OPTIONAL_HEAVY_TEST_FILES
+      - name: Fail on any skipped test
+        run: |
+          python - optional-heavy-results.xml optional-heavy-secure-results.xml <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          skipped = [
+              f"{path}: {case.get('classname')}::{case.get('name')}: {element.get('message')}"
+              for path in sys.argv[1:]
+              for case in ET.parse(path).getroot().iter("testcase")
+              for element in case.findall("skipped")
+          ]
+          if skipped:
+              print("These tests skipped; this job exists to run them:")
+              print("\n".join(skipped))
+              sys.exit(1)
+          print("no test skipped")
+          PY
+      - name: Retain the test results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: optional-heavy-results
+          path: |
+            optional-heavy-results.xml
+            optional-heavy-secure-results.xml
+          if-no-files-found: warn
+          retention-days: 14
+
   docker:
     needs: select-tests
     # Skipped on a pull request whose change set cannot affect this job (select-tests).

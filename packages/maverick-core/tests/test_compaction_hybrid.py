@@ -201,11 +201,46 @@ def test_epsilon_exploration_uses_injected_prng(tmp_path):
     assert "explore" in reason
 
 
+#: Run in a fresh interpreter: the test process's ``sys.modules`` is shared with
+#: every other test in the same xdist worker, and one of them (the learned-PRM
+#: training round trip) imports Torch on purpose when it is installed. The
+#: finder records every attempt to import Torch, so an import guarded by
+#: ``try/except ImportError`` counts too, whether or not Torch is installed.
+_IMPORT_HYBRID_WITHOUT_TORCH = """
+import json
+import sys
+
+
+class RecordTorchImports:
+    attempts = []
+
+    def find_spec(self, name, path=None, target=None):
+        if name == "torch" or name.startswith("torch."):
+            self.attempts.append(name)
+        return None
+
+
+finder = RecordTorchImports()
+sys.meta_path.insert(0, finder)
+import maverick.compaction.hybrid  # noqa: E402,F401
+
+print(json.dumps({
+    "attempts": finder.attempts,
+    "loaded": sorted(m for m in sys.modules if m == "torch" or m.startswith("torch.")),
+}))
+"""
+
+
 def test_no_torch_required():
+    import subprocess
     import sys
 
-    import maverick.compaction.hybrid  # noqa: F401  (already imported above)
-    assert "torch" not in sys.modules
+    proc = subprocess.run(
+        [sys.executable, "-c", _IMPORT_HYBRID_WITHOUT_TORCH],
+        capture_output=True, text=True, timeout=120, check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout.strip().splitlines()[-1]) == {"attempts": [], "loaded": []}
     doc = " ".join((sys.modules["maverick.compaction.hybrid"].__doc__ or "").split())
     assert "no torch" in doc.lower()
     assert "not a pretrained model" in doc

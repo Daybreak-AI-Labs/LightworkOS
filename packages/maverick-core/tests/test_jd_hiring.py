@@ -88,7 +88,11 @@ def test_match_includes_custom_tenant_packs(tmp_path, monkeypatch):
     assert matches and matches[0].name == "acme_llama_groomer"
 
 
-def test_match_empty_and_oversized_input():
+def test_match_empty_and_oversized_input(monkeypatch):
+    # Input handling, not ranking quality: rank on the lexical fallback.
+    from test_support.embedding_memo import without_local_model
+
+    without_local_model(monkeypatch)
     assert match_jd("") == []
     assert match_jd("   \n  ") == []
     # Oversized input is truncated, not an error.

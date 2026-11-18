@@ -41,7 +41,12 @@ def _embed_each_pack_once(monkeypatch, tmp_path_factory):
 
 # ---- /agents/jd/match ---------------------------------------------------------
 
-def test_jd_match_ranks_roster():
+def test_jd_match_ranks_roster(monkeypatch):
+    # The route's contract and its lexical ranking; the real local model is
+    # exercised by test_domain_router_fastembed.py in the optional-heavy job.
+    from test_support.embedding_memo import without_local_model
+
+    without_local_model(monkeypatch)
     resp = client.post("/api/v1/agents/jd/match",
                        json={"jd_text": FINANCE_JD, "k": 5})
     assert resp.status_code == 200

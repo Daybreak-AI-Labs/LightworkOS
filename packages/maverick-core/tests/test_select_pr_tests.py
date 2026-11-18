@@ -484,6 +484,77 @@ def test_postgres_job_runs_every_live_postgres_test_file_in_both_postures():
         assert postures == [None, "1"], target
 
 
+#: How a test file shows that it needs Torch, FastEmbed or Playwright installed.
+_NEEDS_HEAVY_INTEGRATION = re.compile(
+    r"""importorskip\(\s*["'](?:torch|fastembed|playwright)(?:\.[\w.]+)?["']"""
+)
+#: Files the optional-heavy job runs although no import guard names them, and
+#: guarded files it leaves out, each with the reason.
+_HEAVY_ALSO_RUN = {
+    # Its subprocess check that the hybrid picker never imports Torch is
+    # vacuous unless Torch is installed.
+    "packages/maverick-core/tests/test_compaction_hybrid.py",
+}
+_HEAVY_LEFT_OUT = {
+    # Skips without a live Qdrant server (MAVERICK_QDRANT_URL); no job runs one.
+    "packages/maverick-core/tests/test_qdrant_isolation_live.py",
+}
+
+
+def test_optional_heavy_job_runs_every_file_that_needs_torch_fastembed_or_playwright():
+    """The `test` and `posture` legs do not install Torch, FastEmbed or
+    Playwright, so a test that needs one runs only in the optional-heavy job,
+    and only when that job names its file. Every such file is named there, a
+    change to it selects the job on a pull request, the job installs all three
+    under the reviewed constraints, runs the files in both postures without
+    reaching the network for the model, and fails on a skip."""
+    jobs = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))["jobs"]
+    job = jobs["optional-heavy"]
+    listed = job["env"]["OPTIONAL_HEAVY_TEST_FILES"].split()
+    assert len(listed) == len(set(listed))
+    assert all((REPO_ROOT / name).is_file() for name in listed)
+    assert all(name.startswith(select_pr_tests.JOB_PREFIXES["optional-heavy"]) for name in listed)
+
+    guarded = {
+        path.relative_to(REPO_ROOT).as_posix()
+        for path in select_pr_tests.test_files(REPO_ROOT)
+        if _NEEDS_HEAVY_INTEGRATION.search(path.read_text(encoding="utf-8"))
+    }
+    assert guarded >= _HEAVY_LEFT_OUT
+    assert set(listed) == (guarded - _HEAVY_LEFT_OUT) | _HEAVY_ALSO_RUN
+
+    install = next(step["run"] for step in job["steps"] if step.get("name") == "Install")
+    assert "./packages/maverick-core[qdrant,browser]" in install
+    assert re.search(r"\btorch\b", install)
+    assert "scripts/verify_constraint_closure.py" in install
+    assert "--extra-index-url" not in install and "--index-url" not in install
+    fetch = next(step for step in job["steps"] if step.get("name", "").startswith("Fetch"))
+    assert "playwright install --only-shell chromium" in fetch["run"]
+    assert "--with-deps" not in fetch["run"]
+    # conftest.py moves HOME, so the browser and model locations are explicit
+    # and the same where they are fetched and where the tests read them.
+    locations = {name: fetch["env"][name] for name in ("FASTEMBED_CACHE_PATH", "PLAYWRIGHT_BROWSERS_PATH")}
+    assert not any(value.startswith("~") for value in locations.values())
+    cache = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/cache@"))
+    assert set(cache["with"]["path"].splitlines()) == set(locations.values())
+
+    runs = [step for step in job["steps"] if "$OPTIONAL_HEAVY_TEST_FILES" in step.get("run", "")]
+    assert [step["env"].get("MAVERICK_TEST_SECURE_DEFAULT") for step in runs] == [None, "1"]
+    assert all(step["env"]["HF_HUB_OFFLINE"] == "1" for step in runs)
+    assert all({name: step["env"][name] for name in locations} == locations for step in runs)
+    reports = [re.search(r"--junitxml=(\S+)", step["run"])[1] for step in runs]
+    no_skip = next(step for step in job["steps"] if step.get("name") == "Fail on any skipped test")
+    assert all(report in no_skip["run"] for report in reports)
+
+    # The required legs never install the three.
+    for name in ("test", "test-window", "posture"):
+        text = yaml.safe_dump(jobs[name])
+        for package in ("torch", "fastembed", "playwright"):
+            assert not re.search(rf"\b{package}\b", text), (name, package)
+    shard = TEST_SHARD_ACTION.read_text(encoding="utf-8")
+    assert not re.search(r"\b(?:torch|fastembed|playwright)\b|\[[^\]]*\b(?:qdrant|browser|embeddings)\b", shard)
+
+
 def test_ci_pull_request_legs_take_the_selection_and_the_queue_runs_everything():
     jobs = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))["jobs"]
 

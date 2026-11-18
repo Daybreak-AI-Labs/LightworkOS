@@ -117,7 +117,12 @@ def test_offroster_query_returns_nothing():
     assert _ROUTER.rank("zzzqqq xqzptl", k=10) == []
 
 
-def test_module_level_cache_matches_fresh_index():
+def test_module_level_cache_matches_fresh_index(monkeypatch):
+    # The module-level index must agree with a fresh lexical index; with the
+    # local model loaded the blend would compare hybrid to lexical instead.
+    from test_support.embedding_memo import without_local_model
+
+    without_local_model(monkeypatch)
     ranked = rank_specialists("draft a press release", k=5, domains=_PACKS)
     assert [n for n, _ in ranked][:3] == [
         n for n, _ in _ROUTER.rank("draft a press release", k=5)][:3]
