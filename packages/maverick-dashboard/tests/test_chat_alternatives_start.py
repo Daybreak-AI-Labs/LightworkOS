@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 
+import maverick.orchestrator as _orchestrator
 import pytest
 from fastapi.testclient import TestClient
 from maverick.oidc import VerifiedPrincipal
@@ -20,6 +21,7 @@ ORIGIN = {"Origin": "http://127.0.0.1"}
 ADMIN_SUB = "google-oauth2|104857600123456789"
 ADMIN = "user:" + ADMIN_SUB
 RUNS: dict[int, tuple] = {}
+_REAL_RUN = _orchestrator.run_goal_sync  # the fixture below stubs it; the file tests restore it
 
 
 @pytest.fixture
@@ -230,3 +232,75 @@ def test_a_non_admin_non_member_cannot_start_work_in_the_workspace(env):
                     headers=_headers("outsider"), follow_redirects=False)
     assert sent.status_code == 403, (sent.status_code, sent.text[:300])
     assert not RUNS
+
+
+# ---- the copied files reach the new attempt's model -------------------------
+#
+# Live goal #50 read QA-note.txt and answered "HERON". Try again (#51, answer
+# only) listed "Files available to this new attempt: QA-note.txt" and showed
+# "Attachments (1)", but answered "Unknown": the file never reached the model.
+# These run the real orchestrator to the model boundary with a scripted model
+# that records every prompt it is given.
+
+NOTE = b"The code word is HERON.\n"
+QUESTION = "Using only the attached note, what is the code word? Answer in one word."
+PROMPTS: list[dict] = []
+
+
+class _ScriptedModel:
+    """Reads the note with its tools when it has them; answers from what it saw.
+    A branch copies the earlier answer, so only the note's own text counts."""
+
+    async def complete_async(self, **kwargs):
+        import json
+
+        from maverick.llm import LLMResponse, ToolCall
+
+        PROMPTS.append(kwargs)
+        seen = json.dumps(kwargs.get("messages"), default=str)
+        if "The code word is HERON" in seen:  # the note itself, not an earlier answer
+            return LLMResponse("FINAL: HERON", None, [], "end_turn")
+        names = {tool.get("name") for tool in kwargs.get("tools") or []}
+        listed = re.search(r"(\d+)  QA-note\.txt", seen)
+        if listed and "read_attachment" in names:
+            return LLMResponse("", None, [ToolCall("r1", "read_attachment", {"id": int(listed.group(1))})], "tool_use")
+        if "list_attachments" in names and "list_attachments" not in seen:
+            return LLMResponse("", None, [ToolCall("l1", "list_attachments", {})], "tool_use")
+        return LLMResponse("FINAL: Unknown", None, [], "end_turn")
+
+
+@pytest.fixture
+def scripted(env, monkeypatch):
+    import maverick.orchestrator as orchestrator
+    from maverick.llm import LLM
+
+    PROMPTS.clear()
+    monkeypatch.setattr(orchestrator, "run_goal_sync", _REAL_RUN)
+    monkeypatch.setattr(LLM, "_get_client", lambda self, provider: _ScriptedModel())
+    return env
+
+
+def _task_with_note(client, who="member"):
+    sent = client.post("/chat/send", data={"title": QUESTION, "composer_mode": "message"},
+                       files={"files": ("QA-note.txt", NOTE, "text/plain")},
+                       headers=_headers(who), follow_redirects=False)
+    assert sent.status_code == 303, sent.text
+    goal_id = int(sent.headers["location"].rsplit("/", 1)[1])
+    page = client.get(f"/chat/goal/{goal_id}", headers=_headers(who))
+    return goal_id, re.search(r'data-context="([a-f0-9]{64})"', page.text).group(1)
+
+
+@pytest.mark.parametrize("answer_only", [True, False], ids=["answer-only", "actions-allowed"])
+@pytest.mark.parametrize("action", ["retry", "edit", "branch"])
+def test_the_new_attempt_reads_the_copied_file(scripted, action, answer_only):
+    goal_id, context = _task_with_note(scripted)
+    first = _world().get_goal(goal_id)
+    assert first.status == "done" and "HERON" in (first.result or ""), first.result
+    PROMPTS.clear()
+    new_id, reviewed = _alternative(scripted, "member", goal_id, context, action, answer_only=answer_only)
+    assert reviewed["answer_only"] is answer_only
+    assert [row["name"] for row in reviewed["files"]] == ["QA-note.txt"]
+    assert [a.filename for a in _world().list_attachments(new_id)] == ["QA-note.txt"]
+    assert PROMPTS, "the new attempt never reached the model"
+    goal = _world().get_goal(new_id)
+    assert "HERON" in (goal.result or ""), goal.result

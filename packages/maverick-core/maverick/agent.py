@@ -5296,14 +5296,16 @@ class Agent:
         """Image/PDF attachments of the goal as vision/document content blocks
         for the first user message (PDFs are budgeted against the driving
         model's context window). Other media stay reachable through
-        `list_attachments` + `read_file` / `transcribe_audio`."""
+        `list_attachments` + `read_file` / `transcribe_audio`; an answer-only
+        run has no tools, so its text files embed here too."""
         if self.depth != 0 or self.ctx.goal_id is None:
             return []
         try:
             from .attachments import content_blocks_for_goal
+            from .chat_message_actions import answer_only_runtime
             return content_blocks_for_goal(
                 self.ctx.world, self.ctx.goal_id, model=self.model,
-                shield=self.ctx.shield,
+                shield=self.ctx.shield, answer_only=answer_only_runtime(),
             )
         except Exception:
             return []
