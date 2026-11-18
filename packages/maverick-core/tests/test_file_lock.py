@@ -1156,3 +1156,48 @@ def test_orphan_adoption_failure_keeps_the_classic_error(tmp_path, monkeypatch):
     finally:
         os.close(fd)
     assert lock_path.read_bytes() == b""
+
+
+@pytest.mark.skipif(not os.path.isdir("/proc/self/fd"), reason="needs Linux /proc to list open files")
+@pytest.mark.parametrize("create", ["bytes", "text"])
+def test_exclusive_publication_never_unlinks_an_open_file(tmp_path, monkeypatch, create):
+    """On NFS (the EFS volume a hosted install keeps its data on), unlinking a
+    file this process still has open renames it to ``.nfs…`` instead, so the
+    published name keeps a second link until the close. An attachment checked
+    right after publication then failed its single-link check, and every chat
+    file upload stopped with 'could not start the task'. Publish only after
+    the temporary file is closed."""
+    from maverick import file_lock
+
+    real_link, real_unlink = os.link, os.unlink
+
+    def open_paths():
+        paths = set()
+        for entry in os.listdir("/proc/self/fd"):
+            try:
+                paths.add(os.readlink(f"/proc/self/fd/{entry}"))
+            except OSError:
+                pass
+        return paths
+
+    seen = []
+
+    def link(source, target, *args, **kwargs):
+        seen.append(("link", os.path.realpath(source) in open_paths()))
+        return real_link(source, target, *args, **kwargs)
+
+    def unlink(path, *args, **kwargs):
+        if os.path.basename(str(path)).endswith(".tmp"):
+            seen.append(("unlink", os.path.realpath(path) in open_paths()))
+        return real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(file_lock.os, "link", link)
+    monkeypatch.setattr(file_lock.os, "unlink", unlink)
+    target = tmp_path / "private" / "note.txt"
+    if create == "bytes":
+        file_lock.atomic_create_bytes(target, b"hello")
+    else:
+        file_lock.atomic_create_text(target, "hello")
+    assert target.read_bytes() == b"hello"
+    assert os.stat(target).st_nlink == 1
+    assert seen == [("link", False), ("unlink", False)]

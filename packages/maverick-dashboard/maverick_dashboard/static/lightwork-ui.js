@@ -1411,8 +1411,15 @@
             window.dispatchEvent(new CustomEvent('lightwork:composer-sent', {detail: {form: form, recoveryCleared: true}}));
             window.location.reload(); return;
           }
-          let serverDetail = '';
-          try { const j = await resp.json(); if (j && typeof j.detail === 'string') serverDetail = j.detail; } catch (e) {}
+          let serverDetail = '', payload = null;
+          try { payload = await resp.json(); if (payload && typeof payload.detail === 'string') serverDetail = payload.detail; } catch (e) {}
+          if (payload && window.mvBusinessError(payload)) {
+            // A reviewed refusal names what happened and the next step (for
+            // example, files that were not saved and the draft to open).
+            window.mvRenderError(errBox, resp, 'start the task', payload);
+            errBox.style.display = 'block';
+            return;
+          }
           let detail = window.mvErrorText(resp, 'start the task');
           if (resp.status === 429) {
             const ra = parseInt(resp.headers.get('Retry-After') || '', 10);
