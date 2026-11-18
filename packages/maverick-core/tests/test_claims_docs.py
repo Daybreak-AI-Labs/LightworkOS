@@ -339,3 +339,14 @@ def test_operator_first_run_states_the_task_limit_setup_saves():
     text = _read("docs/operator-first-run.md")
     assert "does not generate a per-task dollar" not in text
     assert "$2 and 30-minute limit for each task, and `--fast` saves it" in text
+
+
+def test_docker_docs_do_not_promise_an_automatic_init():
+    """The Dockerfile said the first run "drops you into `maverick init`", but
+    the image's CMD is `--help`, and deployment.md did not say the mounted
+    `config.toml` must exist (Docker turns a missing source into a directory)."""
+    dockerfile = _read("deploy/docker/Dockerfile")
+    assert 'CMD ["--help"]' in dockerfile
+    assert "drops you into" not in dockerfile and "helpfully points" not in dockerfile
+    docker = _read("docs/deployment.md").split("## Docker", 1)[1].split("\n## ", 1)[0]
+    assert "Both host paths must exist before the first run" in docker

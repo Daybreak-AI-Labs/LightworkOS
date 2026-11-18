@@ -64,6 +64,13 @@ docker run -it --rm \
   start "..."
 ```
 
+Both host paths must exist before the first run: create
+`~/maverick-workspace`, and create `~/.maverick/config.toml` with
+`lightwork init` (or copy a reviewed file there). Docker creates a missing
+mount source as an empty directory, so a missing `config.toml` becomes a
+directory, and Podman refuses to start. The container runs as uid 1000, so
+that user must be able to write the workspace folder.
+
 For untrusted skills, **do not** mount `~/.maverick/` into the same
 container that runs the agent tools. A local sandbox inside this
 container can read mounted files and process environment variables.
