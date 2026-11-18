@@ -155,3 +155,27 @@ def test_unreadable_file_is_never_rewritten_from_empty(_roles_file):
     with pytest.raises(ValueError, match="cannot be read"):
         remove_role_override("coder")
     assert _roles_file.read_text() == before
+
+
+def test_roles_show_the_model_that_will_actually_run(monkeypatch):
+    """Live: the Roles page said 'Claude Haiku 4.5 · Anthropic' for the
+    summarizer while every task ran on the dashboard's default OpenAI pin.
+    The view resolves the model the way a run does, and says when that
+    model's AI service is not set up."""
+    from maverick import runtime_overrides
+
+    monkeypatch.setattr(runtime_overrides, "default_model_override", lambda: "openai:gpt-5.6-sol")
+    monkeypatch.setattr(runtime_overrides, "role_model_override", lambda role: None)
+    monkeypatch.setattr("maverick.config.load_config", lambda *a, **k: {})
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    view = resolved_role("summarizer")
+    assert view["model"] == "openai:gpt-5.6-sol"
+    assert view["model_ready"] is True
+    assert {row["role"]: row["model"] for row in list_roles()}["summarizer"] == "openai:gpt-5.6-sol"
+
+    monkeypatch.setattr(runtime_overrides, "default_model_override", lambda: None)
+    view = resolved_role("summarizer")
+    assert view["model"].startswith(("anthropic:", "claude"))
+    assert view["model_ready"] is False
+    assert {row["role"]: row["model_ready"] for row in list_roles()}["summarizer"] is False
