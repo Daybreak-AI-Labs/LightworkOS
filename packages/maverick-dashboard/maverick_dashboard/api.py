@@ -12830,7 +12830,9 @@ def requested_approval_history(request: Request, before_id: int | None = None) -
                        "decided_at": approval.decided_at,
                        "expires_at": card.get("expires_at") if card else None,
                        "before": text(card["preview"]["before"]) if card else "",
-                       "after": text(card["preview"]["after"]) if card else "",
+                       # A denied request never ran; its card's "after" is only what approval would have allowed.
+                       "after": ("The reviewed operation did not run, because this request was denied."
+                                 if card and approval.status == "denied" else text(card["preview"]["after"]) if card else ""),
                        "goal_id": approval.goal_id,
                        "execution": "Current task state: " + goal.status if goal else "No task execution outcome is attached to this decision."})
     return {"items": result, "has_more": len(rows) > 50,
