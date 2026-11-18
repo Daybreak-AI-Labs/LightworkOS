@@ -881,6 +881,12 @@ ROLE_TOOL_OVERLAYS["revisor"] = ROLE_TOOL_OVERLAYS["coder"]
 _CODE_EDIT_TOOLS = frozenset({"apply_patch", "ast_edit", "preview_diff", "repo_map", "dep_graph"})
 _NON_CODE_ROLES = frozenset({"worker", "researcher", "writer", "analyst", "summarizer",
                              "verifier", "translator", "vision", "skill_distiller"})
+# Roles that only produce prose are not shown the code-running tools up front.
+# Offered them, a writer drafted a welcome note inside a Python script: a
+# high-risk approval for pure writing. They stay discoverable via find_tools,
+# and the capability, approval and budget checks still govern every call.
+_PROSE_ROLES = frozenset({"writer", "summarizer", "translator"})
+_RUN_CODE_TOOLS = frozenset({"shell", "code_exec"})
 
 
 def core_tool_names(role: str, *, extra=()) -> frozenset[str]:
@@ -893,6 +899,8 @@ def core_tool_names(role: str, *, extra=()) -> frozenset[str]:
     names = set(CORE_TOOL_NAMES) | ROLE_TOOL_OVERLAYS.get(role, frozenset())
     if role in _NON_CODE_ROLES:
         names -= _CODE_EDIT_TOOLS
+    if role in _PROSE_ROLES:
+        names -= _RUN_CODE_TOOLS
     names.update(str(t).strip() for t in (extra or ()) if str(t).strip())
     return frozenset(names)
 

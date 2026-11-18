@@ -95,6 +95,26 @@ def test_core_tool_names_per_role():
     assert core_tool_names("worker", extra=["scan_finance_anomalies"]) == worker | {"scan_finance_anomalies"}
 
 
+def test_writing_roles_are_not_offered_code_running_tools_up_front(ctx, monkeypatch):
+    """Live goals 34 and 49: a plain writing task's writer drafted its note
+    inside 'Run one Python script', a high-risk approval, and the wait and
+    extra steps used the task's whole spending limit. Prose roles are not shown
+    shell or code_exec up front; they stay discoverable, and other roles keep them."""
+    from maverick.tools import core_tool_names
+
+    for role in ("writer", "summarizer", "translator"):
+        assert not {"shell", "code_exec"} & core_tool_names(role), role
+        assert {"write_file", "read_file", "compute", "find_tools"} <= core_tool_names(role)
+    for role in ("orchestrator", "worker", "analyst", "coder", "researcher"):
+        assert {"shell", "code_exec"} <= core_tool_names(role), role
+    monkeypatch.setenv("MAVERICK_CODE_EXEC", "1")
+    _config(monkeypatch)
+    writer = _agent(ctx, "writer")
+    assert "code_exec" in {t.name for t in writer.tools.all()}
+    assert not {"shell", "code_exec"} & _offered(writer)
+    assert "code_exec" in _offered(_agent(ctx, "analyst"))
+
+
 # ------------------------------------------------------------ per role
 
 def test_core_exposure_is_role_aware_and_lean(ctx, monkeypatch):
