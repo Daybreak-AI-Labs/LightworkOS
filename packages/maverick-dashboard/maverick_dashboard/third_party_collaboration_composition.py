@@ -428,6 +428,7 @@ class _LazyTenantCollaborationStore:
         principal_resolver: Callable[[], str | None],
         registry_resolver: Callable[[], Iterable[Any]],
         builder: Callable[..., Any],
+        checked_policy: collaboration.ThirdPartyCollaborationPolicy | None = None,
     ) -> None:
         self._tenant_id = canonical_tenant_id(tenant_id)
         self._principal_resolver = principal_resolver
@@ -435,15 +436,23 @@ class _LazyTenantCollaborationStore:
         self._builder = builder
         self._store: Any | None = None
         self._store_policy: collaboration.ThirdPartyCollaborationPolicy | None = None
+        # The policy a request's factory checked a moment ago, with the roster:
+        # the first operation builds with it (construction checks both again).
+        self._checked_policy = checked_policy
         self._lock = threading.Lock()
 
     def _authority(self) -> Any:
-        _assert_active_tenant(self._tenant_id, self._registry_resolver)
-        policy = _load_tenant_policy(self._tenant_id)
+        with self._lock:
+            policy, self._checked_policy = self._checked_policy, None
+        if policy is None or self._store is not None:
+            _assert_active_tenant(self._tenant_id, self._registry_resolver)
+            policy = _load_tenant_policy(self._tenant_id)
         if self._store is not None and self._store_policy == policy:
             return self._store
         with self._lock:
-            policy = _load_tenant_policy(self._tenant_id)
+            if self._store is not None and self._store_policy != policy:
+                # Another operation rebuilt meanwhile: decide on a fresh read.
+                policy = _load_tenant_policy(self._tenant_id)
             if self._store is None or self._store_policy != policy:
                 self._store = self._builder(
                     tenant_id=self._tenant_id,
@@ -706,6 +715,11 @@ class ThirdPartyCollaborationRateLimitContextMiddleware:
             await self.app(scope, receive, send)
             return
         request = Request(scope, receive=receive)
+        if _EXTERNAL_PATH_RE.fullmatch(request.url.path) is None:
+            # Not a public portal request: no peer metadata to resolve, so no
+            # wait for a worker thread (a busy pool held up every request here).
+            await self.app(scope, receive, send)
+            return
         context = await run_in_threadpool(self.limiter.prepare_request_context, request)
         with _BoundRequestContext(context):
             await self.app(scope, receive, send)
@@ -944,7 +958,7 @@ def attach_third_party_collaboration_composition(
                     "third-party collaboration principal authority changed"
                 )
             tenant = _assert_active_tenant(tenant_id, registry_resolver)
-            _load_tenant_policy(tenant)
+            policy = _load_tenant_policy(tenant)
 
             def pinned_principal() -> str | None:
                 current = principal_resolver()
@@ -955,6 +969,7 @@ def attach_third_party_collaboration_composition(
                 principal_resolver=pinned_principal,
                 registry_resolver=registry_resolver,
                 builder=store_builder,
+                checked_policy=policy,
             )
 
         state.third_party_collaboration_store_factory = store_factory
