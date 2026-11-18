@@ -513,7 +513,12 @@ def require_durable_automation_creator(request: Request) -> str:
     )
 
 
-def _pin_tenant_from_principal(request: Request, principal: VerifiedPrincipal) -> None:
+_UNDECIDED = object()
+
+
+def _pin_tenant_from_principal(
+    request: Request, principal: VerifiedPrincipal, choice: object = _UNDECIDED,
+) -> None:
     """Pin per-user isolation or an authorized workspace selection.
 
     HTTP middleware runs before FastAPI dependencies populate
@@ -523,23 +528,53 @@ def _pin_tenant_from_principal(request: Request, principal: VerifiedPrincipal) -
     stored on request state for the outer middleware to clean up after the
     response. Workspace selection is a preference, never a grant: inactive
     tenants and tenants without an effective membership remain unbound.
+
+    ``choice`` is :func:`_tenant_pin_choice`'s answer when the caller already
+    made those file reads off the event loop; the pin itself is set here, in
+    the request's own context.
+    """
+    if choice is _UNDECIDED:
+        choice = _tenant_pin_choice(request, principal)
+    if choice is None or getattr(request.state, "tenant_pin_token", None) is not None:
+        return
+    try:
+        from maverick.paths import set_tenant
+
+        source, tenant = choice
+        if source == "denied":
+            request.state.workspace_tenant_denied = tenant
+            return
+        request.state.tenant_pin_token = set_tenant(tenant)
+        request.state.workspace_tenant_source = source
+        if source == "principal_selection":
+            request.state.workspace_expected_tenant = tenant
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="tenant isolation policy unavailable",
+        ) from exc
+
+
+def _tenant_pin_choice(request: Request, principal: VerifiedPrincipal) -> tuple[str, str] | None:
+    """Decide the tenant pin: ``(source, tenant)``, ``("denied", tenant)`` or None.
+
+    Reads the configuration, the workspace selection, the tenant roster and
+    the membership, so the request dependency runs it in the thread pool.
     """
     try:
-        from maverick.paths import current_tenant_id, set_tenant, tenant_by_user_enabled
+        from maverick.paths import current_tenant_id, tenant_by_user_enabled
 
         name = getattr(principal, "principal", "")
         if not isinstance(name, str):
             name = ""
         if not name or getattr(request.state, "tenant_pin_token", None) is not None:
-            return
+            return None
         # A process/env/client binding is an operator floor and always outranks
         # an in-app preference.
         if current_tenant_id() is not None:
-            return
+            return None
         if tenant_by_user_enabled():
-            request.state.tenant_pin_token = set_tenant(f"api:{name}")
-            request.state.workspace_tenant_source = "principal_isolation"
-            return
+            return "principal_isolation", f"api:{name}"
 
         from maverick.tenant.registry import is_active
 
@@ -551,7 +586,7 @@ def _pin_tenant_from_principal(request: Request, principal: VerifiedPrincipal) -
         # selection is irrelevant to the key. Membership is still re-checked.
         selected = str(bound or "") or workspace_tenants.get_selection(name)
         if not selected:
-            return
+            return None
         if not is_active(selected) or not workspace_tenants.principal_can_select(
             name, selected
         ):
@@ -563,11 +598,8 @@ def _pin_tenant_from_principal(request: Request, principal: VerifiedPrincipal) -
                     detail="This API key's workspace is paused or its owner is no longer a "
                            "member of it. Ask a workspace administrator.",
                 )
-            request.state.workspace_tenant_denied = selected
-            return
-        request.state.tenant_pin_token = set_tenant(selected)
-        request.state.workspace_tenant_source = "principal_selection"
-        request.state.workspace_expected_tenant = selected
+            return "denied", selected
+        return "principal_selection", selected
     except HTTPException:
         raise
     except Exception as exc:
@@ -1527,14 +1559,14 @@ def _bind_principal(connection, principal):
     return principal
 
 
-def _bind_identity(connection, principal) -> bool:
+def _bind_identity(connection, principal, pin_choice: object = _UNDECIDED) -> bool:
     """Set the identity and tenant pin; True when workspace policies apply."""
     if connection is None or principal is None:
         return False
     connection.state.principal = principal
     from .device_pairing import bind as bind_device
     if not bind_device(connection, principal):
-        _pin_tenant_from_principal(connection, principal)
+        _pin_tenant_from_principal(connection, principal, pin_choice)
     return True
 
 
@@ -1599,7 +1631,13 @@ async def require_principal_in_request_context(
     """
     principal = await _verify_off_loop(request, websocket)
     connection = request if request is not None else websocket
-    if _bind_identity(connection, principal):
+    pin_choice: object = _UNDECIDED
+    if (connection is not None and principal is not None
+            and getattr(connection.state, "paired_device_verified", False) is not True):
+        # The workspace selection, roster and membership are file reads: decide
+        # in the thread pool, then pin in this request's own context.
+        pin_choice = await run_in_threadpool(_tenant_pin_choice, connection, principal)
+    if _bind_identity(connection, principal, pin_choice):
         # The policies read the configuration (the workspace's overlay once the
         # tenant is pinned, which the thread's copied context carries): keep
         # that file I/O off the event loop.

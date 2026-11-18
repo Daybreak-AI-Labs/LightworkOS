@@ -53,3 +53,59 @@ def test_tenant_pin_keeps_exact_verified_principal(monkeypatch):
     auth._pin_tenant_from_principal(request, request.state.principal)
 
     assert pins == ["api:user:alice "]
+
+
+def test_workspace_selection_is_read_off_the_event_loop_then_pinned_in_the_request(monkeypatch):
+    """Every signed-in request, a stylesheet too, resolves the selected
+    workspace: the selection file, the tenant roster and the membership. On a
+    network file system those reads stalled every other request when they ran
+    on the event loop."""
+    import asyncio
+
+    from maverick.paths import current_tenant_id
+    from maverick.tenant import registry
+    from maverick_dashboard import workspace_tenants
+
+    def on_loop() -> bool:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return False
+        return True
+
+    reads: list[tuple[str, bool]] = []
+
+    def selection(name):
+        reads.append(("selection", on_loop()))
+        return "tenant-a"
+
+    def active(tenant):
+        reads.append(("active", on_loop()))
+        return True
+
+    def can_select(name, tenant):
+        reads.append(("membership", on_loop()))
+        return True
+
+    monkeypatch.setattr("maverick.paths.tenant_by_user_enabled", lambda: False)
+    monkeypatch.setattr(workspace_tenants, "get_selection", selection)
+    monkeypatch.setattr(workspace_tenants, "principal_can_select", can_select)
+    monkeypatch.setattr(registry, "is_active", active)
+    monkeypatch.setattr(auth, "_enforce_workspace_policies", lambda *_args: None)
+    request = _request_for("alice")
+    principal = request.state.principal
+
+    async def verified(_request, _websocket):
+        return principal
+
+    monkeypatch.setattr(auth, "_verify_off_loop", verified)
+
+    async def bind():
+        assert await auth.require_principal_in_request_context(request) is principal
+        return current_tenant_id()
+
+    assert asyncio.run(bind()) == "tenant-a"
+    assert [kind for kind, _loop in reads] == ["selection", "active", "membership"]
+    assert not any(loop for _kind, loop in reads)
+    assert request.state.workspace_tenant_source == "principal_selection"
+    assert request.state.workspace_expected_tenant == "tenant-a"
