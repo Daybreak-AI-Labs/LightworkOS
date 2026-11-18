@@ -845,6 +845,49 @@ def test_a_tenant_path_through_a_file_still_means_no_overlay(config_home, monkey
     assert not config.config_source_errors()
 
 
+def test_an_absent_optional_source_costs_one_stat(tmp_path, monkeypatch):
+    # Every configuration load asks whether the workspace overlay exists; on
+    # network storage each stat is a round trip, and an absent file took two.
+    from pathlib import Path
+
+    from maverick import config
+
+    stats = []
+    real = os.stat
+    monkeypatch.setattr(os, "stat", lambda path, *a, **k: stats.append(path) or real(path, *a, **k))
+    assert config._present(tmp_path / "absent.toml") is False
+    assert len(stats) == 1
+    (tmp_path / "present.toml").write_text("", encoding="utf-8")
+    assert config._present(tmp_path / "present.toml") is True
+    assert len(stats) == 2
+    assert config._present(tmp_path / "present.toml" / "child") is False  # ENOTDIR is absent
+    monkeypatch.setattr(os, "stat", real)
+
+    def denied(self, *args, **kwargs):
+        raise PermissionError(13, "Permission denied", str(self))
+
+    monkeypatch.setattr(Path, "stat", denied)
+    with pytest.raises(PermissionError):  # an unreadable source is never "absent"
+        config._present(tmp_path / "absent.toml")
+
+
+def test_a_missing_keyring_folder_is_not_listed_on_each_check(config_home, monkeypatch):
+    from maverick import config, crypto_at_rest
+
+    listed = []
+    real = os.scandir
+    monkeypatch.setattr(os, "scandir", lambda path, *a, **k: listed.append(path) or real(path, *a, **k))
+    first = config._read_witness()
+    assert first is not None and listed == []
+    with crypto_at_rest.deployment_key_scope():
+        keyring = crypto_at_rest._keyring_dir()
+    keyring.mkdir(parents=True, exist_ok=True)
+    (keyring / "0011223344556677.key").write_text("00" * 32, encoding="utf-8")
+    second = config._read_witness()
+    assert len(listed) == 1 and second != first
+    assert str(keyring / "0011223344556677.key") in second[0]
+
+
 def test_a_failed_key_read_is_not_kept_for_the_rest_of_a_decision(config_home, monkeypatch):
     from maverick import config, crypto_at_rest
 
