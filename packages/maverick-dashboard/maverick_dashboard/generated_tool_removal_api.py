@@ -11,6 +11,7 @@ from maverick import crypto_at_rest
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import generated_tool_removal as native
+from . import single_computer
 
 router = APIRouter(prefix=native.API, tags=["generated-tool-removals"])
 PURPOSE = "lightwork.generated-tool-removal.v1"
@@ -36,12 +37,14 @@ def response(value):
 
 @router.get("")
 def listing(request: Request):
-    return response(native.listing(request))
+    _who, context, _owner = native.authority(request)
+    return response(single_computer.read(lambda: native.listing(request), context=context, choices=[]))
 
 
 @router.get("/history")
 def history(request: Request):
-    return response(native.history(request))
+    _who, context, _owner = native.authority(request)
+    return response(single_computer.read(lambda: native.history(request), context=context, choices=[]))
 
 
 @router.get("/original/{reference}")

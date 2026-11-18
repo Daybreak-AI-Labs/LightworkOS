@@ -2,19 +2,23 @@
 from __future__ import annotations
 
 import json
+import logging
 import secrets
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 from maverick import config, crypto_at_rest
+from maverick.governed_records import GovernedRecordLocalOnly
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import auth
+from . import auth, single_computer
 from . import private_task_computation_store as native
 from .draft_api import context_for
+from .store_failures import log_store_failure, remember_route
 from .tools_ops_api import same_origin
 
-router = APIRouter(tags=["private-task-computation"])
+router = APIRouter(tags=["private-task-computation"], dependencies=[Depends(remember_route)])
+log = logging.getLogger(__name__)
 API, PAGE, PURPOSE = "/api/v1/private-task-computation", "/private-task-computation", "lightwork.private-task-review.v1"
 
 
@@ -43,9 +47,12 @@ def call(function, *arguments):
         raise
     except native.knowledge_task_context.SourceContextUnavailable as exc:
         raise HTTPException(403, "Current inherited source permission does not allow this analysis or release. No entered consent can override it.") from exc
+    except GovernedRecordLocalOnly:
+        raise  # A single-computer feature on a shared deployment: the app answers 409.
     except (ValueError, TypeError, KeyError, UnicodeError) as exc:
         raise HTTPException(422, "Check the complete CSV, declared possibilities and conditions. Missing, duplicate or out-of-range values are refused; no source was shortened.") from exc
     except Exception as exc:
+        log_store_failure(log, exc)
         raise HTTPException(503, "The requested result could not be confirmed. If a request was admitted, read its exact original; it will not repeat automatically.") from exc
 
 
@@ -53,6 +60,9 @@ def call(function, *arguments):
 def page(request: Request):
     from .app import templates
     auth.require_permission(request, "operate")
+    notice = single_computer.page(request, "Private task calculations", section="Your private work", back=("/today", "Back to Today"))
+    if notice is not None:
+        return notice
     enabled = not config.config_source_errors(include_tenant=True) and config.get_features().get(native.FEATURE) is True
     return templates.TemplateResponse(request, "private_task_computation.html", {"private_check_context": context_for(request),
         "private_check_enabled": enabled, "private_check_notice": native.NOTICE}, headers={"Cache-Control": "private, no-store"})
@@ -60,7 +70,8 @@ def page(request: Request):
 
 @router.get(API + "/choices")
 def choices(request: Request):
-    return response(call(native.choices, request))
+    _actor, context = native.authority(request, historical=True)
+    return response(single_computer.read(lambda: call(native.choices, request), context=context, choices=[]))
 
 
 @router.get(API + "/source")
@@ -70,7 +81,8 @@ def source(request: Request, goal: int = Query(ge=1), attachment: int = Query(ge
 
 @router.get(API + "/history")
 def history(request: Request):
-    return response(call(native.history, request))
+    _actor, context = native.authority(request, historical=True)
+    return response(single_computer.read(lambda: call(native.history, request), context=context, choices=[]))
 
 
 @router.get(API + "/author")

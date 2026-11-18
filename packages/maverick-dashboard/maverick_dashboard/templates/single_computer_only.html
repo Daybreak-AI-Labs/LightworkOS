@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · Lightwork{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+{{ hero(section, title) }}
+<section class="panel" aria-labelledby="single-computer-heading">
+  <h2 id="single-computer-heading">Not available on this deployment</h2>
+  <p role="status">{{ message }}</p>
+  <p class="muted">Your other Lightwork pages work as usual. An administrator who needs this feature can run it on a single-computer installation.</p>
+  <a class="btn" href="{{ back_href }}">{{ back_label }}</a>
+</section>
+{% endblock %}
