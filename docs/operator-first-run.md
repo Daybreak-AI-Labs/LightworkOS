@@ -37,9 +37,11 @@ previous secret file. The config and secret file are separate replacements,
 not a crash-atomic two-file transaction. Retain the backups and inspect both
 files after an interrupted setup.
 
-New setup does not generate a per-task dollar or step limit. Review preserved
-settings on upgrades and choose any explicit task cap separately from the
-organization allowance; see [task limits](task-limits.md).
+Setup offers a $2 and 30-minute limit for each task, and `--fast` saves it;
+choosing "No task limit" saves `task_limits_enabled = false`. Setup does not
+generate a step limit. Review preserved settings on upgrades and choose any
+explicit task cap separately from the organization allowance; see
+[task limits](task-limits.md).
 
 `init`, `preflight`, `doctor`, `version`, and `config-lint` do not resolve or
 open the world database. They therefore remain usable when a malformed client

@@ -319,3 +319,23 @@ def test_remote_worker_mentions_say_they_are_not_packaged():
         text = _read(relpath)
         assert "scale remote" not in text.lower(), relpath
         assert "capacity-and-scaling" in text or "Capacity and scaling" in text, relpath
+
+
+def test_getting_started_names_the_provider_keys_path_doctor_names():
+    """getting-started.md sent owners to "Settings → Provider keys"; the section
+    sits under the Connections tab, which is the path `doctor` prints."""
+    assert "Settings > Connections > Provider keys" in _read(
+        "packages/maverick-core/maverick/health.py")
+    text = _read("docs/getting-started.md")
+    assert "**Settings → Provider keys**" not in text
+    assert "**Settings → Connections → Provider keys**" in text
+
+
+def test_operator_first_run_states_the_task_limit_setup_saves():
+    """operator-first-run.md said new setup generates no per-task dollar limit,
+    but `maverick init --fast` saves $2 and 30 minutes."""
+    wizard = _read("apps/installer-cli/maverick_installer/wizard/__init__.py")
+    assert '{"max_dollars": 2.0, "max_wall_seconds": 1800.0' in wizard
+    text = _read("docs/operator-first-run.md")
+    assert "does not generate a per-task dollar" not in text
+    assert "$2 and 30-minute limit for each task, and `--fast` saves it" in text
