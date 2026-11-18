@@ -39,7 +39,7 @@
     model.records.forEach(row => {
       const card = document.createElement('article'); card.className = 'panel';
       paragraph(card, row.label + ' — ' + row.status + (row.expired ? ' (expired)' : '') + (row.audit_pending ? ' · activity record pending' : ''));
-      paragraph(card, 'Requested by ' + row.requester + ' for ' + row.purpose.replaceAll('_', ' ') + '; ' + row.minutes + ' minutes.');
+      paragraph(card, 'Requested by ' + (row.requester_label || 'a colleague') + ' for ' + row.purpose.replaceAll('_', ' ') + '; ' + row.minutes + ' minutes.');
       if (row.expires_at) paragraph(card, 'Expires ' + (window.mvTimeAbsolute ? window.mvTimeAbsolute(row.expires_at) : new Date(row.expires_at * 1000).toLocaleString()));
       if (row.status === 'requested' && row.can_review) { button(card, 'Approve this scope', () => decide(row, 'approve')); button(card, 'Deny', () => decide(row, 'deny')); }
       if (row.can_revoke && ['requested', 'approved'].includes(row.status)) button(card, 'Revoke access', () => decide(row, 'revoke'));

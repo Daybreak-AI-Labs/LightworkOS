@@ -51,9 +51,33 @@ def _actor(request, *, write=False):
     return actor
 
 
+def _person(identity, actor=None):
+    """A person as people read them: "You", an email, or the account kind."""
+    from .identity_format import humanize_principal
+
+    if actor and identity == actor:
+        return "You"
+    ident = humanize_principal(identity)
+    return f"{ident.name} ({ident.detail})" if ident.detail and ident.detail != "Email" else ident.name
+
+
+def _subject_label(resource_id, actor=None):
+    from .compliance_controls_api import _channel_label
+
+    channel, user = json.loads(resource_id)
+    person = "You (this computer)" if (channel, user) == ("cli", "local") else _person(user, actor)
+    return person + " · " + _channel_label(channel) + " data export"
+
+
 def _public(record, actor, is_admin):
     row = {key: record.get(key) for key in ("id", "revision", "requester", "owner", "resource_kind",
            "resource_id", "label", "purpose", "minutes", "status", "reviewed_by", "expires_at")}
+    row["requester_label"] = _person(record.get("requester"), actor)
+    if record.get("resource_kind") == "subject_data":
+        try:  # Saved records keep the identity; the list shows the person.
+            row["label"] = _subject_label(record["resource_id"], actor)
+        except (TypeError, ValueError):
+            row["label"] = "Personal data export"
     row["audit_pending"] = bool(record.get("_audit_pending"))
     row["can_review"] = content_access._reviewer_current({**record, "reviewed_by": actor})
     row["can_revoke"] = actor in {record["requester"], record["owner"]} or is_admin
@@ -83,7 +107,7 @@ def _resources(*, approvals_only=False):
         resource_id = json.dumps([person["channel"], person["user"]], separators=(",", ":"))
         resources.append({"resource_kind": "subject_data", "resource_id": resource_id,
                           "owner": "channel:" + resource_id,
-                          "label": person["person"] + " · " + person["channel_label"] + " data export"})
+                          "label": _subject_label(resource_id)})
     return resources
 
 
