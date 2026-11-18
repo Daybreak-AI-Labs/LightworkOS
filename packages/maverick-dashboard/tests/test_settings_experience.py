@@ -86,6 +86,22 @@ def test_the_change_review_names_the_plain_settings_area_not_a_code_module(clien
     assert item["area"] in settings_catalog.GROUPS
 
 
+def test_review_names_where_each_value_comes_from_in_plain_words(client):
+    revision = client.get("/api/v1/settings/catalog").json()["revision"]
+    (item,) = client.post("/api/v1/settings/catalog/review", json={
+        "changes": [{"id": "features.task_handoffs", "value": True}], "expected_revision": revision}).json()["items"]
+    assert (item["source"], item["resulting_source"]) == ("Default", "Set here")
+    saved = client.post("/api/v1/settings/catalog", json={
+        "changes": [{"id": "features.task_handoffs", "value": True}], "expected_revision": revision, "confirm": True})
+    revision = client.get("/api/v1/settings/catalog").json()["revision"]
+    (reset,) = client.post("/api/v1/settings/catalog/review", json={
+        "changes": [{"id": "features.task_handoffs", "reset": True}], "expected_revision": revision}).json()["items"]
+    if saved.status_code == 200:
+        assert reset["source"] == "Set here"
+    # A reset returns the product default; it is never called a dashboard setting.
+    assert reset["resulting_source"] == "Default"
+
+
 def test_the_review_and_runtime_scripts_show_the_plain_area():
     from pathlib import Path
 

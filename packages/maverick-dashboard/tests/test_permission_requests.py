@@ -110,3 +110,28 @@ def test_layer_reads_the_acl_as_the_kernel_does():
     assert service._layer("x", {"denied_tools": "shell"}, "s")["allowed"] is True
     capped = service._layer("x", {"max_risk": "LOW"}, "shell")
     assert capped["allowed"] is False and "low ceiling" in capped["reason"]
+
+
+def test_explanation_agrees_with_account_authority_outside_workspace_membership(policy, monkeypatch):
+    """Account and Permission requests read the same authority. Tool use does
+    not require named workspace membership, so its absence blocks nothing."""
+    monkeypatch.setattr("maverick.personal_identity.principal_current", lambda actor: False)
+    decision = service.explain("user:employee", "tool", "read_file")
+    cap = capability.capability_from_config("user:employee", channel="dashboard", user_id="employee")
+    assert decision["allowed"] is cap.permits("read_file") is True
+    assert all(row["source"] != "Current named membership" for row in decision["layers"])
+    assert service.explain("user:employee", "permission", "operate")["allowed"] is True
+
+
+def test_a_deactivated_identity_stays_blocked(policy, monkeypatch):
+    monkeypatch.setattr(service, "explain_role", lambda actor: {
+        "role": None, "source": "Deactivated identity", "owner": "Identity administrator"})
+    decision = service.explain("user:employee", "tool", "read_file")
+    assert decision["allowed"] is False
+    assert decision["layers"][0] == {"source": "Deactivated identity", "allowed": False,
+                                     "reason": "This account is deactivated."}
+
+
+def test_tool_names_read_as_actions_not_abbreviations():
+    assert api.action_label("tool", "a11y") == "Checks a web page for accessibility problems"
+    assert api.action_label("tool", "a11y_tree") == "Lists a web page's headings, links, buttons and form fields"

@@ -58,6 +58,10 @@ def service(request, *, write=False):
     if (write or supplied is not None) and not auth.constant_time_equals(supplied or "", context_for(request)):
         raise product_error(409, "context_changed", "Your account or workspace changed. Reload bundles before continuing.")
     tenant = current_tenant_id_strict()
+    actor = auth.caller_principal(request)
+    if tenant and actor and actor.startswith("user:") and not _eligible(tenant, actor, None, "view", True):
+        from .access_explanations import membership_required
+        raise membership_required(actor, "Sharing selected deliverables")
     try:
         return DeliverableBundles(_world(), actor=auth.caller_principal(request),
                                    eligible=lambda actor, suite, permission, member: _eligible(tenant, actor, suite, permission, member))
@@ -91,10 +95,14 @@ def _public(record):
 @router.get("/deliverable-bundles")
 def page(request: Request, goal: int | None = None):
     from .app import templates
+    from .feature_gate import turned_off_page
 
-    source = service(request)
-    if goal is not None:
-        call(lambda: source.candidates(goal))
+    off = turned_off_page(request, "deliverable_bundles", kicker="Your work", title="Selected deliverable bundles")
+    if off is not None:
+        return off
+    # The page loads the chosen task's items itself and explains a refusal in
+    # place; a task the person cannot share is not a missing page.
+    service(request)
     return templates.TemplateResponse(request, "deliverable_bundles.html",
                                       {"bundle_context": context_for(request), "bundle_goal": goal or ""},
                                       headers={"Cache-Control": "private, no-store"})

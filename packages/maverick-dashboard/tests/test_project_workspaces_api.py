@@ -137,4 +137,8 @@ def test_global_feature_ceiling_cannot_be_enabled_by_tenant_only(setup, monkeypa
     client, project, _, _, _ = setup
     monkeypatch.setattr(config, "load_global_config", lambda: {"features": {"project_workspaces": False}})
     monkeypatch.setattr(config, "get_features", lambda: {"project_workspaces": True})
-    assert client.get(api.BASE + f"/{project}").status_code == 403
+    response = client.get(api.BASE + f"/{project}")
+    assert response.status_code == 403
+    # Turned off, not a permission refusal: the page can say so by name.
+    assert response.headers["X-Lightwork-Reason"] == "feature-off"
+    assert response.headers["X-Lightwork-Feature-Label"] == "Project workspaces"

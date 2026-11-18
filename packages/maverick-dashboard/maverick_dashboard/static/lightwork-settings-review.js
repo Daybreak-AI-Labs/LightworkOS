@@ -26,7 +26,7 @@
       });
       plan.items.forEach(function (item) {
         var section = document.createElement('section'), title = document.createElement('h3'); title.textContent = item.label + (item.automatic ? ' (dependent change)' : ''); section.appendChild(title);
-        var detail = document.createElement('p'); detail.textContent = item.scope + ': ' + item.source + ' to ' + item.resulting_source + '. ' + item.timing + '. Affects: ' + item.affected + '. Area: ' + item.area + '.'; section.appendChild(detail);
+        var detail = document.createElement('p'); detail.textContent = item.scope + '. Now: ' + item.source + '. After saving: ' + item.resulting_source + '. ' + item.timing + '. Affects: ' + item.affected + '. Area: ' + item.area + '.'; section.appendChild(detail);
         var before = document.createElement('pre'); before.textContent = 'Before: ' + shown(item.before) + '\nAfter: ' + shown(item.after); section.appendChild(before); dialog.appendChild(section);
       });
       plan.warnings.forEach(function (warning) { var p = document.createElement('p'); p.textContent = warning.label + ': ' + warning.warning; dialog.appendChild(p); });

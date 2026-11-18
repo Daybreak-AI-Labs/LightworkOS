@@ -6,8 +6,9 @@
     {% if gate == 'off' %}<a class="btn btn--primary" href="/settings#settings-sections">Open Settings</a>{% endif %}
     {% if gate == 'task_steps' %}<a class="btn btn--primary" href="/settings/all?id=agent.max_steps">Review task settings</a>{% endif %}
     {% if gate == 'step_up' %}<a class="btn btn--primary" href="{{ reauthenticate or path }}">Sign in again</a>{% endif %}
-    <a class="btn{% if gate not in ('off', 'step_up', 'task_steps') %} btn--primary{% endif %}" href="{{ path }}">Reload this page</a>
-    {% if status == 403 %}<a class="btn" href="/workspace/tenant">Choose a workspace</a>{% endif %}
+    {% if gate == 'membership' and action %}<a class="btn btn--primary" href="{{ action.href }}">{{ action.label }}</a>{% endif %}
+    <a class="btn{% if gate not in ('off', 'step_up', 'task_steps', 'membership') %} btn--primary{% endif %}" href="{{ path }}">Reload this page</a>
+    {% if status == 403 and not (action and action.href == '/workspace/tenant') %}<a class="btn" href="/workspace/tenant">Choose a workspace</a>{% endif %}
     <a class="btn" href="/">Back to home</a>
   {% endset %}
   {% if gate == 'retry' and ut is defined %}{% set title = ut(title) %}{% set message = ut(message) %}{% endif %}

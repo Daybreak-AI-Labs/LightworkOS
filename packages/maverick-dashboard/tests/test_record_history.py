@@ -137,14 +137,25 @@ def test_typed_copilot_uses_same_native_search_gate(monkeypatch):
     from maverick_dashboard import product_operations_record_history as operations
     monkeypatch.setattr(operations, "page_context", lambda request: {"record_search_context":"a"*64})
     calls=[]
-    monkeypatch.setattr(operations, "search_history", lambda request, **args: calls.append(args) or {"items":[],"next_cursor":None})
-    arguments={"source":"tasks","query":"Old record","oldest":True}
+    monkeypatch.setattr(operations, "search_history", lambda request, **args: calls.append(args) or {
+        "items":[{"kind":"project","id":"1","title":"QA project","href":"/projects/1","state":"active",
+                  "revision":"1795012924.1081839","date":1795012924.1081839}],
+        "next_cursor":None,"snapshot":"f"*64,"context":"a"*64,"date_basis":"Last update",
+        "coverage":[{"source":"Projects","state":"current","href":"/projects"}]})
+    arguments={"source":"projects","query":"QA","oldest":True}
+    # A search changes nothing: Copilot shows it as a read, not a reviewed change.
+    (adapter,) = operations.entries()
+    assert adapter.execute is None
     preview=operations.prepare(object(),{},arguments)
-    outcome=operations.execute(object(),{},arguments,preview.native,"b"*32)
-    assert outcome.status == "confirmed" and calls == [arguments]
+    assert calls == [arguments]
+    shown = json.dumps(preview.native)
+    assert "QA project" in shown and "18 Nov 2026" in shown
+    for raw in ("1795012924", "f"*64, "a"*64, "next_cursor", "snapshot"):
+        assert raw not in shown
+    assert preview.native["Records found"][0]["Name"] == {"label":"QA project","href":"/projects/1"}
     monkeypatch.setattr(operations,"page_context",lambda request: {})
     with pytest.raises(HTTPException):
-        operations.execute(object(),{},arguments,preview.native,"c"*32)
+        operations.prepare(object(),{},arguments)
 
 
 def test_budget_stop_remains_partial_with_date_remedy(monkeypatch):

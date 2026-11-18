@@ -264,8 +264,13 @@ def test_named_explicit_member_required_even_with_default_operator(environment, 
 
 def test_config_admin_still_needs_explicit_workspace_membership(environment):
     del environment.memberships["acme"][ADMIN]
-    assert environment.client.get(BASE, headers=_headers(ADMIN)).status_code == 403
-    assert environment.client.get(BASE + "/admin", headers=_headers(ADMIN)).status_code == 403
+    for path in (BASE, BASE + "/admin"):
+        response = environment.client.get(path, headers=_headers(ADMIN))
+        assert response.status_code == 403
+        # The refusal names the missing membership and how to add it.
+        detail = response.json()["detail"]
+        assert detail["code"] == "workspace_membership_required"
+        assert detail["next_action"]["href"] == "/users#wm-root"
 
 
 @pytest.mark.parametrize("actor", [ALICE, BOB])

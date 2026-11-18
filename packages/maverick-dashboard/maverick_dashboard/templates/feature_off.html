@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}{{ off_title }} · Lightwork{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+{{ hero(off_kicker, off_title, compact=true) }}
+{# The standard turned-off state: the page exists, its feature (or one it needs) is off. #}
+<p class="mg-banner" role="status" data-feature-off="{{ off_feature }}"><strong>{{ off_headline }}</strong>
+  <span class="mg-copy">{% for row in off_missing %}{% if off_admin %}Turn on <a href="/settings/all?id=features.{{ row.name }}">{{ row.label }}</a> in Settings. {% endif %}{% endfor %}{% if not off_admin %}Ask an administrator to turn {{ 'them' if off_missing|length > 1 else 'it' }} on in Settings.{% endif %}</span></p>
+{% endblock %}

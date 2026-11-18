@@ -118,7 +118,8 @@ def _authority(request: Request, *, admin: bool = False, write: bool = False,
         raise HTTPException(403, "Sign in with a named account and select a workspace to use a companion.")
     membership = rbac.get_tenant_role(tenant, actor)
     if "view" not in rbac.permissions_for(membership) or scim_groups.active_for_principal(actor) is False:
-        raise HTTPException(403, "Current workspace membership is required to use a companion.")
+        from .access_explanations import membership_required
+        raise membership_required(actor, "Employee companions" if admin else "Your companion")
     _credential_binding(request, actor, tenant)
     context = hashlib.sha256(json.dumps(["employee-companion-v1", tenant, actor]).encode()).hexdigest()
     supplied = request.headers.get(_HEADER)
@@ -622,7 +623,11 @@ def _page(request, *, admin=False):
 
 @router.get("/companion")
 def companion_page(request: Request):
-    return _page(request)
+    from .feature_gate import turned_off_page
+
+    # Policies can be prepared while the feature is off; the employee page cannot be used.
+    off = turned_off_page(request, "employee_companions", kicker="Your workspace", title="Your companion")
+    return off if off is not None else _page(request)
 
 
 @router.get("/companion/admin")

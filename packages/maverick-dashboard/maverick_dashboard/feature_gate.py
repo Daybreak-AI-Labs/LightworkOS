@@ -85,7 +85,41 @@ def refusal_headers(detail: object) -> dict[str, str]:
     return headers_for()
 
 
+def turned_off_page(request, name: str, *, kicker: str, title: str):
+    """The page in the standard turned-off state (200), or ``None`` when the
+    ``features.<name>`` switch and every switch it requires are on.
+
+    A turned-off feature is not a permission problem, so its page is not a 403.
+    Unreadable settings count as off: nothing is claimed to be available."""
+    from maverick import config
+
+    from . import auth
+    from .plain_labels import feature_label
+    from .settings_feature_metadata import FEATURE_REQUIRES
+
+    auth.require_permission(request, "view")
+    readable = not config.config_source_errors(include_tenant=True)
+    features = config.get_features() if readable else {}
+    names = (name, *FEATURE_REQUIRES.get(name, ()))
+    missing = [{"name": item, "label": feature_label(item)} for item in names if features.get(item) is not True]
+    if not missing:
+        return None
+    label = feature_label(name)
+    if missing[0]["name"] == name:
+        headline = f"{label}: turned off."
+        if len(missing) > 1:
+            headline += " It also needs " + ", ".join(row["label"] for row in missing[1:]) + ", which is off."
+    else:
+        headline = f"{label} needs " + ", ".join(row["label"] for row in missing) + ", which is turned off."
+    from .app import templates
+
+    return templates.TemplateResponse(request, "feature_off.html", {
+        "off_kicker": kicker, "off_title": title, "off_feature": name, "off_headline": headline,
+        "off_missing": missing, "off_admin": auth.has_global_permission(request, "admin"),
+    }, headers={"Cache-Control": "private, no-store"})
+
+
 __all__ = [
     "FEATURE_HEADER", "FEATURE_OFF", "LABEL_HEADER", "REASON_HEADER", "SWITCH_HEADER",
-    "feature_off", "headers_for", "refusal_headers",
+    "feature_off", "headers_for", "refusal_headers", "turned_off_page",
 ]

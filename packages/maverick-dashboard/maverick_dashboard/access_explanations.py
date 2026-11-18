@@ -78,3 +78,31 @@ def denial(request, permission, *, installation=False):
                 f"Ask your {current['owner'].lower()} to review access. Account shows your current permissions; Permission requests lets you ask the policy owner for review.")
     except Exception:
         return "Your current access policy is unavailable. Ask an installation administrator to restore it before retrying."
+
+
+MEMBERSHIP_REQUIRED = "workspace_membership_required"
+
+
+def membership_required(principal, feature):
+    """403 for an owner-bound feature: the real reason and the way to fix it.
+
+    Installation administrators are not implicitly members of a workspace, so
+    an administrator is told how to add themselves instead of "no role"."""
+    from . import auth, rbac
+    from .product_errors import product_error
+
+    try:
+        admin = bool(principal) and (auth.is_dashboard_admin(principal) or "admin" in rbac.permissions_for(
+            auth.global_role_for_principal(principal)))
+    except Exception:  # noqa: BLE001 -- an unreadable role store still explains membership
+        admin = False
+    if admin:
+        message = (f"You're an installation administrator, but not a member of this workspace. "
+                   f"{feature} needs workspace membership. "
+                   "Add yourself under Users → Workspace members, or choose another workspace.")
+        action = {"label": "Add yourself as a member", "href": "/users#wm-root"}
+    else:
+        message = (f"You're not a member of this workspace, so you can't use {feature} here. "
+                   "Ask a workspace administrator to add you, or choose another workspace.")
+        action = {"label": "Choose a workspace", "href": "/workspace/tenant"}
+    return product_error(403, MEMBERSHIP_REQUIRED, message, next_action=action)

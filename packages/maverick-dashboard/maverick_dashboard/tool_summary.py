@@ -32,6 +32,8 @@ _TRIM_AT = re.compile(
 # Hand-written summaries for everyday built-in tools whose descriptions are
 # agent instructions rather than a sentence a person can use.
 _CURATED = {
+    "a11y": "Checks a web page for accessibility problems.",
+    "a11y_tree": "Lists a web page's headings, links, buttons and form fields.",
     "apply_patch": "Applies a set of prepared file changes all at once, or none at all.",
     "ask_user": "Asks you a question when the agent needs your input.",
     "http_fetch": "Opens a web page and reads its content.",
