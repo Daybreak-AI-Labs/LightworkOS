@@ -289,6 +289,23 @@ _RULES: tuple[tuple[str, re.Pattern[str], str, str, str | None, str | None], ...
         None, None,
     ),
     (
+        "workspace_access",
+        _rx(r"^start_refused:workspace_access$"),
+        "This task did not start because your account is not a member of this workspace "
+        "with permission to run tasks. No AI work was started and nothing was spent.",
+        "Ask a workspace administrator to add you to this workspace on the People page, then try again.",
+        "/users", "Open People",
+    ),
+    (
+        "workspace_access",
+        _rx(r"^start_refused:access$"),
+        "This task did not start because your account can no longer use a message or file it copies. "
+        "No AI work was started and nothing was spent.",
+        "Start a new conversation with the messages and files you can use now, "
+        "or ask a workspace administrator for access.",
+        "/chat", "Start a new conversation",
+    ),
+    (
         "provider_authentication",
         _rx(r"^provider_error:authentication$", r"\bAuthenticationError\b"),
         "The AI connection needs attention.",

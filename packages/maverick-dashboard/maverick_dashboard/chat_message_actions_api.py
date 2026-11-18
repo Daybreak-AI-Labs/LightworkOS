@@ -22,6 +22,10 @@ class ReviewIn(BaseModel):
     source: str = Field(pattern=r"^[a-f0-9]{64}$")
     message: str = Field(min_length=1, max_length=GOAL_DESCRIPTION_MAX_LENGTH)
     answer_only: bool = True
+    # The same optional per-task limits as the main composer. Empty keeps the
+    # workspace limits; a value can only lower them.
+    max_dollars: str = Field(default="", max_length=32)
+    max_minutes: str = Field(default="", max_length=32)
 
 
 class OriginalIn(BaseModel):
