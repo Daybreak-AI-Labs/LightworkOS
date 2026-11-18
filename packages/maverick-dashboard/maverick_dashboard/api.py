@@ -12497,6 +12497,13 @@ def _held_for_undo(world, approval_id: int) -> bool:
         return False
 
 
+def _decider_name(principal) -> str:
+    """Who decided, as a person reads it: never the raw sign-in identifier."""
+    from .identity_format import humanize_principal
+
+    return humanize_principal(principal).name
+
+
 def _approval_decision_response(world, event, audit_delivered: bool) -> Response:
     """Make pending-vs-effective state explicit at the HTTP boundary."""
     try:
@@ -12522,7 +12529,7 @@ def _approval_decision_response(world, event, audit_delivered: bool) -> Response
         "X-Lightwork-Approval-Count": str(state.get("approved_count", 0)),
         "X-Lightwork-Approval-Required": str(state.get("approvals_required", 1)),
         "X-Lightwork-Decided-By": (
-            str(event.decided_by).encode("ascii", "backslashreplace").decode("ascii")
+            _decider_name(event.decided_by).encode("ascii", "backslashreplace").decode("ascii")
         ),
     }
     if audit_delivered and approval_status != "pending" and _held_for_undo(world, event.approval_id):
@@ -12818,7 +12825,9 @@ def requested_approval_history(request: Request, before_id: int | None = None) -
             return redact(str(value or ""))[0]
         result.append({"id": approval.id, "action": context["approval_actions"][approval.id],
                        "summary": text(context["approval_details"][approval.id]), "status": approval.status,
-                       "decided_by": text(approval.decided_by), "decided_at": approval.decided_at,
+                       "decided_by": text(approval.decided_by),
+                       "decided_by_name": _decider_name(approval.decided_by) if approval.decided_by else "",
+                       "decided_at": approval.decided_at,
                        "expires_at": card.get("expires_at") if card else None,
                        "before": text(card["preview"]["before"]) if card else "",
                        "after": text(card["preview"]["after"]) if card else "",

@@ -341,8 +341,15 @@ def deliver_approval_audit_event(world, event, *, effect_guard=None) -> bool:
     if effect_guard is not None:
         effect_guard()
     try:
+        approval = world.get_approval(int(event.approval_id))
+    except Exception:  # noqa: BLE001 -- the task link is a reading aid, never authority
+        approval = None
+    task = getattr(approval, "goal_id", None)
+    try:
         written = audit_event(
             EventKind.APPROVAL_DECISION,
+            # The Activity log links the decision to the task that asked.
+            **({"goal_id": int(task)} if isinstance(task, int) and not isinstance(task, bool) else {}),
             approval_event_id=event.event_id,
             approval_id=int(event.approval_id),
             status=event.status,

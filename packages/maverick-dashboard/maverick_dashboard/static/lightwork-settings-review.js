@@ -103,7 +103,7 @@
       } else if (button.hasAttribute('data-history')) {
         var history = await call('/api/v1/settings/history'), list = panel.querySelector('[data-history-items]'); list.replaceChildren();
         history.items.forEach(function (item) {
-          var row=document.createElement('li'), text=document.createElement('p'); text.textContent=item.label + ' - ' + item.actor + ' - ' + item.at;
+          var row=document.createElement('li'), text=document.createElement('p'); text.textContent=item.label + ' - ' + item.actor + ' - ' + (window.mvTimeAbsolute && !isNaN(Date.parse(item.at)) ? window.mvTimeAbsolute(Date.parse(item.at) / 1000) : item.at);
           var detail=document.createElement('pre');detail.textContent='Before: ' + shown(item.before) + '\nAfter: ' + shown(item.after) + '\nRevision: ' + (item.before_revision || 'not recorded on legacy entries') + ' to ' + (item.after_revision || 'not recorded');
           row.appendChild(text);row.appendChild(detail);
           if(item.restorable){var restore=document.createElement('button');restore.type='button';restore.className='btn btn--ghost';restore.textContent='Review restore';restore.addEventListener('click',async function(e){e.stopPropagation();restore.disabled=true;try{await saveExternal([{id:item.id,value:item.restore_value}],history.revision,status);}catch(failure){status.textContent=failure.message;}finally{restore.disabled=false;}});row.appendChild(restore);}

@@ -198,6 +198,13 @@ def presets(request: Request):
         return JSONResponse({'presets': results, 'revision': page._revision(layers)}, headers=HEADERS)
 
 
+def _who(actor) -> str:
+    """Who changed a setting, as a person reads it: never a raw sign-in identifier."""
+    from .identity_format import humanize_principal
+
+    return humanize_principal(actor).name if actor else "Unknown"
+
+
 @router.get('/api/v1/settings/history')
 def history(request: Request):
     _allowed(request)
@@ -217,7 +224,7 @@ def history(request: Request):
                 continue
             old, new = payload.get('old'), payload.get('new')
             restorable = _can_export(setting) and old is not None
-            events.append({'id': key, 'label': setting.label, 'actor': payload.get('actor', 'Unknown'),
+            events.append({'id': key, 'label': setting.label, 'actor': _who(payload.get('actor')),
                            'at': datetime.fromtimestamp(event['ts'], timezone.utc).isoformat(),
                            'before': _present_value(setting, old), 'after': _present_value(setting, new),
                            'before_revision': payload.get('before_revision'), 'after_revision': payload.get('after_revision'),

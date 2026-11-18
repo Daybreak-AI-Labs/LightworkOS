@@ -390,3 +390,24 @@ def test_undo_of_a_settings_request_needs_a_global_administrator(tmp_path, recor
     undo = c.post(f"/api/v1/approvals/{aid}/undo")
     assert undo.status_code == 403 and seen == [(aid, False)]
     assert w.get_approval(aid).status == "approved"
+
+
+def test_the_decider_is_named_not_shown_as_a_raw_sign_in_id(monkeypatch):
+    """Live: 'Approved just now by user:google-oauth2|1158…'."""
+    from types import SimpleNamespace
+
+    from maverick_dashboard import api
+
+    monkeypatch.setattr(api, "_held_for_undo", lambda world, approval_id: False)
+    event = SimpleNamespace(event_id="e1", final_status="approved", approval_id=1,
+                            decided_by="user:google-oauth2|115836816027351327475")
+    shown = api._approval_decision_response(None, event, True).headers["x-lightwork-decided-by"]
+    assert "google-oauth2" not in shown and "user:" not in shown and "Google" in shown
+    assert api._decider_name("user:google-oauth2|115836816027351327475") == shown
+
+
+def test_settings_history_names_who_changed_a_setting():
+    from maverick_dashboard.settings_experience import _who
+
+    assert "google-oauth2" not in _who("user:google-oauth2|115836816027351327475")
+    assert _who(None) == "Unknown" and _who("Chris") == "Chris"
