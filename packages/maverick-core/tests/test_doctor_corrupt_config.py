@@ -64,3 +64,20 @@ def test_doctor_anthropic_red_when_nothing_configured(tmp_path, monkeypatch, cap
     out = capsys.readouterr().out
     assert "ANTHROPIC_API_KEY not set" in out
     assert "another provider" not in out
+
+
+def test_doctor_names_one_place_for_ai_keys(tmp_path, monkeypatch, capsys):
+    """The wizard said Settings > AI services, doctor said Settings > Models and
+    the dashboard button opened Connections: one name for one place."""
+    from maverick import health
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr("maverick.config.get_provider_config", lambda name: {})
+    monkeypatch.setattr("maverick.config.any_provider_configured", lambda: False)
+    health._check_anthropic()
+    out = capsys.readouterr().out
+    assert "Settings > Connections > Provider keys" in out
+    assert "Settings > Models" not in out and "AI services" not in out
+    source = Path(health.__file__).read_text(encoding="utf-8")
+    assert "Settings > AI services" not in source
+    assert "update it in Lightwork Settings > Models" not in source

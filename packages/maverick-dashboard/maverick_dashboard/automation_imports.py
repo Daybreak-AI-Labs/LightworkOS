@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 from contextlib import ExitStack
@@ -18,14 +19,16 @@ from maverick.file_lock import cross_process_lock
 from maverick.flow import enabled as flows_enabled
 from maverick.flow import store as flows
 from maverick.governed_operations import digest
-from maverick.governed_records import GovernedRecordStore, RecordConflict
+from maverick.governed_records import GovernedRecordLocalOnly, GovernedRecordStore, RecordConflict
 from maverick.paths import current_tenant_id_strict, data_dir
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import auth, tools_ops_api
 from .draft_api import context_for
 from .plain_labels import datetime_text
+from .store_failures import log_store_failure
 
+log = logging.getLogger(__name__)
 PAGE = "/automations#auto-import-h"
 API = "/api/v1/automation-imports"
 TTL = 600
@@ -34,6 +37,8 @@ NAMES = {"n8n": "n8n", "make": "Make", "workato": "Workato", "uipath": "UiPath",
 NOTICE = ("Review every translated instruction and any visual flow before saving. An import creates drafts; it does not prove identical behavior in the other platform. "
           "Nothing is published, scheduled or allowed to start from another service. Activation is a separate reviewed choice after publication. "
           "If a save is interrupted, read its original record. It will never repeat automatically; earlier saved items may remain.")
+LOCAL_ONLY = ("Automation import keeps its records only on a single-computer installation of Lightwork. "
+              "This deployment uses a shared database, so imports and their original history are not available here.")
 
 
 class Choices(BaseModel):
@@ -118,7 +123,10 @@ def owned(request, identifier):
 
 def history(request):
     tenant, actor, context = authority(request)
-    rows = records().list(limit=1001)
+    try:
+        rows = records().list(limit=1001)
+    except GovernedRecordLocalOnly:
+        return {"context": context, "choices": [], "available": False, "message": LOCAL_ONLY}
     if len(rows) > 1000:
         raise HTTPException(409, "The complete import history exceeds its supported limit. No records were silently hidden.")
     result = [{"value": row["id"], "label": NAMES.get(row["source"], "Imported work") + " / " + ("Save drafts" if row["kind"] == "import" else "Activate schedule") + " / " + datetime_text(row["created_at"])}
@@ -620,5 +628,8 @@ def native_call(function):
         if isinstance(exc, ValueError) and str(exc).startswith("n8n import needs repair:"):
             raise HTTPException(422, str(exc)) from exc
         raise HTTPException(409, "The current import, account or saved workflow could not be verified. Read the original record before reviewing another import.") from exc
+    except GovernedRecordLocalOnly as exc:
+        raise HTTPException(409, LOCAL_ONLY + " Nothing was saved or changed.") from exc
     except Exception as exc:
-        raise HTTPException(503, "Import information is unavailable. Entered work was kept; read the original record if a save was submitted. Nothing repeats automatically.") from exc
+        log_store_failure(log, exc)
+        raise HTTPException(503, "Import information is unavailable. Entered work was kept; read the original record if a save was submitted. Nothing repeats automatically. An administrator can find the cause in the server log.") from exc

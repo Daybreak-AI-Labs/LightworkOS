@@ -111,8 +111,11 @@ def test_chat_can_handoff_an_unsaved_flow_or_agent_draft(monkeypatch, tmp_path):
     assert 'name="authoring_kind"' in page
     from test_support.element_text import element_texts
 
-    assert element_texts(page, "option", {"value": "flow"}) == ["Draft a workflow"]
-    assert element_texts(page, "option", {"value": "agent"}) == ["Draft an agent"]
+    # The mode picker names what is made; the send arrow beside it is the
+    # only control that says to start ("Run this task" read as a second one).
+    assert element_texts(page, "option", {"value": "goal"}) == ["Task"]
+    assert element_texts(page, "option", {"value": "flow"}) == ["Workflow draft"]
+    assert element_texts(page, "option", {"value": "agent"}) == ["Agent draft"]
 
     ui = _client().get("/static/lightwork-ui.js").text
     assert "lightwork.authoring-handoff" in ui

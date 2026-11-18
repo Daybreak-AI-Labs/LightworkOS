@@ -143,6 +143,10 @@ def test_fast_setup_without_key_is_incomplete_even_if_config_smoke_passes(monkey
     assert "AI is not connected" in output
     assert "Saved setup:" in output
     assert "Fast setup finished" not in output
+    # The exit status is explained, and the key's place has one name: the
+    # Settings tab and section the dashboard's own button opens.
+    assert "exits with status 1" in output and "no need to run setup again" in output
+    assert "Settings > Connections > Provider keys" in output
 
 
 def test_the_config_is_still_written_before_the_smoke_test_verdict(

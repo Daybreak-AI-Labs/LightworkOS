@@ -956,6 +956,18 @@ def _active_workspace() -> str | None:
     return current_tenant_id_strict()
 
 
+class DatabaseUpgradeNeedsOwner(RuntimeError):
+    """A pending migration this login may not apply: it does not own the
+    tables. Doctor, the dashboard error page and readiness say this text."""
+
+    def __init__(self, version: int) -> None:
+        super().__init__(
+            f"Lightwork needs to update its Postgres database to version {version}. "
+            "This database login does not own the tables, so nothing was changed. "
+            "Start Lightwork once as the owner of the tables, then start it again "
+            "with this login.")
+
+
 class ErasureBlocked(RuntimeError):
     """An erasure stopped, changing nothing, because a row the active
     workspace cannot see still refers to a record it would remove."""
@@ -1566,6 +1578,8 @@ class PostgresWorldModel:
         self._lock = threading.RLock()
         self._tx_depth = threading.local()
         self.rls_bypass_reason: str | None = None
+        # Set whether or not RLS is on: governed records refuse such a login.
+        self.login_bypasses_rls: str | None = None
         try:
             self._check_database_role()
             self._migrate()
@@ -1607,6 +1621,7 @@ class PostgresWorldModel:
             if superuser
             else "the Postgres login has BYPASSRLS, which bypasses row-level security"
         )
+        self.login_bypasses_rls = problem
         fix = (
             "connect with a dedicated login that is neither a superuser nor BYPASSRLS "
             "(for example CREATE ROLE maverick_app LOGIN NOSUPERUSER NOBYPASSRLS)"
@@ -2046,12 +2061,7 @@ class PostgresWorldModel:
         except Exception as exc:
             if getattr(exc, "sqlstate", None) != "42501":  # insufficient_privilege
                 raise
-            raise RuntimeError(
-                f"Lightwork needs to update its Postgres database to version {_PG_SCHEMA_VERSION}, "
-                "but this database login does not own the tables, so nothing was changed. "
-                "Start Lightwork once as the owner of the tables, then start it again "
-                "with this login."
-            ) from None
+            raise DatabaseUpgradeNeedsOwner(_PG_SCHEMA_VERSION) from None
 
     def _apply_pending_migrations(self) -> None:
         with self._tx() as cur:

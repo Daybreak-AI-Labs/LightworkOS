@@ -28,9 +28,9 @@
   <div class="panel settings-saved" role="status" id="settings-notice">{{ notice }}</div>
   {% endif %}
 
-  <p class="muted">Review setting changes and who made them in the
-    <a href="/audit?kind=setting_changed">Activity log</a>. This metadata view does not display the values before and after a change. A prepared entry alone does not confirm a save.
-    If a save reports that its completion record is unavailable, refresh Settings and Activity before retrying.</p>
+  <p class="muted">See who changed a setting, and when, in the
+    <a href="/audit?kind=setting_changed">Activity log</a>. It does not show the old and new values. A change counts as saved only when its entry says it finished.
+    If a save says Lightwork could not record that it finished, refresh Settings and the Activity log before you try again.</p>
 
   {# The group shown first is decided here, not by the page script, so the
      page never paints all six groups and then hides five of them. #}
@@ -231,7 +231,7 @@
           <option value="off">Charge it again</option>
         </select>
       </label>
-      <label class="settings-field"><input type="checkbox" name="confirm">
+      <label class="settings-check"><input type="checkbox" name="confirm">
         Needed to mark it free: I run this server, or I checked that it charges nothing.
       </label>
       <button class="btn" type="submit">Save server charge</button>
@@ -263,7 +263,7 @@
       <label class="settings-field">Review again by
         <input class="input" type="date" name="valid_until" min="{{ price_today }}" value="{{ price_review_until }}" required>
       </label>
-      <label class="settings-field"><input type="checkbox" name="confirm" required>
+      <label class="settings-check"><input type="checkbox" name="confirm" required>
         I checked this model's own USD rate and used a ceiling high enough for our agreement.
       </label>
       <button class="btn" type="submit">Save spending ceiling</button>
@@ -288,12 +288,12 @@
       <tbody>{% for row in tool_price_states %}<tr>
         <td>{{ row.label }}<br><span class="muted">Name in settings: {{ row.service }}</span></td>
         <td><span class="badge {{ 'active' if row.priced else 'blocked' }}">{{ row.charge }}</span></td>
-        <td>{% if row.priced %}<form method="post" action="/settings/tools/price/remove" data-settings-local="true"><input type="hidden" name="service" value="{{ row.service }}"><button class="btn btn--ghost" type="submit">Remove price</button></form>{% endif %}</td>
+        <td>{% if row.priced %}<form method="post" action="/settings/tools/price/remove" data-settings-local="true"><input type="hidden" name="service" value="{{ row.service }}"><button class="btn btn--ghost" type="submit">Remove price</button></form>{% else %}<a href="#settings-tool-price-form">Set a price</a>{% endif %}</td>
       </tr>{% endfor %}</tbody>
     </table>
     <p class="muted">A call priced per second or per terabyte holds at most {{ tool_unmetered_hold }} while it runs. If it never reports its usage, that full amount is charged.</p>
     <p class="muted">Enter the service's own USD price and what it charges for. Its invoice remains the final bill. Change the safety ceiling and that hold in <a href="/settings/all">All settings</a>.</p>
-    <form method="post" action="/settings/tools/price" class="settings-row-form" data-settings-local="true">
+    <form method="post" action="/settings/tools/price" class="settings-row-form" id="settings-tool-price-form" data-settings-local="true">
       <label class="settings-field">Service
         <select class="select" name="service" required>
           {% for choice in tool_price_services %}<option value="{{ choice.service }}">{{ choice.label }}</option>{% endfor %}
@@ -313,7 +313,7 @@
           <option value="terabyte">Terabyte scanned</option>
         </select>
       </label>
-      <label class="settings-field"><input type="checkbox" name="confirm" required>
+      <label class="settings-check"><input type="checkbox" name="confirm" required>
         I checked this service's own price.
       </label>
       <button class="btn" type="submit">Save tool price</button>
@@ -484,7 +484,7 @@
     <p><a href="/settings/voice-unlock">{{ ui('Voice unlock: record your voice so spoken requests are checked against it') }}</a></p>
   </section>
 
-  <div class="section-head" data-settings-group="general"><h2>Spending per task</h2></div>
+  <div class="section-head" data-settings-group="general" id="settings-task-limit"><h2>Spending per task</h2></div>
   <div class="panel" data-settings-group="general">
     <p class="muted settings-lead">
       Choose whether Lightwork stops a single task that goes over a set amount.
@@ -554,7 +554,10 @@
     <p class="muted settings-foot" role="note">Right now:
       {% if limit_mode == 'off' %}tasks have no spending limit of their own.
       {% elif limit_mode == 'amount' %}each task stops after spending {{ budget | money }}.
-      {% else %}each task follows your installation's standard limits.{% endif %}</p>
+      {% else %}each task follows your installation's standard limits{% if standard_task_limits %}: it stops after
+        {%- if standard_task_limits.dollars is not none %} spending {{ standard_task_limits.dollars | money }}{% endif %}
+        {%- if standard_task_limits.dollars is not none and standard_task_limits.time %} or{% endif %}
+        {%- if standard_task_limits.time %} running for {{ standard_task_limits.time }}{% endif %}{% endif %}.{% endif %}</p>
   </div>
 
   <div class="section-head" data-settings-group="integrations" id="settings-integrations"><h2>Provider keys</h2></div>
@@ -1013,6 +1016,8 @@
     .settings-stack-form { display: grid; gap: var(--space-2); }
     .settings-inline-form { margin-top: var(--space-2); }
     .settings-field { display: flex; flex-direction: column; gap: var(--space-1); min-width: min(100%, 14rem); }
+    /* A confirmation box sits beside its words, on its own row of the form. */
+    .settings-check { display: flex; gap: var(--space-2); align-items: flex-start; flex: 1 1 100%; }
     .settings-grow { flex: 1 1 18rem; }
     .settings-choice { border: 0; padding: 0; margin: 0; display: grid; gap: var(--space-2); }
     .settings-choice legend { font-weight: var(--font-medium); margin-bottom: var(--space-2); }

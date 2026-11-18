@@ -13,8 +13,8 @@ this is your first visit.
    contain. Use **Add details** for longer instructions and **Attach files**
    when the work depends on documents. An attached file is available to the
    task; attaching it alone does not prove the worker read or used it.
-2. Leave **What should Lightwork create?** on **Run this task** for a one-off
-   request. **Draft a workflow** and **Draft an agent** create drafts for you
+2. Leave **What should Lightwork create?** on **Task** for a one-off
+   request. **Workflow draft** and **Agent draft** create drafts for you
    to review; they do not silently put a new process into service. If you need
    a spending boundary, open **Check budget before starting** and review the
    task limit shown below the composer before pressing **Start task**.
@@ -68,7 +68,7 @@ Open **Workflows** (`/workflows`) to see three different kinds of saved work:
 
 | If you need | Use | What to expect |
 | --- | --- | --- |
-| A reusable task instruction | **New workflow** | Build a template, then use it from Chat or arrange a schedule or trigger when those features are available. |
+| A reusable task instruction | **New template or playbook** | Build a template, then use it from Chat or arrange a schedule or trigger when those features are available. |
 | Connected steps with decisions or repetition | **New flow** | Use the visual designer, review each step and its required inputs, then inspect the run. A flow approval step pauses for a person. |
 | Instructions for an agent you build | An **agent playbook** | It guides the agent; a sentence telling it to seek review does **not** create a flow approval gate. |
 

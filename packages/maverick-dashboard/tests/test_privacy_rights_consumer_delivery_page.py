@@ -69,7 +69,7 @@ def test_page_fails_closed_and_template_uses_safe_ephemeral_dom(page_client) -> 
     )
     assert disabled.status_code == 200
     assert 'data-module-gate="privacy_automation.rights_consumer_delivery"' in disabled.text
-    assert "Sending people their data is turned off." in disabled.text
+    assert "Sending people their data: turned off." in disabled.text
     assert "[privacy_automation.rights_consumer_delivery] enable = true" not in disabled.text
     template = (
         Path(__file__).resolve().parents[1]

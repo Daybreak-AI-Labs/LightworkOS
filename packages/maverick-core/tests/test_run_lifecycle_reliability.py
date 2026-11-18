@@ -311,7 +311,7 @@ async def test_resume_limit_checked_before_paid_brief(run_state, monkeypatch, ag
 
     monkeypatch.setattr("maverick.orchestrator._build_orchestrator_brief", brief)
     out = await run_goal(ctx.llm, ctx.world, ctx.budget, ctx.goal_id, sandbox=ctx.sandbox, resume=True)
-    assert "spending or time limit" in out
+    assert "hit your spending limit" in out
     assert not calls
     assert ctx.budget.dollars == 2
     assert ctx.budget.max_dollars == 1

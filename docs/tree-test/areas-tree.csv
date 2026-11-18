@@ -31,11 +31,11 @@ Work,Workflows,Workflow builder,/workflow-builder
 Work,Workflows,Flow results,/flows/analytics
 Work,Automations,,/automations
 Work,Code changes,Code,/code
-Work,Promise reviews,,/commitment-reviews
+Work,Commitment reviews,,/commitment-reviews
 Work,Shared decision reviews,,/decision-evidence
-Work,Hand over a team's work,Autonomous shoring,/shoring
+Work,Hand over a team's work,Work handoff,/shoring
 Agents,Workforce,Workforce,/workforce
-Agents,Workforce,Teams,/fleets
+Agents,Workforce,Agent teams,/fleets
 Agents,Workforce,Roles,/roles
 Agents,Workforce,Starter teams,/starter-teams
 Agents,Build an agent,Agent Factory,/agents
@@ -128,7 +128,7 @@ Risk & compliance,Vendors,Third-party lifecycle,/third-party/lifecycle
 Risk & compliance,Vendors,Third-party collaboration,/third-party/collaboration
 Evidence & audit,Activity log,,/audit
 Evidence & audit,Task replay,Task replay,/replay
-Evidence & audit,Task replay,Branches,/run-tree
+Evidence & audit,Task replay,Task branches,/run-tree
 Evidence & audit,Task replay,Video walkthroughs,/walkthroughs
 Evidence & audit,Trust receipts,,/audit/receipts
 Evidence & audit,Learning history,,/audit/evolution-ledger

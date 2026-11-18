@@ -323,6 +323,58 @@ def test_ensure_private_file_leaves_an_already_private_posix_file_unchanged(tmp_
     assert private_path_is_restricted(path)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX mode fast path")
+def test_ensure_private_directory_leaves_an_already_private_posix_directory_alone(
+    tmp_path, monkeypatch,
+):
+    """The state folder is checked on every signed-in request (nine times for a
+    stylesheet). On a network file system (EFS/NFS) a mkdir of an existing folder
+    and a chmod are each a server round trip that cannot be cached; a folder
+    that is already a private directory needs one lstat."""
+    import maverick.file_lock as file_lock
+
+    folder = tmp_path / "state"
+    folder.mkdir(mode=0o700)
+    folder.chmod(0o700)
+    before = folder.lstat()
+    calls: list[str] = []
+    real_mkdir, real_chmod = os.mkdir, os.chmod
+    monkeypatch.setattr(os, "mkdir", lambda *a, **k: (calls.append("mkdir"), real_mkdir(*a, **k))[1])
+    monkeypatch.setattr(os, "chmod", lambda *a, **k: (calls.append("chmod"), real_chmod(*a, **k))[1])
+
+    assert file_lock.ensure_private_directory(folder) == folder
+
+    assert calls == []
+    assert folder.lstat().st_ctime_ns == before.st_ctime_ns
+    assert private_path_is_restricted(folder, 0o700)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX modes")
+def test_ensure_private_directory_still_tightens_and_refuses_aliases(tmp_path):
+    import maverick.file_lock as file_lock
+
+    loose = tmp_path / "loose"
+    loose.mkdir()
+    loose.chmod(0o755)
+    file_lock.ensure_private_directory(loose)
+    assert private_path_is_restricted(loose, 0o700)
+
+    missing = tmp_path / "a" / "b"
+    file_lock.ensure_private_directory(missing)
+    assert private_path_is_restricted(missing, 0o700)
+
+    link = tmp_path / "link"
+    link.symlink_to(loose, target_is_directory=True)
+    with pytest.raises(PermissionError):
+        file_lock.ensure_private_directory(link)
+
+    plain = tmp_path / "plain-file"
+    plain.write_text("x", encoding="utf-8")
+    plain.chmod(0o700)
+    with pytest.raises((PermissionError, FileExistsError)):
+        file_lock.ensure_private_directory(plain)
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows handle-bound DACL fast path")
 def test_ensure_private_file_rejects_aba_swap_during_private_fast_path(
     tmp_path, monkeypatch,

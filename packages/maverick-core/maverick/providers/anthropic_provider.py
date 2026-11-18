@@ -385,9 +385,14 @@ class AnthropicClient:
             if not key and not token:
                 raise RuntimeError("Anthropic requires a credential in the admitted provider configuration")
             kw.update(
-                api_key=key or "", auth_token=token,
+                api_key=key or "",
                 base_url=base_url or env.get("ANTHROPIC_BASE_URL") or "https://api.anthropic.com",
             )
+            # Pass the bearer only when one is configured: an empty
+            # ``auth_token`` makes the SDK send ``Authorization: Bearer ``,
+            # which the HTTP layer refuses before the request leaves.
+            if token:
+                kw["auth_token"] = token
         # Thread an explicit `[providers.anthropic] base_url` into the SDK so a
         # configured endpoint (proxy / gateway) is honored. ``None`` leaves the
         # SDK's own default base_url (mirrors how OpenAIClient handles base_url).

@@ -43,14 +43,14 @@ Work
 	Automations
 	Code changes
 		Code
-	Promise reviews
+	Commitment reviews
 	Shared decision reviews
 	Hand over a team's work
-		Autonomous shoring
+		Work handoff
 Agents
 	Workforce
 		Workforce
-		Teams
+		Agent teams
 		Roles
 		Starter teams
 	Build an agent
@@ -171,7 +171,7 @@ Evidence & audit
 	Activity log
 	Task replay
 		Task replay
-		Branches
+		Task branches
 		Video walkthroughs
 	Trust receipts
 	Learning history

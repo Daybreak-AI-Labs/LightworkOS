@@ -19,11 +19,11 @@ CANONICAL_CONTEXTS = {
     "/overview": "Overview",
     "/ekko": "Ekko",
     "/oversight": "Oversight",
-    "/run-tree": "Branches",
+    "/run-tree": "Task branches",
     "/spend": "Spend",
     "/savings": "Savings",
     "/work-value": "Work value & opportunities",
-    "/shoring": "Autonomous shoring",
+    "/shoring": "Work handoff",
     "/knowledge-access": "Knowledge",
     "/human-conversations": "Human conversations",
     "/learning": "Learning",
@@ -41,11 +41,11 @@ CANONICAL_CONTEXTS = {
     "/start": "Get started",
     "/providers": "Providers",
     "/billing": "Billing",
-    "/commitment-reviews": "Promise reviews",
+    "/commitment-reviews": "Commitment reviews",
     "/workflows": "Workflows",
     "/agents": "Agent Factory",
     "/workforce": "Workforce",
-    "/fleets": "Teams",
+    "/fleets": "Agent teams",
     "/approvals": "Approvals",
     "/facts": "Facts",
     "/content-access": "Content access",
@@ -158,7 +158,7 @@ def test_every_everyday_navigation_page_has_authored_help() -> None:
 
 
 @pytest.mark.parametrize(("path", "template", "control"), [
-    ("/today", "today.html", "In-flight work"),
+    ("/today", "_today_cards.html", "In-flight work"),  # the page includes it
     ("/action-center", "_action_center_body.html", "Refresh list"),  # the page includes it
     ("/goals", "goals.html", "Result"),
     ("/deliverables", "deliverables.html", "Finished work"),

@@ -33,7 +33,42 @@ needed) → Secrets Manager (DB password, dashboard
 token, Anthropic API key placeholder, assembled Postgres DSN) → RDS Postgres
 16 (`db.t4g.micro`) → ECS Fargate service running `maverick dashboard --host
 0.0.0.0 --port 8765` behind an ALB (health check `/livez`) → least-privilege
-IAM roles → CloudWatch logs.
+IAM roles → CloudWatch logs → CloudWatch alarms notifying one SNS topic
+(see "Alarms") → optionally, an AWS WAF web ACL on the ALB (off by default; see
+"Optional WAF").
+
+## Check for drift before launch
+
+The live stack can drift from this Terraform: a console or CLI change, or a
+task definition revision registered by hand, is not in state until someone
+applies over it. Before a launch, or before any apply to an existing
+deployment, export the credentials as in step 2 and run:
+
+```bash
+terraform plan -input=false
+```
+
+Read every change to an existing resource, not only the totals. Drift found
+on the live deployment at the last review:
+
+- **EFS backups were disabled**, although `efs.tf` defines
+  `aws_efs_backup_policy` as `ENABLED`. The plan turns them back on; let it.
+- **The running task definition was not produced by this Terraform.** Its
+  container lacked `MAVERICK_DEPLOYMENT_ISOLATION`,
+  `MAVERICK_REQUIRE_CONTAINER_BACKEND`, `MAVERICK_EXECUTOR_NAMESPACE` and
+  `MAVERICK_EXECUTOR_IMAGE`, which `ecs.tf` sets. Expect a new task definition
+  revision and a service update; the `ecs.tf` precondition requires the
+  separate executor (`deploy/aws/EXECUTOR.md`) to be provisioned first.
+- **EFS throughput was switched to provisioned** outside Terraform. Until this
+  stack has variables for the throughput mode and they match the live
+  setting, a plan shows it changing back to bursting, which would bring back
+  the throttling; hold the apply until then.
+- **RDS deletion protection was off.** `rds.tf` sets it on, so the plan shows
+  an in-place change that enables it; make that choice deliberately before
+  applying.
+
+None of the alarms existed before; expect them, the SNS topic and (with
+`enable_waf`) the web ACL as additions.
 
 ## Steps, in order
 
@@ -115,7 +150,7 @@ eval "$(aws configure export-credentials --profile lightwork --format env)"
 cd <your Lightwork checkout>/deploy/aws/terraform
 cp backend.hcl.example backend.hcl   # then set bucket to the state bucket created above
 terraform init -input=false -backend-config=backend.hcl
-terraform plan -input=false          # sanity check — should show ~30 resources to add, 0 to change/destroy
+terraform plan -input=false          # sanity check — a new account shows only additions, 0 to change/destroy
 terraform apply -input=false -auto-approve
 ```
 
@@ -288,6 +323,93 @@ image build, so rebuild and redeploy (step 3 and step 5) after this change.
 Then `GET /api/v1/features/modules` should report the three modules as
 `configured` instead of `incomplete`.
 
+## Alarms
+
+`alarms.tf` creates the SNS topic `<project>-<environment>-alarms` (output
+`alarm_topic_arn`) and the CloudWatch alarms below; each one notifies the
+topic when it fires and when it clears, and its description says what it means
+and what to do first. Set `alarm_email` in `local.auto.tfvars` to subscribe an
+address. AWS then sends that address a confirmation email, and **nothing is
+delivered until the recipient opens the link and confirms**; check the
+subscription with `aws sns list-subscriptions-by-topic`. With `alarm_email`
+empty the topic has no subscriber, so subscribe a pager or chat integration to
+it yourself.
+
+| Alarm | Fires when (default) | Missing data |
+| --- | --- | --- |
+| ALB 5xx | more than 20 load-balancer 5xx in each of two 5-minute windows | not breaching |
+| Target 5xx rate | more than 5% of app responses are 5xx in two 5-minute windows (windows under 20 requests ignored) | not breaching |
+| Unhealthy targets | any unhealthy target for 3 minutes | not breaching |
+| Response time p95 | p95 above 2 s for 15 minutes | not breaching |
+| ECS running tasks | fewer running than desired in 5 of 10 minutes | **breaching** |
+| ECS CPU / memory | above 80% for 15 minutes | missing |
+| EFS burst credits | balance below 1024 GiB (bursting mode only) | missing |
+| EFS I/O limit | `PercentIOLimit` above 90% for 15 minutes | not breaching |
+| EFS throughput | metered throughput above 80% of `PermittedThroughput` for 15 minutes, any mode | not breaching |
+| RDS CPU | above 80% for 15 minutes | missing |
+| RDS free storage | below 2 GiB | missing |
+| RDS freeable memory | below 100 MiB for 15 minutes | missing |
+| RDS CPU credits | balance below 30 (db.t* classes only) | missing |
+| RDS connections | more than 60 in two 5-minute windows | missing |
+
+Every threshold is a variable (`variables.tf`, "Alarms"). Why the defaults:
+
+- **Response time p95, 2 s.** Healthy dashboard pages answer well under a
+  second. When the state volume ran out of EFS burst credits, signed-in pages
+  took several seconds and nothing reported it; 2 s sustained for 15 minutes
+  catches that and ignores single slow requests. Streaming responses count only
+  until their headers, so long-running chats do not inflate it.
+- **ECS running tasks, 5 of 10 minutes, missing data breaching.** Deploys stop
+  the old task before starting the new one (`ecs.tf`), so a deploy is short a
+  task for a few minutes by design. No data at all means the service or its
+  Container Insights metrics are gone, which is treated as down.
+- **ALB 5xx.** The same stop-then-start deploy produces 503s while no task is
+  registered; one alarm right after a deploy that clears on its own is
+  expected.
+- **EFS throughput utilisation** uses the AWS metric math for percentage of
+  permitted throughput (`MeteredIOBytes` against `PermittedThroughput`). In
+  bursting mode `PermittedThroughput` drops to the baseline when credits run
+  out, so this alarm also catches credit exhaustion, and it keeps working in
+  provisioned or elastic mode where the burst-credit alarm is not created.
+- **RDS thresholds** suit `db.t4g.micro` (about 1 GiB of memory; Postgres
+  `max_connections` under 100). Raise the memory and connection thresholds with
+  a larger `db_instance_class`. RDS runs burstable classes in Unlimited mode,
+  so a low CPU-credit balance means surplus CPU is billed, not throttled.
+
+The alarms add CloudWatch alarm charges (metric-math alarms count each metric
+they read) and the SNS deliveries; see CloudWatch pricing.
+
+## Optional WAF
+
+`waf.tf` is off by default. Set `enable_waf = true` to create a regional AWS
+WAF web ACL associated with the ALB, with the AWS managed Common rule set,
+Known bad inputs and Amazon IP reputation list rule groups, and a rate-based
+rule that blocks a client IP above `waf_rate_limit` requests in any 5-minute
+window (default 2,000). AWS WAF is billed per web ACL per month, per rule or
+rule group per month, and per million requests inspected; some managed rule
+groups carry their own fees. See AWS WAF pricing for current rates.
+
+- **Large bodies.** An ALB lets WAF inspect only the first 8 KB of a request
+  body. The Common rule set's `SizeRestrictions_BODY` rule would block every
+  larger body, which includes chat posts, document uploads, SAML responses and
+  JSON imports, so this stack sets it to count; the app enforces its own
+  per-route body limits. If another Common rule blocks legitimate traffic (for
+  example `CrossSiteScripting_BODY` on a chat post that contains code), add its
+  name to `waf_common_rule_count_overrides` rather than disabling the group;
+  the rule group's CloudWatch metrics and sampled requests show what matched.
+- **Health checks.** ALB health checks go from the load balancer straight to
+  the task's private IP, not through a listener, so the web ACL does not see
+  them and cannot fail the target (an assumption from how AWS documents health
+  checks; AWS does not state it for WAF in so many words). External probes of
+  `/livez`, `/readyz` or `/healthz` do pass through the WAF and are rate-limited
+  like any client; the health paths are not exempted, because `/readyz` and
+  `/healthz` run dependency checks.
+- **Behind Cloudflare.** With `restrict_ingress_to_cloudflare = true` the ALB
+  sees only Cloudflare's edge addresses, so the rate rule keys on the
+  `CF-Connecting-IP` header instead of the source IP. The IP reputation group
+  still evaluates the source address, which is then a Cloudflare edge, so it
+  adds little in that mode.
+
 ## Notes
 
 - HTTPS exists only while `domain_name` (`variables.tf`) is set: it creates
@@ -295,3 +417,7 @@ Then `GET /api/v1/features/modules` should report the three modules as
   listener. With it empty the stack serves plain HTTP on the ALB DNS name.
 - Run Terraform as the scoped deployer identity from `deployer.tf`, never as
   the account root user.
+- The deployer policy allows this stack's alarms, its alarm topic and,
+  bound to the deploy region, the WAF. A policy change is an IAM change, so
+  the administrator identity applies it first; until then a deployer apply
+  that adds the alarms or the web ACL is denied.

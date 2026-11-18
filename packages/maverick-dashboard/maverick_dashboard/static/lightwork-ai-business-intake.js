@@ -1,6 +1,8 @@
 (() => {
   'use strict';
-  const root=document.getElementById('ai-business-intake-panel');if(!root)return;
+  const root=document.getElementById('ai-business-intake-panel');
+  // Turned off (the server marks the hidden section): never call its API.
+  if(!root||root.hasAttribute('data-feature-off'))return;
   const el=id=>document.getElementById('abi-'+id),base='/api/v1/security/assurance/ai-business-intake';
   const node=(tag,text)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=text;return n;};
   let contract=null,current=null,busy=false,expired=false,conflicted=false,offset=0,hasMore=false;
@@ -22,7 +24,10 @@
   }
   async function api(path,method='GET',body){const response=await fetch(base+path,{method,credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json',...(contract?{'X-Lightwork-Intake-Context':contract.context}:{})},...(body!==undefined?{body:JSON.stringify(body)}:{})});
     // A refusal's body is never read: release it so the request ends instead of staying open.
-    if([401,403].includes(response.status)){response.body?.cancel().catch(()=>{});lock();throw new Error('Your sign-in or access changed. Sign in again and reload AI business intake.');}
+    if([401,403].includes(response.status)){response.body?.cancel().catch(()=>{});lock();
+      // A feature that is turned off is not a sign-in problem.
+      const off=response.status===403&&window.mvFeatureOff&&window.mvFeatureOff(response);
+      throw new Error(off?'AI business intake is turned off. '+(document.body?.getAttribute('data-global-admin')==='1'?'You can turn it on in Settings.':'Ask an administrator to turn it on.'):'Your sign-in or access changed. Sign in again and reload AI business intake.');}
     const friendly=action=>window.mvErrorText?window.mvErrorText(response,action):'Could not '+action+'. Try again.';
     if(response.status>=500)throw new Error('The intake service is unavailable. Your answers are kept; try again.');
     const raw=await response.text();if(new TextEncoder().encode(raw).length>2*1024*1024)throw new Error('The intake response is too large. Narrow the draft search.');
@@ -35,7 +40,9 @@
     if(contract&&data.context!==contract.context){lock();throw new Error('The account or workspace changed. Reload AI business intake.');}
     return data;
   }
-  async function run(work){if(busy||expired)return;busy=true;update();try{await work();}catch(error){say(error.message+(conflicted&&!expired?' Your unsaved answers are kept. Open the saved intake to review its current version before continuing.':''));el('status').focus();}finally{busy=false;update();}}
+  async function run(work,{focus=true}={}){if(busy||expired)return;busy=true;update();try{await work();}catch(error){say(error.message+(conflicted&&!expired?' Your unsaved answers are kept. Open the saved intake to review its current version before continuing.':''));
+    // Focus follows a person's action; a failed first load must not scroll the page to this section.
+    if(focus)el('status').focus();}finally{busy=false;update();}}
   const choiceLabel=value=>({none:'No data',public:'Public information',internal:'Internal',confidential_business:'Confidential business information',personal:'Personal data',sensitive_personal:'Sensitive personal data',both:'Internal and external',assistive:'Assists a person',recommending:'Recommends decisions',automated:'Makes automated decisions',not_applicable:'Not applicable',unknown:'Not yet known'}[value]||value.replace(/_/g,' ').replace(/^./,c=>c.toUpperCase()));
   function build(answers={}){controls.clear();el('fields').replaceChildren();const groups=new Map();
     for(const field of contract.fields){let group=groups.get(field.group);if(!group){group=node(field.group==='Advanced'?'details':'fieldset');group.append(node(field.group==='Advanced'?'summary':'legend',field.group));if(field.group==='Expert review signals')group.append(node('p','These are screening questions, not legal advice or a legal determination. Select what may apply, or leave unanswered for help from a compliance expert. Choose “None of these signals” only after reviewing every choice.'));el('fields').append(group);groups.set(field.group,group);}
@@ -92,5 +99,5 @@
   el('export').addEventListener('click',()=>{if(!current)return;const blob=new Blob([JSON.stringify(readAnswers(),null,2)],{type:'application/json'});const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download=((current.use_case_name||'ai-intake').replace(/[^A-Za-z0-9]+/g,'-').replace(/^-|-$/g,'')||'ai-intake')+'-answers.json';document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(link.href),1000);say('Answers downloaded. You can import this file later to continue.');});
   window.addEventListener('beforeunload',event=>{if(!expired&&isDirty()){event.preventDefault();event.returnValue='';}});
   async function initialize(){const data=await api('/form');if(!/^[a-f0-9]{64}$/.test(data.context)||!Array.isArray(data.fields)||data.fields.length>32||!data.fields.length||data.fields.some(field=>!/^\w+(\.\w+)?$/.test(field.path)||field.path.split('.').some(key=>['__proto__','constructor','prototype'].includes(key))||!['text','boolean','choice','multiple'].includes(field.kind)))throw new Error('The intake questionnaire could not be verified. Reload this page.');contract=data;build();savedAnswers='{}';await list();say(contract.can_edit?'Start with what you know, or open a saved workspace draft.':'You can view saved intakes. An operator can save answers and submit them for review.');}
-  run(initialize);
+  run(initialize,{focus:false});
 })();

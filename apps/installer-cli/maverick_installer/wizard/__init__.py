@@ -5560,7 +5560,9 @@ def run_fast() -> int:
             Panel.fit(
                 "[bold yellow]Setup saved, but AI is not connected.[/bold yellow]\n\n"
                 "No AI provider key was found, so Lightwork cannot run a task yet. "
-                "Open Lightwork > Settings > AI services and add your provider key.\n"
+                "Open Lightwork > Settings > Connections > Provider keys and add your provider key.\n"
+                "Setup exits with status 1 so scripts know AI is not connected yet. "
+                "Your setup is saved: there is no need to run setup again.\n"
                 f"Saved setup: {CONFIG_FILE}",
                 border_style="yellow",
             )

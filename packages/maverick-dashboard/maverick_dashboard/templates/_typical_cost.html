@@ -20,6 +20,6 @@ Past costs could not be read.
 {%- if tc and tc.enough -%}
 Your past tasks usually cost {{ tc.low | money }} to {{ tc.high | money }}, {{ tc.median | money }} in the middle (from your last {{ tc.runs }} finished {{ 'task' if tc.runs == 1 else 'tasks' }}). This is past spending, not a prediction.
 {%- elif tc -%}
-No cost range yet: {{ tc.runs }} of the {{ tc.min_runs }} finished tasks needed to show what your tasks usually cost. It appears here once more of your tasks finish.
+Your typical task cost appears here after {{ tc.min_runs }} of your tasks have run ({{ tc.runs }} so far).
 {%- endif -%}
 {%- endmacro %}

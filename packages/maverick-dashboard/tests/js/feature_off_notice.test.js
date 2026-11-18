@@ -10,7 +10,7 @@ const source = fs.readFileSync(
   path.resolve(__dirname, "../../maverick_dashboard/static/lightwork-ui.js"), "utf8");
 
 const TOP_GATE = `<div class="mg-banner" id="top-gate" data-module-gate="privacy_automation.public_rights_form">
-  <strong>Rights request form is turned off.</strong><span class="mg-err" role="alert"></span></div>`;
+  <strong>Rights request form: turned off.</strong><span class="mg-err" role="alert"></span></div>`;
 
 function load({ admin = false, fetchImpl } = {}) {
   const dom = new JSDOM(`<!doctype html><body data-global-admin="${admin ? 1 : 0}">
@@ -38,10 +38,10 @@ function turnedOff(extra = {}) {
 test("a feature that is turned off is never reported as a missing permission", () => {
   const viewer = load();
   assert.equal(viewer.mvErrorText(turnedOff(), "save the property"),
-    "Could not save the property. Rights request form is turned off. Ask an administrator to turn on rights request form.");
+    "Could not save the property. Rights request form: turned off. Ask an administrator to turn on rights request form.");
   const admin = load({ admin: true });
   assert.equal(admin.mvErrorText(turnedOff(), "save the property"),
-    "Could not save the property. Rights request form is turned off. You can turn it on in Settings.");
+    "Could not save the property. Rights request form: turned off. You can turn it on in Settings.");
   // A real permission refusal still says so.
   assert.match(viewer.mvErrorText({ status: 403 }, "save the property"), /do not have permission/);
   assert.match(viewer.mvErrorText({ status: 403, headers: new Headers() }, "save it"), /do not have permission/);
@@ -62,7 +62,7 @@ test("the in-place notice offers Turn on, keeps the page and retires stale notic
   const d = w.document;
   assert.equal(w.mvShowFeatureOff(d.getElementById("msg"), turnedOff(), "save the property"), true);
   const gate = d.querySelector("#msg .mg-banner");
-  assert.match(gate.textContent, /Could not save the property\. Rights request form is turned off\./);
+  assert.match(gate.textContent, /Could not save the property\. Rights request form: turned off\./);
   const button = gate.querySelector(".mg-on");
   assert.equal(button.textContent, "Turn on rights request form");
   assert.match(gate.querySelector(".mg-nonadmin-note").textContent, /Ask an administrator to turn on rights request form/);
@@ -81,6 +81,6 @@ test("a feature that cannot be switched on in the app says who can", () => {
   failure.headers.delete("X-Lightwork-Feature-Switch");
   assert.equal(w.mvShowFeatureOff(msg, failure, "save"), true);
   assert.equal(msg.querySelector(".mg-on"), null);
-  assert.equal(msg.textContent, "Could not save. The privacy register is turned off. Ask an administrator to turn on the privacy register.");
+  assert.equal(msg.textContent, "Could not save. The privacy register: turned off. Ask an administrator to turn on the privacy register.");
   assert.equal(w.mvShowFeatureOff(msg, { status: 403 }, "save"), false);
 });

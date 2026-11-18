@@ -369,33 +369,15 @@ def _unpriced_model_message(exc: BaseException, goal_id: Any) -> str:
     )
 
 
-def _budget_exceeded_message(budget: Any, goal_id: Any) -> str:
-    """Sentence-style cap message a non-engineer can read, with resume advice."""
-    limits = []
-    if budget.max_dollars is not None:
-        limits.append(f"${budget.dollars:.2f} of ${budget.max_dollars:.2f} cap")
-    if budget.max_wall_seconds is not None:
-        limits.append(f"{budget.elapsed():.0f}s of {budget.max_wall_seconds:.0f}s")
-    for used, cap, label in (
-        (budget.input_tokens, budget.max_input_tokens, "input tokens"),
-        (budget.output_tokens, budget.max_output_tokens, "output tokens"),
-        (budget.tool_calls, budget.max_tool_calls, "tool calls"),
-    ):
-        if cap is not None:
-            limits.append(f"{used} of {cap} {label}")
-    command = f"maverick resume {goal_id}"
-    if budget.max_dollars is not None:
-        command += " --max-dollars <higher>"
-    elif budget.max_wall_seconds is not None:
-        command += " --max-wall-seconds <higher>"
-    return (
-        f"Stopped: this goal hit your spending or time limit "
-        f"({', '.join(limits) or 'a configured usage limit'}).\n"
-        "Your recorded work and usage are retained. Raise the applicable limit "
-        "or remove configured task limits in Settings, then resume saved work. "
-        "Organization spending controls still apply.\n"
-        f"Resume with a higher cap: {command}"
-    )
+def _budget_exceeded_message(budget: Any, goal_id: Any, detail: str = "") -> str:
+    """Sentence-style cap message a non-engineer can read, with resume advice.
+
+    ``detail`` is the ``BudgetExceeded`` text: it names the refused call's
+    estimate and any safety ceiling, which the meter alone cannot show.
+    """
+    from .stop_reasons import budget_stop_text
+
+    return budget_stop_text(budget, goal_id, detail)
 
 
 def _usage_accounting_message(detail: str, goal_id: Any) -> str:
@@ -431,7 +413,7 @@ def _budget_stop_message(budget: Any, goal_id: Any, error: BudgetExceeded) -> st
         )
     if isinstance(error, UnpricedModelError):
         return _unpriced_model_message(error, goal_id)
-    return _budget_exceeded_message(budget, goal_id)
+    return _budget_exceeded_message(budget, goal_id, str(error))
 
 
 def _review_checkpoint_message(detail: str, goal_id: Any) -> str:
@@ -1712,6 +1694,35 @@ def _evidence_ready_goal_output(
     return str(delivery["delivered_text"])
 
 
+def _evidence_preflight_refusal(world: Any, goal_id: int) -> str | None:
+    """Refuse a goal whose answer the evidence gateway would withhold.
+
+    Runs before any model call, so a workspace whose evidence setup refuses
+    every delivery stops at the start instead of after paid work. Only a
+    definite, read-only finding refuses; if the check itself cannot run, the
+    goal proceeds and the fail-closed delivery check at the end still applies.
+    """
+    from .ai_evidence import delivery as gateway
+
+    try:
+        found = gateway.preflight()
+    except Exception:
+        log.warning("evidence pre-flight unavailable for goal #%s", goal_id, exc_info=True)
+        return None
+    if found is None:
+        return None
+    from .stop_reasons import explain_stop
+
+    reason = f"evidence_gateway:not_ready:{found['code']}: {found['detail']}"
+    world.set_goal_status(goal_id, "blocked", result=reason)
+    _fire_webhook("goal_finished", {
+        "goal_id": goal_id, "status": "blocked", "result": reason,
+    })
+    stop = explain_stop(reason)
+    log.warning("goal #%s not started: %s", goal_id, reason)
+    return f"{stop.message}\n{stop.action}"
+
+
 def _goal_already_ran(world: Any, goal_id: int) -> bool:
     """Whether a run of this task is already on record (so it was let through).
 
@@ -2223,7 +2234,7 @@ def _handle_root_error(*, result: Any, world: WorldModel, goal: Any, goal_id: in
         message = (
             _organization_budget_message(result.stop_detail, goal_id)
             if result.stop_kind == "organization_budget"
-            else _budget_exceeded_message(budget, goal_id)
+            else _budget_exceeded_message(budget, goal_id, result.stop_detail)
         )
         lifecycle.end_episode(result.stop_kind, "interrupted")
         world.set_goal_status(goal_id, "blocked", result=message)
@@ -2266,7 +2277,7 @@ def _handle_root_error(*, result: Any, world: WorldModel, goal: Any, goal_id: in
         # A sub-agent's call was refused by the budget reservation;
         # surface the same friendly cap message as a top-level
         # BudgetExceeded, not the generic "ran into an error".
-        return _budget_exceeded_message(budget, goal_id)
+        return _budget_exceeded_message(budget, goal_id, (result.error or "")[len("budget exceeded:"):])
     return (
         f"Stopped: the assistant ran into an error and couldn't finish.\n"
         f"Detail: {result.error}\n"
@@ -2498,12 +2509,15 @@ def _prepare_goal_output(*, result: Any, shield: Any, world: WorldModel,
 
             if not isinstance(exc, gateway.EvidenceGatewayError):
                 raise
+            # The code prefix lets stop_reasons name the cause and the fix;
+            # a configuration refusal is "blocked", not an agent failure.
             refusal = (
+                f"evidence_gateway:withheld:{gateway.refusal_code(exc)}: "
                 "AI evidence gateway withheld the generated output. "
                 "Operator action is required: "
                 f"{_safe_exception_text(exc, fallback='evidence review failed')}"
             )
-            lifecycle.end_episode(refusal, "failure")
+            lifecycle.end_episode(refusal, "blocked")
             world.set_goal_status(goal_id, "blocked", result=refusal)
             _fire_webhook(
                 "goal_finished",
@@ -2852,6 +2866,9 @@ async def _run_goal_impl(  # noqa: C901  -- core goal-execution loop
     limit_refusal = _check_start_limits(world, budget, goal_id, principal)
     if limit_refusal:
         return limit_refusal
+    evidence_refusal = _evidence_preflight_refusal(world, goal_id)
+    if evidence_refusal:
+        return evidence_refusal
 
     # Bind trace context so every log line emitted in this task is
     # automatically tagged with goal_id (+ conversation_id when set). Capture

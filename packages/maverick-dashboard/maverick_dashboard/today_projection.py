@@ -11,6 +11,11 @@ from . import auth
 
 CARDS = {"tasks": "In-flight work", "decisions": "Pending decisions", "recent": "Recently changed results",
          "schedules": "Upcoming occurrences", "templates": "Pinned templates"}
+# The work source each card reads. Today renders at once and loads each
+# source from /today/sections/<source>, so a slow source delays only its cards.
+CARD_SOURCES = {"tasks": "tasks", "recent": "tasks", "decisions": "decisions",
+                "schedules": "schedules", "templates": "templates"}
+SOURCES = frozenset(CARD_SOURCES.values())
 
 
 def template_choices(request):
@@ -83,7 +88,8 @@ def _schedules(principal, until):
             "state": "available", "message": f"Next occurrences of {len(rows)} owned active schedules in this period; showing up to 20. Open schedules for occurrence history."}
 
 
-def project(request, world, preferences):
+def project(request, world, preferences, only=None):
+    """Today's work. ``only`` names one source (see :data:`SOURCES`) to read just that one."""
     auth.require_permission(request, "view")
     principal = auth.caller_principal(request)
     if not principal:
@@ -101,6 +107,9 @@ def project(request, world, preferences):
                "template_choices": lambda: template_choices(request)}
     if auth.has_permission(request, "operate"):
         readers["decisions"] = lambda: _decisions(request)
+    if only is not None:
+        key = "template_choices" if only == "templates" else only
+        readers = {key: readers[key]} if key in readers else {}
     for key, read in readers.items():
         try:
             result[key] = read()

@@ -15,20 +15,25 @@ from fnmatch import fnmatchcase
 from typing import Any
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from maverick import config, crypto_at_rest
 from maverick.governed_operations import digest
+from maverick.governed_records import GovernedRecordLocalOnly
 from maverick.product_operation_families import FAMILIES
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from . import auth
 from .draft_api import context_for
 from .scalar_wire import exact_integers
+from .store_failures import remember_route
 
-router = APIRouter(prefix="/api/v1/copilot/product-operations", tags=["copilot-product-operations"])
+router = APIRouter(prefix="/api/v1/copilot/product-operations", tags=["copilot-product-operations"],
+                   dependencies=[Depends(remember_route)])
 TTL = 600
 PURPOSE = "lightwork.product-operation.v1"
+LOCAL_ONLY = ("This action keeps its records only on a single-computer installation of Lightwork. "
+              "This deployment uses a shared database, so it is not available here.")
 
 
 
@@ -509,6 +514,8 @@ def _adapter(request, page, selection, identifier):
         raise HTTPException(403, "Your administrator has not enabled this Copilot action family. Use its native controls.")
     try:
         snapshot = adapter.snapshot(request, _selection(selection))
+    except GovernedRecordLocalOnly as exc:
+        raise HTTPException(409, LOCAL_ONLY + " Nothing was saved or changed.") from exc
     except (ValueError, OSError) as exc:
         raise HTTPException(503, "Current source information is unavailable. Use the native page to check status.") from exc
     if not isinstance(snapshot, Snapshot) or not isinstance(snapshot.revision, str) or not snapshot.revision:
@@ -548,6 +555,10 @@ def catalog(request: Request, body: ContextInput):
             continue
         try:
             state = adapter.snapshot(request, selection)
+        except GovernedRecordLocalOnly:
+            items.append({"id": adapter.id, "label": adapter.label, "family": adapter.family,
+                          "available": False, "blocked": LOCAL_ONLY, "direct_ui": adapter.direct_ui})
+            continue
         except (HTTPException, ValueError, OSError) as exc:
             if isinstance(exc, HTTPException) and exc.status_code in {401, 403, 404}:
                 continue  # Never advertise an inaccessible record or its title.

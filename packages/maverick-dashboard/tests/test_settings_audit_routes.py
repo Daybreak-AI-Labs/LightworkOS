@@ -277,4 +277,5 @@ def test_admin_demotion_at_write_boundary_prevents_save(client, rows, monkeypatc
 def test_settings_page_links_review_and_explains_incomplete_receipts(client):
     text = client.get("/settings").text
     assert "/audit?kind=setting_changed" in text
-    assert "A prepared entry alone does not confirm a save" in text
+    assert "A change counts as saved only when its entry says it finished" in text
+    assert "prepared entry" not in text and "metadata view" not in text

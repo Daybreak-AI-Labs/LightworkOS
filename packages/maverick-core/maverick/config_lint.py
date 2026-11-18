@@ -2221,6 +2221,12 @@ def _looks_like_env_ref(v: str) -> bool:
 _SEALED_TOKEN_PREFIXES = ("MVKAR1:", "MVKBND1:")
 
 
+def _lint_inline_secret_sources(cfg: dict, raw_sources: list[dict] | None) -> list[Finding]:
+    """Inline secrets in each config file as written, else in ``cfg``."""
+    trees = raw_sources if raw_sources is not None else [cfg]
+    return [finding for tree in trees if isinstance(tree, dict) for finding in _lint_inline_secrets(tree)]
+
+
 def _lint_inline_secrets(cfg: dict, _path: tuple[str, ...] = ()) -> list[Finding]:
     """Walk the whole config (nested tables included) and warn on a literal
     string under a secret-bearing key -- a plaintext secret in config.toml.
@@ -4989,10 +4995,15 @@ def _lint_image_edit_models(cfg: dict) -> list[Finding]:
     return findings
 
 
-def lint_config(cfg: dict) -> list[Finding]:
+def lint_config(cfg: dict, *, raw_sources: list[dict] | None = None) -> list[Finding]:
     """Validate a loaded config dict and return findings (possibly empty).
 
-    Never raises: anything we can't interpret is skipped rather than flagged.
+    ``raw_sources`` are the config files as written
+    (:func:`maverick.config.raw_config_sources`). The inline-secret check reads
+    them when given: in the loaded config a ``${VAR}`` reference is already
+    expanded and a sealed Settings value already opened, so both looked like
+    a plaintext secret. Never raises: anything we can't interpret is skipped
+    rather than flagged.
     """
     findings: list[Finding] = []
     if not isinstance(cfg, dict):
@@ -5183,7 +5194,7 @@ def lint_config(cfg: dict) -> list[Finding]:
 
     findings.extend(_lint_image_edit_models(cfg))
     findings.extend(_lint_governance_nested_tables(cfg))
-    findings.extend(_lint_inline_secrets(cfg))
+    findings.extend(_lint_inline_secret_sources(cfg, raw_sources))
     findings.extend(_lint_group_mappings(cfg))
     return findings
 

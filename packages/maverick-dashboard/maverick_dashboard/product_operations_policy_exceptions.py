@@ -39,6 +39,11 @@ def catalog(request):
     from maverick import model_risk_assurance, security_ops
 
     _actor, context = authority(request)
+    if not policy.enabled():
+        from .feature_gate import feature_off
+
+        # Off is not "could not be verified": the page shows the shared turned-off notice.
+        raise feature_off("ai_policy_management", detail="AI use rules are turned off.")
     try:
         service = policy.configured_policy_management()
         policies, exceptions = service.list_policies(), service.list_exceptions()

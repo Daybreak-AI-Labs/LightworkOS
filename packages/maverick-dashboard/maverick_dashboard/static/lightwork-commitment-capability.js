@@ -4,17 +4,17 @@
   const actionNames = {create:'Entered additional-work review',edit:'Replaced additional-work review',report:'Recorded completed trial report',test:'Ran local rule qualification',scope:'Reviewed source permission',withdraw:'Withdrew observation use',release:'Released waiting for unknown result',remove:'Removed current qualification'};
   const historyRoot = $('ccl-history');
   let historyContext = '', historyBusy = false, historyGeneration = 0;
-  function clearHistory() { historyGeneration++; historyContext = ''; $('ccl-history-select').replaceChildren(new Option('Refresh your own originals', '')); $('ccl-history-result').replaceChildren(); }
+  function clearHistory() { historyGeneration++; historyContext = ''; $('ccl-history-select').replaceChildren(new Option('Choose Refresh list to see your checks', '')); $('ccl-history-result').replaceChildren(); }
   async function historical(path) {
     const stamp = historyGeneration;
     const value = await window.mvFetchJSON(api + path, {cache:'no-store', plainDetail:true, onAccess:clearPrivate, accessStatuses:[401,403,404]}, 'read your exact original qualification result');
-    if (stamp !== historyGeneration) throw new Error('The selected context changed. Refresh your own original requests.');
-    if (historyContext && historyContext !== value.context) { clearPrivate(); throw new Error('Your account or workspace changed. Refresh your own original requests.'); }
+    if (stamp !== historyGeneration) throw new Error('The selected account or workspace changed. Choose Refresh list.');
+    if (historyContext && historyContext !== value.context) { clearPrivate(); throw new Error('Your account or workspace changed. Choose Refresh list.'); }
     historyContext = value.context; return value;
   }
   async function refreshHistory() {
     if (historyBusy) return; historyBusy = true;
-    try { const value = await historical('/history'); $('ccl-history-select').replaceChildren(new Option('Choose an exact original request', '')); value.choices.forEach(row => $('ccl-history-select').add(new Option(row.label, row.value))); $('ccl-history-message').textContent = value.choices.length ? 'Only your own retained originals are listed. Current model or source permission is not granted by reading.' : 'No retained qualification requests are available to this account and workspace.'; }
+    try { const value = await historical('/history'); $('ccl-history-select').replaceChildren(new Option('Choose an earlier check', '')); value.choices.forEach(row => $('ccl-history-select').add(new Option(row.label, row.value))); $('ccl-history-message').textContent = value.message || (value.choices.length ? 'Only your own earlier checks are listed. Reading one does not give access to models or sources.' : 'You have no earlier checks in this account and workspace.'); }
     catch (error) { $('ccl-history-message').textContent = error.message; } finally { historyBusy = false; }
   }
   if (historyRoot) {
@@ -23,7 +23,7 @@
       if (historyBusy) return; const reference = $('ccl-history-select').value; if (!reference) return;
       historyBusy = true;
       try { const [identifier,operation] = reference.split('|'), value = await historical('/original/' + identifier + '/' + operation), receipt = value.receipt, out = $('ccl-history-result'); out.replaceChildren();
-        for (const line of [receipt.parent_name || 'Saved Promise review',actionNames[receipt.action] + ' · ' + (value.confirmed ? 'Recorded result' : 'Original result unknown'),
+        for (const line of [receipt.parent_name || 'Saved Commitment review',actionNames[receipt.action] + ' · ' + (value.confirmed ? 'Recorded result' : 'Original result unknown'),
           value.message,'Actor: ' + receipt.actor + '. Recorded: ' + new Date(receipt.recorded_at * 1000).toLocaleString() + '.',
           receipt.result?.known === false ? 'No known Yes/No local observation was recorded.' : typeof receipt.result?.outcome === 'boolean' ? 'Original local rule outcome: ' + (receipt.result.outcome ? 'Yes' : 'No') : 'No local rule outcome is claimed by this original.',
           'Historical result only. No current model, availability, source permission or business action is confirmed.']) { const node = document.createElement('p'); node.textContent = line; out.append(node); }
@@ -59,12 +59,12 @@
   }
   async function request(path, method = 'GET', body) {
     const selected = parent;
-    if (!selected) throw new Error('Open an owned current Promise review first.');
+    if (!selected) throw new Error('Open an owned current Commitment review first.');
     const abort = new AbortController(), timer = setTimeout(() => abort.abort(), 20000);
     try {
       const result = await window.mvFetchJSON(api + path, {method, cache:'no-store', body, signal:abort.signal, plainDetail:true,
         headers:{'Content-Type':'application/json'}, onAccess:clearPrivate, accessStatuses:[401,403,404], messages:{offline:'The reply was interrupted. Read the exact original request; nothing repeats automatically.'}}, 'review additional work');
-      if (parent !== selected || result.context !== selected.context) { clearPrivate(); throw new Error('The selected account, workspace or Promise review changed. Reload it.'); }
+      if (parent !== selected || result.context !== selected.context) { clearPrivate(); throw new Error('The selected account, workspace or Commitment review changed. Reload it.'); }
       return result;
     } finally { clearTimeout(timer); }
   }
@@ -142,12 +142,12 @@
     if (!details || Object.keys(details).sort().join('|') !== keys.join('|') ||
         !/^[a-f0-9]{64}$/.test(details.context) || !/^CMV-[a-f0-9]{48}$/.test(details.parent) || !/^[a-f0-9]{64}$/.test(details.parent_binding) ||
         typeof isCurrent !== 'function') {
-      throw new Error('The complete-form link could not be verified. Reopen the current Promise review.');
+      throw new Error('The complete-form link could not be verified. Reopen the current Commitment review.');
     }
     const selected = parent, stamp = generation;
     const valid = () => isCurrent() && parent === selected && generation === stamp && selected?.id === details.parent &&
       selected.context === details.context && !root.hidden && !busy;
-    if (!valid()) throw new Error('The selected account, workspace or Promise review changed. Reopen its complete form.');
+    if (!valid()) throw new Error('The selected account, workspace or Commitment review changed. Reopen its complete form.');
     const fresh = await request('/author/' + details.parent + '?context=' + details.context + '&parent_binding=' + details.parent_binding);
     if (!valid() || Object.keys(fresh).sort().join('|') !== keys.join('|') || keys.some(key => fresh[key] !== details[key])) {
       throw new Error('The current source or selection changed. Review the current Promise before opening its complete form.');
@@ -171,12 +171,12 @@
   function render(value) {
     current = value; const out = $('ccl-results'); out.replaceChildren(); $('ccl-current-controls').hidden = !value.exists || value.removed;
     $('ccl-originals').replaceChildren(); $('ccl-release').hidden = !value.pending;
-    if (!value.exists) { say('Enter possible requirements and additions for this owned Promise review.'); return; }
+    if (!value.exists) { say('Enter possible requirements and additions for this owned Commitment review.'); return; }
     const evaluation = value.evaluation, model = value.model;
     const label = ids => ids.map(id => model.offers.find(row => row.id === id)?.label || model.additions.find(row => row.id === id)?.label || id).join(', ');
     card(out, value.removed ? 'Current qualification removed' : evaluation.status === 'conditional' ? 'Conditional support within the entered possibilities' : 'Unknown',
       [evaluation.meaning, 'Accepted work: ' + evaluation.accepted_state + '. Current observations: ' + evaluation.current_observations + '. Remaining explanations: ' + evaluation.surviving_models.length + '.',
-        'Remaining shared allowance for this Promise review: ' + evaluation.allowance.tests + ' tests and ' + evaluation.allowance.effort_points + ' effort points.',
+        'Remaining shared allowance for this Commitment review: ' + evaluation.allowance.tests + ' tests and ' + evaluation.allowance.effort_points + ' effort points.',
         value.source_changed ? 'The accepted-work source changed. Review current source permission before another qualification.' : 'Source permission: ' + (value.consent ? 'Allowed until ' + date(model.expires_at) : 'Withdrawn')]);
     for (const row of evaluation.already_supported) card(out, 'Already supported by the entered quantities', [label(row.offers) + ' · ' + row.quantity + ' work units. No addition is needed in the surviving entered explanations. Physical availability remains reported.']);
     for (const row of evaluation.frontier) card(out, 'Possible additions for ' + label(row.offers), ['Together: ' + label(row.additions) + '.',
@@ -221,7 +221,7 @@
       const sources = await request('/choices'); if (generation !== stamp) return; choices = sources.choices; const flow = $('ccl-test').elements.flow_id; flow.replaceChildren(new Option('Choose current owned published rules', '')); choices.forEach(row => flow.add(new Option(row.label, row.value)));
       if (previousParent === parent.id && choices.some(row => row.value === previousFlow)) flow.value = previousFlow;
       outputChoices(); if (previousParent === parent.id && choices.find(row => row.value === flow.value)?.outputs.includes(previousOutput)) $('ccl-test').elements.output.value = previousOutput;
-      say(value.exists ? (value.removed ? 'Current qualification removed. Read earlier originals below.' : 'The current qualification result is shown. Earlier originals remain separate.') : 'Enter possible requirements and additions for this owned Promise review.');
+      say(value.exists ? (value.removed ? 'Current qualification removed. Read earlier originals below.' : 'The current qualification result is shown. Earlier originals remain separate.') : 'Enter possible requirements and additions for this owned Commitment review.');
     } catch (error) { if (generation === stamp) say(error.message); }
     finally { if (generation === stamp) { lock(false); if (parent && previousParent !== parent.id && window.location.hash === '#ccl-author') focusAuthor(); } }
   });
@@ -248,5 +248,5 @@
     catch (error) { review = null; $('ccl-review').hidden = true; say(error.message + ' Read the waiting original request before another action.'); }
     finally { lock(false); }
   };
-  $('ccl-recover').onclick = () => { const value = remembered(); if (value && value.parent === parent?.id) readOriginal(value.id, value.operation); else say('No waiting opaque request reference is saved for this Promise review. Use the original request buttons.'); };
+  $('ccl-recover').onclick = () => { const value = remembered(); if (value && value.parent === parent?.id) readOriginal(value.id, value.operation); else say('No waiting opaque request reference is saved for this Commitment review. Use the original request buttons.'); };
 })();

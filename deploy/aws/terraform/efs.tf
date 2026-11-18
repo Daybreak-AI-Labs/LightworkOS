@@ -11,6 +11,13 @@ resource "aws_efs_file_system" "state" {
   encrypted = true
   tags      = { Name = "${local.name}-state" }
 
+  # Bursting throughput scales with stored bytes. A ~2 GB state volume earns a
+  # ~1 MiB/s baseline, and once its burst credits run out every request's file
+  # operations queue behind it (seen live: credits at 0 for a day, signed-in
+  # pages taking seconds). Provisioned throughput gives a fixed floor.
+  throughput_mode                 = var.efs_throughput_mode
+  provisioned_throughput_in_mibps = var.efs_throughput_mode == "provisioned" ? var.efs_provisioned_throughput_mibps : null
+
   # This is the operating state of the deployment. Never let a destroy take it.
   lifecycle {
     prevent_destroy = true

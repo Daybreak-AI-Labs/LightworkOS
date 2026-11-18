@@ -43,8 +43,12 @@ def client(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("path", ["/immune", "/code"])
-def test_pages_render_accessibly_with_a_tight_csp(client, path):
+def test_pages_render_accessibly_with_a_tight_csp(client, path, monkeypatch):
+    from maverick import config
     from maverick.a11y_audit import audit_html
+    # The code page loads its script only while code projects are on; off,
+    # it shows the one turn-on notice.
+    monkeypatch.setattr(config, "get_codebase", lambda: {"enable": True, "default_protect": "block"})
     response = client.get(path)
     assert response.status_code == 200, response.text[:300]
     assert "style-src 'self' 'nonce-" in response.headers["content-security-policy"]

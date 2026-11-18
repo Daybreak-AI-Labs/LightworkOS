@@ -632,6 +632,26 @@ def dashboard_overrides_path() -> Path:
     return config_path().parent / DASHBOARD_OVERRIDES_BASENAME
 
 
+def raw_config_sources() -> list[dict]:
+    """Each config layer as written: ``${VAR}`` references unexpanded and
+    values the dashboard sealed still sealed. Unreadable layers read as empty
+    (the config checks report them)."""
+    paths = [config_path(), dashboard_overrides_path()]
+    overlay = os.environ.get(CONFIG_OVERLAY_ENV, "").strip()
+    if overlay:
+        paths.append(Path(overlay).expanduser())
+    tenant = tenant_config_path()
+    if tenant is not None:
+        paths.append(tenant)
+    sources = []
+    for path in paths:
+        try:
+            sources.append(_read_toml_raw(path))
+        except Exception:
+            sources.append({})
+    return sources
+
+
 def load_governed_records_config() -> dict:
     """Load only sources allowed to select the governed-record backend.
 
@@ -1148,6 +1168,55 @@ def tenant_policy_loosenings() -> dict[str, list[str]]:
     return found
 
 
+def _dotted_value(tree: object, dotted: str) -> tuple[bool, object]:
+    for part in dotted.split("."):
+        if not isinstance(tree, dict) or part not in tree:
+            return False, None
+        tree = tree[part]
+    return True, tree
+
+
+def _plain_value(value: object) -> str:
+    return f'"{value}"' if isinstance(value, str) else str(value).lower() if isinstance(value, bool) else str(value)
+
+
+def tenant_policy_reasons() -> dict[str, list[str]]:
+    """Why each ignored workspace value is ignored, one sentence per setting,
+    keyed by workspace folder: a value looser than the organisation's (the
+    organisation's applies), or one only the organisation sets."""
+    from .paths import maverick_home
+    root = maverick_home() / "tenants"
+    if not root.is_dir():
+        return {}
+    upper = load_global_config()
+    found: dict[str, list[str]] = {}
+    for path in sorted(root.glob("*/config.toml")):
+        try:
+            tenant = _load_config_file(path, interpolate=False)
+        except Exception:  # unreadable files are reported by the config checks
+            continue
+        _, ignored, fixed = _tighten_tenant(upper, tenant)
+        reasons = []
+        for key in ignored:
+            mine, here = _dotted_value(tenant, key)
+            theirs, there = _dotted_value(upper, key)
+            numbers = all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (here, there))
+            if mine and theirs and numbers and here > there:
+                reasons.append(f"{key} is {_plain_value(here)} in this workspace, higher than your "
+                               f"organisation's {_plain_value(there)}, so {_plain_value(there)} applies")
+            elif mine and theirs:
+                reasons.append(f"{key} is {_plain_value(here)} in this workspace, looser than your "
+                               f"organisation's {_plain_value(there)}, so {_plain_value(there)} applies")
+            else:
+                reasons.append(f"{key} in this workspace is looser than your organisation's setting, "
+                               "so your organisation's setting applies")
+        reasons += [f"{key} can only be set by your organisation, so this workspace's value is ignored"
+                    for key in fixed]
+        if reasons:
+            found[path.parent.name] = reasons
+    return found
+
+
 def tenant_ignored_settings() -> set[str]:
     """Dotted names the active workspace overlay tried to loosen (ignored)."""
     tcfg = tenant_config_path()
@@ -1237,6 +1306,13 @@ def provider_configuration_state(provider: str) -> dict[str, Any]:
     tenant/operator value still wins. No credential value is returned.
     """
     name = str(provider or "").strip().lower()
+    return provider_configuration_states([name])[name]
+
+
+def provider_configuration_states(providers) -> dict[str, dict[str, Any]]:
+    """:func:`provider_configuration_state` for several providers, keyed by the
+    normalized name, from one read of each settings layer (a page listing every
+    provider read config.toml and the Settings overlay once per provider)."""
     _load_wizard_env()
     layers: list[tuple[str, Path | None]] = [
         ("config.toml", config_path()),
@@ -1247,11 +1323,9 @@ def provider_configuration_state(provider: str) -> dict[str, Any]:
         layers.append(("operator overlay", Path(operator_overlay).expanduser()))
     layers.append(("tenant config", tenant_config_path()))
 
-    effective: dict[str, Any] = {}
-    field_sources: dict[str, str] = {}
-    dashboard_set = False
     dashboard_path = dashboard_overrides_path()
     dashboard_layer = _load_config_file(dashboard_path) if dashboard_path.exists() else {}
+    loaded_layers: list[tuple[str, Any]] = []
     for source, path in layers:
         if path is None or not path.exists():
             continue
@@ -1263,6 +1337,20 @@ def provider_configuration_state(provider: str) -> dict[str, Any]:
             from .config_resets import apply_to_base
 
             loaded = apply_to_base(loaded, dashboard_layer)
+        loaded_layers.append((source, loaded))
+    source_errors = config_source_errors()
+    states: dict[str, dict[str, Any]] = {}
+    for provider in providers:
+        name = str(provider or "").strip().lower()
+        states[name] = _provider_state(name, loaded_layers, source_errors)
+    return states
+
+
+def _provider_state(name: str, loaded_layers: list[tuple[str, Any]], source_errors) -> dict[str, Any]:
+    effective: dict[str, Any] = {}
+    field_sources: dict[str, str] = {}
+    dashboard_set = False
+    for source, loaded in loaded_layers:
         providers = loaded.get("providers") if isinstance(loaded, dict) else None
         table = providers.get(name) if isinstance(providers, dict) else None
         if not isinstance(table, dict):
@@ -1318,7 +1406,7 @@ def provider_configuration_state(provider: str) -> dict[str, Any]:
         "dashboard_set": dashboard_set,
         "dashboard_can_set_api_key": key_source not in protected_sources,
         "dashboard_can_set_base_url": base_source not in protected_sources,
-        "source_errors": config_source_errors(),
+        "source_errors": dict(source_errors),
     }
 
 

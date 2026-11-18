@@ -46,6 +46,8 @@ test('a late old-period response cannot replace the selected period or its times
   assert.equal(ui.result(), 'Current week');
   assert.equal(ui.stamp(), stamp);
   assert.match(stamp, /^Showing 7 days,/);
+  // The page checks again every minute; that is not when spending last changed.
+  assert.match(stamp, /checks again every minute$/);
   assert.equal(ui.window.document.querySelector('[data-days="7"]').getAttribute('aria-selected'), 'true');
   assert.deepEqual([...ui.window.document.querySelectorAll('[aria-selected="true"]')].map((tab) => tab.dataset.days), ['7']);
 });

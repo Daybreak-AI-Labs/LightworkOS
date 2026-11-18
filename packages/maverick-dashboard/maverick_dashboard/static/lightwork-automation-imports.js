@@ -48,7 +48,7 @@
       const original = history.value; history.replaceChildren(new Option('Choose an original request', '')); saved.choices.forEach(row => history.append(new Option(row.label, row.value)));
       if (!pending) { try { const kept = JSON.parse(sessionStorage.getItem(storage) || 'null'); if (kept?.context === context && /^AIR-[a-f0-9]{32}$/.test(kept.id)) pending = kept; } catch (_) {} }
       const wantedOriginal = original || pending?.id; if (wantedOriginal) { if (!Array.from(history.options).some(row => row.value === wantedOriginal)) history.append(new Option('Original request / check outcome', wantedOriginal)); history.value = wantedOriginal; }
-      status.textContent = 'Current import choices are ready. Original history never repeats saved work.'; return true;
+      status.textContent = saved.message || 'Current import choices are ready. Original history never repeats saved work.'; return true;
     } catch (failure) { if (started === generation) fail(failure); return false; }
     finally { if (started === generation) lock(false); }
   }

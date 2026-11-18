@@ -74,6 +74,6 @@ def test_scan_inventory_page_renders_when_gate_is_off(page_client: TestClient) -
     response = page_client.get("/consent/scan-inventory", params={"enabled": False})
     assert response.status_code == 200
     assert 'data-module-gate="consent_preferences.scanner"' in response.text
-    assert "Website tracker scans is turned off." in response.text
+    assert "Website tracker scans: turned off." in response.text
     assert "[consent_preferences.scanner] enable = true" not in response.text
     assert 'id="csi-controls" disabled' in response.text

@@ -64,3 +64,13 @@ output "anthropic_secret_id" {
   description = "Secrets Manager id to put the real provider API key into."
   value       = aws_secretsmanager_secret.anthropic_api_key.name
 }
+
+output "alarm_topic_arn" {
+  description = "SNS topic every CloudWatch alarm notifies. Subscribe a pager or chat integration here, or set alarm_email."
+  value       = aws_sns_topic.alarms.arn
+}
+
+output "waf_web_acl_arn" {
+  description = "WAF web ACL associated with the load balancer (empty unless enable_waf is true)."
+  value       = var.enable_waf ? aws_wafv2_web_acl.main[0].arn : ""
+}
