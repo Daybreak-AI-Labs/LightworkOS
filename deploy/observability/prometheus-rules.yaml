@@ -33,7 +33,7 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: "Lightwork at max concurrency for 10m"
-          description: "concurrent_goals has been at the cap; consider raising MAVERICK_MAX_CONCURRENT_GOALS or scaling out (requires Postgres)."
+          description: "concurrent_goals has been at the cap; the dashboard is one process, so raise MAVERICK_MAX_CONCURRENT_GOALS only if tasks mostly wait for the AI provider. Remote workers need Redis, the queue extra and Postgres, and are not packaged (docs/deployment.md#capacity-and-scaling)."
 
   - name: maverick.cost
     rules:

@@ -20,7 +20,7 @@ service:
 # world model, but flow releases/runs, A2A task claims, audit/learning ledgers,
 # and tenant-local policy state are still file-backed. The chart refuses to
 # split those approval/idempotency authorities across dashboard/serve pods.
-# Scale remote goal workers separately.
+# Remote goal workers are not packaged; see docs/deployment.md (Capacity and scaling).
 replicaCount: 1
 
 # Persistent state (~/.maverick). Required with SQLite AND Postgres: approvals,
@@ -123,7 +123,7 @@ podDisruptionBudget:
 
 # Horizontal Pod Autoscaler. Reserved for a future fully transactional shared
 # control plane. The chart currently fails closed when this is enabled, even on
-# Postgres; scale remote workers instead of the dashboard/serve process.
+# Postgres. Remote workers are not packaged; see docs/deployment.md.
 autoscaling:
   enabled: false
   minReplicas: 2

@@ -966,8 +966,11 @@ threads simultaneously. Override with:
 MAVERICK_MAX_CONCURRENT_GOALS=4 maverick dashboard
 ```
 
-Default is 16. Raise on a beefy machine; lower on a Raspberry Pi. (A
-separate per-principal cap also limits concurrent goals from any one caller.)
+Default is 16. The goals run inside the one dashboard process, so more CPU
+cores do not make a higher value useful: raise it only when tasks mostly wait
+for the AI provider, and lower it on a small machine such as a Raspberry Pi.
+(A separate per-principal cap also limits concurrent goals from any one
+caller.) See [Capacity and scaling](deployment.md#capacity-and-scaling).
 
 ## Swarm size
 

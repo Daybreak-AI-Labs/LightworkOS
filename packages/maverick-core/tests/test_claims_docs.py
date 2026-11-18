@@ -281,3 +281,41 @@ def test_complexity_waivers_do_not_grow():
     )
     assert f"{COMPLEXITY_WAIVER_CEILING} grandfathered" in _read("CLAUDE.md")
     assert f"the {COMPLEXITY_WAIVER_CEILING} functions already over it" in _read("pyproject.toml")
+
+
+def test_capacity_docs_describe_one_dashboard_process():
+    """deployment.md spoke of "Dashboard replicas" and configuration.md said to
+    raise the goal cap "on a beefy machine". The dashboard refuses more than one
+    worker (_server.py) and a second control plane (control_plane_lease.py), and
+    runs its goals in one process with one event loop, so more cores do not add
+    dashboard capacity."""
+    deployment = _read("docs/deployment.md")
+    assert "Dashboard replicas" not in deployment
+    section = deployment.split("## Capacity and scaling", 1)[1].split("\n## ", 1)[0]
+    assert "one event loop" in section
+    assert "`MAVERICK_REPLICA_COUNT` must stay `1`" in section
+    assert "beefy" not in _read("docs/configuration.md")
+    assert "scaling out (requires Postgres)" not in _read(
+        "deploy/observability/prometheus-rules.yaml")
+
+
+def test_remote_worker_mentions_say_they_are_not_packaged():
+    """Several docs said "scale remote workers" without saying how. The only
+    remote path is `[queue] backend = "arq"`, and nothing ships a worker: the
+    image does not install the `queue` extra and no chart or Compose file
+    defines one. Each mention must say so."""
+    dockerfile = _read("deploy/docker/Dockerfile")
+    extras = re.search(r"--core-extra\s+(\S+)", dockerfile)
+    assert extras is not None and "queue" not in extras.group(1).split(",")
+    shipped = [*(REPO_ROOT / "deploy/helm").rglob("*.yaml"),
+               *(REPO_ROOT / "deploy").rglob("docker-compose*.yml")]
+    assert shipped and not any("arq" in path.read_text(encoding="utf-8") for path in shipped)
+    assert "Remote workers are not packaged" in _read("docs/deployment.md")
+    for relpath in ("docs/operations.md", "docs/multi-tenancy.md",
+                    "docs/enterprise/deployment-playbook.md",
+                    "deploy/postgres/README.md", "deploy/helm/README.md",
+                    "deploy/observability/runbook.md",
+                    "deploy/helm/maverick/values.yaml"):
+        text = _read(relpath)
+        assert "scale remote" not in text.lower(), relpath
+        assert "capacity-and-scaling" in text or "Capacity and scaling" in text, relpath
