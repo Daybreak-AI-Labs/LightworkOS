@@ -356,7 +356,7 @@ class ConversationInbox:
 def current_authority(goal):
     """Web-only feature: absent dashboard authority adapters fail closed."""
     from maverick_dashboard import rbac, scim_groups
-    from maverick_dashboard.auth import stored_automation_identity
+    from maverick_dashboard.auth import role_for_principal, stored_automation_identity
 
     from .domain import suites_for_domain
     from .tenant.registry import assert_tenant_active
@@ -364,7 +364,9 @@ def current_authority(goal):
     assert_tenant_active(tenant)
     if scim_groups.active_for_principal(goal.owner) is False:
         raise PermissionError("The task owner is no longer active")
-    if tenant and "operate" not in rbac.permissions_for(rbac.get_tenant_role(tenant, goal.owner)):
+    # The same role resolution that admitted the work: a workspace role wins,
+    # and a pinned installation administrator stays admin in every workspace.
+    if tenant and "operate" not in rbac.permissions_for(role_for_principal(goal.owner)):
         raise PermissionError("The task owner no longer has workspace execution permission")
     _, user_id, suites = stored_automation_identity(goal.owner)
     if suites is not None and not suites_for_domain(goal.domain) <= suites:
