@@ -435,3 +435,17 @@ def test_skill_install_enabled_by_env(monkeypatch, tmp_path):
     # 400 = install_skill raised ValueError (bad URL); we're past the gate.
     assert resp.status_code in (400, 404, 500)
     assert resp.status_code != 403
+
+
+def test_permissions_policy_names_only_features_browsers_recognise():
+    # Browsers do not recognise 'bluetooth' as a Permissions-Policy feature and
+    # log "Unrecognized feature: 'bluetooth'" on every page that sends it.
+    from pathlib import Path
+
+    import maverick_dashboard
+    from maverick_dashboard.consent_bulk_jobs_page import _HEADERS
+
+    assert "serial=()" in _HEADERS["Permissions-Policy"]
+    assert "bluetooth" not in _HEADERS["Permissions-Policy"]
+    package = Path(maverick_dashboard.__file__).parent
+    assert not [path.name for path in package.rglob("*.py") if "bluetooth=" in path.read_text(encoding="utf-8")]
