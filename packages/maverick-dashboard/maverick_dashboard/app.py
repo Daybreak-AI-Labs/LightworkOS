@@ -5961,7 +5961,7 @@ async def privacy_regulatory_intelligence_page(request: Request) -> HTMLResponse
 
 
 @app.get("/privacy/rights-orchestration", response_class=HTMLResponse)
-async def privacy_rights_orchestration_page(request: Request) -> HTMLResponse:
+def privacy_rights_orchestration_page(request: Request) -> HTMLResponse:
     """Provider-neutral privacy-rights case orchestration workbench."""
 
     require_permission(request, "operate")
@@ -6109,7 +6109,7 @@ async def governance_agents_page(request: Request) -> HTMLResponse:
 
 
 @app.get("/third-party/lifecycle", response_class=HTMLResponse)
-async def third_party_lifecycle_page(request: Request) -> HTMLResponse:
+def third_party_lifecycle_page(request: Request) -> HTMLResponse:
     """Conditional assessments, lifecycle changes, and governed offboarding."""
 
     require_permission(request, "operate")
@@ -6127,7 +6127,7 @@ async def third_party_lifecycle_page(request: Request) -> HTMLResponse:
 
 
 @app.get("/third-party/collaboration", response_class=HTMLResponse)
-async def third_party_collaboration_page(request: Request) -> HTMLResponse:
+def third_party_collaboration_page(request: Request) -> HTMLResponse:
     """Internal control plane for governed external-vendor collaboration."""
 
     require_permission(request, "operate")

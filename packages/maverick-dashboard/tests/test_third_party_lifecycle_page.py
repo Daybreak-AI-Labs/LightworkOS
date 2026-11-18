@@ -100,3 +100,15 @@ def test_dashboard_mounts_page_api_visibility_and_security_link(
         Path(__file__).resolve().parents[1] / "maverick_dashboard" / "templates" / "security.html"
     ).read_text(encoding="utf-8")
     assert 'href="/third-party/lifecycle"' in security
+
+
+def test_page_renders_in_the_worker_pool_not_on_the_event_loop() -> None:
+    """The page checks its settings and permissions and renders the shell, all
+    file reads; FastAPI runs a plain ``def`` handler in its worker pool."""
+    import inspect
+
+    from maverick_dashboard.app import app
+
+    endpoints = [route.endpoint for route in app.routes if getattr(route, "path", None) == "/third-party/lifecycle"]
+    assert endpoints
+    assert not any(inspect.iscoroutinefunction(endpoint) for endpoint in endpoints)
