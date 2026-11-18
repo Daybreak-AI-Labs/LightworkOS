@@ -157,7 +157,7 @@ def historical_requests(request):
         for operation, receipt in references.items():
             choices.append({"value": row["id"] + "|" + operation,
                 "label": payload["model"]["title"] + " · " + ACTION_LABELS[receipt["action"]] + " · " +
-                    datetime.fromtimestamp(receipt["recorded_at"], timezone.utc).isoformat()})
+                    _date(receipt["recorded_at"])})
     authority(request, context, historical=True)
     return {"context": context, "choices": choices}
 
@@ -259,7 +259,10 @@ def review_changes(prepared):
 
 
 def _date(value):
-    return datetime.fromtimestamp(value, timezone.utc).isoformat()
+    from .plain_labels import day_text
+
+    moment = datetime.fromtimestamp(value, timezone.utc)
+    return f"{day_text(moment)}, {moment:%H:%M} UTC"
 
 
 def _situation(model, index):
