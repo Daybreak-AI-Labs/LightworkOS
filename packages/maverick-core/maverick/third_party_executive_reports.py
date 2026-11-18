@@ -1092,6 +1092,9 @@ class ThirdPartyExecutiveReportStore:
                 );
                 """
             )
+            # One opener at a time from here: two first opens must not both
+            # see no schema row and both insert it.
+            connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 "SELECT value FROM executive_report_meta WHERE key='schema_version'"
             ).fetchone()
