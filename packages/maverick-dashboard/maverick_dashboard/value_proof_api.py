@@ -198,6 +198,24 @@ async def record_stats(request: Request) -> dict:
 
 # ---- spend ----------------------------------------------------------------
 
+_ENDED = {"done": "Finished", "completed": "Finished", "cancelled": "Stopped",
+          "pending": "Still running", "active": "Still running", "running": "Still running"}
+_STOPPED_AT = {"time_limit": "Stopped at its time limit", "spending_limit": "Stopped at its spending limit"}
+
+
+def _ended(world, row) -> str:
+    """How a costly task ended, in the words the task page uses."""
+    status = row.get("status")
+    if row.get("failed") and status != "blocked" or status in ("failed", "error"):
+        return "Failed"
+    if status == "blocked":
+        from maverick.stop_reasons import stop_payload
+        goal = world.get_goal(int(row["goal_id"]))
+        kind = (stop_payload("blocked", goal.result if goal else None) or {}).get("kind")
+        return _STOPPED_AT.get(kind, "Stopped before finishing")
+    return _ENDED.get(status, "Failed" if row.get("failed") else "Finished")
+
+
 @router.get("/cost-retro")
 async def cost_retro(request: Request, top: int = 10) -> dict:
     require_permission(request, "audit")
@@ -209,7 +227,8 @@ async def cost_retro(request: Request, top: int = 10) -> dict:
         "total": float(rep["total_spend"]), "tasks": int(rep["priced_goals"]),
         "failed_spend": float(rep["failed_spend"]), "failed_share": float(rep["failed_share"]),
         "costliest": [{"task": int(r["goal_id"]), "title": str(r.get("title") or "")[:200],
-                       "cost": float(r["cost"]), "failed": bool(r["failed"])}
+                       "cost": float(r["cost"]), "failed": bool(r["failed"]),
+                       "result": _ended(world, r)}
                       for r in rep["top_goals"][:top]],
         "advice": [str(o)[:300] for o in rep["observations"][:10]],
     }

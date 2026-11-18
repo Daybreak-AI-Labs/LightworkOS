@@ -70,7 +70,10 @@ _PROJECTED = re.compile(
     rf"projected {_AMOUNT} > {_AMOUNT} \(spent {_AMOUNT}(?: \+ in-flight {_AMOUNT})? "
     rf"\+ est {_AMOUNT} for this call\)")
 _SPENT = re.compile(rf"^{_AMOUNT} > {_AMOUNT}")
-_WALL = re.compile(r"wall time (\d+)s >= (\d+)s")
+# Every wording the kernel uses for a wall-clock stop: Budget.check ("wall time
+# 60s >= 60s"), the agent's dispatch check ("wall time 61s > 60s") and its hard
+# interrupt of an in-flight call ("wall-clock cap 60s reached mid-model-call").
+_WALL = re.compile(r"wall time \d+s >=? (\d+)s|wall-clock cap (\d+)s reached")
 _TOOL_CEILING = re.compile(r"Spend for (.+?) used the per-call safety ceiling")
 _MODEL_CEILING = re.compile(r"Spend for (.+?) used the safety ceiling because it has no price set")
 #: Settings > Spending per task, where the spending limit per task is set.
@@ -121,8 +124,19 @@ def budget_stop_facts(detail: str) -> BudgetStopFacts:
         return BudgetStopFacts("spent", _money(m.group(2)), _money(m.group(1)),
                                ceiling_tools=tools, ceiling_models=models)
     if m := _WALL.search(text):
-        return BudgetStopFacts("time", wall_cap=float(m.group(2)))
+        return BudgetStopFacts("time", wall_cap=float(m.group(1) or m.group(2)))
     return BudgetStopFacts("other", ceiling_tools=tools, ceiling_models=models)
+
+
+def _time_ran_out(budget) -> bool:
+    """The wall-clock cap is used up while the spending cap is not."""
+    try:
+        wall_cap = budget.max_wall_seconds
+        if wall_cap is None or budget.elapsed() < wall_cap:
+            return False
+        return budget.max_dollars is None or budget.dollars < budget.max_dollars
+    except (AttributeError, TypeError):
+        return False
 
 
 def _ceiling_sentences(facts: BudgetStopFacts) -> list[str]:
@@ -161,6 +175,9 @@ def budget_stop_text(budget, goal_id, detail: str = "") -> str:
     message keeps those facts instead of only what the meter shows.
     """
     facts = budget_stop_facts(detail)
+    if facts.limit == "other" and _time_ran_out(budget):
+        facts = BudgetStopFacts("time", wall_cap=float(budget.max_wall_seconds),
+                                ceiling_tools=facts.ceiling_tools, ceiling_models=facts.ceiling_models)
     cap = facts.cap if facts.cap is not None else budget.max_dollars
     spent = facts.spent if facts.spent is not None else budget.dollars
     if facts.limit == "projected":
@@ -201,8 +218,9 @@ _STOP_MODEL = re.compile(r"(?m)^(.+?) has no price set, so Lightwork used a safe
 def _task_limit_reason(text: str, technical: str) -> StopReason | None:
     """A specific explanation for a stop at the task's own limit, else None."""
     if m := _STOP_TIME.search(text):
-        return StopReason("spending_limit", f"This task reached its time limit of {m.group(1)}.",
-                          "Raise the time limit per task in Settings, then resume this task.",
+        return StopReason("time_limit", f"This task reached its time limit of {m.group(1)}. "
+                          "Its recorded work is kept.",
+                          "Start it again with a longer time limit, or raise the time limit per task.",
                           TIME_LIMIT_HREF, "Open Time limit per task", technical)
     if m := _STOP_PROJECTED.search(text):
         spent, cap, estimate, projected = m.groups()
