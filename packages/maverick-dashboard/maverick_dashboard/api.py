@@ -7801,6 +7801,36 @@ def _ensure_local_halt_fail_safe(
         return "re-armed"
 
 
+def _halt_workspace_audit(*, operation: str, actor: str, scope: str, reason: str) -> None:
+    """Also show a completed stop or release in the acting workspace's log.
+
+    The deployment-wide record above is the control-plane authority. Without
+    this copy, the workspace's Activity log (what a person searches) had no
+    trace that anyone engaged or released the emergency stop.
+    """
+    from maverick.audit import (
+        AuditRefused,
+        EventKind,
+        audit_event,
+        default_audit_log,
+        global_audit_log,
+    )
+
+    try:
+        if getattr(default_audit_log(), "audit_dir", None) == getattr(global_audit_log(), "audit_dir", None):
+            return  # one chain: the deployment record is already this log's row
+        # ``status`` is one of the fields the Activity log may show; the
+        # reason is recorded but stays out of the summary view like any text.
+        audit_event(EventKind.HALT, agent="dashboard", actor=actor, operation=operation,
+                    status="released" if operation == "clear-halt" else "engaged",
+                    scope=scope, reason=reason, detail=reason)
+    except AuditRefused:
+        # The stop itself is already applied and its deployment record governs.
+        log.warning("workspace copy of the emergency stop record was refused", exc_info=True)
+    except Exception:  # pragma: no cover -- audit_event is already fail-soft
+        log.warning("workspace copy of the emergency stop record failed", exc_info=True)
+
+
 def _halt_control_audit(
     *,
     operation: str,
@@ -7823,6 +7853,8 @@ def _halt_control_audit(
         reason,
         fallback="operator requested HALT state change",
     )
+    if result == "succeeded":
+        _halt_workspace_audit(operation=operation, actor=actor, scope=scope, reason=bounded_reason)
     return audit_event(
         EventKind.CONTROL_PLANE_ACTION,
         agent="control_plane",
