@@ -220,3 +220,26 @@ def test_self_connection_policy_fails_closed_when_disabled(monkeypatch):
     assert not connection_oauth.self_connect_profiles()
     with pytest.raises(PermissionError):
         connection_oauth._self_connect_allowed("google-drive")
+
+
+def test_behind_a_tls_proxy_the_overview_says_what_is_missing_not_409(client):
+    # Live: the load balancer ends TLS, the app sees http://<public host>, and
+    # the whole Connections overview answered 409 "Remote account authorization
+    # requires HTTPS." The overview is a read: it says what is missing instead.
+    plain = TestClient(client.app, base_url="http://lightwork.example", headers={"Origin": "http://lightwork.example"})
+    response = plain.get("/api/v1/connection-setup")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["account_sign_in_available"] is False and body["can_set_up_sign_in"] is False
+    assert "address for others" in body["message"]
+    started = plain.post("/api/v1/connection-setup/authorize", json={
+        "confirm": True, "context": "0" * 64, "profile": "google-drive", "name": "customer-drive"})
+    assert started.status_code == 409
+
+
+def test_the_configured_public_address_is_the_return_address(client, monkeypatch):
+    monkeypatch.setenv("MAVERICK_PUBLIC_URL", "https://lightwork.example/")
+    plain = TestClient(client.app, base_url="http://lightwork.example", headers={"Origin": "http://lightwork.example"})
+    response = plain.get("/api/v1/connection-setup")
+    assert response.status_code == 200, response.text
+    assert response.json()["callback_uri"] == "https://lightwork.example/connections"

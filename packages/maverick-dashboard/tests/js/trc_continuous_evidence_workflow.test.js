@@ -17,7 +17,7 @@ const markup = fs.readFileSync(path.join(folder, "templates/trc_continuous_evide
 const helpers = fs.readFileSync(path.join(folder, "static/lightwork-record-workflows.js"), "utf8");
 const source = fs.readFileSync(path.join(folder, "static/lightwork-trc-continuous-evidence.js"), "utf8");
 
-async function fixture({ running = false, admin = true } = {}) {
+async function fixture({ running = false, admin = true, setup = null } = {}) {
   const dom = new JSDOM(markup, { url: "https://lightwork.example/compliance/continuous-evidence", runScripts: "outside-only" });
   const { window } = dom;
   const root = window.document.getElementById("trc-root");
@@ -40,6 +40,7 @@ async function fixture({ running = false, admin = true } = {}) {
     "/jobs": { items: [] },
     "/alerts": { items: [{ enrollment_id: "local-soc2", control_ref: "encryption_at_rest", previous_status: "observed", current_status: "failed", created_at: 50 }] },
   };
+  if (setup) replies["/setup"] = setup;
   window.fetch = async (url, opts = {}) => {
     const call = { url: new URL(url, window.location), method: opts.method || "GET", body: opts.body ? JSON.parse(opts.body) : null };
     ui.calls.push(call);
@@ -97,4 +98,10 @@ test("setting up a source asks first and sends nothing but the choice", async (t
   const call = ui.calls.find((c) => c.url.pathname.endsWith("/setup/okta/definition"));
   assert.equal(call.method, "POST");
   assert.equal(call.body, null);
+});
+
+test("on with no sources chosen says what to choose instead of failing", async (t) => {
+  const notice = "No evidence sources are chosen yet. An administrator can choose them in All settings.";
+  const ui = await fixture({ setup: { notice, items: [] } }); t.after(() => ui.window.close());
+  assert.match(ui.el("trc-live-status").textContent, /No evidence sources are chosen yet/);
 });

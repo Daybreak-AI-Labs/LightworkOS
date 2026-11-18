@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, is_dataclass
@@ -15,7 +16,9 @@ from starlette.concurrency import run_in_threadpool
 
 from ._shared import authenticated_subject
 from .auth import require_global_permission, require_permission
+from .store_failures import log_store_failure
 
+log = logging.getLogger(__name__)
 _ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
 _OP_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,191}$"
 _DIGEST_PATTERN = r"^[0-9a-f]{64}$"
@@ -213,6 +216,17 @@ _LOCAL_CONTROL_LABELS = {
 }
 
 
+def _collectors_notice(request: Request, evidence_enabled: bool, collectors: list) -> str:
+    """Why no evidence sources are offered, in plain words; "" when some are."""
+    if not evidence_enabled:
+        return "Continuous evidence is turned off. Other blueprint choices remain available."
+    from . import trc_continuous_evidence_api as evidence_api
+
+    if not collectors and not evidence_api._collector_ids(request):
+        return evidence_api.NO_SOURCES
+    return ""
+
+
 def _approved_collectors(request: Request, tenant: str) -> list[dict[str, object]]:
     """Current installed, approved definitions; no credentials or provider data."""
     from maverick import trc_continuous_evidence as evidence
@@ -392,6 +406,7 @@ def _no_code_grc_studio_probes_routes(deps):
         except (KeyboardInterrupt, SystemExit):
             raise
         except Exception as exc:
+            log_store_failure(log, exc)
             raise HTTPException(
                 status_code=503, detail="GRC studio authority is unavailable"
             ) from exc
@@ -569,13 +584,14 @@ def _no_code_grc_studio_list_sources_routes(call, composition, deps, router, run
                 raise
             except Exception:  # noqa: BLE001 - a listing failure leaves the typed fallback
                 targets, listed = [], False
+        notice = await run_in_threadpool(_collectors_notice, request, evidence_enabled, collectors)
         _secure(response)
         guarded.authority(request, context)
         return {
             "schema": "lightwork.no-code-grc-sources.v1",
             "context": context,
             "collectors": collectors,
-            "collectors_notice": "Continuous evidence is turned off. Other blueprint choices remain available." if not evidence_enabled else "",
+            "collectors_notice": notice,
             "destinations": targets,
             "destinations_listed": listed,
         }

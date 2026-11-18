@@ -150,6 +150,19 @@ def test_api_is_strict_role_gated_and_decodes_transient_manifest_bytes(environme
     assert created.headers["cache-control"] == "no-store, private, max-age=0"
 
 
+def test_readiness_of_a_turned_off_feature_is_an_answer_not_an_outage(environment) -> None:
+    # Live: the page's readiness read answered 503 although the feature was
+    # simply off. Off is a plain 200 answer; only "on but not ready" is 503.
+    client, state, _service = environment
+    state.enabled = False
+    response = client.get(f"{BASE}/readiness")
+    assert response.status_code == 200
+    assert response.json() == {"enabled": False, "ready": False}
+    state.enabled = True
+    state.ready = False
+    assert client.get(f"{BASE}/readiness").status_code == 503
+
+
 def test_disabled_unready_and_caller_authority_fields_fail_closed(environment) -> None:
     client, state, service = environment
     state.ready = False

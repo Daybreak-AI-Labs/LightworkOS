@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 from maverick import trc_continuous_evidence as evidence
 from maverick_dashboard import trc_continuous_evidence_api as api
@@ -285,3 +285,34 @@ def test_definition_and_enrollment_require_tenant_collector_allowlist(environmen
         },
     )
     assert enrolled.status_code == 403
+
+
+def test_on_with_no_sources_chosen_reads_as_no_sources_not_an_outage(environment):
+    # Live: Settings allows continuous evidence on with "Where evidence is
+    # collected from" left empty (its default). Every read then answered 503
+    # "collector allowlist is unavailable". Nothing chosen means nothing may
+    # be collected: an empty allowlist, said plainly.
+    client, _database, state = environment
+    state["allowed_collectors"] = []
+    assert api._collector_ids(SimpleNamespace(app=client.app)) == frozenset()
+    rejected = client.put(
+        f"{API}/definitions/local-definition/versions/1",
+        json={
+            "collector_id": "local_soc2_v1",
+            "collector_schema_version": 1,
+            "collector_key_id": "local_key_v1",
+            "capability_revision": 1,
+            "allowed_control_refs": ["audit_log"],
+        },
+    )
+    assert rejected.status_code == 403
+
+
+def test_a_malformed_source_list_stays_a_logged_outage(environment, caplog):
+    client, _database, state = environment
+    state["allowed_collectors"] = ["Not A Collector!"]
+    with caplog.at_level("WARNING", logger=api.__name__):
+        with pytest.raises(HTTPException) as failed:
+            api._collector_ids(SimpleNamespace(app=client.app))
+    assert failed.value.status_code == 503
+    assert any("TrcEvidenceSchedulerConfigurationError" in row.getMessage() for row in caplog.records)

@@ -584,6 +584,13 @@ def test_default_authority_fails_closed_without_server_resolvers(
     response = client.get(f"{API}/proposals/CSNP-missing")
     assert response.status_code == 503
     assert response.json() == {"detail": "scan disclosure-proposal runtime is unavailable"}
+    # The page's opening list read says so plainly instead of answering 503:
+    # no installation wires these server resolvers today (live, 2026-11-18).
+    listing = client.get(f"{API}/proposals?limit=200")
+    assert listing.status_code == 200
+    value = listing.json()
+    assert value["available"] is False and value["items"] == []
+    assert "not available on this installation" in value["message"]
 
 
 def test_list_shows_stage_head_and_only_the_viewers_own_role(environment) -> None:

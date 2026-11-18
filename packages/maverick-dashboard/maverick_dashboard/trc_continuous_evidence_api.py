@@ -9,6 +9,7 @@ and worker lease tokens are intentionally absent.
 from __future__ import annotations
 
 import hashlib
+import logging
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, is_dataclass
 from typing import Annotated, Any, Literal
@@ -20,6 +21,9 @@ from starlette.concurrency import run_in_threadpool
 
 from ._shared import authenticated_subject
 from .auth import require_global_permission, require_permission
+from .store_failures import log_store_failure
+
+log = logging.getLogger(__name__)
 
 _ID_PATTERN = r"^[a-z][a-z0-9_.:-]{0,127}$"
 _CONTROL_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
@@ -116,6 +120,18 @@ def trc_continuous_evidence_enabled_for_page() -> bool:
     return _enabled()
 
 
+NO_SOURCES = ("No evidence sources are chosen yet. An administrator can choose them in All settings, "
+              "under “Where evidence is collected from”.")
+
+
+def no_sources_chosen(config: object) -> bool:
+    """Continuous evidence is on, but its source list was left empty."""
+    root = config.get("tech_risk_compliance") if isinstance(config, Mapping) else None
+    feature = root.get("continuous_evidence") if isinstance(root, Mapping) else None
+    return (isinstance(feature, Mapping) and root.get("enable") is True and feature.get("enable") is True
+            and feature.get("enabled_collectors") in (None, []))
+
+
 def _collector_ids(request: Request) -> frozenset[str]:
     """Resolve the tenant's closed collector allowlist from trusted config."""
 
@@ -133,10 +149,15 @@ def _collector_ids(request: Request) -> frozenset[str]:
             if config_source_errors(include_tenant=True):
                 raise RuntimeError("tenant configuration is unreadable")
             config = load_config() or {}
+        if no_sources_chosen(config):
+            # Settings allows "on" before any source is chosen (the default):
+            # nothing chosen means nothing may be collected, not an outage.
+            return frozenset()
         from .trc_continuous_evidence_scheduler import configured_collector_ids
 
         configured = configured_collector_ids(config)
     except Exception as exc:
+        log_store_failure(log, exc)
         raise HTTPException(
             status_code=503,
             detail="continuous-evidence collector allowlist is unavailable",

@@ -33,7 +33,7 @@ async function page(role, options = {}) {
   w.fetch = async (url, init = {}) => {
     const method = init.method || "GET", body = init.body ? JSON.parse(init.body) : null;
     calls.push({ url, method, body });
-    if (url.includes("/proposals?")) return reply(200, { head_revision: 5, items: options.items || rows(role) });
+    if (url.includes("/proposals?")) return reply(200, options.listing || { head_revision: 5, items: options.items || rows(role) });
     if (options.conflict && method === "POST") return reply(409, { detail: "scan disclosure-proposal state conflict" });
     return reply(200, {});
   };
@@ -94,4 +94,13 @@ test("creating a suggestion uses the head version and explains conflicts plainly
     assert.match(ui.d.getElementById("csnp-status").textContent, /Someone else made one since you opened the page/);
     assert.doesNotMatch(ui.d.getElementById("csnp-status").textContent, /state conflict/);
   } finally { ui.dom.window.close(); }
+});
+
+test("an installation without the server setup says so instead of a list", async () => {
+  const message = "Disclosure suggestions are not available on this installation, because it does not include the server setup they need.";
+  const view = await page("creator", { listing: { available: false, message, head_revision: 0, items: [] } });
+  try {
+    assert.equal(view.d.getElementById("csnp-list").textContent, message);
+    assert.equal(view.d.getElementById("csnp-new").disabled, true);
+  } finally { view.dom.window.close(); }
 });
