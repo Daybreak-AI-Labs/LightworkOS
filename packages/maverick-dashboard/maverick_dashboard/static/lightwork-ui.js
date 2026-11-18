@@ -2681,7 +2681,10 @@ window.mvReveal = function (element, options) {
   function load() {
     if (state !== 'idle' || loaded()) return;
     state = 'loading';
-    var scripts = [fab.dataset.operationsSrc, fab.dataset.copilotSrc].map(function (src) {
+    var sources = [fab.dataset.operationsSrc, fab.dataset.copilotSrc];
+    // The reply renderer: pages without the chat already have it, others load it first.
+    if (!window.lwMarkdown && fab.dataset.markdownSrc) sources.unshift(fab.dataset.markdownSrc);
+    var scripts = sources.map(function (src) {
       var script = document.createElement('script');
       script.src = src; script.async = false;   // in order, like the deferred tags they replace
       document.head.appendChild(script);

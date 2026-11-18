@@ -165,7 +165,13 @@
   function addMessage(role, text, actionLink) {
     var message = document.createElement("div");
     message.className = "mv-copilot__msg mv-copilot__msg--" + role;
-    message.textContent = String(text);
+    // An AI guide's reply can carry headings, lists and emphasis: render them
+    // safely (DOM nodes from text, no markup) instead of showing raw marks.
+    if (role === "bot" && window.lwMarkdown && typeof window.lwMarkdown.renderInto === "function") {
+      window.lwMarkdown.renderInto(message, String(text));
+    } else {
+      message.textContent = String(text);
+    }
     if (role === "bot" && actionLink && typeof actionLink.href === "string" &&
         LINK_HREF.test(actionLink.href) && typeof actionLink.label === "string") {
       var focus = typeof actionLink.focus === "string" && FOCUS_ID.test(actionLink.focus) ? actionLink.focus : "";
