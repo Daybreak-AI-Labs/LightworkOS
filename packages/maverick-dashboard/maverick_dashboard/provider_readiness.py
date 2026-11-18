@@ -159,7 +159,15 @@ def _configured(name: str, state: dict[str, Any], table: dict[str, Any]) -> tupl
         if name == "openai_compatible" and not state.get("base_url_configured"):
             return False, ""
         return True, "key"
-    if name in _KEY_REQUIRED or name == "openai_compatible":
+    if name == "openai_compatible":
+        # The client accepts a key-less server only on this computer or a
+        # private network (LM Studio, llama.cpp); a public gateway needs a key.
+        from maverick.enterprise import _is_local_endpoint
+
+        if state.get("base_url_configured") and _is_local_endpoint(state.get("base_url")):
+            return True, "server address"
+        return False, ""
+    if name in _KEY_REQUIRED:
         return False, ""
     if name == "codex_cli":
         try:
