@@ -96,7 +96,14 @@
     const value = await window.mvFetchJSON('/api/v1/research' + path, {method: method || 'GET', cache: 'no-store', body, messages: {
       409: 'This research record changed. Refresh and review it again.',
       403: 'Your current account cannot perform that research action.',
-      422: 'Some details need fixing. Check the highlighted fields and try again.'}});
+      422: 'Some details need fixing. Check the highlighted fields and try again.'}}).catch(error => {
+      // Not a member of this workspace: the server says how to get access.
+      const detail = error && error.detail;
+      if (detail && detail.code === 'workspace_membership_required' && typeof detail.message === 'string') {
+        error.message = detail.message;
+      }
+      throw error;
+    });
     if (value && value.context && value.context !== context) {
       throw new Error('You switched account or workspace. Reload this page.');
     }

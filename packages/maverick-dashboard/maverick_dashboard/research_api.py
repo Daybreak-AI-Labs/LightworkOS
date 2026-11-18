@@ -251,6 +251,13 @@ def _binding(request, response, payload=None, *, operator=False):
     actor, tenant = caller_principal(request), current_tenant_id_strict()
     if not actor or not actor.startswith("user:") or not tenant:
         raise HTTPException(403, "Sign in with a named account and select a research workspace")
+    if not rbac.get_tenant_role(tenant, actor):
+        # Research runs belong to workspace members (resolve_authority), and
+        # installation administrators are not implicitly members: say so and
+        # how to get access instead of a bare refusal.
+        from .access_explanations import membership_required
+
+        raise membership_required(actor, "Research")
     response.headers["Cache-Control"] = "private, no-store"
     context = context_for(request)
     if payload is not None:
