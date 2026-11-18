@@ -631,9 +631,9 @@
             try {
               var opened = await capabilityForm.openAuthor(capabilityAuthor, {isCurrent:isCurrent});
               if (!isCurrent()) return;
-              status.textContent = opened ? 'The complete additional-work form is open; your entered choices were kept.' : 'The selected work or current form changed. Review Promise reviews before continuing.';
+              status.textContent = opened ? 'The complete additional-work form is open; your entered choices were kept.' : 'The selected work or current form changed. Review Commitment reviews before continuing.';
               if (opened) { var close = document.getElementById('mv-copilot-close'); if (close) close.click(); }
-            } catch (_) { if (isCurrent()) status.textContent = 'The additional-work form could not be opened. Check current Promise reviews.'; }
+            } catch (_) { if (isCurrent()) status.textContent = 'The additional-work form could not be opened. Check current Commitment reviews.'; }
             finally { if (isCurrent() && capabilityButton.isConnected) capabilityButton.disabled = false; }
           });
           else {

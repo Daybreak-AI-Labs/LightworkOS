@@ -122,9 +122,13 @@ async def health_response(
         world.ping()
         checks["db"] = "ok"
     except Exception as exc:
+        from maverick.service_status import database_refusal
+
+        refusal = database_refusal(exc)
         checks["db"] = (
             f"fail: {type(exc).__name__}"
             if not include_details
+            else f"fail: {refusal}" if refusal
             else f"fail: {type(exc).__name__}: {exc}"
         )
         overall_ok = False

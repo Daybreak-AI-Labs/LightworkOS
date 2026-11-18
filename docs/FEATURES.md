@@ -140,7 +140,7 @@ catalogue of built features and tools.
   `docs/configuration.md`.
 
 - **Additional-work capability qualification** — the optional
-  `[features] commitment_capability_learning` setting adds guided Promise
+  `[features] commitment_capability_learning` setting adds guided Commitment
   review forms for competing material/capacity/shared-setup explanations,
   jointly offered work and inclusion-minimal hypothetical additions. Completed
   attributed trials or exact owned published local-rule tests narrow those
@@ -5887,7 +5887,7 @@ Tool support remains provider-reported and untested. See [model choice tests](mo
 | Check local rules together | Learning → Check local rules together. Choose two owned published pure rules and permitted retained cases. All supported finite starting values, both orders and separate native references count toward one reviewed work allowance. A qualified request can run with ordinary named inputs; it remains unpublished. |
 | Prepare an answer for this request | Learning → Prepare an answer for this request. Choose up to three existing taught steps, permitted original cases and explicit desired answers. Every sequence through three steps is checked by the native runner. Only complete agreement among all surviving arrangements supports an answer. No arbitrary code or connected action is generated. |
 | Try one taught step | Workflow builder or Designer → select a taught local rule with AI fallback off → Try. Ordinary exact text, whole-number and Yes/No inputs lead to a complete review and one native step. AI calls and connected actions are refused; the original request is retained without automatic replay. |
-| Compare additional-work economics | Promise reviews → select current additional-work qualification → enter complete financial assumptions. Exact currency amounts and all incremental expenses are compared across jointly feasible offer/addition combinations while every accepted commitment stays protected. Demand, source availability and financial premises remain team reports. |
+| Compare additional-work economics | Commitment reviews → select current additional-work qualification → enter complete financial assumptions. Exact currency amounts and all incremental expenses are compared across jointly feasible offer/addition combinations while every accepted commitment stays protected. Demand, source availability and financial premises remain team reports. |
 
 Each capability has a default-off Features control and an installer choice.
 Native ownership, current authority, source custody, learning stops and review

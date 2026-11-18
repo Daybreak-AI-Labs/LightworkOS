@@ -156,22 +156,27 @@ def _work(key, record_id, item_id):
 
 
 def cycle():
+    """One pass over each workspace's inbox records. True when it saw pending
+    work or a full page (more records to scan), so the loop keeps its pace."""
     from maverick.paths import tenant_scope
 
     from .personal_notification_scheduler import _tenants
+    busy = False
     for tenant in _tenants():
         if _scheduler_stop.is_set():
-            return
+            return busy
         with tenant_scope(tenant=tenant):
             if not policy()["enabled"]:
                 continue
             page = list(STORE.iter_record_ids(start_after=_cursor.get(tenant, ""), limit=20))
             _cursor[tenant] = page[-1][0] if page else ""
+            busy = busy or len(page) >= 20
             for _, record_id in page:
                 record = STORE.get(record_id)
                 if not record or not any(item["state"] in {"queued", "dispatching", "guidance_ready", "needs_decision"}
                                          for item in _unpack(record)["items"]):
                     continue
+                busy = True
                 for item in _unpack(record)["items"]:
                     if item["state"] not in {"queued", "dispatching", "guidance_ready", "needs_decision"}:
                         continue
@@ -186,15 +191,33 @@ def cycle():
                         _threads[:] = [thread for thread in _threads if thread.is_alive()]
                         _threads.append(worker)
                         worker.start()
+    return busy
+
+
+_ACTIVE_WAIT = 3
+_IDLE_WAIT_MAX = 30
 
 
 def _loop():
+    from maverick.config import kept_reads
+
+    wait = _ACTIVE_WAIT
     while not _scheduler_stop.is_set():
+        busy = False  # a pass that fails is retried on the idle schedule
         try:
-            cycle()
+            # One configuration read per pass while the files are unchanged
+            # (the request scope's rule), instead of four full reads per
+            # workspace on every pass.
+            with kept_reads():
+                busy = bool(cycle())
         except Exception as exc:
             log.warning("Conversation inbox observer unavailable (%s)", type(exc).__name__)
-        _wake.wait(3)
+        # Nothing pending: back off to 30 s. A submission or change wakes the
+        # observer at once (wake()), and so does a finished dispatch.
+        if busy:
+            wait = _ACTIVE_WAIT
+        woke = _wake.wait(wait)
+        wait = _ACTIVE_WAIT if woke else min(wait * 2, _IDLE_WAIT_MAX)
         _wake.clear()
 
 

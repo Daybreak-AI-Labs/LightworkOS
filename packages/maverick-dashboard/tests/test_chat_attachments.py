@@ -94,7 +94,7 @@ def test_chat_pages_read_plainly_and_offer_a_menu_on_small_screens(monkeypatch, 
     r = _client().get("/chat")
     assert developer_terms(r.text) == []
     assert 'id="cs-menu" aria-controls="cs-side"' in r.text
-    assert 'aria-label="Start task"' in r.text and "Run this task" in r.text
+    assert 'aria-label="Start task"' in r.text and "Run this task" not in r.text
     assert "transcribe failed" not in r.text
 
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 import shutil
 from datetime import date, timedelta
 from pathlib import Path
@@ -191,7 +192,13 @@ def test_accepted_risks_still_describe_a_locked_package():
     for risk in ACCEPTED_RISKS:
         package = risk["package"]
         text = (ROOT / risk["lockfile"]).read_text(encoding="utf-8")
-        if package["ecosystem"] == "npm":
+        if package["ecosystem"] == "npm" and risk["lockfile"].endswith("pnpm-lock.yaml"):
+            # pnpm lists each package once as a top-level key: "  name@version:".
+            locked = {
+                (m.group(1), m.group(2))
+                for m in re.finditer(r"^  '?/?((?:@[^@\s/]+/)?[^@\s/(']+)@([^\s(:']+)", text, re.MULTILINE)
+            }
+        elif package["ecosystem"] == "npm":
             locked = {
                 (path.rpartition("node_modules/")[2], entry.get("version"))
                 for path, entry in json.loads(text).get("packages", {}).items()

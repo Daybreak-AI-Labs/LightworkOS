@@ -31,6 +31,7 @@ data "aws_iam_policy_document" "deployer" {
       "logs:Describe*", "logs:Get*", "logs:FilterLogEvents", "codebuild:BatchGet*", "codebuild:List*",
       "acm:Describe*", "acm:List*", "iam:Get*", "iam:List*", "sts:GetCallerIdentity",
       "secretsmanager:ListSecrets", "s3:ListAllMyBuckets", "ses:Get*", "ses:List*",
+      "cloudwatch:DescribeAlarms", "sns:ListTopics",
     ]
     resources = ["*"]
   }
@@ -94,7 +95,8 @@ data "aws_iam_policy_document" "deployer" {
     ]
   }
 
-  # Network, load balancer, database, state volume, certificates, email.
+  # Network, load balancer, database, state volume, certificates, email, and
+  # the optional WAF web ACL (waf.tf).
   # Infrastructure the stack creates has no ARN before it exists, so these
   # actions cannot be resource-scoped; they are bound to the deploy region
   # instead (every resource, including the ALB certificate and SES, lives in
@@ -105,6 +107,7 @@ data "aws_iam_policy_document" "deployer" {
       "ec2:*Vpc*", "ec2:*Subnet*", "ec2:*RouteTable*", "ec2:*Route", "ec2:*InternetGateway*",
       "ec2:*SecurityGroup*", "ec2:*NetworkInterface*", "ec2:*Address*", "ec2:CreateTags", "ec2:DeleteTags",
       "ec2:ModifyVpcAttribute", "elasticloadbalancing:*", "rds:*", "elasticfilesystem:*", "acm:*", "ses:*",
+      "wafv2:*",
     ]
     resources = ["*"]
     condition {
@@ -128,6 +131,24 @@ data "aws_iam_policy_document" "deployer" {
       "elasticfilesystem:DeleteFileSystem",
     ]
     resources = ["*"]
+  }
+
+  # The stack's alarms (alarms.tf) and the SNS topic they notify, including
+  # its email subscription.
+  statement {
+    sid     = "Alarms"
+    actions = ["cloudwatch:PutMetricAlarm", "cloudwatch:DeleteAlarms", "cloudwatch:TagResource", "cloudwatch:UntagResource", "cloudwatch:ListTagsForResource"]
+    resources = [
+      "arn:aws:cloudwatch:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:alarm:${local.name}-*",
+    ]
+  }
+  statement {
+    sid     = "AlarmTopic"
+    actions = ["sns:*"]
+    resources = [
+      "arn:aws:sns:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:${local.name}-alarms",
+      "arn:aws:sns:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:${local.name}-alarms:*",
+    ]
   }
 
   # This stack's secrets only.

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Autonomous shoring · Lightwork{% endblock %}
+{% block title %}Work handoff · Lightwork{% endblock %}
 {% block content %}
 <style>
   .sh-pos { color: var(--success); }
@@ -21,7 +21,7 @@
 
 {% from "_hero.html" import hero, state %}
 {% if disabled %}
-{{ hero('Insights', 'Autonomous shoring', subtitle="Hand a team's work to Lightwork",
+{{ hero('Insights', 'Work handoff', subtitle="Hand a team's work to Lightwork",
         lede='Choose a business area, set the service levels you expect, and track what it costs and saves compared with doing it by hand.') }}
 <section class="panel" role="status" aria-labelledby="sh-off-title">
   <h2 id="sh-off-title">This page is turned off</h2>
@@ -58,7 +58,7 @@
 {% set sla_word = {'met': 'On target', 'at_risk': 'At risk', 'breached': 'Missed', 'no_data': 'No data yet'} %}
 {% set lc_cls = {'scoping': 'idle', 'demonstrating': 'info', 'running': 'ok', 'proving': 'info'} %}
 
-{% call hero('Insights', 'Autonomous shoring', subtitle="Hand a team's work to Lightwork",
+{% call hero('Insights', 'Work handoff', subtitle="Hand a team's work to Lightwork",
              lede='Choose a business area, set the service levels you expect, and track what it costs and saves compared with doing it by hand. See the full breakdown on <a href="/savings">Savings</a>.' | safe) %}
   {% if report.available %}{{ state('Estimated cost difference',
            saved | money ~ ' saved',

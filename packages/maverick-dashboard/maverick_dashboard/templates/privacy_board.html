@@ -1242,7 +1242,7 @@
   }
   function stamp() {
     $('pb-stamp').textContent = 'Updated ' +
-      (window.mvTimeAbsolute ? window.mvTimeAbsolute(Date.now()) : new Date().toLocaleTimeString()) + ' · updates every minute';
+      (window.mvTimeAbsolute ? window.mvTimeAbsolute(Date.now()) : new Date().toLocaleTimeString()) + ' · checks again every minute';
   }
   function load() {
     window.mvFetchJSON(API).then(function (d) {

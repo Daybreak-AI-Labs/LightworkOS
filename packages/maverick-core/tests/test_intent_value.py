@@ -562,6 +562,63 @@ def test_measured_receipts_replace_runtime_and_reprocessing_does_not_double_coun
     assert report(world)["totals"] == first["totals"]
 
 
+def test_day_period_receipts_replace_runtime_without_a_parse_error(world, monkeypatch):
+    # Provider caps default to UTC-day periods (YYYY-MM-DD); a month-only parser
+    # failed with "unconverted data remains: -16" and the whole report broke.
+    from datetime import datetime, timezone
+
+    from maverick import cost_provenance
+    identifier = goal(world, cost=2)
+    period = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    receipt = {"reference": "synthetic-day-receipt", "period": period, "state": "settled", "actual": 3,
+               "currency": "USD", "basis": "recorded"}
+    monkeypatch.setattr(cost_provenance, "for_goal", lambda gid: {"state": "available", "receipts": [receipt] if gid == identifier else []})
+    totals = report(world)["totals"]
+    assert totals["known_execution_costs"] == {"USD": 3}
+    assert totals["measured_costs"] == {"USD": 3}
+    assert totals["estimated_costs"] == {}
+
+
+def test_episode_across_midnight_is_reconciled_once_against_both_day_receipts(world, monkeypatch):
+    # An episode is stamped with its end; receipts for the day it started
+    # used to be added on top of a residual computed only against the end
+    # day ($4 + $6 receipts plus a $4 "residual" for $10 of spend).
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+
+    from maverick import cost_provenance, episode_reporting
+    identifier = goal(world, cost=10)
+    midnight = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    original = episode_reporting.iter_episodes
+
+    def crossing(source):
+        for episode in original(source):
+            if episode.goal_id == identifier:
+                episode = SimpleNamespace(**{**vars(episode), "started_at": (midnight - timedelta(hours=1)).timestamp()})
+            yield episode
+
+    monkeypatch.setattr(episode_reporting, "iter_episodes", crossing)
+    receipts = [{"reference": "before-midnight", "period": (midnight - timedelta(days=1)).strftime("%Y-%m-%d"),
+                 "state": "settled", "actual": 4, "currency": "USD", "basis": "recorded"},
+                {"reference": "after-midnight", "period": midnight.strftime("%Y-%m-%d"),
+                 "state": "settled", "actual": 6, "currency": "USD", "basis": "recorded"}]
+    monkeypatch.setattr(cost_provenance, "for_goal", lambda gid: {"state": "available", "receipts": receipts if gid == identifier else []})
+    item = service.refresh(world)[0]
+    assert not [cost for cost in item["source"]["costs"] if cost["id"].startswith("runtime-residual:")]
+    assert report(world)["totals"]["known_execution_costs"] == {"USD": 10}
+
+
+def test_unreadable_receipt_period_is_a_limitation_not_a_failure(world, monkeypatch):
+    from maverick import cost_provenance
+    identifier = goal(world, cost=2)
+    receipt = {"reference": "synthetic-bad-period", "period": "2026-11-16T00:00:00-05:00", "state": "settled",
+               "actual": 3, "currency": "USD", "basis": "recorded"}
+    monkeypatch.setattr(cost_provenance, "for_goal", lambda gid: {"state": "available", "receipts": [receipt] if gid == identifier else []})
+    item = service.refresh(world)[0]
+    assert any("period could not be read" in text for text in item["source"]["cost_limitations"])
+    assert report(world)["totals"]["known_execution_costs"] == {"USD": 2}
+
+
 def test_unknown_receipt_retains_incurred_runtime_with_incomplete_net(world, monkeypatch):
     from datetime import datetime, timezone
 

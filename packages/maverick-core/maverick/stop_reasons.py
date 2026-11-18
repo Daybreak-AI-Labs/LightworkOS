@@ -65,6 +65,172 @@ def exception_stop_text(exc: BaseException) -> str:
     return "provider_error:configuration"
 
 
+_AMOUNT = r"\$([\d,]+(?:\.\d+)?)"
+_PROJECTED = re.compile(
+    rf"projected {_AMOUNT} > {_AMOUNT} \(spent {_AMOUNT}(?: \+ in-flight {_AMOUNT})? "
+    rf"\+ est {_AMOUNT} for this call\)")
+_SPENT = re.compile(rf"^{_AMOUNT} > {_AMOUNT}")
+_WALL = re.compile(r"wall time (\d+)s >= (\d+)s")
+_TOOL_CEILING = re.compile(r"Spend for (.+?) used the per-call safety ceiling")
+_MODEL_CEILING = re.compile(r"Spend for (.+?) used the safety ceiling because it has no price set")
+#: Settings > Spending per task, where the spending limit per task is set.
+TASK_LIMIT_HREF = "/settings#settings-task-limit"
+#: Settings > Models > Prices for paid tool services.
+TOOL_PRICES_HREF = "/settings#settings-tool-prices"
+TIME_LIMIT_HREF = "/settings/all?id=budget.max_wall_seconds"
+
+
+def _money(value: str) -> float:
+    return float(value.replace(",", ""))
+
+
+def _duration(seconds: float) -> str:
+    if seconds >= 60 and seconds % 60 == 0:
+        minutes = int(seconds // 60)
+        return f"{minutes} minute{'s' if minutes != 1 else ''}"
+    whole = int(round(seconds))
+    return f"{whole} second{'s' if whole != 1 else ''}"
+
+
+@dataclass(frozen=True)
+class BudgetStopFacts:
+    """What a task-limit stop knows, read from the kernel's own wording."""
+
+    limit: str  # "projected", "spent", "time" or "other"
+    cap: float | None = None
+    spent: float | None = None
+    estimate: float | None = None
+    projected: float | None = None
+    in_flight: float = 0.0
+    wall_cap: float | None = None
+    ceiling_tools: str = ""
+    ceiling_models: str = ""
+
+
+def budget_stop_facts(detail: str) -> BudgetStopFacts:
+    """Facts from a ``BudgetExceeded`` text (``Budget.check``/``reserve``)."""
+    text = (detail or "").strip()
+    tools = m.group(1) if (m := _TOOL_CEILING.search(text)) else ""
+    models = m.group(1) if (m := _MODEL_CEILING.search(text)) else ""
+    if m := _PROJECTED.search(text):
+        projected, cap, spent, in_flight, estimate = m.groups()
+        return BudgetStopFacts(
+            "projected", _money(cap), _money(spent), _money(estimate), _money(projected),
+            _money(in_flight) if in_flight else 0.0, ceiling_tools=tools, ceiling_models=models)
+    if m := _SPENT.search(text):
+        return BudgetStopFacts("spent", _money(m.group(2)), _money(m.group(1)),
+                               ceiling_tools=tools, ceiling_models=models)
+    if m := _WALL.search(text):
+        return BudgetStopFacts("time", wall_cap=float(m.group(2)))
+    return BudgetStopFacts("other", ceiling_tools=tools, ceiling_models=models)
+
+
+def _ceiling_sentences(facts: BudgetStopFacts) -> list[str]:
+    lines = []
+    if facts.ceiling_tools:
+        lines.append(f"{facts.ceiling_tools} has no price set, so Lightwork counted each call at "
+                     "its per-call safety ceiling. Set its price in Settings > Models, under "
+                     "Prices for paid tool services.")
+    if facts.ceiling_models:
+        lines.append(f"{facts.ceiling_models} has no price set, so Lightwork used a safety ceiling. "
+                     "Set its price in Settings > Models, under Prices for the models you use.")
+    return lines
+
+
+def _metered_limits(budget) -> str:
+    limits = []
+    if budget.max_dollars is not None:
+        limits.append(f"${budget.dollars:.2f} of ${budget.max_dollars:.2f} cap")
+    if budget.max_wall_seconds is not None:
+        limits.append(f"{budget.elapsed():.0f}s of {budget.max_wall_seconds:.0f}s")
+    for used, cap, label in (
+        (budget.input_tokens, budget.max_input_tokens, "input tokens"),
+        (budget.output_tokens, budget.max_output_tokens, "output tokens"),
+        (budget.tool_calls, budget.max_tool_calls, "tool calls"),
+    ):
+        if cap is not None:
+            limits.append(f"{used} of {cap} {label}")
+    return ", ".join(limits) or "a configured usage limit"
+
+
+def budget_stop_text(budget, goal_id, detail: str = "") -> str:
+    """The stop message for a task that reached its own spending or time limit.
+
+    ``detail`` is the kernel's ``BudgetExceeded`` text. It names the cap, the
+    spend, the refused call's estimate and any safety ceiling behind it; the
+    message keeps those facts instead of only what the meter shows.
+    """
+    facts = budget_stop_facts(detail)
+    cap = facts.cap if facts.cap is not None else budget.max_dollars
+    spent = facts.spent if facts.spent is not None else budget.dollars
+    if facts.limit == "projected":
+        lines = [f"Stopped: this goal hit your spending limit before its next step "
+                 f"(${spent:.2f} of ${cap:.2f} cap used).",
+                 f"The next step was estimated at ${facts.estimate:.2f}, which would bring "
+                 f"spending to ${facts.projected:.2f}."]
+        if facts.in_flight:
+            lines.append(f"Steps still running had reserved ${facts.in_flight:.2f} of that.")
+    elif facts.limit == "spent":
+        lines = [f"Stopped: this goal hit your spending limit (${spent:.2f} of ${cap:.2f} cap used)."]
+    elif facts.limit == "time":
+        lines = [f"Stopped: this goal hit your time limit ({_duration(facts.wall_cap or 0)})."]
+    else:
+        lines = [f"Stopped: this goal hit your spending or time limit ({_metered_limits(budget)})."]
+    lines.extend(_ceiling_sentences(facts))
+    setting = "time limit" if facts.limit == "time" else "spending limit"
+    lines.append(f"Your recorded work and usage are kept. To continue, raise the {setting} per task "
+                 "in Settings, or resume with a higher limit. Organization spending controls still apply.")
+    command = f"maverick resume {goal_id}"
+    if facts.limit == "time" or (cap is None and budget.max_wall_seconds is not None):
+        command += " --max-wall-seconds <higher>"
+    elif cap is not None:
+        command += " --max-dollars <higher>"
+    lines.append(f"Resume with a higher cap: {command}")
+    return "\n".join(lines)
+
+
+_STOP_PROJECTED = re.compile(
+    rf"before its next step \({_AMOUNT} of {_AMOUNT} cap used\)\.\s*The next step was estimated "
+    rf"at {_AMOUNT}, which would bring spending to {_AMOUNT}")
+_STOP_SPENT = re.compile(rf"hit your spending limit \({_AMOUNT} of {_AMOUNT} cap used\)")
+_STOP_TIME = re.compile(r"hit your time limit \(([^)]+)\)")
+_STOP_TOOL = re.compile(r"(?m)^(.+?) has no price set, so Lightwork counted each call")
+_STOP_MODEL = re.compile(r"(?m)^(.+?) has no price set, so Lightwork used a safety ceiling")
+
+
+def _task_limit_reason(text: str, technical: str) -> StopReason | None:
+    """A specific explanation for a stop at the task's own limit, else None."""
+    if m := _STOP_TIME.search(text):
+        return StopReason("spending_limit", f"This task reached its time limit of {m.group(1)}.",
+                          "Raise the time limit per task in Settings, then resume this task.",
+                          TIME_LIMIT_HREF, "Open Time limit per task", technical)
+    if m := _STOP_PROJECTED.search(text):
+        spent, cap, estimate, projected = m.groups()
+        message = (f"This task stopped before its next step. That step was estimated at ${estimate}, "
+                   f"which would bring spending to ${projected}. The task's spending limit is ${cap}, "
+                   f"and it had spent ${spent}.")
+    elif m := _STOP_SPENT.search(text):
+        spent, cap = m.groups()
+        message = f"This task reached its spending limit of ${cap}. It had spent ${spent}."
+    else:
+        return None
+    tool = m.group(1) if (m := _STOP_TOOL.search(text)) else ""
+    model = m.group(1) if (m := _STOP_MODEL.search(text)) else ""
+    if tool:
+        return StopReason(
+            "spending_limit", f"{message} {tool} has no price set, so each call was counted at a safety ceiling.",
+            f"Set the price for {tool} in Settings, then resume this task. You can also raise the spending limit per task.",
+            TOOL_PRICES_HREF, "Set paid service prices", technical)
+    if model:
+        return StopReason(
+            "spending_limit", f"{message} {model} has no price set, so its spending used a safety ceiling.",
+            f"Set the price for {model} in Settings, then resume this task. You can also raise the spending limit per task.",
+            "/settings#settings-model-prices", "Review model prices", technical)
+    return StopReason("spending_limit", message,
+                      "Raise the spending limit per task in Settings, then resume this task.",
+                      TASK_LIMIT_HREF, "Open Spending per task", technical)
+
+
 @dataclass(frozen=True)
 class StopReason:
     """What a person reads when a run stops."""
@@ -190,13 +356,18 @@ _RULES: tuple[tuple[str, re.Pattern[str], str, str, str | None, str | None], ...
     ),
     (
         "spending_limit",
-        _rx(r"over its daily (spend|token) quota", r"spend cap", r"spending limit",
-            r"spending allowance", r"budget exhausted", r"of \$[\d.,]+ cap",
-            r"BudgetExceeded", r"over quota"),
-        "This task reached a spending limit.",
-        "Set a spending limit for this attempt, or ask an administrator to raise "
-        "the workspace's limit.",
+        _rx(r"over its daily (spend|token) quota", r"spending allowance", r"over quota"),
+        "This task reached a workspace or organization spending limit.",
+        "Review the spending limits, or ask an administrator to raise the workspace or organization limit.",
         "/spending-limits", "Open Spending limits",
+    ),
+    (
+        "spending_limit",
+        _rx(r"spend cap", r"spending limit", r"budget exhausted", r"of \$[\d.,]+ cap",
+            r"BudgetExceeded", r"hit your spending or time limit"),
+        "This task reached its spending or time limit.",
+        "Raise the spending limit per task in Settings, then resume this task.",
+        TASK_LIMIT_HREF, "Open Spending per task",
     ),
     (
         # The kernel refuses to build a specialist whose workflow needs a tool
@@ -265,6 +436,99 @@ _RULES: tuple[tuple[str, re.Pattern[str], str, str, str | None, str | None], ...
     ),
 )
 
+#: Plain cause, fix and route for each AI evidence gateway refusal code
+#: (``ai_evidence_gateway.delivery_refusal_code``). The orchestrator stores
+#: ``evidence_gateway:<not_ready|withheld>:<code>: <detail>`` on the goal.
+_ASSURANCE = ("/security/assurance", "Open AI assurance")
+_WORKSPACES = ("/workspaces", "Open Workspaces")
+EVIDENCE_CAUSES: dict[str, tuple[str, str, str, str]] = {
+    "demo_and_real_mixed": (
+        "This workspace holds sample (demo) evidence rules and real ones, which must be kept apart.",
+        "An administrator must create a separate workspace for real work on the Workspaces page. "
+        "Run the task there.",
+        *_WORKSPACES,
+    ),
+    "no_workspace": (
+        "The AI evidence check is on, but this work has no workspace to record evidence in.",
+        "An administrator must choose or create a workspace on the Workspaces page. "
+        "Then run the task again.",
+        *_WORKSPACES,
+    ),
+    "written_answers_not_allowed": (
+        "This workspace's evidence rule for task answers does not allow written answers.",
+        "An administrator must allow written answers in the workspace's default evidence rule "
+        "on AI assurance.",
+        *_ASSURANCE,
+    ),
+    "fixed_request": (
+        "This workspace's evidence rule for task answers is tied to one fixed request, "
+        "so other tasks can't match it.",
+        "An administrator must remove the request binding from the default evidence rule "
+        "on AI assurance.",
+        *_ASSURANCE,
+    ),
+    "fixed_model": (
+        "This workspace's evidence rule for task answers is tied to a different AI model "
+        "than the one used.",
+        "An administrator must bind the default evidence rule to the model in use, "
+        "or remove that binding.",
+        *_ASSURANCE,
+    ),
+    "receipt_limit": (
+        "This workspace has reached its limit of saved evidence receipts.",
+        "An administrator must raise Evidence receipts kept in Settings. Then run the task again.",
+        "/settings/all?id=evidence_gateway.receipt_max_total", "Review evidence limits",
+    ),
+    "records_unreadable": (
+        "This workspace's evidence records could not be read safely.",
+        "An administrator must check the evidence records on AI assurance before tasks "
+        "can finish here.",
+        *_ASSURANCE,
+    ),
+    "other": (
+        "The AI evidence check refused to record this answer.",
+        "An administrator must review this workspace's evidence setup on AI assurance. "
+        "Then run the task again.",
+        *_ASSURANCE,
+    ),
+}
+_EVIDENCE_STOP = re.compile(r"^evidence_gateway:(not_ready|withheld):([a-z_]+)\b")
+# Goals withheld before the cause code was stored carry only the gateway text.
+_LEGACY_EVIDENCE_WITHHELD = re.compile(r"^AI evidence gateway withheld the generated output\.")
+_LEGACY_MIXED = re.compile(r"separate tenant namespaces|already mixes synthetic and production")
+_EVIDENCE_LEADS = {
+    "not_ready": (
+        "evidence_setup",
+        "This task didn't start because this workspace can't record AI evidence for its answer. "
+        "No work was started and nothing was spent.",
+    ),
+    "withheld": (
+        "evidence_withheld",
+        "Lightwork finished this task but held back the answer, because this workspace "
+        "can't record AI evidence for it.",
+    ),
+}
+
+
+def evidence_cause(code: str) -> tuple[str, str, str, str]:
+    """Plain cause, fix, link and link label for an evidence refusal code."""
+    return EVIDENCE_CAUSES.get(code, EVIDENCE_CAUSES["other"])
+
+
+def _evidence_stop(text: str, technical: str) -> StopReason | None:
+    match = _EVIDENCE_STOP.match(text)
+    if match:
+        stage, code = match.groups()
+    elif _LEGACY_EVIDENCE_WITHHELD.match(text):
+        stage = "withheld"
+        code = "demo_and_real_mixed" if _LEGACY_MIXED.search(text) else "other"
+    else:
+        return None
+    kind, lead = _EVIDENCE_LEADS[stage]
+    cause, action, link, label = evidence_cause(code)
+    return StopReason(kind, f"{lead} {cause}", action, link, label, technical)
+
+
 # Text a person should never have to read: identifiers, paths, code.
 _TECHNICAL = _rx(r"\b\w+(Error|Exception)\b", r"Traceback", r"'[^' ]+'", r"\"[^\" ]+\"",
                  r"(^|[\s(])/[\w.-]+/", r"[A-Za-z]:\\", r"\btenant\b", r"\bprincipal\b",
@@ -289,6 +553,11 @@ def explain_stop(raw: str | None, *, status: str | None = None) -> StopReason:
     technical = _bounded(text, RAW_TEXT_LIMIT)
     if not text:
         return StopReason("other", _GENERIC_MESSAGE, _GENERIC_ACTION)
+    evidence = _evidence_stop(text, technical)
+    if evidence is not None:
+        return evidence
+    if (task_limit := _task_limit_reason(text, technical)) is not None:
+        return task_limit
     for kind, pattern, message, action, link, label in _RULES:
         if pattern.search(text):
             return StopReason(kind, message, action, link, label, technical)

@@ -1,5 +1,7 @@
 """Identity/role display formatting for the dashboard UI."""
+import pytest
 from maverick_dashboard.identity_format import (
+    humanize,
     humanize_principal,
     permission_label,
     role_label,
@@ -74,3 +76,27 @@ def test_humanize_reads_abbreviations_the_way_people_write_them():
     assert humanize("gdpr-dsar") == "GDPR DSAR"
     assert humanize("  ") == ""
     assert humanize(None) == ""
+
+
+@pytest.mark.parametrize("raw,label", [
+    ("ec_article_50", "EU AI Act, Article 50"),
+    ("eu_ai_act_article_50", "EU AI Act, Article 50"),
+    ("ec_gpai_guidelines", "EU guidelines for general-purpose AI models"),
+    ("nist_ai_rmf_1_0", "NIST AI RMF 1.0"),
+    ("omb_m_25_22", "OMB M-25-22"),
+    ("kv_memory", "Saved notes"),
+    ("recv_from_agent", "Read messages from other agents"),
+    ("send_to_agent", "Send messages to other agents"),
+    ("cmmc", "CMMC"),
+    ("cmmc_level_2", "CMMC level 2"),
+])
+def test_humanize_names_regulations_and_tools_from_one_label_table(raw, label):
+    # Mangled identifiers ("Ec article 50", "Omb m 25 22", "Kv memory") never
+    # reach a customer: whole identifiers map through one label table.
+    assert humanize(raw) == label
+
+
+def test_known_label_keeps_codes_that_are_already_names():
+    from maverick_dashboard.identity_format import known_label
+    assert known_label("eu_ai_act_article_50") == "EU AI Act, Article 50"
+    assert known_label("AI-DISCLOSURE-01") == "AI-DISCLOSURE-01"

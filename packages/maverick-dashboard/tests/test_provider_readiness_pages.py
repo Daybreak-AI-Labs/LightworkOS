@@ -90,9 +90,9 @@ def test_provider_pages_assemble_one_readiness_snapshot(workspace, monkeypatch, 
         calls["workspace"] += 1
         return real_workspace()
 
-    def provider_once(name, *, configured):
+    def provider_once(name, *, configured, material=None):
         calls["provider"] += 1
-        return real_provider(name, configured=configured)
+        return real_provider(name, configured=configured, material=material)
 
     monkeypatch.setattr(provider_readiness, "workspace_readiness", workspace_once)
     monkeypatch.setattr(integration_readiness, "provider_readiness", provider_once)
@@ -131,6 +131,9 @@ def test_saved_key_never_tested_reads_the_same_everywhere(workspace, monkeypatch
     assert 'id="composer-readiness"' in pages["/chat"]
     assert "key saved, not tested yet" in visible_text(pages["/chat"])
     assert re.search(r'<a href="/providers">(?:<[^>]+>)*Test the connection', pages["/chat"])
+    # Live: "…not tested yet. Test the connection You can still start a task." (no sentence break).
+    note = re.search(r'<p class="cs-dock__note" id="composer-readiness"[^>]*>.*?</p>', pages["/chat"], re.DOTALL).group(0)
+    assert re.search(r"Test the connection(?:</?[^>]+>)*\.\s+(?:<[^>]+>)*You can still start a task\.", note), note
     # Get started: step 1 is not done and the checks do not say complete.
     start = pages["/start"]
     assert "0 of 4 done" in start and 'class="gs__step gs__step--done"' not in start

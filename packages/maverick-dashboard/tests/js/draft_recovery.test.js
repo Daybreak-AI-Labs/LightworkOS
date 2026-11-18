@@ -173,11 +173,11 @@ test('request failures show plain sentences, never server text or browser errors
 // Chat's compact row said "Checking draft recovery…" for 18-109 ms on every
 // load. A check that answers within 300 ms now never shows the loading words;
 // a slow one still says so.
-async function compactRow(delayMs,frameMs,inertMs){
+async function compactRow(delayMs,frameMs,inertMs,payload=null){
   const dom=new JSDOM('<meta name="lightwork-draft-context" content="account-workspace"><form id="editor"><textarea id="brief"></textarea></form>',{url:'https://lightwork.test/chat',runScripts:'outside-only'});
   const w=dom.window,d=w.document;Object.defineProperty(w,'crypto',{value:webcrypto});w.TextEncoder=TextEncoder;
   const labels=[];
-  w.fetch=async url=>{await new Promise(resolve=>setTimeout(resolve,delayMs));return {ok:true,json:async()=>({context:'account-workspace',revision:0,payload:null,slot:url.split('/').pop()})};};
+  w.fetch=async url=>{await new Promise(resolve=>setTimeout(resolve,delayMs));return {ok:true,json:async()=>({context:'account-workspace',revision:payload?1:0,payload,slot:url.split('/').pop()})};};
   if(frameMs!==undefined)w.requestAnimationFrame=callback=>setTimeout(callback,frameMs);
   if(inertMs){d.getElementById('editor').setAttribute('inert','');setTimeout(()=>d.getElementById('editor').removeAttribute('inert'),inertMs);}
   w.eval(source);
@@ -186,7 +186,7 @@ async function compactRow(delayMs,frameMs,inertMs){
   new w.MutationObserver(()=>labels.push(summary.textContent)).observe(summary,{childList:true,characterData:true,subtree:true});
   labels.push(summary.textContent);
   await recovery.ready;await tick();
-  return {dom,labels,summary};
+  return {dom,labels,summary,w};
 }
 test('a quick recovery check never shows the loading words in the compact row',async()=>{
   const ui=await compactRow(20);
@@ -224,15 +224,18 @@ test('the checking words stay 500 ms from when the page can show them',async()=>
   assert.equal(ui.summary.textContent,'Draft recovery ready');ui.dom.window.close();
 });
 
-// A recovery problem opens Chat's compact row by itself, with no input from
-// the person. Opening it in place grew the docked composer from 331 to 544 px
-// and pushed the conversation up (layout shift 0.17-0.19 on phones), so the
-// opened row floats above the composer instead of resizing the dock.
-test('the compact row opens above the composer without resizing it',async()=>{
-  const ui=await compactRow(20);
-  const body=ui.summary.nextElementSibling;
-  assert.equal(body.style.position,'absolute');
-  assert.match(body.style.bottom,/100%/);
-  assert.equal(ui.summary.parentElement.style.position,'relative');
+// Live: a recovery copy opened Chat's row by itself as a floating panel
+// over the budget note and suggestion cards, and it could not be closed
+// until a choice was made. Now the row only changes its words; opened by the
+// person, it sits in the page flow and closes like any disclosure.
+test('a recovery copy to review changes the row words without opening or covering anything',async()=>{
+  const ui=await compactRow(20,undefined,undefined,{brief:'unsent text'});
+  const details=ui.summary.parentElement,body=ui.summary.nextElementSibling;
+  assert.equal(ui.summary.textContent,'Recovery copy needs review');
+  assert.equal(details.open,false);
+  assert.notEqual(body.style.position,'absolute');
+  assert.equal(details.style.position,'');
+  details.open=true;ui.summary.click();
+  assert.equal(details.open,false,'the person can close it while a choice is pending');
   ui.dom.window.close();
 });

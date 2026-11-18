@@ -15,13 +15,13 @@
   {% from "_empty_state.html" import empty_state %}
   {% call hero('Value & spend', 'Spend',
                subtitle='What your AI work has cost',
-               lede='Costs for every finished task, taken from Lightwork\'s own
+               lede='Costs for every finished attempt at a task, taken from Lightwork\'s own
                      runtime pricing records. These can be measured, estimated or bounded prices;
                      they are not verified provider invoices. Need the monthly statement?
                      Open <a href="/billing">Billing</a>.' | safe) %}
     {{ state('Current state',
              total.dollars | money ~ ' recorded across all time',
-             badge=total.runs ~ ' finished task' ~ ('' if total.runs == 1 else 's'),
+             badge=total.runs ~ ' priced attempt' ~ ('' if total.runs == 1 else 's'),
              badge_class='ok' if total.runs else 'idle',
              copy='The same records power <a href="/savings">Savings</a> and
                    the monthly statement.' | safe) }}
@@ -162,11 +162,11 @@
                 format: B.money },
         sub: 'last ' + D.days + ' days',
         spark: D.daily.map(function (r) { return r.cost; }) }));
-      k.appendChild(B.kpi({ label: 'Finished tasks', value: D.totals.runs,
+      k.appendChild(B.kpi({ label: 'Priced attempts', value: D.totals.runs,
         chip: { cur: D.totals.runs, prev: D.prev.runs },
         sub: 'last ' + D.days + ' days', sparkCls: 'ok',
         spark: D.daily.map(function (r) { return r.runs; }) }));
-      k.appendChild(B.kpi({ label: 'Average cost per task',
+      k.appendChild(B.kpi({ label: 'Average cost per attempt',
         value: D.totals.runs ? D.totals.dollars / D.totals.runs : 0,
         format: B.money,
         sub: D.totals.tool_calls ? B.fmt(D.totals.tool_calls) + ' steps' : '' }));

@@ -105,6 +105,10 @@ def test_spend_html_scopes_episodes_and_totals_to_authenticated_user(monkeypatch
     response = client.get("/spend", headers=_as(user))
     assert response.status_code == 200
     assert f"${total:,.2f} recorded across all time" in response.text
+    # The badge counts priced attempts, not finished tasks: a blocked task can
+    # have a finished, priced attempt while Overview shows 0 delivered.
+    assert ("1 priced attempt" if total else "0 priced attempts") in response.text
+    assert "finished task" not in response.text.split('id="bd-kpis"')[0]
     expected = {"alice": {alice_goal}, "bob": {bob_goal}, "root": set()}
     rendered_goals = {int(value) for value in re.findall(r'href="/chat/goal/(\d+)"', response.text)}
     assert rendered_goals == expected[user]

@@ -527,6 +527,29 @@ def list_tenants() -> list[TenantRecord]:
     return [records[k] for k in sorted(records) if not _retired(k)]
 
 
+def owner_workspace_id() -> str | None:
+    """The workspace owner setup made, when it is the only one; else None.
+
+    Owner setup provisions one self-hosted workspace and the dashboard works
+    in it, while a command line with no tenant used the shared root: its runs
+    never showed in the dashboard. An unbound command line adopts this
+    workspace the way the dashboard selects it (a context scope, not
+    ``MAVERICK_TENANT``), so both use one database and the deployment key.
+    Isolation holds: any other workspace, an explicit tenant or a client
+    binding means there is no single answer, and nothing is adopted.
+    """
+    from ..billing import SELF_HOSTED_PLAN
+    from ..client import strict_client_id
+    from ..paths import explicit_tenant_id
+
+    if explicit_tenant_id() or strict_client_id():
+        return None
+    tenants = list_tenants()
+    if len(tenants) != 1 or tenants[0].plan != SELF_HOSTED_PLAN or tenants[0].status != ACTIVE:
+        return None
+    return tenants[0].id
+
+
 def get_tenant(tenant_id: str) -> TenantRecord | None:
     tid = _lookup_id(tenant_id)
     return None if tid and _retired(tid) else _load().get(tid)

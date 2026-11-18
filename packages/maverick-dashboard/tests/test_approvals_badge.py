@@ -65,8 +65,8 @@ def test_waiting_count_needs_the_permission_to_decide(client, monkeypatch):
 def test_both_shells_carry_an_empty_badge_on_every_approvals_link(client, path):
     body = client.get(path).text
     links = re.findall(r'<a href="/approvals"[^>]*>.*?</a>', body, re.DOTALL)
-    # Most used and the Governance group: both get the same hidden badge.
-    assert len(links) == 2
+    # Listed once (Most used; the Governance group leaves it out), with its badge.
+    assert len(links) == 1
     for link in links:
         assert "data-approvals-badge" in link
         assert '<span class="nav-count" hidden></span>' in link

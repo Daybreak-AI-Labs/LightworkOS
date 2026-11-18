@@ -157,3 +157,28 @@ def test_cli_start_uses_goal_defaults_and_honors_explicit_limits(monkeypatch, tm
     ])
     assert default.exit_code == explicit.exit_code == 0, (default.output, explicit.output)
     assert seen == [(2.0, 1800.0), (5.0, 3600.0)]
+
+
+def test_resume_warns_before_repeating_paid_work(monkeypatch, tmp_path):
+    """Without saved progress a resume repeats finished paid searches; say so first."""
+    monkeypatch.delenv("MAVERICK_DURABLE", raising=False)
+    world = WorldModel(tmp_path / "world.db")
+    goal_id = world.create_goal("research", "")
+    episode = world.start_episode(goal_id)
+    world.end_episode(episode, "stopped", "interrupted", cost_dollars=1.16)
+    world.set_goal_status(goal_id, "blocked", "Stopped: this goal hit your spending limit")
+    order = []
+    def run(llm, actual_world, budget, gid, **kwargs):
+        order.append("run")
+        actual_world.set_goal_status(gid, "done", "ok")
+        return "ok"
+    monkeypatch.setattr(cli, "open_world", lambda path: world)
+    monkeypatch.setattr(cli, "_require_llm_key", lambda: None)
+    monkeypatch.setattr(cli, "_kernel", lambda: SimpleNamespace(
+        DEFAULT_MODEL="fixture:offline", LLM=lambda **kw: None,
+        build_sandbox=lambda **kw: None, run_goal_sync=run))
+    result = CliRunner().invoke(cli.main, ["resume", str(goal_id), "--max-dollars", "5"])
+    assert result.exit_code == 0, result.output
+    assert "from the beginning" in result.output and "$1.16" in result.output
+    assert result.output.index("from the beginning") < result.output.index("ok")
+    world.close()

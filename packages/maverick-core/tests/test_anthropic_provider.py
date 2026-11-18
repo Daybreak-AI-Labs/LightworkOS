@@ -679,3 +679,70 @@ def test_empty_system_prompt_sends_no_system_block(monkeypatch, system):
         max_tokens=128, thinking_budget=None, model="claude-sonnet-4-6",
     )
     assert "system" not in kwargs
+
+
+# ---- an API key with no auth token must not send an empty bearer ----
+
+def _local_messages_server():
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    seen: list[dict] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("content-length", 0)))
+            seen.append({k.lower(): v for k, v in self.headers.items()})
+            body = json.dumps({
+                "id": "msg_1", "type": "message", "role": "assistant", "model": "m",
+                "content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn",
+                "stop_sequence": None, "usage": {"input_tokens": 1, "output_tokens": 1},
+            }).encode()
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, seen
+
+
+def test_admitted_api_key_without_auth_token_reaches_the_provider():
+    """The admitted-configuration path (``environment=``) used to pass
+    ``auth_token=""``. The SDK then sent ``Authorization: Bearer `` and the
+    HTTP layer refused it before any request left ("Illegal header value"),
+    so every call with an ordinary API key failed as a connection error."""
+    from maverick.providers.anthropic_provider import AnthropicClient
+
+    server, seen = _local_messages_server()
+    try:
+        env = {"ANTHROPIC_API_KEY": "sk-ant-test",  # pragma: allowlist secret
+               "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{server.server_port}"}
+        client = AnthropicClient(environment=env)
+        reply = client.client.messages.create(
+            model="m", max_tokens=5, messages=[{"role": "user", "content": "hi"}])
+    finally:
+        server.shutdown()
+    assert reply.content[0].text == "ok"
+    assert seen and seen[0].get("x-api-key") == "sk-ant-test"  # pragma: allowlist secret
+    assert "authorization" not in seen[0]
+
+
+def test_admitted_auth_token_is_still_sent_as_bearer():
+    from maverick.providers.anthropic_provider import AnthropicClient
+
+    server, seen = _local_messages_server()
+    try:
+        env = {"ANTHROPIC_AUTH_TOKEN": "tok-test",  # pragma: allowlist secret
+               "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{server.server_port}"}
+        AnthropicClient(environment=env).client.messages.create(
+            model="m", max_tokens=5, messages=[{"role": "user", "content": "hi"}])
+    finally:
+        server.shutdown()
+    assert seen[0].get("authorization") == "Bearer tok-test"  # pragma: allowlist secret

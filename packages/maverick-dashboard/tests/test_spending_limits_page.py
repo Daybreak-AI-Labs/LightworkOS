@@ -22,12 +22,20 @@ def test_page_starts_with_no_limits_and_plain_controls(client):
     r = client.get("/spending-limits")
     assert r.status_code == 200
     text = r.text
-    assert "By default there is no limit" in text
+    assert "By default there is no daily or monthly limit" in text
+    # The chat composer shows the per-task limit; this page names it too, so
+    # "no limit" here never contradicts "Task limits: up to $X" there.
+    from maverick.runner import configured_max_dollars
+    cap = configured_max_dollars()
+    if cap is not None:
+        assert f"Each task also stops at its own task limit: ${cap:,.2f} per task" in text
+    else:
+        assert "Tasks have no per-task limit either" in text
     for action in ("/spending-limits/workspace", "/spending-limits/default"):
         assert f'action="{action}"' in text
     assert "per task" in text and "per day" in text and "per month" in text
     # No developer language in the page's own content (the shared menu aside).
-    body = text[text.index("By default there is no limit"):text.index("reset at midnight UTC")]
+    body = text[text.index("By default there is no daily or monthly limit"):text.index("reset at midnight UTC")]
     for word in ("principal", "tenant", "JSON", "config.toml", "maverick "):
         assert word not in body
 
@@ -136,7 +144,7 @@ def test_page_says_when_spending_was_updated_and_when_alerts_arrive(client):
     stamp = spending_limits.spend_recorded_at()
     page = client.get("/spending-limits").text
     # The label carries the ledger's own time, which the page script shows as "x minutes ago".
-    assert "Spending updated <time" in page and f'data-mv-time="{stamp:.3f}"' in page
+    assert "Newest spending recorded <time" in page and f'data-mv-time="{stamp:.3f}"' in page
 
 
 def test_spend_page_freshness_comes_from_the_newest_cost(client):
@@ -200,3 +208,13 @@ def test_saving_a_limit_is_recorded_in_the_audit_log(client, monkeypatch):
                     follow_redirects=False)
     assert r.status_code == 303
     assert events, "saving a spending limit must write an audit record"
+
+
+@pytest.mark.parametrize("cap,words", [
+    (25000.01, "Each task also stops at its own task limit: $25,000.01 per task"),
+    (None, "Tasks have no per-task limit either"),
+])
+def test_page_names_the_per_task_limit_the_composer_shows(client, monkeypatch, cap, words):
+    from maverick import runner
+    monkeypatch.setattr(runner, "configured_max_dollars", lambda: cap)
+    assert words in client.get("/spending-limits").text

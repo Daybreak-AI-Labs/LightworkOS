@@ -226,6 +226,7 @@ templates.env.filters["identity"] = _idfmt.humanize_principal
 templates.env.filters["role_label"] = _idfmt.role_label
 templates.env.filters["permission_label"] = _idfmt.permission_label
 templates.env.filters["humanize"] = _idfmt.humanize
+templates.env.filters["known_label"] = _idfmt.known_label
 from .approval_labels import action_label as _approval_action_label  # noqa: E402
 
 templates.env.globals["approval_action_label"] = _approval_action_label
@@ -305,6 +306,10 @@ def _suggestions_enabled() -> bool:
 
 
 templates.env.globals["suggestions_enabled"] = _suggestions_enabled
+
+from . import governance_sections as _governance_sections  # noqa: E402
+
+_governance_sections.register(templates.env)
 
 
 from .i18n import t as _i18n_t  # noqa: E402
@@ -3521,15 +3526,14 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
         from .tenant_select_page import tenant_select_response
 
         return tenant_select_response(request, templates, detail=str(exc.detail))
-    if (
-        exc.status_code == 401
-        and _wants_html(request)
-        and request.method == "GET"
-    ):
+    from . import browser_signin
+
+    if exc.status_code == 401 and browser_signin.is_browser_navigation(request):
         # A browser navigating to a protected page with no valid session should
         # land on the sign-in flow, not a static "sign in required" page. Only
         # when a browser login provider is actually configured (OIDC); otherwise
         # fall through to the branded page below (there is nowhere to send them).
+        # Bearer, non-GET and API requests keep the JSON 401 (browser_signin).
         try:
             from maverick.oidc import login_enabled as _login_enabled
 
@@ -3537,15 +3541,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
         except Exception:  # pragma: no cover - never turn an auth error into a 500
             login_on = False
         if login_on:
-            from urllib.parse import quote
-
-            return_to = request.url.path
-            if request.url.query:
-                return_to = f"{return_to}?{request.url.query}"
-            return RedirectResponse(
-                f"/auth/login?return_to={quote(return_to, safe='')}",
-                status_code=302,
-            )
+            return RedirectResponse(browser_signin.sign_in_url(request), status_code=302)
         from .local_owner import claimed as local_owner_claimed
         from .local_passphrases import available as passphrase_sign_in
 
@@ -3604,7 +3600,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
 
             gate = "off"
             label = unquote(headers.get(feature_gate.LABEL_HEADER, ""))
-            title = f"{label} is turned off" if label else "This page is turned off"
+            title = f"{label}: turned off" if label else "This page is turned off"
             message = (
                 "This feature is turned off for your workspace, or its settings "
                 "could not be read. An administrator can turn it on in Settings."
@@ -3875,18 +3871,20 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
               reference, occurred_at, request.method, route,
               exc_info=(type(exc), exc, exc.__traceback__))
     headers = {"Cache-Control": "private, no-store", "X-Lightwork-Failure-Reference": reference}
-    from maverick.service_status import READ_ONLY_REFUSAL, is_read_only_error
+    from maverick.service_status import READ_ONLY_REFUSAL, database_refusal, is_read_only_error
 
     # A write refused by a read-only database says what broke, that
     # saved work is safe and what to do, never the database error itself.
+    # A database setup refusal shows the fix maverick doctor prints.
     read_only = is_read_only_error(exc)
-    status = 503 if read_only else 500
+    database_error = database_refusal(exc)
+    status = 503 if read_only or database_error else 500
     if _wants_html(request):
         try:
             return templates.TemplateResponse(
                 request, "500.html", {"failure_reference": reference, "failure_time": occurred_at,
                                       "uncertain_mutation": request.method not in {"GET", "HEAD"},
-                                      "read_only_error": read_only},
+                                      "read_only_error": read_only, "database_error": database_error},
                 status_code=status, headers=headers,
             )
         except Exception:
@@ -3898,7 +3896,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
                 f'<a href="/help?failure={reference}">Open Help</a></html>',
                 status_code=500, headers=headers,
             )
-    detail = READ_ONLY_REFUSAL if read_only else (
+    detail = READ_ONLY_REFUSAL if read_only else database_error or (
         "The request could not be completed. Check its current state before retrying a change.")
     return JSONResponse({"detail": detail, "failure_reference": reference, "occurred_at": occurred_at},
                         status_code=status, headers=headers)
@@ -11488,6 +11486,7 @@ def chat_page(request: Request, compose: str = "") -> HTMLResponse:
     from maverick import flow
     from maverick.runner import configured_max_dollars, configured_max_wall_seconds
 
+    from .api import task_limit_ceilings
     from .onboarding_state import workspace_readiness
 
     compose_form = compose == "form"
@@ -11538,6 +11537,7 @@ def chat_page(request: Request, compose: str = "") -> HTMLResponse:
             "director_profiles": _director_choices(),
             "goal_max_dollars": configured_max_dollars(),
             "goal_max_wall_seconds": configured_max_wall_seconds(),
+            "task_limit_ceilings": task_limit_ceilings(),
             "flows_enabled": flow.enabled(),
             "can_enable_flows": has_global_permission(request, "admin") and "MAVERICK_FLOWS" not in os.environ,
             # What Lightwork can do (examples for the person's department) and
@@ -11741,8 +11741,18 @@ def _dispatch_goal(request: Request, bg: BackgroundTasks, goal_id: int, *, conve
                 raise HTTPException(409, "Your specialist access changed. Reopen Chat and review the current choices before starting.")
     current_start_guard()
     kwargs["effect_guard"] = current_start_guard
+    # Limits the person set for this task, bound into the submission so a
+    # recovered draft runs under them too. Each only narrows another cap.
+    from maverick.runner import clamp_task_limit
+
+    own = receipt.get("detail", {}).get("task_limits") or {}
+    if not isinstance(own, dict) or not set(own) <= {"max_dollars", "max_wall_seconds"}:
+        raise HTTPException(409, "This task's limits cannot be verified. Start a new task with the limits you want.")
+    max_dollars = clamp_task_limit(max_dollars, own.get("max_dollars"))
     if max_dollars is not None:
         kwargs["max_dollars"] = max_dollars
+    if own.get("max_wall_seconds") is not None:
+        kwargs["max_wall_seconds"] = own["max_wall_seconds"]
     if conversation_id is not None:
         kwargs["conversation_id"] = conversation_id
     user_id = execution_user_id_from_request(request)
@@ -11824,10 +11834,16 @@ async def chat_send(
     specialist_context: str = Form(""),
     specialist_revision: str = Form(""),
     value_opportunity: str = Form(""),
+    max_dollars: str = Form(""),
+    max_minutes: str = Form(""),
 ) -> RedirectResponse:
     _require_same_origin(request)
     require_permission(request, "operate")
     require_provider_or_400()
+    from .api import person_task_limits
+
+    # The person's own limits for this task: checked before anything is saved.
+    task_limits = person_task_limits(max_dollars, max_minutes)
     check_goal_rate_limit(request)
     from .task_model_selection_api import effect_guard as task_ai_guard
     from .task_model_selection_api import selection as select_task_ai
@@ -11904,6 +11920,7 @@ async def chat_send(
                            task_selection=task_selection,
                            specialist_selection={"name": chosen_specialist, "context": specialist_context,
                                                  "revision": specialist_revision} if chosen_specialist else None,
+                           task_limits=task_limits or None,
                            effect_guard=start_guard)
     start_guard()
     goal_id = receipt["goal_id"]
@@ -14078,10 +14095,14 @@ def errors_page(request: Request, goal_id: int) -> HTMLResponse:
         raise HTTPException(status_code=404, detail="no such goal")
     assert_goal_access(request, g)
     errors = [e for e in w.goal_events(goal_id, limit=10_000) if e.kind == "error"]
+    from maverick.stop_reasons import stop_payload
+
+    # A refusal (evidence check, setup, limits) records no error event; its
+    # plain reason and fix still belong on this tab.
     return templates.TemplateResponse(
         request,
         "errors.html",
-        {"goal": g, "errors": errors},
+        {"goal": g, "errors": errors, "stop": stop_payload(g.status, g.result)},
     )
 
 

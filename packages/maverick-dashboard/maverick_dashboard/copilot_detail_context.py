@@ -14,12 +14,12 @@ from fastapi import HTTPException, Request
 from .copilot_context import CopilotPageContext, record_detail_for_page
 
 
-def _label(value: object, fallback: str) -> str:
+def _label(value: object, fallback: str, limit: int = 80) -> str:
     """Bound record labels for the text-only panel, without changing their meaning."""
 
     text = " ".join(str(value or "").split())
     text = "".join(char for char in text if not category(char).startswith("C"))
-    return text[:80] if text else fallback
+    return text[:limit] if text else fallback
 
 
 def _status(value: object) -> str:
@@ -69,7 +69,8 @@ def authorized_detail_context(
         section = parts[1] if kind == "task" else ""
         opening = f"Task ‘{title}’ has status: {status}."
         stop = stop_payload(goal.status, getattr(goal, "result", None))
-        reason = _label(stop.get("message"), "") if stop and stop.get("kind") != "other" else ""
+        # A stop explanation is a few plain sentences; a label bound would cut its cause.
+        reason = _label(stop.get("message"), "", 400) if stop and stop.get("kind") != "other" else ""
         current = f"{opening} {reason}".strip()
         if section == "errors":
             next_step = "Review this task's error list and current result before retrying."
@@ -79,6 +80,9 @@ def authorized_detail_context(
             next_step = "Review the plan and check which steps have finished."
         else:
             next_step = "Review the result and use the task tabs for its plan, timeline, or errors."
+        if stop and reason and stop.get("action"):
+            # A stopped task's own fix (who must do what, where) comes first.
+            next_step = _label(stop["action"], next_step, 400)
         return replace(
             context, title=context.title, summary=f"{current} {next_step}",
             next_steps=(current, next_step),

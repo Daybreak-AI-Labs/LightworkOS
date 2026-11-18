@@ -49,7 +49,10 @@ class AIPolicy:
         from maverick.paths import current_tenant_id_strict
 
         if not ai_policy_management.enabled():
-            raise HTTPException(404, "AI use rules are turned off.")
+            from .feature_gate import feature_off
+
+            # Turned off, not missing: the page says so instead of "no longer exists".
+            raise feature_off("ai_policy_management", detail="AI use rules are turned off.")
         if current_tenant_id_strict() is None:
             raise HTTPException(409, "Choose a workspace before suggesting changes to its rules.")
         return ai_policy_management.configured_policy_management()

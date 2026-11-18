@@ -424,7 +424,7 @@ def test_assurance_modules_lazy_load_each_read_group_once():
     # in the generic summary loader too would issue duplicate draft reads.
     assert '["ai-business-intake-panel",' not in page
     intake = _intake_controller(page)
-    assert intake.count("run(initialize);") == 1
+    assert intake.count("run(initialize,{focus:false});") == 1
     assert "await api('/form')" in intake
     assert "await list();" in intake
 

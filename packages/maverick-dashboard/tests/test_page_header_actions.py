@@ -69,7 +69,7 @@ def test_agent_and_workforce_cards_use_plain_buttons():
 MIGRATED_HEADERS = {
     "404.html": "'Page not found'", "500.html": "'Something went wrong'", "error.html": "title",
     "flow_run.html": "'Flow run'", "budget_guidance.html": "ui('Your budget before work starts')",
-    "commitment_viability.html": "'Promise reviews'", "content_access.html": "'Content access'",
+    "commitment_viability.html": "'Commitment reviews'", "content_access.html": "'Content access'",
     "conversations.html": "'My conversations'", "cost_reconciliation.html": "'Compare cost records'",
     "deliverable_bundles.html": "'Selected deliverable bundles'", "devices.html": "'Your paired devices'",
     "employee_activation.html": 'ui("Your first useful result")',
@@ -101,3 +101,21 @@ def test_rendered_error_page_uses_the_header_and_its_main_action(client):
     assert '<h1 class="page-title hero-title" id="page-hero-title">Page not found</h1>' in page
     actions = re.search(r'<div class="hero-actions">(.*?)</div>', page, re.DOTALL).group(1)
     assert 'class="btn btn--primary" href="/">Go to the overview</a>' in actions
+
+
+@pytest.mark.parametrize("path", ["/action-center", "/run-tree"])
+def test_working_pages_use_the_shared_header_card(client, path):
+    # Action Center and Task branches had a bare heading where every other
+    # page shows the shared header card.
+    page = client.get(path)
+    assert page.status_code == 200, path
+    assert re.search(r'<section class="hero[^"]*"', _view(page.text)), path
+
+
+@pytest.mark.parametrize("path", ["/workflows", "/automations"])
+def test_page_content_spans_the_same_width_as_the_header(client, path):
+    # An 880px column inside the page made these pages narrower than their
+    # header card and than every other page.
+    page = client.get(path)
+    assert page.status_code == 200, path
+    assert "max-width: 880px" not in page.text

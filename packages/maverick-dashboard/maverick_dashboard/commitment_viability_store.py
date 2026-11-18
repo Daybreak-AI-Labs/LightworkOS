@@ -59,9 +59,9 @@ def _digest(value: object) -> str:
 
 def _owned(record: dict | None, context: str) -> dict:
     if record is None or not hmac.compare_digest(str(record.get("context") or ""), context):
-        raise LookupError("This promise review is unavailable in your account and workspace.")
+        raise LookupError("This commitment review is unavailable in your account and workspace.")
     if record.get("schema") != SCHEMA:
-        raise RecordConflict("This promise review has an unsupported saved format.")
+        raise RecordConflict("This commitment review has an unsupported saved format.")
     return record
 
 
@@ -77,7 +77,7 @@ def archived_get(identifier: str, context: str) -> dict:
     archive = ARCHIVE.get(_archive_id(identifier))
     if (archive is None or archive.get("schema") != ARCHIVE_SCHEMA
             or not hmac.compare_digest(str(archive.get("context") or ""), context)):
-        raise LookupError("This promise review is unavailable in your account and workspace.")
+        raise LookupError("This commitment review is unavailable in your account and workspace.")
     archive = _settle_archive_audit(archive)
     source = archive.get("source")
     if (not isinstance(source, dict) or source.get("id") != identifier
@@ -352,7 +352,7 @@ def _repeat_or_update(identifier: str, context: str, actor: str, expected_revisi
             return latest
         raise
     if saved is None:
-        raise LookupError("This promise review is no longer available.")
+        raise LookupError("This commitment review is no longer available.")
     return _settle_audit(saved)
 
 
@@ -489,7 +489,7 @@ def _mark_retirement(identifier: str, context: str, actor: str, body: dict) -> d
                 raise
             saved = latest
         if saved is None:
-            raise LookupError("This promise review is no longer available.")
+            raise LookupError("This commitment review is no longer available.")
         current = _settle_audit(saved)
     if current.get("_audit_pending"):
         raise CommitmentAuditPending("The archive request was saved, but its activity receipt is pending. Refresh and retry the same request.")

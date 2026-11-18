@@ -437,6 +437,12 @@ def test_tool_prices_are_set_on_the_prices_page_and_through_the_copilot(monkeypa
     origin = {"origin": "http://127.0.0.1"}
     page = c.get("/settings").text
     assert "Prices for paid tool services" in page and "Safety ceiling: $0.10 per call" in page
+    # Every row offers an action, and confirmation boxes sit beside their words.
+    import re
+    rows = re.findall(r"<tr>(.*?)</tr>", page.split("data-tool-prices", 1)[1].split("</table>", 1)[0], re.DOTALL)
+    assert rows and all(not cell.strip().endswith("<td></td>") for cell in rows)
+    assert 'href="#settings-tool-price-form">Set a price</a>' in page
+    assert '<label class="settings-field"><input type="checkbox"' not in page
     saved = c.post("/settings/tools/price", data={"service": "deepl", "dollars": "0.001",
                                                  "per": "character", "confirm": "on"},
                    headers=origin, follow_redirects=False)

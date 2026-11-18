@@ -130,6 +130,18 @@ def test_task_limit_standard_choice(client):
     assert "each task follows your installation's standard limits" in client.get("/settings").text
 
 
+def test_task_limit_row_shows_the_effective_amount(client, monkeypatch):
+    """Settings said only "standard limits" while tasks stopped at $2: the
+    row names the amount and time a task actually stops at."""
+    import maverick.runner as runner
+    client.post("/settings/budget", data={"mode": "default", "max_dollars": ""}, follow_redirects=False)
+    monkeypatch.setattr(runner, "configured_max_dollars", lambda: 2.0)
+    monkeypatch.setattr(runner, "configured_max_wall_seconds", lambda: 1800.0)
+    page = client.get("/settings").text
+    assert 'id="settings-task-limit"' in page
+    assert "it stops after spending $2.00 or running for 30 minutes" in page
+
+
 # ---- Maintenance tab APIs ---------------------------------------------------
 
 def test_system_checks_require_admin(client, monkeypatch):

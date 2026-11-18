@@ -76,6 +76,13 @@ def parse_networks(entries: list | tuple) -> tuple[list[_Network], list[str]]:
 
 
 def _peer_is_trusted_proxy(host: str) -> bool:
+    from ._request_memo import memoized
+
+    # Asked by several middlewares and the sign-in check of every request.
+    return memoized(f"peer_is_trusted_proxy:{host}", lambda: _peer_trusted_now(host))
+
+
+def _peer_trusted_now(host: str) -> bool:
     try:
         from maverick.proxy_auth import proxy_trusts
 
