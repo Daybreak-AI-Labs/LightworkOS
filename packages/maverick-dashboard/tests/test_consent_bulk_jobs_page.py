@@ -87,6 +87,13 @@ def test_workbench_is_store_free_closed_and_copilot_enabled(client: TestClient) 
     assert developer_terms(response.text) == []
 
 
+def test_no_element_carries_an_inline_style_the_policy_would_block(client: TestClient) -> None:
+    # style-src has no 'unsafe-inline', so a style attribute is refused and logged.
+    parser = _Markup()
+    parser.feed(client.get(ROUTE).text)
+    assert [(tag, attrs) for tag, attrs in parser.tags if "style" in attrs] == []
+
+
 def test_jobs_are_rows_with_buttons_and_the_export_downloads_from_its_row(
     client: TestClient,
 ) -> None:
