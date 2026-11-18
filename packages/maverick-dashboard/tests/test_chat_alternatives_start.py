@@ -16,6 +16,9 @@ from fastapi.testclient import TestClient
 from maverick.oidc import VerifiedPrincipal
 
 ORIGIN = {"Origin": "http://127.0.0.1"}
+# The live roster entry's shape: an Auth0 subject for a Google sign-in.
+ADMIN_SUB = "google-oauth2|104857600123456789"
+ADMIN = "user:" + ADMIN_SUB
 RUNS: dict[int, tuple] = {}
 
 
@@ -30,7 +33,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(world_model, "DEFAULT_DB", tmp_path / "world.db")
     for name in ("MAVERICK_TENANT", "MAVERICK_DASHBOARD_TOKEN"):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("MAVERICK_DASHBOARD_ADMINS", "user:org-admin")
+    monkeypatch.setenv("MAVERICK_DASHBOARD_ADMINS", "user:someone-else," + ADMIN)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
     monkeypatch.setenv("MAVERICK_DASHBOARD_MAX_GOALS_PER_MIN", "1000")
     config.reset_config_cache()
@@ -43,7 +46,7 @@ def env(tmp_path, monkeypatch):
 
     registry.create_tenant("demo", display_name="Demo")
     rbac.set_tenant_role("demo", "user:member", "operator", actor="test")
-    for who in ("org-admin", "member"):
+    for who in (ADMIN_SUB, "member"):
         workspace_tenants.set_selection("user:" + who, "demo")
 
     # Stop at the model boundary: the orchestrator answers without an AI call.
@@ -146,3 +149,84 @@ def test_an_alternative_cannot_raise_the_workspace_limit(env):
         "message": source["message"], "answer_only": True, "max_dollars": "100000"})
     assert refused.status_code == 400
     assert "lower the workspace" in refused.text
+
+
+@pytest.mark.parametrize("action", ["retry", "edit", "branch"])
+def test_an_installation_administrator_s_alternative_starts_like_new_work(env, action):
+    """Live goal 40: a roster administrator (Google sign-in through Auth0, no
+    named membership in a workspace that has members) starts new work, but the
+    runner refused Try again / Edit / Branch at start with "The task owner no
+    longer has workspace execution permission". The start-time recheck must
+    resolve the role exactly as the request that admitted the work did."""
+    from maverick_dashboard import rbac
+
+    assert rbac.get_tenant_role("demo", ADMIN) is None  # no named membership
+    goal_id, context = _first_task(env, ADMIN_SUB)
+    first = _world().get_goal(goal_id)
+    assert first.status == "done"
+    assert first.owner == ADMIN  # stored exactly as the roster entry
+    new_id, _ = _alternative(env, ADMIN_SUB, goal_id, context, action)
+    goal = _world().get_goal(new_id)
+    assert goal.owner == ADMIN
+    assert goal.status == "done", goal.result
+
+
+def _change_before_start(monkeypatch, change):
+    """Change the owner's standing after the review was applied and before the
+    runner's start-time check: only that check can refuse the work."""
+    import maverick.runner as runner
+
+    real = runner.run_goal_in_background_async
+
+    def start(*args, **kwargs):
+        change()
+        return real(*args, **kwargs)
+    monkeypatch.setattr(runner, "run_goal_in_background_async", start)
+
+
+def _refused_at_start(client, who, goal_id, context, caplog, reason):
+    with caplog.at_level("WARNING", logger="maverick.runner"):
+        new_id, _ = _alternative(client, who, goal_id, context, "retry")
+    goal = _world().get_goal(new_id)
+    assert goal.status == "blocked"
+    assert new_id not in RUNS  # no model work started
+    assert f"goal #{new_id} not started: {reason}" in caplog.text
+    return goal
+
+
+def test_an_administrator_removed_from_the_roster_is_refused_at_start(env, monkeypatch, caplog):
+    """Without the roster entry the owner is a non-admin non-member."""
+    goal_id, context = _first_task(env, ADMIN_SUB)
+    _change_before_start(monkeypatch, lambda: monkeypatch.setenv("MAVERICK_DASHBOARD_ADMINS", "user:someone-else"))
+    goal = _refused_at_start(env, ADMIN_SUB, goal_id, context, caplog,
+                             "The task owner no longer has workspace execution permission")
+    assert goal.result == "start_refused:workspace_access"
+
+
+def test_a_deactivated_administrator_is_refused_at_start(env, monkeypatch, caplog):
+    from maverick_dashboard import subject_directory
+
+    goal_id, context = _first_task(env, ADMIN_SUB)
+    _change_before_start(monkeypatch, lambda: subject_directory.retire([ADMIN_SUB]))
+    goal = _refused_at_start(env, ADMIN_SUB, goal_id, context, caplog, "The task owner is no longer active")
+    assert goal.result == "start_refused:access"
+
+
+def test_a_demoted_member_is_refused_at_start(env, monkeypatch, caplog):
+    from maverick_dashboard import rbac
+
+    goal_id, context = _first_task(env, "member")
+    _change_before_start(monkeypatch, lambda: rbac.set_tenant_role("demo", "user:member", "viewer", actor="test"))
+    goal = _refused_at_start(env, "member", goal_id, context, caplog,
+                             "The task owner no longer has workspace execution permission")
+    assert goal.result == "start_refused:workspace_access"
+
+
+def test_a_non_admin_non_member_cannot_start_work_in_the_workspace(env):
+    from maverick_dashboard import workspace_tenants
+
+    workspace_tenants.set_selection("user:outsider", "demo")
+    sent = env.post("/chat/send", data={"title": "Write a short welcome note", "composer_mode": "message"},
+                    headers=_headers("outsider"), follow_redirects=False)
+    assert sent.status_code == 403, (sent.status_code, sent.text[:300])
+    assert not RUNS
