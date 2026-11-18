@@ -40,6 +40,7 @@ from . import third_party_lifecycle as lifecycle
 from .file_lock import cross_process_lock, ensure_private_directory, ensure_private_file
 from .paths import canonical_tenant_id
 from .sqlite_closing import ClosingConnection
+from .sqlite_initialized import InitializedFiles
 
 SCHEMA_VERSION = 1
 INVITATION_SCHEMA = "lightwork.third-party-collaboration-invitation.v1"
@@ -620,6 +621,10 @@ def _new_token(token_factory: Callable[[int], bytes]) -> tuple[str, str]:
     return token, hashlib.sha256(token.encode("ascii")).hexdigest()
 
 
+# The dashboard builds a store per request; its schema script runs once per file.
+_INITIALIZED = InitializedFiles()
+
+
 class ThirdPartyCollaborationStore:
     """Durable collaboration state bound to one lifecycle SQLite authority."""
 
@@ -656,7 +661,9 @@ class ThirdPartyCollaborationStore:
             )
         ).normalized()
         ensure_private_directory(self.path.parent)
-        self._initialize()
+        if not _INITIALIZED.current(self.path):
+            self._initialize()
+            _INITIALIZED.remember(self.path)
 
     def _actor(self) -> str:
         actor = self._principal_resolver()

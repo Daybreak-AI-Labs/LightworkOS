@@ -2329,3 +2329,28 @@ def test_audit_media_snapshot_covers_the_anchor_high_water(tmp_path):
     after = security_api._audit_media_snapshot([], tmp_path)
     assert ".anchors.highwater.json" in {name for name, *_ in after}
     assert before != after
+
+
+def test_security_pages_render_in_the_worker_pool_and_retry_audits_once(monkeypatch) -> None:
+    """The workspace lists its records about forty times per render, and each
+    list retried a batch of pending audit receipts first: seconds of record
+    loads on the event loop, which no other request could pass."""
+    import inspect
+
+    from maverick import security_ops
+
+    for path in ("/security", "/security/report"):
+        endpoints = [route.endpoint for route in app.routes if getattr(route, "path", None) == path]
+        assert endpoints and not any(inspect.iscoroutinefunction(e) for e in endpoints)
+    retries: list[int] = []
+    original = security_ops.retry_pending_audits
+
+    def counted(*, limit: int = 100) -> int:
+        retries.append(limit)
+        return original(limit=limit)
+
+    monkeypatch.setattr(security_ops, "retry_pending_audits", counted)
+    for path in ("/security", "/security/report"):
+        retries.clear()
+        assert client.get(path).status_code == 200
+        assert retries == [16], path

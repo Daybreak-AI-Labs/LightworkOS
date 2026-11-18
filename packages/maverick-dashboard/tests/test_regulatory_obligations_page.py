@@ -96,3 +96,14 @@ def test_page_is_registered_in_the_nav_registry() -> None:
     entry = next(p for p in ui_visibility.PAGES if p["path"] == page.PAGE_PATH)
     assert entry["group"] == "Govern" and entry["floor"] == "view"
     assert entry.get("in_nav", True) is True
+
+
+def test_page_renders_in_the_worker_pool_not_on_the_event_loop() -> None:
+    """The page checks its settings and permissions and renders the shell, all
+    file reads; FastAPI runs a plain ``def`` handler in its worker pool."""
+    import inspect
+
+    router = page.create_regulatory_obligations_page_router(_templates())
+    endpoints = [route.endpoint for route in router.routes if getattr(route, "path", None) == page.PAGE_PATH]
+    assert endpoints
+    assert not any(inspect.iscoroutinefunction(endpoint) for endpoint in endpoints)

@@ -42,7 +42,7 @@ def create_regulatory_obligations_page_router(templates: Jinja2Templates) -> API
     router = APIRouter(tags=["regulatory-obligations-console"])
 
     @router.get(PAGE_PATH, response_class=HTMLResponse, include_in_schema=False)
-    async def console(request: Request) -> HTMLResponse:
+    def console(request: Request) -> HTMLResponse:
         require_permission(request, "view")
         if any(key not in {"theme", "density", "font", "lang"} for key in request.query_params):
             raise HTTPException(status_code=404, detail="regulatory obligations unavailable")

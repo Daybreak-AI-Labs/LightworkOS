@@ -32,6 +32,7 @@ from typing import Any
 from .file_lock import ensure_private_directory, ensure_private_file
 from .paths import canonical_tenant_id
 from .sqlite_closing import ClosingConnection
+from .sqlite_initialized import InitializedFiles
 
 SCHEMA_VERSION = 1
 AUDIT_SCHEMA = "lightwork.third-party-lifecycle-audit.v1"
@@ -677,6 +678,10 @@ class IntegrityVerification:
     terminal_audit_sha256: str
 
 
+# The dashboard builds a store per request; its schema script runs once per file.
+_INITIALIZED = InitializedFiles()
+
+
 class ThirdPartyLifecycleStore:
     """Durable tenant-isolated lifecycle and assessment authority."""
 
@@ -695,7 +700,9 @@ class ThirdPartyLifecycleStore:
         self._clock = clock
         self._token_factory = token_factory
         ensure_private_directory(self.path.parent)
-        self._initialize()
+        if not _INITIALIZED.current(self.path):
+            self._initialize()
+            _INITIALIZED.remember(self.path)
 
     def _actor(self) -> str:
         actor = self._principal_resolver()

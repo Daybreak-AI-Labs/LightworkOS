@@ -85,18 +85,24 @@
   }
 
   // ---- lists ----------------------------------------------------------------
-  function loadInvitations(more) {
+  function fetchInvitations(more) {
     var query = "/invitations?limit=100" + (more && state.after ? "&after=" + encodeURIComponent(state.after) : "");
-    return R.call("GET", API + query).then(function (d) {
-      state.invitations = more ? state.invitations.concat(d.items || []) : (d.items || []);
-      state.after = d.next_after || null;
-      document.getElementById("tpc-more").hidden = !state.after;
-      render();
-    });
+    return R.call("GET", API + query);
+  }
+  function showInvitations(d, more) {
+    state.invitations = more ? state.invitations.concat(d.items || []) : (d.items || []);
+    state.after = d.next_after || null;
+    document.getElementById("tpc-more").hidden = !state.after;
+    render();
+  }
+  function loadInvitations(more) {
+    return fetchInvitations(more).then(function (d) { showInvitations(d, more); });
   }
   function loadAll() {
     say("Loading…");
+    // The list is asked for together with the names it shows, not after them.
     var jobs = [
+      canAudit ? fetchInvitations(false) : null,
       R.call("GET", LIFE + "/assessments").then(function (d) { state.assessments = d.items || []; }).catch(function () { state.assessments = []; }),
       R.call("GET", LIFE + "/templates").then(function (d) { state.templates = d.items || []; }).catch(function () { state.templates = []; }),
       R.call("GET", "/api/v1/vendors").then(function (d) {
@@ -104,9 +110,10 @@
       }).catch(function () { /* names fall back to the stored words */ }),
     ];
     if (canAdmin) { jobs.push(R.call("GET", API + "/sharing").then(function (d) { state.sharing = d; }).catch(function () { state.sharing = null; })); }
-    return Promise.all(jobs).then(function () {
+    return Promise.all(jobs).then(function (results) {
       if (!canAudit) { say("Only auditors and administrators can see invitations."); render(); return; }
-      return loadInvitations(false).then(function () { say("Up to date."); });
+      showInvitations(results[0], false);
+      say("Up to date.");
     }).catch(function (f) {
       fail("load the invitations")(f);
       // The list never stays on "Loading…": say what happened and offer a retry.

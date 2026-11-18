@@ -631,3 +631,94 @@ def test_lazy_store_forwards_evidence_measurement_only_for_its_own_tenant(allow_
     with pytest.raises(collaboration.ThirdPartyCollaborationPermissionDenied):
         material.store.measure_evidence("tenant-b", "token", content=b"x")
     assert measured == [("tenant-a", {"content": b"x"})]
+
+
+def test_one_internal_operation_reads_roster_and_policy_a_bounded_number_of_times(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    allow_policy,
+) -> None:
+    """Each roster read and each tenant-settings read is several file round
+    trips; the page's invitation list paid four of each before reading a row."""
+    _policy, loaded = allow_policy
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    reads: list[int] = []
+
+    def registry():
+        reads.append(1)
+        return [Tenant("tenant-a", True)]
+
+    class CapturingStore:
+        def __init__(self, _path: Path, **kwargs: Any) -> None:
+            kwargs["config_gate"]()
+
+        def list_invitations(self, tenant_id: str, **_kwargs: Any) -> dict[str, Any]:
+            return {"tenant_id": tenant_id, "items": []}
+
+    monkeypatch.setattr(collaboration, "ThirdPartyCollaborationStore", CapturingStore)
+    app = FastAPI()
+    composition.attach_third_party_collaboration_composition(
+        app,
+        routing_key_resolver=lambda: KEY,
+        tenant_registry_resolver=registry,
+    )
+    factory = app.state.third_party_collaboration_store_factory
+    store = factory(tenant_id="tenant-a", principal_ref="p", principal_resolver=lambda: "p")
+    assert store.list_invitations("tenant-a")["tenant_id"] == "tenant-a"
+    # The factory's check, then the builder's and the store gate's at construction.
+    assert (len(reads), len(loaded)) == (3, 2)
+    # A later operation on the same store checks again before it runs.
+    store.list_invitations("tenant-a")
+    assert (len(reads), len(loaded)) == (4, 3)
+
+    reads.clear()
+    loaded.clear()
+
+    def suspended():
+        reads.append(1)
+        return [Tenant("tenant-a", False)]
+
+    store = composition._LazyTenantCollaborationStore(
+        tenant_id="tenant-a",
+        principal_resolver=lambda: "p",
+        registry_resolver=suspended,
+        builder=composition.build_third_party_collaboration_store,
+    )
+    with pytest.raises(composition.ThirdPartyCollaborationCompositionError):
+        store.list_invitations("tenant-a")
+
+
+def test_internal_requests_skip_the_portal_limiter_thread_hop() -> None:
+    """Only public portal requests need peer metadata; every other request
+    used to wait for a worker thread first, even a stylesheet."""
+    app = FastAPI()
+    composition.attach_third_party_collaboration_composition(
+        app,
+        routing_key_resolver=lambda: KEY,
+        tenant_registry_resolver=lambda: [Tenant("tenant-a", True)],
+    )
+    limiter = app.state.third_party_collaboration_rate_limit
+    prepared: list[str] = []
+    original = limiter.prepare_request_context
+
+    def watched(request: Request):
+        prepared.append(request.url.path)
+        return original(request)
+
+    limiter.prepare_request_context = watched
+    portal = composition.derive_third_party_collaboration_portal_ref("tenant-a", KEY)
+
+    @app.get("/api/v1/third-party/collaboration/invitations")
+    def internal() -> dict[str, bool]:
+        return {"ok": True}
+
+    @app.get("/api/v1/external/third-party-collaboration/{portal_ref}/contract")
+    def external(portal_ref: str, request: Request) -> dict[str, str]:
+        request.app.state.third_party_collaboration_rate_limit("a" * 64, "contract")
+        return {"portal_ref": portal_ref}
+
+    client = TestClient(app, base_url="http://127.0.0.1")
+    assert client.get("/api/v1/third-party/collaboration/invitations").status_code == 200
+    assert prepared == []
+    assert client.get(f"/api/v1/external/third-party-collaboration/{portal}/contract").status_code == 200
+    assert prepared == [f"/api/v1/external/third-party-collaboration/{portal}/contract"]
