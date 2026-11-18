@@ -5,7 +5,7 @@
   if (!$('starter-team-schedules')) return;
   const base = '/api/v1/starter-team-schedules';
   let schedules = [], setups = [], teams = [], account = '', token = null;
-  let busy = false, generation = 0, opener = null;
+  let busy = false, generation = 0, listGeneration = 0, opener = null, catalog = null;
   const node = (tag, text, cls) => { const result = document.createElement(tag); if (text !== undefined) result.textContent = String(text); if (cls) result.className = cls; return result; };
   const selected = () => schedules.find(row => row.id === $('sts-saved').value);
   const text = value => String(value === null || value === undefined ? '' : value);
@@ -73,18 +73,22 @@
     } catch (error) { if (version === generation) $('sts-history').replaceChildren(node('p', error.message)); }
   }
   async function refresh(preferred) {
+    if (!catalog) return;
+    const version = ++listGeneration, currentCatalog = catalog;
     try {
-      const [current, catalog] = await Promise.all([api(''), window.mvFetchJSON('/api/v1/starter-teams', {credentials: 'same-origin'}, 'read your saved teams').catch(() => { throw new Error('Your saved teams are unavailable. Check workspace access and refresh.'); })]);
-      if (current.context !== catalog.context) throw new Error('Your workspace changed while loading. Refresh before reviewing scheduled work.');
+      const current = await api('');
+      if (version !== listGeneration) return;
+      if (current.context !== currentCatalog.context) throw new Error('Your workspace changed while loading. Refresh before reviewing scheduled work.');
       const old = $('sts-saved').value;
-      account = current.context; schedules = current.schedules; setups = catalog.setups; teams = catalog.teams;
+      account = current.context; schedules = current.schedules; setups = currentCatalog.setups; teams = currentCatalog.teams;
       $('sts-worker').textContent = current.worker && current.worker.running ? 'Background worker running while Lightwork is open. It advances only approved packages that are due.' : 'Background worker is not running. You can review a due run here; saving a schedule does not start a worker.';
       options($('sts-setup'), setups.map(row => [row.id, teamName(row) + ' - ' + row.owner_label]), $('sts-setup').value, 'Save a starter team first');
       options($('sts-saved'), schedules.map(row => [row.id, teamName(setups.find(item => item.id === row.setup_id)) + ' - ' + new Date(row.start_at * 1000).toISOString().slice(0, 16).replace('T', ' ') + ' UTC']), preferred || old, 'No reviewed schedules');
       $('sts-create-review').disabled = !setups.length;
       await showSchedule($('sts-saved').value !== old || !$('sts-tables').children.length);
+      if (version !== listGeneration) return;
       message(schedules.length + ' reviewed schedules. Each run still needs its own approved evidence package.'); restore();
-    } catch (error) { generation += 1; schedules = []; account = ''; $('sts-inbox').hidden = true; $('sts-history').replaceChildren(); $('sts-create-review').disabled = true; $('sts-tick').disabled = true; $('sts-pause').disabled = true; options($('sts-saved'), [], '', 'Unavailable'); message(error.message); }
+    } catch (error) { if (version !== listGeneration) return; generation += 1; schedules = []; account = ''; $('sts-inbox').hidden = true; $('sts-history').replaceChildren(); $('sts-create-review').disabled = true; $('sts-tick').disabled = true; $('sts-pause').disabled = true; options($('sts-saved'), [], '', 'Unavailable'); message(error.message); }
   }
   async function review(action, arguments_) {
     if (busy || token) return; busy = true; opener = document.activeElement;
@@ -111,6 +115,19 @@
   $('sts-cancel').addEventListener('click', () => { if (!busy) { $('sts-review').close(); token = null; remember(); if (opener) opener.focus(); } });
   $('sts-review').addEventListener('cancel', event => { if (busy) event.preventDefault(); else { token = null; remember(); } });
   $('sts-refresh').addEventListener('click', () => refresh());
-  document.addEventListener('lightwork:starter-team-selected', () => { if (!busy && !token) refresh(); });
-  refresh();
+  // The team page owns catalogue loading. Do not touch the schedules API
+  // until an eligible catalogue is loaded, and reuse that result.
+  document.addEventListener('lightwork:starter-team-catalogue', event => {
+    const previousContext = catalog && catalog.context;
+    catalog = event.detail && event.detail.preview_only !== true ? event.detail : null;
+    listGeneration++; generation++;
+    if (!catalog) {
+      $('sts-review').close();
+      return;
+    }
+    if ((previousContext || account) && (previousContext || account) !== catalog.context) {
+      token = null; account = ''; remember(); $('sts-review').close();
+    }
+    if (!busy && !token) refresh();
+  });
 })();

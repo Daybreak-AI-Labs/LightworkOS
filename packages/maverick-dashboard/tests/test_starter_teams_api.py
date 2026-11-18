@@ -351,8 +351,12 @@ def test_ordinary_page_exposes_inputs_review_and_recovery(web):
 def test_starter_page_scripts_are_served_by_asset_allowlist(web, script):
     client, _ = web
     page = client.get("/starter-teams")
-    assert f"/static/{script}" in page.text
-    asset = client.get(f"/static/{script}")
+    from maverick_dashboard.app import static_url
+
+    versioned = static_url(script)
+    assert f"/static/{script}?v=" in versioned
+    assert f'src="{versioned}"' in page.text
+    asset = client.get(versioned)
     assert asset.status_code == 200, asset.text
     assert "javascript" in asset.headers["content-type"]
     assert "async function confirm" in asset.text
@@ -519,9 +523,63 @@ def test_postgres_catalog_and_fixture_preview_do_not_use_durable_service(web, mo
     assert client.get(BASE + "/preview/order_management").status_code == 503
 
 
+def test_postgres_generic_preview_has_no_licensed_or_durable_access(web, monkeypatch):
+    client, state = web
+    monkeypatch.setenv("MAVERICK_WORLD_BACKEND", "postgres")
+    monkeypatch.setenv("MAVERICK_PG_DSN", "postgresql://example.invalid/test")
+    demo_path = BASE + "/preview/" + native.GENERIC_DEMO_ID
+
+    def no_store(_request):
+        pytest.fail("generic preview opened the durable starter-team service")
+
+    monkeypatch.setattr(native, "service", no_store)
+    assert "synthetic_demo" not in client.get(BASE).json()
+
+    def deny_team(_request, team):
+        assert team["id"] != native.GENERIC_DEMO_ID
+        raise HTTPException(403, "Current department access denied")
+
+    monkeypatch.setattr(native, "require_team", deny_team)
+    catalogue = client.get(BASE).json()
+    assert catalogue["preview_only"] is True
+    assert catalogue["teams"] == catalogue["setups"] == []
+    assert catalogue["synthetic_demo"]["id"] == native.GENERIC_DEMO_ID
+
+    def no_licensed_evaluation(*_args, **_kwargs):
+        pytest.fail("generic preview used the licensed team evaluator")
+
+    monkeypatch.setattr(starter_team_checks, "evaluate", no_licensed_evaluation)
+    response = client.get(demo_path)
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "private, no-store"
+    value = response.json()
+    assert value["mode"] == "synthetic_preview" and value["saved"] is False
+    output = value["output"]
+    assert output["usage"] == {"provider_calls": 0, "tool_calls": 0, "dollars": 0}
+    assert output["external_effects"] == []
+    assert [row["row_id"] for row in output["evidence"]] == ["example-001", "example-002"]
+    assert [finding["id"] for finding in output["findings"]] == ["missing_reviewer:example-002"]
+    assert output["business_acceptance"] == "pending_human_review"
+    state["context"] = replace(state["context"], tenant="another-tenant", actor="user:another")
+    assert client.get(demo_path).json() == value
+    assert client.get(BASE + "/preview/order_management").status_code == 403
+
+    state["context"] = replace(state["context"], human=False)
+    assert "synthetic_demo" not in client.get(BASE).json()
+    assert client.get(demo_path).status_code == 403
+
+    def no_workspace(_request):
+        raise HTTPException(409, "Choose a workspace before opening starter teams.")
+
+    monkeypatch.setattr(native, "context", no_workspace)
+    assert client.get(demo_path).status_code == 409
+
+
 def test_local_backend_retains_reviewed_workflow_without_unsaved_preview(web):
     client, _ = web
     assert "preview_only" not in client.get(BASE).json()
+    assert "synthetic_demo" not in client.get(BASE).json()
     assert client.get(BASE + "/preview/order_management").status_code == 404
+    assert client.get(BASE + "/preview/" + native.GENERIC_DEMO_ID).status_code == 404
     saved, _ = _save(client)
     assert client.get(BASE).json()["setups"][0]["id"] == saved["id"]

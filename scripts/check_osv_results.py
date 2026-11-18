@@ -78,6 +78,38 @@ ACCEPTED_RISKS = (
                   "Metro measures the app's images and those shipped in its locked npm packages; the "
                   "infinite loop needs a crafted JXL, HEIF or ICNS file among them. Remove this entry with the "
                   "React Native and Expo SDK upgrade.",
+    },    {
+        "lockfile": "apps/desktop/src-tauri/Cargo.lock",
+        "package": {"name": "chrono", "version": "0.4.45", "ecosystem": "crates.io"},
+        "advisories": frozenset({"RUSTSEC-2026-0543"}),
+        "accepted": "2026-11-17",
+        "review_by": "2027-02-17",
+        "reason": "An unmaintained-crate notice, not a vulnerability: RUSTSEC-2026-0543 lists no "
+                  "affected function and no fixed release. chrono is not a direct dependency; "
+                  "serde_with (through the Tauri stack) pulls it in. Remove this entry when serde_with drops chrono or "
+                  "a vulnerability is reported against it.",
+    },
+    {
+        "lockfile": "apps/installer-desktop/src-tauri/Cargo.lock",
+        "package": {"name": "chrono", "version": "0.4.45", "ecosystem": "crates.io"},
+        "advisories": frozenset({"RUSTSEC-2026-0543"}),
+        "accepted": "2026-11-17",
+        "review_by": "2027-02-17",
+        "reason": "An unmaintained-crate notice, not a vulnerability: RUSTSEC-2026-0543 lists no "
+                  "affected function and no fixed release. chrono is not a direct dependency; "
+                  "serde_with (through the Tauri stack) pulls it in. Remove this entry when serde_with drops chrono or "
+                  "a vulnerability is reported against it.",
+    },
+    {
+        "lockfile": "examples/clients/rust/Cargo.lock",
+        "package": {"name": "chrono", "version": "0.4.44", "ecosystem": "crates.io"},
+        "advisories": frozenset({"RUSTSEC-2026-0543"}),
+        "accepted": "2026-11-17",
+        "review_by": "2027-02-17",
+        "reason": "An unmaintained-crate notice, not a vulnerability: RUSTSEC-2026-0543 lists no "
+                  "affected function and no fixed release. chrono is not a direct dependency; "
+                  "the MCP client library rmcp and schemars pulls it in. Remove this entry when rmcp drops chrono or "
+                  "a vulnerability is reported against it.",
     },
 )
 

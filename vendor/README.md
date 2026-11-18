@@ -11,6 +11,7 @@ these local sources.
 | `glib` 0.18.5 | Backport [gtk-rs/gtk-rs-core#1343](https://github.com/gtk-rs/gtk-rs-core/pull/1343): pass a mutable out-pointer in `VariantStrIter::impl_get`. | RUSTSEC-2024-0429 / GHSA-wrw7-89jp-8q8g; fixes undefined behavior in optimized iteration without changing the GTK3 ABI. |
 | `glib-macros` 0.18.5 and `gtk3-macros` 0.18.2 | Replace `proc-macro-error` with the maintained `proc-macro-error3` 3.1.1 with its Syn 2 integration. | RUSTSEC-2024-0370; removes the abandoned macro implementation and its attribute crate. |
 | `deepmerge` 4.3.1 | Local private package `@lightwork/deepmerge`; reject `__proto__`, `constructor`, and `prototype` while copying either operand, including nested objects. | GHSA-gcqx-w48m-w2h4; prevents target-side and null-prototype-source poisoning while preserving the merge API used by Svelte and by Expo's config loader. |
+| `picomatch` 2.3.2, 3.0.2 and 4.0.7 | Use licensed local copies with repeated extended glob operators disabled at parser admission. | CVE-2026-112366 / GHSA-fc5q-39xc-vjpf. Ordinary glob syntax and other extended glob operators remain supported. Remove these copies when each required registry line has a verified fix. |
 
 The Tauri utility lock is separately updated to 2.10.2, which uses `urlpattern`
 0.6 and ICU instead of the abandoned `unic-*` dependency family.
@@ -34,6 +35,17 @@ SDK 52 can load, so `ACCEPTED_RISKS` in `scripts/check_osv_results.py` records
 them, with the reason and a review date, for that lockfile and exact version
 only. The remediation record lists them separately, and the gate fails again
 on a new advisory or once the review date passes.
+
+The installer pnpm graph and the mobile npm graph resolve the hardened Picomatch
+copies above. Build metadata preserves dependency ranges without presenting
+the sources as a new upstream release. Mobile stores the reviewed sources as
+checksum-pinned npm archives; npm 10 cannot reliably freeze the same nested
+directory links. From each mobile Picomatch source directory, use Node
+22.23.1's npm 10.9.8 and `npm pack --ignore-scripts --pack-destination
+../../archives` to reproduce the archive. CI checks every local source and
+license hash, each archive against the exact sources, every dependency alias,
+and parser regressions. The unchanged OSV scan still covers registry
+dependencies.
 
 Validation includes optimized GLib string-iterator operations, macro-derived
 GLib types, Unicode URL patterns, prototype-poisoning regressions, the Svelte

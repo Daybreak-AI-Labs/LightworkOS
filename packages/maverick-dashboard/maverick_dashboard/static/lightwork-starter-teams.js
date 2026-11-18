@@ -4,7 +4,10 @@
   const $ = id => document.getElementById(id);
   const base = '/api/v1/starter-teams';
   let teams = [], setups = [], token = null, busy = false, opener = null, historyGeneration = 0, accountContext = null;
-  let editedTeam = null, inputSetup = null, previewOnly = false, previewGeneration = 0;
+  let editedTeam = null, inputSetup = null, previewOnly = false, previewGeneration = 0, catalogGeneration = 0;
+  const CATALOG_TIMEOUT_MS = 10000;
+  const GENERIC_DEMO_ID = 'generic_synthetic_demo';
+  let genericDemoAvailable = false;
   const element = (tag, text, className) => { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; if (className) node.className = className; return node; };
   const pretty = value => Array.isArray(value) ? value.join('\n') : typeof value === 'object' ? Object.entries(value || {}).map(([key, item]) => key + ': ' + item).join('\n') : String(value);
   const selectedTeam = () => teams.find(team => team.id === $('st-team').value);
@@ -20,9 +23,10 @@
   async function api(path, body) {
     return window.mvFetchJSON(base + path, {
       method: body === undefined ? 'GET' : 'POST', credentials: 'same-origin',
+      ...(path === '' ? {timeout: CATALOG_TIMEOUT_MS} : {}),
       headers: {'Accept': 'application/json', 'Content-Type': 'application/json'}, body,
       serverDetail: 'This work could not be completed. Check the selected workspace and try again.',
-      messages: {unreadable: 'The response could not be read. Check the original result before trying again.'}
+      messages: {timeout: 'Loading teams took too long.', unreadable: 'The response could not be read. Check the original result before trying again.'}
     }, 'check the starter-team work');
   }
   function addList(host, title, values) {
@@ -132,33 +136,72 @@
     try { const value = await api('/setups/' + encodeURIComponent(setup.id) + '/cases'); if (generation !== historyGeneration) return; const host = $('st-history'); host.replaceChildren(); if (!value.cases.length) host.appendChild(element('p', 'No results yet. Start with the bundled sample.')); value.cases.forEach(row => renderCase(row, host)); }
     catch (error) { if (generation === historyGeneration) $('st-history').replaceChildren(element('p', error.message)); }
   }
+  function publishCatalog(value) {
+    document.dispatchEvent(new CustomEvent('lightwork:starter-team-catalogue', {detail: value}));
+  }
+  function savedPanels(hidden) {
+    ['st-setup-panel', 'st-saved-panel', 'st-history-panel', 'st-schedules-panel'].forEach(id => { $(id).hidden = hidden; });
+  }
+  function genericDemo(available) {
+    genericDemoAvailable = available;
+    $('st-generic-demo').hidden = !available;
+    $('st-generic-submit').disabled = !available;
+    $('st-generic-result').replaceChildren();
+  }
+  function noTeams() {
+    return 'No teams are available in this workspace. Choose another workspace or ask your workspace administrator to check department access.' +
+      (genericDemoAvailable ? ' You can still try the generic synthetic example below.' : '');
+  }
   async function refresh(preferred) {
+    const generation = ++catalogGeneration, retry = $('st-catalog-retry');
+    retry.disabled = true; previewGeneration++; genericDemo(false);
+    message('Loading your available teams…');
     try {
       const value = await api('');
+      if (generation !== catalogGeneration) return;
       if (accountContext && accountContext !== value.context) { $('st-owner').value = ''; $('st-scope').value = ''; token = null; remember(); editedTeam = null; inputSetup = null; $('st-input-tables').replaceChildren(); $('st-review').close(); }
       accountContext = value.context; teams = value.teams; setups = value.setups;
       previewOnly = value.preview_only === true;
-      $('st-preview-panel').hidden = !previewOnly;
-      ['st-setup-panel', 'st-saved-panel', 'st-history-panel', 'starter-team-schedules'].forEach(id => { $(id).hidden = previewOnly; });
+      genericDemo(previewOnly && !teams.length && value.synthetic_demo?.id === GENERIC_DEMO_ID);
+      $('st-preview-panel').hidden = !previewOnly || !teams.length;
+      $('st-team').disabled = !teams.length;
+      savedPanels(previewOnly || !teams.length);
+      publishCatalog(!previewOnly && teams.length ? value : null);
       if (previewOnly) {
         historyGeneration++;
         $('st-inputs-section').hidden = true;
         $('st-review').close();
         chooseOptions($('st-team'), teams.map(team => [team.id, team.title]), $('st-team').value, 'No permitted teams');
-        showTeam(); message(teams.length + ' teams available to preview.');
+        showTeam(); retry.hidden = Boolean(teams.length);
+        message(teams.length ? teams.length + ' teams available to preview.' : noTeams());
         return;
       }
       let target = preferred || $('st-saved').value;
       const hash = window.location.hash;
       if (!preferred && hash.startsWith('#setup-')) target = hash.slice(7);
-      if (!preferred && hash.startsWith('#case-')) { const original = await api('/cases/' + encodeURIComponent(hash.slice(6))); target = original.case.setup_id; }
+      if (teams.length && !preferred && hash.startsWith('#case-')) { const original = await api('/cases/' + encodeURIComponent(hash.slice(6))); if (generation !== catalogGeneration) return; target = original.case.setup_id; }
       const linkedSetup = !preferred && (hash.startsWith('#case-') || hash.startsWith('#setup-')) ? setups.find(setup => setup.id === target) : null;
       chooseOptions($('st-team'), teams.map(team => [team.id, team.title]), linkedSetup ? linkedSetup.team_id : $('st-team').value, 'No permitted teams');
-      chooseOptions($('st-saved'), setups.map(setup => [setup.id, (teams.find(team => team.id === setup.team_id) || {}).title + ' — ' + setup.owner_label]), target, 'No saved teams yet');
-      showTeam(); await showSaved(); message(teams.length + ' teams available. Samples and record checks stay within the reviewed scope.');
+      chooseOptions($('st-saved'), setups.map(setup => [setup.id, (teams.find(team => team.id === setup.team_id) || {}).title + ' — ' + setup.owner_label]), target, 'No saved teams yet. Select Review setup to save a team.');
+      showTeam(); await showSaved();
+      if (generation !== catalogGeneration) return;
+      retry.hidden = Boolean(teams.length);
+      message(teams.length ? teams.length + ' teams available. Samples and record checks stay within the reviewed scope.' : noTeams());
       if (hash.startsWith('#case-')) { const original = document.getElementById(hash.slice(1)); if (original) original.scrollIntoView({block: 'nearest'}); }
-      restore();
-    } catch (error) { teams = []; setups = []; $('st-details').replaceChildren(); $('st-history').replaceChildren(); $('st-inputs-section').hidden = true; chooseOptions($('st-team'), [], '', 'Unavailable'); chooseOptions($('st-saved'), [], '', 'Unavailable'); message(error.message); }
+      if (teams.length) restore();
+    } catch (error) {
+      if (generation !== catalogGeneration) return;
+      teams = []; setups = []; historyGeneration++; previewGeneration++;
+      savedPanels(true);
+      $('st-details').replaceChildren(); $('st-history').replaceChildren(); $('st-preview-result').replaceChildren();
+      $('st-inputs-section').hidden = true; $('st-preview-panel').hidden = true;
+      $('st-team').disabled = true; $('st-preview-submit').disabled = true;
+      chooseOptions($('st-team'), [], '', 'Unavailable'); chooseOptions($('st-saved'), [], '', 'Unavailable');
+      publishCatalog(null);
+      retry.hidden = false; message(error.message + ' Use Retry loading teams to try again.');
+    } finally {
+      if (generation === catalogGeneration) retry.disabled = false;
+    }
   }
   async function review(action, arguments_) {
     if (previewOnly || busy || token) return; busy = true; opener = document.activeElement; message('Preparing the review…');
@@ -175,19 +218,24 @@
     } catch (error) { $('st-review-message').textContent = error.message + ' Check the original result before trying again.'; $('st-original').hidden = false; }
     finally { busy = false; $('st-original').disabled = false; }
   }
-  $('st-preview-submit').addEventListener('click', async () => {
-    const team = selectedTeam();
-    if (!previewOnly || !team) return;
-    const generation = ++previewGeneration, host = $('st-preview-result');
+  async function showPreview(id, host) {
+    const generation = ++previewGeneration;
     host.replaceChildren(element('p', 'Checking the bundled synthetic sample…'));
     try {
-      const value = await api('/preview/' + encodeURIComponent(team.id));
+      const value = await api('/preview/' + encodeURIComponent(id));
       if (generation !== previewGeneration) return;
       host.replaceChildren();
       renderCase({id: 'synthetic-preview', mode: 'sample', status: 'synthetic preview, not saved', output: value.output}, host);
     } catch (error) {
       if (generation === previewGeneration) host.replaceChildren(element('p', error.message));
     }
+  }
+  $('st-preview-submit').addEventListener('click', () => {
+    const team = selectedTeam();
+    if (previewOnly && team) showPreview(team.id, $('st-preview-result'));
+  });
+  $('st-generic-submit').addEventListener('click', () => {
+    if (genericDemoAvailable) showPreview(GENERIC_DEMO_ID, $('st-generic-result'));
   });
   $('st-team').addEventListener('change', showTeam); $('st-saved').addEventListener('change', showSaved);
   $('st-setup-form').addEventListener('submit', event => { event.preventDefault(); if (selectedTeam()) review('setup', {team_id: selectedTeam().id, owner_label: $('st-owner').value, scope: $('st-scope').value, cadence: $('st-cadence').value, max_rows: Number($('st-limit').value)}); });
@@ -197,7 +245,9 @@
   $('st-confirm').addEventListener('click', () => confirm(false)); $('st-original').addEventListener('click', () => confirm(true));
   $('st-cancel').addEventListener('click', () => { if (!busy) { $('st-review').close(); token = null; remember(); if (opener) opener.focus(); } });
   $('st-review').addEventListener('cancel', event => { if (busy) event.preventDefault(); else { token = null; remember(); } });
-  $('st-refresh').addEventListener('click', () => refresh()); refresh();
+  $('st-refresh').addEventListener('click', () => refresh());
+  $('st-catalog-retry').addEventListener('click', () => refresh());
+  refresh();
   window.LightworkStarterTeams = {context: () => accountContext, setup: selectedSetup, refresh};
   window.addEventListener('hashchange', () => refresh());
 })();

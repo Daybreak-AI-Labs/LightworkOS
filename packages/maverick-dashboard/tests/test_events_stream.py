@@ -193,3 +193,40 @@ def test_partial_result_never_overwrites_a_finished_goal(tmp_path):
     w.set_goal_status(gid, "done", "final answer")
     assert w.set_goal_partial_result(gid, "late preview") is False
     assert w.get_goal(gid).result == "final answer"
+
+def test_chat_stream_publishes_status_only_changes(monkeypatch):
+    """A transition into active work need not write a new event or result."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from maverick_dashboard import _event_stream
+
+    async def collect(legacy):
+        statuses = iter(("pending", "active", "active", "done"))
+        monkeypatch.setattr(
+            _event_stream, "stream_state",
+            lambda *args, **kwargs: SimpleNamespace(status=next(statuses), result=""),
+        )
+
+        async def not_disconnected():
+            return False
+
+        async def no_wait(_):
+            pass
+
+        frames = []
+        async for frame in _event_stream.goal_stream(
+            SimpleNamespace(is_disconnected=not_disconnected),
+            SimpleNamespace(goal_events=lambda *args, **kwargs: []),
+            4, since=39, lease=SimpleNamespace(release=lambda: None),
+            visible=lambda _: True, legacy=legacy, sleep=no_wait, clock=lambda: 0,
+        ):
+            frames.extend(json.loads(line[6:]) for line in frame.splitlines()
+                          if line.startswith("data: "))
+        return frames
+
+    frames = asyncio.run(collect(True))
+    assert [p["status"] for p in frames] == ["pending", "active", "done"]
+    assert [p["terminal"] for p in frames] == [False, False, True]
+    assert all(p["next_id"] == 39 and p["events"] == [] for p in frames)
+    assert asyncio.run(collect(False)) == [{"status": "done", "next_id": 39, "terminal": True}]

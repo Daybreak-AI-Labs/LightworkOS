@@ -18,3 +18,14 @@ test('Show work presents readable activity and useful findings after live update
   await expect(page.locator('#events')).toContainText('Asked you a question');
   await expect(page.locator('#events')).not.toContainText(/INTERNAL PROMPT|private model scratch|tool_output|QUEUED|Prior failures/);
 });
+
+
+test('a finished task replays its work log without EventSource', async ({page, request}) => {
+  const created = await request.post('/__browser_fixture/chat');
+  const {goal_id} = await created.json();
+  expect((await request.post(`/__browser_fixture/chat/${goal_id}/activity`)).status()).toBe(200);
+  await page.addInitScript(() => { window.EventSource = undefined; });
+  await page.goto(`/chat/goal/${goal_id}`);
+  await expect(page.locator('#events')).toContainText('Shared what it found');
+  await expect(page.locator('#work-now')).toHaveText(/Work log: [1-9]\d* steps?/);
+});

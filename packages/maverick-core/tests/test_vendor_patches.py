@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import shutil
 from datetime import date, timedelta
 from pathlib import Path
@@ -22,6 +23,7 @@ def source_copy(tmp_path):
         "apps/desktop/src-tauri/Cargo.toml", "apps/desktop/src-tauri/Cargo.lock",
         "apps/installer-desktop/src-tauri/Cargo.toml", "apps/installer-desktop/src-tauri/Cargo.lock",
         "apps/installer-desktop/package.json", "apps/installer-desktop/pnpm-lock.yaml",
+        "apps/mobile-companion/package.json", "apps/mobile-companion/package-lock.json",
     ):
         destination = tmp_path / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -54,6 +56,39 @@ def test_frontend_override_removal_is_rejected(source_copy):
     path = source_copy / "apps/installer-desktop/package.json"
     path.write_text(path.read_text().replace("file:../../vendor/js/deepmerge", "4.3.1"))
     assert any("does not use the reviewed local source" in error for error in checker.validate(source_copy))
+
+
+@pytest.mark.parametrize("alias", [
+    "node_modules/picomatch",
+    "node_modules/anymatch/node_modules/picomatch",
+    "node_modules/jest-util/node_modules/picomatch",
+    "node_modules/micromatch/node_modules/picomatch",
+    "node_modules/picomatch-as-alias",
+])
+def test_mobile_picomatch_registry_fallback_is_rejected(source_copy, alias):
+    path = source_copy / "apps/mobile-companion/package-lock.json"
+    lock = json.loads(path.read_text())
+    lock["packages"][alias] = {
+        "version": "3.0.2",
+        "resolved": "https://registry.npmjs.org/picomatch/-/picomatch-3.0.2.tgz",
+    }
+    path.write_text(json.dumps(lock))
+    assert "mobile: unreviewed picomatch registry resolution" in checker.validate(source_copy)
+
+
+def test_desktop_picomatch_registry_fallback_is_rejected(source_copy):
+    path = source_copy / "apps/installer-desktop/pnpm-lock.yaml"
+    contents = path.read_text()
+    snapshot = "      picomatch: '@lightwork/picomatch-v4@file:../../vendor/js/picomatch-v4'"
+    assert snapshot in contents
+    path.write_text(contents.replace(snapshot, "      picomatch: 4.0.7", 1))
+    assert "installer: unreviewed picomatch registry resolution" in checker.validate(source_copy)
+
+
+def test_mobile_picomatch_archive_hash_is_enforced(source_copy):
+    archive = next((source_copy / "vendor/archives").glob("*picomatch-v2-*.tgz"))
+    archive.write_bytes(archive.read_bytes() + b"unreviewed trailing archive data")
+    assert "mobile: picomatch v2 local archive differs from its provenance" in checker.validate(source_copy)
 
 
 def _clean_results(root):
@@ -180,18 +215,24 @@ def test_accepted_risks_are_dated_reasoned_and_short_lived():
 def test_accepted_risks_still_describe_a_locked_package():
     # An upgrade that removes the affected version must also remove its
     # record, or the record keeps describing a risk that no longer exists.
-    import json
-
     from scripts.check_osv_results import ACCEPTED_RISKS
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
+        import tomli as tomllib
+
     for risk in ACCEPTED_RISKS:
         package = risk["package"]
-        assert package["ecosystem"] == "npm", "extend this check for a new ecosystem"
-        lock = json.loads((ROOT / risk["lockfile"]).read_text(encoding="utf-8"))
-        locked = {
-            (path.rpartition("node_modules/")[2], entry.get("version"))
-            for path, entry in lock.get("packages", {}).items()
-            if "node_modules/" in path
-        }
+        text = (ROOT / risk["lockfile"]).read_text(encoding="utf-8")
+        if package["ecosystem"] == "npm":
+            locked = {
+                (path.rpartition("node_modules/")[2], entry.get("version"))
+                for path, entry in json.loads(text).get("packages", {}).items()
+                if "node_modules/" in path
+            }
+        else:
+            assert package["ecosystem"] == "crates.io", "extend this check for a new ecosystem"
+            locked = {(entry["name"], entry["version"]) for entry in tomllib.loads(text).get("package", [])}
         assert (package["name"], package["version"]) in locked, (risk["lockfile"], package)
 
 

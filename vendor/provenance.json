@@ -190,6 +190,73 @@
         "license.txt": "6cfc4687cb2f2d86f4a77e6b526290d3878e5e512f3fec2f4cb36a9cb36f798b",
         "package.json": "b781ed970dc7fbd441330d123297ae3711c4f7dc9dbef6f21a579020c504e9ad"
       }
+    },
+    {
+      "path": "vendor/js/picomatch-v2",
+      "upstream": "https://registry.npmjs.org/picomatch/-/picomatch-2.3.2.tgz",
+      "archive_sha256": "4c843ba015bec815ac52116162559ab7b4b4efbd3b86f7fcf38f3d770decace6",
+      "version": "2.3.2",
+      "files": {
+        "LICENSE": "d0cd141b0c322fded5dfad1d4645bb2fedfc05b7321fe1009469638190d59ef9",
+        "index.js": "5695ff5dfcd5a338a40630bd506056f2950bcb08fe1cc068519cbbfe60add480",
+        "lib/constants.js": "980225ab847a88a784f6d315557b8434f7742b2551ce20e354455c61b938c0a5",
+        "lib/parse.js": "d9894f0f9cccfc7b487152778a9008bd4308ade4b987ff9c730ab2fa391f6f0a",
+        "lib/picomatch.js": "2cb169cbe17d356036c5f62a377318b85e30817877e59797842aec9d8b15f54b",
+        "lib/scan.js": "227fcc994a477ea95c5a0435d32783566334c6bd0dcc4a103029735ad8c9c535",
+        "lib/utils.js": "809fc29cf35ab0aa76b99cad29182f62c0ae598902481d10f9868eaef71981ee",
+        "package.json": "36ad5c011416b54aaae6185d9706a05c8b2a0d6a43491d3eae737fcbd04e5a4e"
+      },
+      "patches": [
+        "Reject repeated extglobs at parser admission, independently of options (CVE-2026-112366)."
+      ],
+      "mobile_archive": {
+        "path": "vendor/archives/lightwork-picomatch-v2-2.3.2+lightwork.1.tgz",
+        "sha256": "50da48d2df28bf6e4dd24794559c1d3675871b370a17a8bc6f904adc47962c28"
+      }
+    },
+    {
+      "path": "vendor/js/picomatch-v3",
+      "upstream": "https://registry.npmjs.org/picomatch/-/picomatch-3.0.2.tgz",
+      "archive_sha256": "0ca99f928a1681979b41ead45d7f685bf6877cbd6f94c60f8f21268393f2f580",
+      "version": "3.0.2",
+      "files": {
+        "LICENSE": "d0cd141b0c322fded5dfad1d4645bb2fedfc05b7321fe1009469638190d59ef9",
+        "index.js": "fe9556a24a9ed18ef369806356f7ac411b8b1dff713586c6ef341d94857bbca1",
+        "lib/constants.js": "c28f952d2758261fe5428a121add485cc25b03e0193633f649de903dc0e5e222",
+        "lib/parse.js": "d5484a3c945ab9703e419fe9fd7f1cd6ad3402770b5377b90c4adecc48c4cb19",
+        "lib/picomatch.js": "808ceda04cf4a7911e9d4eab72ac8d590685960d56238018917d17b57baf9ddd",
+        "lib/scan.js": "227fcc994a477ea95c5a0435d32783566334c6bd0dcc4a103029735ad8c9c535",
+        "lib/utils.js": "9bed8215e95839d8c5ba33c847ede3cbdaad517364278648ff781ccff3eacfac",
+        "package.json": "58807598f4c65263865c33032dbf9f165aa2f895ab8b454f8fbba668e0e27ce5",
+        "posix.js": "5695ff5dfcd5a338a40630bd506056f2950bcb08fe1cc068519cbbfe60add480"
+      },
+      "patches": [
+        "Reject repeated extglobs at parser admission, independently of options (CVE-2026-112366)."
+      ],
+      "mobile_archive": {
+        "path": "vendor/archives/lightwork-picomatch-v3-3.0.2+lightwork.1.tgz",
+        "sha256": "3f9a41b9097ae28f02bd18c6f9e3a13cf4b90bf341cea3fc41846f2e33ab6452"
+      }
+    },
+    {
+      "path": "vendor/js/picomatch-v4",
+      "upstream": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.7.tgz",
+      "archive_sha256": "697b463be3cdbd9ffc8f4194fd5019a69ddf95875fb703d78b2b115cc9e740a8",
+      "version": "4.0.7",
+      "files": {
+        "LICENSE": "d0cd141b0c322fded5dfad1d4645bb2fedfc05b7321fe1009469638190d59ef9",
+        "index.js": "02ae26406508e28f9ba0865be16cf77f0b33de6c4d4d49c212c4176df1d5625a",
+        "lib/constants.js": "c28f952d2758261fe5428a121add485cc25b03e0193633f649de903dc0e5e222",
+        "lib/parse.js": "5497736f261a7cb33946893d661f6c32bc7048c5df71e2dfc1d18a20233cffd5",
+        "lib/picomatch.js": "fdd249d7ffff853f3bb1c77eafc8baa1a437bea85a94c35877b83c6a40d9ca94",
+        "lib/scan.js": "6457a1764e5c2e543cc3a0c00ce12ebb3764097628868198370b64d4e642aaae",
+        "lib/utils.js": "f04604f70cd1a3f6ace80b84766468674ff38b4bb83818d2ef1d81fc6355f935",
+        "package.json": "56b72edf91948d32e465eb42f797657c79de650ca7f202782cfe6a42428d52f6",
+        "posix.js": "5695ff5dfcd5a338a40630bd506056f2950bcb08fe1cc068519cbbfe60add480"
+      },
+      "patches": [
+        "Reject repeated extglobs at parser admission, independently of options (CVE-2026-112366)."
+      ]
     }
   ]
 }
