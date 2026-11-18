@@ -634,3 +634,42 @@ def test_case_list_and_case_work_are_workspace_scoped_and_never_echo_raw_refs(
     assert client.get(f"{API}/cases/nope/work").status_code == 404
     state["tenant"] = "tenant-b"
     assert client.get(f"{API}/cases").json()["count"] == 0
+
+
+def _on_event_loop() -> bool:
+    import asyncio
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
+def test_reads_check_the_gate_and_open_the_store_off_the_event_loop(
+    environment, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Opening a tenant store is SQLite file work; on a network file system it
+    stalled every other request while the page's lists loaded."""
+    client, _database, state = environment
+    seen: list[tuple[str, bool]] = []
+    gate = rights.require_enabled
+
+    def watched_gate() -> None:
+        seen.append(("gate", _on_event_loop()))
+        gate()
+
+    factory = client.app.state.privacy_rights_orchestration_store_factory
+
+    def watched_factory(**kwargs):
+        seen.append(("store", _on_event_loop()))
+        return factory(**kwargs)
+
+    monkeypatch.setattr(rights, "require_enabled", watched_gate)
+    client.app.state.privacy_rights_orchestration_store_factory = watched_factory
+    assert client.get(f"{API}/cases").status_code == 200
+    assert client.get(f"{API}/sources").status_code == 200
+    assert {kind for kind, _loop in seen} == {"gate", "store"}
+    assert not any(loop for _kind, loop in seen)
+    state["enabled"] = False
+    assert client.get(f"{API}/cases").status_code == 403

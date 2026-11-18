@@ -18,6 +18,7 @@ import hashlib
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, is_dataclass
+from functools import partial
 from typing import Annotated, Any, Literal
 from urllib.parse import urlparse
 
@@ -465,7 +466,7 @@ def create_third_party_collaboration_router(
         tags=["third-party-collaboration"],
     )
 
-    def authority(request: Request) -> tuple[Any, str, Any]:
+    def open_authority(request: Request) -> tuple[Any, str, Any]:
         ops = _ops()
         tenant = _tenant_id()
         principal = _principal(request, tenant)
@@ -509,6 +510,10 @@ def create_third_party_collaboration_router(
             )
         return ops, tenant, store
 
+    # The gate reads the settings and the store opens tenant SQLite files: file
+    # work that must not stall every other request on the event loop.
+    authority = partial(run_in_threadpool, open_authority)
+
     @router.get("/status")
     async def status(request: Request) -> dict[str, Any]:
         require_permission(request, "audit")
@@ -522,7 +527,7 @@ def create_third_party_collaboration_router(
                 "upload_bytes_implemented": False,
                 "vendor_identity_independently_verified": False,
             }
-        _ops_value, _tenant, _store = authority(request)
+        _ops_value, _tenant, _store = await authority(request)
         return {
             "schema": "lightwork.third-party-collaboration-api-status.v1",
             "enabled": True,
@@ -544,8 +549,8 @@ def create_third_party_collaboration_router(
         """Where vendors answer, and the limits an invitation must fit in, so
         the invite form offers only choices the portal will accept."""
         require_permission(request, "admin")
-        ops, _tenant, _store = authority(request)
-        return _sharing(request, ops)
+        ops, _tenant, _store = await authority(request)
+        return await run_in_threadpool(_sharing, request, ops)
 
     @router.get("/invitations")
     async def list_invitations(
@@ -554,13 +559,13 @@ def create_third_party_collaboration_router(
         after: str | None = Query(default=None, min_length=1, max_length=128),
     ) -> dict[str, Any]:
         require_permission(request, "audit")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return await _call(ops, store.list_invitations, tenant, limit=limit, after=after)
 
     @router.get("/invitations/{invitation_id}")
     async def get_invitation(request: Request, invitation_id: ObjectPath) -> dict[str, Any]:
         require_permission(request, "audit")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return await _call(ops, store.get_invitation, tenant, invitation_id)
 
     @router.post("/invitations", status_code=201)
@@ -570,7 +575,7 @@ def create_third_party_collaboration_router(
         response: Response,
     ) -> dict[str, Any]:
         require_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         result = await _call(
             ops,
             store.issue_invitation,
@@ -597,7 +602,7 @@ def create_third_party_collaboration_router(
         response: Response,
     ) -> dict[str, Any]:
         require_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         result = await _call(
             ops,
             store.rotate_invitation,
@@ -615,7 +620,7 @@ def create_third_party_collaboration_router(
         request: Request,
     ) -> dict[str, Any]:
         require_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return await _call(
             ops,
             store.revoke_invitation,
@@ -631,7 +636,7 @@ def create_third_party_collaboration_router(
         request: Request,
     ) -> dict[str, Any]:
         require_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return await _call(
             ops,
             store.request_follow_up,
@@ -648,7 +653,7 @@ def create_third_party_collaboration_router(
         response: Response,
     ) -> dict[str, Any]:
         require_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         result = await _call(
             ops,
             store.reopen_follow_up,
@@ -666,7 +671,7 @@ def create_third_party_collaboration_router(
         request: Request,
     ) -> dict[str, Any]:
         require_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return await _call(
             ops,
             store.set_legal_hold,
@@ -678,13 +683,13 @@ def create_third_party_collaboration_router(
     @router.post("/purge")
     async def purge(body: PurgeIn, request: Request) -> dict[str, Any]:
         require_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return await _call(ops, store.purge_expired, tenant, **body.model_dump())
 
     @router.get("/integrity")
     async def integrity(request: Request) -> dict[str, Any]:
         require_permission(request, "audit")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return await _call(ops, store.verify_integrity, tenant)
 
     return router
