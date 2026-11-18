@@ -429,3 +429,46 @@ def test_sharing_is_off_with_the_feature(environment) -> None:
     client, _store, state = environment
     state["enabled"] = False
     assert client.get(f"{INTERNAL}/sharing").status_code == 403
+
+
+def _on_event_loop() -> bool:
+    import asyncio
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
+def test_reads_check_the_gate_and_open_the_store_off_the_event_loop(
+    environment, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The composed store checks the tenant roster and the tenant's settings
+    before it opens SQLite; none of that may stall the event loop."""
+    client, store, state = environment
+    seen: list[tuple[str, bool]] = []
+    gate = collaboration.require_enabled
+
+    def watched_gate() -> None:
+        seen.append(("gate", _on_event_loop()))
+        gate()
+
+    def factory(**_kwargs):
+        seen.append(("store", _on_event_loop()))
+        return store
+
+    def portal_ref() -> str:
+        seen.append(("portal", _on_event_loop()))
+        return "tpcp_" + "a" * 43
+
+    monkeypatch.setattr(collaboration, "require_enabled", watched_gate)
+    monkeypatch.setattr(collaboration, "load_policy", lambda: collaboration.ThirdPartyCollaborationPolicy())
+    client.app.state.third_party_collaboration_store_factory = factory
+    client.app.state.third_party_collaboration_current_portal_ref = portal_ref
+    assert client.get(f"{INTERNAL}/invitations").status_code == 200
+    assert client.get(f"{INTERNAL}/sharing").json()["portal_path"].endswith("/portal")
+    assert {kind for kind, _loop in seen} == {"gate", "store", "portal"}
+    assert not any(loop for _kind, loop in seen)
+    state["enabled"] = False
+    assert client.get(f"{INTERNAL}/invitations").status_code == 403

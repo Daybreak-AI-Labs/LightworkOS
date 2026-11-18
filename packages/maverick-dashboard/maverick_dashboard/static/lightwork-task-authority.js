@@ -4,7 +4,7 @@
   var root = document.getElementById('task-authority');
   if (!root) return;
   var allowed = root.dataset.operate === '1', checking = null, reason = '';
-  var selector = '#answer-send,#cancel-btn,#edit-toggle,#edit-save,#feedback-up,#feedback-down,#share-create,#share-confirm,.share-revoke,#signoff-approve,#signoff-reject,#attach-add-btn,#reply-attach,#reply-files,#halt-resume,#halt-resume-budget,#ps-run,#ps-passes,#answer-mic,#attach-add,#goal-project-sel,#goal-project-save,#recover-submission-btn';
+  var selector = '#answer-send,#cancel-btn,#edit-toggle,#edit-save,#feedback-up,#feedback-down,#share-create,#share-confirm,.share-revoke,#signoff-approve,#signoff-reject,#attach-add-btn,#reply-attach,#reply-files,#halt-resume,#halt-resume-budget,#ps-run,#ps-passes,#answer-mic,#attach-add,#goal-project-sel,#goal-project-save,#recover-submission-btn,#discard-draft-btn';
   var restoring = new WeakMap(), passed = new WeakSet();
   function project() {
     document.querySelectorAll(selector).forEach(function (node) {
@@ -36,7 +36,7 @@
   }, true);
   document.addEventListener('submit', async function (event) {
     var form = event.target;
-    if (!form.matches('#answer-form,#halt-resume-form,.goal-project,form[action$="/recover-submission"]')) return;
+    if (!form.matches('#answer-form,#halt-resume-form,.goal-project,form[action$="/recover-submission"],form[action$="/discard-draft"]')) return;
     if (passed.has(form)) { passed.delete(form); return; }
     event.preventDefault(); event.stopImmediatePropagation();
     if (await refresh()) { passed.add(form); form.requestSubmit(); }

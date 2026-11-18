@@ -51,13 +51,11 @@ DOCUMENTED_STATUS_GATES: dict[str, set[int]] = {
     "/knowledge-access": {403},
     # These opt-in personal surfaces require a named account; the smoke's
     # local installation credential intentionally cannot impersonate one.
-    "/companion": {403},
+    # (My data, bundles, handoffs and the companion are off by default, so
+    # they render their turned-off state instead.)
     "/companion/admin": {403},
-    "/deliverable-bundles": {403},
     "/preferences": {403},
-    "/task-handoffs": {403},
     "/today": {403},
-    "/my-data": {403},
     "/content-access": {403},
     "/notifications": {403},
     "/access-requests": {403},

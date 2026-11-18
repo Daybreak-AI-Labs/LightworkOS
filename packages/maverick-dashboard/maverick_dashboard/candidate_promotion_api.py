@@ -26,6 +26,7 @@ from maverick.candidate_promotion import (
     CandidatePromotionNotFound,
     CandidatePromotionUnavailable,
 )
+from maverick.governed_records import GovernedRecordLocalOnly
 from maverick.paths import current_tenant_id_strict
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
@@ -172,6 +173,8 @@ async def _call(function: Callable, *args, **kwargs):
     except HTTPException:
         # A deliberate refusal already carries its own status and message.
         raise
+    except GovernedRecordLocalOnly:
+        raise  # A single-computer feature on a shared deployment: the app answers 409.
     except CandidatePromotionNotFound as exc:
         raise HTTPException(404, "Candidate promotion was not found in this workspace") from exc
     except CandidatePromotionDenied as exc:

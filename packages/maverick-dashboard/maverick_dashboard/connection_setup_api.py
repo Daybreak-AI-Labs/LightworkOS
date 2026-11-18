@@ -113,7 +113,21 @@ def _authority(request, response, payload=None, *, operator=False):
     return actor, context
 
 
+def _public_address() -> str:
+    """The configured HTTPS address people use to reach Lightwork, or ""."""
+    from .automation_queue import _public_base_url
+
+    parsed = urlsplit(_public_base_url().rstrip("/"))
+    if parsed.scheme != "https" or not parsed.netloc or parsed.path or parsed.query or parsed.fragment:
+        return ""
+    return "https://" + parsed.netloc
+
+
 def _callback(request, return_profile="browser"):
+    # A deployment behind a TLS-ending proxy sees http://<public host>; its
+    # configured public address is the trusted return address.
+    if return_profile == "browser" and _public_address():
+        return _public_address() + "/connections"
     base = str(request.base_url).rstrip("/")
     parsed = urlsplit(base)
     if any(k in request.headers for k in ("x-forwarded-host", "forwarded")):
@@ -156,6 +170,13 @@ NAMED_SIGN_IN_NEEDED = (
 )
 
 
+PUBLIC_ADDRESS_NEEDED = (
+    "Connecting an account by signing in needs Lightwork's secure public address. "
+    "An administrator can enter it in All settings, under “Lightwork's address for others”. "
+    "Connections that use a key work without it."
+)
+
+
 @router.get("")
 def overview(request: Request, response: Response):
     if not str(caller_principal(request) or "").startswith("user:"):
@@ -173,6 +194,13 @@ def overview(request: Request, response: Response):
                 "message": NAMED_SIGN_IN_NEEDED + (" You can set up named sign-in now." if can_set_up
                                                   else " Ask whoever manages Lightwork sign-in to set it up.")}
     actor, context = _authority(request, response)
+    try:
+        callback = _callback(request)
+    except HTTPException as exc:
+        if exc.status_code != 409:
+            raise
+        # A read: say what is missing instead of failing the whole overview.
+        return {"account_sign_in_available": False, "can_set_up_sign_in": False, "message": PUBLIC_ADDRESS_NEEDED}
     enabled = connection_oauth.enabled()
     is_admin = has_permission(request, "admin")
     approved = connection_oauth.self_connect_profiles()
@@ -182,7 +210,7 @@ def overview(request: Request, response: Response):
         "desktop_return_enabled": connection_oauth.desktop_return_enabled(),
         "desktop_return_available": bool(connection_oauth.desktop_instance_id()),
         "desktop_callback_uri": connection_oauth.DESKTOP_CALLBACK,
-        "callback_uri": _callback(request), "profiles": [{"id": key, **value} for key, value in connection_oauth.PROFILES.items() if is_admin or key in approved],
+        "callback_uri": callback, "profiles": [{"id": key, **value} for key, value in connection_oauth.PROFILES.items() if is_admin or key in approved],
         "applications": _call(lambda: _applications(actor, can_manage)) if enabled else [],
         "connections": _call(lambda: connections.list_connections(owner=actor)) if connections.enabled() else [],
         "live_provider_verified": False}

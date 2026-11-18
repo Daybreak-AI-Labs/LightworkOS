@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import logging
+import sqlite3
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, is_dataclass
 from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi import Path as ApiPath
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from starlette.concurrency import run_in_threadpool
 
 from .auth import _dashboard_token_authenticated, has_permission, require_permission
+from .store_failures import log_store_failure, remember_route
 
+log = logging.getLogger(__name__)
 _ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
 _OP_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:-]{7,191}$"
 _DIGEST_PATTERN = r"^[0-9a-f]{64}$"
@@ -177,6 +181,7 @@ def create_third_party_executive_reports_router(  # noqa: C901
     router = APIRouter(
         prefix="/third-party/executive-reports",
         tags=["third-party-executive-reports"],
+        dependencies=[Depends(remember_route)],
     )
 
     def probe(request: Request, name: str, explicit: Callable[[str], bool] | None):
@@ -201,7 +206,8 @@ def create_third_party_executive_reports_router(  # noqa: C901
             raise HTTPException(status_code=403, detail=str(exc)) from exc
         except _ops().ThirdPartyExecutiveReportConfigError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
-        except (OSError, RuntimeError) as exc:
+        except (OSError, RuntimeError, sqlite3.Error) as exc:
+            log_store_failure(log, exc)
             raise HTTPException(
                 status_code=503,
                 detail="third-party executive report runtime is unavailable",
@@ -232,7 +238,8 @@ def create_third_party_executive_reports_router(  # noqa: C901
                 status_code=503,
                 detail="third-party executive report integrity verification failed",
             ) from exc
-        except ops.ThirdPartyExecutiveReportError as exc:
+        except (ops.ThirdPartyExecutiveReportError, sqlite3.Error) as exc:
+            log_store_failure(log, exc)
             raise HTTPException(
                 status_code=503,
                 detail="third-party executive report operation failed",

@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, is_dataclass
+from functools import partial
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -298,7 +299,7 @@ class PrivacyRightsOrchestrationDependencies:
 
 def _privacy_rights_orchestration_authority_routes(deps, router):
     """Bind authority and related router operations."""
-    def authority(request: Request):
+    def open_authority(request: Request):
         ops = _ops()
         tenant = _tenant_id()
         principal = _principal(request, tenant)
@@ -331,6 +332,10 @@ def _privacy_rights_orchestration_authority_routes(deps, router):
                 detail="privacy-rights orchestration store is unavailable",
             )
         return ops, tenant, store
+
+    # The gate reads the settings and the store opens tenant SQLite files: file
+    # work that must not stall every other request on the event loop.
+    authority = partial(run_in_threadpool, open_authority)
 
     async def call(ops, function, *args, **kwargs):
         try:
@@ -477,7 +482,7 @@ def _privacy_rights_orchestration_source_worker_routes(authority, call, router):
     @router.put("/sources/{source_id}")
     async def enroll_source(request: Request, source_id: ObjectPath, body: SourceEnrollmentIn):
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(ops, store.enroll_source, tenant, source_id, **body.model_dump())
         )
@@ -485,13 +490,13 @@ def _privacy_rights_orchestration_source_worker_routes(authority, call, router):
     @router.get("/sources/{source_id}")
     async def get_source(request: Request, source_id: ObjectPath):
         require_permission(request, "view")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(await call(ops, store.get_source, tenant, source_id))
 
     @router.get("/sources")
     async def list_sources(request: Request, limit: int = Query(default=100, ge=1, le=1_000)):
         require_permission(request, "view")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         items = await call(ops, store.list_sources, tenant, limit=limit)
         return {"items": _jsonable(items), "count": len(items)}
 
@@ -510,7 +515,7 @@ def _privacy_rights_orchestration_source_worker_routes(authority, call, router):
             body = CaseOpenIn.model_validate(await request.json())
         except (ValidationError, ValueError, UnicodeError) as exc:
             raise HTTPException(status_code=422, detail="case-open body is invalid") from exc
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(await call(ops, store.open_case, tenant, case_id, **body.model_dump()))
 
     @router.get("/cases")
@@ -518,7 +523,7 @@ def _privacy_rights_orchestration_source_worker_routes(authority, call, router):
         """Rights requests in this workspace, newest first (no raw references)."""
 
         require_permission(request, "view")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         items = await call(ops, store.list_cases, tenant, limit=limit)
         return {"items": _jsonable(items), "count": len(items)}
 
@@ -528,14 +533,14 @@ def _privacy_rights_orchestration_source_worker_routes(authority, call, router):
         response packages and exports."""
 
         require_permission(request, "view")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         work = await call(ops, store.case_work, tenant, case_id)
         return {key: _jsonable(value) for key, value in work.items()}
 
     @router.get("/cases/{case_id}")
     async def get_case(request: Request, case_id: ObjectPath):
         require_permission(request, "view")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(await call(ops, store.get_case, tenant, case_id))
 
     @router.post("/cases/{case_id}/identity-verification")
@@ -543,7 +548,7 @@ def _privacy_rights_orchestration_source_worker_routes(authority, call, router):
         request: Request, case_id: ObjectPath, body: IdentityVerificationIn
     ):
         require_global_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -557,7 +562,7 @@ def _privacy_rights_orchestration_source_worker_routes(authority, call, router):
     @router.post("/cases/{case_id}/legal-hold")
     async def set_legal_hold(request: Request, case_id: ObjectPath, body: LegalHoldIn):
         require_global_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(ops, store.set_legal_hold, tenant, case_id, **body.model_dump())
         )
@@ -565,7 +570,7 @@ def _privacy_rights_orchestration_source_worker_routes(authority, call, router):
     @router.post("/cases/{case_id}/retention-gate")
     async def set_retention_gate(request: Request, case_id: ObjectPath, body: RetentionGateIn):
         require_global_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(ops, store.set_retention_gate, tenant, case_id, **body.model_dump())
         )
@@ -578,7 +583,7 @@ def _privacy_rights_orchestration_source_worker_routes(authority, call, router):
         body: PlanTasksIn,
     ):
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         items = await call(
             ops,
             store.plan_source_tasks,
@@ -592,7 +597,7 @@ def _privacy_rights_orchestration_source_worker_routes(authority, call, router):
     @router.post("/tasks/{task_id}/approve-destructive")
     async def approve_destructive_work(request: Request, task_id: ObjectPath, body: RevisionIn):
         require_global_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -606,7 +611,7 @@ def _privacy_rights_orchestration_source_worker_routes(authority, call, router):
     @router.post("/callbacks/claim")
     async def claim_callbacks(request: Request, body: ClaimCallbacksIn):
         require_global_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         items = await call(ops, store.claim_callbacks, tenant, **body.model_dump())
         return {"items": _jsonable(items), "count": len(items)}
     return source_worker
@@ -624,7 +629,7 @@ def _privacy_rights_orchestration_list_callbacks_routes(authority, call, router,
         limit: int = Query(default=100, ge=1, le=1_000),
     ):
         require_global_permission(request, "audit")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         items = await call(
             ops,
             store.list_callbacks,
@@ -689,7 +694,7 @@ def _privacy_rights_orchestration_list_callbacks_routes(authority, call, router,
     @router.post("/callbacks/{callback_id}/fail")
     async def fail_callback(request: Request, callback_id: ObjectPath, body: FailCallbackIn):
         require_global_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _without_lease(
             await call(ops, store.fail_callback, tenant, callback_id, **body.model_dump())
         )
@@ -697,7 +702,7 @@ def _privacy_rights_orchestration_list_callbacks_routes(authority, call, router,
     @router.post("/callbacks/{callback_id}/acknowledge")
     async def ack_callback(request: Request, callback_id: ObjectPath, body: AckCallbackIn):
         require_global_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _without_lease(
             await call(ops, store.ack_callback, tenant, callback_id, **body.model_dump())
         )
@@ -705,7 +710,7 @@ def _privacy_rights_orchestration_list_callbacks_routes(authority, call, router,
     @router.post("/callbacks/{callback_id}/requeue")
     async def requeue_callback(request: Request, callback_id: ObjectPath, body: RevisionIn):
         require_global_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _without_lease(
             await call(ops, store.requeue_callback, tenant, callback_id, **body.model_dump())
         )
@@ -720,7 +725,7 @@ def _privacy_rights_orchestration_list_callbacks_routes(authority, call, router,
         body: SourceEvidenceIn,
     ):
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -742,7 +747,7 @@ def _privacy_rights_orchestration_list_callbacks_routes(authority, call, router,
         body: ManifestIn,
     ):
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -762,7 +767,7 @@ def _privacy_rights_orchestration_list_callbacks_routes(authority, call, router,
         body: ResponsePackageIn,
     ):
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -777,13 +782,13 @@ def _privacy_rights_orchestration_list_callbacks_routes(authority, call, router,
     @router.get("/packages/{package_id}")
     async def get_package(request: Request, package_id: ObjectPath):
         require_permission(request, "view")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(await call(ops, store.get_response_package, tenant, package_id))
 
     @router.post("/cases/{case_id}/closure/approve")
     async def approve_closure(request: Request, case_id: ObjectPath, body: RevisionIn):
         require_global_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -797,7 +802,7 @@ def _privacy_rights_orchestration_list_callbacks_routes(authority, call, router,
     @router.post("/cases/{case_id}/close")
     async def close_case(request: Request, case_id: ObjectPath, body: RevisionIn):
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(await call(ops, store.close_case, tenant, case_id, **body.model_dump()))
 
     @router.put("/cases/{case_id}/exports/{export_id}")
@@ -805,7 +810,7 @@ def _privacy_rights_orchestration_list_callbacks_routes(authority, call, router,
         request: Request, case_id: ObjectPath, export_id: ObjectPath, body: ExportIn
     ):
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -820,13 +825,13 @@ def _privacy_rights_orchestration_list_callbacks_routes(authority, call, router,
     @router.post("/retention/purge")
     async def purge(request: Request, body: PurgeIn):
         require_global_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(await call(ops, store.purge_expired, tenant, **body.model_dump()))
 
     @router.get("/integrity")
     async def integrity(request: Request):
         require_global_permission(request, "audit")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         result = _jsonable(await call(ops, store.verify_integrity, tenant))
         result["valid"] = True
         return result

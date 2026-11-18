@@ -26,9 +26,14 @@
       try {
         data = await window.mvFetchJSON(base + path, {method: body ? 'POST' : 'GET', cache: 'no-store', signal: controller.signal, timeout: 20000,
           headers: {'X-Lightwork-Project-Context': context}, body: body, plainDetail: true, messages: {401: kept, 403: kept},
-          onAccess: function (error) { closePrivateView(); status(error.message); }}, body ? 'save the project change' : 'load the project');
+          onAccess: function (error) {
+            // A turned-off feature is not an unconfirmed operation: say which.
+            var off = window.mvFeatureOff && window.mvFeatureOff(error);
+            if (off) error.message = window.mvFeatureOffText(off);
+            closePrivateView(); status(error.message);
+          }}, body ? 'save the project change' : 'load the project');
       } catch (error) {
-        if (error.status && !window.mvPlainDetail(error.detail)) error.message = kept;
+        if (error.status && !error.accessChanged && !window.mvPlainDetail(error.detail)) error.message = kept;
         throw error;
       }
       if (!data || typeof data !== 'object' || (data.context && data.context !== context)) { closePrivateView(); status('The current account or workspace changed. Reload before continuing.'); var changed = new Error('The current account or workspace could not be confirmed. Reload before continuing.'); changed.status = 409; throw changed; }

@@ -74,7 +74,7 @@ FEATURE_INFO = {
     "project_reviews": "Share selected, fixed task results with assigned workspace reviewers. Review does not execute or sign off the live task.",
     "deliverable_bundles": "Share only selected result versions and evidence files with one named workspace recipient, with separate human acceptance and offline export.",
     "project_workspaces": "Plan project outcomes, reviewed context and live milestones. Explicit planning membership never grants private task, review, or execution access.",
-    "task_handoffs": "Offer a named colleague an unstarted continuation with selected evidence and a spending ceiling; acceptance closes the original conversation to new execution.",
+    "task_handoffs": "Offer a named colleague an unstarted continuation with selected evidence and a spending ceiling; acceptance closes the original conversation to new execution. Requires Selected deliverable bundles to be on as well.",
     "human_conversation_handoffs": "Let a person request help from a named colleague who is on duty. Review the exact conversation shared, pause AI work, reply in the same conversation and separately return future work to AI.",
     "outcome_measurement": "Plan a paired workflow pilot, record observed baseline and review effort, and compare current accepted outcomes. Unmeasured costs and unreviewed work remain explicit.",
     "commitment_viability": "Review two accepted orders against the capacity and stock your team reports. Explore expiring options and record observed contention with owner review. This pilot does not connect to a supplier or reserve stock.",
@@ -113,4 +113,10 @@ FEATURE_INFO = {
                   "Existing schedules are managed from that page.",
     "triggers": "Start saved workflows when a connected service sends an "
                 "authenticated event. Requires a configured signing secret.",
+}
+
+# A switch that does nothing until another switch is on. Settings names the
+# requirement, and the page explains which one is still off.
+FEATURE_REQUIRES = {
+    "task_handoffs": ("deliverable_bundles",),
 }

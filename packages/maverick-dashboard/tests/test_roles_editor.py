@@ -128,3 +128,19 @@ class TestRoleEditingGate:
                            json={"system_addendum": "x"}).status_code == 403
         assert client.delete("/api/v1/roles/coder/override").status_code == 403
         assert client.get("/api/v1/roles/coder").status_code == 200  # read-only still ok
+
+
+def test_the_page_names_the_model_that_runs_and_flags_one_that_cannot(monkeypatch):
+    from maverick import runtime_overrides
+
+    monkeypatch.setattr(runtime_overrides, "role_model_override", lambda role: None)
+    monkeypatch.setattr("maverick.config.load_config", lambda *a, **k: {})
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(runtime_overrides, "default_model_override", lambda: "openai:gpt-5.6-sol")
+    page = client.get("/roles", params={"role": "summarizer"}).text
+    assert "GPT-5.6 Sol" in page and "Claude Haiku" not in page.split('id="f-model"')[0]
+    assert 'id="role-model-not-ready"' not in page
+    monkeypatch.setattr(runtime_overrides, "default_model_override", lambda: None)
+    page = client.get("/roles", params={"role": "summarizer"}).text
+    assert 'id="role-model-not-ready"' in page and "can't run yet" in page

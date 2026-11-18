@@ -372,7 +372,8 @@ def create_consent_application_scanner_router(  # noqa: C901 - route-local trust
         )
         enabled = callable(enabled_probe) and enabled_probe(tenant) is True
         ready = enabled and callable(readiness_probe) and readiness_probe(request, tenant) is True
-        response.status_code = 200 if ready else 503
+        # Turned off is an answer, not an outage; only "on but not ready" is 503.
+        response.status_code = 200 if ready or not enabled else 503
         return {"enabled": enabled, "ready": ready}
 
     @router.post("/applications", status_code=201)

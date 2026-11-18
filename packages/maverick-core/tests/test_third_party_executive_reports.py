@@ -681,3 +681,47 @@ def test_historical_reports_page_reaches_oldest_and_keeps_exact_role(tmp_path):
     before = authority.history_window(caller_role="operator", oldest=True).snapshot
     authority.revoke_report("report-0000", expected_control_revision=1, reason_code="superseded", idempotency_key="history-revoke-0000")
     assert before != authority.history_window(caller_role="operator", oldest=True).snapshot
+
+
+def test_two_first_opens_at_once_both_succeed(tmp_path, monkeypatch) -> None:
+    # Live: the page's first two reads built the store together. Both saw no
+    # schema row, both inserted it, and the second answered 500 with
+    # "UNIQUE constraint failed: executive_report_meta.key".
+    import sqlite3
+    import threading
+
+    clock = Clock(1_800_000_000.0)
+    barrier = threading.Barrier(2)
+    original = reports.ThirdPartyExecutiveReportStore._connect
+
+    def connect(self):
+        connection = original(self)
+
+        def execute(sql, *args):
+            if "SELECT value FROM executive_report_meta" in sql:
+                try:
+                    barrier.wait(timeout=1)  # Hold both openers at the check.
+                except threading.BrokenBarrierError:
+                    pass
+            return sqlite3.Connection.execute(connection, sql, *args)
+
+        connection.execute = execute
+        return connection
+
+    monkeypatch.setattr(reports.ThirdPartyExecutiveReportStore, "_connect", connect)
+    failures: list[BaseException] = []
+
+    def open_store() -> None:
+        try:
+            store(tmp_path, clock)
+        except BaseException as exc:  # noqa: BLE001 - reported below
+            failures.append(exc)
+
+    threads = [threading.Thread(target=open_store) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=60)
+    assert failures == []
+    monkeypatch.setattr(reports.ThirdPartyExecutiveReportStore, "_connect", original)
+    assert store(tmp_path, clock).list_reports(caller_role="admin") == ()

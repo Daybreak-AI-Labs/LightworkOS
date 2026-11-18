@@ -286,3 +286,31 @@ def test_change_refuses_a_full_receipt_history_before_the_effect(setup):
     with pytest.raises(ValueError, match="history is full"):
         inbox.change(goal, item["id"], expected_revision=item["revision"], operation_id=uuid.uuid4().hex, action="cancel")
     assert inbox.state(goal)["items"][0]["state"] == "queued"
+
+
+def _authority_seams(monkeypatch, *, tenant_roles, admins=()):
+    from maverick.tenant import registry
+    from maverick_dashboard import auth, scim_groups
+
+    monkeypatch.setattr(module, "current_tenant_id_strict", lambda: "tenant-a")
+    monkeypatch.setattr(registry, "assert_tenant_active", lambda tenant_id: None)
+    monkeypatch.setattr(scim_groups, "active_for_principal", lambda principal: True)
+    monkeypatch.setattr(auth, "is_dashboard_admin", lambda principal: principal in admins)
+    monkeypatch.setattr("maverick_dashboard.rbac.get_tenant_role", lambda tenant_id, principal: tenant_roles.get(principal))
+    monkeypatch.setattr(auth, "global_role_for_principal", lambda principal: "admin" if principal in admins else None)
+    monkeypatch.setattr("maverick.paths.current_tenant_id", lambda: "tenant-a")
+
+
+def test_deferred_authority_matches_admission_for_an_installation_administrator(monkeypatch):
+    """Starting work and every later recheck read the same role: a pinned
+    installation administrator is admin in each workspace even without a named
+    membership, so a follow-up they started is not refused afterwards."""
+    _authority_seams(monkeypatch, tenant_roles={}, admins={"user:owner"})
+    user_id, suites = module.current_authority(SimpleNamespace(owner="user:owner", domain=""))
+    assert user_id == "owner" and suites is None
+
+
+def test_deferred_authority_still_refuses_a_workspace_demotion(monkeypatch):
+    _authority_seams(monkeypatch, tenant_roles={"user:owner": "viewer"})
+    with pytest.raises(PermissionError, match="workspace execution permission"):
+        module.current_authority(SimpleNamespace(owner="user:owner", domain=""))

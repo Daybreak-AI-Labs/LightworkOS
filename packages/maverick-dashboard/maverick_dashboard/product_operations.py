@@ -7,6 +7,7 @@ confirmation or execution argument. Preparations are sealed and short lived.
 from __future__ import annotations
 
 import json
+import logging
 import secrets
 import time
 from collections.abc import Callable
@@ -23,17 +24,17 @@ from maverick.governed_records import GovernedRecordLocalOnly
 from maverick.product_operation_families import FAMILIES
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from . import auth
+from . import auth, single_computer
 from .draft_api import context_for
 from .scalar_wire import exact_integers
-from .store_failures import remember_route
+from .store_failures import log_store_failure, remember_route
 
 router = APIRouter(prefix="/api/v1/copilot/product-operations", tags=["copilot-product-operations"],
                    dependencies=[Depends(remember_route)])
 TTL = 600
 PURPOSE = "lightwork.product-operation.v1"
-LOCAL_ONLY = ("This action keeps its records only on a single-computer installation of Lightwork. "
-              "This deployment uses a shared database, so it is not available here.")
+log = logging.getLogger(__name__)
+LOCAL_ONLY = single_computer.MESSAGE
 
 
 
@@ -559,9 +560,11 @@ def catalog(request: Request, body: ContextInput):
             items.append({"id": adapter.id, "label": adapter.label, "family": adapter.family,
                           "available": False, "blocked": LOCAL_ONLY, "direct_ui": adapter.direct_ui})
             continue
-        except (HTTPException, ValueError, OSError) as exc:
+        except Exception as exc:  # noqa: BLE001 - one control's source never fails the whole catalog
             if isinstance(exc, HTTPException) and exc.status_code in {401, 403, 404}:
                 continue  # Never advertise an inaccessible record or its title.
+            if not isinstance(exc, (HTTPException, ValueError, OSError)):
+                log_store_failure(log, exc, answered="Copilot control shown as unavailable")
             items.append({"id": adapter.id, "label": adapter.label, "family": adapter.family,
                           "available": False, "blocked": "Current source information is unavailable.",
                           "direct_ui": adapter.direct_ui})

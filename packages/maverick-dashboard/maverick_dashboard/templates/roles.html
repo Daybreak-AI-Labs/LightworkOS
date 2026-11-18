@@ -50,6 +50,11 @@
         {% if selected.effort %}· Thinking level: <strong>{{ selected.effort | effort_label }}</strong>{% endif %}
         {% if selected.is_override %}· <span class="badge">Changed</span>{% endif %}
       </p>
+      {% if selected.model_ready == false %}
+      <p class="muted" id="role-model-not-ready"><span class="badge">Not set up</span>
+        This model can't run yet because its AI service isn't connected. Choose another model below, or
+        <a href="/settings?focus=ai-provider#settings-integrations">connect its AI service in Settings</a>.</p>
+      {% endif %}
       <div id="role-msg" role="status" aria-live="polite" class="muted roles-msg"></div>
 
       <form id="role-form" data-role="{{ selected.role }}" data-role-name="{{ selected.role | agent_role }}">

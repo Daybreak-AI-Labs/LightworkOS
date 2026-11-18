@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, is_dataclass
+from functools import partial
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request
@@ -327,7 +328,7 @@ class ThirdPartyLifecycleDependencies:
 
 def _third_party_lifecycle_authority_routes(deps, router):
     """Bind authority and related router operations."""
-    def authority(request: Request):
+    def open_authority(request: Request):
         ops = _ops()
         tenant = _tenant_id()
         principal = _principal(request, tenant)
@@ -358,6 +359,10 @@ def _third_party_lifecycle_authority_routes(deps, router):
                 status_code=503, detail="third-party lifecycle store is unavailable"
             )
         return ops, tenant, principal, store
+
+    # The gate reads the settings and the store opens tenant SQLite files: file
+    # work that must not stall every other request on the event loop.
+    authority = partial(run_in_threadpool, open_authority)
 
     async def call(ops, function, *args, **kwargs):
         try:
@@ -433,7 +438,7 @@ def _third_party_lifecycle_authority_routes(deps, router):
     @router.get("/templates")
     async def list_templates(request: Request) -> dict[str, Any]:
         require_permission(request, "view")
-        ops, tenant, _principal_ref, store = authority(request)
+        ops, tenant, _principal_ref, store = await authority(request)
         items = _jsonable(await call(ops, store.list_templates, tenant, limit=500))
         for item in items:
             item["needs_named_author"] = _unattributed_author(tenant, item["authored_by"])
@@ -446,19 +451,19 @@ def _third_party_lifecycle_list_assessments_routes(authority, call, router):
     @router.get("/assessments")
     async def list_assessments(request: Request) -> dict[str, Any]:
         require_permission(request, "view")
-        ops, tenant, _principal_ref, store = authority(request)
+        ops, tenant, _principal_ref, store = await authority(request)
         return {"items": _jsonable(await call(ops, store.list_assessments, tenant, limit=500))}
 
     @router.get("/lifecycles")
     async def list_lifecycles(request: Request) -> dict[str, Any]:
         require_permission(request, "view")
-        ops, tenant, _principal_ref, store = authority(request)
+        ops, tenant, _principal_ref, store = await authority(request)
         return {"items": _jsonable(await call(ops, store.list_lifecycles, tenant, limit=500))}
 
     @router.get("/offboarding")
     async def list_offboarding(request: Request) -> dict[str, Any]:
         require_permission(request, "view")
-        ops, tenant, _principal_ref, store = authority(request)
+        ops, tenant, _principal_ref, store = await authority(request)
         items = _jsonable(await call(ops, store.list_offboarding_plans, tenant, limit=500))
         for item in items:
             item["needs_named_initiator"] = _unattributed_author(tenant, item["initiated_by"])
@@ -469,7 +474,7 @@ def _third_party_lifecycle_list_assessments_routes(authority, call, router):
         require_permission(request, "operate")
         if not (caller_principal(request) or "").startswith("user:"):
             raise HTTPException(403, "Set up individual sign-ins before writing a questionnaire for approval.")
-        ops, tenant, _principal_ref, store = authority(request)
+        ops, tenant, _principal_ref, store = await authority(request)
         return _jsonable(
             await call(ops, store.create_template_version, tenant, template_id, **body.model_dump())
         )
@@ -477,7 +482,7 @@ def _third_party_lifecycle_list_assessments_routes(authority, call, router):
     @router.get("/templates/{template_id}/versions/{version}")
     async def get_template(request: Request, template_id: ObjectPath, version: int):
         require_permission(request, "view")
-        ops, tenant, _principal_ref, store = authority(request)
+        ops, tenant, _principal_ref, store = await authority(request)
         return _jsonable(await call(ops, store.get_template_version, tenant, template_id, version))
 
     @router.post("/templates/{template_id}/versions/{version}/approve")
@@ -487,7 +492,7 @@ def _third_party_lifecycle_list_assessments_routes(authority, call, router):
         require_global_permission(request, "admin")
         if not (caller_principal(request) or "").startswith("user:"):
             raise HTTPException(403, "Sign in with an individual account to approve a questionnaire.")
-        ops, tenant, _principal_ref, store = authority(request)
+        ops, tenant, _principal_ref, store = await authority(request)
         record = await call(ops, store.get_template_version, tenant, template_id, version)
         if _unattributed_author(tenant, record.authored_by):
             raise HTTPException(
@@ -510,7 +515,7 @@ def _third_party_lifecycle_list_assessments_routes(authority, call, router):
         request: Request, assessment_id: ObjectPath, body: AssessmentCreateIn
     ):
         require_permission(request, "operate")
-        ops, tenant, _principal_ref, store = authority(request)
+        ops, tenant, _principal_ref, store = await authority(request)
         from .vendor_profile import effect_guard, registered_vendor
         registered_vendor(tenant, body.vendor_ref)
         return _jsonable(
@@ -521,13 +526,13 @@ def _third_party_lifecycle_list_assessments_routes(authority, call, router):
     @router.get("/assessments/{assessment_id}")
     async def get_assessment(request: Request, assessment_id: ObjectPath):
         require_permission(request, "view")
-        ops, tenant, _principal_ref, store = authority(request)
+        ops, tenant, _principal_ref, store = await authority(request)
         return _jsonable(await call(ops, store.get_assessment, tenant, assessment_id))
 
     @router.get("/assessments/{assessment_id}/required-questions")
     async def required_questions(request: Request, assessment_id: ObjectPath):
         require_permission(request, "view")
-        ops, tenant, _principal_ref, store = authority(request)
+        ops, tenant, _principal_ref, store = await authority(request)
         items = await call(ops, store.required_questions, tenant, assessment_id)
         return {"assessment_id": assessment_id, "required_questions": _jsonable(items)}
 
@@ -536,7 +541,7 @@ def _third_party_lifecycle_list_assessments_routes(authority, call, router):
         request: Request, assessment_id: ObjectPath, question_id: ObjectPath, body: ResponseIn
     ):
         require_permission(request, "operate")
-        ops, tenant, _principal_ref, store = authority(request)
+        ops, tenant, _principal_ref, store = await authority(request)
         return _jsonable(
             await call(
                 ops, store.record_response, tenant, assessment_id, question_id, **body.model_dump()
@@ -546,7 +551,7 @@ def _third_party_lifecycle_list_assessments_routes(authority, call, router):
     @router.post("/assessments/{assessment_id}/evaluate")
     async def evaluate_assessment(request: Request, assessment_id: ObjectPath, body: RevisionIn):
         require_permission(request, "operate")
-        ops, tenant, _principal_ref, store = authority(request)
+        ops, tenant, _principal_ref, store = await authority(request)
         return _jsonable(
             await call(ops, store.evaluate_assessment, tenant, assessment_id, **body.model_dump())
         )
@@ -556,7 +561,7 @@ def _third_party_lifecycle_list_assessments_routes(authority, call, router):
         request: Request, assessment_id: ObjectPath, task_id: ObjectPath, body: AssessmentTaskIn
     ):
         require_permission(request, "operate")
-        ops, tenant, _principal_ref, store = authority(request)
+        ops, tenant, _principal_ref, store = await authority(request)
         return _jsonable(
             await call(
                 ops, store.set_assessment_task, tenant, assessment_id, task_id, **body.model_dump()
@@ -566,7 +571,7 @@ def _third_party_lifecycle_list_assessments_routes(authority, call, router):
     @router.put("/lifecycles/{lifecycle_id}")
     async def create_lifecycle(request: Request, lifecycle_id: ObjectPath, body: LifecycleCreateIn):
         require_permission(request, "operate")
-        ops, tenant, _principal_ref, store = authority(request)
+        ops, tenant, _principal_ref, store = await authority(request)
         from .vendor_profile import effect_guard, registered_vendor
         registered_vendor(tenant, body.vendor_ref)
         return _jsonable(
@@ -577,7 +582,7 @@ def _third_party_lifecycle_list_assessments_routes(authority, call, router):
     @router.get("/lifecycles/{lifecycle_id}")
     async def get_lifecycle(request: Request, lifecycle_id: ObjectPath):
         require_permission(request, "view")
-        ops, tenant, _principal_ref, store = authority(request)
+        ops, tenant, _principal_ref, store = await authority(request)
         return _jsonable(await call(ops, store.get_lifecycle, tenant, lifecycle_id))
 
 
@@ -591,7 +596,7 @@ def _third_party_lifecycle_transition_lifecycle_routes(authority, call, router):
             require_global_permission(request, "admin")
         else:
             require_permission(request, "operate")
-        ops, tenant, _principal_ref, store = authority(request)
+        ops, tenant, _principal_ref, store = await authority(request)
         payload = body.model_dump()
         target = payload.pop("target_stage")
         from .vendor_profile import effect_guard
@@ -607,7 +612,7 @@ def _third_party_lifecycle_transition_lifecycle_routes(authority, call, router):
         require_global_permission(request, "admin")
         if not (caller_principal(request) or "").startswith("user:"):
             raise HTTPException(403, "Set up individual sign-ins before starting offboarding approval.")
-        ops, tenant, _principal_ref, store = authority(request)
+        ops, tenant, _principal_ref, store = await authority(request)
         return _jsonable(
             await call(
                 ops, store.begin_offboarding, tenant, lifecycle_id, plan_id, **body.model_dump()
@@ -617,13 +622,13 @@ def _third_party_lifecycle_transition_lifecycle_routes(authority, call, router):
     @router.get("/offboarding/{plan_id}")
     async def get_offboarding(request: Request, plan_id: ObjectPath):
         require_permission(request, "view")
-        ops, tenant, _principal_ref, store = authority(request)
+        ops, tenant, _principal_ref, store = await authority(request)
         return _jsonable(await call(ops, store.get_offboarding_plan, tenant, plan_id))
 
     @router.post("/offboarding/{plan_id}/legal-hold")
     async def set_legal_hold(request: Request, plan_id: ObjectPath, body: LegalHoldIn):
         require_global_permission(request, "admin")
-        ops, tenant, _principal_ref, store = authority(request)
+        ops, tenant, _principal_ref, store = await authority(request)
         return _jsonable(
             await call(ops, store.set_legal_hold, tenant, plan_id, **body.model_dump())
         )
@@ -633,7 +638,7 @@ def _third_party_lifecycle_transition_lifecycle_routes(authority, call, router):
         request: Request, plan_id: ObjectPath, task_id: ObjectPath, body: OffboardingTaskIn
     ):
         require_permission(request, "operate")
-        ops, tenant, _principal_ref, store = authority(request)
+        ops, tenant, _principal_ref, store = await authority(request)
         return _jsonable(
             await call(
                 ops, store.set_offboarding_task, tenant, plan_id, task_id, **body.model_dump()
@@ -647,7 +652,7 @@ def _third_party_lifecycle_transition_lifecycle_routes(authority, call, router):
         require_global_permission(request, "admin")
         if not (caller_principal(request) or "").startswith("user:"):
             raise HTTPException(403, "Sign in with an individual account to approve offboarding.")
-        ops, tenant, _principal_ref, store = authority(request)
+        ops, tenant, _principal_ref, store = await authority(request)
         plan = await call(ops, store.get_offboarding_plan, tenant, plan_id)
         if _unattributed_author(tenant, plan.initiated_by):
             raise HTTPException(
@@ -663,7 +668,7 @@ def _third_party_lifecycle_transition_lifecycle_routes(authority, call, router):
     @router.get("/callbacks/{callback_id}")
     async def get_callback(request: Request, callback_id: ObjectPath):
         require_permission(request, "view")
-        ops, tenant, _principal_ref, store = authority(request)
+        ops, tenant, _principal_ref, store = await authority(request)
         result = _jsonable(await call(ops, store.get_callback, tenant, callback_id))
         result.pop("lease_token", None)
         return result
@@ -671,7 +676,7 @@ def _third_party_lifecycle_transition_lifecycle_routes(authority, call, router):
     @router.post("/callbacks/claim")
     async def claim_callbacks(request: Request, body: ClaimCallbacksIn):
         require_global_permission(request, "admin")
-        ops, tenant, _principal_ref, store = authority(request)
+        ops, tenant, _principal_ref, store = await authority(request)
         return {
             "items": _jsonable(await call(ops, store.claim_callbacks, tenant, **body.model_dump()))
         }
@@ -679,7 +684,7 @@ def _third_party_lifecycle_transition_lifecycle_routes(authority, call, router):
     @router.post("/callbacks/{callback_id}/fail")
     async def fail_callback(request: Request, callback_id: ObjectPath, body: FailCallbackIn):
         require_global_permission(request, "admin")
-        ops, tenant, _principal_ref, store = authority(request)
+        ops, tenant, _principal_ref, store = await authority(request)
         return _jsonable(
             await call(ops, store.fail_callback, tenant, callback_id, **body.model_dump())
         )
@@ -687,7 +692,7 @@ def _third_party_lifecycle_transition_lifecycle_routes(authority, call, router):
     @router.post("/callbacks/{callback_id}/acknowledge")
     async def acknowledge_callback(request: Request, callback_id: ObjectPath, body: AckCallbackIn):
         require_global_permission(request, "admin")
-        ops, tenant, _principal_ref, store = authority(request)
+        ops, tenant, _principal_ref, store = await authority(request)
         return _jsonable(
             await call(ops, store.acknowledge_callback, tenant, callback_id, **body.model_dump())
         )
@@ -695,7 +700,7 @@ def _third_party_lifecycle_transition_lifecycle_routes(authority, call, router):
     @router.post("/callbacks/{callback_id}/requeue")
     async def requeue_callback(request: Request, callback_id: ObjectPath, body: RequeueCallbackIn):
         require_global_permission(request, "admin")
-        ops, tenant, _principal_ref, store = authority(request)
+        ops, tenant, _principal_ref, store = await authority(request)
         return _jsonable(
             await call(ops, store.requeue_dead_letter, tenant, callback_id, **body.model_dump())
         )
@@ -705,7 +710,7 @@ def _third_party_lifecycle_transition_lifecycle_routes(authority, call, router):
         request: Request, assessment_id: ObjectPath, export_id: ObjectPath, body: ExportIn
     ):
         require_permission(request, "operate")
-        ops, tenant, _principal_ref, store = authority(request)
+        ops, tenant, _principal_ref, store = await authority(request)
         return _jsonable(
             await call(
                 ops, store.export_assessment, tenant, assessment_id, export_id, **body.model_dump()
@@ -717,7 +722,7 @@ def _third_party_lifecycle_transition_lifecycle_routes(authority, call, router):
         request: Request, lifecycle_id: ObjectPath, export_id: ObjectPath, body: ExportIn
     ):
         require_permission(request, "operate")
-        ops, tenant, _principal_ref, store = authority(request)
+        ops, tenant, _principal_ref, store = await authority(request)
         return _jsonable(
             await call(
                 ops, store.export_lifecycle, tenant, lifecycle_id, export_id, **body.model_dump()
@@ -727,13 +732,13 @@ def _third_party_lifecycle_transition_lifecycle_routes(authority, call, router):
     @router.get("/exports/{export_id}")
     async def get_export(request: Request, export_id: ObjectPath):
         require_permission(request, "view")
-        ops, tenant, _principal_ref, store = authority(request)
+        ops, tenant, _principal_ref, store = await authority(request)
         return _jsonable(await call(ops, store.get_export, tenant, export_id))
 
     @router.post("/retention/purge")
     async def purge(request: Request, body: PurgeIn):
         require_global_permission(request, "admin")
-        ops, tenant, _principal_ref, store = authority(request)
+        ops, tenant, _principal_ref, store = await authority(request)
         return _jsonable(await call(ops, store.purge_expired, tenant, **body.model_dump()))
 
 
@@ -742,7 +747,7 @@ def _third_party_lifecycle_integrity_routes(authority, call, router):
     @router.get("/integrity")
     async def integrity(request: Request):
         require_global_permission(request, "audit")
-        ops, tenant, _principal_ref, store = authority(request)
+        ops, tenant, _principal_ref, store = await authority(request)
         result = _jsonable(await call(ops, store.verify_integrity, tenant))
         result["valid"] = True
         return result

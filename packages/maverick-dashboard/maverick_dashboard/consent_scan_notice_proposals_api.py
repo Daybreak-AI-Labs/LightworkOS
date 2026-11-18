@@ -137,6 +137,10 @@ def _enabled() -> bool:
     return notice_proposals_enabled()
 
 
+NOT_SET_UP = ("Disclosure suggestions are not available on this installation, "
+              "because it does not include the server setup they need.")
+
+
 def scan_notice_proposals_enabled_for_page() -> bool:
     """Read the exact feature gate without opening inventory or proposal state."""
 
@@ -332,6 +336,17 @@ def create_consent_scan_notice_proposals_router(  # noqa: C901
         route_class=_GenericValidationRoute,
     )
 
+    def _runtime_installed(request: Request) -> bool:
+        """Whether the server seams a proposal store needs are installed at all."""
+        state = request.app.state
+        return deps.store_for is not None or callable(
+            getattr(state, "consent_scan_notice_proposal_store_factory", None)
+        ) or all(callable(getattr(state, name, None)) for name in (
+            "consent_scan_notice_proposal_binding_resolver_factory",
+            "consent_scan_notice_proposal_revocation_resolver_factory",
+            "consent_scan_notice_proposal_signing_key_resolver",
+        ))
+
     def authority(request: Request) -> tuple[Any, Any]:
         proposals = _ops()
         tenant = _tenant_id()
@@ -480,6 +495,10 @@ def create_consent_scan_notice_proposals_router(  # noqa: C901
         limit: int = Query(default=100, ge=1, le=500),
     ):
         require_permission(request, "view")
+        if not _runtime_installed(request):
+            _ops()  # A turned-off feature still says it is turned off.
+            _tenant_id()
+            return {"available": False, "message": NOT_SET_UP, "head_revision": 0, "items": []}
         proposals, store = authority(request)
         return await call(proposals, store.list_proposals, limit=limit)
 

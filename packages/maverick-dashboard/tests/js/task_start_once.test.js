@@ -86,3 +86,23 @@ test("a real refusal still explains itself and unlocks the form", async () => {
   assert.equal(w.document.querySelector("button").disabled, false);
   w.close();
 });
+
+test("files that were not saved say so and link to the saved draft", async () => {
+  // Live: every task with a file showed "This cannot be done right now".
+  const { w } = load(async () => ({
+    redirected: false, ok: false, status: 409, url: "https://lightwork.test/chat/send",
+    headers: { get: () => null }, json: async () => ({ detail: {
+      schema: "lightwork.error.v1", code: "attachments_not_saved", retryable: false, field_errors: {},
+      message: "Your files could not be saved, so this task did not start and nothing was spent.",
+      next_action: { label: "Open the saved draft", href: "/chat/goal/48" } } }),
+  }));
+  w.document.querySelector("form").dispatchEvent(new w.Event("submit", { cancelable: true }));
+  for (let i = 0; i < 5; i += 1) await tick();
+  const error = w.document.getElementById("goal-error");
+  assert.match(error.textContent, /Your files could not be saved/);
+  assert.doesNotMatch(error.textContent, /cannot be done right now/);
+  assert.equal(error.querySelector("a").getAttribute("href"), "/chat/goal/48");
+  assert.equal(error.style.display, "block");
+  assert.equal(w.document.querySelector("button").disabled, false);
+  w.close();
+});

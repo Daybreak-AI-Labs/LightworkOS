@@ -131,7 +131,10 @@ def test_storage_failure_is_recoverable_draft_and_retry_deduplicates(environment
     goal = world.list_goals()[0]
     assert goal.status == "draft"
     page = client.get(f"/chat/goal/{goal.id}")
-    assert "Submission saved as a draft" in page.text and "Retry preparation" in page.text
+    # Files that were never stored cannot be prepared again from the draft:
+    # the page offers to discard it and to send the files again instead.
+    assert "Submission saved as a draft" in page.text and "Retry preparation" not in page.text
+    assert "Discard draft" in page.text and "send your message again with the files" in page.text
     retry_missing = client.post(f"/chat/goal/{goal.id}/recover-submission", follow_redirects=False)
     assert retry_missing.status_code == 409 and not runs
     monkeypatch.setattr(submissions, "publish_batch", publish)

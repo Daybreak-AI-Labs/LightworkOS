@@ -11,7 +11,7 @@
       var data = await response.json(); if (!Array.isArray(data.items)) throw new Error('unreadable');
       data.items.forEach(function (item) {
         var row = document.createElement('article'), title = document.createElement('h3'), state = document.createElement('p'), detail = document.createElement('p');
-        title.textContent = item.action; state.textContent = 'Decision: ' + item.status + (item.decided_by ? ' by ' + item.decided_by : '') + (item.expires_at ? '. Request expires ' + (window.mvTimeAbsolute ? window.mvTimeAbsolute(item.expires_at) : new Date(item.expires_at * 1000).toLocaleString()) : ''); detail.textContent = item.summary;
+        title.textContent = item.action; state.textContent = 'Decision: ' + item.status + (item.decided_by_name || item.decided_by ? ' by ' + (item.decided_by_name || item.decided_by) : '') + (item.expires_at ? '. Request expires ' + (window.mvTimeAbsolute ? window.mvTimeAbsolute(item.expires_at) : new Date(item.expires_at * 1000).toLocaleString()) : ''); detail.textContent = item.summary;
         row.append(title, state, detail);
         if (item.before || item.after) { var preview = document.createElement('p'); preview.textContent = 'Reviewed change: ' + item.before + ' → ' + item.after; row.append(preview); }
         var execution = document.createElement('p'); execution.textContent = item.execution; row.append(execution);

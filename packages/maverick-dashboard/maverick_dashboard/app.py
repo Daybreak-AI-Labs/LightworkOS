@@ -3503,6 +3503,22 @@ def _task_limit_error(status, detail, headers, title, message):
     return title, message, ""
 
 
+def _business_refusal(detail, title=""):
+    """(gate, title, message, next action) for an authored business refusal.
+
+    Business refusals carry customer copy (product_errors), so a browser page
+    shows it instead of the generic role text. A named account outside this
+    workspace also gets how to fix that."""
+    from .access_explanations import MEMBERSHIP_REQUIRED
+
+    if not (isinstance(detail, dict) and detail.get("schema") == "lightwork.error.v1"
+            and isinstance(detail.get("message"), str)):
+        return None
+    if detail.get("code") == MEMBERSHIP_REQUIRED:
+        return "membership", "Workspace membership needed", detail["message"], detail.get("next_action") or {}
+    return "", title, detail["message"], {}
+
+
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     """Branded, actionable HTML for browser failures; JSON for API callers."""
@@ -3595,6 +3611,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
         title, message, gate = _task_limit_error(status, exc.detail, headers, title, message)
         reauthenticate = ""
         feature = {}
+        action = {}
         if status == 403 and feature_off:
             from urllib.parse import unquote
 
@@ -3607,6 +3624,8 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
             )
             if label and headers.get(feature_gate.SWITCH_HEADER) == "module":
                 feature = {"section": headers[feature_gate.FEATURE_HEADER], "label": label}
+        elif status == 403 and _business_refusal(exc.detail):
+            gate, title, message, action = _business_refusal(exc.detail, title)
         elif status == 403 and isinstance(exc.detail, str):
             # Feature switches and named sign-in gates raise 403 with these
             # fixed server phrases; show the real reason instead of the
@@ -3649,6 +3668,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
                 "gate": gate,
                 "reauthenticate": reauthenticate,
                 "feature": feature,
+                "action": action,
             },
             status_code=status,
             headers=headers,
@@ -3831,6 +3851,21 @@ async def world_backend_refused_handler(request: Request, exc: _WorldBackendUnre
             "path": request.url.path, "gate": "", "reauthenticate": "", "feature": {},
         }, status_code=503)
     return JSONResponse({"detail": detail, "code": "records_database_refused"}, status_code=503)
+
+
+from maverick.governed_records import GovernedRecordLocalOnly as _GovernedRecordLocalOnly  # noqa: E402
+
+
+@app.exception_handler(_GovernedRecordLocalOnly)
+async def single_computer_only_handler(request: Request, exc: _GovernedRecordLocalOnly):
+    """A single-computer feature on a shared deployment: a plain 409, never a 500.
+
+    The pages' opening reads answer 200 themselves (``single_computer.read``);
+    this covers every other request that meets the same refusal.
+    """
+    from .single_computer import refusal_response
+
+    return refusal_response(request)
 
 
 @app.exception_handler(FlowPayloadError)
@@ -5961,7 +5996,7 @@ async def privacy_regulatory_intelligence_page(request: Request) -> HTMLResponse
 
 
 @app.get("/privacy/rights-orchestration", response_class=HTMLResponse)
-async def privacy_rights_orchestration_page(request: Request) -> HTMLResponse:
+def privacy_rights_orchestration_page(request: Request) -> HTMLResponse:
     """Provider-neutral privacy-rights case orchestration workbench."""
 
     require_permission(request, "operate")
@@ -6109,7 +6144,7 @@ async def governance_agents_page(request: Request) -> HTMLResponse:
 
 
 @app.get("/third-party/lifecycle", response_class=HTMLResponse)
-async def third_party_lifecycle_page(request: Request) -> HTMLResponse:
+def third_party_lifecycle_page(request: Request) -> HTMLResponse:
     """Conditional assessments, lifecycle changes, and governed offboarding."""
 
     require_permission(request, "operate")
@@ -6127,7 +6162,7 @@ async def third_party_lifecycle_page(request: Request) -> HTMLResponse:
 
 
 @app.get("/third-party/collaboration", response_class=HTMLResponse)
-async def third_party_collaboration_page(request: Request) -> HTMLResponse:
+def third_party_collaboration_page(request: Request) -> HTMLResponse:
     """Internal control plane for governed external-vendor collaboration."""
 
     require_permission(request, "operate")
@@ -6147,12 +6182,18 @@ async def third_party_collaboration_page(request: Request) -> HTMLResponse:
 
 
 @app.get("/security", response_class=HTMLResponse)
-async def security_page(request: Request) -> HTMLResponse:
+def security_page(request: Request) -> HTMLResponse:
     """Security & GRC department workspace over assessments and durable
     control-program records. Record contents are operate-tier data."""
     require_permission(request, "operate")
     from maverick import security_ops
 
+    # About forty list reads: pending audit receipts are retried once, not per list.
+    with security_ops.read_scope():
+        return _security_page(request, security_ops)
+
+
+def _security_page(request: Request, security_ops) -> HTMLResponse:
     ctx = _workspace_ctx("security", viewer=caller_principal(request) or "")
     records = {
         "enabled": security_ops.enabled(),
@@ -6247,13 +6288,18 @@ async def security_page(request: Request) -> HTMLResponse:
 
 
 @app.get("/security/report", response_class=HTMLResponse)
-async def security_report_page(request: Request) -> HTMLResponse:
+def security_report_page(request: Request) -> HTMLResponse:
     """Print-friendly security readiness and board report."""
     require_permission(request, "operate")
     from maverick import security_ops
 
     if not security_ops.enabled():
         raise HTTPException(status_code=404, detail="security ops are disabled")
+    with security_ops.read_scope():
+        return _security_report_page(request, security_ops)
+
+
+def _security_report_page(request: Request, security_ops) -> HTMLResponse:
     report = security_ops.program_report()
     generated_at = report.get("generated_at")
     if isinstance(generated_at, (int, float)):
@@ -12029,13 +12075,44 @@ async def recover_chat_submission(request: Request, bg: BackgroundTasks, goal_id
         # Idempotency-Key resumes it with exactly those. Chat recovery would not.
         raise HTTPException(status_code=409, detail=(
             "This request came through the API. Replay it with the same Idempotency-Key to run it."))
-    records = {(r.filename, r.mime, r.size_bytes, r.sha256) for r in w.list_attachments(goal_id)}
-    if any((r["filename"], r["mime"], r["size_bytes"], r["sha256"]) not in records
-           for r in receipt["detail"]["manifest"]):
-        raise HTTPException(status_code=409, detail="The attachment batch is incomplete. Resubmit the original form and files to recover it.")
+    if not _submission_files_saved(w, goal_id, receipt):
+        from .attachment_submission import files_not_saved
+
+        raise files_not_saved(goal_id)
     conversation_id = _submission_conversation(w, receipt)
     _dispatch_goal(request, bg, goal_id, conversation_id=conversation_id, receipt=receipt)
     return RedirectResponse(f"/chat/goal/{goal_id}", status_code=303)
+
+
+def _submission_files_saved(w, goal_id: int, receipt: dict) -> bool:
+    """Whether every file the person sent with this draft was stored."""
+    records = {(r.filename, r.mime, r.size_bytes, r.sha256) for r in w.list_attachments(goal_id)}
+    return all((r["filename"], r["mime"], r["size_bytes"], r["sha256"]) in records
+               for r in receipt["detail"].get("manifest") or [])
+
+
+@app.post("/chat/goal/{goal_id}/discard-draft")
+async def discard_chat_draft(request: Request, goal_id: int) -> RedirectResponse:
+    """Discard the person's own unstarted draft: it is stopped and never runs."""
+    _require_same_origin(request)
+    require_permission(request, "operate")
+    w = _world()
+    goal = w.get_goal(goal_id)
+    if goal is None:
+        raise HTTPException(status_code=404, detail="no such goal")
+    assert_goal_access(request, goal)
+    if (goal.owner or "") != (caller_principal(request) or ""):
+        raise HTTPException(status_code=403, detail="Only the person who sent this draft can discard it.")
+    if goal.status != "draft":
+        raise HTTPException(status_code=409, detail="This is no longer an unstarted draft. Open it to see its current state.")
+    from uuid import uuid4
+
+    from .reviewed_stop import StopInput
+    from .reviewed_stop import apply as stop
+
+    await run_in_threadpool(stop, request, goal_id, StopInput(
+        expected_updated_at=float(goal.updated_at), expected_owner=goal.owner or "", operation_id=uuid4().hex))
+    return RedirectResponse("/chat", status_code=303)
 
 
 @app.post("/webhook/start")
@@ -13607,7 +13684,9 @@ def _chat_goal_page(request: Request, goal_id: int) -> HTMLResponse:
             "stop_progress": _stop_progress(w, g),
             "show_technical_details": show_technical,
             "submission_key": secrets.token_urlsafe(24),
-            "submission": SubmissionStore(w).for_goal(goal_id),
+            "submission": (submission := SubmissionStore(w).for_goal(goal_id)),
+            "submission_files_saved": (g.status != "draft" or submission is None
+                                       or _submission_files_saved(w, goal_id, submission)),
             "spend_ceiling": spend_ceiling,
             "spend_ceiling_text": (
                 f"{spend_ceiling:,.2f}" if spend_ceiling is not None else ""

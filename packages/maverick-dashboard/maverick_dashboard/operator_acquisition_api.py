@@ -2,17 +2,22 @@
 from __future__ import annotations
 
 import json
+import logging
 import secrets
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from maverick import config, crypto_at_rest
+from maverick.governed_records import GovernedRecordLocalOnly
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import operator_acquisition as native
+from . import single_computer
+from .store_failures import log_store_failure, remember_route
 from .tools_ops_api import same_origin
 
-router = APIRouter(tags=["operator-acquisition"])
+router = APIRouter(tags=["operator-acquisition"], dependencies=[Depends(remember_route)])
+log = logging.getLogger(__name__)
 PURPOSE = "lightwork.operator-acquisition-review.v1"
 
 
@@ -34,11 +39,12 @@ class ApplyIn(BaseModel):
 def call(function, *args, **kwargs):
     try:
         return function(*args, **kwargs)
-    except HTTPException:
-        raise
+    except (HTTPException, GovernedRecordLocalOnly):
+        raise  # A single-computer refusal reaches the app's plain 409.
     except (ValueError, TypeError, KeyError) as exc:
         raise HTTPException(422, "Check the complete source, answer and supported teaching bounds. An unknown result is not a policy; nothing was shortened.") from exc
     except Exception as exc:
+        log_store_failure(log, exc)
         raise HTTPException(503, "No complete result is available. If a request was admitted, read its original before a separate reviewed intent; no work repeats automatically.") from exc
 
 
@@ -50,6 +56,9 @@ def response(value):
 def page(request: Request):
     from .app import templates
     actor, context = native.authority(request, historical=True)
+    notice = single_computer.page(request, "Plan teaching questions")
+    if notice is not None:
+        return notice
     enabled = not config.config_source_errors(include_tenant=True) and config.get_features().get(native.FEATURE) is True
     return templates.TemplateResponse(request, "operator_acquisition.html", {"request": request, "enabled": enabled, "context": context, "actor": actor},
         headers={"Cache-Control": "private, no-store"})
@@ -57,12 +66,14 @@ def page(request: Request):
 
 @router.get(native.API + "/choices")
 def choices(request: Request, flow: str = Query(default="", max_length=256)):
-    return response(call(native.listing, request, flow))
+    _actor, context = native.authority(request, historical=True)
+    return response(single_computer.read(lambda: call(native.listing, request, flow), context=context, choices=[]))
 
 
 @router.get(native.API + "/history")
 def history(request: Request):
-    return response(call(native.history, request))
+    _actor, context = native.authority(request, historical=True)
+    return response(single_computer.read(lambda: call(native.history, request), context=context, choices=[]))
 
 
 @router.get(native.API + "/author")

@@ -108,7 +108,7 @@ def _context(request: Request) -> ServiceContext:
         require_permission(request, "operate")
     tenant = current_tenant_id_strict()
     if not tenant:
-        raise HTTPException(409, "Select an active tenant")
+        raise HTTPException(409, "Choose a workspace before using vendor onboarding.")
     actor = caller_principal(request)
     if not actor:
         raise HTTPException(403, "A named authenticated reviewer is required")
@@ -132,7 +132,7 @@ def _context(request: Request) -> ServiceContext:
         raise HTTPException(403, "A current workspace role is required")
     enrolled = settings()
     if not enrolled.enable:
-        raise HTTPException(409, "Vendor onboarding is disabled")
+        raise HTTPException(409, "Vendor onboarding is turned off on this installation. The person who runs Lightwork can turn it on in its configuration.")
     with tenant_scope(tenant=tenant):
         ticket = connections.get_connection(enrolled.ticket_connection)
     if not ticket:

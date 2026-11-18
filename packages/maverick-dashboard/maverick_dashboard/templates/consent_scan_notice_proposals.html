@@ -83,6 +83,7 @@
       if (!enabled) { $("csnp-list").replaceChildren(CW.el("p", "muted", "Turn on disclosure suggestions above to start.")); return; }
       try {
         var result = await call("/proposals?limit=200");
+        if (result.available === false) { $("csnp-list").replaceChildren(CW.el("p", "muted", result.message)); $("csnp-new").disabled = true; return; }
         state.head = result.head_revision || 0; state.items = result.items || [];
         CW.table($("csnp-list"), state.items, {label: "Suggestions", name: function (p) { return "Suggestion " + p.version; },
           columns: [

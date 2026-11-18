@@ -26,8 +26,11 @@ def _app():
 def _actor(request):
     auth.require_permission(request, "view")
     principal = auth.caller_principal(request)
-    if not principal or not personal_identity.principal_current(principal):
-        raise HTTPException(403, "Use a named account with current workspace membership for My data.")
+    if not principal:
+        raise HTTPException(403, "Sign in with a named account and choose a workspace to use My data.")
+    if not personal_identity.principal_current(principal):
+        from .access_explanations import membership_required
+        raise membership_required(principal, "My data")
     if not personal_identity.enabled():
         raise HTTPException(403, "My data controls are disabled. Ask your administrator to enable Personal data controls in Settings.")
     return principal
@@ -123,6 +126,10 @@ def _state(request):
 
 @router.get("/my-data")
 def page(request: Request):
+    from .feature_gate import turned_off_page
+    off = turned_off_page(request, "personal_data_controls", kicker="Your account", title="My data")
+    if off is not None:
+        return off
     state = _call(lambda: _state(request), json_response=False)
     return _app().templates.TemplateResponse(request, "personal_data.html", {"personal_data": state},
                                              headers={"Cache-Control": "private, no-store"})

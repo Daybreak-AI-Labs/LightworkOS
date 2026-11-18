@@ -75,7 +75,6 @@ def tool_explanation(principal, name):
 
 
 def explain(principal, kind, capability):
-    from maverick.personal_identity import principal_current
     if kind not in {"permission", "tool"} or not isinstance(capability, str) or not capability or len(capability) > 80:
         raise ValueError("Choose a supported permission or tool name.")
     current = explain_role(principal)
@@ -93,9 +92,11 @@ def explain(principal, kind, capability):
             value["allowed"] = False
             value["layers"].insert(0, {"source": current["source"], "allowed": False,
                                       "reason": "Current dashboard role does not permit tool actions."})
-    if not principal_current(principal):
+    # The same resolution as authorization (and Account): a deactivated account
+    # is blocked; workspace membership alone does not gate tool use.
+    if current["source"] == "Deactivated identity":
         value["allowed"] = False
-        value["layers"].insert(0, {"source": "Current named membership", "allowed": False, "reason": "No current active named workspace membership."})
+        value["layers"].insert(0, {"source": "Deactivated identity", "allowed": False, "reason": "This account is deactivated."})
     value.update(kind=kind, capability=capability)
     value["snapshot"] = digest(value)
     return value

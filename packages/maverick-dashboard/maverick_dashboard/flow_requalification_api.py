@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from . import flow_requalification as native
 from . import local_flow_promotions as release
+from . import single_computer
 from .scalar_wire import exact_integers
 
 router = APIRouter()
@@ -46,19 +47,22 @@ def response(value):
 def page(request: Request):
     from .app import templates
     native.authority(request)
+    notice = single_computer.page(request, "Recheck affected rules")
+    if notice is not None:
+        return notice
     return templates.TemplateResponse(request, "flow_requalification.html", {}, headers={"Cache-Control": "private, no-store"})
 
 
 @router.get(native.API)
 def listing(request: Request, flow: str = ""):
-    native.authority(request, request.headers.get("X-Lightwork-Requalification-Context"))
-    return response(release._native_call(lambda: native.listing(request, flow)))
+    _tenant, _owner, context = native.authority(request, request.headers.get("X-Lightwork-Requalification-Context"))
+    return response(single_computer.read(lambda: release._native_call(lambda: native.listing(request, flow)), context=context))
 
 
 @router.get(native.API + "/history")
 def history(request: Request):
-    native.authority(request, request.headers.get("X-Lightwork-Requalification-Context"))
-    return response(native.history(request))
+    _tenant, _owner, context = native.authority(request, request.headers.get("X-Lightwork-Requalification-Context"))
+    return response(single_computer.read(lambda: native.history(request), context=context, choices=[]))
 
 
 @router.get(native.API + "/original/{identifier}")

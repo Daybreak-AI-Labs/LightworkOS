@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import secrets
 import time
@@ -309,14 +310,19 @@ def apply(request, value):
 
 
 def call(function):
-    from maverick.governed_records import GovernedRecordBackendError
+    from maverick.governed_records import GovernedRecordBackendError, GovernedRecordLocalOnly
     from maverick.learning_guard import Halted
     from maverick.privacy_ops import AuditOutboxError, PrivacyStateError
+
+    from .store_failures import log_store_failure
     try:
         return release._native_call(function)
+    except GovernedRecordLocalOnly:
+        raise  # A single-computer feature on a shared deployment: the app answers 409.
     except (BudgetExceeded, Halted) as exc:
         raise HTTPException(409, "The full calculation exceeded its allowance. Read the original outcome; no partial result is called an answer.") from exc
     except (ValueError, RecordConflict) as exc:
         raise HTTPException(409, "The complete typed request or original custody could not be qualified. Check every expected answer and current source, or read the original outcome without repeating it.") from exc
     except (OSError, GovernedRecordBackendError, AuditOutboxError, PrivacyStateError) as exc:
+        log_store_failure(logging.getLogger(__name__), exc)
         raise HTTPException(503, "The original request could not be confirmed. Read its original outcome; no calculation will repeat automatically.") from exc

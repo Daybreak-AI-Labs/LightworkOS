@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 from collections import OrderedDict
 from collections.abc import Mapping
@@ -11,6 +12,10 @@ from typing import Any
 from fastapi import Request
 from maverick import consent_application_scanner as application_scanner
 from maverick.paths import canonical_tenant_id, current_tenant_id_strict, tenant_scope
+
+from .store_failures import log_store_failure
+
+_log = logging.getLogger(__name__)
 
 _CONFIG_KEYS = frozenset({"enable", "max_records", "retention_seconds"})
 _DEFAULT_MAX_RECORDS = 25_000
@@ -186,7 +191,9 @@ def attach_consent_application_scanner_composition(app: Any) -> None:
             )
         except (KeyboardInterrupt, SystemExit):
             raise
-        except Exception:
+        except Exception as exc:
+            # "Not ready" alone hides the cause; the operator needs it.
+            log_store_failure(_log, exc, answered="application scanning reported not ready")
             return False
 
     def maintenance(

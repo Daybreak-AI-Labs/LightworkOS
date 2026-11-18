@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import tempfile
 import uuid
 from contextlib import asynccontextmanager
@@ -15,7 +16,23 @@ from maverick.file_lock import cross_process_lock, ensure_private_directory
 from maverick.paths import data_dir
 from starlette.concurrency import run_in_threadpool
 
+log = logging.getLogger(__name__)
+
 _CHUNK_BYTES = 64 * 1024
+#: The saved draft's note when its files could not be stored.
+FILES_NOT_SAVED = ("Your files were not saved, so this draft cannot run. No AI work was started and nothing "
+                   "was spent. Discard it, then send your message again with the files.")
+
+
+def files_not_saved(goal_id: int):
+    """The plain refusal for a draft whose files were not admitted."""
+    from .product_errors import product_error
+
+    return product_error(
+        409, "attachments_not_saved",
+        "Your files could not be saved, so this task did not start and nothing was spent. "
+        "Open the saved draft to discard it, then send your message again with the files.",
+        next_action={"label": "Open the saved draft", "href": f"/chat/goal/{int(goal_id)}"})
 _MAX_FILES = 128
 
 
@@ -140,9 +157,10 @@ async def submit(world, files, *, token, owner, title, description, parent_id=No
                                                message="All attachments admitted. Preparing evidence before execution.")
             return {**updated, "created": receipt["created"]}
         except Exception as exc:
-            await run_in_threadpool(store.update, receipt["key"], state="draft",
-                                   message="Attachment admission interrupted. This draft has not run; resubmit the original batch to recover.")
-            raise HTTPException(status_code=409, detail=f"Submission retained as draft /chat/goal/{receipt['goal_id']}; no work started.") from exc
+            # The cause belongs in the server log; the person reads what happened.
+            log.exception("attachments for goal #%s could not be stored", receipt["goal_id"])
+            await run_in_threadpool(store.update, receipt["key"], state="draft", message=FILES_NOT_SAVED)
+            raise files_not_saved(receipt["goal_id"]) from exc
 
 
 def prepare(world, receipt, *, effect_guard=None):

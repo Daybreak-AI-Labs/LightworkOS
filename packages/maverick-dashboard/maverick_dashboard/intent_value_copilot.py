@@ -173,6 +173,10 @@ def _comparison(request, query, result):
 
 def _answer(request, message, page, token, permissions):
     normalized = " ".join(message.casefold().strip().rstrip("?!. ").split())
+    from .copilot_live_state import intent as live_intent
+
+    if live_intent(message) is not None:
+        return None  # one task's own record answers it, not a workspace total
     prior = _prior(request, token, permissions)
     if not _wants_metric(normalized, prior):
         return None

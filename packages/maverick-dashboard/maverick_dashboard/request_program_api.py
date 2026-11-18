@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 
 from . import request_program as native
+from . import single_computer
 from .scalar_wire import exact_integers
 
 router = APIRouter()
@@ -51,13 +52,16 @@ def material(token):
 def page(request: Request):
     from .app import templates
     native.authority(request)
+    notice = single_computer.page(request, "Prepare an answer for this request")
+    if notice is not None:
+        return notice
     return templates.TemplateResponse(request, "request_program.html", {}, headers={"Cache-Control": "no-store, private"})
 
 
 @router.get(native.API)
 def listing(request: Request, flow: str = ""):
-    native.authority(request, request.headers.get("X-Lightwork-Request-Context"))
-    return response(native.call(lambda: native.listing(request, flow)))
+    _tenant, _owner, context = native.authority(request, request.headers.get("X-Lightwork-Request-Context"))
+    return response(single_computer.read(lambda: native.call(lambda: native.listing(request, flow)), context=context, choices=[]))
 
 
 @router.post(native.API + "/review")

@@ -68,7 +68,8 @@ def test_spend_read_outs_use_the_kernel(client, monkeypatch):
         "top_concentration": 0.5, "observations": ["Most spend went to one task."],
         "top_goals": [{"goal_id": 7, "title": "Quarterly report", "cost": 9.0, "failed": False, "episodes": 2}]})
     out = client.get(API + "/cost-retro").json()
-    assert out["costliest"][0] == {"task": 7, "title": "Quarterly report", "cost": 9.0, "failed": False}
+    assert out["costliest"][0] == {"task": 7, "title": "Quarterly report", "cost": 9.0, "failed": False,
+                                   "result": "Finished"}
     assert out["advice"] == ["Most spend went to one task."]
 
     monkeypatch.setattr(budget_tuner, "recommend_for_world", lambda world, pct, min_samples: {
@@ -80,6 +81,30 @@ def test_spend_read_outs_use_the_kernel(client, monkeypatch):
     reasons = client.get(API + "/failures").json()["reasons"]
     assert reasons == [{"reason": "Hit a spending limit", "count": 2},
                        {"reason": "Sign-in or permission problem", "count": 1}]
+
+
+def test_costliest_tasks_say_how_each_one_ended(client, monkeypatch):
+    """Live goal 43 stopped at its time limit; Spend listed it as Finished."""
+    from maverick.cost import retrospective as retro
+    from maverick_dashboard import app as dash_app
+
+    world = dash_app._world()
+    ids = {}
+    for name, status, result in (
+        ("time", "blocked", "Stopped: this goal hit your time limit (1 minute)."),
+        ("money", "blocked", "Stopped: this goal hit your spending limit ($0.50 of $0.50 cap used)."),
+        ("done", "done", "All done."), ("stopped", "cancelled", ""), ("running", "active", "")):
+        ids[name] = world.create_goal(name, "")
+        world.set_goal_status(ids[name], status, result=result)
+    rows = [{"goal_id": gid, "title": name, "cost": 1.0, "failed": False, "status": world.get_goal(gid).status}
+            for name, gid in ids.items()]
+    rows.append({"goal_id": ids["done"], "title": "failed", "cost": 1.0, "failed": True, "status": "failed"})
+    monkeypatch.setattr(retro, "retrospective", lambda world, top_n: {
+        "total_spend": 6.0, "priced_goals": 6, "failed_spend": 1.0, "failed_share": 0.1,
+        "observations": [], "top_goals": rows})
+    results = [row["result"] for row in client.get(API + "/cost-retro").json()["costliest"]]
+    assert results == ["Stopped at its time limit", "Stopped at its spending limit", "Finished",
+                       "Stopped", "Still running", "Failed"]
 
 
 def test_spend_and_savings_tuning_matches_the_command_options(client, monkeypatch):

@@ -4,6 +4,7 @@
   var root = document.getElementById('chat-message-actions'); if (!root) return;
   var expected = root.dataset.context, API = '/api/v1/chat/message-actions';
   var form = document.getElementById('chat-alternative-form'), message = document.getElementById('chat-alternative-message');
+  var maxDollars = document.getElementById('chat-alternative-max-dollars'), maxMinutes = document.getElementById('chat-alternative-max-minutes');
   var answerOnly = document.getElementById('chat-alternative-answer-only'), review = document.getElementById('chat-alternative-full-review');
   var status = document.getElementById('chat-alternative-status'), original = document.getElementById('chat-alternative-original'), link = document.getElementById('chat-alternative-open');
   var ready = null, plan = null, pending = '', busy = false, current = true, generation = 0, dirty = false, controllers = new Set(), recovery = null;
@@ -35,7 +36,8 @@
       if (value.context && value.context !== expected) { clear(); throw new Error('Your account or workspace changed. Reload Chat.'); }
       if (!response.ok) {
         if (response.status === 409 && /account or workspace changed/.test(String(value.detail))) clear();
-        throw new Error(typeof value.detail === 'string' ? value.detail : 'This request was refused. Your draft and original request were kept.');
+        var detail = value.detail, fields = detail && typeof detail === 'object' && detail.field_errors ? Object.values(detail.field_errors).filter(function (text) { return typeof text === 'string'; }) : [];
+        throw new Error(typeof detail === 'string' ? detail : detail && typeof detail.message === 'string' ? [detail.message].concat(fields).join(' ') : 'This request was refused. Your draft and original request were kept.');
       }
       return value;
     } catch (failure) {
@@ -60,10 +62,12 @@
       ready = data; invalidate(); root.hidden = false;
       document.getElementById('chat-alternative-title').textContent = {retry:'Try this answer again',edit:'Edit and resend your message',branch:'Branch from this answer'}[action];
       if (!dirty) message.value = data.message;
+      if (data.caps) { maxDollars.placeholder = 'Up to $' + Number(data.caps.max_dollars).toFixed(2); maxMinutes.placeholder = 'Up to ' + Math.floor(data.caps.max_wall_seconds / 60) + ' minutes'; }
       message.readOnly = action === 'retry';
       say(data.notice); root.scrollIntoView({block:'nearest'}); message.focus(); return true;
     } finally { busy = false; if (current) document.getElementById('chat-alternative-review').disabled = false; }
   }
+  function limitMinutes(seconds) { var minutes = Math.round(seconds / 6) / 10; return minutes + (minutes === 1 ? ' minute' : ' minutes'); }
   function fullReview(value) {
     if (!Array.isArray(value.history) || value.history.length > 100 || !Array.isArray(value.files) || value.files.length > 128 || !Array.isArray(value.accounts) || value.accounts.length > 100 || value.accounts.some(function (account) { return !account || typeof account.name !== 'string'; }) || typeof value.message !== 'string' || !value.caps) throw new Error('The complete review is unavailable. Keep your draft and check current context.');
     if (value.history.some(function (row) { return !row || !['user','assistant'].includes(row.role) || typeof row.content !== 'string'; })) throw new Error('A retained message cannot be displayed completely. Nothing was started.');
@@ -79,7 +83,7 @@
     if (!value.accounts.length) history.append(node('p', 'No specific connected account was selected in the original task. Current connection permissions and approval rules still apply if you allow actions.'));
     value.accounts.forEach(function (account) { history.append(node('p', account.name)); });
     history.append(node('p', value.answer_only ? 'Answer only. This conversation generates text without taking actions, including after Resume.' : 'Actions are allowed under your current permissions. This is new work and may repeat earlier changes.'),
-      node('p', 'At most $' + value.caps.max_dollars.toFixed(2) + ' and ' + value.caps.max_wall_seconds + ' seconds under current operating limits.'));
+      node('p', 'This attempt stops at $' + value.caps.max_dollars.toFixed(2) + ' or ' + limitMinutes(value.caps.max_wall_seconds) + ', whichever comes first.'));
     var acknowledge = node('label', ''), checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.id = 'chat-alternative-confirm';
     acknowledge.append(checkbox, document.createTextNode(' I reviewed all included messages, files, limits and the new attempt’s effects.'));
     var start = node('button', 'Start separate conversation'); start.type = 'button'; start.id = 'chat-alternative-start'; start.className = 'btn btn--primary'; start.disabled = true;
@@ -101,11 +105,13 @@
   form.addEventListener('submit', async function (event) {
     event.preventDefault(); if (!current || busy || !ready) { if (current) say('Choose a message action or check current context first.'); return; }
     busy = true; var ticket = generation, written = message.value;
-    var submitted = {context:expected,goal:ready.goal,action:ready.action,turn:ready.turn,source:ready.source,message:written,answer_only:answerOnly.checked};
+    var submitted = {context:expected,goal:ready.goal,action:ready.action,turn:ready.turn,source:ready.source,message:written,answer_only:answerOnly.checked,
+      max_dollars:maxDollars.value.trim(),max_minutes:maxMinutes.value.trim()};
     var stamp = JSON.stringify(submitted);
     try {
       var value = await call('/review', submitted, ticket);
-      if (!ready || stamp !== JSON.stringify({context:expected,goal:ready.goal,action:ready.action,turn:ready.turn,source:ready.source,message:message.value,answer_only:answerOnly.checked})) { say('Your choices changed while their review was loading. Review the current draft again.'); return; }
+      if (!ready || stamp !== JSON.stringify({context:expected,goal:ready.goal,action:ready.action,turn:ready.turn,source:ready.source,message:message.value,answer_only:answerOnly.checked,
+        max_dollars:maxDollars.value.trim(),max_minutes:maxMinutes.value.trim()})) { say('Your choices changed while their review was loading. Review the current draft again.'); return; }
       fullReview(value); plan = value; say('Nothing has started. Review every included message and confirm this separate attempt.');
     } catch (failure) { if (current) say(failure.message); }
     finally { busy = false; }

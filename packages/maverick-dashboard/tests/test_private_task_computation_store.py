@@ -5,7 +5,7 @@ from contextlib import nullcontext
 from types import SimpleNamespace
 
 import pytest
-from fastapi import HTTPException
+from maverick.governed_records import GovernedRecordLocalOnly
 
 
 def test_a_world_without_local_custody_is_a_plain_refusal_not_a_server_error(monkeypatch):
@@ -16,7 +16,7 @@ def test_a_world_without_local_custody_is_a_plain_refusal_not_a_server_error(mon
     monkeypatch.setattr(store, "authority_effect_fence", nullcontext)
     monkeypatch.setattr(store, "_world", lambda: SimpleNamespace())
     monkeypatch.setattr(store.STORE, "_backend", lambda: SimpleNamespace(kind="local"))
-    with pytest.raises(HTTPException) as refused, store._writer():
+    # It is the single-computer refusal, which the app answers with a plain
+    # 409 (single_computer.refusal_response), not an outage 503.
+    with pytest.raises(GovernedRecordLocalOnly, match="native local custody"), store._writer():
         pass
-    assert refused.value.status_code == 503
-    assert "native local custody" in refused.value.detail

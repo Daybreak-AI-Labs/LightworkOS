@@ -39,6 +39,12 @@ _EVIDENCE = re.compile(
     r"is (?:the |this workspace's )?(?:ai )?evidence (?:check|gateway|setup) (?:ready|working|blocking tasks)|"
     r"why are (?:my |all )?tasks (?:held back|withheld)(?: in this workspace)?)(?: please)?\Z"
 )
+_TASK_COST = re.compile(
+    r"(?:how much (?:did|has|does) (?:my |this |the )?(?:goal|task|run)(?: #?\d{1,18})? cost(?: so far)?|"
+    r"what (?:did|does|has) (?:my |this |the )?(?:goal|task|run)(?: #?\d{1,18})? cost(?: so far)?|"
+    r"(?:what is |what's )?the cost of (?:my |this |the )?(?:goal|task|run)(?: #?\d{1,18})?)"
+    r"(?:,? and why)?(?: please)?\Z"
+)
 _EXPLICIT_TASK = re.compile(r"\b(?:goal|task|run)\s*#?(\d{1,18})\b")
 _PAGE_TASK = re.compile(r"^/(?:chat/goal|goals|tasks)/(\d{1,18})(?:/|$)")
 _DECISIONS = frozenset({"approval", "signoff", "assessment", "project_review", "vendor_reconciliation"})
@@ -61,6 +67,8 @@ def intent(message: str) -> str | None:
         return "code_checks"
     if _EVIDENCE.fullmatch(normalized):
         return "evidence_readiness"
+    if _TASK_COST.fullmatch(normalized):
+        return "task_cost"
     return None
 
 
@@ -248,6 +256,39 @@ def _task_failure(request, message: str, page: str, selected_goal_id: int | None
     return _answer(reply, href, "Open task progress", "Task progress")
 
 
+def _task_cost(request, message: str, page: str, selected_goal_id: int | None):
+    """One task's own recorded cost, never the workspace total."""
+    from .app import _world
+
+    auth.require_permission(request, "view")
+    identifier = _task_id(message, page, selected_goal_id)
+    if identifier is None:
+        return _answer("Open the task you mean, then ask what it cost. The Spend page shows the workspace total.",
+                       "/spend", "Open Spend", "Spend")
+    world = _world()
+    goal = world.get_goal(identifier)
+    try:
+        if goal is None:
+            raise HTTPException(404, "no such goal")
+        auth.assert_goal_access(request, goal)
+    except HTTPException:
+        return _answer("I can't access that task in this account and workspace.", "/goals", "Open Tasks", "Tasks")
+    runs = list(world.list_episodes(limit=10_000, goal_id=identifier))
+    cost = sum(float(getattr(run, "cost_dollars", 0) or 0) for run in runs)
+    read = sum(int(getattr(run, "input_tokens", 0) or 0) for run in runs)
+    written = sum(int(getattr(run, "output_tokens", 0) or 0) for run in runs)
+    title, href = _bounded(goal.title), f"/chat/goal/{identifier}"
+    if not runs:
+        return _answer(f"Checked task ‘{title}’ {_checked_at()}. No AI work is recorded for it yet, so it has no cost.",
+                       href, "Open the task", "Task cost")
+    so_far = "" if goal.status in ("done", "failed", "cancelled", "blocked") else " so far"
+    reply = (f"Checked task ‘{title}’ {_checked_at()}. It cost ${cost:.2f}{so_far} across "
+             f"{len(runs)} recorded AI {'run' if len(runs) == 1 else 'runs'}. "
+             f"The AI read {read:,} and wrote {written:,} units of text; reading usually costs the most. "
+             "These are Lightwork's recorded prices, not a provider invoice.")
+    return _answer(reply, href, "Open the task", "Task cost")
+
+
 def _evidence_readiness(request):
     """Whether this workspace's AI evidence setup lets task answers through."""
     from maverick import ai_evidence_gateway as gateway
@@ -308,6 +349,8 @@ def answer(request, message: str, page: str, selected_goal_id: int | None) -> di
             value = _code_checks(request)
         elif selected == "evidence_readiness":
             value = _evidence_readiness(request)
+        elif selected == "task_cost":
+            value = _task_cost(request, message, page, selected_goal_id)
         else:
             value = _task_failure(request, message, page, selected_goal_id)
     except HTTPException:

@@ -12,7 +12,7 @@ const template = fs.readFileSync(path.join(templates, 'project_workspaces.html')
   .replace('{% include "_project_workspace_body.html" %}', () => fs.readFileSync(path.join(templates, '_project_workspace_body.html'), 'utf8'));
 const settle = async () => { for (let i = 0; i < 15; i++) await new Promise(resolve => setImmediate(resolve)); };
 
-function page() {
+function page(override) {
   // The title comes from the shared page header macro; stand in its <h1>.
   const html = template.replace(/\{\{ hero\([\s\S]*?\) \}\}/, '<h1 id="pw-title">Project workspaces</h1>').replace(/\{%[\s\S]*?%\}/g, '').replace(/\{\{ project_id or '' \}\}/g, '1').replace(/\{\{ project_context \}\}/g, 'current-context').replace(/\{\{[\s\S]*?\}\}/g, '');
   const dom = new JSDOM(html, {url:'https://lightwork.invalid/project-workspaces/1', runScripts:'outside-only'});
@@ -24,6 +24,7 @@ function page() {
   dom.window.mvConfirm = async () => true;
   dom.window.mvDraftRecovery = {create(options) { recoveries[options.key] = options; return {clear:async () => { clears.push(options.key); return true; }, dispose() {}}; }};
   dom.window.fetch = async (url, options) => {
+    if (override) return override(url, options);
     const body = options.body ? JSON.parse(options.body) : null; requests.push({url,body,options});
     if (url.endsWith('/prepare')) return {ok:true,status:200,json:async () => ({revision:state.workspace.revision,summary:'Review exact values',changes:[{label:'Outcome',before:state.workspace.outcome,after:body.payload.outcome || 'New planning'}]})};
     if (url.endsWith('/change')) return change(options);
@@ -110,4 +111,14 @@ test('the project list opens each plan where the page says plans live', async ()
     await settle();
     assert.equal(dom.window.document.querySelector('#pw-list a').getAttribute('href'), expected);
   }
+});
+
+test('a turned-off feature says so instead of an unconfirmed operation', async () => {
+  const headers = new Map([['x-lightwork-reason', 'feature-off'], ['x-lightwork-feature-label', 'Project%20workspaces']]);
+  const p = page(async () => ({ok:false, status:403, headers:{get:name => headers.get(name.toLowerCase()) || null}, json:async () => ({detail:'Project workspaces: turned off.'})}));
+  await settle();
+  const text = p.doc.getElementById('pw-status').textContent;
+  assert.match(text, /Project workspaces: turned off\./);
+  assert.doesNotMatch(text, /could not be confirmed/);
+  p.dom.window.close();
 });

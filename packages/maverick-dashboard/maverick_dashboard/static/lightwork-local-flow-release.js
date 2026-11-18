@@ -58,7 +58,7 @@
       if (window.location.hash === '#local-flow-release') host.open = true;
       flow.replaceChildren(new Option('Choose a workflow', ''));
       state.flows.forEach(row => flow.appendChild(new Option(row.name + ' · version ' + row.version, row.id, false, row.id === chosen)));
-      status.textContent = state.enabled ? state.detail : 'Release decisions are turned off. An installation administrator can enable them in All settings; your workflow draft can still be prepared.';
+      status.textContent = state.available === false ? state.message : state.enabled ? state.detail : 'Release decisions are turned off. An installation administrator can enable them in All settings; your workflow draft can still be prepared.';
     } catch (_) { state = null; flow.replaceChildren(new Option('Refresh to check saved workflows', '')); status.textContent = 'Saved workflows could not be checked. Refresh when Lightwork is responding again.'; }
     finally { lock(false); show(); }
   }

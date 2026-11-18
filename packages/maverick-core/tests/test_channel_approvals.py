@@ -554,3 +554,30 @@ def test_a_chat_card_offers_no_undo_for_a_decision_nothing_waits_on(tmp_path, re
         undo_decision(world, aid, undone_by="user:a", channel="slack")
     assert exc.value.reason == "final" and exc.value.status_code == 409
     assert world.get_approval(aid).status == "denied"
+
+
+def test_the_approval_decision_record_names_its_task(tmp_path, monkeypatch):
+    """Live: Activity log rows for approvals had no link to their task."""
+    from types import SimpleNamespace
+
+    from maverick import audit
+    from maverick.channel_approvals import deliver_approval_audit_event
+    from maverick.world_model import WorldModel
+
+    world = WorldModel(tmp_path / "world.db")
+    goal_id = world.create_goal("Write a welcome note")
+    from maverick.logging_config import _goal_id_var
+
+    token = _goal_id_var.set(goal_id)
+    try:
+        approval_id = world.create_approval("Run one Python script")
+    finally:
+        _goal_id_var.reset(token)
+    assert world.get_approval(approval_id).goal_id == goal_id
+    seen = {}
+    monkeypatch.setattr(audit, "audit_event", lambda kind, **fields: seen.update(kind=kind, **fields) or True)
+    monkeypatch.setattr(world, "mark_approval_audit_delivered", lambda *a, **k: True)
+    event = SimpleNamespace(delivered_at=None, event_id="e" * 32, approval_id=approval_id, status="approved",
+                            decided_by="user:chris", created_at=1.0, final_status="approved")
+    assert deliver_approval_audit_event(world, event)
+    assert seen["kind"] == audit.EventKind.APPROVAL_DECISION and seen["goal_id"] == goal_id

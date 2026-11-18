@@ -517,3 +517,42 @@ def test_legacy_shared_author_cannot_be_approved_after_owner_claim(environment) 
     )
     assert approval.status_code == 409
     assert "new version" in approval.json()["detail"]
+
+
+def _on_event_loop() -> bool:
+    import asyncio
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
+def test_reads_check_the_gate_and_open_the_store_off_the_event_loop(
+    environment, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Opening a tenant store is SQLite file work; on a network file system it
+    stalled every other request while the page's four lists loaded."""
+    client, state = environment
+    seen: list[tuple[str, bool]] = []
+    gate = lifecycle.require_enabled
+
+    def watched_gate() -> None:
+        seen.append(("gate", _on_event_loop()))
+        gate()
+
+    factory = client.app.state.third_party_lifecycle_store_factory
+
+    def watched_factory(**kwargs):
+        seen.append(("store", _on_event_loop()))
+        return factory(**kwargs)
+
+    monkeypatch.setattr(lifecycle, "require_enabled", watched_gate)
+    client.app.state.third_party_lifecycle_store_factory = watched_factory
+    for path in ("templates", "assessments", "lifecycles", "offboarding"):
+        assert client.get(f"{API}/{path}").status_code == 200
+    assert {kind for kind, _loop in seen} == {"gate", "store"}
+    assert not any(loop for _kind, loop in seen)
+    state["enabled"] = False
+    assert client.get(f"{API}/templates").status_code == 403
