@@ -265,6 +265,8 @@ def test_dashboard_task_cap_stop_points_to_the_task_limit_setting():
     assert "$2.00" in stop.message and "$1.80" in stop.message and "$0.30" in stop.message
     assert "administrator" not in stop.action
     assert stop.link == "/settings#settings-task-limit"
+    # The task page offers a limit for the next attempt beside this advice.
+    assert stop.action.startswith("Try again with a higher spending limit for this attempt")
 
 
 def test_time_limit_stop_is_a_limit_not_an_internal_error():

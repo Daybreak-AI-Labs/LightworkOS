@@ -81,6 +81,10 @@ TASK_LIMIT_HREF = "/settings#settings-task-limit"
 #: Settings > Models > Prices for paid tool services.
 TOOL_PRICES_HREF = "/settings#settings-tool-prices"
 TIME_LIMIT_HREF = "/settings/all?id=budget.max_wall_seconds"
+#: The task page offers a spending limit for the next attempt right beside
+#: this advice, so Settings is the second choice, not the only one.
+_RAISE_TASK_SPENDING = ("Try again with a higher spending limit for this attempt, "
+                        "or raise the spending limit per task in Settings.")
 
 
 def _money(value: str) -> float:
@@ -245,7 +249,7 @@ def _task_limit_reason(text: str, technical: str) -> StopReason | None:
             f"Set the price for {model} in Settings, then resume this task. You can also raise the spending limit per task.",
             "/settings#settings-model-prices", "Review model prices", technical)
     return StopReason("spending_limit", message,
-                      "Raise the spending limit per task in Settings, then resume this task.",
+                      _RAISE_TASK_SPENDING,
                       TASK_LIMIT_HREF, "Open Spending per task", technical)
 
 
@@ -401,7 +405,7 @@ _RULES: tuple[tuple[str, re.Pattern[str], str, str, str | None, str | None], ...
         _rx(r"spend cap", r"spending limit", r"budget exhausted", r"of \$[\d.,]+ cap",
             r"BudgetExceeded", r"hit your spending or time limit"),
         "This task reached its spending or time limit.",
-        "Raise the spending limit per task in Settings, then resume this task.",
+        _RAISE_TASK_SPENDING,
         TASK_LIMIT_HREF, "Open Spending per task",
     ),
     (
