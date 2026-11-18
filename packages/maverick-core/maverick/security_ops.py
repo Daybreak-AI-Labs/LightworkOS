@@ -22,6 +22,9 @@ import threading
 import time
 import uuid
 from collections import Counter
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 
 from .privacy_ops import (
@@ -240,8 +243,36 @@ def retry_pending_audits(*, limit: int = 100) -> int:
     return cleared
 
 
+# Inside a read scope, pending audit receipts were already retried this page.
+_RETRIED_IN_SCOPE: ContextVar[list[bool] | None] = ContextVar(
+    "security_ops_retried_in_scope", default=None,
+)
+
+
+@contextmanager
+def read_scope() -> Iterator[None]:
+    """One page's reads: pending audit receipts are retried once, not per list.
+
+    Every list first retries a rotating batch of up to 16 pending receipts,
+    loading each record; a page that lists forty times loaded hundreds of
+    records it never showed. Outside a scope every list still retries.
+    """
+    if _RETRIED_IN_SCOPE.get() is not None:
+        yield
+        return
+    token = _RETRIED_IN_SCOPE.set([])
+    try:
+        yield
+    finally:
+        _RETRIED_IN_SCOPE.reset(token)
+
+
 def _list(store: _RecordStore) -> list[dict]:
-    retry_pending_audits(limit=16)
+    retried = _RETRIED_IN_SCOPE.get()
+    if retried is None or not retried:
+        retry_pending_audits(limit=16)
+        if retried is not None:
+            retried.append(True)
     return store.list()
 
 

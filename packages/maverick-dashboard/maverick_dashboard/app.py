@@ -6147,12 +6147,18 @@ def third_party_collaboration_page(request: Request) -> HTMLResponse:
 
 
 @app.get("/security", response_class=HTMLResponse)
-async def security_page(request: Request) -> HTMLResponse:
+def security_page(request: Request) -> HTMLResponse:
     """Security & GRC department workspace over assessments and durable
     control-program records. Record contents are operate-tier data."""
     require_permission(request, "operate")
     from maverick import security_ops
 
+    # About forty list reads: pending audit receipts are retried once, not per list.
+    with security_ops.read_scope():
+        return _security_page(request, security_ops)
+
+
+def _security_page(request: Request, security_ops) -> HTMLResponse:
     ctx = _workspace_ctx("security", viewer=caller_principal(request) or "")
     records = {
         "enabled": security_ops.enabled(),
@@ -6247,13 +6253,18 @@ async def security_page(request: Request) -> HTMLResponse:
 
 
 @app.get("/security/report", response_class=HTMLResponse)
-async def security_report_page(request: Request) -> HTMLResponse:
+def security_report_page(request: Request) -> HTMLResponse:
     """Print-friendly security readiness and board report."""
     require_permission(request, "operate")
     from maverick import security_ops
 
     if not security_ops.enabled():
         raise HTTPException(status_code=404, detail="security ops are disabled")
+    with security_ops.read_scope():
+        return _security_report_page(request, security_ops)
+
+
+def _security_report_page(request: Request, security_ops) -> HTMLResponse:
     report = security_ops.program_report()
     generated_at = report.get("generated_at")
     if isinstance(generated_at, (int, float)):

@@ -1406,3 +1406,35 @@ def test_program_report_types_cover_every_security_template():
 
     assert "iso42001" in security_ops.SECURITY_ASSESSMENT_TYPES
     assert set(TEMPLATES) >= security_ops.SECURITY_ASSESSMENT_TYPES
+
+
+def test_one_page_of_reads_retries_pending_audit_receipts_once(monkeypatch):
+    """Every list retried a rotating batch of pending audit receipts first,
+    loading up to 16 records; the security workspace lists about 40 times per
+    render, so one page view loaded hundreds of records it did not show."""
+    _approved_evidence()
+    retries: list[int] = []
+    original = security_ops.retry_pending_audits
+
+    def counted(*, limit: int = 100) -> int:
+        retries.append(limit)
+        return original(limit=limit)
+
+    monkeypatch.setattr(security_ops, "retry_pending_audits", counted)
+    security_ops.list_controls()
+    security_ops.list_evidence()
+    assert len(retries) == 2  # outside a page, every list still retries
+
+    retries.clear()
+    with security_ops.read_scope():
+        report = security_ops.program_report()
+        for _ in range(3):
+            security_ops.readiness_report("soc2")
+        with security_ops.read_scope():
+            assert len(security_ops.list_evidence()) == 1
+    assert report["readiness"] is not None
+    assert retries == [16]
+
+    retries.clear()
+    security_ops.list_evidence()
+    assert retries == [16]
