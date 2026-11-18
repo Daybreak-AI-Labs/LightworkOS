@@ -68,6 +68,7 @@ from maverick_installer import wizard
 wizard.preflight = lambda: True
 wizard.welcome = lambda: None
 wizard._docker_available = lambda: False
+wizard._podman_available = lambda: False
 result = wizard.run_fast()
 
 from maverick.config import config_path, load_config
@@ -119,6 +120,7 @@ def _stub(monkeypatch, tmp_path: Path, *, smoke: bool):
     monkeypatch.setattr(wizard, "preflight", lambda: True)
     monkeypatch.setattr(wizard, "welcome", lambda: None)
     monkeypatch.setattr(wizard, "_docker_available", lambda: False)
+    monkeypatch.setattr(wizard, "_podman_available", lambda: False)
     monkeypatch.setattr(wizard, "smoke_test", lambda: smoke)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     return wizard

@@ -38,6 +38,31 @@ def test_docker_available_happy_path(monkeypatch):
     assert wizard._docker_available() is True
 
 
+def test_podman_available_happy_path(monkeypatch):
+    import shutil as _shutil
+    import subprocess as _sp
+
+    from maverick_installer import wizard
+    calls = []
+    monkeypatch.setattr(_shutil, "which", lambda x: f"/usr/bin/{x}" if x == "podman" else None)
+    monkeypatch.setattr(
+        _sp, "run",
+        lambda *a, **kw: calls.append(a[0]) or _sp.CompletedProcess(a[0], 0, b"", b""),
+    )
+    assert wizard._podman_available() is True
+    assert calls == [["podman", "version"]]
+    assert wizard._container_backend() == "podman"
+
+
+def test_container_backend_is_local_when_no_engine_answers(monkeypatch):
+    import shutil as _shutil
+
+    from maverick_installer import wizard
+    monkeypatch.setattr(_shutil, "which", lambda _x: None)
+    assert wizard._podman_available() is False
+    assert wizard._container_backend() == "local"
+
+
 # ---------- pick_sandbox default stays on docker ----------
 
 def test_pick_sandbox_defaults_docker_when_unavailable(monkeypatch):

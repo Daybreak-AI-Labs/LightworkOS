@@ -613,7 +613,9 @@ def preflight() -> bool:
 
     # Docker availability determines whether the simple setup can safely
     # offer file changes and command execution in an isolated work area.
-    if shutil.which("docker"):
+    if not _docker_available() and _podman_available():
+        console.print("[green]✓[/green] Podman is available")
+    elif shutil.which("docker"):
         try:
             subprocess.run(
                 ["docker", "version"],
@@ -2692,22 +2694,26 @@ def pick_api_keys() -> dict[str, Any]:
     return result
 
 
-def _docker_available() -> bool:
-    """Return True iff the `docker` binary is on PATH AND the daemon
-    responds. Used to pick a safe sandbox default in consumer mode and
+def _docker_available(engine: str = "docker") -> bool:
+    """Return True iff the `docker` binary (or ``engine``) is on PATH AND
+    answers. Used to pick a safe sandbox default in consumer mode and
     to choose the wizard's default in dev mode."""
-    if not shutil.which("docker"):
+    if not shutil.which(engine):
         return False
     try:
-        subprocess.run(
-            ["docker", "version"],
-            capture_output=True,
-            timeout=2,
-            check=True,
-        )
+        subprocess.run([engine, "version"], capture_output=True, timeout=2, check=True)
         return True
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
         return False
+
+
+def _podman_available() -> bool:
+    return _docker_available("podman")
+
+
+def _container_backend() -> str:
+    """Docker when its daemon answers, else Podman, else local (file work off)."""
+    return "docker" if _docker_available() else "podman" if _podman_available() else "local"
 
 
 # Container backends pick their image from the coding language (see
@@ -5504,7 +5510,7 @@ def run_fast() -> int:
     # daemon isn't up -- otherwise fast-setup writes a docker config that the
     # very next `maverick start` can't run (the user never chose docker, yet
     # hits "Docker not available"). Mirrors write_consumer_config.
-    backend = "docker" if _docker_available() else "local"
+    backend = _container_backend()
     sandbox = {
         "backend": backend,
         "workdir": str(Path.home() / "maverick-workspace"),
@@ -5754,7 +5760,7 @@ def write_consumer_config(
         prepare_first_outcome(first_outcome, str(Path(workdir).expanduser()))
         if first_outcome else None
     )
-    backend = "docker" if _docker_available() else "local"
+    backend = _container_backend()
     # Computer + browser always require explicit opt-in (consumer is
     # never asked). When there's no Docker sandbox to contain it, also
     # deny the host-mutating tools — fail closed on the host. With
@@ -6142,7 +6148,7 @@ def run_express() -> int:
     budget = _consumer_budget()
 
     Path(workdir).expanduser().mkdir(parents=True, exist_ok=True)
-    backend = "docker" if _docker_available() else "local"
+    backend = _container_backend()
     # Express turns on every safe single-user feature; the governance level
     # layers its posture (signed audit, quotas, WORM, signed approvals) on
     # top. Union of two all-True dicts, so profile keys can only ADD.

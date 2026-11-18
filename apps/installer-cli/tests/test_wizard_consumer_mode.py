@@ -180,6 +180,7 @@ def _stub_wizard_io(monkeypatch, tmp_path: Path, key: str = "sk-ant-test"):
     monkeypatch.setattr(wizard, "preflight", lambda: True)
     # Pretend Docker is unavailable so the test is hermetic.
     monkeypatch.setattr(wizard, "_docker_available", lambda: False)
+    monkeypatch.setattr(wizard, "_podman_available", lambda: False)
     # Stub the validator so we don't hit Anthropic.
     monkeypatch.setattr(
         wizard, "_validate_anthropic_key", lambda k: (True, "validated"),
