@@ -231,3 +231,35 @@ test("a model reply cannot inject markup into Copilot", async () => {
   assert.equal(reply.querySelector("a[href^='javascript']"), null);
   h.close();
 });
+
+test("a task's cost question reaches the live task read, not a control proposal", async () => {
+  // Live: "How much did task #50 cost?" on /chat/goal/50 and /spend was
+  // claimed by the product-operations proposal ("Find a saved record") and
+  // never reached the server's live task-cost read.
+  for (const question of ["How much did task #50 cost?", "What did this task cost in dollars?",
+                          "how much did task 50 cost so far", "What's the cost of this task?",
+                          "How much did task #50 cost in total?"]) {
+    const h = harness();
+    try {
+      let proposed = 0;
+      h.w.LightworkProductOperations = {isBusy: () => false, open: () => {}, close: () => {},
+        propose: async () => { proposed += 1; return true; }};
+      await h.open();
+      await h.ask(question);
+      assert.equal(proposed, 0, question);
+      assert.equal(h.calls.filter(call => call.url === "/api/v1/copilot").at(-1)?.body.message, question);
+    } finally { h.close(); }
+  }
+});
+
+test("an ordinary request still reaches the control proposal", async () => {
+  const h = harness();
+  try {
+    let proposed = 0;
+    h.w.LightworkProductOperations = {isBusy: () => false, open: () => {}, close: () => {},
+      propose: async () => { proposed += 1; return true; }};
+    await h.open();
+    await h.ask("Find my saved record about the vendor review");
+    assert.equal(proposed, 1);
+  } finally { h.close(); }
+});

@@ -40,8 +40,8 @@ _EVIDENCE = re.compile(
     r"why are (?:my |all )?tasks (?:held back|withheld)(?: in this workspace)?)(?: please)?\Z"
 )
 _TASK_COST = re.compile(
-    r"(?:how much (?:did|has|does) (?:my |this |the )?(?:goal|task|run)(?: #?\d{1,18})? cost(?: so far)?|"
-    r"what (?:did|does|has) (?:my |this |the )?(?:goal|task|run)(?: #?\d{1,18})? cost(?: so far)?|"
+    r"(?:how much (?:did|has|does) (?:my |this |the )?(?:goal|task|run)(?: #?\d{1,18})? cost(?: in (?:dollars|total))?(?: so far)?|"
+    r"what (?:did|does|has) (?:my |this |the )?(?:goal|task|run)(?: #?\d{1,18})? cost(?: in (?:dollars|total))?(?: so far)?|"
     r"(?:what is |what's )?the cost of (?:my |this |the )?(?:goal|task|run)(?: #?\d{1,18})?)"
     r"(?:,? and why)?(?: please)?\Z"
 )
