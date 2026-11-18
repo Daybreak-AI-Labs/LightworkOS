@@ -202,13 +202,15 @@
       <label for="composer-max-minutes">{{ ui('Time limit (minutes)') }}
         <input id="composer-max-minutes" class="input" type="number" name="max_minutes" min="1" step="1" inputmode="numeric"
                {% if limit_cap.max_wall_seconds is defined %}max="{{ '%g'|format(limit_cap.max_wall_seconds / 60) }}"{% endif %}
-               placeholder="{% if goal_max_wall_seconds is not none %}{{ ut('Up to {minutes} minutes', minutes='%g'|format(goal_max_wall_seconds / 60)) }}{% endif %}"
+               placeholder="{% if goal_max_wall_seconds == 60 %}{{ ut('Up to 1 minute') }}{% elif goal_max_wall_seconds is not none %}{{ ut('Up to {minutes} minutes', minutes='%g'|format(goal_max_wall_seconds / 60)) }}{% endif %}"
                aria-describedby="composer-limit-help composer-limit-effective">
       </label>
-      <p class="muted" id="composer-limit-help">{{ ui('Leave a field empty to use the workspace limit.') }}{% if limit_cap.max_dollars is defined %} {{ ui('The most you can set is {amount} and {minutes} minutes.', amount=limit_cap.max_dollars | money, minutes='%g'|format(limit_cap.max_wall_seconds / 60)) }}{% endif %}</p>
+      <p class="muted" id="composer-limit-help">{{ ui('Leave a field empty to use the workspace limit.') }}{% if limit_cap.max_dollars is defined %} {% if limit_cap.max_wall_seconds == 60 %}{{ ui('The most you can set is {amount} and 1 minute.', amount=limit_cap.max_dollars | money) }}{% else %}{{ ui('The most you can set is {amount} and {minutes} minutes.', amount=limit_cap.max_dollars | money, minutes='%g'|format(limit_cap.max_wall_seconds / 60)) }}{% endif %}{% endif %}</p>
       <p class="muted" id="composer-limit-effective" role="status" aria-live="polite">
-        {%- if goal_max_dollars is not none and goal_max_wall_seconds is not none %}{{ ui('This task stops at {amount} or {minutes} minutes, whichever comes first.', amount=goal_max_dollars | money, minutes='%g'|format(goal_max_wall_seconds / 60)) }}
+        {%- if goal_max_dollars is not none and goal_max_wall_seconds == 60 %}{{ ui('This task stops at {amount} or 1 minute, whichever comes first.', amount=goal_max_dollars | money) }}
+        {%- elif goal_max_dollars is not none and goal_max_wall_seconds is not none %}{{ ui('This task stops at {amount} or {minutes} minutes, whichever comes first.', amount=goal_max_dollars | money, minutes='%g'|format(goal_max_wall_seconds / 60)) }}
         {%- elif goal_max_dollars is not none %}{{ ui('This task stops at {amount}.', amount=goal_max_dollars | money) }}
+        {%- elif goal_max_wall_seconds == 60 %}{{ ui('This task stops after 1 minute.') }}
         {%- elif goal_max_wall_seconds is not none %}{{ ui('This task stops after {minutes} minutes.', minutes='%g'|format(goal_max_wall_seconds / 60)) }}
         {%- else %}{{ ui('This task has no spending or time limit.') }}{% endif -%}
       </p>
@@ -279,7 +281,7 @@
   {% else %}
     {{ ui('Task limits:') }}
     {% if goal_max_dollars is not none %}{{ ui('up to {amount}', amount=goal_max_dollars | money) }}{% else %}{{ ui('no spending limit') }}{% endif %},
-    {% if goal_max_wall_seconds is none %}{{ ui('no time limit') }}{% elif goal_max_wall_seconds > 0 and goal_max_wall_seconds % 60 == 0 %}{{ ui('up to {minutes} minutes', minutes='%g'|format(goal_max_wall_seconds / 60)) }}{% else %}{{ ui('up to {seconds} seconds', seconds='%g'|format(goal_max_wall_seconds)) }}{% endif %}.
+    {% if goal_max_wall_seconds is none %}{{ ui('no time limit') }}{% elif goal_max_wall_seconds == 60 %}{{ ui('up to 1 minute') }}{% elif goal_max_wall_seconds > 0 and goal_max_wall_seconds % 60 == 0 %}{{ ui('up to {minutes} minutes', minutes='%g'|format(goal_max_wall_seconds / 60)) }}{% else %}{{ ui('up to {seconds} seconds', seconds='%g'|format(goal_max_wall_seconds)) }}{% endif %}.
   {% endif %}
   {% if show_settings_link %}<a href="/settings">{{ ui('Review task limits') }}</a>{% endif %}
 </p>
@@ -313,8 +315,10 @@
     function update() {
       var amount = lower(dollars.value, box.dataset.dollars), time = lower(minutes.value, box.dataset.minutes);
       var money = amount === null ? '' : (window.mvMoney ? window.mvMoney(amount) : '$' + amount.toFixed(2));
-      if (amount !== null && time !== null) chatCopy(note, 'This task stops at {amount} or {minutes} minutes, whichever comes first.', {amount: money, minutes: String(time)});
+      if (amount !== null && time === 1) chatCopy(note, 'This task stops at {amount} or 1 minute, whichever comes first.', {amount: money});
+      else if (amount !== null && time !== null) chatCopy(note, 'This task stops at {amount} or {minutes} minutes, whichever comes first.', {amount: money, minutes: String(time)});
       else if (amount !== null) chatCopy(note, 'This task stops at {amount}.', {amount: money});
+      else if (time === 1) chatCopy(note, 'This task stops after 1 minute.');
       else if (time !== null) chatCopy(note, 'This task stops after {minutes} minutes.', {minutes: String(time)});
       else chatCopy(note, 'This task has no spending or time limit.');
     }

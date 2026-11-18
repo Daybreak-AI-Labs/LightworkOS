@@ -7,6 +7,7 @@ ROWS = [
     ("no spending limit", "aucune limite de dépenses", "kein Ausgabenlimit", "支出上限なし", "无支出限制"),
     ("no time limit", "aucune limite de durée", "kein Zeitlimit", "時間制限なし", "无时间限制"),
     ("up to {minutes} minutes", "jusqu’à {minutes} minutes", "bis zu {minutes} Minuten", "最大{minutes}分", "最长{minutes}分钟"),
+    ("up to 1 minute", "jusqu’à 1 minute", "bis zu 1 Minute", "最大1分", "最长1分钟"),
     ("up to {seconds} seconds", "jusqu’à {seconds} secondes", "bis zu {seconds} Sekunden", "最大{seconds}秒", "最长{seconds}秒"),
     ("Review task limits", "Vérifier les limites des tâches", "Aufgabenlimits prüfen", "タスクの上限を確認", "查看任务限制"),
     ("Access to the saved result changed. Sign in or reopen the authorized task to continue.", "L'accès au résultat enregistré a changé. Connectez-vous ou rouvrez la tâche autorisée pour continuer.", "Der Zugriff auf das gespeicherte Ergebnis hat sich geändert. Melden Sie sich an oder öffnen Sie die berechtigte Aufgabe erneut.", "保存済み結果へのアクセスが変更されました。ログインするか、権限のあるタスクを開き直してください。", "已保存结果的访问权限已更改。请登录或重新打开有权访问的任务。"),
@@ -141,5 +142,9 @@ ROWS = [
     ("This task stops at {amount} or {minutes} minutes, whichever comes first.", "Cette tâche s’arrête à {amount} ou après {minutes} minutes, selon la première éventualité.", "Diese Aufgabe stoppt bei {amount} oder nach {minutes} Minuten, je nachdem, was zuerst eintritt.", "このタスクは {amount} または {minutes} 分のいずれか早い方で停止します。", "此任务在达到 {amount} 或 {minutes} 分钟时停止，以先到者为准。"),
     ("This task stops at {amount}.", "Cette tâche s’arrête à {amount}.", "Diese Aufgabe stoppt bei {amount}.", "このタスクは {amount} で停止します。", "此任务在达到 {amount} 时停止。"),
     ("This task stops after {minutes} minutes.", "Cette tâche s’arrête après {minutes} minutes.", "Diese Aufgabe stoppt nach {minutes} Minuten.", "このタスクは {minutes} 分後に停止します。", "此任务在 {minutes} 分钟后停止。"),
+    ("Up to 1 minute", "Jusqu’à 1 minute", "Bis zu 1 Minute", "最大1分", "最多1分钟"),
+    ("The most you can set is {amount} and 1 minute.", "Vous pouvez définir au maximum {amount} et 1 minute.", "Sie können höchstens {amount} und 1 Minute festlegen.", "設定できる上限は {amount} と 1 分です。", "最多可设置 {amount} 和 1 分钟。"),
+    ("This task stops at {amount} or 1 minute, whichever comes first.", "Cette tâche s’arrête à {amount} ou après 1 minute, selon la première éventualité.", "Diese Aufgabe stoppt bei {amount} oder nach 1 Minute, je nachdem, was zuerst eintritt.", "このタスクは {amount} または 1 分のいずれか早い方で停止します。", "此任务在达到 {amount} 或 1 分钟时停止，以先到者为准。"),
+    ("This task stops after 1 minute.", "Cette tâche s’arrête après 1 minute.", "Diese Aufgabe stoppt nach 1 Minute.", "このタスクは 1 分後に停止します。", "此任务在 1 分钟后停止。"),
     ("This task has no spending or time limit.", "Cette tâche n’a aucune limite de dépenses ni de durée.", "Diese Aufgabe hat kein Ausgaben- oder Zeitlimit.", "このタスクには支出上限も時間制限もありません。", "此任务没有支出或时间限制。"),
 ]

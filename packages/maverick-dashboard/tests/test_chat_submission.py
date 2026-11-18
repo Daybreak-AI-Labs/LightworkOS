@@ -242,3 +242,40 @@ def test_empty_task_limits_keep_the_workspace_defaults(chat_env):
                                                "max_minutes": ""}, follow_redirects=False)
     assert response.status_code == 303, response.text
     assert "max_dollars" not in calls[0][2] and "max_wall_seconds" not in calls[0][2]
+
+
+def test_composer_limit_says_one_minute_in_the_singular(chat_env, monkeypatch):
+    import maverick.runner as runner
+
+    monkeypatch.setattr(runner, "configured_max_dollars", lambda: 1.0)
+    monkeypatch.setattr(runner, "configured_max_wall_seconds", lambda: 60.0)
+    monkeypatch.setattr(runner, "configured_goal_ceiling_dollars", lambda: 1.0)
+    monkeypatch.setattr(runner, "configured_goal_ceiling_wall_seconds", lambda: 60.0)
+    client, _world, _calls = chat_env
+    text = re.sub(r"<[^>]+>", "", client.get("/chat").text)
+    assert "This task stops at $1.00 or 1 minute, whichever comes first." in text
+    assert "The most you can set is $1.00 and 1 minute." in text
+    assert "1 minutes" not in text
+
+
+# A workspace limit above the $100 REST bound ran the task at the workspace
+# limit while the composer said the most a person could set was $100: two
+# contradictory statements. A person's own limit only narrows the workspace's,
+# so the workspace's limit is the most they can set.
+def test_composer_ceiling_is_the_workspace_limit_the_task_runs_under(chat_env, monkeypatch):
+    import maverick.runner as runner
+
+    monkeypatch.setattr(runner, "configured_max_dollars", lambda: 25_000.01)
+    monkeypatch.setattr(runner, "configured_max_wall_seconds", lambda: None)
+    monkeypatch.setattr(runner, "configured_goal_ceiling_dollars", lambda: 25_000.01)
+    monkeypatch.setattr(runner, "configured_goal_ceiling_wall_seconds", lambda: None)
+    client, _world, calls = chat_env
+    page = client.get("/chat").text
+    text = re.sub(r"<[^>]+>", "", page)
+    assert "This task stops at $25,000.01." in text
+    assert "The most you can set is $25,000.01" in text and "$100.00" not in text
+    assert 'max="25000.01"' in page
+    response = client.post("/chat/send", data={"title": "Research pricing", "max_dollars": "150"},
+                           follow_redirects=False)
+    assert response.status_code == 303, response.text
+    assert calls[0][2]["max_dollars"] == 150.0
