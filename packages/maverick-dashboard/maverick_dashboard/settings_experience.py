@@ -96,13 +96,19 @@ def review(request: Request, body: page.CatalogUpdate):
             setting = change['setting']
             requested = next((item for item in body.changes if item.id == setting.id), None)
             inherited = {**layers, 'here': {}}
-            resulting_source = (page._resolve(setting, inherited)['source']
-                                if requested and requested.inherit else 'dashboard setting')
+            # People read where the value comes from now and after saving.
+            if requested and requested.inherit:
+                resulting_source = page.SOURCE_TEXT.get(page._resolve(setting, inherited)['source'], 'Inherited')
+            elif requested and requested.reset:
+                resulting_source = page.SOURCE_TEXT['default']
+            else:
+                resulting_source = page.SOURCE_TEXT['here']
+            current_source = page._resolve(setting, layers)['source']
             items.append({
                 'id': setting.id, 'label': setting.label,
                 'before': _present_value(setting, change['old']),
                 'after': _present_value(setting, change['new']),
-                'source': page._resolve(setting, layers)['source'], 'resulting_source': resulting_source,
+                'source': page.SOURCE_TEXT.get(current_source, current_source), 'resulting_source': resulting_source,
                 'scope': 'Organization / installation', 'restart': setting.restart,
                 'affected': 'Authorized workspaces inheriting this organization setting',
                 'module': setting.group, 'area': setting.group,
