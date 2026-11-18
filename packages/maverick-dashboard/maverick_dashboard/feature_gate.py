@@ -87,7 +87,7 @@ def refusal_headers(detail: object) -> dict[str, str]:
 
 def turned_off_page(request, name: str, *, kicker: str, title: str):
     """The page in the standard turned-off state (200), or ``None`` when the
-    ``features.<name>`` switch is on.
+    ``features.<name>`` switch and every switch it requires are on.
 
     A turned-off feature is not a permission problem, so its page is not a 403.
     Unreadable settings count as off: nothing is claimed to be available."""
@@ -95,15 +95,22 @@ def turned_off_page(request, name: str, *, kicker: str, title: str):
 
     from . import auth
     from .plain_labels import feature_label
+    from .settings_feature_metadata import FEATURE_REQUIRES
 
     auth.require_permission(request, "view")
     readable = not config.config_source_errors(include_tenant=True)
     features = config.get_features() if readable else {}
-    if features.get(name) is True:
+    names = (name, *FEATURE_REQUIRES.get(name, ()))
+    missing = [{"name": item, "label": feature_label(item)} for item in names if features.get(item) is not True]
+    if not missing:
         return None
     label = feature_label(name)
-    missing = [{"name": name, "label": label}]
-    headline = f"{label}: turned off."
+    if missing[0]["name"] == name:
+        headline = f"{label}: turned off."
+        if len(missing) > 1:
+            headline += " It also needs " + ", ".join(row["label"] for row in missing[1:]) + ", which is off."
+    else:
+        headline = f"{label} needs " + ", ".join(row["label"] for row in missing) + ", which is turned off."
     from .app import templates
 
     return templates.TemplateResponse(request, "feature_off.html", {

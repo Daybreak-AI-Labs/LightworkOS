@@ -158,7 +158,7 @@ FEATURE_HELP = {
     "project_reviews": "Share finished task results with the reviewers you choose.",
     "deliverable_bundles": "Share selected files and result versions with a named colleague for review and offline use.",
     "project_workspaces": "Plan outcomes, milestones and current source context with explicitly chosen colleagues.",
-    "task_handoffs": "Offer a named colleague an unstarted continuation with selected evidence and a spending ceiling; acceptance closes the original conversation to new execution.",
+    "task_handoffs": "Offer a named colleague an unstarted continuation with selected evidence and a spending ceiling; acceptance closes the original conversation to new execution. Requires Selected deliverable bundles to be on as well.",
     "outcome_measurement": "Compare how long work took before and after Lightwork, using your own numbers.",
     "commitment_viability": "See whether reported capacity and stock can cover two accepted orders, and what needs a decision before an option closes.",
     "work_restructuring": "Check exact shared preparation across permitted original local cases, with separate complete results and deadlines.",

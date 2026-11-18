@@ -55,6 +55,28 @@ def test_a_turned_off_feature_page_is_the_standard_turned_off_state(client, monk
     assert "Permission required" not in response.text and "Page not found" not in response.text
 
 
+def test_task_handoffs_name_the_bundle_switch_they_need(client, monkeypatch):
+    _features(monkeypatch, task_handoffs=True)
+    response = client.get("/task-handoffs", headers=HTML)
+    assert response.status_code == 200
+    assert "needs Selected deliverable bundles, which is turned off." in response.text
+    assert 'href="/settings/all?id=features.deliverable_bundles"' in response.text
+    assert 'href="/settings/all?id=features.task_handoffs"' not in response.text
+
+
+def test_both_switches_off_names_both(client, monkeypatch):
+    _features(monkeypatch)
+    text = client.get("/task-handoffs", headers=HTML).text
+    assert "It also needs Selected deliverable bundles, which is off." in text
+    assert 'href="/settings/all?id=features.deliverable_bundles"' in text
+
+
+def test_settings_describe_the_handoff_dependency():
+    from maverick_dashboard.settings_catalog_features import _help
+
+    assert "Selected deliverable bundles" in _help("task_handoffs")
+
+
 def _membership_admin(monkeypatch, admin):
     from maverick_dashboard import auth
 
