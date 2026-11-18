@@ -182,6 +182,36 @@ class TestAgentLoop:
         assert "Still 42, no marker." in result.final
 
     @pytest.mark.asyncio
+    async def test_verifier_sees_what_the_agent_read_before_judging_its_answer(
+        self, ctx, fake_llm, make_llm_response, monkeypatch,
+    ):
+        # A correct answer drawn only from an attached note was flagged "could
+        # not fully verify": the verifier judged "HERON" without ever seeing
+        # the note the agent read, so it could not find the claim supported.
+        # The material the agent read with its tools must reach the verifier.
+        monkeypatch.setenv("MAVERICK_REASONING_REWARD", "0")
+        accept = '{"confidence":0.95,"accepts":true,"critique":"","issues":[]}'
+        fake_llm.scripted = [
+            make_llm_response(tool_calls=[
+                ToolCall(id="read-note", name="read_file", input={"path": "QA-note.txt"}),
+            ]),
+            make_llm_response(text="FINAL: HERON"),
+            make_llm_response(text=accept),
+        ]
+        agent = Agent(ctx=ctx, role="orchestrator",
+                      brief="Using only the attached note, what is the code word?")
+
+        async def read(_name, _args):
+            return "QA- attachment note.\nThe code word is HERON."
+
+        monkeypatch.setattr(agent.tools, "run", read)
+        result = await agent.run()
+        assert result.final == "HERON"
+        verifier_prompt = fake_llm.calls[-1]["messages"][0]["content"]
+        assert "The code word is HERON." in verifier_prompt
+        assert "<tool_output" in verifier_prompt  # still framed as data
+
+    @pytest.mark.asyncio
     async def test_budget_exceeded_returns_error(self, ctx, fake_llm, make_llm_response):
         ctx.budget.max_input_tokens = 1_000_000
         ctx.budget.input_tokens = ctx.budget.max_input_tokens - 1
@@ -1906,6 +1936,28 @@ def test_blackboard_observation_keeps_tool_output_frame_closed():
     assert post.startswith(f"<tool_output tool='web_fetch' id={nonce}>\n")
     assert post.endswith(f"\n</tool_output {nonce}>")
     assert _observation_post("ERROR: denied " + "x" * 900) == ("ERROR: denied " + "x" * 900)[:500]
+
+
+def test_verifier_evidence_keeps_newest_results_framed_and_skips_failures():
+    from maverick.agent import _verifier_evidence
+
+    def framed(nonce, body):
+        return f"<tool_output tool='read_file' id={nonce}>\n{body}\n</tool_output {nonce}>"
+
+    def results(*blocks):
+        return {"role": "user", "content": list(blocks)}
+
+    old = {"type": "tool_result", "tool_use_id": "a", "content": framed("aa", "old " * 200)}
+    failed = {"type": "tool_result", "tool_use_id": "b", "content": framed("bb", "ERROR: gone"),
+              "is_error": True}
+    newest = {"type": "tool_result", "tool_use_id": "c", "content": framed("cc", "HERON " * 200)}
+    messages = [{"role": "user", "content": "brief"}, results(old), results(failed, newest)]
+    evidence = _verifier_evidence(messages, limit=1000)
+    assert len(evidence) <= 1000
+    assert "ERROR: gone" not in evidence
+    assert evidence.count("<tool_output") == evidence.count("</tool_output")
+    assert evidence.endswith("</tool_output cc>") and "HERON" in evidence
+    assert _verifier_evidence([{"role": "user", "content": "brief"}]) == ""
 
 
 @pytest.mark.asyncio

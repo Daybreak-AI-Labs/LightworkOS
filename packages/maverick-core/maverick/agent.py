@@ -1416,8 +1416,9 @@ _OBSERVATION_POST_CHARS = 500
 _FRAME_OPEN_RE = re.compile(r"<tool_output [^\n]*\bid=([0-9a-f]+)>")
 
 
-def _observation_post(output: str) -> str:
-    """The blackboard copy of a tool result, bounded to 500 characters.
+def _observation_post(output: str, limit: int = _OBSERVATION_POST_CHARS) -> str:
+    """The blackboard copy of a tool result, bounded to ``limit`` characters
+    (500 by default).
 
     Other agents (the orchestrator included) read blackboard posts, so a
     framed result must stay framed: a plain ``output[:500]`` keeps the opening
@@ -1427,10 +1428,40 @@ def _observation_post(output: str) -> str:
     text = str(output or "")
     match = _FRAME_OPEN_RE.match(text)
     if match is None:
-        return text[:_OBSERVATION_POST_CHARS]
+        return text[:limit]
     opener, close = match.group(0), f"</tool_output {match.group(1)}>"
-    room = max(0, _OBSERVATION_POST_CHARS - len(opener) - len(close) - 2)
+    room = max(0, limit - len(opener) - len(close) - 2)
     return f"{opener}\n{unframe_tool_output(text)[:room]}\n{close}"
+
+
+_VERIFIER_EVIDENCE_CHARS = 12_000
+
+
+def _verifier_evidence(messages: list[dict], limit: int = _VERIFIER_EVIDENCE_CHARS) -> str:
+    """What this run read with its tools, for the verifier to check the answer
+    against: the successful tool results, newest first when they exceed
+    ``limit`` characters, each still inside its ``<tool_output>`` frame (an
+    excerpt is re-closed with the same nonce). Failed calls are left out: they
+    support nothing."""
+    results: list[str] = []
+    for message in messages:
+        content = message.get("content") if isinstance(message, dict) else None
+        if message.get("role") != "user" or not isinstance(content, list):
+            continue
+        for block in content:
+            if (isinstance(block, dict) and block.get("type") == "tool_result"
+                    and not block.get("is_error") and isinstance(block.get("content"), str)
+                    and block["content"].strip()):
+                results.append(block["content"])
+    kept: list[str] = []
+    room = limit
+    for text in reversed(results):
+        if room <= 0:
+            break
+        excerpt = text if len(text) <= room else _observation_post(text, room)
+        kept.append(excerpt)
+        room -= len(excerpt) + 2
+    return "\n\n".join(reversed(kept))
 
 
 def _tool_result_limit(model: str | None = None) -> int:
@@ -5961,6 +5992,7 @@ class Agent:
                 force_ensemble=bool(
                     getattr(self.ctx, "escalate_verification", False)
                 ),
+                evidence=_verifier_evidence(st.messages),
             )
             # Stamp the verdict so the autonomy servo can tighten the leash
             # on low-confidence runs.

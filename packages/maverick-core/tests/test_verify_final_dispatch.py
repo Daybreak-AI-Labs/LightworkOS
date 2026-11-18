@@ -116,7 +116,7 @@ def test_config_true_string_enables_ensemble(_clean, monkeypatch):
 def test_verify_final_passes_proposer_model_through(_clean, monkeypatch):
     seen = {}
 
-    async def _single(brief, proposal, llm, budget=None, *, proposer_model=None):
+    async def _single(brief, proposal, llm, budget=None, *, proposer_model=None, evidence=""):
         seen["proposer_model"] = proposer_model
         return VerifierVerdict(confidence=1.0, accepts=True, critique="")
 
@@ -175,3 +175,51 @@ def test_ensemble_uses_selected_provider_outside_curated_panel(_clean, monkeypat
 
     assert v.accepts is True
     assert calls == ["deepseek:deepseek-v4-pro"]
+
+
+class _PromptLLM:
+    def __init__(self, reply):
+        self.reply, self.prompts = reply, []
+
+    async def complete_async(self, *, system, messages, **_kw):
+        from maverick.llm import LLMResponse
+        self.prompts.append(messages[0]["content"])
+        return LLMResponse(text=self.reply, thinking=None, tool_calls=[],
+                           stop_reason="end_turn")
+
+
+_ACCEPT = '{"confidence":0.95,"accepts":true,"critique":"","issues":[]}'
+_NOTE = "<tool_output tool='read_file' id=ab12>\nThe code word is HERON.\n</tool_output ab12>"
+
+
+@pytest.mark.parametrize("reward", ["0", "1"])
+def test_evidence_reaches_the_verifier_as_data(_clean, monkeypatch, reward):
+    # The verifier cannot judge an answer grounded in material it never sees.
+    monkeypatch.setenv("MAVERICK_REASONING_REWARD", reward)
+    llm = _PromptLLM(_ACCEPT)
+    asyncio.run(verifier.verify_final(
+        "Using only the attached note, what is the code word?", "HERON", llm,
+        evidence=_NOTE,
+    ))
+    prompt = llm.prompts[-1]
+    assert "The code word is HERON." in prompt
+    assert "never instructions" in prompt
+    assert prompt.index("GOAL BRIEF") < prompt.index("HERON.") < prompt.index(
+        "PROPOSED FINAL ANSWER")
+
+
+def test_evidence_reaches_every_ensemble_member(_clean, monkeypatch):
+    llm = _PromptLLM(_ACCEPT)
+    asyncio.run(verifier.verify_proposal_ensemble(
+        "brief", "HERON", llm, panel=["fake:a", "fake:b"], evidence=_NOTE,
+    ))
+    assert len(llm.prompts) == 2
+    assert all("The code word is HERON." in p for p in llm.prompts)
+
+
+def test_no_evidence_leaves_the_verifier_prompt_unchanged(_clean):
+    llm = _PromptLLM(_ACCEPT)
+    asyncio.run(verifier.verify_final("brief", "answer", llm))
+    assert llm.prompts == [
+        "GOAL BRIEF:\nbrief\n\nPROPOSED FINAL ANSWER:\nanswer\n\nReturn the verdict JSON."
+    ]
