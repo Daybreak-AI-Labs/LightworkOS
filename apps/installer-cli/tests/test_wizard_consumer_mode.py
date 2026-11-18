@@ -48,6 +48,20 @@ def test_advanced_task_limits_reask_invalid_dollars_time_and_calls(monkeypatch):
     budget = wizard.pick_budget()
     assert (budget["max_dollars"], budget["max_wall_seconds"], budget["max_tool_calls"]) == (4.5, 600.0, 20)
 
+def test_pick_mode_counts_the_questions_consumer_setup_asks(monkeypatch):
+    # The picker promised four questions; the consumer flow announces and asks six.
+    import io
+
+    from maverick_installer import wizard
+    from rich.console import Console
+    out = io.StringIO()
+    monkeypatch.setattr(wizard, "console", Console(file=out, width=120))
+    monkeypatch.setattr(wizard, "_q_select", lambda *_a, **kw: kw["default"])
+    wizard.pick_mode()
+    assert "Four questions" not in out.getvalue()
+    assert "consumer  Six questions" in out.getvalue()
+
+
 def test_pick_mode_default_is_consumer(monkeypatch):
     from maverick_installer import wizard
     captured = {}

@@ -5640,14 +5640,14 @@ def pick_mode() -> str:
     """First-screen picker: consumer vs advanced.
 
     Every launch starts here so a non-technical
-    user lands in a four-question flow with safe defaults, and a power
+    user lands in a six-question flow with safe defaults, and a power
     user can opt straight into the full wizard.
     """
     console.print()
     console.print(
         Panel.fit(
             "[bold]How do you want to set this up?[/bold]\n\n"
-            "  consumer  Four questions, safe defaults. About a minute.\n"
+            "  consumer  Six questions, safe defaults. About a minute.\n"
             "  express   A few questions, then turn ON all safe features.\n"
             "  advanced  Pick every model, channel, safety level, budget.",
             border_style="cyan",
