@@ -96,7 +96,7 @@ def _alternative(client, who, goal_id, context, action="retry", **limits):
     applied = client.post("/api/v1/chat/message-actions/apply", headers=_headers(who),
                           json={"token": reviewed.json()["token"], "confirmed": True})
     assert applied.status_code == 200, applied.text
-    return applied.json()["goal"], reviewed.json()
+    return applied.json()["goal"], {**reviewed.json(), "applied": applied.json()}
 
 
 @pytest.mark.parametrize("action", ["retry", "edit", "branch"])
@@ -104,6 +104,24 @@ def test_a_named_member_s_alternative_starts_and_finishes(env, action):
     goal_id, context = _first_task(env, "member")
     assert _world().get_goal(goal_id).status == "done"
     new_id, _ = _alternative(env, "member", goal_id, context, action)
+    assert _world().get_goal(new_id).status == "done"
+
+
+@pytest.mark.parametrize("action", ["retry", "edit", "branch"])
+def test_a_started_alternative_says_so_and_a_repeat_says_nothing_was_repeated(env, action):
+    """Live #51-#53 started and finished, yet the status read "No second attempt
+    was started. AI work has not been confirmed as started; open its draft
+    recovery controls." The first Start reports the start it requested; only a
+    repeat of the same request says nothing was repeated."""
+    goal_id, context = _first_task(env, "member")
+    new_id, reviewed = _alternative(env, "member", goal_id, context, action)
+    first = reviewed["applied"]["message"]
+    assert "Started a separate conversation" in first and "Open it to follow its progress" in first
+    assert "No second attempt" not in first and "draft recovery" not in first
+    again = env.post("/api/v1/chat/message-actions/apply", headers=_headers("member"),
+                     json={"token": reviewed["token"], "confirmed": True}).json()
+    assert again["goal"] == new_id and "No second attempt was started" in again["message"]
+    assert "Its AI work finished" in again["message"] and "draft recovery" not in again["message"]
     assert _world().get_goal(new_id).status == "done"
 
 
@@ -118,9 +136,12 @@ def test_a_refused_alternative_is_settled_with_the_reason_not_left_queued(env, a
     def refused(goal):  # the start-time authority check refuses the owner
         raise PermissionError("The task owner no longer has workspace execution permission")
     monkeypatch.setattr(conversation_inbox, "current_authority", refused)
-    new_id, _ = _alternative(env, "member", goal_id, context, action)
+    new_id, reviewed = _alternative(env, "member", goal_id, context, action)
     goal = _world().get_goal(new_id)
     assert goal.status == "blocked"
+    again = env.post("/api/v1/chat/message-actions/original", headers=_headers("member"),
+                     json={"token": reviewed["token"]}).json()
+    assert "Its AI work stopped. Open the conversation to read why." in again["message"]
     stop = stop_payload(goal.status, goal.result)
     assert stop["kind"] == "workspace_access"
     assert "member of this workspace" in stop["message"] and "No AI work" in stop["message"]
