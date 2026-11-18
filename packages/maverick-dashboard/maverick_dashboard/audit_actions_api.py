@@ -102,6 +102,10 @@ _SLUG_KEYS = {"name", "tool", "action", "stage", "provider", "rule", "outcome", 
 _SLUG = re.compile(r"[a-z][a-z0-9]*(?:[_.:-][a-z0-9]+)*")
 
 
+# The emergency stop's dashboard records name what happened, not "Administrator action".
+_EMERGENCY_STOP_LABELS = {"halt": "Emergency stop engaged", "clear-halt": "Emergency stop released"}
+
+
 def kind_label(kind: object) -> str:
     return KIND_LABELS.get(str(kind or ""), humanize(kind) or "Activity")
 
@@ -114,6 +118,12 @@ def event_label(event: dict) -> str:
             action = event["payload"].get("action")
         if isinstance(action, str) and action in APPROVAL_ACTION_LABELS:
             return APPROVAL_ACTION_LABELS[action]
+    if event.get("kind") == "halt" and event.get("status") in ("engaged", "released"):
+        return "Emergency stop " + event["status"]
+    if event.get("kind") == "control_plane_action":
+        stop = _EMERGENCY_STOP_LABELS.get(str(event.get("operation") or event.get("verb") or ""))
+        if stop:
+            return stop
     if event.get("kind") == "control_plane_action":
         from .content_access import VISIBLE_CONTROL_ACTIONS
 
@@ -153,7 +163,8 @@ def value_text(key: str, value: Any) -> str:
 def event_person(event: dict) -> str:
     for key in _PERSON_KEYS:
         value = event.get(key)
-        if isinstance(value, str) and value:
+        # "*" marks a deployment-wide record, not a person.
+        if isinstance(value, str) and value and value != "*":
             return value
     return ""
 

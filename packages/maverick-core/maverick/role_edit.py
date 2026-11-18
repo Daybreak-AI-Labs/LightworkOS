@@ -188,8 +188,11 @@ def _effective_model_effort(role: str) -> tuple[str | None, str | None]:
     never raises into the view."""
     model = None
     try:
-        from .config import get_role_model
-        model = get_role_model(role) or ROLE_MODELS.get(role)
+        # The same deterministic route a run takes (role pin, config, the
+        # dashboard's default model, then the built-in default, within the
+        # admin allow-list), so the view never names a model that won't run.
+        from .llm import offline_model_for_role
+        model = offline_model_for_role(role)
     except Exception:
         model = ROLE_MODELS.get(role)
     effort = None
@@ -199,6 +202,18 @@ def _effective_model_effort(role: str) -> tuple[str | None, str | None]:
     except Exception:
         effort = None
     return model, effort
+
+
+def _model_ready(role: str) -> bool | None:
+    """Whether the role's model has the AI service setup it needs; None if unknown."""
+    try:
+        from .config import load_config
+        from .operator_preflight import _role_configuration_missing
+
+        _, missing = _role_configuration_missing(role, load_config())
+        return not missing
+    except Exception:
+        return None
 
 
 def resolved_role(role: str, path: str | Path | None = None) -> dict | None:
@@ -216,6 +231,7 @@ def resolved_role(role: str, path: str | Path | None = None) -> dict | None:
     return {
         "role": role,
         "model": eff_model,            # effective (resolved) -- display
+        "model_ready": _model_ready(role),  # False: its AI service is not set up
         "effort": eff_effort,          # effective (resolved) -- display
         "system_addendum": addendum,
         "model_override": model_ov,    # editable; "" = inherit the config default
@@ -237,6 +253,7 @@ def list_roles(path: str | Path | None = None) -> list[dict]:
         out.append({
             "role": role,
             "model": model,
+            "model_ready": _model_ready(role),
             "is_override": any(str(entry.get(k) or "").strip() for k in _FIELDS),
         })
     return out

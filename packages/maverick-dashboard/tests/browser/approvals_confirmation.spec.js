@@ -41,7 +41,7 @@ test('a high-risk approval is confirmed in the page on a phone, decided with a t
   const decided=page.locator('#approval-decided');
   await expect(decided).toBeVisible();
   await expect(decided.locator(`article.approval-item[data-id="${id}"]`)).toBeVisible();
-  await expect(decided).toContainText('Approved just now by user:browser-reviewer');
+  await expect(decided).toContainText('Approved just now by browser-reviewer.');
   await expect(page.locator('#approval-queue .mv-empty__title')).toHaveText('Nothing needs your decision right now');
   await fits(page);
 

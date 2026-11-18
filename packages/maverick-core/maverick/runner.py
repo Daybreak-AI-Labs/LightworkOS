@@ -555,6 +555,41 @@ def _goal_run_exception_status(world, goal_id: int, exc: Exception) -> str:
     return "error"
 
 
+#: Stored on a task whose start was refused because its owner may not run
+#: work in the workspace (see ``stop_reasons``). Fixed text, never the
+#: exception's own words.
+WORKSPACE_ACCESS_REFUSAL = "start_refused:workspace_access"
+START_ACCESS_REFUSAL = "start_refused:access"
+
+
+def _refuse_start(world, goal_id: int, exc: PermissionError) -> str:
+    """Settle a still-queued task whose start was refused, with a plain reason."""
+    log.warning("goal #%s not started: %s", goal_id, exc)
+    reason = (WORKSPACE_ACCESS_REFUSAL if "workspace execution permission" in str(exc)
+              else START_ACCESS_REFUSAL)
+    try:
+        block_pending = getattr(world, "block_pending_goal", None)
+        if callable(block_pending):
+            block_pending(goal_id, result=reason)
+        else:  # pragma: no cover -- every shipped backend has the atomic update
+            log.warning("world backend cannot settle a refused start (goal_id=%s)", goal_id)
+    except Exception:  # pragma: no cover - settlement never masks the refusal
+        log.exception("failed to settle refused start of goal #%s", goal_id)
+    return "blocked"
+
+
+def _handed_off(world, goal_id: int) -> bool:
+    """A person took over this conversation, or the task was handed off."""
+    from .goal_mutations import GoalMutationConflict
+    from .human_conversation_handoffs import require_ai_open
+    from .task_handoffs import closure
+    try:
+        require_ai_open(world, goal_id)
+    except GoalMutationConflict:
+        return True
+    return bool(closure(world, goal_id))
+
+
 def _run_world(db_path: Path | None):
     from .world_model import open_world
 
@@ -675,16 +710,14 @@ def _run_goal_in_thread(
         if goal is None:
             return _unavailable_goal_run("missing", detailed_outcome=detailed_outcome)
         from .chat_message_actions import runtime_limits, runtime_scope
-        alternative, max_dollars, max_wall_seconds, max_depth, capability = runtime_limits(
-            world, goal, max_dollars, max_wall_seconds, max_depth, capability)
-        from .goal_mutations import GoalMutationConflict
-        from .human_conversation_handoffs import require_ai_open
-        from .task_handoffs import closure
         try:
-            require_ai_open(world, goal_id)
-        except GoalMutationConflict:
-            return "blocked"
-        if closure(world, goal_id):
+            alternative, max_dollars, max_wall_seconds, max_depth, capability = runtime_limits(
+                world, goal, max_dollars, max_wall_seconds, max_depth, capability)
+        except PermissionError as exc:
+            # A refused start must settle the task with its reason. Leaving it
+            # pending showed a queued task that never ran and never explained.
+            return _refuse_start(world, goal_id, exc)
+        if _handed_off(world, goal_id):
             return "blocked"
         principal_matches = _runner_principal_binding(world, goal, execution_principal)
         if principal_matches is None:

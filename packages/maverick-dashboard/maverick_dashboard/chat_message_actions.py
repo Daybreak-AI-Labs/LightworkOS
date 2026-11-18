@@ -69,6 +69,18 @@ def _caps():
     return api._rest_goal_limits(GoalIn(title="Conversation alternative"))
 
 
+def _own_caps(base, body):
+    """The reviewed caps, lowered by the person's own limits for this attempt.
+
+    Checked like the main composer's fields (refused above the workspace
+    limit); each can only narrow a cap, and the run's Budget enforces them."""
+    from maverick.runner import clamp_task_limit
+
+    own = api.person_task_limits(body.get("max_dollars") or "", body.get("max_minutes") or "")
+    return {**base, "max_dollars": clamp_task_limit(own.get("max_dollars"), base["max_dollars"]),
+            "max_wall_seconds": clamp_task_limit(own.get("max_wall_seconds"), base["max_wall_seconds"])}
+
+
 def _source(request, goal, action, at_turn=None, *, connection=None):
     def authorize(value):
         auth.assert_goal_access(request, value)
@@ -111,9 +123,10 @@ def review(request, body):
         if not body["message"].strip():
             raise HTTPException(422, "Write the message for this separate conversation.")
         now = time.time()
+        base = _caps()
         value = {"purpose": PURPOSE, "operation": secrets.token_hex(16), "authority": before,
                  "reviewed_at": now, "expires": now + TTL, "source": material, "message": body["message"],
-                 "answer_only": body["answer_only"], "caps": _caps()}
+                 "answer_only": body["answer_only"], "caps": _own_caps(base, body), "base_caps": base}
         token = crypto_at_rest.seal_to_str(json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":")))
         if not crypto_at_rest.is_sealed_str(token) or len(token) > 1048576:
             raise HTTPException(413, "This full conversation is too large for a protected review. Nothing was created; start a new conversation with explicitly chosen context.")
@@ -178,20 +191,21 @@ def apply(request, token):
         return previous, None
     with authority_effect_fence():
         before = authority(request, value["authority"]["context"], write=True)
-        if before != value["authority"] or _caps() != value["caps"]:
+        reviewed_base = value.get("base_caps", value["caps"])
+        if before != value["authority"] or _caps() != reviewed_base:
             raise HTTPException(409, "Your access or operating limits changed. Your draft is kept; review current choices again.")
         api.require_provider_or_400()
         from .app import check_goal_rate_limit
         check_goal_rate_limit(request)
         def guard(connection):
             if (time.time() >= value["expires"] or authority(request, before["context"], write=True) != before
-                    or _caps() != value["caps"]):
+                    or _caps() != reviewed_base):
                 raise HTTPException(409, "This review expired or your access changed while waiting. Nothing was started; review current choices again.")
             current = _source(request, value["source"]["goal_id"], value["source"]["action"],
                               value["source"].get("at_turn"), connection=connection)
             if digest(current) != digest(value["source"]):
                 raise HTTPException(409, "A conversation message, file or permission changed after review. Nothing was started; your edited message is kept.")
-            if (authority(request, before["context"], write=True) != before or _caps() != value["caps"]
+            if (authority(request, before["context"], write=True) != before or _caps() != reviewed_base
                     or time.time() >= value["expires"]):
                 raise HTTPException(409, "This review expired or your access changed while waiting. Nothing was started; review current choices again.")
         try:

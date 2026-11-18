@@ -53,6 +53,7 @@ ROWS = [
     ('Submission saved as a draft', 'Envoi enregistré comme brouillon', 'Einreichung als Entwurf gespeichert', '送信内容を下書きとして保存しました', '提交内容已保存为草稿'),
     ('AI work has not started. If all your files uploaded, try preparing the task again from this saved draft.', 'Le travail IA n’a pas démarré. Si tous les fichiers ont été importés, réessayez de préparer la tâche à partir de ce brouillon enregistré.', 'Die KI-Arbeit wurde noch nicht gestartet. Wenn alle Dateien hochgeladen wurden, bereiten Sie die Aufgabe erneut aus diesem gespeicherten Entwurf vor.', 'AI作業は開始していません。すべてのファイルがアップロード済みなら、この保存済み下書きからタスクの準備を再試行してください。', 'AI工作尚未开始。如果所有文件均已上传，请尝试从此已保存草稿重新准备任务。'),
     ('Retry preparation', 'Réessayer la préparation', 'Vorbereitung erneut versuchen', '準備を再試行', '重试准备'),
+    ('Discard draft', 'Supprimer le brouillon', 'Entwurf verwerfen', '下書きを破棄', '放弃草稿'),
     ('Show the work behind this answer', 'Voir le travail à l’origine de cette réponse', 'Arbeit hinter dieser Antwort anzeigen', 'この回答に至る作業を表示', '显示此回答背后的工作'),
     ('Attachments ({count})', 'Pièces jointes ({count})', 'Anhänge ({count})', '添付ファイル（{count}）', '附件（{count}）'),
     ('+ Add file', '+ Ajouter un fichier', '+ Datei hinzufügen', '+ ファイルを追加', '+ 添加文件'),

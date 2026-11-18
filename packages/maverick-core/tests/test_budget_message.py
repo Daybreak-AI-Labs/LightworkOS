@@ -265,6 +265,8 @@ def test_dashboard_task_cap_stop_points_to_the_task_limit_setting():
     assert "$2.00" in stop.message and "$1.80" in stop.message and "$0.30" in stop.message
     assert "administrator" not in stop.action
     assert stop.link == "/settings#settings-task-limit"
+    # The task page offers a limit for the next attempt beside this advice.
+    assert stop.action.startswith("Try again with a higher spending limit for this attempt")
 
 
 def test_time_limit_stop_is_a_limit_not_an_internal_error():
@@ -276,8 +278,45 @@ def test_time_limit_stop_is_a_limit_not_an_internal_error():
     out = _budget_stop_message(budget, 9, BudgetExceeded("wall time 1800s >= 1800s"))
     assert "time limit" in out and "30 minutes" in out
     stop = explain_stop(out)
-    assert stop.kind == "spending_limit"
+    assert stop.kind == "time_limit"
     assert "time limit" in stop.message and "administrator" not in stop.action
+    assert "spending" not in stop.message.lower() and "spending" not in stop.action.lower()
+
+
+@pytest.mark.parametrize("detail", [
+    "wall time 61s > 60s",
+    "wall-clock cap 60s reached mid-model-call",
+    "wall-clock cap 60s reached mid-tool-execution",
+])
+def test_every_wall_clock_wording_is_a_time_limit_stop(detail):
+    """Live goal 43 stopped at its 1-minute limit mid-call and was told to raise
+    its spending limit: the agent's own wall-cap wordings were not recognised."""
+    from maverick.budget import BudgetExceeded
+    from maverick.orchestrator import _budget_stop_message
+    from maverick.stop_reasons import explain_stop
+
+    budget = Budget(max_dollars=1.0, max_wall_seconds=60)
+    with budget._lock:
+        budget.dollars = 0.58
+    out = _budget_stop_message(budget, 43, BudgetExceeded(detail))
+    assert "time limit (1 minute)" in out and "spending" not in out.split("\n")[0]
+    assert "--max-wall-seconds" in out
+    stop = explain_stop(out)
+    assert stop.kind == "time_limit"
+    assert "1 minute" in stop.message
+    assert "time limit" in stop.action and "spending" not in stop.action.lower()
+
+
+def test_unexplained_cap_stop_after_the_time_ran_out_is_a_time_limit_stop():
+    from maverick.budget import BudgetExceeded
+    from maverick.orchestrator import _budget_stop_message
+    from maverick.stop_reasons import explain_stop
+
+    budget = Budget(max_dollars=1.0, max_wall_seconds=0.001)
+    import time as _time
+    _time.sleep(0.01)
+    out = _budget_stop_message(budget, 5, BudgetExceeded("limit reached"))
+    assert explain_stop(out).kind == "time_limit"
 
 
 def test_organization_allowance_stop_still_names_an_administrator():

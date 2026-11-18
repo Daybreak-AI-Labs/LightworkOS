@@ -98,7 +98,7 @@
         td.appendChild(link);
         tr.appendChild(td);
         tr.appendChild(el('td', null, money(r.cost)));
-        tr.appendChild(el('td', null, r.failed ? 'Failed' : 'Finished'));
+        tr.appendChild(el('td', null, r.result || (r.failed ? 'Failed' : 'Finished')));
         rows.appendChild(tr);
       });
       $('vp-retro-table').hidden = !d.costliest.length;

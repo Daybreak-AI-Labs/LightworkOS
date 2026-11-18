@@ -204,3 +204,30 @@ test("a failed control suggestion keeps the question and never claims a review o
   assert.equal(h.calls.filter(call => call.url === '/api/v1/copilot').length, 0);
   h.close();
 });
+
+test("an AI guide's reply shows its formatting, never raw markdown marks", async () => {
+  const h = harness();
+  h.w.eval(read("static/lightwork-markdown.js"));
+  h.w.fetch = async (url, options = {}) => url.includes("/copilot/context")
+    ? response({client_context: h.state.scope, boundaries: [], suggested_questions: []})
+    : response({reply: "**Next step:** open the task.\n\n- Check its result\n- Ask a follow-up", mode: "model"});
+  await h.open(); await h.ask("What next?");
+  const reply = h.get("mv-copilot-log").lastElementChild;
+  assert.equal(reply.querySelector("strong").textContent, "Next step:");
+  assert.equal(reply.querySelectorAll("li").length, 2);
+  assert.doesNotMatch(reply.textContent, /\*\*|^- /m);
+  h.close();
+});
+
+test("a model reply cannot inject markup into Copilot", async () => {
+  const h = harness();
+  h.w.eval(read("static/lightwork-markdown.js"));
+  h.w.fetch = async (url, options = {}) => url.includes("/copilot/context")
+    ? response({client_context: h.state.scope, boundaries: [], suggested_questions: []})
+    : response({reply: "<img src=x onerror=alert(1)> [click](javascript:alert(1))", mode: "model"});
+  await h.open(); await h.ask("Hi");
+  const reply = h.get("mv-copilot-log").lastElementChild;
+  assert.equal(reply.querySelector("img"), null);
+  assert.equal(reply.querySelector("a[href^='javascript']"), null);
+  h.close();
+});

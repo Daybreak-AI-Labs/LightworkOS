@@ -339,9 +339,14 @@
     <ul>{% for item in submission.detail.coverage %}<li><bdi lang="und" dir="auto" data-user-content>{{ item.filename }}</bdi>: {% if item.status in ('ready', 'admitted', 'complete', 'ok') %}{{ ui("Readable text ready") }}{% elif item.status in ('pending', 'queued') %}{{ ui("Still being read") }}{% else %}{{ ui("Could not be read ({status})", status=item.status|humanize|lower) }}{% endif %}</li>{% endfor %}</ul>
     {% endif %}
     {% if goal.status == 'draft' and can_operate %}
+    {% if submission_files_saved %}
     <p>{{ ui('AI work has not started. If all your files uploaded, try preparing the task again from this saved draft.') }}</p>
     <form method="post" action="/chat/goal/{{ goal.id }}/recover-submission">
       <button id="recover-submission-btn" class="btn" type="submit"{% if not can_operate %} disabled data-permission-disabled="1"{% endif %}>{{ ui('Retry preparation') }}</button>
+    </form>
+    {% endif %}
+    <form method="post" action="/chat/goal/{{ goal.id }}/discard-draft">
+      <button id="discard-draft-btn" class="btn btn--ghost" type="submit"{% if not can_operate %} disabled data-permission-disabled="1"{% endif %}>{{ ui('Discard draft') }}</button>
     </form>
     {% endif %}
   </section>

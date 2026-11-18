@@ -152,3 +152,65 @@ def test_chat_digests_only_the_specialists_it_ships(monkeypatch, tmp_path):
     assert len(digests) == len(body["items"]) <= 5
     profiles = enabled_domains()
     assert all(item["revision"] == dataclass_digest(profiles[item["value"]]) for item in body["items"])
+
+
+def _failing_publication(monkeypatch):
+    import maverick_dashboard.attachment_submission as submission
+
+    def broken(world, goal_id, records):
+        raise OSError("simulated storage failure")
+    monkeypatch.setattr(submission, "publish_batch", broken)
+
+
+def test_unsaved_files_say_what_happened_and_how_to_recover(monkeypatch, tmp_path, caplog):
+    """Live: every chat task with a file failed with 'This cannot be done right
+    now' and left a draft that could not be discarded. The real cause was
+    swallowed. It is logged now, and the person reads what happened."""
+    import logging
+
+    _prep(monkeypatch, tmp_path)
+    _failing_publication(monkeypatch)
+    with caplog.at_level(logging.ERROR):
+        r = _client().post("/chat/send", data={"title": "use the note"},
+                           files={"files": ("QA-tiny.txt", b"code word", "text/plain")},
+                           headers=_ORIGIN, follow_redirects=False)
+    assert r.status_code == 409
+    detail = r.json()["detail"]
+    assert detail["code"] == "attachments_not_saved"
+    assert "could not be saved" in detail["message"] and "nothing was spent" in detail["message"]
+    from maverick_dashboard import app as dash
+    goal = dash._world().list_goals()[-1]
+    assert detail["next_action"] == {"label": "Open the saved draft", "href": f"/chat/goal/{goal.id}"}
+    assert any("simulated storage failure" in (rec.exc_text or "") for rec in caplog.records)
+
+
+def test_a_draft_whose_files_were_not_saved_can_be_discarded(monkeypatch, tmp_path):
+    _prep(monkeypatch, tmp_path)
+    _failing_publication(monkeypatch)
+    client = _client()
+    client.post("/chat/send", data={"title": "use the note"},
+                files={"files": ("QA-tiny.txt", b"code word", "text/plain")},
+                headers=_ORIGIN, follow_redirects=False)
+    from maverick_dashboard import app as dash
+    goal = dash._world().list_goals()[-1]
+    assert goal.status == "draft"
+    page = client.get(f"/chat/goal/{goal.id}").text
+    assert 'id="discard-draft-btn"' in page and 'id="recover-submission-btn"' not in page
+    assert "Your files were not saved" in page
+    retry = client.post(f"/chat/goal/{goal.id}/recover-submission", headers=_ORIGIN, follow_redirects=False)
+    assert retry.status_code == 409 and retry.json()["detail"]["code"] == "attachments_not_saved"
+    gone = client.post(f"/chat/goal/{goal.id}/discard-draft", headers=_ORIGIN, follow_redirects=False)
+    assert gone.status_code == 303 and gone.headers["location"] == "/chat"
+    assert dash._world().get_goal(goal.id).status == "cancelled"
+    assert client.post(f"/chat/goal/{goal.id}/discard-draft", headers=_ORIGIN,
+                       follow_redirects=False).status_code == 409
+
+
+def test_only_the_person_who_sent_a_draft_can_discard_it(monkeypatch, tmp_path):
+    _prep(monkeypatch, tmp_path)
+    from maverick_dashboard import app as dash
+    goal_id = dash._world().create_goal("someone else's draft", "", owner="user:other")
+    dash._world().set_goal_status(goal_id, "draft")
+    r = _client().post(f"/chat/goal/{goal_id}/discard-draft", headers=_ORIGIN, follow_redirects=False)
+    assert r.status_code in (403, 404)
+    assert dash._world().get_goal(goal_id).status == "draft"

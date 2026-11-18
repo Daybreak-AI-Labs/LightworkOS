@@ -6,6 +6,14 @@
     <textarea id="chat-alternative-message" class="textarea" rows="4" maxlength="16000" required></textarea>
     <label><input id="chat-alternative-answer-only" type="checkbox" checked> Answer only — generate text without taking actions</label>
     <p class="muted">Answer only cannot fetch new information or perform actions. Allowing actions starts new work under your current permissions and approvals; it can repeat changes the original conversation already completed.</p>
+    <fieldset id="chat-alternative-limits">
+      <legend>Limits for this attempt (optional)</legend>
+      <label for="chat-alternative-max-dollars">Spending limit (US dollars)
+        <input id="chat-alternative-max-dollars" class="input" type="number" min="0.01" step="0.01" inputmode="decimal" aria-describedby="chat-alternative-limit-help"></label>
+      <label for="chat-alternative-max-minutes">Time limit (minutes)
+        <input id="chat-alternative-max-minutes" class="input" type="number" min="1" step="1" inputmode="numeric" aria-describedby="chat-alternative-limit-help"></label>
+      <p class="muted" id="chat-alternative-limit-help">Leave a field empty to use the workspace limit. These limits can lower it but not raise it.</p>
+    </fieldset>
     <div class="actions"><button type="submit" id="chat-alternative-review" class="btn btn--primary">Review separate attempt</button>
       <button type="button" id="chat-alternative-current" class="btn btn--ghost">Check current context</button>
       <button type="button" id="chat-alternative-close" class="btn btn--ghost">Close and keep draft</button></div>

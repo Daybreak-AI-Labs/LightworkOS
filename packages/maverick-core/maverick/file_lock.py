@@ -1268,6 +1268,17 @@ def _publish_new_private_temp(fd: int, tmp: str, path: Path) -> None:
         os.close(parent_fd)
 
 
+def _publish_closed_private_temp(tmp: str, path: Path) -> None:
+    """POSIX publication after the temp file is closed.
+
+    On NFS (a hosted install's shared volume) unlinking a file this process
+    still has open only renames it to ``.nfs…``: the published name keeps a
+    second link until the close, and a check of the new file right after
+    publication sees two links. Closing first makes the unlink a real one.
+    """
+    _publish_new_private_temp(-1, tmp, path)
+
+
 def atomic_create_text(
     path: str | Path,
     text: str,
@@ -1295,7 +1306,10 @@ def atomic_create_text(
             f.write(text)
             f.flush()
             os.fsync(f.fileno())
-            _publish_new_private_temp(f.fileno(), tmp, path)
+            if os.name == "nt":
+                _publish_new_private_temp(f.fileno(), tmp, path)
+        if os.name != "nt":
+            _publish_closed_private_temp(tmp, path)
     except BaseException:
         if fd >= 0:
             try:
@@ -1338,7 +1352,10 @@ def atomic_create_bytes_chunks(
                 f.write(chunk)
             f.flush()
             os.fsync(f.fileno())
-            _publish_new_private_temp(f.fileno(), tmp, path)
+            if os.name == "nt":
+                _publish_new_private_temp(f.fileno(), tmp, path)
+        if os.name != "nt":
+            _publish_closed_private_temp(tmp, path)
     except BaseException:
         if fd >= 0:
             try:

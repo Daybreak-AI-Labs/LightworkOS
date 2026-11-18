@@ -7801,6 +7801,36 @@ def _ensure_local_halt_fail_safe(
         return "re-armed"
 
 
+def _halt_workspace_audit(*, operation: str, actor: str, scope: str, reason: str) -> None:
+    """Also show a completed stop or release in the acting workspace's log.
+
+    The deployment-wide record above is the control-plane authority. Without
+    this copy, the workspace's Activity log (what a person searches) had no
+    trace that anyone engaged or released the emergency stop.
+    """
+    from maverick.audit import (
+        AuditRefused,
+        EventKind,
+        audit_event,
+        default_audit_log,
+        global_audit_log,
+    )
+
+    try:
+        if getattr(default_audit_log(), "audit_dir", None) == getattr(global_audit_log(), "audit_dir", None):
+            return  # one chain: the deployment record is already this log's row
+        # ``status`` is one of the fields the Activity log may show; the
+        # reason is recorded but stays out of the summary view like any text.
+        audit_event(EventKind.HALT, agent="dashboard", actor=actor, operation=operation,
+                    status="released" if operation == "clear-halt" else "engaged",
+                    scope=scope, reason=reason, detail=reason)
+    except AuditRefused:
+        # The stop itself is already applied and its deployment record governs.
+        log.warning("workspace copy of the emergency stop record was refused", exc_info=True)
+    except Exception:  # pragma: no cover -- audit_event is already fail-soft
+        log.warning("workspace copy of the emergency stop record failed", exc_info=True)
+
+
 def _halt_control_audit(
     *,
     operation: str,
@@ -7823,6 +7853,8 @@ def _halt_control_audit(
         reason,
         fallback="operator requested HALT state change",
     )
+    if result == "succeeded":
+        _halt_workspace_audit(operation=operation, actor=actor, scope=scope, reason=bounded_reason)
     return audit_event(
         EventKind.CONTROL_PLANE_ACTION,
         agent="control_plane",
@@ -11069,15 +11101,17 @@ async def copilot_endpoint(request: Request, payload: CopilotIn, response: Respo
 
     # A detail URL identifies one current record. Never send its authorized
     # name, status or stop explanation to a model or later guide history.
-    if is_detail_page and (detail_reply := _copilot_detail_reply(
-        request, msg, permissions, context, record_context,
-    )) is not None:
-        return detail_reply
-
     # Exact read questions use live, request-authorized native records. Their
     # contents stay on this server; no model receives private tasks or reviews.
     from .copilot_live_state import answer as live_answer
     from .copilot_live_state import intent as live_intent
+
+    # A task's cost is a live read even on its own page; the page guide
+    # describes the task but holds no spending record.
+    if is_detail_page and live_intent(msg) != "task_cost" and (detail_reply := _copilot_detail_reply(
+        request, msg, permissions, context, record_context,
+    )) is not None:
+        return detail_reply
 
     if live_intent(msg) is not None:
         live = await run_in_threadpool(live_answer, request, msg, payload.page,
@@ -12463,6 +12497,13 @@ def _held_for_undo(world, approval_id: int) -> bool:
         return False
 
 
+def _decider_name(principal) -> str:
+    """Who decided, as a person reads it: never the raw sign-in identifier."""
+    from .identity_format import humanize_principal
+
+    return humanize_principal(principal).name
+
+
 def _approval_decision_response(world, event, audit_delivered: bool) -> Response:
     """Make pending-vs-effective state explicit at the HTTP boundary."""
     try:
@@ -12488,7 +12529,7 @@ def _approval_decision_response(world, event, audit_delivered: bool) -> Response
         "X-Lightwork-Approval-Count": str(state.get("approved_count", 0)),
         "X-Lightwork-Approval-Required": str(state.get("approvals_required", 1)),
         "X-Lightwork-Decided-By": (
-            str(event.decided_by).encode("ascii", "backslashreplace").decode("ascii")
+            _decider_name(event.decided_by).encode("ascii", "backslashreplace").decode("ascii")
         ),
     }
     if audit_delivered and approval_status != "pending" and _held_for_undo(world, event.approval_id):
@@ -12784,7 +12825,9 @@ def requested_approval_history(request: Request, before_id: int | None = None) -
             return redact(str(value or ""))[0]
         result.append({"id": approval.id, "action": context["approval_actions"][approval.id],
                        "summary": text(context["approval_details"][approval.id]), "status": approval.status,
-                       "decided_by": text(approval.decided_by), "decided_at": approval.decided_at,
+                       "decided_by": text(approval.decided_by),
+                       "decided_by_name": _decider_name(approval.decided_by) if approval.decided_by else "",
+                       "decided_at": approval.decided_at,
                        "expires_at": card.get("expires_at") if card else None,
                        "before": text(card["preview"]["before"]) if card else "",
                        "after": text(card["preview"]["after"]) if card else "",

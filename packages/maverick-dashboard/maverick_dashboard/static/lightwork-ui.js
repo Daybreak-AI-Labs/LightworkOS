@@ -1411,8 +1411,15 @@
             window.dispatchEvent(new CustomEvent('lightwork:composer-sent', {detail: {form: form, recoveryCleared: true}}));
             window.location.reload(); return;
           }
-          let serverDetail = '';
-          try { const j = await resp.json(); if (j && typeof j.detail === 'string') serverDetail = j.detail; } catch (e) {}
+          let serverDetail = '', payload = null;
+          try { payload = await resp.json(); if (payload && typeof payload.detail === 'string') serverDetail = payload.detail; } catch (e) {}
+          if (payload && window.mvBusinessError(payload)) {
+            // A reviewed refusal names what happened and the next step (for
+            // example, files that were not saved and the draft to open).
+            window.mvRenderError(errBox, resp, 'start the task', payload);
+            errBox.style.display = 'block';
+            return;
+          }
           let detail = window.mvErrorText(resp, 'start the task');
           if (resp.status === 429) {
             const ra = parseInt(resp.headers.get('Retry-After') || '', 10);
@@ -2674,7 +2681,10 @@ window.mvReveal = function (element, options) {
   function load() {
     if (state !== 'idle' || loaded()) return;
     state = 'loading';
-    var scripts = [fab.dataset.operationsSrc, fab.dataset.copilotSrc].map(function (src) {
+    var sources = [fab.dataset.operationsSrc, fab.dataset.copilotSrc];
+    // The reply renderer: pages without the chat already have it, others load it first.
+    if (!window.lwMarkdown && fab.dataset.markdownSrc) sources.unshift(fab.dataset.markdownSrc);
+    var scripts = sources.map(function (src) {
       var script = document.createElement('script');
       script.src = src; script.async = false;   // in order, like the deferred tags they replace
       document.head.appendChild(script);
