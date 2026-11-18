@@ -137,6 +137,31 @@ def test_named_assignee_sees_both_inboxes_and_only_approval_detail(setup, monkey
     assert decision.json()["status"] == "resuming"
 
 
+def test_inbox_reads_the_live_caller_after_another_tests_auth_patch(setup, monkeypatch):
+    # The inbox module is imported lazily, by the first request that needs it.
+    # When that request belongs to a test that has patched ``auth`` (many do),
+    # a by-name import keeps the patched function after monkeypatch restores
+    # ``auth``, and every later test in the worker sees the wrong caller.
+    import importlib
+    import sys
+
+    import maverick_dashboard
+    from maverick_dashboard import auth
+
+    client, actor = setup
+    name = "maverick_dashboard.flow_approval_inbox"
+    monkeypatch.setattr(maverick_dashboard, "flow_approval_inbox", importlib.import_module(name))
+    monkeypatch.delitem(sys.modules, name)
+    with monkeypatch.context() as other_test:
+        other_test.setattr(auth, "caller_principal", lambda _request: "user:someone-else")
+        importlib.import_module(name)
+    _pause()
+    actor["principal"] = "user:reviewer"
+    rows = client.get("/api/v1/approvals").json()["flow_approvals"]
+    assert [row["run_id"] for row in rows] == ["review-run"]
+    assert client.get("/api/v1/flows/runs/review-run").status_code == 200
+
+
 def test_assignee_detail_excludes_unbound_owner_prompt(setup):
     client, actor = setup
     _pause()
