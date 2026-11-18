@@ -42,7 +42,9 @@ def require_enabled(request):
     if (config.config_source_errors(include_tenant=True) or
             not isinstance(global_features, dict) or global_features.get("project_workspaces") is not True or
             config.get_features().get("project_workspaces") is not True):
-        raise HTTPException(403, "Project workspaces are disabled. Ask an administrator to enable Project workspaces in Settings.")
+        from .feature_gate import feature_off
+        raise feature_off("", "Project workspaces",
+                          detail="Project workspaces are disabled. Ask an administrator to enable Project workspaces in Settings.")
     principal, tenant = caller_principal(request), current_tenant_id_strict()
     if not principal or not principal.startswith("user:") or not tenant:
         raise HTTPException(403, "Sign in with a named account and select a workspace to use project planning.")
