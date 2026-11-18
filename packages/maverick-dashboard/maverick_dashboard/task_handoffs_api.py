@@ -53,6 +53,11 @@ def call(operation):
 @router.get("/task-handoffs")
 def page(request: Request, bundle: str = ""):
     from .app import templates
+    from .feature_gate import turned_off_page
+
+    off = turned_off_page(request, "task_handoffs", kicker="Your work", title="Task handoffs")
+    if off is not None:
+        return off
     service(request)
     return templates.TemplateResponse(request, "task_handoffs.html", {"handoff_context": context_for(request), "handoff_bundle": bundle},
                                       headers={"Cache-Control": "private, no-store"})

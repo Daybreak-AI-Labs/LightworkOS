@@ -3503,6 +3503,22 @@ def _task_limit_error(status, detail, headers, title, message):
     return title, message, ""
 
 
+def _business_refusal(detail, title=""):
+    """(gate, title, message, next action) for an authored business refusal.
+
+    Business refusals carry customer copy (product_errors), so a browser page
+    shows it instead of the generic role text. A named account outside this
+    workspace also gets how to fix that."""
+    from .access_explanations import MEMBERSHIP_REQUIRED
+
+    if not (isinstance(detail, dict) and detail.get("schema") == "lightwork.error.v1"
+            and isinstance(detail.get("message"), str)):
+        return None
+    if detail.get("code") == MEMBERSHIP_REQUIRED:
+        return "membership", "Workspace membership needed", detail["message"], detail.get("next_action") or {}
+    return "", title, detail["message"], {}
+
+
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     """Branded, actionable HTML for browser failures; JSON for API callers."""
@@ -3595,6 +3611,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
         title, message, gate = _task_limit_error(status, exc.detail, headers, title, message)
         reauthenticate = ""
         feature = {}
+        action = {}
         if status == 403 and feature_off:
             from urllib.parse import unquote
 
@@ -3607,6 +3624,8 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
             )
             if label and headers.get(feature_gate.SWITCH_HEADER) == "module":
                 feature = {"section": headers[feature_gate.FEATURE_HEADER], "label": label}
+        elif status == 403 and _business_refusal(exc.detail):
+            gate, title, message, action = _business_refusal(exc.detail, title)
         elif status == 403 and isinstance(exc.detail, str):
             # Feature switches and named sign-in gates raise 403 with these
             # fixed server phrases; show the real reason instead of the
@@ -3649,6 +3668,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
                 "gate": gate,
                 "reauthenticate": reauthenticate,
                 "feature": feature,
+                "action": action,
             },
             status_code=status,
             headers=headers,

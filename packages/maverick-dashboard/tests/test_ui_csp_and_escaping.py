@@ -258,15 +258,17 @@ def _nonce_problems(response) -> list[str]:
 # pages. Each answers 401 or 403 with an error page: a sign-in or permission
 # page, or a page the workspace has turned off. Their own templates are still
 # covered by the static scan, and their error pages by the nonce check.
+# My data, bundles, handoffs and the companion are off by default: they render
+# their turned-off state (200) and are walked like any other page.
 GATED_PATHS = frozenset({
-    "/access-requests", "/companion", "/companion/admin", "/compliance/scope-actions/mapping",
-    "/content-access", "/deliverable-bundles", "/devices", "/get-started/employee",
+    "/access-requests", "/companion/admin", "/compliance/scope-actions/mapping",
+    "/content-access", "/devices", "/get-started/employee",
     "/human-conversations", "/knowledge-access", "/learning/acquisition", "/learning/applicability",
     "/learning/approval-challenges", "/learning/distinctions", "/learning/instructions",
     "/learning/portable-rules", "/learning/recheck-rules", "/learning/recovery-visibility",
     "/learning/request-program", "/learning/rule-evolution", "/learning/rules-together",
-    "/learning/work-restructuring", "/my-data", "/notifications", "/preferences",
-    "/project-reviews", "/research", "/task-handoffs", "/today",
+    "/learning/work-restructuring", "/notifications", "/preferences",
+    "/project-reviews", "/research", "/today",
 })
 
 
