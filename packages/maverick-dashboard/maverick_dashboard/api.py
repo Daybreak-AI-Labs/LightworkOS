@@ -11101,15 +11101,17 @@ async def copilot_endpoint(request: Request, payload: CopilotIn, response: Respo
 
     # A detail URL identifies one current record. Never send its authorized
     # name, status or stop explanation to a model or later guide history.
-    if is_detail_page and (detail_reply := _copilot_detail_reply(
-        request, msg, permissions, context, record_context,
-    )) is not None:
-        return detail_reply
-
     # Exact read questions use live, request-authorized native records. Their
     # contents stay on this server; no model receives private tasks or reviews.
     from .copilot_live_state import answer as live_answer
     from .copilot_live_state import intent as live_intent
+
+    # A task's cost is a live read even on its own page; the page guide
+    # describes the task but holds no spending record.
+    if is_detail_page and live_intent(msg) != "task_cost" and (detail_reply := _copilot_detail_reply(
+        request, msg, permissions, context, record_context,
+    )) is not None:
+        return detail_reply
 
     if live_intent(msg) is not None:
         live = await run_in_threadpool(live_answer, request, msg, payload.page,

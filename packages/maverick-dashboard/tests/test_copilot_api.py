@@ -1081,3 +1081,45 @@ def test_live_failure_answer_explains_a_withheld_evidence_task(client, monkeypat
     assert "held back the answer" in result["reply"]
     assert "Workspaces page" in result["reply"]
     assert "Something went wrong" not in result["reply"]
+
+
+def test_live_task_cost_answers_for_the_task_asked_about(client, monkeypatch):
+    """Live: 'How much did task 34 cost, and why?' was answered with the
+    workspace's work-value total (USD 3.43) instead of the task's $0.43."""
+    from maverick_dashboard import api, intent_value_copilot
+    from maverick_dashboard import app as dashboard_app
+    from maverick_dashboard import copilot_live_state as live
+
+    goal = SimpleNamespace(id=34, owner="alice", title="Write a welcome note", status="done",
+                           result="Welcome!", updated_at=9, domain="")
+    private = SimpleNamespace(id=35, owner="bob", title="Private plan", status="done",
+                              result="", updated_at=9, domain="")
+    runs = {34: [SimpleNamespace(cost_dollars=0.30, input_tokens=20000, output_tokens=1000, outcome="success"),
+                 SimpleNamespace(cost_dollars=0.1337, input_tokens=3660, output_tokens=480, outcome="success")],
+            35: [SimpleNamespace(cost_dollars=3.0, input_tokens=1, output_tokens=1, outcome="success")]}
+
+    class World:
+        def get_goal(self, identifier):
+            return {34: goal, 35: private}.get(identifier)
+
+        def list_episodes(self, *, limit, goal_id):
+            return runs[goal_id]
+
+    monkeypatch.setattr(dashboard_app, "_world", lambda: World())
+    monkeypatch.setattr(live.auth, "require_permission", lambda _request, _permission: None)
+    monkeypatch.setattr(live.auth, "assert_goal_access", lambda _request, row: None if row.owner == "alice"
+                        else (_ for _ in ()).throw(HTTPException(404, "no such goal")))
+    monkeypatch.setattr(intent_value_copilot, "read_report",
+                        lambda *a, **k: pytest.fail("a task's cost was answered with the work-value report"))
+    monkeypatch.setattr(api, "_copilot_model_route_status", lambda: pytest.fail("live records went to the provider route"))
+    for message, page in (("How much did task 34 cost, and why?", "/chat"),
+                          ("What did this task cost?", "/chat/goal/34"),
+                          ("how much did task #34 cost", "/spend")):
+        answer = client.post("/api/v1/copilot", json={"message": message, "page": page}).json()
+        assert answer["mode"] == "live", message
+        assert "$0.43" in answer["reply"] and "3.43" not in answer["reply"], answer["reply"]
+        assert "Write a welcome note" in answer["reply"] and "2 recorded" in answer["reply"]
+        assert answer["action_link"]["href"] == "/chat/goal/34"
+    denied = client.post("/api/v1/copilot", json={"message": "How much did task 35 cost?", "page": "/chat"}).json()
+    assert "can't access that task" in denied["reply"] and "3.00" not in denied["reply"]
+    assert live.intent("How much did my business work cost us last month?") is None
