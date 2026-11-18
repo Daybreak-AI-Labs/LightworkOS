@@ -213,3 +213,17 @@ def test_a_catalog_read_while_the_account_changes_is_refused_not_mixed(registry,
     reads = iter(["a" * 64, "b" * 64])
     monkeypatch.setattr(ops, "_access", lambda request: next(reads, "b" * 64))
     assert client.post(BASE + "/catalog", json={"page": "/preferences"}).status_code == 409
+
+
+def test_a_single_computer_feature_on_a_shared_deployment_is_unavailable_plainly(registry):
+    from maverick.governed_records import GovernedRecordLocalOnly
+
+    client, state = registry
+    def local_only(*args): raise GovernedRecordLocalOnly("example records are local only")
+    state["adapter"] = replace(state["adapter"], snapshot=local_only)
+    response = client.post(BASE + "/catalog", json={"page": "/preferences"})
+    assert response.status_code == 200, response.text
+    item = response.json()["operations"][0]
+    assert item["available"] is False and "single-computer installation" in item["blocked"]
+    review = prepare(client, state)
+    assert review.status_code == 409 and "single-computer installation" in review.json()["detail"]

@@ -323,6 +323,32 @@ def _require_cli_execution_allowed() -> None:
         raise SystemExit(3) from None
 
 
+# Servers choose a tenant per request or job; workspace and setup commands
+# manage the roster itself. They never adopt the owner's workspace.
+_NO_OWNER_WORKSPACE = frozenset({
+    "dashboard", "serve", "mcp", "worker", "gateway", "a2a", "tenant", "init",
+    "installation-maintenance", "channel-maintenance",
+})
+
+
+def _adopt_owner_workspace(ctx: click.Context) -> None:
+    """Work in the owner's workspace, as the dashboard does, when it is the
+    installation's only one and nothing else chose a tenant (CLI and dashboard
+    then share one database and the deployment key). Best effort: an
+    unreadable roster leaves the shared root, as before."""
+    try:
+        from ..tenant.registry import owner_workspace_id
+
+        workspace = owner_workspace_id()
+    except Exception:  # pragma: no cover -- the tenant check below reports a broken roster
+        return
+    if workspace:
+        from ..paths import reset_tenant, set_tenant
+
+        token = set_tenant(workspace)
+        ctx.call_on_close(lambda: reset_tenant(token))
+
+
 def _require_known_cli_tenant(tenant: str | None) -> None:
     from ..tenant.registry import (
         _is_implicit_default,
@@ -545,6 +571,8 @@ def main(ctx: click.Context, db: str | None, model: str | None) -> None:
             raise click.ClickException(
                 f"refusing unsafe tagged MCP launch: {exc}"
             ) from exc
+    if ctx.invoked_subcommand not in _NO_OWNER_WORKSPACE:
+        _adopt_owner_workspace(ctx)
     if ctx.invoked_subcommand not in {
         "tenant", "config-lint", "doctor", "gen-stubs", "init",
         "installation-maintenance", "launch-check", "preflight", "version",
@@ -4748,7 +4776,9 @@ def config_lint_cmd() -> None:
     except Exception as e:
         click.echo(f"could not load config: {e}", err=True)
         sys.exit(1)
-    findings = lint_config(cfg)
+    from ..config import raw_config_sources
+
+    findings = lint_config(cfg, raw_sources=raw_config_sources())
     click.echo(format_findings(findings))
     if any(getattr(f, "severity", "") == "error" for f in findings):
         sys.exit(1)
@@ -5451,6 +5481,10 @@ def resume(ctx, goal_id_arg, goal_id, max_depth: int, max_dollars, max_wall_seco
         max_wall_seconds=max_wall_seconds,
     )
     _apply_resume_spend(world, goal_id, bud)
+    from ..goal_resume import respend_notice
+
+    if notice := respend_notice(world, goal_id):
+        click.echo(notice)
     # Honor the configured [sandbox] backend on resume too, rather than
     # falling back to run_goal's default local backend and ignoring a user who
     # configured docker/podman. --sandbox overrides it, so an operator who ran

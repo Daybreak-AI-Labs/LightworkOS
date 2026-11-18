@@ -84,5 +84,5 @@ def test_public_clients_page_reports_gate_off(isolated_page: Path) -> None:
     response = client.get("/consent/public-clients")
     assert response.status_code == 200
     assert 'data-module-gate="consent_preferences.public_api"' in response.text
-    assert "Consent public clients is turned off." in response.text
+    assert "Consent public clients: turned off." in response.text
     assert "[consent_preferences.public_api]" not in response.text

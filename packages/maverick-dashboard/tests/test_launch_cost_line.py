@@ -51,7 +51,8 @@ def test_start_shows_what_your_past_tasks_cost(env):
     client, world = env
     page = client.get("/chat").text
     assert 'id="composer-typical-cost"' in page and 'aria-describedby="composer-typical-cost"' in page
-    assert "No cost range yet: 0 of the 2 finished tasks needed" in page
+    assert "Your typical task cost appears here after 2 of your tasks have run (0 so far)." in page
+    assert "No cost range yet" not in page
     for dollars in (0.40, 0.60, 0.80):
         _finished(world, ANA, dollars)
     _finished(world, "user:ben@corp.com", 90.0)  # someone else's tasks never count

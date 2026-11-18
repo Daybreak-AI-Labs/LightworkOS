@@ -69,7 +69,7 @@
 <div class="card-grid ekko-summary" aria-label="Ekko summary" style="margin-bottom: var(--space-5);">
   <div class="stat"><div class="num" id="ekko-stat-events">0</div><div class="label">Activities noticed</div></div>
   <div class="stat"><div class="num" id="ekko-stat-opportunities">0</div><div class="label">Suggestions</div></div>
-  <div class="stat"><div class="num" id="ekko-stat-collector">Waiting</div><div class="label">Recorder on the device</div></div>
+  <div class="stat"><div class="num" id="ekko-stat-collector">Checking</div><div class="label">Recorder on the device</div></div>
   <div class="stat"><div class="num" id="ekko-stat-apps">0</div><div class="label">Apps allowed</div></div>
   <div class="stat"><div class="num" id="ekko-stat-retention">14 days</div><div class="label">Kept for</div></div>
 </div>
@@ -426,6 +426,15 @@
     return {live: 'Connected', stale: 'Lost contact'}[state] || 'Waiting';
   }
 
+  // The recorder tile follows the same state as "Activity recording": it
+  // never reads "Waiting" while recording is off or nothing is being watched.
+  function collectorTile(status, state) {
+    if (!status.enabled) return 'Off';
+    if (!status.enrollment || !status.enrollment.active) return 'Not enrolled';
+    if (!status.session || status.session.state !== 'running') return 'Not watching';
+    return collectorWord(state);
+  }
+
   function stateLabel(status) {
     if (!status.enabled) return 'Off';
     if (!status.enrollment || !status.enrollment.active) return 'Waiting for you to enroll this device';
@@ -508,7 +517,7 @@
     setText('ekko-state-copy', copy);
 
     setText('ekko-stat-events', status.event_count);
-    setText('ekko-stat-collector', collectorWord(collectorState));
+    setText('ekko-stat-collector', collectorTile(status, collectorState));
     document.getElementById('ekko-watch').hidden = !enrolled;
     var activeState = session ? session.state : '';
     document.getElementById('ekko-start').hidden = !(status.enabled && enrolled && !['running', 'paused'].includes(activeState));

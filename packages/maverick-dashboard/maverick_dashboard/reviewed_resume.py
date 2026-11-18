@@ -73,7 +73,9 @@ def status(request, goal_id):
             ("Only stopped, failed or blocked tasks can be resumed." if goal.status not in {"blocked", "cancelled", "failed"}
              and not stranded(world, goal_id) else ""),
             "unanswered_questions": len(world.open_questions(goal_id=goal_id)),
-            "consequence": "Starts a new billable attempt under current policy. Earlier external actions are not undone; inspect uncertain effects before retrying."}
+            "consequence": " ".join(part for part in (
+                "Starts a new billable attempt under current policy.", goal_resume.respend_notice(world, goal_id),
+                "Earlier external actions are not undone; inspect uncertain effects before retrying.") if part)}
 
 
 def recover(request, goal_id, payload):

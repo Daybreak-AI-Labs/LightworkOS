@@ -49,7 +49,7 @@ def test_task_cost_pages_show_the_newest_recorded_cost(client, path):
     assert "No spending recorded yet." in _stamp(client.get(path).text)
     when = _finished_task()
     label = _stamp(client.get(path).text)
-    assert "Spending updated <time" in label and f'data-mv-time="{when:.3f}"' in label
+    assert "Newest spending recorded <time" in label and f'data-mv-time="{when:.3f}"' in label
 
 
 def test_budget_page_shows_when_usage_last_reached_the_ledger(client):
@@ -59,7 +59,7 @@ def test_budget_page_shows_when_usage_last_reached_the_ledger(client):
     UsageLedger().record("user:alice", 1.0, 0, 0)
     stamp = spending_limits.spend_recorded_at()
     label = _stamp(client.get("/budget").text)
-    assert "Spending updated <time" in label and f'data-mv-time="{stamp:.3f}"' in label
+    assert "Newest spending recorded <time" in label and f'data-mv-time="{stamp:.3f}"' in label
 
 
 def test_compare_cost_records_shows_the_newest_of_its_records(client):
@@ -83,7 +83,7 @@ def test_provider_spending_shows_when_the_provider_ledger_changed(client):
     stamp = cap.recorded_at()
     assert stamp is not None
     label = _stamp(client.get("/provider-spending").text)
-    assert "Spending updated <time" in label and f'data-mv-time="{stamp:.3f}"' in label
+    assert "Newest spending recorded <time" in label and f'data-mv-time="{stamp:.3f}"' in label
 
 
 def test_provider_spending_on_a_shared_ledger_claims_no_time(client, monkeypatch):

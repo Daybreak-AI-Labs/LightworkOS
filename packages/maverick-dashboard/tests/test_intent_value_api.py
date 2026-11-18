@@ -1196,3 +1196,25 @@ def test_ekko_factory_finds_owned_work_and_respects_customer_decisions(context):
         "decision": "reopen", "manual_steps": ["inputs", "prepare", "review"]})
     assert reopened.status_code == 200, reopened.text
     assert scan()["ready"] == 0
+
+
+def test_internal_parse_errors_never_reach_the_page(context, monkeypatch):
+    # Live: a parser's "unconverted data remains: -16" was shown to users as the report error.
+    client, _world = context
+    from maverick_dashboard import intent_value_api
+
+    def broken(*_args, **_kwargs):
+        raise ValueError("unconverted data remains: -16")
+
+    monkeypatch.setattr(intent_value_api, "read_report", broken)
+    response = client.get(BASE, headers=headers())
+    assert response.status_code == 503
+    assert "unconverted" not in response.text and "-16" not in response.text
+    assert "this is not zero activity" in response.json()["detail"]
+
+
+def test_plain_validation_messages_still_reach_the_page(context):
+    client, _world = context
+    response = client.get(BASE + "?start=2026-13-40", headers=headers())
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Use UTC calendar dates in YYYY-MM-DD format."

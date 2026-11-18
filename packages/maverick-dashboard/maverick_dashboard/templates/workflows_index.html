@@ -2,7 +2,7 @@
 {% block title %}Workflows · Lightwork{% endblock %}
 {% block content %}
 <style>
-  .wfx { max-width: 880px; margin-inline: auto; }
+  .wfx { min-width: 0; }
   .wfx :focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: var(--radius-sm); }
   .wfx__section { margin-bottom: var(--space-7); }
   .wfx__section h2 { font-size: var(--text-lg); margin: 0 0 var(--space-3); }
@@ -19,7 +19,7 @@
   {% from "_hero.html" import hero, state %}
   {% from "_empty_state.html" import empty_state %}
   {% set workflow_actions %}
-    <a class="btn btn--primary" href="/workflow-builder">Create workflow</a>
+    <a class="btn btn--primary" href="/workflow-builder">Create template or playbook</a>
     {% if flows_enabled %}<a class="btn" href="/flows/designer">New flow</a>{% endif %}
     {% if flows_enabled %}<a class="btn btn--ghost" href="/learning/examples">Learning examples</a>{% endif %}
   {% endset %}
@@ -74,7 +74,7 @@
     {% elif can_operate_workflows %}
     {{ empty_state('No flows yet',
                    'Flows you build appear here. Build your first flow in the visual designer. Copilot can explain the steps while you work.',
-                   action_label='Open the flow designer', action_href='/flows/designer') }}
+                   action_label='Open Flow designer', action_href='/flows/designer') }}
     {% else %}
     {{ empty_state('No flows yet', 'Flows that people in your workspace build appear here.') }}
     {% endif %}
@@ -114,7 +114,7 @@
     {% elif can_operate_workflows %}
     {{ empty_state('No templates yet',
                    'Reusable workflows you save appear here, ready to run, schedule or trigger. Draft the first one in the builder.',
-                   action_label='New workflow', action_href='/workflow-builder') }}
+                   action_label='New template', action_href='/workflow-builder') }}
     {% else %}
     {{ empty_state('No templates yet', 'Reusable workflows that people in your workspace save appear here.') }}
     {% endif %}
@@ -140,7 +140,7 @@
     {% elif can_operate_workflows %}
     {{ empty_state('No agent playbooks yet',
                    'Governed agents you build appear here. In the builder, choose “Agent playbook” to build the first one.',
-                   action_label='Open the builder', action_href='/workflow-builder') }}
+                   action_label='Open Workflow builder', action_href='/workflow-builder') }}
     {% else %}
     {{ empty_state('No agent playbooks yet', 'Governed agents that people in your workspace build appear here.') }}
     {% endif %}

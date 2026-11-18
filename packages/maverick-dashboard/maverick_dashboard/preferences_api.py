@@ -65,12 +65,12 @@ def _thread(request: Request, thread: int | None) -> int | None:
     return thread
 
 
-def _state(request: Request, thread: int | None = None) -> dict:
+def _state(request: Request, thread: int | None = None, *, choices: bool = True) -> dict:
     with auth.fresh_configuration():
-        return _current_state(request, thread)
+        return _current_state(request, thread, choices=choices)
 
 
-def _current_state(request: Request, thread: int | None = None) -> dict:
+def _current_state(request: Request, thread: int | None = None, *, choices: bool = True) -> dict:
     principal = _principal(request)
     state = preferences.state(principal, thread=_thread(request, thread))
     destinations = _destinations(request)
@@ -81,9 +81,11 @@ def _current_state(request: Request, thread: int | None = None) -> dict:
     if state["values"]["start_page"] not in destinations:
         state["values"]["start_page"] = "/chat"
     ai_models, specialists = [], []
-    if thread is None and auth.has_permission(request, "operate"):
-        from .task_model_selection_api import choices
-        ai_models = choices(request)
+    # Chat's model and specialist choices read every published specialist
+    # (seconds on a cold process); a page that does not show them skips them.
+    if choices and thread is None and auth.has_permission(request, "operate"):
+        from .task_model_selection_api import choices as model_choices
+        ai_models = model_choices(request)
         from .product_operations_task_launch import published_specialists
         specialists = published_specialists(request)["choices"]
     return {**state, "context": context_for(request), "destinations": destinations, "chat_models": ai_models, "chat_specialists": specialists,
@@ -438,15 +440,40 @@ def resolved_display(request: Request, key: str, fallback: str | None = None):
 @router.get('/today')
 def today_page(request: Request):
     from .navigation_api import areas_redirect
-    from .today_projection import project
 
     moved = areas_redirect(request)
     if moved is not None:
         return moved
-    model = _state(request)
+    auth.require_permission(request, 'view')
+    model = _state(request, choices=False)
+    # The page carries no work: each source loads from /today/sections/<source>
+    # with its own loading and error state, so a slow source cannot time out the page.
     return _app().templates.TemplateResponse(request, 'today.html', {
-        'today_preferences': model, 'today': project(request, _app()._world(), model),
+        'today_preferences': model, 'today': None, 'today_period_days': _today_days(model),
         'today_decisions_allowed': auth.has_permission(request, 'operate'),
+    }, headers={'Cache-Control': 'private, no-store'})
+
+
+def _today_days(model: dict) -> int:
+    days = model["values"].get("today_days", "7")
+    return int(days) if days in {"1", "7", "30"} else 7
+
+
+@router.get('/today/sections/{source}')
+def today_section(request: Request, source: str):
+    """One Today source's cards, as HTML the page swaps in."""
+    from .today_projection import SOURCES, project
+
+    if source not in SOURCES:
+        raise HTTPException(404, "Not Found")
+    decisions_allowed = auth.has_permission(request, 'operate')
+    if source == 'decisions' and not decisions_allowed:
+        raise HTTPException(403, "Only people who can act on work see pending decisions.")
+    model = _state(request, choices=False)
+    return _app().templates.TemplateResponse(request, 'today_section.html', {
+        'today_preferences': model, 'today': project(request, _app()._world(), model, only=source),
+        'today_source': source, 'today_period_days': _today_days(model),
+        'today_decisions_allowed': decisions_allowed,
     }, headers={'Cache-Control': 'private, no-store'})
 
 

@@ -205,3 +205,13 @@ def test_background_observer_records_owner_outcomes_without_an_open_inbox(
     # Each alert opens its task; a question opens it with the answer box in view.
     assert all(row["href"] == f'/chat/goal/{row["goal_id"]}'
                + ("#question-panel" if row["category"] == "needs-decision" else "") for row in rows)
+
+
+def test_preferences_form_waits_for_saved_values_and_inbox_reads_plainly(client_and_actor):
+    # A required Time zone field showed empty while the saved preferences
+    # loaded: the form stays hidden until the script fills in saved values.
+    client, _actor, _world, _home = client_and_actor
+    page = client.get("/notifications").text
+    assert '<form class="panel" id="notification-preferences" tabindex="-1" hidden>' in page
+    assert "resolved before observation" not in page and "actionable state" not in page
+    assert "you see only where it stands now" in page

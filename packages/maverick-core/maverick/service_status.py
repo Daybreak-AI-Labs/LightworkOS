@@ -179,6 +179,26 @@ def database_notice() -> dict[str, Any] | None:
             "link": {"href": "/help", "label": "Open Help and diagnostics"}}
 
 
+# Database refusals whose own text is the plain fix (no secrets, no SQL).
+_PLAIN_DATABASE_REFUSALS = frozenset({"DatabaseUpgradeNeedsOwner"})
+
+
+def database_refusal(exc: BaseException | None) -> str:
+    """The plain fix for a database refusal anywhere in ``exc``'s chain, else "".
+
+    Every page opens the world model, so one setup problem (a login that does
+    not own the tables) failed every page with no reason; the error page and
+    readiness detail show the same text ``maverick doctor`` prints.
+    """
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if type(exc).__name__ in _PLAIN_DATABASE_REFUSALS:
+            return str(exc)
+        exc = exc.__cause__ or exc.__context__
+    return ""
+
+
 def is_read_only_error(exc: BaseException) -> bool:
     """A write refused because the database or its disk is read-only."""
     text = str(exc).lower()

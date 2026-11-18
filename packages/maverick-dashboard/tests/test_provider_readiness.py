@@ -1,6 +1,8 @@
 """One truth about whether an AI service is connected (provider_readiness)."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from maverick.config import PROVIDER_BASE_URL_ENV_VARS, PROVIDER_CREDENTIAL_ENV_VARS
 
@@ -403,3 +405,50 @@ def test_unreadable_receipt_file_means_never_tested_without_crashing(workspace, 
     assert workspace_readiness()["verdict"] == "ready"
     integration_readiness._clear_for_testing()
     assert workspace_readiness()["verdict"] == "needs_test"
+
+
+def test_the_readiness_of_every_provider_reads_each_settings_file_once(workspace, monkeypatch, tmp_path):
+    # The home page asked for every known provider's state, and each asked read
+    # config.toml and the Settings overlay again (and decrypted the saved keys):
+    # 30 settings-file reads per readiness check, three checks per page. On a
+    # state folder on network storage each read is a server round trip.
+    from maverick import config
+    from maverick.providers import KNOWN_PROVIDERS
+    from maverick_dashboard.provider_readiness import workspace_readiness
+
+    workspace('[providers.anthropic]\napi_key = "sk-ant-placeholder"\n')  # pragma: allowlist secret
+    overlay = config.dashboard_overrides_path()
+    overlay.parent.mkdir(parents=True, exist_ok=True)
+    overlay.write_text('[providers.openai]\napi_key = "sk-placeholder"\n', encoding="utf-8")  # pragma: allowlist secret
+    config.reset_config_cache()
+    reads: list[str] = []
+    real = config._load_config_file
+
+    def counting(path, *args, **kwargs):
+        reads.append(Path(path).name)
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(config, "_load_config_file", counting)
+    with config.kept_reads():  # as in a dashboard request
+        readiness = workspace_readiness()
+
+    assert len(KNOWN_PROVIDERS) > 5
+    assert _row(readiness, "anthropic")["configured"] is True
+    assert _row(readiness, "openai")["configured"] is True
+    assert _row(readiness, "openai")["via"] == "dashboard"
+    # The request's kept read, the provenance read and the at-rest key's client
+    # id read (unsealed, outside the kept read): not one per provider.
+    assert reads.count("config.toml") <= 3
+    assert reads.count(overlay.name) <= 3
+
+
+def test_one_provider_state_matches_the_state_read_with_the_others(workspace):
+    from maverick import config
+    from maverick.providers import KNOWN_PROVIDERS
+
+    workspace('[providers.anthropic]\napi_key = "sk-ant-placeholder"\n'  # pragma: allowlist secret
+              '[providers.ollama]\nbase_url = "http://127.0.0.1:11434"\n')
+    together = config.provider_configuration_states(KNOWN_PROVIDERS)
+    for name in KNOWN_PROVIDERS:
+        assert together[name] == config.provider_configuration_state(name)
+    assert config.provider_configuration_state(" Anthropic ")["configured"] is True

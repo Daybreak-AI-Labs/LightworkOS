@@ -1897,9 +1897,38 @@ def test_an_existing_workspace_file_with_now_ignored_settings_loads_and_lists_th
     assert config.tenant_policy_loosenings() == {"acme": ignored}
     health._check_policy_overlays()
     out = capsys.readouterr().out
-    assert "sandbox.image (set by your organisation)" in out and "organisation's config.toml" in out
+    assert "sandbox.image can only be set by your organisation" in out and "organisation's config.toml" in out
     assert "applies to every workspace" in out and "MAVERICK_WORKDIR" in out
     tenant.write_text('[enterprise]\nallowed_hosts = ["crm.acme.example"]\n', encoding="utf-8")
     health._check_policy_overlays()
     out = capsys.readouterr().out
     assert "enterprise.allowed_hosts" in out and "every workspace" in out and "no way yet" in out
+
+
+def test_doctor_names_each_ignored_workspace_value_and_counts_it(tmp_path, monkeypatch, capsys):
+    """Field finding: doctor said "local: ignored budget.max_dollars,
+    budget.max_wall_seconds, sandbox.workdir (set by your organisation)" --
+    two raises and one organisation-only key read as one reason, and the row
+    was not counted in "need attention"."""
+    from maverick import config, health
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    monkeypatch.delenv("MAVERICK_CONFIG", raising=False)
+    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
+    (tmp_path / "config.toml").write_text(
+        "[budget]\nmax_dollars = 2.0\nmax_wall_seconds = 1800\n", encoding="utf-8")
+    tenant = tmp_path / "tenants" / "local" / "config.toml"
+    tenant.parent.mkdir(parents=True)
+    tenant.write_text('[budget]\nmax_dollars = 5.0\nmax_wall_seconds = 3600\n'
+                      '[sandbox]\nworkdir = "/srv/local"\n', encoding="utf-8")
+    config.reset_config_cache()
+    health._FAILURES.clear()
+    health._ATTENTION.clear()
+    health._check_policy_overlays()
+    out = capsys.readouterr().out
+    assert ("budget.max_dollars is 5.0 in this workspace, higher than your organisation's 2.0, "
+            "so 2.0 applies") in out
+    assert "budget.max_wall_seconds is 3600 in this workspace, higher than your organisation's 1800" in out
+    assert "sandbox.workdir can only be set by your organisation" in out
+    assert health._ATTENTION == ["workspace policy"]
+    assert health._FAILURES == []

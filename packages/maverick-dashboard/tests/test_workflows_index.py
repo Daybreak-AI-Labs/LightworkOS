@@ -45,7 +45,7 @@ def test_index_lists_user_templates_and_playbooks(monkeypatch, tmp_path):
     # only the overridden playbook with a workflow is "yours"
     assert "invoice-clerk" in t and "/workflow-builder?edit_agent=invoice-clerk" in t
     assert "vanilla" not in t
-    assert "Create workflow" in t and "Agent playbooks" in t
+    assert "Create template or playbook" in t and "Create workflow" not in t and "Agent playbooks" in t
 
 
 def test_index_empty_states(monkeypatch, tmp_path):
@@ -93,7 +93,7 @@ def test_no_flows_guide_uses_the_designer_without_promising_copilot_creation(mon
     monkeypatch.setattr(store, "list_flow_summaries", lambda *, owner: [])
     page = _client().get("/workflows")
     assert page.status_code == 200
-    assert 'href="/flows/designer">Open the flow designer</a>' in page.text
+    assert 'href="/flows/designer">Open Flow designer</a>' in page.text
     assert "Copilot can explain the steps" in page.text
     assert "ask Copilot to build one" not in page.text
 

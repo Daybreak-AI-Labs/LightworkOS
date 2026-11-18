@@ -45,7 +45,7 @@
     <div class="ov-links">
       <a class="btn btn--ghost" href="/approvals">Approvals</a>
       <a class="btn btn--ghost" href="/safety">Safety</a>
-      <a class="btn btn--ghost" href="/fleets">Teams of assistants</a>
+      <a class="btn btn--ghost" href="/fleets">Agent teams</a>
       <a class="btn btn--ghost" href="/audit">Activity log</a>
     </div>
   {% endcall %}
@@ -417,6 +417,7 @@
     // Charts.
     var B = window.LWBoard;
     var lastKnown = {};
+    var SOURCE_NAMES = {audit: 'The activity log', approvals: 'Approvals', halt: 'The emergency stop'};
     function renderBoard(D) {
       var k = document.getElementById('bd-kpis');
       k.textContent = '';
@@ -427,7 +428,7 @@
           lastKnown[name] = {at: source.checked_at, value: name === 'audit' ? D.interventions : (name === 'approvals' ? D.pending_approvals : D.halted)};
         } else {
           var notice = document.createElement('p'); notice.setAttribute('role', 'status');
-          notice.textContent = name + ': ' + source.state + '. Current state is not known. ';
+          notice.textContent = SOURCE_NAMES[name] + ' could not be read just now, so its current state is not known. ';
           if (lastKnown[name]) notice.textContent += 'Last known: ' + lastKnown[name].value + ' at ' + (window.mvTimeAbsolute ? window.mvTimeAbsolute(lastKnown[name].at) : new Date(lastKnown[name].at * 1000).toLocaleString()) + '. ';
           var repair = document.createElement('a'); repair.href = source.repair_href || '/help'; repair.textContent = 'Review this source'; notice.appendChild(repair); k.appendChild(notice);
         }
@@ -442,9 +443,9 @@
       k.appendChild(B.kpi({ label: 'Emergency stop', value: D.halted ? 1 : 0,
         format: function () { return D.halted === null ? 'Unknown' : (D.halted ? 'Stopped' : 'Off'); },
         sub: D.halted === null ? 'stop state unavailable — check before relying on it' : (D.halted ? 'all work is stopped' : 'stop is not currently active') }));
-      k.appendChild(B.kpi({ label: 'Kinds of safety rule', value: D.by_kind.length,
+      k.appendChild(B.kpi({ label: 'Safety rules that stepped in', value: D.by_kind.length,
         format: function (v) { return sourceState.audit && sourceState.audit.state === 'available' ? B.fmt(v) : 'Unknown'; },
-        sub: 'different rules that stepped in' }));
+        sub: D.by_kind.length ? 'different rules, last ' + D.days + ' days' : 'no rule stepped in, last ' + D.days + ' days' }));
       if (D.interventions) {
         var weekly = D.days > 60;
         B.area(document.getElementById('bd-interventions'), {

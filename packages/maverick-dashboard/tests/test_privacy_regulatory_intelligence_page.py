@@ -69,7 +69,7 @@ def test_page_renders_fail_closed_gate_guidance(page_client: TestClient) -> None
     )
     assert response.status_code == 200
     assert 'data-module-gate="privacy_automation.regulatory_intelligence"' in response.text
-    assert "Privacy law research is turned off." in response.text
+    assert "Privacy law research: turned off." in response.text
     assert "privacy_automation.regulatory_intelligence.enable" not in response.text
 
 

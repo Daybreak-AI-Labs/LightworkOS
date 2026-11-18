@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ "Safety settings need attention" if policy_error else ("Lightwork can't save changes right now" if read_only_error else "Something went wrong") }} · Lightwork{% endblock %}
+{% block title %}{{ "Safety settings need attention" if policy_error else ("Lightwork can't save changes right now" if read_only_error else ("Lightwork can't open its database" if database_error else "Something went wrong")) }} · Lightwork{% endblock %}
 {% block content %}
   {% from "_hero.html" import hero %}
   {% if policy_error %}
@@ -28,6 +28,11 @@
                   still read and export it. It works again as soon as an administrator makes the database
                   writable; Help and diagnostics shows where it is.",
             actions=failure_actions) }}
+    <p class="muted">Support reference: {{ failure_reference or 'Unavailable' }}</p>
+  {% elif database_error %}
+    {% set failure_actions %}<a class="btn" href="/help#installation-health">Open Help and diagnostics</a><a class="btn btn--ghost" href="/">Back to home</a>{% endset %}
+    {{ hero('', "Lightwork can't open its database", lede=database_error, actions=failure_actions) }}
+    <p class="muted">Everything already saved is safe. An administrator can confirm the fix with the health check: lightwork doctor.</p>
     <p class="muted">Support reference: {{ failure_reference or 'Unavailable' }}</p>
   {% else %}
     {% set failure_lede %}{% if uncertain_mutation %}The change could not be confirmed. Check its current state before repeating it.{% else %}This page could not be loaded. You can retry loading it.{% endif %} If this keeps happening, contact your administrator with the support details below.{% endset %}

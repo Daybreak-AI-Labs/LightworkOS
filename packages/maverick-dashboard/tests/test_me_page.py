@@ -357,3 +357,17 @@ def test_slack_receivers_bypass_dashboard_bearer_and_still_verify_signature(tmp_
     assert client.post("/webhook/slack/interactions", content=body,
                        headers=_signed(body, secret="wrong")).status_code == 401
     assert client.post("/webhook/slack/commands", content=body).status_code == 401
+
+
+def test_right_now_counts_results_that_need_attention(tmp_path, monkeypatch):
+    # A recent result labelled "Needs attention" must not sit under an "All
+    # clear" headline: the headline and the table count the same items.
+    world = _world(tmp_path)
+    goal = world.create_goal("Export retry", owner="user:alice")
+    world.set_goal_status(goal, "blocked", result="Withheld.")
+    _as(monkeypatch, "user:alice")
+    text = _client().get("/me").text
+    assert "Needs attention" in text
+    assert "1 thing needs you" in text and "All clear" not in text
+    body = _client().get("/api/v1/me/work").json()
+    assert body["digest"]["counts"]["needs_attention"] == 1

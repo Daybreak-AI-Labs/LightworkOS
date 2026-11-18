@@ -52,7 +52,7 @@ CATALOG = (
      "limit": "These are not released and cannot be installed yet."},
 )
 
-LABELS = {"available": "Ready to use", "live_validation": "Needs a real-world check",
+LABELS = {"available": "Ready to use", "live_validation": "Tested; try it on your work",
     "bounded": "Ready, with limits", "preview": "Early preview", "release_candidate": "Almost ready",
     "experimental": "Experimental", "prototype": "In design"}
 

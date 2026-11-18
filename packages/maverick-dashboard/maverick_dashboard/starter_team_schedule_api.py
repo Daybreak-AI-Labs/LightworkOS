@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timezone
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from maverick import crypto_at_rest
 from maverick.governed_operations import digest
 from pydantic import Field
@@ -15,8 +15,10 @@ from pydantic import Field
 from . import auth
 from . import starter_teams_api as native
 from .product_operations import StrictInput
+from .store_failures import remember_route
 
-router = APIRouter(prefix="/api/v1/starter-team-schedules", tags=["starter-team-schedules"])
+router = APIRouter(prefix="/api/v1/starter-team-schedules", tags=["starter-team-schedules"],
+                   dependencies=[Depends(remember_route)])
 PURPOSE = "lightwork.starter-team-schedule-review.v1"
 TTL = 600
 NOTICE = ("Schedules can dispatch only individually reviewed evidence packages within their "
@@ -239,8 +241,15 @@ def _result(value):
 def read_schedules(request: Request):
     from .starter_team_scheduler import worker_status
 
-    return native._response(native.call(lambda: {"schedules": available_schedules(request),
-        "context": digest(native.context(request).binding()), "notice": NOTICE, "worker": worker_status()}))
+    def read():
+        if native._deployment_backend_kind() == "postgres":
+            # Matches the Starter teams catalog: schedules are not kept on a
+            # shared deployment, so there is nothing to list and no store to open.
+            return {"schedules": [], "context": digest(native.context(request).binding()), "notice": NOTICE,
+                    "worker": worker_status(), "preview_only": True, "message": native.LOCAL_ONLY}
+        return {"schedules": available_schedules(request),
+                "context": digest(native.context(request).binding()), "notice": NOTICE, "worker": worker_status()}
+    return native._response(native.call(read))
 
 
 @router.get("/{schedule_id}/items")

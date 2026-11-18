@@ -40,7 +40,7 @@ def test_consent_page_is_explicit_about_default_off_and_product_boundary():
     # Default-off is explicit, and the gate is switchable IN-APP: the shared
     # module-gate banner with a Turn on control, no config keys in the UI.
     assert 'data-module-gate="consent_preferences"' in page
-    assert "Consent preferences is turned off." in page
+    assert "Consent preferences: turned off." in page
     assert "[consent_preferences] enable = true" not in page
     assert "Consent management" in page
     for form in (
@@ -60,7 +60,7 @@ def test_consent_page_is_explicit_about_default_off_and_product_boundary():
     # turned-off card and does not ask for records it cannot have.
     assert 'data-registry-enabled="false"' in page
     assert 'data-module-gate="consent_registry"' in page
-    assert "Consent register is turned off." in page
+    assert "Consent register: turned off." in page
     assert "[consent_registry]" not in page
     assert "/identity-links/integrity?limit=500" in page
     assert "Links change only when the person verifies themselves" in page

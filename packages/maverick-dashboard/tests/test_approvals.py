@@ -502,7 +502,10 @@ def test_empty_queue_offers_owned_decisions(monkeypatch, tmp_path):
     _isolate(monkeypatch, tmp_path)
     text = _client().get("/approvals").text
     assert '<p class="mv-empty__title">Nothing needs your decision right now</p>' in text
-    assert 'class="btn mv-empty__action" href="#request-decision-history"' in text
+    # The history sits right below the empty queue; a second button with
+    # nearly the same words ("See decisions on your requests") repeated it.
+    assert 'class="btn mv-empty__action" href="#request-decision-history"' not in text
+    assert text.count("See decisions on your requests") == 1  # the hidden missing-approval note
     assert 'id="request-decision-history"' in text and "Decisions on your requests" in text
     assert 'id="request-decision-more"' in text and "/static/lightwork-approval-history.js" in text
 

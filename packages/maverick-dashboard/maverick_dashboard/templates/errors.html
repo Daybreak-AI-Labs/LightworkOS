@@ -19,6 +19,13 @@
 {% from "_hero.html" import hero %}
 {{ task_tabs(goal, 'problems') }}
 {{ hero('Task', 'Problems in: ' ~ goal.title, compact=true) }}
+{% if stop %}
+<section class="panel" aria-labelledby="stop-reason-title">
+  <h2 id="stop-reason-title">Why this task stopped</h2>
+  <p>{{ stop.message }}</p>
+  <p>{{ stop.action }}{% if stop.link %} <a href="{{ stop.link }}">{{ stop.link_label or 'Open' }}</a>{% endif %}</p>
+</section>
+{% endif %}
 {% if errors %}
 <p>Something went wrong {{ errors|length }} time{{ '' if errors|length == 1 else 's' }} while this task ran.
   Open a problem to see the full message you can share with support.</p>
@@ -36,7 +43,7 @@
   </li>
   {% endfor %}
 </ul>
-{% else %}
+{% elif not stop %}
 <p class="err-empty">No problems recorded for this task.</p>
 {% endif %}
 <script nonce="{{ csp_script_nonce }}">

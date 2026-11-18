@@ -25,13 +25,19 @@ def test_tenant_suspended_or_unknown_maps_to_workspaces():
     "over quota: Your spending limit of $5.00 per day has been reached ($6.00 spent today). "
     "An administrator can change it in Admin > Spending limits.",
     "Paused: the organization spending allowance cannot admit the next call.\nDetail: x",
-    "Stopped: budget exhausted ($1.00 of $1.00 cap). Raise the cap and resume: maverick resume 3",
 ])
 def test_real_spending_failures_get_the_spending_limit_advice(raw):
     stop = explain_stop(raw)
     assert stop.kind == "spending_limit"
     assert stop.link == "/spending-limits"
     assert "user:local" not in stop.message and "'acme'" not in stop.message
+
+
+def test_a_task_cap_points_to_the_task_limit_not_an_administrator():
+    stop = explain_stop("Stopped: budget exhausted ($1.00 of $1.00 cap). Raise the cap and resume: maverick resume 3")
+    assert stop.kind == "spending_limit"
+    assert stop.link == "/settings#settings-task-limit"
+    assert "administrator" not in stop.action
 
 
 def test_workspace_failure_is_not_mistaken_for_a_spending_limit():
@@ -268,3 +274,52 @@ def test_a_paused_ai_service_reads_as_paused_not_as_a_lightwork_fault():
     assert "paused after repeated errors" in stop.message and "kept" in stop.message
     assert "checks again" in stop.action
     assert "anthropic" not in stop.message + stop.action
+
+
+WITHHELD_DEMO = (
+    "evidence_gateway:withheld:demo_and_real_mixed: AI evidence gateway withheld the "
+    "generated output. Operator action is required: synthetic demo and production AI "
+    "evidence policies require separate tenant namespaces"
+)
+
+
+def test_evidence_withhold_explains_the_demo_workspace_and_the_fix():
+    stop = explain_stop(WITHHELD_DEMO)
+    assert stop.kind == "evidence_withheld"
+    assert stop.message.startswith("Lightwork finished this task but held back the answer")
+    assert "sample (demo)" in stop.message
+    assert "Workspaces page" in stop.action
+    assert stop.link == "/workspaces"
+    assert "tenant" not in (stop.message + stop.action).lower()
+    assert stop.technical == WITHHELD_DEMO
+
+
+def test_evidence_preflight_says_no_work_was_started():
+    raw = ("evidence_gateway:not_ready:fixed_request: the default AI evidence policy "
+           "is bound to one context digest")
+    stop = explain_stop(raw)
+    assert stop.kind == "evidence_setup"
+    assert "No work was started" in stop.message and "nothing was spent" in stop.message
+    assert "fixed request" in stop.message
+    assert stop.link == "/security/assurance"
+    assert "digest" not in (stop.message + stop.action)
+
+
+def test_legacy_evidence_withhold_text_is_not_an_internal_error():
+    # Goals withheld before the cause code was stored still read plainly.
+    raw = WITHHELD_DEMO.split(": ", 1)[1]
+    stop = explain_stop(raw)
+    assert stop.kind == "evidence_withheld"
+    assert stop.link == "/workspaces"
+
+
+def test_every_evidence_cause_has_plain_words_and_a_route():
+    from maverick.stop_reasons import EVIDENCE_CAUSES
+
+    for code in EVIDENCE_CAUSES:
+        for stage in ("not_ready", "withheld"):
+            stop = explain_stop(f"evidence_gateway:{stage}:{code}: detail")
+            assert stop.kind in {"evidence_setup", "evidence_withheld"}
+            assert stop.link and stop.link_label
+            for sentence in (stop.message + " " + stop.action).split(". "):
+                assert len(sentence.split()) <= 25, sentence

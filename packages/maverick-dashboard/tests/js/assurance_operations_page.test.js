@@ -27,7 +27,7 @@ function pageHtml() {
   return html;
 }
 
-async function fixture(t, routes = {}) {
+async function fixture(t, routes = {}, {off = []} = {}) {
   const html = pageHtml();
   const inline = html.match(/<script>([\s\S]*?)<\/script>/)[1];
   const dom = new JSDOM(`<!doctype html><body>${html.replace(/<script[\s\S]*?<\/script>/g, "")}</body>`,
@@ -61,6 +61,8 @@ async function fixture(t, routes = {}) {
   // Exception request/approve/close run through their reviewed controller.
   if (!w.HTMLDialogElement.prototype.showModal) w.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   w.eval(fs.readFileSync(path.join(base, "static/lightwork-policy-exceptions.js"), "utf8"));
+  // The server hides a turned-off tool and marks it data-feature-off.
+  off.forEach(id => { const panel = w.document.getElementById(id); panel.hidden = true; panel.setAttribute("data-feature-off", "off"); });
   w.eval(inline);
   const settle = async () => { for (let i = 0; i < 30; i += 1) await new Promise(resolve => setImmediate(resolve)); };
   // File and text fingerprints finish on a worker thread, so wait for the
@@ -571,4 +573,16 @@ test("a refresh that fails after a good read keeps the lists as they were read",
   assert.match(h.byId("policy-exception-controls").textContent, NO_SAFEGUARDS);
   assert.doesNotMatch(h.byId("policy-exception-controls").textContent, /could not be read/);
   assert.match(h.byId("policy-exception-policy").textContent, /Customer data rules/);
+});
+
+// Live: turned-off tools were called anyway and showed "Rules could not be
+// loaded", "Training requirements could not be loaded" and similar false errors.
+test("turned-off tools are never called, even when every section is loaded", async t => {
+  const h = await fixture(t, {}, {off: ["ai-literacy-panel", "ai-policy-management-panel"]});
+  h.byId("governance-operations-load-all").click();
+  await h.settle();
+  const called = h.calls.map(call => call.url);
+  assert.ok(called.some(url => url.startsWith("/eu-ai-incidents")), "a turned-on tool still loads");
+  assert.deepEqual(called.filter(url => /^\/(ai-literacy|ai-policy-management|pickers\/policy-exceptions)/.test(url)), []);
+  assert.doesNotMatch(h.statuses(), /could not be loaded/i);
 });

@@ -384,6 +384,28 @@ def test_worker_starts_only_when_a_feature_is_on(monkeypatch, tmp_path):
     assert aq.start() is False                                # nothing on -> no worker
 
 
+def test_the_automation_pool_sleeps_until_work_is_due(monkeypatch, tmp_path):
+    # Three threads each polled the automation queue every 2 s with nothing to
+    # do: about 90 empty claims a minute, each opening the database and its
+    # write-ahead log on the state folder (network storage in production).
+    _isolate(monkeypatch, tmp_path)
+    from maverick_dashboard import automation_queue as aq
+    _reset_aq(monkeypatch, aq)
+    assert aq.start() is True
+    try:
+        assert aq._worker.idle_max == 60.0
+    finally:
+        aq.stop()
+    monkeypatch.setenv("MAVERICK_CONFIG", str(tmp_path / "idle.toml"))
+    (tmp_path / "idle.toml").write_text("[automation]\nidle_poll_seconds = 15\n", encoding="utf-8")
+    from maverick import config
+    config.reset_config_cache()
+    assert aq._idle_max() == 15.0
+    (tmp_path / "idle.toml").write_text("[automation]\nidle_poll_seconds = 0\n", encoding="utf-8")
+    config.reset_config_cache()
+    assert aq._idle_max() == 2.0  # never below the plain idle backoff
+
+
 def test_fired_goal_runs_via_durable_queue(monkeypatch, tmp_path):
     # A run_goal job on the automation queue is drained through the worker's
     # built-in handler -- the durable path that gets retry + dead-letter.

@@ -127,6 +127,7 @@
     });
     load();
   }
-  function init() { document.querySelectorAll('[data-policy-suggestions]').forEach(setup); }
+  // A suggestions list inside a turned-off tool never calls its API.
+  function init() { document.querySelectorAll('[data-policy-suggestions]').forEach(function (root) { if (!root.closest('[data-feature-off]')) setup(root); }); }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 }());

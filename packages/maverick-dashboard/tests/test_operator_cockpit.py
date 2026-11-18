@@ -248,3 +248,26 @@ def test_non_policy_review_flow_keeps_its_next_action(
 
     assert view["progress"][0]["done"] is True
     assert view["next_action"]["title"].startswith(expected_title)
+
+
+def test_blocked_task_answers_come_first_with_the_plain_fix():
+    view = gateway_view(
+        {
+            "current_policy_count": 2,
+            "interaction_receipt_count": 1,
+            "readiness": {"ready": True, "gaps": []},
+            "task_delivery": {"blocked": True, "code": "demo_and_real_mixed"},
+        },
+        [{"metadata": {"synthetic": True}}],
+        [],
+        [],
+    )
+
+    action = view["next_action"]
+    assert action["title"] == "Tasks in this workspace can't deliver answers"
+    assert "sample (demo) evidence rules" in action["detail"]
+    assert "Workspaces page" in action["detail"]
+    assert action["href"] == "/workspaces"
+    label = next(gap["label"] for gap in view["gaps"] if gap["code"] == "task_answers_blocked")
+    assert "held back" in label and "sample (demo)" in label
+    assert view["status"]["key"] != "ready"

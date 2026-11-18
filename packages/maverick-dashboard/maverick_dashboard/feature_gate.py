@@ -29,7 +29,7 @@ SWITCH_HEADER = "X-Lightwork-Feature-Switch"
 FEATURE_OFF = "feature-off"
 
 _OFF_TEXT = re.compile(
-    r"\b(?:is|are) (?:turned off|disabled|off|not enabled)\b|\bisn't enabled\b|"
+    r"\b(?:is|are) (?:turned off|disabled|off|not enabled)\b|: turned off\b|\bisn't enabled\b|"
     r"\baren't enabled\b|\bdisabled in Settings\b|\b[a-z0-9]+(?:_[a-z0-9]+)*_disabled\Z|\Adisabled\Z",
     re.IGNORECASE,
 )
@@ -63,9 +63,10 @@ def headers_for(section: str = "", label: str = "") -> dict[str, str]:
 def feature_off(section: str, label: str = "", *, detail: str = "") -> HTTPException:
     """A 403 saying ``section`` is turned off, never "no permission"."""
     headers = headers_for(section, label)
-    name = label or (_switches().get(section) or {}).get("label", "") or "This feature"
-    return HTTPException(status_code=403, detail=detail or f"{name} is turned off.",
-                         headers=headers)
+    name = label or (_switches().get(section) or {}).get("label", "")
+    # "Name: turned off." reads right for any name ("Policy packs is turned off" did not).
+    text = f"{name}: turned off." if name else "This feature is turned off."
+    return HTTPException(status_code=403, detail=detail or text, headers=headers)
 
 
 def refusal_headers(detail: object) -> dict[str, str]:

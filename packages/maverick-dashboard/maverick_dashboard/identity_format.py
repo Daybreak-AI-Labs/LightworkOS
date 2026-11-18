@@ -209,8 +209,30 @@ _WORDS = {
     "pii": "personal data", "sla": "SLA", "mfa": "MFA", "eu": "EU", "us": "US", "uk": "UK",
     "llm": "AI model", "mcp": "MCP", "sha256": "fingerprint", "csv": "CSV", "pdf": "PDF",
     "iso": "ISO", "nist": "NIST", "dpia": "DPIA", "ropa": "record of processing",
-    "cmp": "consent banner", "ok": "OK",
+    "cmp": "consent banner", "ok": "OK", "cmmc": "CMMC", "omb": "OMB", "rmf": "RMF",
 }
+# Whole identifiers whose word-by-word reading is wrong ("Ec article 50",
+# "Omb m 25 22", "Kv memory"): regulations and frameworks by their published
+# names, and agent tools by what they let an agent do. One table for every
+# page that shows these identifiers through ``humanize``.
+LABELS = {
+    "ec_article_50": "EU AI Act, Article 50",
+    "eu_ai_act_article_50": "EU AI Act, Article 50",
+    "ec_gpai_guidelines": "EU guidelines for general-purpose AI models",
+    "nist_ai_rmf_1_0": "NIST AI RMF 1.0",
+    "omb_m_25_22": "OMB M-25-22",
+    "kv_memory": "Saved notes",
+    "recv_from_agent": "Read messages from other agents",
+    "send_to_agent": "Send messages to other agents",
+}
+
+
+def known_label(value: object) -> str:
+    """A whole identifier's label from :data:`LABELS`, else the value as
+    written: for codes that are already a name (a control such as
+    ``AI-DISCLOSURE-01``) where word-by-word humanizing would mangle them."""
+    raw = "" if value is None else str(value)
+    return LABELS.get(raw.strip().lower(), raw)
 
 
 def humanize(value: object) -> str:
@@ -219,6 +241,9 @@ def humanize(value: object) -> str:
     capitalized and known abbreviations read as a person writes them
     (``in_progress`` -> ``In progress``, ``ai_act`` -> ``AI act``). Empty in,
     empty out."""
+    known = LABELS.get(("" if value is None else str(value)).strip().lower())
+    if known:
+        return known
     words = ("" if value is None else str(value)).replace("-", " ").replace("_", " ").split()
     if not words:
         return ""
@@ -234,4 +259,6 @@ __all__ = [
     "role_description",
     "permission_label",
     "humanize",
+    "known_label",
+    "LABELS",
 ]

@@ -625,13 +625,18 @@ def probe_provider(provider: str, provider_config: dict[str, Any]) -> dict[str, 
     }
 
 
-def provider_readiness(provider: str, *, configured: bool) -> dict[str, Any]:
-    """Typed provider state without performing network I/O."""
+def provider_readiness(provider: str, *, configured: bool,
+                       material: Any = None) -> dict[str, Any]:
+    """Typed provider state without performing network I/O.
+
+    ``material`` is the provider's table from a configuration the caller has
+    just loaded (what :func:`get_provider_config` would return); without it the
+    configuration is loaded here."""
     from maverick.config import get_provider_config
 
     name = str(provider).strip().lower()
     try:
-        material = get_provider_config(name) or {}
+        material = (get_provider_config(name) if material is None else material) or {}
     except Exception as exc:
         unavailable = check(
             "failed",

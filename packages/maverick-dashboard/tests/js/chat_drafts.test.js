@@ -89,3 +89,23 @@ test('without the server-rendered wrapper nothing is inserted or wrapped', () =>
   assert.equal(doc.body.innerHTML.replace(' data-draft-ready="true"', ''), before);
   dom.window.close();
 });
+
+test('a recovered draft keeps the person\'s own task limits', () => {
+  // Without them, restoring a draft and sending it would run under the
+  // higher workspace limits the person had chosen to lower.
+  const withLimits = HOST.replace('<input name="connection_references" value="[]">',
+    '<input name="connection_references" value="[]"><input name="max_dollars" value=""><input name="max_minutes" value="">');
+  const {dom, calls, doc} = page(withLimits, true);
+  dom.window.eval(source);
+  doc.querySelector('[name="max_dollars"]').value = '0.50';
+  doc.querySelector('[name="max_minutes"]').value = '5';
+  const saved = calls[0].read();
+  assert.equal(saved.max_dollars, '0.50');
+  assert.equal(saved.max_minutes, '5');
+  doc.querySelector('[name="max_dollars"]').value = '';
+  doc.querySelector('[name="max_minutes"]').value = '';
+  calls[0].restore({title: 'Recovered request', connection_references: '[]', max_dollars: '0.50', max_minutes: '5'});
+  assert.equal(doc.querySelector('[name="max_dollars"]').value, '0.50');
+  assert.equal(doc.querySelector('[name="max_minutes"]').value, '5');
+  dom.window.close();
+});

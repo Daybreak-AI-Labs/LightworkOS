@@ -474,11 +474,12 @@
       <tbody>{% for row in regulatory_impacts %}<tr data-record="{{ row.impact_id|default(row.id, true) }}">
         <th scope="row">
           {% set affected = row.affected_asset_ids|default([], true) %}
-          {% for asset in affected %}{{ mra_name(asset) }}{% if not loop.last %}, {% endif %}{% else %}No AI system named{% endfor %}
-          <br><span class="assurance-muted">{{ row.affected_policy_ids|default([], true)|length }} rule(s)</span>
+          {% for asset in affected %}{{ mra_name(asset) }}{% if not loop.last %}, {% endif %}{% else %}No AI system linked yet{% endfor %}
+          {% set rule_count = row.affected_policy_ids|default([], true)|length %}
+          <br><span class="assurance-muted">{% if rule_count %}{{ rule_count }} rule{{ '' if rule_count == 1 else 's' }}{% else %}No rules linked{% endif %}</span>
         </th>
         <td>{{ MRA_STATUS.get(row.status|default("pending_review", true), row.status|humanize) }}</td>
-        <td>{{ row.control_ids|default([], true)|join(", ") or "None linked" }}</td>
+        <td>{{ row.control_ids|default([], true)|map('known_label')|join(", ") or "None linked" }}</td>
         <td><ul class="assurance-citations">
           {% for citation in row.citations|default([], true) %}
             <li><a href="{{ citation.record_url|default(citation.url, true) }}"

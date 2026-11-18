@@ -143,6 +143,10 @@ def _my_work(request: Request, principal: str) -> dict:
     # "Things that need you" counts only the requests this person can decide.
     digest["counts"]["approvals"] = sum(
         1 for row in digest["approvals"] if row["waiting_on"] in ("you", "you_own", "you_chat"))
+    # A recent result shown as "Needs attention" also needs this person, so the
+    # "Right now" headline counts it rather than reading "All clear" above it.
+    digest["counts"]["needs_attention"] = sum(
+        1 for row in digest["results"] if row.get("status") == "blocked")
     try:
         links = channel_identities.links_for(principal)
     except channel_identities.ChannelIdentityError:

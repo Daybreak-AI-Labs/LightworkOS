@@ -64,9 +64,20 @@ def _call(call):
     except PermissionError as exc:
         raise HTTPException(403, str(exc)) from exc
     except ValueError as exc:
+        if not _plain(str(exc)):
+            raise HTTPException(503, _UNREADABLE) from exc
         raise HTTPException(422, str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(503, "Work value records could not be read completely. Refresh to retry; this is not zero activity.") from exc
+        raise HTTPException(503, _UNREADABLE) from exc
+
+
+_UNREADABLE = "Work value records could not be read completely. Refresh to retry; this is not zero activity."
+
+
+def _plain(message):
+    """Work-value messages are sentences that start with a capital letter. Python's
+    parser errors ("unconverted data remains: -16") are not, and never reach the page."""
+    return message[:1].isupper() and not message.startswith("Invalid isoformat")
 
 
 def authority(request, *, write=False, company=False, admin=False):
@@ -86,8 +97,12 @@ def period(start="", end="", *, now=None):
     if any(value and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value) for value in (start, end)):
         raise ValueError("Use UTC calendar dates in YYYY-MM-DD format.")
     now = datetime.fromtimestamp(now or time.time(), timezone.utc)
-    left = datetime.fromisoformat(start).replace(tzinfo=timezone.utc) if start else now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    right = datetime.fromisoformat(end).replace(tzinfo=timezone.utc) + timedelta(days=1) if end else now
+    try:
+        left = datetime.fromisoformat(start).replace(tzinfo=timezone.utc) if start else now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        right = datetime.fromisoformat(end).replace(tzinfo=timezone.utc) + timedelta(days=1) if end else now
+    except ValueError:
+        # Not Python's own text ("month must be in 1..12"): it reaches the page.
+        raise ValueError("Use UTC calendar dates in YYYY-MM-DD format.") from None
     if left >= right or (right - left).days > 730:
         raise ValueError("Choose a reporting period of at most two years, with the end after the start.")
     return left.timestamp(), right.timestamp()

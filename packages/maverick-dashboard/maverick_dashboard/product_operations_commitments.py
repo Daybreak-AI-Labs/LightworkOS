@@ -67,7 +67,7 @@ def _selected(request, selection, *, owner=False, allow_archived=False,
     if (not isinstance(selection, dict) or set(selection) != {"kind", "id"}
             or selection["kind"] != "commitment_review"
             or not isinstance(selection["id"], str) or not _ID.fullmatch(selection["id"])):
-        raise HTTPException(404, "Open a saved promise review first.")
+        raise HTTPException(404, "Open a saved commitment review first.")
     try:
         if allow_archived:
             row, archive = reviews.read(selection["id"], context)
@@ -348,7 +348,7 @@ def create_execute(request, selection, args, prepared, operation_id):
 def archive_snapshot(request, selection):
     context, row, projection = _selected(request, selection, owner=True, allow_retiring=True)
     return Snapshot(digest([context, row["id"], row["revision"], row.get("retirement")]),
-                    "Current promise review and owner authority",
+                    "Current commitment review and owner authority",
                     "Finish this review and release its active slot. The full saved history remains readable, but no further decisions or observations can be added.",
                     {"id": row["id"], "title": row["title"], "revision": row["revision"],
                      "archive_pending": projection["archive_pending"], "href": PAGE},
@@ -416,12 +416,14 @@ def entries():
         Adapter("commitments.record_observation", "Record observed work contention", "commitments", PAGE, (PAGE,),
                 ObservationInput, observation_snapshot, observation_prepare,
                 observation_execute, observation_recover),
-        Adapter("commitments.create_review", "Start a promise review", "commitments", PAGE, (PAGE,),
+        Adapter("commitments.create_review", "Start a commitment review", "commitments", PAGE, (PAGE,),
                 CreateInput, create_snapshot, create_prepare, create_execute,
-                aliases=("start promise review", "create promise review")),
-        Adapter("commitments.archive_review", "Finish and archive promise review", "commitments", PAGE, (PAGE,),
+                aliases=("start commitment review", "create commitment review",
+                         "start promise review", "create promise review")),
+        Adapter("commitments.archive_review", "Finish and archive commitment review", "commitments", PAGE, (PAGE,),
                 EmptyInput, archive_snapshot, archive_prepare, archive_execute, archive_recover,
-                aliases=("archive promise review", "finish promise review")),
+                aliases=("archive commitment review", "finish commitment review",
+                         "archive promise review", "finish promise review")),
     )
 
 

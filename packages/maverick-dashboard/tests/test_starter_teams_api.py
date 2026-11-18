@@ -100,7 +100,7 @@ def test_catalog_lists_all_37_without_claiming_provider_readiness(web):
     assert len(value["context"]) == 64
     assert "no-store" in response.headers["cache-control"]
     assert "without calling an AI service" in value["notice"]
-    assert "require qualification" in value["notice"]
+    assert "check a few results against real work" in value["notice"]  # no readiness claim
 
 
 def test_setup_requires_confirmation_and_recovers_exact_original(web):
@@ -345,6 +345,10 @@ def test_ordinary_page_exposes_inputs_review_and_recovery(web):
     assert "Check original result" in response.text
     assert 'aria-labelledby="st-review-title"' in response.text
     assert "specialist AI work" in response.text
+    # Plain words: what is checked and what the customer should try first.
+    for jargon in ("qualification", "Autonomous shoring", "AUTONOMOUS SHORING"):
+        assert jargon not in response.text
+    assert "check a few results against real work" in response.text
 
 
 @pytest.mark.parametrize("script", ["lightwork-starter-teams.js", "lightwork-starter-team-schedules.js"])

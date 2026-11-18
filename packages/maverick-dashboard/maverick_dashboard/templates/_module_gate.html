@@ -37,7 +37,7 @@
   'external': ('idle', 'External'),
 } %}
 <div class="mg-banner" role="status" data-module-gate="{{ section }}">
-  <strong>{{ label }} is turned off.</strong>
+  <strong>{{ label }}: turned off.</strong>
   {% if status and status in _status_badges %}<span class="badge {{ _status_badges[status][0] }}" data-module-status="{{ status }}">{{ _status_badges[status][1] }}</span>{% endif %}
   <span class="mg-copy">{{ detail or 'Turn this feature on before using it.' }}
     It takes effect right away. Review its settings before relying on it.</span>

@@ -8,7 +8,7 @@ Work,Today,,/today
 Work,Code,,/code
 Work,My work,,/me
 Work,Workflow pilots,,/outcome-pilots
-Work,Promise reviews,,/commitment-reviews
+Work,Commitment reviews,,/commitment-reviews
 Work,Project team reviews,,/project-reviews
 Work,Selected deliverable bundles,,/deliverable-bundles
 Work,Task handoffs,,/task-handoffs
@@ -29,7 +29,7 @@ Work,Workflows,,/workflows
 Work,Flow designer,,/flows/designer
 Work,Workflow builder,,/workflow-builder
 Work,Automations,,/automations
-Work,Teams,,/fleets
+Work,Agent teams,,/fleets
 Work,Starter teams,,/starter-teams
 Work,Help and diagnostics,,/help
 Work,Your notifications,,/notifications
@@ -58,11 +58,11 @@ Insights,Overview,,/overview
 Insights,Ekko,,/ekko
 Insights,Oversight,,/oversight
 Insights,Discovery,,/discovery
-Insights,Branches,,/run-tree
+Insights,Task branches,,/run-tree
 Insights,Spend,,/spend
 Insights,Work value & opportunities,,/work-value
 Insights,Savings,,/savings
-Insights,Autonomous shoring,,/shoring
+Insights,Work handoff,,/shoring
 Insights,Billing,,/billing
 Insights,Providers,,/providers
 Insights,Flow results,,/flows/analytics
