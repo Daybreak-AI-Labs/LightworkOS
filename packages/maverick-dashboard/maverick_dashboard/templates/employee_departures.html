@@ -6,7 +6,8 @@
 <section class="panel"><p>Review an employee's access and work across this installation before deactivating their named account. Existing data and preservation holds are retained. A handoff owner becomes responsible for retained work; this does not grant access to private employee content.</p>
 <p>Deactivation revokes Lightwork sessions and prevents new sign-ins for this exact identity. This workflow can remove reviewed local connection credentials and retire reviewed recurring schedules and cancel the person's waiting background work of every kind. Running work, other module queues, external identity accounts and provider-side consent still require explicit handoff. A case stays open until each reviewed item and external obligation has an active named owner. Closure preserves unresolved external outcomes as retained obligations; it does not verify provider revocation.</p>
 <p id="ed-status" role="status" aria-live="polite">Loading departure controls.</p><button type="button" class="btn" id="ed-refresh">Refresh saved cases</button></section>
-<section class="panel" id="ed-new" hidden><h2>Review an employee</h2><form id="ed-preview" data-draft-recovery="off"><label>Employee <select class="select" id="ed-person" required></select></label><button class="btn" type="submit">Preview access and work</button></form>
+<section class="panel" id="ed-new" hidden><h2>Review an employee</h2><form id="ed-preview" data-draft-recovery="off"><label>Employee <select class="select" id="ed-person" required aria-describedby="ed-person-help"></select></label><button class="btn" type="submit">Preview access and work</button></form>
+<p id="ed-person-help" class="muted" hidden>No one can be reviewed here yet. Administrators are not listed. To review one, change their role on <a href="/users#people">Users</a> first.</p>
 <div id="ed-inventory"></div><form id="ed-begin" hidden data-draft-recovery="off"><label>Retained-data and handoff owner <select class="select" id="ed-custodian" required></select></label><p><label><input id="ed-preserve" type="checkbox" required> Retain all existing data and preservation holds. I understand this does not transfer private content access or revoke external provider consent.</label></p><button class="btn btn--danger" type="submit">Deactivate and begin handoff</button></form></section>
 <section class="panel"><h2>Saved cases and outstanding handoffs</h2><div id="ed-cases"></div></section>
 <script nonce="{{ csp_script_nonce }}">
@@ -21,7 +22,7 @@
   async function load() {
     reviewed = null; byId('ed-begin').hidden = true; byId('ed-inventory').replaceChildren();
     model = await call(''); byId('ed-new').hidden = !model.enabled;
-    choose(byId('ed-person'), model.people.filter(p => !p.admin && !p.departed)); choose(byId('ed-custodian'), model.people.filter(p => p.admin && p.active));
+    choose(byId('ed-person'), model.people.filter(p => !p.admin && !p.departed)); byId('ed-person-help').hidden = byId('ed-person').options.length > 1; choose(byId('ed-custodian'), model.people.filter(p => p.admin && p.active));
     say(model.enabled ? 'Current cases loaded. Dispatching steps without a later confirmation have an unknown outcome; do not repeat them blindly.' : 'Departure actions are off. Existing cases remain readable. An installation administrator can enable actions in Settings.');
     const cases = byId('ed-cases'); cases.replaceChildren(); if (!model.cases.length) cases.appendChild(node('p', 'No departure cases yet. Start one above when someone leaves, to hand over their work.'));
     model.cases.forEach(row => {
