@@ -3853,6 +3853,21 @@ async def world_backend_refused_handler(request: Request, exc: _WorldBackendUnre
     return JSONResponse({"detail": detail, "code": "records_database_refused"}, status_code=503)
 
 
+from maverick.governed_records import GovernedRecordLocalOnly as _GovernedRecordLocalOnly  # noqa: E402
+
+
+@app.exception_handler(_GovernedRecordLocalOnly)
+async def single_computer_only_handler(request: Request, exc: _GovernedRecordLocalOnly):
+    """A single-computer feature on a shared deployment: a plain 409, never a 500.
+
+    The pages' opening reads answer 200 themselves (``single_computer.read``);
+    this covers every other request that meets the same refusal.
+    """
+    from .single_computer import refusal_response
+
+    return refusal_response(request)
+
+
 @app.exception_handler(FlowPayloadError)
 async def flow_payload_exception_handler(request: Request, exc: FlowPayloadError):
     """Expose a recovery action without leaking private payload or key details."""

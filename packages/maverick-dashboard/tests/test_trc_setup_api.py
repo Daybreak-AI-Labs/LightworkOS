@@ -58,7 +58,11 @@ def test_local_checks_are_listed_without_fingerprints_or_scopes(environment):
     assert not re.search(r"[0-9a-f]{64}", repr(items))
     assert state["calls"][-1] == "view"
     state["allowed"] = []
-    assert client.get(f"{API}/setup").status_code in {403, 503}   # fails closed
+    # On with no source chosen (Settings' default) lists nothing and says why,
+    # instead of answering 503: nothing chosen means nothing may be read.
+    empty = client.get(f"{API}/setup")
+    assert empty.status_code == 200 and empty.json()["items"] == []
+    assert "No evidence sources are chosen yet" in empty.json()["notice"]
 
 
 def test_set_up_approve_by_someone_else_then_start(environment):

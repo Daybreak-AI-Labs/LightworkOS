@@ -18,7 +18,7 @@ from maverick.authority_effects import authority_effect_fence
 from maverick.budget import Budget, BudgetExceeded
 from maverick.file_lock import cross_process_lock
 from maverick.governed_operations import digest
-from maverick.governed_records import GovernedRecordStore
+from maverick.governed_records import GovernedRecordLocalOnly, GovernedRecordStore
 from maverick.private_task_computation import (
     MAX_BYTES,
     RESULTS,
@@ -68,7 +68,8 @@ def _writer():
         writing = getattr(world, "_writing", None)
         backend = STORE._backend()
         if not callable(writing) or backend.kind != "local":
-            raise HTTPException(503, "This bounded private check requires native local custody.")
+            # A shared world database: the feature needs a single computer.
+            raise GovernedRecordLocalOnly("private task calculations require native local custody")
         with writing() as connection:
             connection.execute("BEGIN IMMEDIATE")
             with cross_process_lock(backend._store._dir() / ".fixed-source-admission", strict=True):

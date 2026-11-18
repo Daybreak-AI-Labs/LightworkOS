@@ -45,7 +45,7 @@ def _checksum(body: dict[str, Any]) -> str:
 def history(ledger: Any) -> dict[str, Any]:
     """Read one bounded complete native journal, with no locks or source writes."""
     if ledger is None or getattr(ledger, "path", None) is None:
-        raise CheckpointUnavailable("A checkpoint needs recorded, permanent learning history. There is no supported history here yet.")
+        raise CheckpointUnavailable("There is no learning history to checkpoint yet. A checkpoint is offered once Lightwork adopts its first learned change.")
     journal = Path(f"{ledger.path}.journal")
     if journal.is_symlink() or not journal.is_file():
         raise CheckpointUnavailable("This history has no supported permanent record. Older files and temporary histories cannot be checkpointed here.")

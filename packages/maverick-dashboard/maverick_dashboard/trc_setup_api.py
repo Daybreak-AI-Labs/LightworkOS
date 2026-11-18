@@ -10,17 +10,21 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import time
 import uuid
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 
 from .auth import require_global_permission, require_permission
+from .store_failures import log_store_failure, remember_route
 
-router = APIRouter(prefix="/api/v1/compliance/continuous-evidence/setup", tags=["trc-setup"])
+router = APIRouter(prefix="/api/v1/compliance/continuous-evidence/setup", tags=["trc-setup"],
+                   dependencies=[Depends(remember_route)])
+log = logging.getLogger(__name__)
 
 LOCAL_KEY = "local-soc2"
 _PROVIDER_LABELS = {
@@ -62,6 +66,7 @@ def _store(request: Request):
                                              principal_resolver=lambda: principal, request=request)
         return evidence, tenant, api._default_store_for(tenant, principal)
     except (evidence.ContinuousEvidenceError, OSError) as exc:
+        log_store_failure(log, exc)
         raise HTTPException(status_code=503, detail="Continuous evidence is not available right now.") from exc
 
 
@@ -73,6 +78,8 @@ def _manifests(request: Request, tenant: str) -> dict[str, dict[str, Any]]:
 
     allowed = api._collector_ids(request)
     plans: dict[str, dict[str, Any]] = {}
+    if not allowed:
+        return plans  # No source chosen yet: none can be offered or read.
     if LocalSoc2Collector.collector_id in allowed:
         plans[LOCAL_KEY] = {
             "label": "Lightwork's own security checks",
@@ -90,6 +97,7 @@ def _manifests(request: Request, tenant: str) -> dict[str, dict[str, Any]]:
         try:
             sources = settings(tenant).sources
         except Exception as exc:
+            log_store_failure(log, exc)
             raise HTTPException(
                 status_code=503,
                 detail="Current evidence source settings could not be read. Your work is kept; refresh after the connection is available.",
@@ -135,7 +143,10 @@ async def configured_sources(request: Request) -> dict[str, Any]:
     require_permission(request, "view")
     _evidence, tenant, _store_value = _store(request)
     plans = await run_in_threadpool(_manifests, request, tenant)
-    return {"items": [
+    from . import trc_continuous_evidence_api as api
+
+    chosen = await run_in_threadpool(api._collector_ids, request)
+    return {"notice": "" if chosen else api.NO_SOURCES, "items": [
         {"key": key, "label": plan["label"], "definition_id": plan["definition_id"],
          "definition_version": plan["definition_version"], "enrollment_id": plan["enrollment_id"],
          "control_count": len(plan["controls"]), "credential_ready": plan["credential_ready"],

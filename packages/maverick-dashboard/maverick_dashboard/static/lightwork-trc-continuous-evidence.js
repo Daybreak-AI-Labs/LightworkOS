@@ -422,7 +422,7 @@
       S.enrollments = results[3].items || []; S.runs = results[4].items || []; S.jobs = results[5].items || []; S.alerts = results[6].items || [];
       S.authorSources = results[7].sources || []; S.authorProviders = results[7].providers || [];
       renderStatus(); renderSources(); renderDefinitions(); renderRuns(); renderAlerts();
-      say(results[7].unavailable || results[7].setup_available === false ? "Evidence lists loaded. " + results[7].notice : "Up to date.");
+      say(results[7].unavailable || results[7].setup_available === false ? "Evidence lists loaded. " + results[7].notice : results[1].notice ? "Evidence lists loaded. " + results[1].notice : "Up to date.");
       restoreLegacyOriginal(results[7].context);
     }).catch(function (failure) { if (sourceCurrent(generation)) { fail("load continuous evidence")(failure); } });
   }

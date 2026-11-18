@@ -1510,3 +1510,31 @@ def test_vendor_page_has_one_main_landmark_and_labelled_decision_fields(web):
     assert {"vo-page-previous", "vo-page-next", "vo-page-status"}.issubset(ids)
     message = next(attrs for _, attrs in markup.elements if attrs.get("id") == "vo-message")
     assert message["aria-live"] == "polite"
+
+
+def test_a_turned_off_or_unselected_workspace_reads_as_a_plain_sentence(web, monkeypatch):
+    # Live: the page showed "could not be loaded" because "Vendor onboarding is
+    # disabled" is not a sentence the page passes through to the person.
+    import re
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+    from maverick.paths import tenant_scope
+    from maverick_dashboard import vendor_onboarding_composition as composition
+
+    # The page's own pass-through rule (lightwork-vendor-onboarding.js).
+    plain_sentence = re.compile(r"[A-Z][^{}<>=_\[\]\\/`|]*[.!?]")
+
+    monkeypatch.setattr(composition, "require_permission", lambda *args: None)
+    monkeypatch.setattr(composition, "caller_principal", lambda *args: "user:reviewer")
+    monkeypatch.setattr(composition, "caller_role", lambda *args: "operator")
+    monkeypatch.setattr(composition, "settings", lambda: SimpleNamespace(enable=False))
+    with tenant_scope(tenant="synthetic-a"), pytest.raises(HTTPException) as off:
+        composition._context(object())
+    assert off.value.status_code == 409 and "turned off" in off.value.detail
+    monkeypatch.setattr(composition, "current_tenant_id_strict", lambda: None)
+    with pytest.raises(HTTPException) as unselected:
+        composition._context(object())
+    for detail in (off.value.detail, unselected.value.detail):
+        assert plain_sentence.fullmatch(detail) and len(detail) <= 300, detail
+        assert "tenant" not in detail, detail

@@ -44,7 +44,7 @@ def _redacted(exc: BaseException) -> str:
     return text[:_MESSAGE_LIMIT] + ("..." if len(text) > _MESSAGE_LIMIT else "")
 
 
-def log_store_failure(log: logging.Logger, exc: BaseException) -> None:
+def log_store_failure(log: logging.Logger, exc: BaseException, *, answered: str = "answered 503") -> None:
     """Log the route, workspace, exception classes and redacted message on one line."""
     causes = []
     seen = {id(exc)}
@@ -54,7 +54,7 @@ def log_store_failure(log: logging.Logger, exc: BaseException) -> None:
         causes.append(type(current).__name__ + ": " + _redacted(current))
         current = current.__cause__ or current.__context__
     log.warning(
-        "saved-record store failed; answered 503: route=%s workspace=%s error=%s: %s%s",
-        _ROUTE.get() or "unknown", _workspace(), type(exc).__name__, _redacted(exc),
+        "saved-record store failed; %s: route=%s workspace=%s error=%s: %s%s",
+        answered, _ROUTE.get() or "unknown", _workspace(), type(exc).__name__, _redacted(exc),
         (" caused by " + " <- ".join(causes)) if causes else "",
     )

@@ -314,3 +314,13 @@ def test_receipt_input_is_strict_bounded_and_all_routes_are_audit_gated(
     assert denied.get(f"{BASE}/snapshot").status_code == 403
     assert denied.get(f"{BASE}/entries/{'0' * 64}/receipt").status_code == 403
     assert denied.post(f"{BASE}/verify-receipt", json={"receipt": "{}"}).status_code == 403
+
+
+def test_no_learning_history_yet_is_said_plainly(monkeypatch):
+    # Live: an installation that never adopted a learned change read "There is
+    # no supported history here yet." The person needs to know why and when.
+    monkeypatch.setattr(api, "_promotion_ledger_source", lambda: (None, "missing"))
+    response = _client(monkeypatch).get(f"{BASE}/checkpoint/status")
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert "no learning history to checkpoint yet" in detail and "supported" not in detail

@@ -37,12 +37,17 @@ from maverick.candidate_promotion import (
 )
 from maverick.flow import runner, store
 from maverick.flow.ir import validate_learned_operator
-from maverick.governed_records import GovernedRecordStore, configured_governed_records_backend
+from maverick.governed_records import (
+    GovernedRecordLocalOnly,
+    GovernedRecordStore,
+    configured_governed_records_backend,
+)
 from maverick.paths import canonical_tenant_id, tenant_scope
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import rbac, workspace_tenants
 from .candidate_promotion_api import _binding
+from .single_computer import LocalReleaseOnly, unavailable
 
 router = APIRouter(prefix="/api/v1/research/local-flow-release", tags=["local-flow-release"])
 asset_router = APIRouter()
@@ -67,7 +72,7 @@ def _sha(value):
 
 def _records():
     if configured_governed_records_backend() != "local":
-        raise CandidatePromotionUnavailable("Local workflow releases require a single-computer installation.")
+        raise LocalReleaseOnly("Local workflow releases require a single-computer installation.")
     return GovernedRecordStore("local-flow-release-targets", "LFT", "local_flow_release", required_backend="local")
 
 
@@ -611,6 +616,10 @@ def choices(request):
     from maverick.config import candidate_promotion_enabled
 
     tenant, actor, context = _binding(request, Response())
+    try:
+        _records()
+    except GovernedRecordLocalOnly:
+        return unavailable(context=context, enabled=candidate_promotion_enabled(), flows=[], prepared=None)
     flows = []
     from .local_flow_comparisons import records as comparisons
     comparison_rows = comparisons().list(limit=1000) if getattr(request.app.state, "local_flow_promotions_installed", False) else []
@@ -754,6 +763,8 @@ def prepare_release(payload: Selection, request: Request):
 def _native_call(function):
     try:
         return function()
+    except GovernedRecordLocalOnly:
+        raise  # The app answers it plainly with 409; it is not a release conflict.
     except (CandidatePromotionConflict, CandidatePromotionDenied, CandidatePromotionUnavailable,
             store.FlowVersionConflict, store.FlowSnapshotError) as exc:
         raise HTTPException(409, str(exc)) from exc

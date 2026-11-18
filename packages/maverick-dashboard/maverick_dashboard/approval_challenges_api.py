@@ -4,28 +4,32 @@ from __future__ import annotations
 import base64
 import binascii
 import hmac
+import logging
 import re
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from maverick import approval_challenges as source
 from maverick.governed_records import (
-    GovernedRecordBackendError,
     GovernedRecordCapacityError,
+    GovernedRecordLocalOnly,
     GovernedRecordStore,
 )
 from maverick.paths import current_tenant_id_strict, data_dir
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 
-from . import auth
+from . import auth, single_computer
 from .draft_api import context_for
+from .store_failures import log_store_failure, remember_route
 
-router = APIRouter(prefix="/api/v1/learning/approval-challenges", tags=["approval-challenges"])
+router = APIRouter(prefix="/api/v1/learning/approval-challenges", tags=["approval-challenges"],
+                   dependencies=[Depends(remember_route)])
+log = logging.getLogger(__name__)
 page_router = APIRouter()
 _ID = re.compile(r"ACP-[a-f0-9]{32}\Z")
 _STEPS = {"read_review": "Reviewer reads the fictional request", "change_claim": "Another reviewer takes the request",
@@ -111,15 +115,15 @@ def _bound(request, body=None):
 def _call(function):
     try:
         return function()
-    except HTTPException:
-        raise
+    except (HTTPException, GovernedRecordLocalOnly):
+        raise  # A single-computer refusal reaches the app's plain 409.
     except GovernedRecordCapacityError as exc:
         raise HTTPException(409, "This workspace has 256 saved practice records. Review and remove one of your inactive records here to make space. Its decision receipt stays in the activity history; an in-progress check cannot be removed.") from exc
-    except GovernedRecordBackendError as exc:
-        raise HTTPException(409, "Approval challenges currently support a single local installation. This installation's storage setup is not supported; no live requests were changed.") from exc
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
     except Exception as exc:
+        # Includes a saved-record store failure: a real outage, not a refusal.
+        log_store_failure(log, exc)
         raise HTTPException(503, "The local challenge record could not be checked. Refresh and read its saved state before starting another check.") from exc
 
 
@@ -347,7 +351,9 @@ def setup(request, body):
 
 @router.get("")
 def options(request: Request, offset: int = 0):
-    return JSONResponse(_call(lambda: choices(request, offset)), headers={"Cache-Control": "private, no-store"})
+    context = _bound(request)[2]
+    value = single_computer.read(lambda: _call(lambda: choices(request, offset)), context=context, records=[])
+    return JSONResponse(value, headers={"Cache-Control": "private, no-store"})
 
 
 async def _body(request, model):
@@ -425,6 +431,9 @@ def download_challenge(request: Request, identity: str):
 @page_router.get("/learning/approval-challenges")
 def challenge_page(request: Request):
     _bound(request)
+    notice = single_computer.page(request, "Approval challenges", section="Learning & safeguards")
+    if notice is not None:
+        return notice
     from .app import templates
     return templates.TemplateResponse(request, "approval_challenges.html", {"request": request})
 

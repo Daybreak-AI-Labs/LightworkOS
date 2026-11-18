@@ -2,22 +2,26 @@
 from __future__ import annotations
 
 import hmac
+import logging
 import re
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from maverick import instruction_capture as source
-from maverick.governed_records import GovernedRecordCapacityError
+from maverick.governed_records import GovernedRecordCapacityError, GovernedRecordLocalOnly
 from maverick.paths import current_tenant_id_strict
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import auth
+from . import auth, single_computer
 from .draft_api import context_for
 from .learning_ops_api import _world
 from .plain_labels import model_label
+from .store_failures import log_store_failure, remember_route
 
-router = APIRouter(prefix="/api/v1/learning/instructions", tags=["learning-instructions"])
+router = APIRouter(prefix="/api/v1/learning/instructions", tags=["learning-instructions"],
+                   dependencies=[Depends(remember_route)])
+log = logging.getLogger(__name__)
 page_router = APIRouter()
 _ID = re.compile(r"ISC-[a-f0-9]{32}\Z")
 
@@ -60,13 +64,14 @@ def _bound(request, payload=None):
 def _call(function):
     try:
         return function()
-    except HTTPException:
-        raise
+    except (HTTPException, GovernedRecordLocalOnly):
+        raise  # A single-computer refusal reaches the app's plain 409.
     except GovernedRecordCapacityError as exc:
         raise HTTPException(409, "This workspace's instruction-recording capacity has been reached. Existing records are kept; you can review, download or withdraw them. Ask your installation administrator to review the retention and storage plan before recording more.") from exc
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
     except Exception as exc:
+        log_store_failure(log, exc)
         raise HTTPException(503, "The instruction record could not be checked. Refresh before trying again.") from exc
 
 
@@ -141,7 +146,9 @@ def withdraw(request, identity, body):
 
 @router.get("")
 def options(request: Request):
-    return JSONResponse(_call(lambda: choices(request)), headers={"Cache-Control": "private, no-store"})
+    context = _bound(request)[2]
+    value = single_computer.read(lambda: _call(lambda: choices(request)), context=context, tasks=[], records=[])
+    return JSONResponse(value, headers={"Cache-Control": "private, no-store"})
 
 
 @router.post("")
@@ -212,6 +219,9 @@ def download_capture(request: Request, identity: str):
 @page_router.get("/learning/instructions")
 def instruction_page(request: Request):
     _bound(request)
+    notice = single_computer.page(request, "Instructions used in real work")
+    if notice is not None:
+        return notice
     from .app import templates
     return templates.TemplateResponse(request, "instruction_capture.html", {"request": request})
 

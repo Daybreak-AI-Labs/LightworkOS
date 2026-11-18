@@ -32,6 +32,7 @@ from pydantic import (
 )
 
 from . import local_flow_promotions as release
+from . import single_computer
 from .candidate_promotion_api import _binding, _call
 
 router = APIRouter()
@@ -465,6 +466,9 @@ def view(request, identifier):
 def page(request: Request):
     from .app import templates
     _binding(request, Response())
+    notice = single_computer.page(request, "Compare saved rules on real cases")
+    if notice is not None:
+        return notice
     return templates.TemplateResponse(request, "flow_comparisons.html", {}, headers={"Cache-Control": "no-store, private"})
 
 

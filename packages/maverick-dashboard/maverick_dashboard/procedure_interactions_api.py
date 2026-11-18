@@ -11,6 +11,7 @@ from starlette.concurrency import run_in_threadpool
 
 from . import local_flow_promotions as release
 from . import procedure_interactions as native
+from . import single_computer
 from .scalar_wire import exact_integers
 
 router = APIRouter()
@@ -36,19 +37,22 @@ def response(value):
 def page(request: Request):
     from .app import templates
     native.authority(request)
+    notice = single_computer.page(request, "Check local rules together")
+    if notice is not None:
+        return notice
     return templates.TemplateResponse(request, "procedure_interactions.html", {}, headers={"Cache-Control": "no-store, private"})
 
 
 @router.get(native.API)
 def listing(request: Request, first: str = "", second: str = ""):
-    native.authority(request, request.headers.get("X-Lightwork-Joint-Context"))
-    return response(release._native_call(lambda: native.listing(request, first, second)))
+    _tenant, _owner, context = native.authority(request, request.headers.get("X-Lightwork-Joint-Context"))
+    return response(single_computer.read(lambda: release._native_call(lambda: native.listing(request, first, second)), context=context))
 
 
 @router.get(native.API + "/history")
 def history(request: Request):
-    native.authority(request, request.headers.get("X-Lightwork-Joint-Context"))
-    return response(native.history(request))
+    _tenant, _owner, context = native.authority(request, request.headers.get("X-Lightwork-Joint-Context"))
+    return response(single_computer.read(lambda: native.history(request), context=context, choices=[]))
 
 
 @router.get(native.API + "/original/{identifier}")
