@@ -13,7 +13,12 @@ no tasks, personal memory, files or business content are supplied. This does not
 model choice, refresh discovery automatically, or change provider credentials.
 
 Each test narrows the configured Budget to at most USD 0.05, 2,048 input tokens,
-64 output tokens and 30 seconds, with no tool calls. Normal model approval, enterprise
+64 output tokens and 30 seconds, with no tool calls. The same switch allows Agent
+Factory draft tries and saved answer checks, which have their own shared limit: USD 0.25,
+10,000 input tokens, 640 output tokens and 120 seconds for up to five saved questions,
+plus USD 0.05, 2,000 input tokens, 128 output tokens and 24 seconds for each question
+after that (and never under 120 seconds). Each review shows the exact limit before you
+confirm. Normal model approval, enterprise
 egress, kill switch, personal quota, workspace/provider admission, pricing and durable
 accounting still apply. The selected provider configuration is fingerprinted at review
 and checked at client construction and dispatch. SDK read/connect timeouts are narrowed

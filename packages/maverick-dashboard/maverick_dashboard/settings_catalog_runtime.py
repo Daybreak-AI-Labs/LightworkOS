@@ -240,7 +240,7 @@ def _models(S, C) -> tuple:
           "Show provider-reported capabilities and dated pricing evidence alongside model choices. Unknown details remain unknown.",
           "toggle", "AI models", True, "maverick.model_guidance", subgroup="Model choices"),
         S("models", "capability_tests", "Allow bounded model generation tests",
-          "Let administrators review and explicitly confirm one synthetic model call, capped at USD 0.05 and 64 output tokens or lower workspace limits. Cancellation cannot retract a sent request; uncertain calls are never retried.",
+          "Let administrators run model calls they review and confirm first: a single model test (up to USD 0.05 and 64 output tokens) and Agent Factory draft tries and answer checks (USD 0.25 for up to five saved questions, USD 0.05 for each one after that; each review shows its exact limit). Lower workspace limits apply. Cancellation cannot retract a sent request; uncertain calls are never retried.",
           "toggle", "AI models", False, "maverick.model_tests", subgroup="Model choices"),
         S("models", "catalog", "Extra models to offer",
           "Models that are not in the built-in list, so they can be chosen everywhere. Write "
