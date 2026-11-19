@@ -64,6 +64,7 @@ except ImportError:  # pragma: no cover
 # primitives, console and CONFIG_* paths through ._seams at call time, so a
 # monkeypatch on this facade applies to them too.
 from .. import models as catalog
+from ._common import _addressed as _addressed
 from ._common import _append_nested_product_config as _append_nested_product_config
 from ._common import _csv_list as _csv_list
 from ._common import _emit_kv as _emit_kv
@@ -5798,7 +5799,7 @@ def write_consumer_config(
             "mcp_*": "20/60",
         },
         retention=dict(preset["retention"]),
-        persona={"name": "Lightwork", "style": "balanced", "user_name": user_name},
+        persona={"name": "Lightwork", "style": "balanced", "user_name": user_name or "you"},
         web_search_enabled=True,
         governance_profile=profile,
         first_outcome=first_outcome_table,
@@ -5832,7 +5833,7 @@ def run_consumer() -> int:
             "What should we call you?",
             default=os.environ.get("USER") or os.environ.get("USERNAME") or "",
         ).strip()
-        or "you"
+        or ""
     )
 
     profile = pick_governance_profile()
@@ -5882,9 +5883,9 @@ def run_consumer() -> int:
     if keys:
         console.print(
             Panel.fit(
-                (f"[bold yellow]Setup saved, {escape(user_name)}. File work is off.[/bold yellow]\n\n"
+                (f"[bold yellow]{escape(_addressed('Setup saved', user_name))} File work is off.[/bold yellow]\n\n"
                  if backend == "local" else
-                 f"[bold green]Setup complete, {escape(user_name)}.[/bold green]\n\n")
+                 f"[bold green]{escape(_addressed('Setup complete', user_name))}[/bold green]\n\n")
                 + f"Your first task ({outcome.label}, on sample data, waits in {outcome.lands_in}):\n"
                 + f"  [bold]{cli_command(department)}[/bold]\n\n"
                 + (_FILE_WORK_RECOVERY + "\n\n" if backend == "local" else "")
@@ -5897,7 +5898,7 @@ def run_consumer() -> int:
     else:
         console.print(
             Panel.fit(
-                f"[bold yellow]Setup saved without an API key, {escape(user_name)}.[/bold yellow]\n\n"
+                f"[bold yellow]{escape(_addressed('Setup saved without an API key', user_name))}[/bold yellow]\n\n"
                 "Open Lightwork Settings to add a provider key when ready.",
                 border_style="yellow",
             )
@@ -6137,7 +6138,7 @@ def run_express() -> int:
             "What should we call you?",
             default=os.environ.get("USER") or os.environ.get("USERNAME") or "",
         ).strip()
-        or "you"
+        or ""
     )
     profile = pick_governance_profile()
     keys = _consumer_api_key()
@@ -6181,7 +6182,7 @@ def run_express() -> int:
                 "code_exec": False,
             },
             advanced={**_EXPRESS_ADVANCED, **preset["advanced"]},
-            persona={"name": "Lightwork", "style": "balanced", "user_name": user_name},
+            persona={"name": "Lightwork", "style": "balanced", "user_name": user_name or "you"},
             web_search_enabled=True,
             self_learning=dict(_EXPRESS_SELF_LEARNING),
             automation_import={"enable": True},
@@ -6216,9 +6217,9 @@ def run_express() -> int:
     if keys:
         console.print(
             Panel.fit(
-                (f"[bold yellow]Setup saved, {escape(user_name)}. File work is off.[/bold yellow]\n\n"
+                (f"[bold yellow]{escape(_addressed('Setup saved', user_name))} File work is off.[/bold yellow]\n\n"
                  if backend == "local" else
-                 f"[bold green]Setup saved, {escape(user_name)}.[/bold green]\n\n")
+                 f"[bold green]{escape(_addressed('Setup saved', user_name))}[/bold green]\n\n")
                 + "Open the dashboard:\n"
                 + "  [bold]maverick dashboard[/bold]   web UI at http://127.0.0.1:8765\n\n"
                 + (_FILE_WORK_RECOVERY + "\n\n" if backend == "local" else "")
@@ -6229,7 +6230,7 @@ def run_express() -> int:
     else:
         console.print(
             Panel.fit(
-                f"[bold yellow]Setup saved without an API key, {escape(user_name)}.[/bold yellow]\n\n"
+                f"[bold yellow]{escape(_addressed('Setup saved without an API key', user_name))}[/bold yellow]\n\n"
                 "Open Lightwork Settings to add a provider key.",
                 border_style="yellow",
             )

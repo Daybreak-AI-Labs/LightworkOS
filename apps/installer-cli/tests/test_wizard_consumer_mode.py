@@ -253,6 +253,33 @@ def test_run_consumer_skip_key_succeeds(monkeypatch, tmp_path: Path):
     assert not (tmp_path / ".maverick" / ".env").exists()
 
 
+def _closing_message(monkeypatch, tmp_path: Path, run: str, name: str) -> str:
+    import io
+
+    from rich.console import Console
+    wizard = _stub_wizard_io(monkeypatch, tmp_path, key="")
+    answers = iter([name, str(tmp_path / "workspace")])
+    monkeypatch.setattr(wizard, "_q_text", lambda *a, **kw: next(answers))
+    out = io.StringIO()
+    monkeypatch.setattr(wizard, "console", Console(file=out, width=200))
+    assert getattr(wizard, run)() == 0
+    return " ".join(out.getvalue().split())
+
+
+def test_closing_message_reads_correctly_without_a_name(monkeypatch, tmp_path: Path):
+    # A blank name used to print "Setup saved without an API key, you."
+    for run in ("run_consumer", "run_express"):
+        text = _closing_message(monkeypatch, tmp_path / run, run, "")
+        assert ", you." not in text
+        assert "Setup saved without an API key." in text
+
+
+def test_closing_message_addresses_a_given_name(monkeypatch, tmp_path: Path):
+    for run in ("run_consumer", "run_express"):
+        text = _closing_message(monkeypatch, tmp_path / run, run, "Ana")
+        assert "Setup saved without an API key, Ana." in text
+
+
 def test_run_consumer_docker_default_when_available(monkeypatch, tmp_path: Path):
     wizard = _stub_wizard_io(monkeypatch, tmp_path)
     monkeypatch.setattr(wizard, "_docker_available", lambda: True)
