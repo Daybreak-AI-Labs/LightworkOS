@@ -259,3 +259,22 @@ def test_the_companion_links_follow_the_gate_without_the_effect_fence(monkeypatc
 
     monkeypatch.setattr(employee_companion_api, "_authority", refused)
     assert employee_companion_api.navigation_available(object()) is False
+
+
+def _ai_service_saved():
+    from maverick_dashboard import settings_store
+
+    settings_store.set_provider("anthropic", api_key="sk-ant-api03-" + "x" * 80)  # pragma: allowlist secret
+
+
+def test_one_ai_readiness_answer_reads_the_configuration_once(signed_in, monkeypatch):
+    from maverick import config
+    from maverick_dashboard import provider_readiness
+
+    _ai_service_saved()
+    checks = []
+    real = config._read_witness
+    monkeypatch.setattr(config, "_read_witness", lambda: checks.append(1) or real())
+    with config.kept_reads():
+        assert provider_readiness.workspace_readiness()["verdict"] != "not_ready"
+    assert len(checks) <= 1, len(checks)
