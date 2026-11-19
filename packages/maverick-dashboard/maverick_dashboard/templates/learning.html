@@ -83,12 +83,13 @@
       <a href="/settings/all#self_harness.auto_run">Manage overnight learning</a></p>
     <p role="status">
     {% if snap.overnight.state == 'completed' %}
-      Last review: {{ snap.overnight.models_reviewed }} AI models reviewed,
-      {{ snap.overnight.patterns_found }} recurring patterns found,
-      {{ snap.overnight.improvements_adopted }} improvements adopted,
-      {{ snap.overnight.examples_prepared }} examples prepared.
+      {% set o = snap.overnight %}
+      Last review: {{ o.models_reviewed }} AI {{ 'model' if o.models_reviewed == 1 else 'models' }} reviewed,
+      {{ o.patterns_found }} recurring {{ 'pattern' if o.patterns_found == 1 else 'patterns' }} found,
+      {{ o.improvements_adopted }} {{ 'improvement' if o.improvements_adopted == 1 else 'improvements' }} adopted,
+      {{ o.examples_prepared }} {{ 'example' if o.examples_prepared == 1 else 'examples' }} prepared.
       {% if snap.overnight.inspection_only %}New improvements were inspected only; add reviewed examples on Learned before testing them.{% endif %}
-      {% if snap.overnight.reviews_held_back %}{{ snap.overnight.reviews_held_back }} reviews were held back by the configured learning checks.{% endif %}
+      {% if snap.overnight.reviews_held_back %}{{ snap.overnight.reviews_held_back }} {{ 'review was' if snap.overnight.reviews_held_back == 1 else 'reviews were' }} held back by the configured learning checks.{% endif %}
       {% if snap.overnight.transfer_held_back %}Sharing improvements between AI models needs separate approved checks and was held back.{% endif %}
     {% elif snap.overnight.state == 'running' %}
       A review started. Its completion has not yet been recorded.
@@ -896,8 +897,11 @@
     k.appendChild(B.kpi({ label: 'Decisions recorded', value: acc.decisions }));
     k.appendChild(B.kpi({ label: 'Human decisions', value: acc.human_decisions,
       sub: 'approvals: ' + B.fmt(acc.approvals) }));
-    k.appendChild(B.kpi({ label: 'Learned capabilities', value: learned === null ? 'Not available' : learned,
-      sub: grounded === null ? 'A current count could not be confirmed. Refresh the page and try again.' : B.fmt(grounded) + ' results checked against real outcomes' }));
+    var adminsOnly = acc.installation_totals === 'administrators_only';
+    k.appendChild(B.kpi({ label: 'Learned capabilities',
+      value: learned === null ? (adminsOnly ? 'Shown to installation administrators' : 'Not available') : learned,
+      sub: adminsOnly ? 'Learned capabilities are counted across the whole installation.'
+        : grounded === null ? 'A current count could not be confirmed. Refresh the page and try again.' : B.fmt(grounded) + ' results checked against real outcomes' }));
 
     B.donut(document.getElementById('bd-systems'), {
       segments: [

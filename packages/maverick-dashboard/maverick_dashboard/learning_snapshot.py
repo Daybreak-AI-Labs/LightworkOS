@@ -41,6 +41,17 @@ def _learning_components(subsystems: list[dict], on_by_key: dict) -> list[dict]:
     return rows
 
 
+def _installation_owner(request) -> bool:
+    """The installation's own owner, without a department limit: these
+    installation-wide totals are theirs to see."""
+    from . import auth
+
+    try:
+        return auth.is_installation_admin(auth.caller_principal(request)) and auth.caller_suites(request) is None
+    except Exception:  # an unreadable identity never widens the view
+        return False
+
+
 def learning_snapshot(request, *, world_factory, owner_filter, permission_check) -> dict:
     """Learning-engine status + accumulated learning. Shared by the JSON endpoint
     and the /learning page so both render identical numbers."""
@@ -120,7 +131,7 @@ def learning_snapshot(request, *, world_factory, owner_filter, permission_check)
     # Learned skills and grounded outcomes are deployment-level assets (neither is
     # stored per-tenant), so only surface them on an unscoped/admin view -- a
     # single tenant must never see deployment-wide totals as if they were its own.
-    if owner is None:
+    if owner is None or _installation_owner(request):
         try:
             # Count the ledger directly -- _learned_snapshot would also build
             # the whole harness/provenance/pending view just to be discarded.
@@ -143,6 +154,9 @@ def learning_snapshot(request, *, world_factory, owner_filter, permission_check)
             improvements = 0
         if improvements:
             accumulated["flow_self_improvements"] = improvements
+    else:
+        # Said plainly on the page, instead of a count that "could not be confirmed".
+        accumulated["installation_totals"] = "administrators_only"
     # Autonomous flow self-improvement: its own opt-in, deliberately NOT folded
     # into the blanket "turn learning on" button -- autonomously rewriting a live
     # workflow is a heavier consequence than passive learning. Policy visibility

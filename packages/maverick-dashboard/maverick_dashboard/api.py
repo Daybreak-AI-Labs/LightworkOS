@@ -7275,10 +7275,20 @@ def _learned_snapshot(limit: int = 50, *, include_pending_items: bool = False, r
         "generated_tools": tools,
         "harness": harness,
         "harness_enabled": harness_enabled,
+        "self_learning_enabled": _self_learning_on(),
         "pending_corpus": {k: len(v) for k, v in pending.items()},
         "pending_items": pending if include_pending_items else {},
         "transfer_memory": _transfer_memory(),
     }
+
+
+def _self_learning_on() -> bool:
+    try:
+        from maverick import self_learning
+
+        return bool(self_learning.enabled())
+    except Exception:  # an unreadable switch reads as off: the page offers the control
+        return False
 
 
 def _pending_corpus_items() -> dict[str, list[dict]]:

@@ -45,7 +45,8 @@
       </table>
     {% else %}
       <p class="muted" id="no-learned">Nothing learned yet. Review any suggested skills on <a href="/skills#to-learned-skills">Skills</a> before agents can use them.</p>
-      <p><a class="btn btn--ghost" href="/learning">Turn on self-learning</a></p>
+      {% if self_learning_enabled %}<p class="muted">Self-learning is on. Skills appear here after agents finish work that teaches something reusable.</p>
+      {% else %}<p><a class="btn btn--ghost" href="/learning">Turn on self-learning</a></p>{% endif %}
     {% endif %}
   </div>
 
