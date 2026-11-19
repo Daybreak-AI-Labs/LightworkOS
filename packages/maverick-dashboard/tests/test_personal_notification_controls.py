@@ -160,3 +160,28 @@ def test_a_task_the_person_can_no_longer_open_does_not_take_down_the_inbox(clien
     summary = client.get("/api/v1/notifications/personal/summary")
     assert summary.status_code == 200, summary.text
     assert summary.json()["unseen"] == 1
+
+
+def test_an_unusable_shared_record_store_answers_unavailable_not_a_server_error(
+    client_and_world, monkeypatch, caplog,
+):
+    """On a Postgres deployment whose login skips row-level security (or that
+    lacks the shared encryption key) the shared records refuse to open. The
+    navigation bell's summary on every page then answered 500."""
+    import logging
+
+    from maverick import budget_guidance
+    from maverick.governed_records import PRIVILEGED_LOGIN_REFUSAL, GovernedRecordBackendError
+
+    client, _world = client_and_world
+
+    def refused(_actor):
+        raise GovernedRecordBackendError(PRIVILEGED_LOGIN_REFUSAL)
+
+    monkeypatch.setattr(budget_guidance, "warning_sources", refused)
+    with caplog.at_level(logging.WARNING):
+        for path in ("/api/v1/notifications/personal/summary", "/api/v1/notifications/personal"):
+            response = client.get(path)
+            assert response.status_code == 503, response.text
+            assert "superuser" not in response.json()["detail"]
+    assert any("superuser" in record.getMessage() for record in caplog.records)
