@@ -940,7 +940,7 @@ remember_account_names = false   # default true; MAVERICK_REMEMBER_ACCOUNT_NAMES
 ```
 
 Off stops recording and naming; kept records stay in My data's export and
-reviewed deletion ([personal-data-controls.md](personal-data-controls.md)).
+reviewed deletion (Account > My Data).
 
 ## External MCP servers
 
