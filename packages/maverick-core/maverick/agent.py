@@ -1437,12 +1437,23 @@ def _observation_post(output: str, limit: int = _OBSERVATION_POST_CHARS) -> str:
 _VERIFIER_EVIDENCE_CHARS = 12_000
 
 
+_REFUSALS = ("not approved", "is denied by the current tool acl")
+
+
+def _is_refusal(framed: str) -> bool:
+    """A failed call that a person or a policy refused: it explains a truthful
+    "this did not happen" answer, unlike an ordinary failure."""
+    head = unframe_tool_output(framed)[:300].casefold()
+    return head.startswith("error") and any(word in head for word in _REFUSALS)
+
+
 def _verifier_evidence(messages: list[dict], limit: int = _VERIFIER_EVIDENCE_CHARS) -> str:
     """What this run read with its tools, for the verifier to check the answer
     against: the successful tool results, newest first when they exceed
     ``limit`` characters, each still inside its ``<tool_output>`` frame (an
     excerpt is re-closed with the same nonce). Failed calls are left out: they
-    support nothing."""
+    support nothing, except a refusal by a person or a policy, which supports
+    a truthful answer that the action did not happen."""
     results: list[str] = []
     for message in messages:
         content = message.get("content") if isinstance(message, dict) else None
@@ -1450,8 +1461,8 @@ def _verifier_evidence(messages: list[dict], limit: int = _VERIFIER_EVIDENCE_CHA
             continue
         for block in content:
             if (isinstance(block, dict) and block.get("type") == "tool_result"
-                    and not block.get("is_error") and isinstance(block.get("content"), str)
-                    and block["content"].strip()):
+                    and isinstance(block.get("content"), str) and block["content"].strip()
+                    and (not block.get("is_error") or _is_refusal(block["content"]))):
                 results.append(block["content"])
     kept: list[str] = []
     room = limit

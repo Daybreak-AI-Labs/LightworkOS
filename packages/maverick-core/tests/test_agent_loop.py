@@ -2010,6 +2010,22 @@ def test_verifier_evidence_keeps_newest_results_framed_and_skips_failures():
     assert _verifier_evidence([{"role": "user", "content": "brief"}]) == ""
 
 
+def test_verifier_evidence_keeps_a_refusal_that_explains_the_answer():
+    # A person rejected the command; the agent truthfully said it did not run.
+    # Without the refusal in its evidence the verifier called that reason
+    # "invented" and the agent was pushed into asking a question instead.
+    from maverick.agent import _verifier_evidence
+
+    refusal = {"type": "tool_result", "tool_use_id": "r", "is_error": True,
+               "content": "<tool_output tool='shell' id=dd>\nERROR: shell command was not approved; "
+                          "no command was run\n</tool_output dd>"}
+    crash = {"type": "tool_result", "tool_use_id": "x", "is_error": True,
+             "content": "<tool_output tool='compute' id=ee>\nERROR: 'simplify' requires sympy.\n</tool_output ee>"}
+    evidence = _verifier_evidence([{"role": "user", "content": [refusal, crash]}])
+    assert "not approved; no command was run" in evidence
+    assert "requires sympy" not in evidence  # an ordinary failure still supports nothing
+
+
 @pytest.mark.asyncio
 async def test_tool_output_shield_error_withholds_content_and_is_observable(tmp_path, caplog):
     """Configured screening must finish before content reaches any consumer.
