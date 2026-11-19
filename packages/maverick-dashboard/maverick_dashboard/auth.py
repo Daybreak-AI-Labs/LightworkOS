@@ -166,6 +166,28 @@ def route_path(connection) -> str:
     return path
 
 
+#: Load-balancer probes. They are authentication-exempt and always answer a
+#: redacted payload about the process, never about a caller, so the per-request
+#: identity, workspace and page-policy work does not apply to them. Doing it
+#: anyway made /livez wait for a free worker thread behind slow requests.
+PROBE_PATHS = frozenset({"/livez", "/readyz", "/healthz"})
+
+
+class _ScopeView:
+    __slots__ = ("scope",)
+
+    def __init__(self, scope: dict) -> None:
+        self.scope = scope
+
+
+def probe_path(scope: dict) -> str | None:
+    """The probe a plain GET or HEAD request asks for, else None."""
+    if scope.get("type") != "http" or scope.get("method") not in ("GET", "HEAD"):
+        return None
+    path = route_path(_ScopeView(scope))
+    return path if path in PROBE_PATHS else None
+
+
 def _self_authenticated_path(path: str) -> bool:
     """Whether a route authenticates itself or bootstraps authentication.
 
@@ -1637,6 +1659,8 @@ async def require_principal_in_request_context(
     lifecycle are checked on every verification; tenant selection/membership is
     resolved at binding, so cached keys never become an authorization grant.
     """
+    if request is not None and probe_path(request.scope):
+        return None  # a probe answers for the process, never for a caller
     principal = await _verify_off_loop(request, websocket)
     connection = request if request is not None else websocket
     pin_choice: object = _UNDECIDED
