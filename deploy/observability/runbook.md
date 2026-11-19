@@ -30,9 +30,12 @@ Quick triage for the alerts in `prometheus-rules.yaml`. Pair with
   from each tenant's plan (`max_concurrent_goals`). If one tenant is hot, check
   its plan/quota rather than raising the global cap.
 - Do not add dashboard/serve replicas: Postgres shares the world model, but not
-  every durable control-plane store. To add goal-processing capacity, move the
-  world model to Postgres and scale remote workers while keeping exactly one
-  control-plane replica. See `deploy/postgres/README.md`.
+  every durable control-plane store. The dashboard is one process with one
+  event loop, so more CPU cores do not add goal capacity. The only way to run
+  goals elsewhere is remote workers (`[queue] backend = "arq"`), which need
+  Redis, the `queue` extra and a shared Postgres world model; the image, chart
+  and Compose files do not package them. See the "Capacity and scaling" section
+  of `docs/deployment.md`.
 
 ## Alert: MaverickSpendSpike
 

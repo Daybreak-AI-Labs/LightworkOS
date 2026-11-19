@@ -489,3 +489,27 @@ def test_input_cap_not_eaten_by_cache_reads():
     assert b.input_tokens == 5_000
     assert b.cache_read_tokens == 500_000
     # The cap on billable input was NEVER tripped.
+
+
+@pytest.mark.parametrize("table,priced", [
+    ({"base_url": "http://127.0.0.1:1234/v1"}, False),  # LM Studio, not marked
+    ({"base_url": "http://127.0.0.1:1234/v1", "price_per_mtok": "free"}, True),
+    ({"base_url": "http://192.168.1.20:8080/v1", "price_per_mtok": "free"}, True),
+    ({"base_url": "https://api.groq.com/openai/v1", "price_per_mtok": "free"}, False),
+    ({"price_per_mtok": "free"}, False),  # no address: nothing to vouch for
+    ({"base_url": "http://169.254.169.254/v1", "price_per_mtok": "free"}, False),
+])
+def test_openai_compatible_server_is_free_only_when_marked_and_private(monkeypatch, table, priced):
+    """An OpenAI-compatible server also fronts paid gateways, so it is never free
+    on its own address alone; an owner may mark one on this computer or a
+    private network free. Unmarked or public, it still stops before spending."""
+    monkeypatch.setenv("MAVERICK_BILLING_STRICT", "1")
+    monkeypatch.delenv("OPENAI_COMPATIBLE_BASE_URL", raising=False)
+    monkeypatch.setattr("maverick.config.get_provider_config", lambda provider: dict(table))
+    if priced:
+        assert budget_mod._lookup_price_quote("openai_compatible:local-model").rates == (0.0, 0.0)
+        assert budget_mod.self_hosted_price_state("openai_compatible") == "marked_free"
+    else:
+        with pytest.raises(UnpricedModelError):
+            budget_mod._lookup_price_quote("openai_compatible:local-model")
+        assert budget_mod.self_hosted_price_state("openai_compatible") == "needs_price"

@@ -76,6 +76,27 @@ def _row(marker: str, label: str, detail: str = "", fix: str = "") -> None:
         click.echo(_console_text(click.style(f"      → {fix}", fg="cyan")))
 
 
+# The versions CI tests. requires-python has no upper bound, so pip installs on
+# a newer Python without a word; doctor says so instead of refusing.
+SUPPORTED_PYTHON = ((3, 11), (3, 12))
+
+
+def _python_version() -> tuple[int, ...]:
+    return tuple(sys.version_info[:3])
+
+
+def _check_python() -> None:
+    version = _python_version()
+    text = "Python " + ".".join(str(part) for part in version)
+    if tuple(version[:2]) in SUPPORTED_PYTHON:
+        _row(GREEN, "python", text)
+        return
+    _ATTENTION.append("python")
+    _row(YELLOW, "python", f"{text} is not tested with Lightwork",
+         fix="Lightwork supports Python 3.11 or 3.12. If something fails, recreate the "
+             "virtual environment with one of them (see Install from source)")
+
+
 def _check_config() -> dict:
     from .operator_preflight import _config_state
 
@@ -758,14 +779,13 @@ def _check_shield() -> None:
     from maverick_shield.builtin_rules import RULES
     backend_label = {
         "agent-shield": "agent-shield SDK",
-        "builtin": f"builtin rules ({len(RULES)} bundled patterns)",
+        "builtin": f"built-in rules ({len(RULES)} bundled patterns)",
         "none": "DISABLED -- [safety] profile=off in config",
     }.get(s.backend, s.backend)
-    if s.backend == "agent-shield":
+    if s.backend in {"agent-shield", "builtin"}:
+        # The bundled built-in rules are the standard release's shield; the full
+        # SDK is not publicly available, so there is nothing for the user to do.
         _row(GREEN, "shield", backend_label)
-    elif s.backend == "builtin":
-        _row(YELLOW, "shield", backend_label,
-             fix="Use the built-in layer; the full SDK is not on public PyPI")
     else:
         _row(RED, "shield", backend_label,
              fix="set [safety] profile = \"balanced\" in ~/.maverick/config.toml to re-enable")
@@ -1166,6 +1186,7 @@ def diagnose() -> int:
     _FAILURES.clear()
     _ATTENTION.clear()
     click.echo(click.style("Lightwork health check\n", bold=True))
+    _check_python()
     cfg = _check_config()
     _check_config_lint(cfg)
     _check_governance_tool_names(cfg)

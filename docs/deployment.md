@@ -30,10 +30,9 @@ is limited to this computer or a private network.
 Named-workspace sharing keeps an opaque token-hash locator in the private,
 deployment-wide `MAVERICK_HOME/dashboard-share-routes` directory. The destination
 world store still checks the token's expiry, revocation and current review gate.
-Dashboard replicas must share this private control-plane state as well as their
-world backend for the same share links to work on every replica; PostgreSQL alone
-does not replicate these locators. Include the directory in application-state
-backups. Expired locators are pruned in bounded batches when new links are made.
+The directory belongs to the installation's single control plane (see
+[Capacity and scaling](#capacity-and-scaling)); PostgreSQL does not hold these
+locators. Include the directory in application-state backups. Expired locators are pruned in bounded batches when new links are made.
 
 **Artifact status:** the release workflow is configured to attach three
 single-file PyInstaller binaries, checksums, SBOMs, and Sigstore material to a
@@ -65,6 +64,13 @@ docker run -it --rm \
   start "..."
 ```
 
+Both host paths must exist before the first run: create
+`~/maverick-workspace`, and create `~/.maverick/config.toml` with
+`lightwork init` (or copy a reviewed file there). Docker creates a missing
+mount source as an empty directory, so a missing `config.toml` becomes a
+directory, and Podman refuses to start. The container runs as uid 1000, so
+that user must be able to write the workspace folder.
+
 For untrusted skills, **do not** mount `~/.maverick/` into the same
 container that runs the agent tools. A local sandbox inside this
 container can read mounted files and process environment variables.
@@ -81,6 +87,33 @@ because the deployment default changed.
 
 To run the dashboard from the same image as a token-gated browser demo,
 locally, on a VPS or on a managed platform, follow `deploy/demo/README.md`.
+
+## Capacity and scaling
+
+What is supported today:
+
+- **One dashboard process per installation.** `lightwork dashboard` serves the
+  web app, the REST API and the tasks it starts from one Python process with
+  one event loop. It refuses to start with more than one web worker
+  (`WEB_CONCURRENCY`) or with reload. A second dashboard or `maverick serve` on
+  the same data folder refuses to start and names the process that holds it,
+  and `MAVERICK_REPLICA_COUNT` must stay `1`. PostgreSQL shares the world model
+  but not every control-plane store, so it does not make a second replica
+  safe. The Helm chart refuses `replicaCount` above 1 and autoscaling.
+- **Size the machine for one process.** Request handling and agent planning
+  share one Python interpreter, so more CPU cores do not add dashboard
+  throughput. Extra cores mainly help work that runs in separate processes:
+  sandbox containers, MCP servers and an AI model served on the same machine.
+  `MAVERICK_MAX_CONCURRENT_GOALS` (default 16) caps how many tasks run at once
+  inside that process; lower it on a small machine. Raising it helps only when
+  tasks spend their time waiting for the AI provider.
+- **Remote workers are not packaged.** `[queue] backend = "arq"` sends tasks to
+  separate worker processes (`arq maverick.arq_worker.WorkerSettings`). That
+  path needs Redis, the `queue` extra (which installs `arq`), a PostgreSQL world
+  model shared with the dashboard, and a shared signing key; see
+  [Fleet queue](env-vars.md#fleet-queue). The container image does not install
+  the `queue` extra, and neither the Helm chart nor the Compose files define a
+  worker, so you would install, run and supervise workers yourself.
 
 ## VPS
 

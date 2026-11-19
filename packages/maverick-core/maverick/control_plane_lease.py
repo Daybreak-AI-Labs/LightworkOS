@@ -350,9 +350,10 @@ def _acquire(root: Path | None, *, role: str) -> Lease | None:
                 f"{who}. Exactly one may write this data root -- flows, A2A "
                 f"claims, and the audit, budget-receipt, fleet-memory and "
                 f"learning ledgers are hash-chained and assume a single "
-                f"author. Scale remote workers instead of the control plane, "
-                f"or point this process at its own data root via "
-                f"MAVERICK_HOME."
+                f"author. Point this process at its own data root via "
+                f"MAVERICK_HOME. Remote workers ([queue] backend = \"arq\") "
+                f"exist but are not packaged in the image, chart or Compose; "
+                f"see docs/deployment.md."
             )
         # Won the lock. Bump the fencing token under it, so the value is
         # monotonic across restarts and a stale holder is detectable (as long

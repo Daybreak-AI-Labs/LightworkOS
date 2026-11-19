@@ -120,7 +120,7 @@ kubectl create secret generic maverick-secrets \
 helm install maverick deploy/helm/maverick -f my-values.yaml
 ```
 Key `values.yaml` knobs: `image.{repository,tag}`, `replicaCount` (must remain
-1; scale remote workers separately), `worldModel.backend`, `persistence.{size,storageClass}`,
+1; remote workers are not packaged, see [Capacity and scaling](../deployment.md#capacity-and-scaling)), `worldModel.backend`, `persistence.{size,storageClass}`,
 `secret.data.*`, `env.*` (MAVERICK_ENTERPRISE, MAVERICK_OIDC_*, MAVERICK_TENANT_BY_USER),
 `ingress.{hosts,tls,annotations}`, and the `securityContext` block (already
 hardened: runAsNonRoot, drop ALL caps, fsGroup, seccomp RuntimeDefault).
@@ -355,7 +355,7 @@ What is enforced in code, and what remains the operator's responsibility.
 ### Known gaps
 | Area | Gap | Mitigation |
 |---|---|---|
-| Multi-replica control plane | Postgres centralizes the world model, but workflow releases/runs, A2A durable claims, audit/learning ledgers, and tenant-local policy files are not all transactionally shared. | Enforced at runtime: the control plane takes an exclusive lock on its data root at startup, and a second process refuses to serve and names the holder. Helm additionally refuses `replicaCount > 1` and control-plane HPA. Authenticated probe details report the replica-safety posture. Scale remote workers separately. |
+| Multi-replica control plane | Postgres centralizes the world model, but workflow releases/runs, A2A durable claims, audit/learning ledgers, and tenant-local policy files are not all transactionally shared. | Enforced at runtime: the control plane takes an exclusive lock on its data root at startup, and a second process refuses to serve and names the holder. Helm additionally refuses `replicaCount > 1` and control-plane HPA. Authenticated probe details report the replica-safety posture. Remote workers need Redis, the `queue` extra and Postgres, and are not packaged in the image or chart. |
 | MCP | Shared bearer grants full tool access; per-tenant gating only via Agent Trust Plane (opt-in). | `[agent_trust] enforce=true` with per-agent tokens. |
 | Plugins | Granted plugins run **in-process** — no runtime syscall/network sandbox (load-time grants only). | Vet + code-review allowlisted plugins. |
 | Local Firecracker | The local scaffold is unsupported; it does not qualify production execution and is not a silent Docker fallback. | Select and qualify a supported execution backend. Managed AWS requires the separate Kubernetes executor in [`deploy/aws/EXECUTOR.md`](../../deploy/aws/EXECUTOR.md). |

@@ -281,3 +281,83 @@ def test_complexity_waivers_do_not_grow():
     )
     assert f"{COMPLEXITY_WAIVER_CEILING} grandfathered" in _read("CLAUDE.md")
     assert f"the {COMPLEXITY_WAIVER_CEILING} functions already over it" in _read("pyproject.toml")
+
+
+def test_capacity_docs_describe_one_dashboard_process():
+    """deployment.md spoke of "Dashboard replicas" and configuration.md said to
+    raise the goal cap "on a beefy machine". The dashboard refuses more than one
+    worker (_server.py) and a second control plane (control_plane_lease.py), and
+    runs its goals in one process with one event loop, so more cores do not add
+    dashboard capacity."""
+    deployment = _read("docs/deployment.md")
+    assert "Dashboard replicas" not in deployment
+    section = deployment.split("## Capacity and scaling", 1)[1].split("\n## ", 1)[0]
+    assert "one event loop" in section
+    assert "`MAVERICK_REPLICA_COUNT` must stay `1`" in section
+    assert "beefy" not in _read("docs/configuration.md")
+    assert "scaling out (requires Postgres)" not in _read(
+        "deploy/observability/prometheus-rules.yaml")
+
+
+def test_remote_worker_mentions_say_they_are_not_packaged():
+    """Several docs said "scale remote workers" without saying how. The only
+    remote path is `[queue] backend = "arq"`, and nothing ships a worker: the
+    image does not install the `queue` extra and no chart or Compose file
+    defines one. Each mention must say so."""
+    dockerfile = _read("deploy/docker/Dockerfile")
+    extras = re.search(r"--core-extra\s+(\S+)", dockerfile)
+    assert extras is not None and "queue" not in extras.group(1).split(",")
+    shipped = [*(REPO_ROOT / "deploy/helm").rglob("*.yaml"),
+               *(REPO_ROOT / "deploy").rglob("docker-compose*.yml")]
+    assert shipped and not any("arq_worker" in path.read_text(encoding="utf-8") for path in shipped)
+    assert "Remote workers are not packaged" in _read("docs/deployment.md")
+    for relpath in ("docs/operations.md", "docs/multi-tenancy.md",
+                    "docs/enterprise/deployment-playbook.md",
+                    "deploy/postgres/README.md", "deploy/helm/README.md",
+                    "deploy/observability/runbook.md",
+                    "deploy/helm/maverick/values.yaml"):
+        text = _read(relpath)
+        assert "scale remote" not in text.lower(), relpath
+        assert "capacity-and-scaling" in text or "Capacity and scaling" in text, relpath
+
+
+def test_getting_started_names_the_provider_keys_path_doctor_names():
+    """getting-started.md sent owners to "Settings → Provider keys"; the section
+    sits under the Connections tab, which is the path `doctor` prints."""
+    assert "Settings > Connections > Provider keys" in _read(
+        "packages/maverick-core/maverick/health.py")
+    text = _read("docs/getting-started.md")
+    assert "**Settings → Provider keys**" not in text
+    assert "**Settings → Connections → Provider keys**" in text
+
+
+def test_operator_first_run_states_the_task_limit_setup_saves():
+    """operator-first-run.md said new setup generates no per-task dollar limit,
+    but `maverick init --fast` saves $2 and 30 minutes."""
+    wizard = _read("apps/installer-cli/maverick_installer/wizard/__init__.py")
+    assert '{"max_dollars": 2.0, "max_wall_seconds": 1800.0' in wizard
+    text = _read("docs/operator-first-run.md")
+    assert "does not generate a per-task dollar" not in text
+    assert "$2 and 30-minute limit for each task, and `--fast` saves it" in text
+
+
+def test_docker_docs_do_not_promise_an_automatic_init():
+    """The Dockerfile said the first run "drops you into `maverick init`", but
+    the image's CMD is `--help`, and deployment.md did not say the mounted
+    `config.toml` must exist (Docker turns a missing source into a directory)."""
+    dockerfile = _read("deploy/docker/Dockerfile")
+    assert 'CMD ["--help"]' in dockerfile
+    assert "drops you into" not in dockerfile and "helpfully points" not in dockerfile
+    docker = _read("docs/deployment.md").split("## Docker", 1)[1].split("\n## ", 1)[0]
+    assert "Both host paths must exist before the first run" in docker
+
+
+def test_docs_say_first_run_setup_saves_the_standard_task_limit():
+    """The owner chose that the dashboard's Save initial settings, like
+    `lightwork init --fast`, saves $2 and 30 minutes (task-limits.md)."""
+    routes = _read("packages/maverick-dashboard/maverick_dashboard/in_app_routes.py")
+    assert "max_dollars = {DEFAULT_MAX_DOLLARS!r}" in routes
+    overview = _read("docs/technical-overview.md")
+    assert "set no per-task limit" not in overview
+    assert "no per-task spending limit" not in overview
+    assert "**Save initial settings** save $2 and 30 minutes" in overview

@@ -513,9 +513,16 @@ async def settings_set_model_rate(request: Request) -> RedirectResponse:
     return RedirectResponse("/settings?saved=model_rate#settings-model-prices", status_code=303)
 
 
-SELF_HOSTED_LABELS = {"ollama": "Ollama", "vllm": "vLLM", "tgi": "Hugging Face TGI"}
+SELF_HOSTED_LABELS = {"ollama": "Ollama", "vllm": "vLLM", "tgi": "Hugging Face TGI",
+                      "openai_compatible": "OpenAI-compatible server"}
 SELF_HOSTED_STATE_WORDS = {"marked_free": "Marked free", "private": "Free: private address",
-                           "priced": "Charged at your set price", "ceiling": "Safety ceiling"}
+                           "priced": "Charged at your set price", "ceiling": "Safety ceiling",
+                           "needs_price": "Stops until you set a price or mark it free"}
+SELF_HOSTED_CHOICE = "Choose Ollama, vLLM, TGI or an OpenAI-compatible server."
+COMPATIBLE_NOT_PRIVATE = (
+    "Only an OpenAI-compatible server on this computer or your private network can be "
+    "marked free. This server's address is not, so set its price instead."
+)
 SELF_HOSTED_CONFIRM = "Confirm that you run this server or that it charges nothing."
 
 
@@ -529,7 +536,8 @@ def self_hosted_states() -> list[dict[str, str]]:
 
 
 def apply_self_hosted_free(request: Request, name: str, free: bool) -> dict:
-    """Mark an Ollama, vLLM or TGI server free, or charge it again.
+    """Mark an Ollama, vLLM, TGI or local OpenAI-compatible server free, or
+    charge it again.
 
     One path for the Settings form and the Copilot: an installation
     administrator only, an audited write, then a read-back of the price in
@@ -542,7 +550,12 @@ def apply_self_hosted_free(request: Request, name: str, free: bool) -> dict:
     from . import settings_store
 
     if name not in settings_store.SELF_HOSTED_PROVIDERS:
-        raise HTTPException(status_code=400, detail="Choose Ollama, vLLM or TGI.")
+        raise HTTPException(status_code=400, detail=SELF_HOSTED_CHOICE)
+    if free and name == "openai_compatible":
+        from maverick.budget import _is_private_endpoint, _self_hosted_endpoint
+
+        if not _is_private_endpoint(_self_hosted_endpoint(name)[0]):
+            raise HTTPException(status_code=409, detail=COMPATIBLE_NOT_PRIVATE)
 
     def effective_free() -> bool:
         return get_provider_config(name).get("price_per_mtok") == "free"
@@ -576,14 +589,14 @@ def apply_self_hosted_free(request: Request, name: str, free: bool) -> dict:
 
 @router.post("/settings/models/self-hosted-free")
 async def settings_self_hosted_free(request: Request) -> RedirectResponse:
-    """Mark an Ollama, vLLM or TGI server free, or charge it again."""
+    """Mark an Ollama, vLLM, TGI or local OpenAI-compatible server free, or charge it again."""
     _app()._require_same_origin(request)
     auth.require_global_permission(request, "admin")
     form = await request.form()
     name = str(form.get("provider", ""))
     free = form.get("free") == "on"
     if name not in SELF_HOSTED_LABELS:
-        raise HTTPException(status_code=400, detail="Choose Ollama, vLLM or TGI.")
+        raise HTTPException(status_code=400, detail=SELF_HOSTED_CHOICE)
     if free and form.get("confirm") != "on":
         raise HTTPException(status_code=400, detail=SELF_HOSTED_CONFIRM)
     await run_in_threadpool(apply_self_hosted_free, request, name, free)

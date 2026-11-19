@@ -223,6 +223,15 @@ def _route_configuration_missing(
         key = configured_key or _present(
             os.environ.get("OPENAI_COMPATIBLE_API_KEY")
         )
+        if base and not key:
+            # Same rule as the client: a key-less server is accepted only on
+            # this computer or a private network (LM Studio, llama.cpp).
+            from .enterprise import _is_local_endpoint
+
+            key = _is_local_endpoint(
+                str(table.get("base_url") or "").strip()
+                or os.environ.get("OPENAI_COMPATIBLE_BASE_URL", "").strip()
+            )
         return tuple(
             item
             for item, present in (("base_url", base), ("api_key", key))

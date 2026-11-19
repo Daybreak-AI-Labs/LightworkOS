@@ -219,7 +219,7 @@ OpenAI/Groq keys are configured.
 
 ## Changing models or providers
 
-After installation, open **Settings → Provider keys** or **Settings → Models**
+After installation, open **Settings → Connections → Provider keys** or **Settings → Models**
 to change these choices. The page identifies values controlled by the
 deployment; an installation administrator must change that source before the
 new value can take effect. See [`configuration.md`](./configuration.md) for the

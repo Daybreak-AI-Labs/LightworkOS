@@ -29,6 +29,7 @@ def _paths(monkeypatch, tmp_path):
     monkeypatch.setattr(wizard, "preflight", lambda: True)
     monkeypatch.setattr(wizard, "smoke_test", lambda: True)
     monkeypatch.setattr(wizard, "_docker_available", lambda: False)
+    monkeypatch.setattr(wizard, "_podman_available", lambda: False)
 
 
 def _write(monkeypatch, tmp_path, **overrides):

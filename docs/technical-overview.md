@@ -49,7 +49,7 @@ python benchmarks/eval_harness_overhead.py --verify-tracked-artifacts
 
 The [README quickstart](../README.md#quickstart) and [Install from source](source-install.md) have the install commands. What happens next:
 
-The first time you open the dashboard it asks you to create the owner account. It then shows a **Get started** page that offers to save initial settings (strict Shield, the shell and the main file-editing tools off, no per-task spending limit) and starts its checklist with connecting an AI provider. `lightwork init` is a separate terminal wizard with its own defaults ([below](#what-is-on-by-default)); it does not create the dashboard owner account.
+The first time you open the dashboard it asks you to create the owner account. It then shows a **Get started** page that offers to save initial settings (strict Shield, the shell and the main file-editing tools off, and the standard $2 and 30-minute limit for each task) and starts its checklist with connecting an AI provider. `lightwork init` is a separate terminal wizard with its own defaults ([below](#what-is-on-by-default)); it does not create the dashboard owner account.
 
 > [!WARNING]
 > **By default, agent commands run directly on this computer** (the `local` sandbox), with no isolation from its files or network. Each shell command waits for a person to approve that exact command (a headless run is denied), but an approved command runs with your account's access, and file tools change the work folder without asking. Use Docker or Podman (`--sandbox docker`) for any task you would not run yourself, and read the [execution posture](../SECURITY.md#execution-posture) first.
@@ -78,7 +78,7 @@ To reproduce the Approvals screenshot in the README: on the dashboard's **Learni
 | Connector writes to outside systems | Always wait for a person's approval | Cannot be turned off |
 | Web requests that send data (`http_fetch` with any method other than GET or HEAD, or with a body) | Always wait for a person's approval; plain GET and HEAD run without asking | Cannot be turned off |
 | Consent-gated actions rated high or critical risk | Ask a person (a headless run is denied); low and medium risk run without asking | `MAVERICK_CONSENT_MODE`, or enterprise mode (every gated action asks) |
-| Spending limit per task | $2 and 30 minutes while no config file exists. The wizard's consumer, express and advanced modes offer the same, another limit or none; `lightwork init --fast` and the dashboard's **Save initial settings** set no per-task limit | `--max-dollars`, `--max-wall-seconds`, `lightwork init` |
+| Spending limit per task | $2 and 30 minutes while no config file exists. The wizard's consumer, express and advanced modes offer the same, another limit or none; `lightwork init --fast` and the dashboard's **Save initial settings** save $2 and 30 minutes | `--max-dollars`, `--max-wall-seconds`, `lightwork init` |
 | Models without a verified price | Stop the run | `[budget] strict_pricing = false` for estimate-only pricing |
 | Signed audit log | On, with the signing key on this host | `MAVERICK_AUDIT_SIGNING_KEY` or `MAVERICK_AUDIT_SIGNING_KEY_WRAPPED` |
 | Encryption at rest (AES-256-GCM) | On for task content, memory, attachments and recall stores; not for the audit log (closed day-files are encrypted only when someone seals them, for example with `lightwork audit seal`; today's file never is), `config.toml` or `.env` | [encryption.md](encryption.md) |

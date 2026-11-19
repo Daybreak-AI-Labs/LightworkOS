@@ -452,3 +452,22 @@ def test_one_provider_state_matches_the_state_read_with_the_others(workspace):
     for name in KNOWN_PROVIDERS:
         assert together[name] == config.provider_configuration_state(name)
     assert config.provider_configuration_state(" Anthropic ")["configured"] is True
+
+
+def test_keyless_openai_compatible_server_on_this_computer_is_set_up(workspace):
+    # LM Studio and llama.cpp serve on loopback without a key, and the client
+    # accepts that; Settings must not call the saved address "Not set up".
+    from maverick_dashboard.provider_readiness import workspace_readiness
+
+    workspace('[providers.openai_compatible]\nbase_url = "http://127.0.0.1:1234/v1"\n')
+    row = _row(workspace_readiness(), "openai_compatible")
+    assert row["configured"] is True and row["status"] == "untested"
+    assert row["status_label"] == "Server address saved, not tested yet"
+
+
+def test_keyless_public_openai_compatible_gateway_is_not_set_up(workspace):
+    from maverick_dashboard.provider_readiness import workspace_readiness
+
+    workspace('[providers.openai_compatible]\nbase_url = "https://gateway.example.test/v1"\n')
+    row = _row(workspace_readiness(), "openai_compatible")
+    assert row["configured"] is False and row["status"] == "not_set_up"

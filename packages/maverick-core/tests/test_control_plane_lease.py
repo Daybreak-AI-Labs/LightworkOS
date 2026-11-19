@@ -101,6 +101,22 @@ def test_the_refusal_names_the_holder_and_what_is_at_stake(tmp_path) -> None:
     assert str(os.getpid()) in message, message
     assert "hash-chained" in message or "single author" in message, message
     assert "MAVERICK_HOME" in message, message
+    # The remedy must match docs/deployment.md: remote workers exist but are
+    # not packaged, so "scale remote workers" alone sent operators nowhere.
+    assert "Scale remote workers" not in message, message
+    assert '[queue] backend = "arq"' in message and "not packaged" in message, message
+
+
+def test_chart_refusals_give_the_remote_worker_status_the_docs_give() -> None:
+    texts = [(CHART / "templates" / name).read_text(encoding="utf-8")
+             for name in ("hpa.yaml", "_helpers.tpl")]
+    fails = [line for text in texts for line in text.splitlines() if "{{- fail" in line
+             and "replica" in line]
+    assert len(fails) == 3, fails
+    for line in fails:
+        assert "scale remote workers" not in line.lower(), line
+        assert "arq queue backend" in line, line
+        assert "not packaged" in line, line
 
 
 def test_the_root_is_released_when_the_holder_dies(tmp_path) -> None:
