@@ -437,6 +437,51 @@ def test_callback_records_pairwise_sub_in_subject_directory(
     assert sd.subs_for(["aad-oid-7"]) == {"pairwise-zzz"}
 
 
+def test_callback_keeps_sign_in_records_off_the_event_loop(login_env, client, monkeypatch, tmp_path):
+    # The name record and the subject directory each take a file lock and
+    # rewrite a shared file; on the event loop a held lock froze every request.
+    import threading
+
+    from maverick_dashboard import account_profiles
+    from maverick_dashboard import subject_directory as sd
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "home"))
+    state, _, nonce = _do_login(client)
+    threads: dict[str, int] = {}
+
+    async def _fake_exchange(url, *, cfg, code, code_verifier):
+        threads["loop"] = threading.get_ident()
+        return {"id_token": "fake.id.token"}
+
+    real_record, real_login = account_profiles.record_sign_in, sd.record_login
+
+    def recording_profile(*args, **kwargs):
+        threads["profile"] = threading.get_ident()
+        return real_record(*args, **kwargs)
+
+    def recording_login(*args, **kwargs):
+        threads["directory"] = threading.get_ident()
+        return real_login(*args, **kwargs)
+
+    monkeypatch.setattr(account_profiles, "record_sign_in", recording_profile)
+    monkeypatch.setattr(sd, "record_login", recording_login)
+    monkeypatch.setattr(ol, "_exchange_code_for_tokens", _fake_exchange)
+    monkeypatch.setattr(
+        ol, "verify_oidc_token",
+        lambda token: VerifiedPrincipal(
+            sub="pairwise-off-loop", issuer=ISSUER, audience="maverick",
+            claims={"sub": "pairwise-off-loop", "email": "dana@example.com",
+                    "email_verified": True, "name": "Dana Lee", "nonce": nonce},
+        ),
+    )
+    resp = client.get(f"/auth/callback?code=c&state={state}", follow_redirects=False)
+    assert resp.status_code == 303
+    assert set(threads) == {"loop", "profile", "directory"}
+    assert threads["profile"] != threads["loop"]
+    assert threads["directory"] != threads["loop"]
+    assert account_profiles.get("user:pairwise-off-loop")["name"] == "Dana Lee"
+
+
 def test_logout_clears_session(login_env, client):
     confirmation = client.get("/auth/logout", follow_redirects=False)
     assert confirmation.status_code == 200 and "set-cookie" not in confirmation.headers
