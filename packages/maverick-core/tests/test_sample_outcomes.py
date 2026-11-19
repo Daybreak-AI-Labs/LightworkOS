@@ -332,3 +332,26 @@ def test_the_brief_asks_for_exact_comparison_not_by_eye():
     brief = so.goal_description("finance")
     assert "spreadsheet_read op=query" in brief and "not by eye" in brief
     assert "INV-1043" not in brief and "A correct result" not in brief
+
+
+def test_only_csv_samples_are_told_to_query_and_none_are_told_to_ask():
+    # Live: Tax (Markdown files) went looking for CSV files the brief named, and
+    # Security, HR and Customer support stopped to ask a "governance" question
+    # their sample does not need.
+    assert "op=query" not in so.goal_description("tax")
+    for department in DEPARTMENTS:
+        assert "do not ask questions" in so.goal_description(department)
+
+
+def test_a_sample_run_gets_no_decision_rules(tmp_path):
+    # The standing "some choices need a person; call request_decision" block
+    # made Customer support, Security and HR samples stop to ask a governance
+    # question the sample does not need. Ordinary tasks keep it.
+    from maverick.orchestrator import _brief_decisions_block
+    from maverick.world_model import WorldModel
+
+    world = WorldModel(tmp_path / "w.db")
+    sample = world.create_goal(so.SAMPLE_TITLE_PREFIX + "Tell me what drives tickets", "")
+    ordinary = world.create_goal("Tell me what drives tickets", "")
+    assert "request_decision" not in _brief_decisions_block(world, sample, None)
+    assert "request_decision" in _brief_decisions_block(world, ordinary, None)

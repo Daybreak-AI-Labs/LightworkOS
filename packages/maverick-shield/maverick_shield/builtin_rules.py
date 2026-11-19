@@ -467,12 +467,14 @@ RULES: list[Rule] = [
          _compile(r"\b(print|repeat|output|show|reveal|echo|paste|reproduce|quote)\b[\s\S]{0,40}?\b(verbatim|word[\s-]for[\s-]word|line[\s-]for[\s-]line|exact\s+text|everything\s+(above|that\s+appears)|hidden\s+(directive|instruction|prompt)|configuration\s+block)"),
          "System-prompt extraction: dump hidden/preceding text verbatim"),
 
-    # Secret exfiltration — name a credential AND move it out (either order).
+    # Secret exfiltration — name a credential AND move it out (either order),
+    # on one line: across a line break a table row ending "Password reset"
+    # met the next row's "email" channel and blocked ordinary ticket exports.
     Rule("secret_exfil_request", "critical",
-         _compile(r"\b(api[\s_-]?(key|token)|access[\s_-]?token|secret|credential|password|private\s+key|\.env\b|config\.toml|/\.aws/|id_rsa)\b[\s\S]{0,60}?\b(include|return|reply|print|show|reveal|paste|email|send|upload|post|exfil|leak|give\s+me)"),
+         _compile(r"\b(api[\s_-]?(key|token)|access[\s_-]?token|secret|credential|password|private\s+key|\.env\b|config\.toml|/\.aws/|id_rsa)\b[^\n]{0,60}?\b(include|return|reply|print|show|reveal|paste|email|send|upload|post|exfil|leak|give\s+me)"),
          "Credential exfiltration request"),
     Rule("secret_exfil_request_rev", "critical",
-         _compile(r"\b(read|fetch|get|dump|cat|summari[sz]e|print|reveal|leak|exfil\w*|send|email|forward|post|upload|transmit)\b[\s\S]{0,40}?\b(environment\s+variable|env\s+var|api[\s_-]?(key|token)|secret|credential|password|private\s+key|\.env\b|config\.toml|/\.aws/|id_rsa)"),
+         _compile(r"\b(read|fetch|get|dump|cat|summari[sz]e|print|reveal|leak|exfil\w*|send|email|forward|post|upload|transmit)\b[^\n]{0,40}?\b(environment\s+variable|env\s+var|api[\s_-]?(key|token)|secret|credential|password|private\s+key|\.env\b|config\.toml|/\.aws/|id_rsa)"),
          "Credential read/exfiltration request"),
 
     # Indirect / tool-output injection — content addressing the agent.

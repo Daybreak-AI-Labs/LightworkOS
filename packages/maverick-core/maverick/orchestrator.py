@@ -2287,13 +2287,22 @@ def _handle_root_error(*, result: Any, world: WorldModel, goal: Any, goal_id: in
 
 
 
+def _is_sample_run(world: Any, goal_id: int) -> bool:
+    from .sample_outcomes import is_sample_goal
+
+    goal = world.get_goal(goal_id)
+    return goal is not None and is_sample_goal(world, goal)
+
+
 def _brief_decisions_block(world: Any, goal_id: int, shield: Any) -> str:
     """The areas that always need a person, and the decisions people made for
     this run, as structured records (never a free-text answer to reinterpret)."""
     from . import decision_requests
 
     try:
-        rules = "\n" + decision_requests.rules_text() + "\n"
+        # A starter-team sample runs on bundled made-up files, takes no action
+        # and needs no decision; the rules made samples stop to ask one.
+        rules = "" if _is_sample_run(world, goal_id) else "\n" + decision_requests.rules_text() + "\n"
     except Exception:  # pragma: no cover -- never block a run on this
         rules = ""
     made = decision_requests.brief_block(
