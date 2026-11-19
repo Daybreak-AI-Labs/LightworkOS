@@ -23,7 +23,10 @@ def _app():
 
 
 def _principal(request: Request) -> str:
-    with auth.fresh_configuration():
+    """Re-check the person now; one decision with one current configuration read."""
+    from maverick.config import single_read
+
+    with auth.fresh_configuration(), single_read(fresh=True):
         return _fresh_principal(request)
 
 

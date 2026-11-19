@@ -293,3 +293,34 @@ def test_the_chat_page_works_out_ai_readiness_once(signed_in, monkeypatch):
     calls.clear()
     assert signed_in.client.get("/").status_code == 200
     assert len(calls) == 1  # the next request works it out again
+
+
+def test_each_account_recheck_reads_the_configuration_once(signed_in, monkeypatch):
+    # The Chat choices re-check the person's session, workspace and role
+    # before and after they read; each re-check asked the configuration again
+    # for every part of it.
+    from maverick import config
+    from maverick_dashboard import preferences_api, task_model_selection_api
+
+    _ai_service_saved()
+    inside, checks = [], []
+    real_witness = config._read_witness
+    monkeypatch.setattr(config, "_read_witness",
+                        lambda: (checks[-1].append(1) if inside else None) or real_witness())
+
+    def watched(real):
+        def call(request, *args, **kwargs):
+            inside.append(1)
+            checks.append([])
+            try:
+                return real(request, *args, **kwargs)
+            finally:
+                inside.pop()
+        return call
+
+    monkeypatch.setattr(task_model_selection_api, "current_authority",
+                        watched(task_model_selection_api.current_authority))
+    monkeypatch.setattr(preferences_api, "_fresh_principal", watched(preferences_api._fresh_principal))
+    _sign_in(signed_in.client)
+    assert signed_in.client.get("/").status_code == 200
+    assert checks and all(len(made) <= 1 for made in checks), [len(made) for made in checks]
