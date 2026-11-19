@@ -31,6 +31,7 @@ from typing import Any
 from .file_lock import ensure_private_directory, ensure_private_file
 from .paths import canonical_tenant_id
 from .sqlite_closing import ClosingConnection
+from .sqlite_initialized import InitializedFiles
 from .trc_evidence_collectors import (
     CollectionRequest,
     CollectorRegistry,
@@ -410,6 +411,10 @@ def _record_payload(
     return payload
 
 
+#: Files whose schema script already ran in this process (see sqlite_initialized).
+_INITIALIZED = InitializedFiles()
+
+
 class ContinuousEvidenceStore:
     """Private per-tenant SQLite authority for continuous evidence."""
 
@@ -449,8 +454,12 @@ class ContinuousEvidenceStore:
             _MAX_RETENTION_SECONDS,
         )
         ensure_private_directory(self.path.parent)
-        self._initialize()
-        ensure_private_file(self.path)
+        # The script writes: run per construction, a page's list reads each
+        # waited (up to the busy timeout) behind any writer.
+        if not _INITIALIZED.current(self.path):
+            self._initialize()
+            ensure_private_file(self.path)
+            _INITIALIZED.remember(self.path)
 
     @property
     def tenant_id(self) -> str:
