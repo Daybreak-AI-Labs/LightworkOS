@@ -602,10 +602,14 @@ def administration_employee(request: Request, owner: str):
 
 
 def navigation_available(request, *, admin=False):
-    """Use the page's current named-member gate for advisory shell links."""
+    """Use the page's current named-member gate for advisory shell links.
+
+    No authority fence: the answer only shows or hides a link, and the page
+    and every action still check under the fence. Taking it here cost a lock
+    file round trip twice per page and held each page behind any authority
+    change in progress."""
     try:
-        with authority_effect_fence():
-            _authority(request, admin=admin)
+        _authority(request, admin=admin)
         return True
     except (HTTPException, OSError, ValueError):
         return False

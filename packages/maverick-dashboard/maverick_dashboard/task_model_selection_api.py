@@ -42,10 +42,13 @@ def selection(request, model="", effort="", context="", *, request_identity=None
 
 
 def current_authority(request):
+    """Re-check the session, identity, workspace and role now. One decision:
+    its parts share one current read of the configuration."""
+    from maverick.config import single_read
     from maverick.paths import current_tenant_id_strict
 
     from .api_flow_operator_review import _workspace_authority
-    with auth.fresh_configuration():
+    with auth.fresh_configuration(), single_read(fresh=True):
         principal = getattr(request.state, "principal", None)
         via = (getattr(principal, "claims", None) or {}).get("via")
         refresh = {"session": auth._session_principal, "invite": auth._invite_session_principal,

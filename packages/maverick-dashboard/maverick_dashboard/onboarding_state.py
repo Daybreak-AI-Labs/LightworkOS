@@ -87,13 +87,23 @@ def workspace_readiness() -> dict[str, Any]:
     return _workspace_readiness()
 
 
+def page_workspace_readiness() -> dict[str, Any]:
+    """:func:`workspace_readiness` for a page view: the home page's redirect
+    and the Chat page it then shows share one answer within a request (it took
+    about 270 file operations each). The next request works it out again."""
+    from ._request_memo import memoized
+
+    return memoized("page_workspace_readiness", workspace_readiness)
+
+
 def selected_model_routes_ready() -> bool:
     """Whether AI work may start: the workspace verdict is not ``not_ready``.
 
     A saved-but-untested key (``needs_test``) still admits work, exactly as
-    goal submission does; only a missing, blocked or failed provider blocks."""
+    goal submission does; only a missing, blocked or failed provider blocks.
+    Asked by the home page before it shows Chat (see page_workspace_readiness)."""
 
-    return workspace_readiness()["verdict"] != "not_ready"
+    return page_workspace_readiness()["verdict"] != "not_ready"
 
 
 def _has_user_template() -> bool:
@@ -402,4 +412,5 @@ def build(
     }
 
 
-__all__ = ["build", "selected_model_route_state", "selected_model_routes_ready", "workspace_readiness"]
+__all__ = ["build", "page_workspace_readiness", "selected_model_route_state", "selected_model_routes_ready",
+           "workspace_readiness"]

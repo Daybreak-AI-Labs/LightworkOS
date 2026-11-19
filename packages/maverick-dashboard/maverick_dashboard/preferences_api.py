@@ -23,7 +23,10 @@ def _app():
 
 
 def _principal(request: Request) -> str:
-    with auth.fresh_configuration():
+    """Re-check the person now; one decision with one current configuration read."""
+    from maverick.config import single_read
+
+    with auth.fresh_configuration(), single_read(fresh=True):
         return _fresh_principal(request)
 
 
@@ -93,17 +96,15 @@ def _current_state(request: Request, thread: int | None = None, *, choices: bool
                       (["organization"] if auth.has_global_permission(request, "admin") else [])}
 
 
-def personal_specialist_default(request) -> str:
-    """Only the person's saved name; publication and execution remain separate."""
-    from .task_model_selection_api import current_authority
-    with auth.fresh_configuration():
-        current_authority(request)
-        context, principal = context_for(request), auth.caller_principal(request)
-        name = preferences.state(principal)["values"]["chat_specialist"] if principal and preferences.enabled() else ""
-        current_authority(request)
-        if context != context_for(request):
-            raise HTTPException(409, "Your account or workspace changed while your Chat default was read.")
-        return name
+def saved_chat_specialist(request) -> str:
+    """Only the person's saved name; publication and execution remain separate.
+
+    Read inside the caller's own authority re-check: the specialist choices
+    re-check the account and compare the workspace context before and after
+    this read (a second re-check pair nested inside cost about 90 file
+    operations on every Chat page)."""
+    principal = auth.caller_principal(request)
+    return preferences.state(principal)["values"]["chat_specialist"] if principal and preferences.enabled() else ""
 
 
 @router.get('/preferences')

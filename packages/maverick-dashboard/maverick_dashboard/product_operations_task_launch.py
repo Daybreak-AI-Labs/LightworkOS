@@ -60,13 +60,13 @@ def _published_specialists(request, *, only=None, revisions=True):
     from maverick.domain import enabled_domains, suites_for_domain
 
     from .plain_labels import pack_display_name
-    from .preferences_api import personal_specialist_default
+    from .preferences_api import saved_chat_specialist
     from .task_model_selection_api import current_authority
 
     current_authority(request)
     current = context_for(request)
     allowed = auth.caller_suites(request)
-    personal_default = personal_specialist_default(request)
+    personal_default = saved_chat_specialist(request)  # inside this re-check pair
     wanted = None if only is None else only(personal_default)
     choices = []
     for name, profile in sorted(enabled_domains().items()):

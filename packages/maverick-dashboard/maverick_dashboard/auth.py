@@ -560,7 +560,13 @@ def _tenant_pin_choice(request: Request, principal: VerifiedPrincipal) -> tuple[
 
     Reads the configuration, the workspace selection, the tenant roster and
     the membership, so the request dependency runs it in the thread pool.
+    One decision: its configuration questions share one current read.
     """
+    with single_read(fresh=True):
+        return _tenant_pin_choice_now(request, principal)
+
+
+def _tenant_pin_choice_now(request: Request, principal: VerifiedPrincipal) -> tuple[str, str] | None:
     try:
         from maverick.paths import current_tenant_id, tenant_by_user_enabled
 
@@ -1540,16 +1546,18 @@ def _enforce_workspace_policies(connection, principal) -> None:
     """Policies that need the caller's workspace: its allowed addresses and
     its second-factor requirement (the workspace's config overlay is active
     once the tenant is pinned). Sign-in bootstrap and sign-out paths are
-    skipped so a refused session can still end itself."""
+    skipped so a refused session can still end itself. One gate: both read
+    the current configuration once (``single_read(fresh=True)``)."""
     path = route_path(connection)
     if _self_authenticated_path(path):
         return
     from .ip_allowlist import BLOCKED_MESSAGE, workspace_allows
     from .mfa_policy import enforce_session_policy
 
-    if not workspace_allows(connection):
-        raise HTTPException(status_code=403, detail=BLOCKED_MESSAGE)
-    enforce_session_policy(principal)
+    with single_read(fresh=True):
+        if not workspace_allows(connection):
+            raise HTTPException(status_code=403, detail=BLOCKED_MESSAGE)
+        enforce_session_policy(principal)
 
 
 def _bind_principal(connection, principal):
