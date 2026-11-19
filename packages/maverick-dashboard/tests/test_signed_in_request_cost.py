@@ -324,3 +324,16 @@ def test_each_account_recheck_reads_the_configuration_once(signed_in, monkeypatc
     _sign_in(signed_in.client)
     assert signed_in.client.get("/").status_code == 200
     assert checks and all(len(made) <= 1 for made in checks), [len(made) for made in checks]
+
+
+def test_the_specialist_choices_recheck_authority_before_and_after_only(signed_in, monkeypatch):
+    from maverick_dashboard import task_model_selection_api
+
+    _ai_service_saved()
+    calls = []
+    real = task_model_selection_api.current_authority
+    monkeypatch.setattr(task_model_selection_api, "current_authority",
+                        lambda request: calls.append(1) or real(request))
+    _sign_in(signed_in.client)
+    assert signed_in.client.get("/chat").status_code == 200
+    assert len(calls) == 2, len(calls)
