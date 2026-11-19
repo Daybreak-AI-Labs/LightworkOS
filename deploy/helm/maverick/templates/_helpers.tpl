@@ -41,8 +41,8 @@ The dashboard/serve process still owns durable file-backed control-plane state
 outside the world model (flow releases/runs, A2A task claims, audit/learning
 ledgers, and tenant-local policy files). Postgres makes the world model safe to
 share, but it does not make those stores replica-safe. Refuse a topology that
-could split approval/idempotency authority across pods. Scale remote workers
-separately until every control-plane store has a shared transactional backend.
+could split approval/idempotency authority across pods. Remote workers (the arq
+queue backend) exist but are not packaged in this chart; see docs/deployment.md.
 */}}
 {{- define "maverick.validate" -}}
 {{- if not .Values.persistence.enabled -}}
@@ -57,9 +57,9 @@ separately until every control-plane store has a shared transactional backend.
 {{- end -}}
 {{- end -}}
 {{- if gt (int .Values.replicaCount) 1 -}}
-{{- fail "replicaCount > 1 is not supported for the Lightwork control plane: Postgres centralizes the world model, but flows, A2A idempotency, audit, and learning state remain tenant-local. Run one dashboard/serve replica and scale remote workers separately." -}}
+{{- fail "replicaCount > 1 is not supported for the Lightwork control plane: Postgres centralizes the world model, but flows, A2A idempotency, audit, and learning state remain tenant-local. Run one dashboard/serve replica. Remote workers (the arq queue backend) exist but are not packaged in this chart, the image or Compose; see docs/deployment.md." -}}
 {{- end -}}
 {{- if .Values.autoscaling.enabled -}}
-{{- fail "autoscaling.enabled is not supported for the Lightwork control plane until all durable flow/A2A/audit/learning stores are shared transactionally. Run one dashboard/serve replica and scale remote workers separately." -}}
+{{- fail "autoscaling.enabled is not supported for the Lightwork control plane until all durable flow/A2A/audit/learning stores are shared transactionally. Run one dashboard/serve replica. Remote workers (the arq queue backend) exist but are not packaged in this chart, the image or Compose; see docs/deployment.md." -}}
 {{- end -}}
 {{- end -}}

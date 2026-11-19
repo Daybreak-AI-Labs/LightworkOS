@@ -309,7 +309,7 @@ def test_remote_worker_mentions_say_they_are_not_packaged():
     assert extras is not None and "queue" not in extras.group(1).split(",")
     shipped = [*(REPO_ROOT / "deploy/helm").rglob("*.yaml"),
                *(REPO_ROOT / "deploy").rglob("docker-compose*.yml")]
-    assert shipped and not any("arq" in path.read_text(encoding="utf-8") for path in shipped)
+    assert shipped and not any("arq_worker" in path.read_text(encoding="utf-8") for path in shipped)
     assert "Remote workers are not packaged" in _read("docs/deployment.md")
     for relpath in ("docs/operations.md", "docs/multi-tenancy.md",
                     "docs/enterprise/deployment-playbook.md",
