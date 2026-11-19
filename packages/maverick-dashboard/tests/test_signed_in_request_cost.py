@@ -326,6 +326,18 @@ def test_each_account_recheck_reads_the_configuration_once(signed_in, monkeypatc
     assert checks and all(len(made) <= 1 for made in checks), [len(made) for made in checks]
 
 
+def test_the_chat_page_cost_is_pinned(signed_in, monkeypatch):
+    # Chat is the first page every person sees. Its AI readiness, specialist
+    # choices and account re-checks each asked the configuration again.
+    _ai_service_saved()
+    _sign_in(signed_in.client)
+    cost = _Cost(monkeypatch, signed_in.home)
+    response = cost.measure(signed_in.client, "/")
+    assert response.status_code == 200, response.headers.get("location")
+    assert cost.checks <= 26, cost.checks  # 136 at the start of this work
+    assert cost.ops <= 560, cost.ops  # 999 at the start of this work
+
+
 def test_the_specialist_choices_recheck_authority_before_and_after_only(signed_in, monkeypatch):
     from maverick_dashboard import task_model_selection_api
 

@@ -11528,16 +11528,26 @@ async def shield_calibration_api() -> JSONResponse:
 def chat_page(request: Request, compose: str = "") -> HTMLResponse:
     """Chat. ``?compose=form`` shows the task builder's form (the Task builder
     page's job in the job-named navigation): the same fields, checks and
-    submit, under that page's own check."""
+    submit, under that page's own check.
+
+    The page's display settings (spending limits, examples, threads, director
+    choices) share one read of the configuration, as a render does; every
+    permission and account check on it still reads the current files."""
+    from maverick.config import single_read
+
+    compose_form = compose == "form"
+    if compose_form:
+        require_page_visible(request, "/goal-builder")
+    with single_read():
+        return _chat_page_now(request, compose_form)
+
+
+def _chat_page_now(request: Request, compose_form: bool) -> HTMLResponse:
     from maverick import flow
     from maverick.runner import configured_max_dollars, configured_max_wall_seconds
 
     from .api import task_limit_ceilings
     from .onboarding_state import page_workspace_readiness
-
-    compose_form = compose == "form"
-    if compose_form:
-        require_page_visible(request, "/goal-builder")
 
     workspace = page_workspace_readiness()
     w = _world()
