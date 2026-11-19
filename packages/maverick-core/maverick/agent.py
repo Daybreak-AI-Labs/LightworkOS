@@ -2490,6 +2490,28 @@ class Agent:
             core -= hidden
         return core, hidden
 
+    def _skill_query(self) -> str:
+        """The text skills are matched against.
+
+        The root agent's brief is the person's task plus standing text (the
+        decision rules, approved instruction changes, facts, the "decompose
+        and spawn workers" instruction). Matching skills against all of it
+        recalled compliance skills into every task: on one installation
+        ``ai-act-conformity-check`` reached 79 of about 92 mostly one-line
+        tasks, and "Reply with only the number 4." got it and
+        ``crisis-management-playbook`` instead of a matching learned skill.
+        The root matches the task's own title and description; sub-agents
+        keep their own task brief."""
+        if self.depth == 0:
+            try:
+                goal = self.ctx.world.get_goal(self.ctx.goal_id)
+                text = "\n".join(part for part in (goal.title, goal.description) if part)
+                if text.strip():
+                    return text
+            except Exception:  # noqa: BLE001 -- no record: fall back to the brief
+                pass
+        return self.brief
+
     def _build_system(self) -> str:
         self._instruction_source_goals = set()
         self._instruction_capture_ready = True
@@ -2553,7 +2575,7 @@ class Agent:
         # renders + returns the recalled skills; the stats/ctx bookkeeping stays
         # here, all-or-nothing inside one fail-safe block, exactly as before.
         base, _skills = apply_skill_overlays(
-            base, brief=self.brief, use_skills=self.ctx.use_skills,
+            base, brief=self._skill_query(), use_skills=self.ctx.use_skills,
             depth=self.depth)
         if _skills:
             try:
