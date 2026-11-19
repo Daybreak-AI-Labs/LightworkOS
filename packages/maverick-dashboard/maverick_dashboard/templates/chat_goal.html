@@ -781,6 +781,9 @@
       // The plain-language stop for a stopped run (kind, message, action,
       // link). Payloads refresh it; the raw result is never put on the page.
       let lastStop = {{ stop|tojson }};
+      // The page's own stop carries the exact technical text for those allowed
+      // to see it; live updates carry only the plain stop.
+      const renderedStop = lastStop;
       statusEl.dataset.stopKind = (lastStop && lastStop.kind) || '';
       const SHOW_TECHNICAL = {{ (show_technical_details|default(false))|tojson }};
 
@@ -938,7 +941,12 @@
         if (budget) budget.hidden = s.kind !== 'spending_limit';
         const technical = document.getElementById('halt-technical');
         if (technical) {
-          const text = SHOW_TECHNICAL ? (s.technical != null ? s.technical : lastResult) : '';
+          // Same stop as the page was served with: keep its exact text. A new
+          // stop that arrived live has none here (reload to see it); never
+          // show its plain message as if it were the technical detail.
+          const sameStop = renderedStop && renderedStop.kind === s.kind && renderedStop.message === s.message;
+          const text = !SHOW_TECHNICAL ? '' : s.technical != null ? s.technical
+            : !s.kind ? lastResult : sameStop ? (renderedStop.technical || '') : '';
           document.getElementById('halt-technical-text').textContent = text || '';
           technical.hidden = !text;
         }
