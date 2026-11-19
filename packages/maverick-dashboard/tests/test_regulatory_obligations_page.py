@@ -107,3 +107,39 @@ def test_page_renders_in_the_worker_pool_not_on_the_event_loop() -> None:
     endpoints = [route.endpoint for route in router.routes if getattr(route, "path", None) == page.PAGE_PATH]
     assert endpoints
     assert not any(inspect.iscoroutinefunction(endpoint) for endpoint in endpoints)
+
+
+def test_a_refused_update_feed_is_released_so_the_page_settles() -> None:
+    """With the regulatory feed off, its notices list answers 403. The page
+    read only the status and left the body unread, so the request never
+    finished and the page never reached network idle."""
+    import json
+    import re
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is unavailable")
+    source = (
+        Path(__file__).resolve().parents[1] / "maverick_dashboard" / "static"
+        / "lightwork-regulatory-obligations.js"
+    ).read_text(encoding="utf-8")
+    match = re.search(r"\n  async function readJson\(response\) \{\n.*?\n  \}\n", source, re.DOTALL)
+    assert match
+    harness = match.group(0) + """
+var maxResponseBytes = 1024;
+var released = false;
+var body = new ReadableStream({
+  start(controller) { controller.enqueue(new TextEncoder().encode('{"detail":"off"}')); },
+  cancel() { released = true; },
+});
+readJson(new Response(body, { status: 403 })).then(
+  function () { console.log(JSON.stringify({ thrown: false, released: released })); },
+  function (failure) { console.log(JSON.stringify({ thrown: true, status: failure.status, released: released })); });
+"""
+    completed = subprocess.run(  # noqa: S603 - exact local interpreter
+        [node, "-e", harness], capture_output=True, check=False, text=True, timeout=30,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {"thrown": True, "status": 403, "released": True}
