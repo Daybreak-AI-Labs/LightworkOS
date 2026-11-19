@@ -932,7 +932,8 @@ scopes = "openid"   # default "openid email profile"; MAVERICK_OIDC_SCOPES wins
 
 Company sign-in (OIDC) keeps the display name and the verified email the
 provider reports, so approvals, settings history and the Activity log name
-people instead of "Google account". Turn it off with:
+people instead of "Google account". Setup asks about this when you turn on
+the built-in browser login. Turn it off with:
 
 ```toml
 [auth]

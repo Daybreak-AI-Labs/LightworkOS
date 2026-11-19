@@ -274,6 +274,13 @@ def pick_oidc() -> dict[str, Any]:
                 "session_secret": session_secret,
             }
         )
+        # Written as [auth] remember_account_names; read by the dashboard's
+        # account_profiles. The record is erased with the account.
+        result["remember_account_names"] = _q_confirm(
+            "    Show people by the name and verified email their company sign-in reports? "
+            "Lightwork keeps them on this installation and erases them with the account.",
+            default=True,
+        )
     return result
 
 
@@ -3755,6 +3762,12 @@ def _cfg_advanced_oidc(advanced: dict[str, Any]) -> list[str]:
             val = oidc.get(key)
             if val:
                 _emit_kv(lines, key, val)
+        if "remember_account_names" in oidc:
+            # The only [auth] key the installer writes; read by the dashboard's
+            # account_profiles (MAVERICK_REMEMBER_ACCOUNT_NAMES wins).
+            lines.append("")
+            lines.append("[auth]")
+            _emit_kv(lines, "remember_account_names", bool(oidc["remember_account_names"]))
     return lines
 
 
