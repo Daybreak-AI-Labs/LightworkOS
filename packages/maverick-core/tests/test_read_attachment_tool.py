@@ -146,3 +146,36 @@ def test_read_pdf_opens_its_goals_attachment_by_the_listed_path(tmp_path, monkey
     assert "3 hours 20 minutes" in read_pdf(sandbox, world=world, goal_id=gid).fn({"source": str(rec.path)})
     refused = read_pdf(sandbox, world=world, goal_id=other).fn({"source": str(rec.path)})
     assert refused.startswith("ERROR: could not read PDF")
+
+
+def _long_report(tmp_path):
+    world = WorldModel(tmp_path / "w.db")
+    gid = world.create_goal("g", "")
+    filler = "\n".join(f"Paragraph {n}: inventory forecast supplier review." for n in range(4000))
+    body = filler + "\nThe forklift battery order BAT-77341 ships from Leeds.\n" + filler
+    rec = att.store(gid, "long-report.txt", "text/plain", body.encode(), root=tmp_path / "a")
+    aid = world.add_attachment(gid, rec.filename, rec.mime, rec.size_bytes, rec.sha256, str(rec.path))
+    return read_attachment_tool(world, gid), aid, body
+
+
+def test_a_long_attachment_can_be_searched_without_running_a_command(tmp_path):
+    # Seen live: a 333 KB report was cut at 100,000 characters, and the only
+    # way to the rest was a shell grep that waited on an approval.
+    tool, aid, body = _long_report(tmp_path)
+    assert len(body) > 200_000
+    first = tool.fn({"id": aid})
+    assert "BAT-77341" not in first
+    assert "pass offset=100000 to continue" in first
+    found = tool.fn({"id": aid, "search": "forklift battery"})
+    assert "BAT-77341 ships from Leeds" in found
+    assert found.splitlines()[0].startswith("1 line matches")
+    assert "no line matches" in tool.fn({"id": aid, "search": "zeppelin"})
+
+
+def test_a_long_attachment_reads_on_from_an_offset(tmp_path):
+    tool, aid, body = _long_report(tmp_path)
+    at = body.index("BAT-77341")
+    window = tool.fn({"id": aid, "offset": at - 10})
+    assert "BAT-77341" in window[:200]
+    assert tool.fn({"id": aid, "offset": len(body) + 5}).startswith("ERROR: offset")
+    assert tool.fn({"id": aid, "offset": "x"}).startswith("ERROR: offset")

@@ -83,7 +83,8 @@ def read_attachment_tool(world, goal_id: int | None, sandbox=None) -> Tool:
             return f"ERROR: no attachment {wanted} on this goal"
         from ..attachments import READABLE_TEXT_MIMES, read_bytes
         if match.mime == "application/pdf":
-            return _pdf_attachment_text(match, args.get("pages"), sandbox)
+            text = _pdf_attachment_text(match, args.get("pages"), sandbox)
+            return text if text.startswith("ERROR:") else _window(text, args)
         if not match.mime.startswith(READABLE_TEXT_MIMES):
             return (f"ERROR: {match.filename} is {match.mime}; pass an image's path to "
                     "view_image, and read a document through its .extracted.txt "
@@ -94,15 +95,15 @@ def read_attachment_tool(world, goal_id: int | None, sandbox=None) -> Tool:
             return f"ERROR: {match.filename} could not be read: {exc}"
         if args.get("sql"):
             return query_table(match.filename, match.mime, text, str(args["sql"]))
-        if len(text) > _MAX_READ_CHARS:
-            return text[:_MAX_READ_CHARS] + f"\n... [truncated, total {len(text)} chars]"
-        return text
+        return _window(text, args)
 
     return Tool(
         name="read_attachment",
         description=("Read the text of one file the user uploaded with this goal, "
                      "by the id `list_attachments` returns. A PDF returns its page text; "
                      "pass `pages` (for example '1-3,7') to read part of a long one. "
+                     "A long file returns its first 100,000 characters: pass `search` "
+                     "to get every line containing a phrase, or `offset` to read on. "
                      "For a CSV file, pass `sql`: "
                      "one read-only SELECT over the table `data` (its columns are the "
                      "header row). Use it for totals, counts and averages instead of "
@@ -112,7 +113,11 @@ def read_attachment_tool(world, goal_id: int | None, sandbox=None) -> Tool:
                                      "sql": {"type": "string",
                                              "description": "Optional. One SELECT over `data` for a CSV."},
                                      "pages": {"type": "string",
-                                               "description": "Optional. PDF page ranges, for example '1-3,7'."}},
+                                               "description": "Optional. PDF page ranges, for example '1-3,7'."},
+                                     "search": {"type": "string",
+                                                "description": "Optional. Return only the lines containing this text (case-insensitive)."},
+                                     "offset": {"type": "integer",
+                                                "description": "Optional. Character position to start reading from."}},
                       "required": ["id"]},
         fn=fn,
     )
@@ -129,7 +134,41 @@ def _pdf_attachment_text(match, pages, sandbox=None) -> str:
         data = read_bytes(match.path)
     except (OSError, ValueError, AttachmentRejected) as exc:
         return f"ERROR: {match.filename} could not be read: {exc}"
-    return pdf_text(data, pages=pages or "", max_chars=_MAX_READ_CHARS, sandbox=sandbox)
+    return pdf_text(data, pages=pages or "", max_chars=_MAX_PDF_CHARS, sandbox=sandbox)
+
+
+_MAX_PDF_CHARS = 1_000_000  # whole-document text, so search and offset reach every page
+_MAX_MATCHES = 50
+_MAX_MATCH_LINE = 500
+
+
+def _window(text: str, args: dict) -> str:
+    """The part of ``text`` the call asked for: matching lines, or up to
+    ``_MAX_READ_CHARS`` from ``offset``, saying how to read on when cut."""
+    search = args.get("search")
+    if search is not None and str(search).strip():
+        return _matching_lines(text, str(search).strip())
+    raw = args.get("offset", 0)
+    if type(raw) is not int or raw < 0 or (raw and raw >= len(text)):
+        return f"ERROR: offset must be a whole number from 0 to {max(0, len(text) - 1)}"
+    end = raw + _MAX_READ_CHARS
+    part = text[raw:end]
+    if end < len(text):
+        part += (f"\n... [showing characters {raw}-{end} of {len(text)}; pass offset={end} "
+                 "to continue, or search to find a phrase]")
+    return part
+
+
+def _matching_lines(text: str, phrase: str) -> str:
+    wanted = phrase.casefold()
+    hits = [(number, line) for number, line in enumerate(text.splitlines(), 1)
+            if wanted in line.casefold()]
+    if not hits:
+        return f"no line matches {phrase!r}"
+    shown = [f"line {number}: {line[:_MAX_MATCH_LINE]}" for number, line in hits[:_MAX_MATCHES]]
+    more = f" (showing the first {_MAX_MATCHES})" if len(hits) > _MAX_MATCHES else ""
+    noun = "line matches" if len(hits) == 1 else "lines match"
+    return f"{len(hits)} {noun} {phrase!r}{more}:\n" + "\n".join(shown)
 
 
 _TABLE_MIMES = ("text/csv", "application/csv", "text/comma-separated-values")
