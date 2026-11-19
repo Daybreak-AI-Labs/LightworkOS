@@ -11848,7 +11848,8 @@ async def home(request: Request) -> HTMLResponse | RedirectResponse:
         from .preferences_api import _state
 
         try:
-            start_state = await run_in_threadpool(_state, request)
+            # Only the start page is needed here: Chat reads its own choices.
+            start_state = await run_in_threadpool(_state, request, choices=False)
             start = start_state["values"]["start_page"]
             if start_state["sources"].get("start_page") == "product default":
                 # Areas navigation starts each role on its preset's page.

@@ -198,3 +198,64 @@ def test_a_saved_address_policy_applies_to_the_next_script_request(signed_in):
     signed_in.config_file.write_text('[auth.ip_allowlist]\nworkspace_cidrs = ["10.9.8.0/24"]\n')
     assert client.get(_script()).status_code == 403
 
+
+def test_the_home_page_reads_the_start_page_without_the_chat_choices(signed_in, monkeypatch):
+    # Choosing where "/" lands needs only the person's start page. Reading the
+    # model and specialist choices for it (thrown away, then read again for
+    # Chat) was about 1,300 data-folder operations on the home page.
+    from maverick_dashboard import (
+        onboarding_state,
+        product_operations_task_launch,
+        task_model_selection_api,
+    )
+
+    calls = {"models": 0, "specialists": 0}
+    models, specialists = task_model_selection_api.choices, product_operations_task_launch.published_specialists
+
+    def counted_models(request):
+        calls["models"] += 1
+        return models(request)
+
+    def counted_specialists(request, *args, **kwargs):
+        calls["specialists"] += 1
+        return specialists(request, *args, **kwargs)
+
+    monkeypatch.setattr(task_model_selection_api, "choices", counted_models)
+    monkeypatch.setattr(product_operations_task_launch, "published_specialists", counted_specialists)
+    monkeypatch.setattr(onboarding_state, "selected_model_routes_ready", lambda: True)
+    _sign_in(signed_in.client)
+    response = signed_in.client.get("/")
+    assert response.status_code == 200, response.headers.get("location")
+    assert calls == {"models": 0, "specialists": 1}  # Chat's own shortened list only
+
+
+def test_the_companion_links_follow_the_gate_without_the_effect_fence(monkeypatch):
+    # The sidebar asks twice per page whether to show the companion links. The
+    # answer only shows or hides a link (the page itself checks under the
+    # fence), so it must not take the cross-process authority fence: a lock
+    # file round trip per check, and every page waited on any authority change.
+    from contextlib import contextmanager
+
+    from fastapi import HTTPException
+    from maverick_dashboard import employee_companion_api
+
+    fenced = []
+
+    @contextmanager
+    def fence():
+        fenced.append(1)
+        yield
+
+    monkeypatch.setattr(employee_companion_api, "authority_effect_fence", fence)
+    seen = []
+    monkeypatch.setattr(employee_companion_api, "_authority",
+                        lambda request, *, admin=False: seen.append(admin))
+    assert employee_companion_api.navigation_available(object()) is True
+    assert employee_companion_api.navigation_available(object(), admin=True) is True
+    assert seen == [False, True] and fenced == []
+
+    def refused(request, *, admin=False):
+        raise HTTPException(403, "not a member")
+
+    monkeypatch.setattr(employee_companion_api, "_authority", refused)
+    assert employee_companion_api.navigation_available(object()) is False
