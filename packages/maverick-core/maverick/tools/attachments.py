@@ -148,6 +148,9 @@ def query_table(filename: str, mime: str, text: str, sql: str) -> str:
     out = io.StringIO()
     writer = csv.writer(out, lineterminator="\n")
     writer.writerow(names)
-    writer.writerows(found[:_MAX_QUERY_ROWS])
+    # Round away binary floating-point noise (209166.05000000002) so the
+    # model reads the figure the data actually holds.
+    writer.writerows([[round(v, 9) if isinstance(v, float) else v for v in row]
+                      for row in found[:_MAX_QUERY_ROWS]])
     note = f"\n... [first {_MAX_QUERY_ROWS} rows only]" if len(found) > _MAX_QUERY_ROWS else ""
     return out.getvalue().rstrip("\n") + note

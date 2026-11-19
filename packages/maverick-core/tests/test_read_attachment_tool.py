@@ -71,3 +71,13 @@ def test_the_query_cannot_change_anything_or_reach_other_files(tmp_path, monkeyp
 def test_a_query_on_a_non_table_attachment_is_refused(tmp_path, monkeypatch):
     world, gid, _other, aid, _iid = _setup(tmp_path, monkeypatch, False)
     assert read_attachment_tool(world, gid).fn({"id": aid, "sql": "SELECT 1"}).startswith("ERROR")
+
+
+def test_query_results_carry_no_floating_point_noise(tmp_path, monkeypatch):
+    world = WorldModel(tmp_path / "w.db")
+    gid = world.create_goal("g", "")
+    body = "region,revenue\nSouth,8820.87\nSouth,9542.12\nSouth,24596.34\n".encode()
+    rec = att.store(gid, "s.csv", "text/csv", body, root=tmp_path / "a")
+    aid = world.add_attachment(gid, rec.filename, rec.mime, rec.size_bytes, rec.sha256, str(rec.path))
+    out = read_attachment_tool(world, gid).fn({"id": aid, "sql": "SELECT SUM(revenue) AS total FROM data"})
+    assert out == "total\n42959.33"
