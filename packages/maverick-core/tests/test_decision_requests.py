@@ -924,3 +924,62 @@ def test_a_goal_below_a_live_step_starts_only_inside_its_code_change(tmp_path, m
     monkeypatch.setattr("maverick.cli.open_world", lambda *a, **k: world, raising=False)
     out = CliRunner().invoke(main, ["resume", "--goal-id", str(child)])
     assert out.exit_code == 2 and "step of a code change" in out.output, out.output
+
+
+def test_the_rules_leave_choices_about_the_deliverable_to_the_agent():
+    # Seen live: asked for a 3,000-word history, the agent stopped to ask how
+    # the history should be presented, reading "What people see" as the reader.
+    from maverick import decision_requests
+
+    assert decision_requests.AREAS["user_facing"] == "What people see in Lightwork, including the Copilot"
+    text = decision_requests.rules_text()
+    assert "What people see in Lightwork, including the Copilot" in text
+    assert "format, length, structure or wording of the work you deliver are yours" in text
+
+
+def test_a_resume_after_a_decision_keeps_the_limits_the_person_set(tmp_path, monkeypatch):
+    # Seen live: a task started with a 1-minute limit was answered on its
+    # decision card, and the resumed run went on for 3.5 minutes under the
+    # workspace defaults instead.
+    import threading
+
+    from maverick import decision_requests as dr
+    from maverick import runner
+    from maverick.attachment_submissions import SubmissionStore
+
+    world = WorldModel(tmp_path / "w.db")
+    receipt = SubmissionStore(world).create(
+        token="t1", fingerprint="a" * 64, owner="user:alice", title="History",
+        description="Write it", manifest=[],
+        submission_detail={"task_limits": {"max_dollars": 2.0, "max_wall_seconds": 60.0}})
+    plain = SubmissionStore(world).create(
+        token="t2", fingerprint="b" * 64, owner="user:alice", title="Other",
+        description="No limits", manifest=[])
+    started, done = [], threading.Event()
+
+    def fake_run(goal_id, **kwargs):
+        started.append((goal_id, kwargs))
+        done.set()
+
+    monkeypatch.setattr(runner, "run_goal_in_background", fake_run)
+    for goal_id in (receipt["goal_id"], plain["goal_id"]):
+        done.clear()
+        assert dr.dispatch_resume(world, goal_id) is True
+        assert done.wait(5)
+    (first, limited), (second, unlimited) = started
+    assert first == receipt["goal_id"] and second == plain["goal_id"]
+    assert limited["max_dollars"] == 2.0 and limited["max_wall_seconds"] == 60.0
+    assert "max_wall_seconds" not in unlimited and "max_dollars" not in unlimited
+    world.close()
+
+
+def test_an_option_label_does_not_repeat_the_recommended_marker():
+    # Seen live: "Academic-style report (recommended) (recommended)" on the card.
+    from maverick import decision_requests as dr
+
+    checked = dr.validate({
+        "question": "How should the history be presented?", "area": "other", "recommended": 1,
+        "why": "It fits the request.",
+        "options": [{"label": "Academic-style report (Recommended)", "effect": "Headings and endnotes."},
+                    {"label": "Magazine-style narrative", "effect": "A flowing feature."}]})
+    assert [o["label"] for o in checked["options"]] == ["Academic-style report", "Magazine-style narrative"]
