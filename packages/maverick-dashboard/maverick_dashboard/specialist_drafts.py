@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import math
 import re
 import time
@@ -33,6 +34,8 @@ ACTIONS = {"save": "Saved a draft", "try": "Tried a draft answer", "check": "Che
            "promote": "Promoted a trial version", "rollback": "Rolled back a trial version"}
 TRIAL_LIVE = ("A trial version of this specialist is live. Promote it or roll it back in Workforce before "
               "publishing another change. Nothing was changed.")
+
+log = logging.getLogger(__name__)
 
 
 def authority(request, context=None, *, write=False):
@@ -220,6 +223,13 @@ def unpublished_profiles(request, *, name=None) -> dict:
         return {}
     if len(rows) > MAX_RECORDS:
         return {}
+    return {row["name"]: domain._coerce(row["name"], row["profile"])
+            for row in _newest_unpublished(rows, actor, context, name)}
+
+
+def _newest_unpublished(rows, actor, context, name=None) -> list:
+    from maverick import domain
+
     published = domain.available_domains()
     found: dict = {}
     for row in sorted(rows, key=lambda item: (item["created_at"], item["id"]), reverse=True):
@@ -228,8 +238,27 @@ def unpublished_profiles(request, *, name=None) -> dict:
             continue
         if row["name"] in published or row["name"] in found or (name is not None and row["name"] != name):
             continue
-        found[row["name"]] = domain._coerce(row["name"], row["profile"])
-    return found
+        found[row["name"]] = row
+    return list(found.values())
+
+
+def unpublished_drafts(request) -> list[dict]:
+    """This person's new agents saved as drafts and not published yet, newest
+    first, with the link that opens each draft in the builder."""
+    try:
+        actor, context = authority(request)
+        rows = STORE.list(limit=MAX_RECORDS + 1)
+    except HTTPException:
+        return []
+    if len(rows) > MAX_RECORDS:
+        return []
+    out = []
+    for row in _newest_unpublished(rows, actor, context)[:20]:
+        description = str((row.get("profile") or {}).get("description") or "").strip()
+        out.append({"name": row["name"], "label": description or row["name"].replace("_", " "),
+                    "saved": time.strftime("%b %d, %Y %H:%M", time.localtime(row["created_at"])),
+                    "href": f"/agents?new=1&specialist_draft={row['id']}#specialist-drafts"})
+    return out
 
 
 def inventory(request, name):
@@ -578,6 +607,8 @@ def apply(request, prepared, operation):
             if not began and _mark_not_started(prepared, row):
                 raise
         except Exception as exc:
+            # The person reads "unconfirmed"; the cause belongs in the server log.
+            log.warning("specialist draft %s (%s) did not finish", prepared["name"], prepared["action"], exc_info=True)
             if STORE.get(identifier) is None:
                 raise HTTPException(503, "The complete draft could not be retained. Your entered work is still in the editor.") from exc
         return original(request, identifier, prepared=prepared)

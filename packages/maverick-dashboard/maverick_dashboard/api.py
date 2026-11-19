@@ -11437,7 +11437,11 @@ def validate_agent_override(request: Request, name: str, payload: AgentOverrideI
         errors.extend(_agent_action_errors(name, payload))
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Available actions could not be checked. Try again shortly.") from exc
-    return {"ok": not errors, "errors": errors, "warnings": warnings}
+    from .workforce_ops_api import _finding
+
+    # The page shows plain words; the lint's own text stays for API callers.
+    notes = list(dict.fromkeys(_finding(warning) for warning in warnings))
+    return {"ok": not errors, "errors": errors, "warnings": warnings, "notes": notes}
 
 
 @router.post("/agents/{name}/override")

@@ -392,7 +392,9 @@ def _perform_answer_tests(job, *, specialist, model, instruction_hash, cases, ac
                     result = saved.grade(case, text, retain_full=draft_mode, tool_calls=tool_calls)
                 else:
                     answer = llm.complete(systems[variant], [{"role": "user", "content": case["task"]}],
-                                          tools=None, budget=budget, max_tokens=32 if draft_mode else (64 if comparison else 128),
+                                          tools=None, budget=budget,
+                                          max_tokens=_draft_answer_tokens(budget, len(cases)) if draft_mode
+                                          else (64 if comparison else 128),
                                           _no_failover=True, max_physical_attempts=1,
                                           dispatch_guard=lambda: guard(job))
                     result = saved.grade(case, answer.text, retain_full=draft_mode)
@@ -578,6 +580,14 @@ def _start_customer_test_job(request: Request, specialist: str, *, operation_id:
                           instructions=None if comparison else profile.persona)
     return start_job(request, "specialist_answer_test", "Checking specialist answers", _run,
                      needs_global=False, cancellable=True, on_cancel=learning_jobs.stop_budget(budget))
+
+
+def _draft_answer_tokens(budget, questions: int) -> int:
+    """A draft check's answer gets its share of the check's own output allowance
+    (at least 128, at most 1,024 tokens), so a person trying a draft reads a
+    whole answer; the check's spending and token caps are unchanged."""
+    total = getattr(budget, "max_output_tokens", None) or 640
+    return max(128, min(1024, int(total) // max(1, int(questions))))
 
 
 def _start_draft_customer_test_job(request, specialist, operation, draft, source_guard, started):

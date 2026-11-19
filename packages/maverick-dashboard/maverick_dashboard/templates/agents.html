@@ -208,6 +208,16 @@
   <p><span class="badge">read-only</span> <span class="muted">Agent editing is turned off by your administrator — viewing only.</span></p>
   {% endif %}
 
+  {% if unpublished_drafts %}
+  <section class="af-card" id="unpublished-drafts" aria-labelledby="unpublished-drafts-title" style="margin-bottom: var(--space-4);">
+    <h2 id="unpublished-drafts-title" class="af-card__title">New agents you saved as drafts</h2>
+    <p class="muted">Not published yet, so nobody can use them. Open one to try it, change it or publish it.</p>
+    <ul>{% for d in unpublished_drafts %}
+      <li><a href="{{ d.href }}">{{ d.label }}</a> <span class="muted">saved {{ d.saved }}</span></li>{% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
   {% if rejected_agents %}
   <section class="af-card" id="agent-setup-review" aria-labelledby="agent-setup-review-title" style="margin-bottom: var(--space-4);">
     <h2 id="agent-setup-review-title" class="af-card__title">Agents and specialists paused for setup review</h2>
@@ -1453,7 +1463,7 @@
             show(problem.text, false);
             fieldMessage(problem.field, problem.text);
           }
-          else if (data.warnings && data.warnings.length) show('Looks good, with notes: ' + data.warnings.join('; '), true);
+          else if ((data.notes || data.warnings || []).length) show('Looks good, with notes: ' + (data.notes || data.warnings).join(' '), true);
           else show('Looks good.', true);
         } catch (error) {
           show(error instanceof Error ? error.message : 'That didn\'t work. Refresh the page and try again.', false);

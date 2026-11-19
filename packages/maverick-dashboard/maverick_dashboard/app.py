@@ -8280,6 +8280,7 @@ async def agents_page(request: Request) -> HTMLResponse:
         "agents.html",
         {"agents": agents, "rejected_agents": rejected_agents,
          "selected": selected, "editable": editable, "creating": creating,
+         "unpublished_drafts": _unpublished_drafts(request) if editable else [],
          "model_options": model_options, "model_roles": model_roles,
          "published_work_available": published_work_available,
          "can_set_model_cost_tier": has_global_permission(request, "admin"),
@@ -11782,6 +11783,16 @@ def _thread_turns(w, goal) -> list:
     except Exception:  # The history control exposes retry without losing this task.
         return []
 
+
+
+def _unpublished_drafts(request: Request) -> list:
+    try:
+        from .specialist_drafts import unpublished_drafts
+
+        return unpublished_drafts(request)
+    except Exception:  # the factory page renders without the list
+        log.warning("unpublished agent drafts could not be listed", exc_info=True)
+        return []
 
 
 def _director_run(profile: str, title: str, description: str, base_max_dollars: float | None = None):

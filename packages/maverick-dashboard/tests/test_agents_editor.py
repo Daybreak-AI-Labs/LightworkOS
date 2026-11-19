@@ -271,6 +271,19 @@ class TestOverrideLifecycle:
         assert r.json()["errors"]
         assert client.get(f"/api/v1/agents/{name}").json()["is_override"] is False
 
+    def test_check_settings_notes_are_plain_words(self):
+        # Seen live: "Check settings" on a new read-only agent showed "no
+        # knowledge_sources: ...", "no deny_tools: ..." and "read-only pack
+        # doesn't explicitly deny shell, write_file: add to deny_tools".
+        body = {"allow_tools": ["read_file"], "max_risk": "low",
+                "persona": "Check supplier invoices against purchase orders and say pay, hold or reject."}
+        checked = client.post("/api/v1/agents/invoice_checker/validate", json=body).json()
+        assert checked["ok"] and checked["warnings"]          # the raw lint stays for API callers
+        notes = checked["notes"]
+        assert "It only reads, but does not explicitly block tools that change things." in notes
+        assert not any("_" in note or "deny_tools" in note for note in notes), notes
+        assert len(notes) == len(set(notes))
+
     def test_factory_cannot_save_actions_missing_from_installed_registry(self, tmp_path):
         name = "invoice_chaser"
         body = {"allow_tools": ["files", "code"], "max_risk": "medium",

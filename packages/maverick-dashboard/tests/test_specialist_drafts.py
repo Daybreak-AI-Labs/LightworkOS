@@ -159,3 +159,47 @@ def test_a_refused_worker_admission_before_any_answer_is_not_a_hold(client, monk
     refused = app.post(DRAFTS + "/apply", json={"token": review.json()["token"], "confirmed": True})
     assert refused.status_code == 409 and "Nothing was started" in refused.json()["detail"], refused.text
     assert _review(app, "save", entered={"persona": NEW + " Again."}).status_code == 200
+
+
+def test_trying_a_draft_gives_its_answer_room_to_finish(client, monkeypatch):
+    # Seen live: "Try entered draft" on an invoice-checking agent returned
+    # "Quantity: matches — 10 units on both" and stopped there: draft answers
+    # were capped at 32 output tokens while the page offered a 640-token check.
+    from maverick import llm
+
+    asked = []
+
+    def answer(self, system, messages, **kwargs):
+        kwargs["dispatch_guard"]()
+        asked.append(kwargs["max_tokens"])
+        return llm.LLMResponse(text="Hold: the price differs ($12 vs $10).", thinking=None,
+                               tool_calls=[], stop_reason="end_turn")
+
+    monkeypatch.setattr(llm.LLM, "complete", answer)
+    tried = _confirm(client, _review(client, "try", entered={"persona": NEW},
+                                     task="Invoice INV-7: 10 at $12; PO-3: 10 at $10. Pay?"))
+    assert tried.status_code == 200, tried.text
+    original, deadline = tried.json(), time.time() + 20
+    while (original.get("run") or {}).get("state") not in {"done", "failed", "stopped", "unknown"}:
+        assert time.time() < deadline, original
+        time.sleep(.05)
+        original = client.get(DRAFTS + "/originals/" + tried.json()["operation"]).json()
+    assert original["run"]["state"] == "done", original
+    (allowance,) = asked
+    assert 128 <= allowance <= 1024 and allowance > 32
+    assert original["run"]["results"][0]["answer"].startswith("Hold:")
+
+
+def test_agent_factory_lists_new_agents_saved_as_drafts(client):
+    # Seen live: a new agent saved as a draft could only be found again by
+    # opening a blank builder and typing the same name.
+    context = client.get(DRAFTS + "/history").json()["context"]
+    review = client.post(DRAFTS + "/review", json={
+        "name": "invoice_checker", "action": "save", "context": context,
+        "entered": {"description": "Invoice checker", "allow_tools": ["read_file"], "max_risk": "low",
+                    "persona": "Check supplier invoices against purchase orders and say pay, hold or reject."}})
+    saved = _confirm(client, review)
+    assert saved.status_code == 200 and saved.json()["confirmed"], saved.text
+    page = client.get("/agents").text
+    assert 'id="unpublished-drafts"' in page and "Invoice checker" in page
+    assert f"/agents?new=1&amp;specialist_draft=SPD-{saved.json()['operation']}#specialist-drafts" in page
