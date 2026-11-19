@@ -661,6 +661,14 @@
       </select>
       <p id="conversation-send-explanation" class="ask__hint"></p>
     </div>
+    {# A decision this task is waiting for: the Approvals page's own card, for this task only. #}
+    <section class="panel" id="decision-requests" data-goal-id="{{ goal.id }}" aria-labelledby="decision-requests-title" hidden>
+      <h2 id="decision-requests-title">{{ ui('Lightwork is waiting for your decision') }}</h2>
+      <p class="muted">{{ ui('Choose an option to continue this task. Sending a new message instead starts the next task and closes this question.') }}</p>
+      <div class="approval-list" data-decision-list></div>
+      <p role="status" data-decision-status></p>
+    </section>
+    <script src="{{ static_url('lightwork-decisions.js') if static_url is defined else '/static/lightwork-decisions.js' }}" defer></script>
     <div id="question-panel" class="ask__question" style="display: none;" role="alert" aria-live="assertive">
       <p class="ask__eyebrow">{{ ui('Lightwork needs one thing from you') }}</p>
       <p id="question-text" lang="und" dir="auto" data-user-content class="ask__text"></p>

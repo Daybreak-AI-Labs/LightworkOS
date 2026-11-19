@@ -766,6 +766,30 @@ def restart_repeats_note() -> str:
 ENDED = ("cancelled", "done", "completed", "failed", "error")
 
 
+def close_for_next_message(world, goal_id: int, *, actor: str, now: float | None = None) -> list[int]:
+    """Close a waiting task's open decisions because the person sent the next
+    message in the conversation instead of choosing an option: that message
+    continues the work, so nothing should keep waiting on the old question."""
+    from .audit import audit_event
+
+    now = time.time() if now is None else float(now)
+    closed: list[int] = []
+    store = _store(world)
+    for decision in open_for_goal(world, goal_id):
+        with store.transaction(f"decision-request:{decision.goal_id}") as connection:
+            changed = store.execute(
+                connection,
+                "UPDATE decision_requests SET status = 'closed', decided_by = ?, decided_at = ? "
+                "WHERE id = ? AND status = 'open'",
+                (str(actor), now, decision.id))
+            if changed.rowcount != 1:
+                continue
+            audit_event("decision_closed", agent=str(actor), goal_id=decision.goal_id,
+                        decision_id=decision.id, area=decision.area, reason="next_message")
+        closed.append(decision.id)
+    return closed
+
+
 def close_ended(world, *, now: float | None = None, goal_id: int | None = None) -> list[int]:
     """Close the open decisions of runs that have ended (cancelled, done,
     failed): nobody can answer for a run that will not continue."""

@@ -113,6 +113,8 @@ ROWS = [
     ('Only this message and selected files', 'Uniquement ce message et les fichiers sélectionnés', 'Nur diese Nachricht und ausgewählte Dateien', 'このメッセージと選択したファイルのみ', '仅此消息和所选文件'),
     ('Include this authorized conversation snapshot', 'Inclure cet instantané autorisé de la conversation', 'Diesen autorisierten Gesprächsstand einschließen', 'この許可された会話スナップショットを含める', '包含此已授权对话快照'),
     ('Lightwork needs one thing from you', 'Lightwork a besoin d’un élément de votre part', 'Lightwork benötigt noch etwas von Ihnen', 'Lightworkから確認事項があります', 'Lightwork需要您提供一项信息'),
+    ('Lightwork is waiting for your decision', 'Lightwork attend votre décision', 'Lightwork wartet auf Ihre Entscheidung', 'Lightworkはあなたの判断を待っています', 'Lightwork正在等待您的决定'),
+    ('Choose an option to continue this task. Sending a new message instead starts the next task and closes this question.', 'Choisissez une option pour poursuivre cette tâche. Si vous envoyez plutôt un nouveau message, la tâche suivante démarre et cette question est fermée.', 'Wählen Sie eine Option, um diese Aufgabe fortzusetzen. Wenn Sie stattdessen eine neue Nachricht senden, startet die nächste Aufgabe und diese Frage wird geschlossen.', 'このタスクを続けるには選択肢を1つ選んでください。代わりに新しいメッセージを送ると、次のタスクが始まり、この質問は閉じられます。', '请选择一个选项以继续此任务。如果改为发送新消息，将开始下一个任务，并关闭此问题。'),
     ('Attach files to your message', 'Joindre des fichiers à votre message', 'Dateien an Ihre Nachricht anhängen', 'メッセージにファイルを添付', '为消息附加文件'),
     ('Dictate by voice', 'Dicter', 'Per Sprache diktieren', '音声入力', '语音输入'),
     ('Stop', 'Arrêter', 'Stoppen', '停止', '停止'),

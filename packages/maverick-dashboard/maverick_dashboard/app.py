@@ -12070,6 +12070,14 @@ async def chat_reply(
         effect_guard=task_ai_guard(request, task_selection, task_model_context),
     )
     new_id = receipt["goal_id"]
+    try:
+        # The next message continues the work, so the earlier task's question
+        # stops waiting (its decision card is the way to answer it in place).
+        from maverick.decision_requests import close_for_next_message
+
+        close_for_next_message(w, parent.id, actor=caller_principal(request) or "user")
+    except Exception:  # noqa: BLE001 -- closing a stale question never blocks the reply
+        log.warning("could not close the earlier task's open decision", exc_info=True)
     conversation_id = _submission_conversation(w, receipt)
     _dispatch_goal(request, bg, new_id, conversation_id=conversation_id, receipt=receipt)
     return RedirectResponse(f"/chat/goal/{new_id}", status_code=303)
