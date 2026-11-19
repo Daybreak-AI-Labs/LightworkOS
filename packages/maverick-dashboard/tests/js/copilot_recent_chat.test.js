@@ -263,3 +263,20 @@ test("an ordinary request still reaches the control proposal", async () => {
     assert.equal(proposed, 1);
   } finally { h.close(); }
 });
+
+test("code-check and evidence-readiness questions reach the live read, not a control proposal", async () => {
+  for (const question of ["What was checked on my proposed code changes?", "Show my proposed code changes",
+                          "Were my code changes checked?", "Can tasks run here?",
+                          "Is this workspace's AI evidence setup ready?", "Why are my tasks held back in this workspace?"]) {
+    const h = harness();
+    try {
+      let proposed = 0;
+      h.w.LightworkProductOperations = {isBusy: () => false, open: () => {}, close: () => {},
+        propose: async () => { proposed += 1; return true; }};
+      await h.open();
+      await h.ask(question);
+      assert.equal(proposed, 0, question);
+      assert.equal(h.calls.filter(call => call.url === "/api/v1/copilot").at(-1)?.body.message, question);
+    } finally { h.close(); }
+  }
+});
