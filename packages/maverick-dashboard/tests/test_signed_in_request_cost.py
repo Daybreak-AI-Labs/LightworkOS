@@ -349,3 +349,29 @@ def test_the_specialist_choices_recheck_authority_before_and_after_only(signed_i
     _sign_in(signed_in.client)
     assert signed_in.client.get("/chat").status_code == 200
     assert len(calls) == 2, len(calls)
+
+
+def test_the_alert_bell_identity_check_reads_the_configuration_once(signed_in, monkeypatch):
+    # Every page's alert bell asks for a summary, which checks the person and
+    # the alert switches before and after it reads their sources.
+    from maverick import config
+    from maverick_dashboard import personal_notifications_api
+
+    inside, checks = [], []
+    real_witness = config._read_witness
+    monkeypatch.setattr(config, "_read_witness",
+                        lambda: (checks[-1].append(1) if inside else None) or real_witness())
+    real_identity = personal_notifications_api._identity
+
+    def identity(request):
+        inside.append(1)
+        checks.append([])
+        try:
+            return real_identity(request)
+        finally:
+            inside.pop()
+
+    monkeypatch.setattr(personal_notifications_api, "_identity", identity)
+    _sign_in(signed_in.client)
+    signed_in.client.get("/api/v1/notifications/personal/summary")
+    assert checks and all(len(made) <= 1 for made in checks), [len(made) for made in checks]

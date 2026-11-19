@@ -19,15 +19,18 @@ def _app():
 
 
 def _identity(request):
+    """The person and both alert switches, now: one check with one current read."""
     from maverick import experience_preferences
+    from maverick.config import single_read
     from maverick.personal_notifications import personal_alerts_enabled
 
     from .preferences_api import _principal
-    principal = _principal(request)
-    if not experience_preferences.enabled():
-        raise HTTPException(403, "Personal preferences are turned off. An administrator can enable them in All settings.")
-    if not personal_alerts_enabled():
-        raise HTTPException(403, "Personal alerts are turned off. An administrator can enable them in All settings.")
+    with single_read(fresh=True):
+        principal = _principal(request)
+        if not experience_preferences.enabled():
+            raise HTTPException(403, "Personal preferences are turned off. An administrator can enable them in All settings.")
+        if not personal_alerts_enabled():
+            raise HTTPException(403, "Personal alerts are turned off. An administrator can enable them in All settings.")
     return principal
 
 
