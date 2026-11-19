@@ -105,7 +105,7 @@
     try {
       var data = await window.mvFetchJSON('/api/v1/decisions', {cache: 'no-store', timeout: 15000}, 'load decisions');
       // On a task's own page (data-goal-id) only that task's decisions show.
-      var only = root.dataset.goalId ? Number(root.dataset.goalId) : null;
+      var only = root.dataset.goal ? Number(root.dataset.goal) : null;
       var rows = (data.decisions || []).filter(function (d) { return only === null || d.goal_id === only; });
       list.textContent = '';
       rows.forEach(function (d) { list.appendChild(card(d)); });

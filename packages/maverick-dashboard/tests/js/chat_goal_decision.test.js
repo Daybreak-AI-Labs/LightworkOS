@@ -18,7 +18,7 @@ function decision(id, goal) {
 }
 
 test("the task page shows only that task's decisions and answers through the same API", async () => {
-  const dom = new JSDOM(`<section id="decision-requests" data-goal-id="10" hidden>
+  const dom = new JSDOM(`<section id="decision-requests" data-goal="10" hidden>
       <div data-decision-list></div><p role="status" data-decision-status></p></section>`,
     {url: "https://fixture.invalid/chat/goal/10", runScripts: "outside-only"});
   const w = dom.window, calls = [];
@@ -41,7 +41,7 @@ test("the task page shows only that task's decisions and answers through the sam
 });
 
 test("with no decision for this task the section stays hidden", async () => {
-  const dom = new JSDOM(`<section id="decision-requests" data-goal-id="10" hidden>
+  const dom = new JSDOM(`<section id="decision-requests" data-goal="10" hidden>
       <div data-decision-list></div><p role="status" data-decision-status></p></section>`,
     {url: "https://fixture.invalid/chat/goal/10", runScripts: "outside-only"});
   dom.window.mvFetchJSON = async () => ({decisions: [decision(2, 11)]});
