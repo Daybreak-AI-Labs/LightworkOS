@@ -260,3 +260,17 @@ def test_page_panes_lose_their_own_blur_without_glass_effects() -> None:
         assert declarations["-webkit-backdrop-filter"] == "none !important"
     goals = (TEMPLATES / "goals.html").read_text(encoding="utf-8")
     assert "backdrop-filter: blur(12px)" in goals  # the page-local pane the guard covers
+
+
+def test_chat_keeps_its_composer_at_the_bottom_without_room_for_a_hidden_button():
+    # The shared shell reserves room at the bottom of the page for the floating
+    # Copilot button. Chat hides that button, but the reservation still applied
+    # there: the composer floated up off the bottom edge and, on a phone, left
+    # task results a strip of about half the screen above it.
+    shared = CSS.read_text(encoding="utf-8")
+    for selector in ("main#content { padding-bottom", "{ scroll-padding-bottom"):
+        rules = [line for line in shared.splitlines() if selector in line and ".mv-copilot__fab" in line]
+        assert rules, selector
+        assert all(":not(.chat-shell)" in line for line in rules), rules
+    chat = (TEMPLATES / "chat_base.html").read_text(encoding="utf-8")
+    assert ".chat-shell > #mv-copilot-fab { display: none; }" in chat
