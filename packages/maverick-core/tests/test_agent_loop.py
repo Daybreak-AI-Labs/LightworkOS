@@ -2010,6 +2010,20 @@ def test_verifier_evidence_keeps_newest_results_framed_and_skips_failures():
     assert _verifier_evidence([{"role": "user", "content": "brief"}]) == ""
 
 
+def test_a_refused_action_is_a_limit_the_judges_and_revision_respect():
+    # Live: a person rejected a command; the verifier, now seeing the refusal,
+    # still rejected the truthful answer for lacking the output, and the agent
+    # asked to run the rejected command again. A refusal is a limit, not a gap.
+    import inspect
+
+    from maverick import agent as agent_mod
+    from maverick.verifier import EVIDENCE_CONTRACT
+
+    assert "refused" in EVIDENCE_CONTRACT and "complete" in EVIDENCE_CONTRACT
+    assert "Never ask the agent to try a refused action again" in EVIDENCE_CONTRACT
+    assert "Never repeat an action a person rejected" in inspect.getsource(agent_mod.Agent._verifier_rejection)
+
+
 def test_verifier_evidence_keeps_a_refusal_that_explains_the_answer():
     # A person rejected the command; the agent truthfully said it did not run.
     # Without the refusal in its evidence the verifier called that reason
