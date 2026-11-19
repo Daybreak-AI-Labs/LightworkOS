@@ -10,6 +10,8 @@ list, capability-read, redeem, grant-claim, object-byte, or credential route.
 from __future__ import annotations
 
 import hashlib
+import logging
+import sqlite3
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, is_dataclass
 from functools import partial
@@ -22,6 +24,9 @@ from starlette.concurrency import run_in_threadpool
 
 from ._shared import authenticated_subject
 from .auth import require_global_permission, require_permission
+from .store_failures import unavailable_if_busy
+
+log = logging.getLogger(__name__)
 
 _ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
 _OP_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,191}$"
@@ -309,6 +314,9 @@ def create_privacy_rights_consumer_delivery_router(  # noqa: C901
                 if callable(factory)
                 else deps.store_for(request, tenant, principal)
             )
+        except sqlite3.OperationalError as exc:
+            unavailable_if_busy(log, exc, "privacy-rights delivery authority is unavailable")
+            raise
         except (ops.RightsConsumerDeliveryError, OSError) as exc:
             raise HTTPException(
                 status_code=503,
@@ -342,6 +350,9 @@ def create_privacy_rights_consumer_delivery_router(  # noqa: C901
     async def call(ops, function, *args, **kwargs):
         try:
             return await run_in_threadpool(function, *args, **kwargs)
+        except sqlite3.OperationalError as exc:
+            unavailable_if_busy(log, exc, "privacy-rights delivery authority is unavailable")
+            raise
         except ops.RightsConsumerDeliveryNotFound as exc:
             raise HTTPException(
                 status_code=404,

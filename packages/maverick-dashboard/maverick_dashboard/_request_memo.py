@@ -85,7 +85,10 @@ class RequestMemoMiddleware:
         token = _SCOPE.set({})
         try:
             with kept_reads():
-                if scope["type"] == "http":
+                from .auth import probe_path
+
+                if scope["type"] == "http" and not probe_path(scope):
+                    # A probe answers without configuration or a worker thread.
                     from starlette.concurrency import run_in_threadpool
 
                     await run_in_threadpool(_prime_request_configuration)

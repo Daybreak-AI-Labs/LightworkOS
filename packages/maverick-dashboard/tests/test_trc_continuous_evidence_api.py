@@ -401,3 +401,17 @@ def test_a_waiting_store_does_not_stop_the_server_answering(environment):
             release.set()
             worker.join(timeout=15)
     assert listing == [200]
+
+
+def test_a_locked_store_answers_unavailable_not_a_server_error(environment):
+    import sqlite3
+
+    client, _database, _state = environment
+
+    def locked_factory(**_kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    client.app.state.trc_continuous_evidence_store_factory = locked_factory
+    response = client.get("/api/v1/compliance/continuous-evidence/definitions")
+    assert response.status_code == 503
+    assert response.json()["detail"] == "continuous-evidence store is unavailable"

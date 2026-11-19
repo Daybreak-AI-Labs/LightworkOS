@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
+import sqlite3
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, is_dataclass
 from functools import partial
@@ -27,6 +29,9 @@ from .auth import (
     require_principal,
 )
 from .draft_api import context_for
+from .store_failures import unavailable_if_busy
+
+log = logging.getLogger(__name__)
 
 _ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
 _OP_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,191}$"
@@ -506,6 +511,9 @@ def _third_party_intelligence_authority_routes(deps):
                 if callable(factory)
                 else deps.store_for(tenant)
             )
+        except sqlite3.OperationalError as exc:
+            unavailable_if_busy(log, exc, "third-party intelligence store is unavailable")
+            raise
         except ops.ThirdPartyIntelligenceConfigError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
         except (ops.ThirdPartyIntelligenceError, OSError) as exc:
@@ -528,6 +536,9 @@ def _third_party_intelligence_authority_routes(deps):
     async def call(ops, function, *args, **kwargs):
         try:
             return await run_in_threadpool(function, *args, **kwargs)
+        except sqlite3.OperationalError as exc:
+            unavailable_if_busy(log, exc, "third-party intelligence store is unavailable")
+            raise
         except ops.ThirdPartyIntelligenceNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ops.ThirdPartyIntelligencePermissionDenied as exc:

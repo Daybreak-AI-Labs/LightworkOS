@@ -9,6 +9,8 @@ intent only and no endpoint performs provider I/O or response delivery.
 from __future__ import annotations
 
 import hashlib
+import logging
+import sqlite3
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, is_dataclass
 from functools import partial
@@ -21,6 +23,9 @@ from starlette.concurrency import run_in_threadpool
 
 from ._shared import authenticated_subject
 from .auth import require_global_permission, require_permission
+from .store_failures import unavailable_if_busy
+
+log = logging.getLogger(__name__)
 
 _ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
 _OP_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,191}$"
@@ -319,6 +324,9 @@ def _privacy_rights_orchestration_authority_routes(deps, router):
                 if callable(factory)
                 else deps.store_for(tenant, principal)
             )
+        except sqlite3.OperationalError as exc:
+            unavailable_if_busy(log, exc, "privacy-rights orchestration store is unavailable")
+            raise
         except ops.PrivacyRightsConfigError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
         except (ops.PrivacyRightsOrchestrationError, OSError) as exc:
@@ -340,6 +348,9 @@ def _privacy_rights_orchestration_authority_routes(deps, router):
     async def call(ops, function, *args, **kwargs):
         try:
             return await run_in_threadpool(function, *args, **kwargs)
+        except sqlite3.OperationalError as exc:
+            unavailable_if_busy(log, exc, "privacy-rights orchestration store is unavailable")
+            raise
         except ops.PrivacyRightsNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ops.PrivacyRightsPermissionDenied as exc:

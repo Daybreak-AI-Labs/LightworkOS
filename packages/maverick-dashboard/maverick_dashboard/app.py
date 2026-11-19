@@ -101,6 +101,7 @@ from .auth import (
     has_global_permission,
     has_permission,
     non_static_auth_configured,
+    probe_path,
     require_global_permission,
     require_permission,
     require_principal_in_request_context,
@@ -1428,6 +1429,14 @@ def enforce_page_visibility(
     require_page_visible(request, route_path(request))
 
 
+async def _page_visibility(request: Request = None) -> None:  # type: ignore[assignment]
+    """The app-level page-policy dependency: the check reads the settings, so
+    it runs in the worker pool, except for a probe, which is no page."""
+    if request is None or probe_path(request.scope):
+        return
+    await run_in_threadpool(enforce_page_visibility, request)
+
+
 def page_visible(request: Request, path: str) -> bool:
     """Whether the page governing ``path`` admits the caller: the same rule
     :func:`enforce_page_visibility` applies to every request for it."""
@@ -1501,7 +1510,7 @@ app = FastAPI(
     dependencies=[
         Depends(require_principal_in_request_context),
         Depends(enforce_expected_workspace_tenant),
-        Depends(enforce_page_visibility),
+        Depends(_page_visibility),
     ],
     lifespan=_lifespan,
     # The request span (below) is the server span; see request_spans.
@@ -4033,6 +4042,10 @@ async def bind_active_tenant(request: Request, call_next):
     authoritative for who may do work.
     """
     from maverick.paths import current_tenant_id, reset_tenant, set_tenant
+
+    if probe_path(request.scope) in ("/livez", "/readyz"):
+        # Process-wide probes; /healthz keeps the binding its provider verdict reads.
+        return await call_next(request)
 
     def _stored_selection() -> str | None:
         # current_tenant_id covers all three existing bindings -- request

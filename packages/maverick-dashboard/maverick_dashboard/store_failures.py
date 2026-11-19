@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import contextvars
 import logging
+import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 
 _ROUTE: contextvars.ContextVar[str] = contextvars.ContextVar(
     "maverick_dashboard_store_failure_route", default="",
@@ -58,3 +61,37 @@ def log_store_failure(log: logging.Logger, exc: BaseException, *, answered: str 
         answered, _ROUTE.get() or "unknown", _workspace(), type(exc).__name__, _redacted(exc),
         (" caused by " + " <- ".join(causes)) if causes else "",
     )
+
+
+_BUSY_CODES = frozenset({sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED})
+
+
+def store_busy(exc: BaseException) -> bool:
+    """Whether ``exc`` is SQLite giving up on a lock another connection held
+    for longer than the busy timeout: the store is momentarily unavailable,
+    not broken."""
+    if not isinstance(exc, sqlite3.OperationalError):
+        return False
+    code = getattr(exc, "sqlite_errorcode", None)
+    if isinstance(code, int):
+        return code & 0xFF in _BUSY_CODES
+    text = str(exc).lower()
+    return "locked" in text or "busy" in text
+
+
+def unavailable_if_busy(log: logging.Logger, exc: BaseException, detail: str) -> None:
+    """Answer a locked or busy store with the route's own 503, logged with its
+    cause. Any other error returns, for the caller to re-raise."""
+    if store_busy(exc):
+        log_store_failure(log, exc)
+        raise HTTPException(status_code=503, detail=detail) from exc
+
+
+@contextmanager
+def unavailable_when_busy(log: logging.Logger, detail: str) -> Iterator[None]:
+    """:func:`unavailable_if_busy` for the block it wraps."""
+    try:
+        yield
+    except sqlite3.OperationalError as exc:
+        unavailable_if_busy(log, exc, detail)
+        raise

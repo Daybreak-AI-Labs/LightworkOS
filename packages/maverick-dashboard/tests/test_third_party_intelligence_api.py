@@ -1095,3 +1095,32 @@ def test_a_waiting_store_does_not_stop_the_server_answering(environment) -> None
             release.set()
             worker.join(timeout=15)
     assert listing == [200]
+
+
+def test_a_locked_store_answers_unavailable_not_a_server_error(environment, caplog) -> None:
+    """On a fresh process the first lists ran the schema script; while another
+    writer held the file they failed after 30 s with an uncaught
+    ``sqlite3.OperationalError``, a 500."""
+    import logging
+    import sqlite3
+
+    client, store, _clock, _state = environment
+
+    def locked_factory(**_kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    original = client.app.state.third_party_intelligence_store_factory
+    client.app.state.third_party_intelligence_store_factory = locked_factory
+    with caplog.at_level(logging.WARNING):
+        response = client.get(f"{API}/vendors")
+    assert response.status_code == 503
+    assert response.json()["detail"] == "third-party intelligence store is unavailable"
+    assert any("database is locked" in record.getMessage() for record in caplog.records)
+
+    client.app.state.third_party_intelligence_store_factory = original
+
+    def busy_list(*_args, **_kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    store.list_vendors = busy_list
+    assert client.get(f"{API}/vendors").status_code == 503

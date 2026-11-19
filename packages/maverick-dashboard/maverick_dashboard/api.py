@@ -31,7 +31,11 @@ from fastapi import (
     Response,
     UploadFile,
 )
-from maverick.governed_records import RecordConflict
+from maverick.governed_records import (
+    GovernedRecordBackendError,
+    GovernedRecordCapacityError,
+    RecordConflict,
+)
 from maverick.runner import (
     DEFAULT_MAX_DOLLARS,
     DEFAULT_MAX_WALL_SECONDS,
@@ -324,6 +328,7 @@ from .module_activation import (
     module_activation_enabled as module_activation_enabled,
 )
 from .product_errors import next_action, product_error
+from .store_failures import log_store_failure
 
 log = logging.getLogger(__name__)
 
@@ -2594,18 +2599,30 @@ async def _estate_call(func, *args, not_found: str = "no such record",
                        **kwargs):
     """One error contract for the estate registers' endpoints: run the
     module call in the threadpool and map RecordConflict -> 409,
-    KeyError -> 404, ValueError/RuntimeError -> 422. HTTPExceptions
-    (from nested guards) pass through untouched."""
+    KeyError -> 404, a record store that cannot open (a refused database
+    login, no shared encryption key) -> 503, ValueError/RuntimeError -> 422.
+    HTTPExceptions (from nested guards) pass through untouched."""
     try:
         return await run_in_threadpool(func, *args, **kwargs)
     except HTTPException:
         raise
     except RecordConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except GovernedRecordBackendError as exc:
+        if isinstance(exc, GovernedRecordCapacityError):
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        log_store_failure(log, exc)
+        raise HTTPException(status_code=503, detail=_RECORDS_UNAVAILABLE) from exc
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=not_found) from exc
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+_RECORDS_UNAVAILABLE = (
+    "These records cannot be opened right now. Ask whoever installed Lightwork to check "
+    "its database and encryption settings."
+)
 
 
 def _vendor_management_or_403():

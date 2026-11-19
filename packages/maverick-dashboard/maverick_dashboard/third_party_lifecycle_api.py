@@ -8,6 +8,7 @@ or treats a governed callback intent as delivered.
 from __future__ import annotations
 
 import hashlib
+import logging
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, is_dataclass
 from functools import partial
@@ -20,6 +21,9 @@ from starlette.concurrency import run_in_threadpool
 
 from ._shared import authenticated_subject
 from .auth import caller_principal, require_global_permission, require_permission
+from .store_failures import unavailable_when_busy
+
+log = logging.getLogger(__name__)
 
 _ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
 _OP_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,191}$"
@@ -338,16 +342,17 @@ def _third_party_lifecycle_authority_routes(deps, router):
             return principal
 
         try:
-            store = (
-                factory(
-                    tenant_id=tenant,
-                    principal_ref=principal,
-                    principal_resolver=resolver,
-                    request=request,
+            with unavailable_when_busy(log, "third-party lifecycle store is unavailable"):
+                store = (
+                    factory(
+                        tenant_id=tenant,
+                        principal_ref=principal,
+                        principal_resolver=resolver,
+                        request=request,
+                    )
+                    if callable(factory)
+                    else deps.store_for(tenant, principal)
                 )
-                if callable(factory)
-                else deps.store_for(tenant, principal)
-            )
         except ops.ThirdPartyLifecycleConfigError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
         except (ops.ThirdPartyLifecycleError, OSError) as exc:
@@ -366,7 +371,8 @@ def _third_party_lifecycle_authority_routes(deps, router):
 
     async def call(ops, function, *args, **kwargs):
         try:
-            return await run_in_threadpool(function, *args, **kwargs)
+            with unavailable_when_busy(log, "third-party lifecycle store is unavailable"):
+                return await run_in_threadpool(function, *args, **kwargs)
         except ops.ThirdPartyLifecycleNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ops.ThirdPartyLifecyclePermissionDenied as exc:
