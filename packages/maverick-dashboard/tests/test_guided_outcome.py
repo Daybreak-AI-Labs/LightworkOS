@@ -90,3 +90,23 @@ def test_scheduling_without_a_started_task_does_not_complete_the_run_step(monkey
     assert result["steps"][2]["done"] is False
     assert result["steps"][3]["done"] is False
     assert not result["runtime_all_set"]
+
+
+def test_step_four_points_to_a_result_that_can_be_accepted(monkeypatch):
+    # "Review the result" linked to Results, where an ordinary task offers
+    # nothing to accept: only a specialist result with a release gate has a
+    # sign-off. The step now opens a finished result that awaits sign-off.
+    monkeypatch.setattr("maverick_dashboard.deliverable_policy.goal_gate",
+                        lambda domain: "approval" if domain == "finance" else None)
+    result = guided.reviewed_goal(World(None), owner="user:alice", principal="user:alice")
+    assert result["complete"] is False
+    assert result["href"] == "/chat/goal/1"
+    assert "Forecast" in result["detail"] and "Approve" in result["detail"]
+
+
+def test_without_an_acceptable_result_step_four_explains_how_to_get_one(monkeypatch):
+    monkeypatch.setattr("maverick_dashboard.deliverable_policy.goal_gate", lambda domain: None)
+    result = guided.reviewed_goal(World(None), owner="user:alice", principal="user:alice")
+    assert result["complete"] is False
+    assert result["href"] == "/start#first-outcome-title"
+    assert "sample task" in result["detail"]
