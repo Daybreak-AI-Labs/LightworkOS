@@ -120,7 +120,7 @@ def test_nobody_deciding_in_time_refuses_and_takes_the_request_off_the_page(db, 
     decision = _consent(goal_id)
 
     assert decision.granted is False
-    assert decision.source == "non-tty-deny"
+    assert decision.source == "no-decision"  # asked, and nobody answered in time
     (row,) = _approvals(db)
     assert row.status == "denied"
     assert row.decided_by == "system:no-decision"
@@ -381,3 +381,41 @@ def test_a_refusal_raised_to_the_tool_says_a_person_answered(db):
     denier.join(timeout=10)
     assert refused.value.source == "dashboard" and refused.value.source in PERSON_REFUSALS
     assert again.value.source == "rejected-earlier" and again.value.source in PERSON_REFUSALS
+
+
+def test_a_team_task_a_person_started_waits_on_the_approvals_page(db, tmp_path, monkeypatch):
+    # Seen live: a team agent started from the Agent teams page asked to run a
+    # command and was refused at once ("nobody approved it in time") although
+    # nobody was asked. The person who owns the team follows that task like a
+    # chat task, so its step waits on the Approvals page.
+    from maverick import fleet
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "home"))
+    team = fleet.Fleet(name="Finance-desk", owner=OWNER,
+                       agents=(fleet.FleetAgent(name="reconciler", role="operator"),))
+    fleet.save_fleet(team, tenant=None)
+    world = WorldModel(path=db)
+    goal_id = world.create_goal("Run date", "", owner=OWNER,
+                                execution_principal=team.principal_for("reconciler"))
+    world.set_goal_status(goal_id, "active")
+    world.close()
+    fleet.record_run("Finance-desk", "reconciler", goal_id, tenant=None)
+    approver = _decide_when_parked(db, "approved")
+    decision = _command_consent(goal_id, "date")
+    approver.join(timeout=10)
+    assert decision.granted is True and decision.source == "dashboard"
+
+    # A run with no person behind it is refused without a request, and says so.
+    headless = _headless_goal(db)
+    refused = _command_consent(headless, "date")
+    assert refused.granted is False and refused.source == "non-tty-deny"
+    assert len(_approvals(db)) == 1
+
+
+def test_a_request_nobody_answers_in_time_is_a_timeout_not_a_refusal(db, monkeypatch):
+    monkeypatch.setenv("MAVERICK_CONSENT_DASHBOARD_TIMEOUT", "1")
+    goal_id = _chat_goal(db)
+    decision = _command_consent(goal_id, "date")
+    assert decision.granted is False and decision.source == "no-decision"
+    (row,) = _approvals(db)
+    assert (row.status, row.decided_by) == ("denied", "system:no-decision")

@@ -120,7 +120,8 @@ def test_the_refusal_says_whether_a_person_rejected_the_command(tmp_path: Path, 
     for source, expected, absent in (
         ("dashboard", "a person rejected it", "in time"),
         ("rejected-earlier", "a person rejected it", "in time"),
-        ("non-tty-deny", "nobody approved it", "a person rejected"),
+        ("no-decision", "nobody approved it in time", "a person rejected"),
+        ("non-tty-deny", "no person could be asked to approve it", "in time"),
     ):
         monkeypatch.setattr(
             consent, "require_consent",

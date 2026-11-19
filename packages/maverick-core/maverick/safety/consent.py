@@ -1490,9 +1490,32 @@ def _web_chat_goal(wm) -> int | None:
         goal_id = current_goal_id()
         if goal_id is None:
             return None
-        return goal_id if ChatThreads(wm).binding(goal_id) is not None else None
+        if ChatThreads(wm).binding(goal_id) is not None or _person_started_team_run(wm, goal_id):
+            return goal_id
+        return None
     except Exception:  # an unreadable binding never widens who is asked
         return None
+
+
+def _person_started_team_run(wm, goal_id: int) -> bool:
+    """A task a person gave one of their team's agents on the Agent teams page.
+
+    The team's owner started it and follows it on its task page, as with a
+    chat task. Only a run recorded for that team, owned by that team's owner
+    and executing as one of its agents, qualifies."""
+    from .. import fleet
+
+    goal = wm.get_goal(goal_id)
+    principal = str(getattr(goal, "execution_principal", "") or "")
+    owner = str(getattr(goal, "owner", "") or "")
+    if goal is None or not owner or not principal.startswith("agent:") or "." not in principal:
+        return False
+    team_name, _, agent_name = principal[len("agent:"):].partition(".")
+    team = fleet.load_fleet(team_name)
+    if team is None or team.owner != owner or agent_name not in {a.name for a in team.agents}:
+        return False
+    return any(run.get("goal_id") == goal_id and run.get("agent") == agent_name
+               for run in fleet.load_runs(team_name))
 
 
 def _task_over(wm, goal_id: int | None) -> bool:
@@ -1733,8 +1756,10 @@ def _await_dashboard_decision(
         time.sleep(1.0)
     if withdraw_on_timeout:
         # Nobody decided in time and the caller will not act on a later vote:
-        # take the request off the Approvals page instead of leaving it there.
+        # take the request off the Approvals page instead of leaving it there,
+        # and say it timed out (the person was asked; nobody answered).
         _withdraw_approval(wm, approval_id, "system:no-decision")
+        return ConsentDecision(False, "no-decision", risk, time.time())
     return None  # timed out: caller falls back
 
 

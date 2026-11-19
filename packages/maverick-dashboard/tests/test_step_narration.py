@@ -147,6 +147,10 @@ def test_a_command_nobody_decided_on_is_not_called_rejected():
                  "so no command was run"))
     assert step.text == "Did not run a command: nobody approved it in time"
     step = narrate("observation", "orchestrator-0-63fc0d", _framed(
+        "shell", "ERROR: shell command was not approved: no person could be asked to approve it "
+                 "for this task, so no command was run"))
+    assert step.text == "Did not run a command: no person could be asked to approve it"
+    step = narrate("observation", "orchestrator-0-63fc0d", _framed(
         "shell", "ERROR: shell command was not approved: a person rejected it, so no "
                  "command was run. Do not ask to run it again."))
     assert step.text == "Did not run a command: a person rejected it"
