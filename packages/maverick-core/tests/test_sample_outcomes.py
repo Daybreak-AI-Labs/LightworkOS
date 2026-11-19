@@ -312,3 +312,15 @@ def test_sample_start_places_fixtures_in_effective_sandbox_workdir(monkeypatch, 
     assert seen["sample"] is True
     assert all((effective / rel).is_file() for rel in so.relative_paths("finance"))
     assert not (tmp_path / "work" / so.SAMPLE_WORKSPACE_DIRNAME).exists()
+
+
+@pytest.mark.parametrize("department", DEPARTMENTS)
+def test_the_workspace_copy_does_not_hand_the_agent_the_answer(department, tmp_path):
+    # The README in the agent's workspace stated the full answer key; the
+    # Finance run cited it as its source, so the first-run demo showed reading,
+    # not the specialist's work. The answer stays in the bundled README only.
+    target = so.create_sample_workspace(department, tmp_path)
+    copied = " ".join((target / "README.md").read_text(encoding="utf-8").split())
+    assert "A correct result" not in copied
+    assert "Synthetic" in copied and "never counts as real evidence" in copied
+    assert "A correct result" in so.expected_result(department)

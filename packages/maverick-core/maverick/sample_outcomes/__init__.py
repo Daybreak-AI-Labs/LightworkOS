@@ -121,6 +121,12 @@ def expected_result(department: str) -> str:
     return load_fixtures(department)["README.md"]
 
 
+def _without_answer(readme: str) -> str:
+    """The README minus its "A correct result ..." paragraph."""
+    kept = [part for part in readme.split("\n\n") if not part.lstrip().startswith("A correct result")]
+    return "\n\n".join(kept).rstrip() + "\n"
+
+
 def sandbox_workdir(workdir: str | Path | None = None) -> Path:
     if workdir is None:
         from ..config import get_sandbox
@@ -152,8 +158,12 @@ def create_sample_workspace(department: str, workdir: str | Path | None = None) 
     target = sample_workspace_path(department, workdir)
     target.mkdir(parents=True, exist_ok=True)
     source = fixture_dir(department)
-    for name in (*outcome.files, "README.md"):
+    for name in outcome.files:
         shutil.copyfile(source / name, target / name)
+    # The agent reads this copy, so it describes the data but never says what a
+    # correct result contains: that paragraph is the grading reference
+    # (expected_result) and handing it over made the demo copy the answer.
+    (target / "README.md").write_text(_without_answer(expected_result(department)), encoding="utf-8")
     (target / SAMPLE_MARKER_FILENAME).write_text(
         "# Sample data\n\n"
         f"This folder was created by Lightwork for the {outcome.label} first outcome. "
