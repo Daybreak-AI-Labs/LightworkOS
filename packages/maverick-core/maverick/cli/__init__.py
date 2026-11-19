@@ -324,9 +324,11 @@ def _require_cli_execution_allowed() -> None:
 
 
 # Servers choose a tenant per request or job; workspace and setup commands
-# manage the roster itself. They never adopt the owner's workspace.
+# manage the roster itself. They never adopt the owner's workspace. The job
+# worker does: its queue file is the current workspace's, and `schedule add`
+# and the dashboard both write the owner's workspace queue.
 _NO_OWNER_WORKSPACE = frozenset({
-    "dashboard", "serve", "mcp", "worker", "gateway", "a2a", "tenant", "init",
+    "dashboard", "serve", "mcp", "gateway", "a2a", "tenant", "init",
     "installation-maintenance", "channel-maintenance",
 })
 

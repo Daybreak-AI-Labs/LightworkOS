@@ -875,6 +875,17 @@ async def _install_automation_scheduler() -> None:
         log.exception("automation worker not started")
 
 
+async def _install_schedule_runner() -> None:
+    """Run due Automations schedules in this process (schedule_runner). No-op
+    under TestClient, when scheduling is off, or when tasks run elsewhere."""
+    try:
+        from maverick_dashboard import schedule_runner
+
+        await run_in_threadpool(schedule_runner.start)
+    except Exception:  # pragma: no cover - never block startup
+        log.exception("schedule runner not started")
+
+
 async def _start_privacy_discovery_remediation_scheduler() -> None:
     try:
         from maverick_dashboard.privacy_data_discovery_scheduler import (
@@ -1380,6 +1391,7 @@ async def _lifespan(app: FastAPI):
         # was stopped is claimed at once, and run beside the warm-up it
         # stretched from about 0.3 s to 3 s and delayed serving by as much.
         await _install_automation_scheduler()
+        await _install_schedule_runner()
         supervisor.phase = "running"
         from maverick.runtime_configuration import start as start_runtime_receipt
         runtime_receipt = start_runtime_receipt("dashboard")
@@ -1391,6 +1403,13 @@ async def _lifespan(app: FastAPI):
             runtime_receipt.close()
         from .local_runtime_service import shutdown as stop_local_ai
 
+        try:
+            from . import schedule_runner
+
+            # No new scheduled task starts while in-flight goals drain.
+            await run_in_threadpool(schedule_runner.stop)
+        except Exception:  # pragma: no cover -- shutdown continues
+            log.exception("schedule runner did not stop cleanly")
         try:
             # Close goal admission and drain in-flight goals first: a goal still
             # running against the managed local server would otherwise lose it

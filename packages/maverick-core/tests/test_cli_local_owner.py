@@ -60,3 +60,29 @@ def test_lightwork_start_records_the_owner(home, monkeypatch):
     monkeypatch.setattr(WorldModel, "create_goal", recording)
     CliRunner().invoke(cli.main, ["--db", str(db), "start", "Reply with exactly: CLI OK", "--max-dollars", "0.1"])
     assert created == ["user:owner@lightwork.test"]
+
+
+def test_the_worker_drains_the_owner_workspace_queue(home, monkeypatch):
+    # `schedule add` and the dashboard write the owner's workspace queue, but
+    # the worker never adopted that workspace, so it drained the root queue.
+    from click.testing import CliRunner
+    from maverick import cli, worker
+    from maverick.paths import current_tenant_id
+
+    monkeypatch.setattr("maverick.tenant.registry.owner_workspace_id", lambda: "local")
+    seen = []
+
+    class FakeWorker:
+        def __init__(self, *a, **k):
+            seen.append(current_tenant_id())
+            self.queue = type("Q", (), {"db_path": "x"})()
+
+        def run_until_empty(self, *a, **k):
+            return 0
+
+        def run_forever(self):
+            return None
+
+    monkeypatch.setattr(worker, "Worker", FakeWorker)
+    CliRunner().invoke(cli.main, ["--db", str(home / "world.db"), "worker", "--once"])
+    assert seen == ["local"]
