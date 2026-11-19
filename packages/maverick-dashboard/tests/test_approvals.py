@@ -542,3 +542,22 @@ def test_decision_routes_run_the_blocking_decision_in_a_worker_thread(monkeypatc
     response = client.post(f"/api/v1/approvals/{approval_id}/{verb}", json={})
     assert response.status_code == 204, response.text
     assert seen == ["worker thread"]
+
+
+def test_a_person_suggested_instruction_change_names_who_suggested_it(monkeypatch, tmp_path):
+    # Seen live: the owner's own suggestion was labelled "This is Lightwork's
+    # suggestion" and "Agent wants to change its own instructions".
+    from maverick.approval_cards import encode_approval_detail
+
+    _isolate(monkeypatch, tmp_path)
+    _world(tmp_path).create_approval(
+        "harness_refine.prompt.Keep-answers-short", risk="high",
+        detail=encode_approval_detail(_structured_card(action="harness_refine.prompt.Keep-answers-short",
+                                                       target_label="Instructions Lightwork gives its agents")),
+        provenance="harness_refine",
+    )
+    text = _client().get("/approvals").text
+    assert "suggested this change — the decision is yours." in text
+    assert "This is Lightwork's suggestion" not in text
+    assert "Change to the instructions agents follow" in text
+    assert "Agent wants to change its own instructions" not in text
