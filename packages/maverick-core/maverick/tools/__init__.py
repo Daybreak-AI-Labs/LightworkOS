@@ -1116,7 +1116,7 @@ def base_registry(
     """
     from .ask_user import ask_user
     from .attachments import list_attachments_tool, read_attachment_tool
-    from .fs import list_dir, read_file, write_file
+    from .fs import deliver_file, list_dir, read_file, write_file
     from .repo_map import repo_map
     from .request_decision import request_decision
     from .shell import shell
@@ -1133,7 +1133,8 @@ def base_registry(
     # A remote workspace path would refer to an unrelated host directory.
     has_local_workdir = workdir_is_local(sandbox)
     _register_local_workspace_tool(reg, sandbox, read_file, has_local_workdir)
-    _register_local_workspace_tool(reg, sandbox, lambda sb: write_file(sb, goal_id=goal_id), has_local_workdir)
+    _register_local_workspace_tool(
+        reg, sandbox, lambda sb: write_file(sb, goal_id=goal_id, world=world), has_local_workdir)
     _register_local_workspace_tool(reg, sandbox, list_dir, has_local_workdir)
     reg.register(shell(sandbox))
     reg.register(ask_user(world, goal_id=goal_id))
@@ -1144,9 +1145,11 @@ def base_registry(
     reg.register(read_attachment_tool(world, goal_id, sandbox=sandbox))
     _register_local_workspace_tool(reg, sandbox, repo_map, has_local_workdir)
     _register_local_workspace_tool(
-        reg, sandbox, lambda sb: str_replace_editor(sb, goal_id=goal_id), has_local_workdir)
+        reg, sandbox, lambda sb: str_replace_editor(sb, goal_id=goal_id, world=world), has_local_workdir)
     # After the first ten core tools, whose order limited provider catalogs rely on.
     reg.register(request_decision(world, goal_id=goal_id))
+    _register_local_workspace_tool(
+        reg, sandbox, lambda sb: deliver_file(sb, goal_id, world), has_local_workdir)
     # Governed session kernel. Registered ONLY when the operator has turned
     # it on: an unregistered tool costs no catalog tokens and cannot be
     # called, so the default deployment is unchanged.

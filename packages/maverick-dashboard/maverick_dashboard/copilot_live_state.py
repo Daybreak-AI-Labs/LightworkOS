@@ -45,6 +45,14 @@ _TASK_COST = re.compile(
     r"(?:what is |what's )?the cost of (?:my |this |the )?(?:goal|task|run)(?: #?\d{1,18})?)"
     r"(?:,? and why)?(?: please)?\Z"
 )
+_TASK_FILES = re.compile(
+    r"(?:(?:what|which) files (?:did|has|does) (?:my |this |the )?(?:goal|task|run)(?: #?\d{1,18})? "
+    r"(?:make|made|create|created|save|saved|produce|produced|write|written)|"
+    r"(?:where (?:is|are)|how (?:do|can) i (?:get|download)) (?:the |my )?(?:file|files|download|downloads)"
+    r"(?: (?:from|for|of) (?:my |this |the )?(?:goal|task|run)(?: #?\d{1,18})?)?|"
+    r"(?:show|list) (?:me )?(?:the )?files (?:from|for|of) (?:my |this |the )?(?:goal|task|run)(?: #?\d{1,18})?)"
+    r"(?: please)?\Z"
+)
 _EXPLICIT_TASK = re.compile(r"\b(?:goal|task|run)\s*#?(\d{1,18})\b")
 _PAGE_TASK = re.compile(r"^/(?:chat/goal|goals|tasks)/(\d{1,18})(?:/|$)")
 _DECISIONS = frozenset({"approval", "signoff", "assessment", "project_review", "vendor_reconciliation"})
@@ -69,6 +77,8 @@ def intent(message: str) -> str | None:
         return "evidence_readiness"
     if _TASK_COST.fullmatch(normalized):
         return "task_cost"
+    if _TASK_FILES.fullmatch(normalized):
+        return "task_files"
     return None
 
 
@@ -289,6 +299,40 @@ def _task_cost(request, message: str, page: str, selected_goal_id: int | None):
     return _answer(reply, href, "Open the task", "Task cost")
 
 
+def _task_files(request, message: str, page: str, selected_goal_id: int | None):
+    """The files one task saved, with the same access and release rule as its page."""
+    from maverick.task_files import files_for
+
+    from .app import _world
+    from .task_files_view import release_state
+
+    auth.require_permission(request, "view")
+    identifier = _task_id(message, page, selected_goal_id)
+    if identifier is None:
+        return _answer("Open the task you mean, then ask which files it made. Its files are listed under its answer.",
+                       "/goals", "Open Tasks", "Tasks")
+    world = _world()
+    goal = world.get_goal(identifier)
+    try:
+        if goal is None:
+            raise HTTPException(404, "no such goal")
+        auth.assert_goal_access(request, goal)
+    except HTTPException:
+        return _answer("I can't access that task in this account and workspace.", "/goals", "Open Tasks", "Tasks")
+    title, href = _bounded(goal.title), f"/chat/goal/{identifier}#task-files"
+    files = files_for(world, identifier)
+    if not files:
+        return _answer(f"Checked task ‘{title}’ {_checked_at()}. It has not saved any files to download. "
+                       "Its answer is on the task page.", f"/chat/goal/{identifier}", "Open the task", "Task files")
+    names = "; ".join(_bounded(f.name) for f in files[:8])
+    more = f" and {len(files) - 8} more" if len(files) > 8 else ""
+    released, note = release_state(world, goal)
+    reply = (f"Checked task ‘{title}’ {_checked_at()}. It saved {len(files)} "
+             f"{'file' if len(files) == 1 else 'files'}: {names}{more}. ")
+    reply += ("Download them under the answer, in Files from this task." if released else note)
+    return _answer(reply, href, "Open the task's files", "Task files")
+
+
 def _evidence_readiness(request):
     """Whether this workspace's AI evidence setup lets task answers through."""
     from maverick import ai_evidence_gateway as gateway
@@ -351,6 +395,8 @@ def answer(request, message: str, page: str, selected_goal_id: int | None) -> di
             value = _evidence_readiness(request)
         elif selected == "task_cost":
             value = _task_cost(request, message, page, selected_goal_id)
+        elif selected == "task_files":
+            value = _task_files(request, message, page, selected_goal_id)
         else:
             value = _task_failure(request, message, page, selected_goal_id)
     except HTTPException:

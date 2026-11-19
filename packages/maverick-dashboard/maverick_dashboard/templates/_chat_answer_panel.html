@@ -14,7 +14,7 @@
           {{ ui("Deliverable updated —") }} <a href="/chat/goal/{{ goal.id }}">{{ ui("reload to view it") }}</a>.
         </p>
       {% else %}
-        <span class="sr-only" id="answer-result-label">{{ ui("Goal result") }}</span><div id="result" tabindex="0" aria-labelledby="answer-result-label" class="prose" data-markdown lang="und" dir="auto" data-user-content>{{ goal.result or '' }}</div>
+        <span class="sr-only" id="answer-result-label">{{ ui("Goal result") }}</span><div id="result" tabindex="0" aria-labelledby="answer-result-label" class="prose" data-markdown lang="und" dir="auto" data-user-content>{{ result_display if result_display is defined else (goal.result or '') }}</div>
       {% endif %}
       <div id="answer-run-details-slot">{% include "_chat_answer_run_details.html" %}</div>
       {# How far to trust this answer, read from the task's own record:
@@ -134,6 +134,14 @@
         <span id="answer-action-msg" class="muted" role="status" aria-live="polite"></span>
         {% if can_download_chat_answer %}<p class="muted">{{ ui('Word keeps your answer editable with headings and lists. Complex layouts remain as text; Markdown keeps the original formatting.') }}</p>{% endif %}
         {% if chat_answer_download_note %}<p class="muted">{{ chat_answer_download_note }}</p>{% endif %}{% endif %}
+        {% if task_files %}<section id="task-files" class="task-files" aria-labelledby="task-files-title">
+          <h3 id="task-files-title">{{ ui('Files from this task') }}</h3>
+          {% if task_files_released %}<ul class="task-files__list">{% for f in task_files %}
+            <li><a class="btn btn--ghost" href="{{ f.href }}" download>{{ ui('Download') }} <bdi>{{ f.name }}</bdi></a> <span class="muted">{{ f.size_text }}</span></li>{% endfor %}
+          </ul>
+          <p class="muted">{{ ui("Each file downloads exactly as this task saved it. If something changed it since, Lightwork tells you instead.") }}</p>
+          {% else %}<p class="muted">{{ task_files_note }}</p>{% endif %}
+        </section>{% endif %}
         {% if can_operate %}
         <div id="edit-box" style="display:none; margin-top: var(--space-3);">
           <textarea lang="und" dir="auto" data-user-content id="edit-text" class="input" rows="8" aria-label="Edit the deliverable"

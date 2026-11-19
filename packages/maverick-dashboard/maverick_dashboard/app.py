@@ -13743,6 +13743,7 @@ def _chat_goal_page(request: Request, goal_id: int) -> HTMLResponse:
             "goal": g,
             "can_download_chat_answer": can_download_answer,
             "chat_answer_download_note": download_note,
+            **_task_files_context(w, g),
             "chat_answer_text": _chat_answer_text(g),
             "answered_questions": [q for q in w.all_questions(goal_id) if q.answer is not None],
             "can_operate": not handed_off and has_permission(request, "operate") and (caller_principal(request) or "") == (g.owner or ""),
@@ -13835,6 +13836,52 @@ def download_chat_answer(request: Request, goal_id: int, turn_id: int | None = N
             "X-Content-Type-Options": "nosniff",
         },
     )
+def _task_files_context(w, goal) -> dict:
+    from .task_files_view import context as task_files_context
+
+    return task_files_context(w, goal)
+
+
+@app.get("/chat/goal/{goal_id}/task-files/{number}")
+def download_task_file(request: Request, goal_id: int, number: int) -> Response:
+    """One file this task saved, exactly as it saved it, with the same goal
+    access check as the task page and the answer's release rule."""
+    from maverick.task_files import TaskFileUnavailable, read_for_download
+
+    from .task_files_view import content_disposition, release_state
+
+    w = _world()
+    goal = w.get_goal(goal_id)
+    if goal is None:
+        raise HTTPException(status_code=404, detail="no such goal")
+    assert_goal_access(request, goal)
+    released, note = release_state(w, goal)
+    try:
+        if not released:
+            raise TaskFileUnavailable(note)
+        found, data = read_for_download(w, goal_id, number)
+    except TaskFileUnavailable as exc:
+        back = {"href": f"/chat/goal/{goal_id}", "label": "Back to the task"}
+        if not _wants_html(request):
+            return JSONResponse({"detail": str(exc)}, status_code=409)
+        return templates.TemplateResponse(
+            request, "error.html",
+            {"status": 409, "title": "This file can't be downloaded", "message": str(exc),
+             "path": request.url.path, "gate": "membership", "reauthenticate": "",
+             "feature": None, "action": back},
+            status_code=409)
+    return Response(
+        data,
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": content_disposition(found.name),
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "sandbox; default-src 'none'",
+        },
+    )
+
+
 @app.get("/api/v1/chat/goal/{goal_id}/permissions")
 def chat_goal_permissions(request: Request, goal_id: int) -> dict:
     """Fresh task authority for a long-lived page; ownership is not a role."""

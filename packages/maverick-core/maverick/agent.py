@@ -445,6 +445,7 @@ _FILE_TOOL_POLICIES: dict[str, _FileToolPolicy] = {
     "spreadsheet_read": _FileToolPolicy((_rule("path"),)),
     "sql_query_read": _FileToolPolicy((_rule("database"),)),
     "write_file": _FileToolPolicy((_rule("path", mutates=True),)),
+    "deliver_file": _FileToolPolicy((_rule("path"),)),
     "list_dir": _FileToolPolicy((_rule("path", default="."),)),
     "str_replace_editor": _FileToolPolicy(
         (
@@ -718,7 +719,7 @@ _UNSCOPED_NETWORK_TOOLS = frozenset({
 # an explicit host check. Unclassified tools fail closed for restricted grants;
 # new tools must be reviewed before being added here or to the URL policies.
 _HOST_SCOPED_LOCAL_TOOLS = frozenset({
-    "read_file", "write_file", "list_dir", "str_replace_editor",
+    "read_file", "write_file", "list_dir", "str_replace_editor", "deliver_file",
     "spreadsheet", "spreadsheet_read", "pandas_query", "sql_query", "sql_query_read",
     "capability_query", "ask_user", "request_decision", "compute", "ast_edit",
 })

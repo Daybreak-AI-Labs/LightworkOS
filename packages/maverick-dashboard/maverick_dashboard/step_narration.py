@@ -22,6 +22,7 @@ _INTERNAL_KINDS = frozenset({"trace_meta", "tool_signal", "prm"})
 _TOOLS: dict[str, tuple[str, str]] = {
     "read_file": ("Read a file", "read a file"),
     "write_file": ("Saved a file", "save a file"),
+    "deliver_file": ("Offered a file to download", "offer a file to download"),
     "apply_patch": ("Changed a file", "change a file"),
     "str_replace_editor": ("Changed a file", "change a file"),
     "ast_edit": ("Changed a file", "change a file"),

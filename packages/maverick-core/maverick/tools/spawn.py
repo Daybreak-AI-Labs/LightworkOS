@@ -238,8 +238,10 @@ def _child_refusals(ctx, child_name: str) -> str:
     world, goal_id = getattr(ctx, "world", None), getattr(ctx, "goal_id", None)
     if world is None or goal_id is None:
         return ""
+    from ..task_files import iter_goal_events
+
     try:
-        events = world.goal_events(goal_id)
+        events = [e for e in iter_goal_events(world, goal_id) if e.agent == child_name]
     except Exception:  # noqa: BLE001 -- the plain error still reaches the parent
         return ""
     lines: list[str] = []

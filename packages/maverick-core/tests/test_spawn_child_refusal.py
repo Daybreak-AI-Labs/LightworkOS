@@ -52,3 +52,18 @@ def test_a_helper_answer_is_returned_unchanged(tmp_path):
     world, parent, child = _parent_and_child(tmp_path, final="The command was not run.")
     assert asyncio.run(_run_child_and_report(parent, child)) == "The command was not run."
     world.close()
+
+
+def test_the_refusal_is_found_in_a_long_task(tmp_path):
+    world, parent, _child = _parent_and_child(tmp_path)
+    late = "researcher-9-abc"
+    for n in range(700):
+        world.append_event(parent.ctx.goal_id, late, "observation", f"step {n}")
+    world.append_event(parent.ctx.goal_id, late, "observation", REJECTED.replace("ab12", "ef34"))
+
+    async def run():
+        return AgentResult(final=None, role="researcher", name=late)
+
+    child = SimpleNamespace(name=late, role="researcher", run=run)
+    assert "a person rejected it" in asyncio.run(_run_child_and_report(parent, child))
+    world.close()

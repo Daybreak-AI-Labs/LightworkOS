@@ -211,5 +211,5 @@ def test_the_task_page_carries_its_own_decision_card():
     import maverick_dashboard
 
     page = (Path(maverick_dashboard.__file__).parent / "templates" / "chat_goal.html").read_text(encoding="utf-8")
-    assert 'id="decision-requests" data-goal-id="{{ goal.id }}"' in page
+    assert 'id="decision-requests" data-goal="{{ goal.id }}"' in page
     assert "lightwork-decisions.js" in page
