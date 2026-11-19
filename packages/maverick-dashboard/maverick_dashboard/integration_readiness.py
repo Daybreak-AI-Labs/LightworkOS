@@ -474,6 +474,54 @@ def _self_hosted_probe_address(name: str, base_url: str) -> str:
     return base_url
 
 
+def _environment_proxy(url: str) -> str | None:
+    """The proxy the environment sets for ``url`` (HTTPS_PROXY and NO_PROXY),
+    as the provider SDKs resolve it; None when the host is reached directly."""
+    import urllib.request
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    if not parts.hostname or urllib.request.proxy_bypass_environment(parts.hostname):
+        return None
+    proxies = urllib.request.getproxies_environment()
+    return proxies.get(parts.scheme) or proxies.get("all") or None
+
+
+def _probe_request(name: str, endpoint: str, headers: dict[str, str]):
+    """The bounded models request: self-hosted servers directly, built-in public
+    endpoints through a configured proxy, anything else through safe_get."""
+    from maverick.tools import _ssrf
+
+    if name in _SELF_HOSTED_PROVIDERS:
+        import httpx
+
+        # This address is the effective operator-configured model endpoint
+        # (or Ollama's built-in loopback default), as with runtime clients.
+        # Never follow a response to a different, unconfigured host.
+        return httpx.get(
+            endpoint, headers=headers, timeout=8.0,
+            follow_redirects=False, trust_env=False,
+        )
+    elif (proxy := _environment_proxy(endpoint)) and endpoint in _PROVIDER_DEFAULT_ENDPOINTS.values():
+        import httpx
+
+        # A built-in public endpoint behind a configured HTTPS proxy: test
+        # it the way the provider SDKs connect, or a mandatory proxy makes
+        # the test fail although real AI calls would work. The outbound
+        # policy still applies, as it does inside safe_get.
+        from maverick.egress_guard import _check as _egress_check
+
+        _egress_check(endpoint)
+        return httpx.get(
+            endpoint, headers=headers, timeout=8.0,
+            # trust_env as the SDKs do: a TLS-inspecting proxy's CA comes
+            # from SSL_CERT_FILE, which an untrusting client would reject.
+            follow_redirects=False, trust_env=True, proxy=proxy,
+        )
+    else:
+        return _ssrf.safe_get(endpoint, headers=headers, timeout=8.0)
+
+
 def probe_provider(provider: str, provider_config: dict[str, Any]) -> dict[str, Any]:
     """Perform a bounded live authentication/readiness probe.
 
@@ -481,6 +529,7 @@ def probe_provider(provider: str, provider_config: dict[str, Any]) -> dict[str, 
     intentionally discarded because they can contain account metadata or echo
     request material.
     """
+    from maverick.enterprise import EgressBlocked
     from maverick.tools import _ssrf
 
     name = str(provider).strip().lower()
@@ -588,19 +637,8 @@ def probe_provider(provider: str, provider_config: dict[str, Any]) -> dict[str, 
         base_url = _self_hosted_probe_address(name, base_url)
         endpoint = _append_endpoint(base_url, suffix)
     try:
-        if name in _SELF_HOSTED_PROVIDERS:
-            import httpx
-
-            # This address is the effective operator-configured model endpoint
-            # (or Ollama's built-in loopback default), as with runtime clients.
-            # Never follow a response to a different, unconfigured host.
-            response = httpx.get(
-                endpoint, headers=headers, timeout=8.0,
-                follow_redirects=False, trust_env=False,
-            )
-        else:
-            response = _ssrf.safe_get(endpoint, headers=headers, timeout=8.0)
-    except _ssrf.BlockedHost:
+        response = _probe_request(name, endpoint, headers)
+    except (_ssrf.BlockedHost, EgressBlocked):
         return {
             "verified": False,
             "detail": "provider endpoint is blocked by the egress policy",
