@@ -11760,6 +11760,17 @@ def _chat_threads(request: Request, w, *, active_root: int | None = None) -> lis
     return sorted(threads, key=lambda row: (not row["pinned"], -row["updated_at"]))
 
 
+def _is_web_conversation(w, goal_id: int) -> bool:
+    """A task started as a chat conversation (human help applies only there);
+    a starter sample or a scheduled run is not one."""
+    try:
+        from maverick.chat_threads import ChatThreads
+
+        return ChatThreads(w).binding(goal_id) is not None
+    except Exception:  # an unreadable binding keeps the panel, as before
+        return True
+
+
 def _thread_turns(w, goal) -> list:
     """Earlier turns of the goal's thread (older goals' messages and answers),
     for the page to render above the live turn. Never blocks the page."""
@@ -13751,6 +13762,7 @@ def _chat_goal_page(request: Request, goal_id: int) -> HTMLResponse:
             "conversation_context": _conversation_context(request),
             "latest_chat_goal_id": ChatThreads(w).latest(g.id),
             "thread_turns": thread_turns,
+            "web_conversation": _is_web_conversation(w, g.id),
             "thread_stop_notes": thread_stop_notes,
             "thread_downloads": _chat_history_download_states(request, w, thread_turns),
             "thread_questions": thread_questions,
