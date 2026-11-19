@@ -56,8 +56,43 @@ def authority(request, context=None, *, write=False):
 
 def _name(name):
     if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", name):
-        raise HTTPException(422, "Choose a specialist or give a custom agent a short name.")
+        raise HTTPException(422, "Choose a specialist, or give the new agent a name that starts with a "
+                                 "letter or number and uses only letters, numbers, dashes or underscores.")
     return name
+
+
+# Setup checks speak in configuration terms ("declared tool 'shell' is denied
+# by this pack"); the Agent Factory says the same thing in plain words and
+# keeps the tool and level. Anything not recognised is shown as written.
+_PLAIN_PROBLEMS = (
+    (re.compile(r"declared tool '([^']+)' is denied by this pack"),
+     "“{0}” is in both the allowed and the blocked tools. Remove it from one list."),
+    (re.compile(r"declared tool '([^']+)' is not available in the installed registry"),
+     "“{0}” is not a tool installed here. Remove it or choose an installed tool."),
+    (re.compile(r"declared tool '([^']+)' \((\w+)\) exceeds max_risk='(\w+)'"),
+     "“{0}” is a {1}-risk tool, above this agent's limit ({2}). Raise the limit or choose a lower-risk tool."),
+    (re.compile(r"workflow tool '([^']+)' is not in allow_tools"),
+     "A playbook step uses “{0}”, which is not in the allowed tools."),
+    (re.compile(r"allow_tools is empty"),
+     "Choose the tools this agent may use. With none chosen it could use every tool."),
+    (re.compile(r"max_risk is unset"), "Choose how risky this agent's actions may be."),
+)
+
+
+def _plain_problems(text: str) -> str:
+    out = []
+    # The risk message carries its own advice after a "; ", which the plain
+    # sentence already gives.
+    text = str(text).replace("; use a scoped read tool or provide an approved export", "")
+    for part in text.split("; "):
+        for pattern, plain in _PLAIN_PROBLEMS:
+            match = pattern.search(part)
+            if match:
+                out.append(plain.format(*match.groups()))
+                break
+        else:
+            out.append(part[:1].upper() + part[1:])
+    return " ".join(item if item.endswith((".", "?", "!")) else item + "." for item in out if item)
 
 
 def _source(request, name):
@@ -100,7 +135,7 @@ def _draft(request, name, entered, source):
     try:
         profile = domain_edit.preview_override(name, patch)
     except (TypeError, ValueError) as exc:
-        raise HTTPException(422, str(exc)) from exc
+        raise HTTPException(422, _plain_problems(str(exc))) from exc
     allowed = auth.caller_suites(request)
     if allowed is not None and not domain.suites_for_domain(name, profile) <= allowed:
         raise HTTPException(403, "The entered draft belongs to a department outside your current access.")

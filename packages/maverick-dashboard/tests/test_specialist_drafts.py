@@ -218,3 +218,24 @@ def test_a_first_decision_says_what_it_did_and_a_repeat_says_nothing_was_repeate
     assert first.json()["message"] == "Saved a draft. It is recorded in this agent's history."
     again = _confirm(client, review)
     assert again.status_code == 200 and "Nothing was repeated" in again.json()["message"]
+
+
+def test_draft_problems_read_as_plain_sentences(client):
+    # Seen live: "declared tool 'shell' is denied by this pack".
+    from maverick_dashboard.specialist_drafts import _plain_problems
+
+    text = _plain_problems("declared tool 'shell' is denied by this pack; declared tool 'shell' (high) "
+                           "exceeds max_risk='low'; use a scoped read tool or provide an approved export; "
+                           "an unrecognised problem")
+    assert text == ("“shell” is in both the allowed and the blocked tools. Remove it from one list. "
+                    "“shell” is a high-risk tool, above this agent's limit (low). Raise the limit or "
+                    "choose a lower-risk tool. An unrecognised problem.")
+    context = client.get(DRAFTS + "/history").json()["context"]
+    refused = client.post(DRAFTS + "/review", json={
+        "name": "invoice_checker", "action": "save", "context": context,
+        "entered": {"description": "Invoice checker", "allow_tools": ["read_file"], "deny_tools": ["read_file"],
+                    "max_risk": "low", "persona": "Check supplier invoices against purchase orders."}})
+    assert refused.status_code == 422
+    assert "“read_file” is in both the allowed and the blocked tools" in refused.json()["detail"]
+    named = client.post(DRAFTS + "/review", json={"name": "bad name!", "action": "save", "context": context})
+    assert named.status_code == 422 and "letters, numbers, dashes or underscores" in named.json()["detail"]
