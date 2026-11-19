@@ -641,3 +641,31 @@ def test_attenuating_globs_keeps_a_narrower_pattern_inside_the_parent():
         allow_paths={"a*"}).permits_path("abc")
     assert not Capability(principal="p", allow_paths=frozenset({"*]b"})).attenuate(
         allow_paths={"[a]b"}).permits_path("ab")
+
+
+def test_team_page_roles_limit_an_agent_without_role_config(monkeypatch):
+    # Seen live: the Agent teams page offers Administrator, Operator, Auditor
+    # and Viewer, but with no [roles.<role>] tables (a default install) every
+    # team agent fell back to its owner's whole grant, so a Viewer agent was
+    # offered shell. These four now carry built-in limits.
+    from maverick.capability import UnknownRoleError, agent_role_known, capability_for_role
+
+    _cfg(monkeypatch, {})
+    for role in ("viewer", "auditor"):
+        cap = capability_for_role(role, principal="agent:Team.reader")
+        assert cap.permits("read_file") and cap.permits("read_attachment") and cap.permits("spawn_subagent")
+        for tool in ("shell", "write_file", "str_replace_editor", "http_fetch", "github_create_issue"):
+            assert not cap.permits(tool), (role, tool)
+    for role in ("operator", "admin"):
+        assert capability_for_role(role, principal="agent:Team.worker").permits("shell")
+    assert all(agent_role_known(r) for r in ("admin", "operator", "auditor", "viewer"))
+    assert not agent_role_known("superuser")
+    with pytest.raises(UnknownRoleError):
+        capability_for_role("superuser", principal="agent:Team.x")
+
+
+def test_a_configured_role_table_overrides_the_built_in_limits(monkeypatch):
+    from maverick.capability import capability_for_role
+
+    _cfg(monkeypatch, {"roles": {"viewer": {"allow_tools": ["read_file", "shell"]}}})
+    assert capability_for_role("viewer", principal="agent:Team.reader").permits("shell")

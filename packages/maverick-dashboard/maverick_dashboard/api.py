@@ -13219,7 +13219,7 @@ async def create_fleet(request: Request, payload: FleetCreateIn) -> dict:
     # fleet, not WHETHER the role may write one. A read-only viewer must be 403'd
     # (otherwise it could self-own a fleet here and then run it).
     require_permission(request, "operate")
-    from maverick.capability import configured_roles
+    from maverick.capability import agent_role_known, configured_roles
     from maverick.fleet import Fleet, FleetAgent, load_fleet, save_fleet, valid_name
 
     if not valid_name(payload.name):
@@ -13234,12 +13234,18 @@ async def create_fleet(request: Request, payload: FleetCreateIn) -> dict:
         if a.name.strip()
     )
     configured = configured_roles()
+    seen: set[str] = set()
     for a in agents:
         if not valid_name(a.name):
             raise HTTPException(status_code=400, detail=f"invalid agent name: {a.name!r}")
+        if a.name.casefold() in seen:
+            raise HTTPException(status_code=400, detail=f"two agents are named {a.name!r}; give each agent its own name")
+        seen.add(a.name.casefold())
         if not a.role:
             raise HTTPException(status_code=400, detail=f"missing role for agent: {a.name!r}")
-        if configured and a.role not in configured:
+        # A role nobody defined used to save and then run with its owner's whole
+        # grant. Only a configured role or one of the page's built-in roles.
+        if (configured and a.role not in configured) or not agent_role_known(a.role):
             raise HTTPException(status_code=400, detail=f"unknown role for agent: {a.name!r}")
 
     principal = caller_principal(request)
@@ -13247,6 +13253,11 @@ async def create_fleet(request: Request, payload: FleetCreateIn) -> dict:
     existing = load_fleet(payload.name)
     if existing is not None and existing.owner != owner:
         raise HTTPException(status_code=404, detail="no such fleet")
+    if existing is not None:
+        # Creating used to replace the team silently, dropping its agents.
+        raise HTTPException(status_code=409, detail=(
+            f"A team called {payload.name} already exists. Choose another name, "
+            "or add agents to that team."))
 
     try:
         save_fleet(Fleet(name=payload.name, owner=owner, agents=agents))

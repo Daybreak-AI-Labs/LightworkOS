@@ -137,6 +137,34 @@ def require_task_settings_or_400() -> None:
         raise HTTPException(400, state["reason"], headers={"X-Lightwork-Task-Settings": "agent.max_steps"})
 
 
+def require_workspace_for_work() -> None:
+    """Refuse new work from someone with no workspace once workspaces exist.
+
+    A person invited to the installation but not yet added to a workspace
+    could start tasks and team runs; they ran in the installation root,
+    outside every workspace's approvals, spending views and records. An
+    installation that never created a workspace, a request in a workspace and
+    a deployment bound to one workspace are unaffected.
+    """
+    from fastapi import HTTPException
+    from maverick.paths import current_tenant_id
+
+    if current_tenant_id() is not None or os.environ.get("MAVERICK_TENANT", "").strip():
+        return
+    try:
+        from maverick.tenant.registry import list_tenants
+
+        has_workspaces = bool(list_tenants())
+    except Exception:  # an unreadable registry keeps the earlier behaviour
+        return
+    if has_workspaces:
+        raise HTTPException(
+            status_code=409,
+            detail=("Choose a workspace before starting work. If you have no workspace, "
+                    "ask an administrator to add you to one."),
+        )
+
+
 def require_provider_or_400(*, role: str | None = None) -> None:
     """Raise HTTP 400 unless the route(s) this operation uses are complete.
 
@@ -144,6 +172,7 @@ def require_provider_or_400(*, role: str | None = None) -> None:
     is created. A drafting endpoint can name its one role so an unrelated or
     incomplete worker route does not block a single bounded completion.
     """
+    require_workspace_for_work()
     if role is None:
         require_task_settings_or_400()
     try:

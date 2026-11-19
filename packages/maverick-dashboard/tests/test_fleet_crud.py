@@ -34,8 +34,8 @@ def test_create_fleet(monkeypatch, tmp_path):
     r = _client().post("/api/v1/fleets", json={
         "name": "acme",
         "agents": [
-            {"name": "researcher", "role": "analyst", "description": "digs"},
-            {"name": "coder", "role": "engineer"},
+            {"name": "researcher", "role": "viewer", "description": "digs"},
+            {"name": "coder", "role": "operator"},
             {"name": "", "role": "ignored"},  # blank -> dropped
         ],
     })
@@ -45,7 +45,7 @@ def test_create_fleet(monkeypatch, tmp_path):
     assert f is not None
     assert f.owner == ""  # auth-off
     assert [a.name for a in f.agents] == ["researcher", "coder"]  # blank dropped
-    assert f.agents[0].role == "analyst"
+    assert f.agents[0].role == "viewer"
 
 
 def test_create_rejects_bad_fleet_name(monkeypatch, tmp_path):
@@ -163,3 +163,28 @@ def test_page_has_create_form_and_remove(monkeypatch, tmp_path):
     text = _client().get("/fleets").text
     assert 'id="fleet-create-form"' in text
     assert 'fleet-remove-btn"' in text
+
+
+def test_creating_a_team_never_replaces_an_existing_one(monkeypatch, tmp_path):
+    # Seen live: creating "Finance-desk" again silently replaced the team's two
+    # agents with the new form's one.
+    _isolate(monkeypatch, tmp_path)
+    first = {"name": "Finance-desk", "agents": [{"name": "reconciler", "role": "operator"},
+                                                 {"name": "reviewer", "role": "auditor"}]}
+    assert _client().post("/api/v1/fleets", json=first).status_code == 201
+    again = _client().post("/api/v1/fleets", json={"name": "Finance-desk",
+                                                    "agents": [{"name": "x1", "role": "operator"}]})
+    assert again.status_code == 409 and "already" in again.json()["detail"]
+    from maverick.fleet import load_fleet
+    assert [a.name for a in load_fleet("Finance-desk").agents] == ["reconciler", "reviewer"]
+
+
+def test_a_team_rejects_made_up_roles_and_repeated_agent_names(monkeypatch, tmp_path):
+    # Seen live: a "superuser" agent was saved and then ran with its owner's
+    # whole grant; two agents named "same" were saved side by side.
+    _isolate(monkeypatch, tmp_path)
+    made_up = _client().post("/api/v1/fleets", json={"name": "t1", "agents": [{"name": "x", "role": "superuser"}]})
+    assert made_up.status_code == 400 and "role" in made_up.json()["detail"]
+    twice = _client().post("/api/v1/fleets", json={"name": "t2", "agents": [{"name": "same", "role": "viewer"},
+                                                                            {"name": "same", "role": "viewer"}]})
+    assert twice.status_code == 400 and "same" in twice.json()["detail"]
