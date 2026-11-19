@@ -177,15 +177,22 @@ def _memory_prepare(state, args, action):
                    [{"note": row["note"], "operation": args["operation"], "replacement": args["replacement"] if args["operation"] == "edit" else ""}], data)
 
 
+# Every store My data can delete (``personal_data_requests.KINDS``) needs one.
+STORE_LABELS = {"preference_notes": "Remembered preferences", "conversation_history": "Conversation history and associated work",
+                "recovery_drafts": "Private editor recovery copies", "companion_history": "Employee companion history",
+                "experience_preferences": "Personal account and conversation preferences", "model_memory": "Personal model memory",
+                "notification_receipts": "Notification delivery history", "diagnostic_reports": "Personal diagnostic reports",
+                "activation_drafts": "Private activation drafts", "project_defaults": "Personal project defaults",
+                "model_test_history": "Personal model-check history", "generated_tools": "Currently authorized learned tools",
+                "conversation_inbox": "Queued messages and human exchanges", "saved_views_and_pins": "Saved views and task pins",
+                "private_notification_destinations": "Private notification destinations",
+                "comments": "Your comments", "policy_suggestions": "Your suggested AI use rule edits",
+                "account_name": "Name and email from company sign-in"}
+
+
 def _deletion_scope(record):
     """Complete human scope; exact source identifiers stay in native receipts."""
-    labels = {"preference_notes": "Remembered preferences", "conversation_history": "Conversation history and associated work",
-              "recovery_drafts": "Private editor recovery copies", "companion_history": "Employee companion history",
-              "experience_preferences": "Personal account and conversation preferences", "model_memory": "Personal model memory",
-              "notification_receipts": "Notification delivery history", "diagnostic_reports": "Personal diagnostic reports",
-              "activation_drafts": "Private activation drafts", "project_defaults": "Personal project defaults",
-              "model_test_history": "Personal model-check history", "generated_tools": "Currently authorized learned tools",
-              "conversation_inbox": "Queued messages and human exchanges", "saved_views_and_pins": "Saved views and task pins"}
+    labels = STORE_LABELS
     targets = []
     for target in record["targets"]:
         kind = target["store"]
