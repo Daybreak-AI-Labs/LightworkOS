@@ -779,14 +779,13 @@ def _check_shield() -> None:
     from maverick_shield.builtin_rules import RULES
     backend_label = {
         "agent-shield": "agent-shield SDK",
-        "builtin": f"builtin rules ({len(RULES)} bundled patterns)",
+        "builtin": f"built-in rules ({len(RULES)} bundled patterns)",
         "none": "DISABLED -- [safety] profile=off in config",
     }.get(s.backend, s.backend)
-    if s.backend == "agent-shield":
+    if s.backend in {"agent-shield", "builtin"}:
+        # The bundled built-in rules are the standard release's shield; the full
+        # SDK is not publicly available, so there is nothing for the user to do.
         _row(GREEN, "shield", backend_label)
-    elif s.backend == "builtin":
-        _row(YELLOW, "shield", backend_label,
-             fix="Use the built-in layer; the full SDK is not on public PyPI")
     else:
         _row(RED, "shield", backend_label,
              fix="set [safety] profile = \"balanced\" in ~/.maverick/config.toml to re-enable")
