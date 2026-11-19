@@ -62,6 +62,9 @@ release-runtime = [
     "boto3>=1.40,<2",
     # Guided company sign-in must work in frozen installations without a shell.
     "pyjwt[crypto]>=2.13.0", "pysaml2>=7.5.5", "pyXMLSecurity>=1.0.0",
+    # The compute tool's symbolic operations; without it the agent fell back
+    # to mental arithmetic on a default install.
+    "sympy>=1.12",
 ]
 azure      = ["openai>=1.30,<4", "azure-identity>=1.25.3,<2"]
 openrouter = ["openai>=1.30,<4"]
