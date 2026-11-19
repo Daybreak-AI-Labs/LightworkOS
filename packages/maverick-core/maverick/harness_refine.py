@@ -350,8 +350,8 @@ def _park_approval(record: dict) -> int:
         record["action"], risk="high",
         detail=encode_operation_approval_detail(
             action=record["action"],
-            summary=f"Apply harness refinement {record['name']}",
-            target_label=f"Harness {record['target']}: {record['name']}",
+            summary=f"Use the suggested instruction change \u201c{record['name']}\u201d for future tasks",
+            target_label=f"Instructions Lightwork gives its agents: {record['name']}",
             target=target,
             parameters=parameters,
             parameter_summary=[

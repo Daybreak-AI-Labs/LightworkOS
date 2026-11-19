@@ -495,10 +495,12 @@
     function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
     function dreamLines(d) {
       var head = d.preview ? 'If Lightwork learned now, it would:' : (d.activity_recorded ? 'Learning completed. Lightwork:' : 'Learning completion is unconfirmed. The cycle reported:');
+      var w = d.preview ? ['review ', 'write ', ' and learn ', 'retire ', ' that stopped working and tidy ']
+        : ['reviewed ', 'wrote ', ' and learned ', 'retired ', ' that stopped working and tidied '];
       return [head,
-        '• review ' + plural(d.tasks_reviewed, 'finished task', 'finished tasks') + ' and ' + plural(d.failures_reviewed, 'problem', 'problems'),
-        '• write ' + plural(d.lessons_written, 'lesson', 'lessons') + ' and learn ' + plural(d.skills_learned, 'skill', 'skills'),
-        '• retire ' + plural(d.skills_retired, 'skill', 'skills') + ' that stopped working and tidy ' + plural(d.notes_tidied, 'old note', 'old notes')]
+        '• ' + w[0] + plural(d.tasks_reviewed, 'finished task', 'finished tasks') + ' and ' + plural(d.failures_reviewed, 'problem', 'problems'),
+        '• ' + w[1] + plural(d.lessons_written, 'lesson', 'lessons') + w[2] + plural(d.skills_learned, 'skill', 'skills'),
+        '• ' + w[3] + plural(d.skills_retired, 'skill', 'skills') + w[4] + plural(d.notes_tidied, 'old note', 'old notes')]
         .concat(d.paused ? ['Learning is paused while its checks recover. Earlier changes may have been kept.'] : [])
         .concat(d.notice ? [d.notice] : []);
     }

@@ -32,6 +32,8 @@ NOTICE = ("Saving a draft does not change the specialist people use. Preview che
 ACTIONS = {"save": "Saved a draft", "try": "Tried a draft answer", "check": "Checked the draft's saved questions",
            "publish": "Published a saved draft", "restore": "Restored an earlier definition",
            "promote": "Promoted a trial version", "rollback": "Rolled back a trial version"}
+# How the version that a publish or restore replaced is named in "Earlier versions".
+_BEFORE = {"publish": "Before a saved draft was published", "restore": "Before an earlier definition was restored"}
 TRIAL_LIVE = ("A trial version of this specialist is live. Promote it or roll it back in Workforce before "
               "publishing another change. Nothing was changed.")
 
@@ -269,7 +271,7 @@ def inventory(request, name):
     versions = [{"value": row["id"], "label": (row.get("title") or ACTIONS[row["action"]]) + " · " +
                  time.strftime("%b %d, %Y %H:%M", time.localtime(row["created_at"]))}
                 for row in rows if row["action"] == "save" and row["state"] == "confirmed" and not row.get("_audit_pending")]
-    earlier = [{"value": row["id"], "label": "Before " + ACTIONS[row["action"]].lower() + " · " +
+    earlier = [{"value": row["id"], "label": _BEFORE[row["action"]] + " · " +
                 time.strftime("%b %d, %Y %H:%M", time.localtime(row["created_at"]))}
                for row in rows if row["action"] in {"publish", "restore"} and row.get("before", {}).get("profile") and row["state"] != "not_started"]
     originals = [{"value": row["id"], "label": ACTIONS[row["action"]] + " · " +
