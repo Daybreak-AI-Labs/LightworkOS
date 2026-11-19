@@ -57,6 +57,8 @@ def test_disagreement_only_added_when_already_flagging():
         disagreement=0.95, coding=False,
     )
     assert any("disagreed" in r for r in reasons)
+    # Plain words for the person reading the answer, not a score.
+    assert not any("entropy" in r or "FINAL" in r for r in reasons)
 
 
 def test_low_disagreement_not_added():

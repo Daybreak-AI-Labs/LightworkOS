@@ -1653,16 +1653,13 @@ def _final_uncertainty_reasons(
         return []
     reasons: list[str] = []
     if no_final_marker:
-        reasons.append(
-            "the response never included a FINAL: marker, so the verifier "
-            "and patch-validation pipeline did not run"
-        )
+        reasons.append("the agent never marked its answer as finished, so it was not checked")
     if verifier_rejected:
-        reasons.append("an internal self-check did not pass after one revision")
+        reasons.append("Lightwork's self-check still found problems after one revision")
     if verifier_incomplete:
-        reasons.append("verification did not finish within the budget")
+        reasons.append("the check ran out of budget before it finished")
     if reasons and disagreement >= 0.8:
-        reasons.append(f"parallel attempts disagreed (entropy {disagreement:.2f})")
+        reasons.append("separate attempts at it disagreed with each other")
     return reasons
 
 
@@ -1678,7 +1675,7 @@ def _final_with_uncertainty_note(final: str | None, reasons: list[str]) -> str |
     note = (
         "⚠️ I could not fully verify this answer: "
         + "; ".join(reasons)
-        + ". Treat it with caution."
+        + ". Check it before you rely on it."
     )
     return note + "\n\n" + final
 
