@@ -825,9 +825,25 @@ def import_original(request, operation):
             "cases": row["prepared"]["cases"] if row else None, "replaced": row["prepared"]["replace"] if row else None}
 
 
+def _import_state(request):
+    """The import controls, or why they are not available yet.
+
+    No test-case location chosen is the normal state of a new installation,
+    not a failed request: answering 409 put an error in the browser console on
+    every visit to the Learned page. Every other refusal still raises."""
+    from maverick import self_harness
+
+    try:
+        return import_controls(request)
+    except HTTPException as exc:
+        if exc.status_code != 409 or self_harness.settings().get("eval_corpus"):
+            raise
+        return {"configured": False, "notice": exc.detail, "requests": []}
+
+
 @router.get("/self-harness/test-cases/import")
 async def import_state(request: Request):
-    return JSONResponse(await run_in_threadpool(import_controls, request), headers={"Cache-Control": "private, no-store"})
+    return JSONResponse(await run_in_threadpool(_import_state, request), headers={"Cache-Control": "private, no-store"})
 
 
 @router.get("/self-harness/test-cases/import/requests/{operation}")
