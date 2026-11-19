@@ -137,3 +137,16 @@ def test_a_framed_success_still_reads_as_done():
 
     assert narrate("observation", "orchestrator-0-4d2072",
                    _framed("shell", "Python 3.12.16\n42")).text == "Ran a command"
+
+
+def test_a_command_nobody_decided_on_is_not_called_rejected():
+    from maverick_dashboard.step_narration import narrate
+
+    step = narrate("observation", "orchestrator-0-63fc0d", _framed(
+        "shell", "ERROR: shell command was not approved: nobody approved it in time, "
+                 "so no command was run"))
+    assert step.text == "Did not run a command: nobody approved it in time"
+    step = narrate("observation", "orchestrator-0-63fc0d", _framed(
+        "shell", "ERROR: shell command was not approved: a person rejected it, so no "
+                 "command was run. Do not ask to run it again."))
+    assert step.text == "Did not run a command: a person rejected it"

@@ -210,6 +210,8 @@ def _tool_step(kind: str, tool: str, rest: str) -> Step:
         return Step("Asked you a question", group="ask_user")
     if output.startswith(_FAILED_OUTPUT):
         if "not approved" in output[:200].casefold():
+            if "nobody approved it in time" in output[:200].casefold():
+                return Step(f"Did not {base}: nobody approved it in time", group=f"unanswered:{tool}")
             return Step(f"Did not {base}: a person rejected it", group=f"rejected:{tool}")
         return Step(f"Tried to {base}, but it did not work", group=f"failed:{tool}")
     return Step(done, group=f"tool:{tool}", plural=_PLURALS.get(tool, ""))

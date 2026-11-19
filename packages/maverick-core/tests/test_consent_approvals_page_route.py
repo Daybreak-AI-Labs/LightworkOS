@@ -261,3 +261,123 @@ def test_withdrawing_a_two_person_approval_with_one_audited_vote_denies_it(db):
 
     assert row.status == "denied"
     assert row.decided_by == "system:task-stopped"
+
+
+def test_a_restart_withdraws_the_requests_its_dead_tasks_were_waiting_on(db):
+    # Seen live: the dashboard restarted while a task waited on a shell
+    # approval. Recovery marked the task stopped, but its request stayed on the
+    # Approvals page as pending with nothing left to act on a decision.
+    world = WorldModel(path=db)
+    dead, live = _headless_goal(db), _headless_goal(db)
+    for goal_id in (dead, live):
+        world.set_goal_status(goal_id, "active")
+
+    def park(goal_id, *, undoable):
+        tokens = set_goal_context(goal_id=goal_id)
+        try:
+            return world.create_approval("shell: grep BAT long-report.txt", risk="high",
+                                         undoable=undoable)
+        finally:
+            reset_goal_context(tokens)
+
+    waited_on = park(dead, undoable=True)       # held by a consent wait
+    queued_action = park(dead, undoable=False)  # its consumer acts later, not a waiter
+    still_live = park(live, undoable=True)
+    with world._writing() as conn:  # the dead task stopped heartbeating
+        conn.execute("UPDATE goals SET updated_at = 0, heartbeat_at = 0 WHERE id = ?", (dead,))
+
+    assert world.reclaim_orphan_goals(statuses=("active",), resolved_window_seconds=60) == 1
+    withdrawn = world.get_approval(waited_on)
+    assert (withdrawn.status, withdrawn.decided_by) == ("denied", "system:task-stopped")
+    assert world.get_approval(queued_action).status == "pending"
+    assert world.get_approval(still_live).status == "pending"
+    world.close()
+
+
+def _command_card(command):
+    from maverick.approval_cards import build_approval_card
+
+    return build_approval_card(
+        action="shell", summary="Run a command in the sandbox.", target_label="sandbox:/work",
+        target={"workdir": "/work"}, parameters={"command": command, "timeout_seconds": None},
+        parameter_summary=["Runs this exact command once; nothing else is approved."],
+        actor=OWNER, workspace="local", role="admin", authority_versions={},
+        input_versions={}, credential_versions={}, budget={"currency": "USD"},
+        expires_at=time.time() + 600, known_effects=["The command runs in the sandbox folder."],
+        unresolved_assumptions=[], before="The command has not run.",
+        after="The command has run once.", irreversible=True, display_command=command)
+
+
+def _command_consent(goal_id, command):
+    from maverick.safety.consent import require_consent
+
+    tokens = set_goal_context(goal_id=goal_id)
+    try:
+        return require_consent("shell", risk="high", scope="sandbox:/work",
+                               approval_card=_command_card(command))
+    finally:
+        reset_goal_context(tokens)
+
+
+def test_a_command_a_person_rejected_is_not_asked_about_again_in_that_task(db):
+    # Seen live: the person rejected `date`; a helper reported it, and the main
+    # agent then asked to run the same `date` again.
+    goal_id = _chat_goal(db)
+    denier = _decide_when_parked(db, "denied")
+    assert _command_consent(goal_id, "date").granted is False
+    denier.join(timeout=10)
+
+    started = time.monotonic()
+    again = _command_consent(goal_id, "date")
+    assert again.granted is False and again.source == "rejected-earlier"
+    assert time.monotonic() - started < 2.0
+    assert [a.status for a in _approvals(db)] == ["denied"]  # no second request
+
+    # A different command, or the same one in another task, still asks.
+    approver = _decide_when_parked(db, "approved")
+    assert _command_consent(goal_id, "date -u").granted is True
+    approver.join(timeout=10)
+    other = _chat_goal(db)
+    approver = _decide_when_parked(db, "approved")
+    assert _command_consent(other, "date").granted is True
+    approver.join(timeout=10)
+
+
+def test_restart_cleanup_leaves_a_request_whose_task_it_cannot_see(db, monkeypatch):
+    # Shared PostgreSQL also lists compatibility rows with no workspace; a task
+    # this scope cannot read is not proof that the task ended.
+    from maverick.safety.consent import withdraw_requests_of_ended_tasks
+
+    world = WorldModel(path=db)
+    goal_id = _headless_goal(db)
+    tokens = set_goal_context(goal_id=goal_id)
+    try:
+        approval = world.create_approval("shell: date", risk="high", undoable=True)
+    finally:
+        reset_goal_context(tokens)
+    monkeypatch.setattr(world, "get_goal", lambda _goal_id: None)
+    assert withdraw_requests_of_ended_tasks(world) == 0
+    assert world.get_approval(approval).status == "pending"
+    world.close()
+
+
+def test_a_refusal_raised_to_the_tool_says_a_person_answered(db):
+    # The tool only sees ConsentDenied; it must know a person said no, not
+    # that nobody answered in time.
+    from maverick.safety.consent import PERSON_REFUSALS, ConsentDenied, require_consent
+
+    goal_id = _chat_goal(db)
+    denier = _decide_when_parked(db, "denied")
+    tokens = set_goal_context(goal_id=goal_id)
+    try:
+        with pytest.raises(ConsentDenied) as refused:
+            require_consent("shell", risk="high", scope="sandbox:/work", raise_on_deny=True,
+                            approval_card=_command_card("uname -a"))
+        with pytest.raises(ConsentDenied) as again:
+            require_consent("shell", risk="high", scope="sandbox:/work", raise_on_deny=True,
+                            approval_card=_command_card("uname -a"))
+    finally:
+        reset_goal_context(tokens)
+    denier.join(timeout=10)
+    assert refused.value.source == "dashboard" and refused.value.source in PERSON_REFUSALS
+    assert again.value.source == "rejected-earlier" and again.value.source in PERSON_REFUSALS

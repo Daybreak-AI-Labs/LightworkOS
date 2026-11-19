@@ -124,9 +124,15 @@ def consent_ledger_path() -> Path:
 class ConsentDenied(Exception):
     """Raised when ``require_consent(..., raise_on_deny=True)`` is denied."""
 
-    def __init__(self, action: str):
+    def __init__(self, action: str, *, source: str = ""):
         super().__init__(f"consent denied for action: {action}")
         self.action = action
+        # The refusing decision's source; PERSON_REFUSALS names a person's "no".
+        self.source = source
+
+
+# Decision sources that mean a person answered no (not a timeout or a policy).
+PERSON_REFUSALS = frozenset({"dashboard", "prompt", "rejected-earlier"})
 
 
 @dataclass(frozen=True)
@@ -766,12 +772,12 @@ def require_consent(
             action, scope, detail,
         )
         if not d.granted and raise_on_deny:
-            raise ConsentDenied(action)
+            raise ConsentDenied(action, source=d.source)
         return d
     if mode == "auto-deny":
         d = _emit(ConsentDecision(False, "auto", risk, ts), action, scope, detail)
         if raise_on_deny:
-            raise ConsentDenied(action)
+            raise ConsentDenied(action, source=d.source)
         return d
     if mode == "dashboard":
         d = _decide_via_dashboard(
@@ -780,7 +786,7 @@ def require_consent(
         if d is not None:
             d = _emit(d, action, scope, detail)
             if not d.granted and raise_on_deny:
-                raise ConsentDenied(action)
+                raise ConsentDenied(action, source=d.source)
             return d
         # Dashboard unavailable -> fall through to the interactive/non-tty
         # path below (fail-open: the kernel never *requires* the dashboard).
@@ -798,7 +804,7 @@ def require_consent(
                 return _decided(asked, action, scope, detail, raise_on_deny)
         d = _emit(ConsentDecision(False, "non-tty-deny", risk, ts), action, scope, detail)
         if raise_on_deny:
-            raise ConsentDenied(action)
+            raise ConsentDenied(action, source=d.source)
         return d
     with _prompt_lock:
         try:
@@ -815,7 +821,7 @@ def require_consent(
                 detail,
             )
             if raise_on_deny:
-                raise ConsentDenied(action) from exc
+                raise ConsentDenied(action, source=d.source) from exc
             return d
         sys.stderr.write(msg)
         sys.stderr.flush()
@@ -826,7 +832,7 @@ def require_consent(
     granted = reply in {"y", "yes"}
     d = _emit(ConsentDecision(granted, "prompt", risk, ts), action, scope, detail)
     if not granted and raise_on_deny:
-        raise ConsentDenied(action)
+        raise ConsentDenied(action, source=d.source)
     return d
 
 
@@ -839,7 +845,7 @@ def _decided(
 ) -> ConsentDecision:
     decision = _emit(decision, action, scope, detail)
     if not decision.granted and raise_on_deny:
-        raise ConsentDenied(action)
+        raise ConsentDenied(action, source=decision.source)
     return decision
 
 
@@ -1283,7 +1289,7 @@ def require_operation_consent(
                 approval_card=card,
             )
         if not decision.granted:
-            raise ConsentDenied(display_action)
+            raise ConsentDenied(display_action, source=str(getattr(decision, "source", "") or ""))
         permit = ConsentPermit(
             card=card,
             decision=decision,
@@ -1515,6 +1521,70 @@ def _withdraw_approval(wm, approval_id: int, by: str) -> None:
         pass
 
 
+def _operation_fingerprint(card: Mapping[str, object] | None) -> tuple[str, str, str] | None:
+    """What a person reviewed: the action and the hashes of its exact target and
+    parameters. Expiry and the per-request binding differ on every request."""
+    if not isinstance(card, Mapping):
+        return None
+    parameters, target = card.get("parameters"), card.get("target")
+    params_sha = parameters.get("sha256") if isinstance(parameters, Mapping) else None
+    target_sha = target.get("sha256") if isinstance(target, Mapping) else None
+    if not (isinstance(params_sha, str) and params_sha and isinstance(target_sha, str)):
+        return None
+    return str(card.get("action") or ""), target_sha, params_sha
+
+
+def _rejected_earlier(wm, goal_id: int, approval_card: Mapping[str, object] | None) -> bool:
+    """A person (not a timeout or a stopped task) denied this exact operation
+    earlier in the same task. Only exact-operation cards qualify."""
+    wanted = _operation_fingerprint(approval_card)
+    if wanted is None:
+        return False
+    from ..approval_cards import decode_approval_detail
+
+    try:
+        earlier = wm.list_approvals()
+    except Exception:  # noqa: BLE001 -- unreadable history: ask as usual
+        return False
+    for row in earlier:
+        if row.goal_id != goal_id or row.status != "denied":
+            continue
+        if not row.decided_by or str(row.decided_by).startswith("system:"):
+            continue
+        try:
+            if _operation_fingerprint(decode_approval_detail(row.detail)) == wanted:
+                return True
+        except Exception:  # noqa: BLE001 -- an unreadable card is not a match
+            continue
+    return False
+
+
+def withdraw_requests_of_ended_tasks(wm) -> int:
+    """Withdraw requests whose waiting task has ended, as its own wait would.
+
+    A consent wait withdraws its request when the task stops. If the process
+    died instead (a restart, a crash), nothing is left to do that, and the
+    request stays pending on the Approvals page with no task behind it. Only
+    requests a wait holds (``undo_hold`` open) qualify: a request whose
+    consumer acts later, without a waiting task, is left alone.
+    """
+    from ..world_model import APPROVAL_UNDO_OPEN
+
+    withdrawn = 0
+    for approval in wm.pending_approvals():
+        if approval.undo_hold != APPROVAL_UNDO_OPEN or approval.goal_id is None:
+            continue
+        try:
+            goal = wm.get_goal(approval.goal_id)
+        except Exception:  # noqa: BLE001 -- unreadable: leave the request
+            continue
+        # A task this scope cannot see is not proof that it ended.
+        if goal is not None and str(getattr(goal, "status", "") or "") in _TASK_OVER:
+            _withdraw_approval(wm, approval.id, "system:task-stopped")
+            withdrawn += 1
+    return withdrawn
+
+
 def _park_approval(
     wm,
     action: str,
@@ -1704,6 +1774,10 @@ def _decide_via_dashboard(
             from ..logging_config import current_goal_id
 
             goal_id = current_goal_id()
+        if goal_id is not None and _rejected_earlier(wm, goal_id, approval_card):
+            # A person already said no to this exact operation in this task:
+            # asking again would only repeat the question they answered.
+            return ConsentDecision(False, "rejected-earlier", risk, time.time())
         try:
             approval_id, approval_card = _park_approval(
                 wm, action, risk, scope, detail, provenance, approval_card,

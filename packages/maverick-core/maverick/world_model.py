@@ -1725,7 +1725,20 @@ class WorldModel:
     def __exit__(self, exc_type, exc, tb) -> None:
         self.close()
 
-    def reclaim_orphan_goals(
+    def reclaim_orphan_goals(self, **kwargs: Any) -> int:
+        """Reclaim stale goals (see :meth:`_reclaim_stale_goal_rows`), then take
+        the approval requests those dead runs were waiting on off the
+        Approvals page."""
+        reclaimed = self._reclaim_stale_goal_rows(**kwargs)
+        try:
+            from .safety.consent import withdraw_requests_of_ended_tasks
+
+            withdraw_requests_of_ended_tasks(self)
+        except Exception:  # noqa: BLE001 -- crash recovery never fails on this
+            log.warning("could not withdraw approval requests of stopped tasks", exc_info=True)
+        return reclaimed
+
+    def _reclaim_stale_goal_rows(
         self, *, max_age_seconds: float = 60.0,
         statuses: tuple[str, ...] = ("active",),
         resolved_window_seconds: float | None = None,

@@ -3608,7 +3608,24 @@ class PostgresWorldModel:
             rows = cur.fetchall()
         return [_dec_goal_row(r) for r in rows]
 
-    def reclaim_orphan_goals(
+    def reclaim_orphan_goals(self, **kwargs: object) -> int:
+        """Reclaim stale goals (see :meth:`_reclaim_stale_goal_rows`), then take
+        the approval requests those dead runs were waiting on off the
+        Approvals page."""
+        reclaimed = self._reclaim_stale_goal_rows(**kwargs)
+        if kwargs.get("exact_tenant"):
+            # The request listing includes compatibility rows with no tenant,
+            # which this sweep must not touch.
+            return reclaimed
+        try:
+            from ..safety.consent import withdraw_requests_of_ended_tasks
+
+            withdraw_requests_of_ended_tasks(self)
+        except Exception:  # noqa: BLE001 -- crash recovery never fails on this
+            log.warning("could not withdraw approval requests of stopped tasks", exc_info=True)
+        return reclaimed
+
+    def _reclaim_stale_goal_rows(
         self, *, max_age_seconds: float = 60.0,
         statuses: tuple[str, ...] = ("active",),
         resolved_window_seconds: float | None = None,
