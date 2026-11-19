@@ -366,7 +366,7 @@ haven't installed yet.
 
 ### Scope and limits
 
-Lightwork is alpha. It installs from source, runs its test suite in CI on
+Lightwork installs from source, runs its test suite in CI on
 Python 3.11–3.12, and the features in this handbook ship and run. Each guide
 states its own limits, and [`FEATURES.md`](./FEATURES.md) marks modules that
 are built but not wired. Hold this handbook to it: if you find a claim here the
