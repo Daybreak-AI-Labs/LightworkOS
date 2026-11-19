@@ -556,3 +556,17 @@ def test_reads_check_the_gate_and_open_the_store_off_the_event_loop(
     assert not any(loop for _kind, loop in seen)
     state["enabled"] = False
     assert client.get(f"{API}/templates").status_code == 403
+
+
+def test_a_locked_store_answers_unavailable_not_a_server_error(environment) -> None:
+    import sqlite3
+
+    client, _state = environment
+
+    def locked_factory(**_kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    client.app.state.third_party_lifecycle_store_factory = locked_factory
+    response = client.get(f"{API}/templates")
+    assert response.status_code == 503
+    assert response.json()["detail"] == "third-party lifecycle store is unavailable"

@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import json
 import logging
+import sqlite3
 import time
 import uuid
 from typing import Any, Literal
@@ -20,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 
 from .auth import require_global_permission, require_permission
-from .store_failures import log_store_failure, remember_route
+from .store_failures import log_store_failure, remember_route, unavailable_if_busy
 
 router = APIRouter(prefix="/api/v1/compliance/continuous-evidence/setup", tags=["trc-setup"],
                    dependencies=[Depends(remember_route)])
@@ -65,6 +66,9 @@ def _store(request: Request):
             return evidence, tenant, factory(tenant_id=tenant, principal_ref=principal,
                                              principal_resolver=lambda: principal, request=request)
         return evidence, tenant, api._default_store_for(tenant, principal)
+    except sqlite3.OperationalError as exc:
+        unavailable_if_busy(log, exc, "Continuous evidence is not available right now.")
+        raise
     except (evidence.ContinuousEvidenceError, OSError) as exc:
         log_store_failure(log, exc)
         raise HTTPException(status_code=503, detail="Continuous evidence is not available right now.") from exc

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import sqlite3
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, is_dataclass
 from functools import partial
@@ -22,7 +23,7 @@ from starlette.concurrency import run_in_threadpool
 
 from ._shared import authenticated_subject
 from .auth import require_global_permission, require_permission
-from .store_failures import log_store_failure
+from .store_failures import log_store_failure, unavailable_if_busy
 
 log = logging.getLogger(__name__)
 
@@ -261,6 +262,9 @@ def create_trc_continuous_evidence_router(
                 if callable(factory)
                 else deps.store_for(tenant, principal)
             )
+        except sqlite3.OperationalError as exc:
+            unavailable_if_busy(log, exc, "continuous-evidence store is unavailable")
+            raise
         except evidence.ContinuousEvidenceConfigError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
         except (evidence.ContinuousEvidenceError, OSError) as exc:
@@ -283,6 +287,9 @@ def create_trc_continuous_evidence_router(
     async def call(evidence, function, *args, **kwargs):
         try:
             return await run_in_threadpool(function, *args, **kwargs)
+        except sqlite3.OperationalError as exc:
+            unavailable_if_busy(log, exc, "continuous-evidence store is unavailable")
+            raise
         except evidence.ContinuousEvidenceNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except evidence.ContinuousEvidencePermissionDenied as exc:

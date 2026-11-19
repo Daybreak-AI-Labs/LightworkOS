@@ -673,3 +673,17 @@ def test_reads_check_the_gate_and_open_the_store_off_the_event_loop(
     assert not any(loop for _kind, loop in seen)
     state["enabled"] = False
     assert client.get(f"{API}/cases").status_code == 403
+
+
+def test_a_locked_store_answers_unavailable_not_a_server_error(environment) -> None:
+    import sqlite3
+
+    client = environment[0]
+
+    def locked_factory(**_kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    client.app.state.privacy_rights_orchestration_store_factory = locked_factory
+    response = client.get(f"{API}/cases")
+    assert response.status_code == 503
+    assert response.json()["detail"] == "privacy-rights orchestration store is unavailable"
