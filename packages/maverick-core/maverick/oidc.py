@@ -123,6 +123,28 @@ class OIDCConfig:
     session_secret: str = ""
     authorization_endpoint: str = ""
     token_endpoint: str = ""
+    # What the browser sign-in asks the provider for. The default adds the
+    # standard ``email`` and ``profile`` scopes, so the ID token carries the
+    # name and email (an email is used only when the provider marks it
+    # verified). ``[auth.oidc] scopes`` / ``MAVERICK_OIDC_SCOPES`` can narrow
+    # it back to ``openid``; nothing can widen it beyond these three.
+    scopes: str = "openid email profile"
+
+
+DEFAULT_SCOPES = ("openid", "email", "profile")
+
+
+def _normalize_scopes(value: Any) -> str:
+    """The requested scopes, kept within :data:`DEFAULT_SCOPES` and always
+    including ``openid``. Unset or unreadable means the default set."""
+    if isinstance(value, str):
+        items = value.replace(",", " ").split()
+    elif isinstance(value, (list, tuple)):
+        items = [str(item).strip() for item in value]
+    else:
+        return " ".join(DEFAULT_SCOPES)
+    chosen = {item for item in items if item in DEFAULT_SCOPES} | {"openid"}
+    return " ".join(scope for scope in DEFAULT_SCOPES if scope in chosen)
 
 
 def _env_flag(name: str) -> bool | None:
@@ -231,6 +253,9 @@ def _load_oidc_config() -> OIDCConfig:
     token_endpoint = os.environ.get("MAVERICK_OIDC_TOKEN_ENDPOINT") or str(
         section.get("token_endpoint", "") or ""
     )
+    scopes_raw: Any = os.environ.get("MAVERICK_OIDC_SCOPES")
+    if scopes_raw is None or not scopes_raw.strip():
+        scopes_raw = section.get("scopes")
 
     return OIDCConfig(
         enabled=enabled,
@@ -244,6 +269,7 @@ def _load_oidc_config() -> OIDCConfig:
         session_secret=session_secret.strip(),
         authorization_endpoint=authorization_endpoint.strip(),
         token_endpoint=token_endpoint.strip(),
+        scopes=_normalize_scopes(scopes_raw),
     )
 
 

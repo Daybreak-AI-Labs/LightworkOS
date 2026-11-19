@@ -919,6 +919,17 @@ been initialized, installations may explicitly set `[dashboard] default_role =
 unassigned users need an explicit global assignment or workspace membership.
 The viewer role still grants read access where `view` permission is sufficient.
 
+Browser sign-in asks the provider for `openid email profile`, so the ID token
+carries the person's name and email. Existing installs receive them from each
+person's next sign-in, and some providers show a consent screen for them. An
+email is used only when the provider marks it verified, as before. Narrow the
+request (it cannot widen beyond these three; `openid` is always included):
+
+```toml
+[auth.oidc]
+scopes = "openid"   # default "openid email profile"; MAVERICK_OIDC_SCOPES wins
+```
+
 Company sign-in (OIDC) keeps the display name and the verified email the
 provider reports, so approvals, settings history and the Activity log name
 people instead of "Google account". Turn it off with:

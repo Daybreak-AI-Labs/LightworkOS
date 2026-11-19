@@ -55,8 +55,11 @@ access. My Data lists it, downloads it (Name and email from company sign-in)
 and erases it through the reviewed deletion. The next company sign-in records
 it again while `[auth] remember_account_names` is on (the default;
 `MAVERICK_REMEMBER_ACCOUNT_NAMES=0` stops recording and naming). Deleting the
-account in the company directory (SCIM) erases it. The provider sends these
-claims only when it releases them for the requested sign-in.
+account in the company directory (SCIM) erases it. Browser sign-in asks for the
+`email` and `profile` scopes by default, so existing installs receive these
+claims from each person's next sign-in; some providers show a consent screen
+for them. `[auth.oidc] scopes = "openid"` narrows the request, after which the
+provider sends them only if it releases them anyway.
 
 Installed-browser and live provider behavior are not qualified.
 

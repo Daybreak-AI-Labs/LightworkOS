@@ -91,7 +91,7 @@ def test_login_redirects_with_state_and_pkce(login_env, client):
     q = parse_qs(urlparse(location).query)
     assert q["response_type"] == ["code"]
     assert q["client_id"] == [CLIENT_ID]
-    assert q["scope"] == ["openid"]
+    assert q["scope"] == ["openid email profile"]  # the verified email and name, by default
     assert q["code_challenge_method"] == ["S256"]
     assert q["code_challenge"] and q["code_challenge"][0]
     assert q["state"] and q["state"][0]
@@ -203,6 +203,67 @@ def test_callback_happy_path_sets_session_and_redirects(login_env, client, monke
     assert payload["verified_email"] == "alice@example.com"
     set_cookie = resp.headers["set-cookie"].lower()
     assert "httponly" in set_cookie and "samesite=lax" in set_cookie
+
+
+@pytest.mark.parametrize("env,config,expected", [
+    ("openid", None, "openid"),
+    ("openid email", None, "openid email"),
+    (None, ["openid"], "openid"),
+    (None, "profile", "openid profile"),             # openid is always asked for
+    ("openid offline_access groups", None, "openid"),  # only narrowing, never wider
+    (None, None, "openid email profile"),
+])
+def test_the_sign_in_scope_can_be_narrowed(login_env, client, monkeypatch, env, config, expected):
+    from maverick import config as maverick_config
+
+    if env is None:
+        monkeypatch.delenv("MAVERICK_OIDC_SCOPES", raising=False)
+    else:
+        monkeypatch.setenv("MAVERICK_OIDC_SCOPES", env)
+    if config is not None:
+        real = maverick_config.load_config
+        monkeypatch.setattr(maverick_config, "load_config", lambda *a, **k: {
+            **(real(*a, **k) or {}), "auth": {"oidc": {"scopes": config}}})
+    location = client.get("/auth/login", follow_redirects=False).headers["location"]
+    assert parse_qs(urlparse(location).query)["scope"] == [expected]
+
+
+def _sign_in(client, monkeypatch, claims):
+    state, _, nonce = _do_login(client)
+
+    async def _fake_exchange(url, *, cfg, code, code_verifier):
+        return {"id_token": "fake.id.token"}
+    monkeypatch.setattr(ol, "_exchange_code_for_tokens", _fake_exchange)
+    monkeypatch.setattr(ol, "verify_oidc_token", lambda token: VerifiedPrincipal(
+        sub="google-oauth2|104857600123456789", issuer=ISSUER, audience="maverick",
+        claims={"sub": "google-oauth2|104857600123456789", "nonce": nonce, **claims}))
+    resp = client.get(f"/auth/callback?code=c&state={state}", follow_redirects=False)
+    assert resp.status_code == 303, resp.text
+    return verify_session(client.cookies.get(ol.SESSION_COOKIE), SESSION_SECRET)
+
+
+def test_a_verified_email_and_name_reach_the_account_record_and_the_session(login_env, client, monkeypatch, tmp_path):
+    from maverick_dashboard import account_profiles
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "home"))
+    payload = _sign_in(client, monkeypatch, {"email": "Dana@Northwind.example", "email_verified": True, "name": "Dana Lee"})
+    assert payload["verified_email"] == "dana@northwind.example"
+    record = account_profiles.get("user:google-oauth2|104857600123456789")
+    assert record["email"] == "dana@northwind.example" and record["name"] == "Dana Lee"
+
+
+@pytest.mark.parametrize("verified", [False, None])
+def test_an_unverified_email_is_ignored_for_the_session_and_the_record(login_env, client, monkeypatch, tmp_path, verified):
+    from maverick_dashboard import account_profiles
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "home"))
+    claims = {"email": "dana@northwind.example", "name": "Dana Lee"}
+    if verified is not None:
+        claims["email_verified"] = verified
+    payload = _sign_in(client, monkeypatch, claims)
+    assert not payload.get("verified_email")
+    record = account_profiles.get("user:google-oauth2|104857600123456789")
+    assert record["email"] == "" and record["name"] == "Dana Lee"
 
 
 def test_invite_email_uses_signed_subject_only_when_email_not_rejected():

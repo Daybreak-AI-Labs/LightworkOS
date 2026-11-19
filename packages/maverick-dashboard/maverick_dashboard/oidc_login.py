@@ -519,7 +519,7 @@ async def auth_login(request: Request):
         "response_type": "code",
         "client_id": cfg.client_id,
         "redirect_uri": cfg.redirect_uri,
-        "scope": "openid",
+        "scope": cfg.scopes,
         "state": state,
         "nonce": nonce,
         "code_challenge": code_challenge,
