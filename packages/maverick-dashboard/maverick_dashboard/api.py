@@ -10723,8 +10723,10 @@ def _probe_container_daemon(binary: str) -> dict:
     # CLI plugin's metadata command first, as ``docker info`` does (about 80
     # ms against 20 here, more with Docker Desktop's plugins); both fail the
     # same way when the daemon is unreachable.
+    # Podman's info has no ServerVersion (that is Docker's field), and the
+    # template error made every working Podman read as not running.
     query = (["version", "--format", "{{.Server.Version}}"] if binary == "docker"
-             else ["info", "--format", "{{.ServerVersion}}"])
+             else ["info", "--format", "{{.Version.Version}}"])
     try:
         proc = subprocess.run(  # noqa: S603 -- fixed argv, no shell
             [path, *query],

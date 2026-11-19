@@ -120,7 +120,8 @@ def test_permissions_page_carries_the_switcher(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize(("binary", "query"), [
     ("docker", ["version", "--format", "{{.Server.Version}}"]),  # skips the CLI plugins' metadata
-    ("podman", ["info", "--format", "{{.ServerVersion}}"]),
+    # Podman has no ServerVersion field; that template failed on every Podman.
+    ("podman", ["info", "--format", "{{.Version.Version}}"]),
 ])
 def test_the_daemon_probe_asks_for_the_server_version(monkeypatch, binary, query):
     import subprocess
@@ -138,3 +139,19 @@ def test_the_daemon_probe_asks_for_the_server_version(monkeypatch, binary, query
     assert api._probe_container_daemon(binary) == {"available": False, "detail": "failed to connect to the daemon"}
     assert [argv for argv, _ in calls] == [[f"/usr/bin/{binary}", *query]] * 2
     assert all(kw.get("timeout") == 6 and "shell" not in kw for _, kw in calls)
+
+
+@pytest.mark.skipif(__import__("shutil").which("podman") is None, reason="Podman is not installed")
+def test_a_working_podman_is_reported_ready():
+    # The probe used Docker's {{.ServerVersion}} template, which Podman rejects,
+    # so a working Podman always read "not running" and could never be chosen.
+    import subprocess
+
+    import maverick_dashboard.api as api
+
+    real = subprocess.run(["podman", "info", "--format", "{{.Version.Version}}"],
+                          capture_output=True, text=True, timeout=30, check=False)
+    if real.returncode != 0:
+        pytest.skip("Podman is installed but not usable here")
+    assert api._probe_container_daemon("podman") == {
+        "available": True, "detail": "Ready · version " + real.stdout.strip()}
