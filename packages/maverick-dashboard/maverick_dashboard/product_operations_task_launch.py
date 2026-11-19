@@ -179,6 +179,35 @@ def _policy():
             "agent_step_limit": task_step_readiness()}
 
 
+# Copilot starts a task through the native POST /api/v1/goals admission, so a
+# task started here keeps that API's published per-task bound even where the
+# workspace (and Chat) allows more. Say so instead of lowering it silently.
+_API_BOUND = (f"${api._REST_GOAL_MAX_DOLLARS:,.2f} and {api._REST_GOAL_MAX_WALL_SECONDS / 3600:g} hours")
+
+
+def _lowered_to_api_bound(payload, effective) -> list[dict]:
+    from maverick.runner import configured_max_dollars, configured_max_wall_seconds
+
+    rows = []
+    for field, bound, label, unit, workspace in (
+            ("max_dollars", api._REST_GOAL_MAX_DOLLARS, "Spending limit lowered",
+             lambda v: f"${v:,.2f}", configured_max_dollars),
+            ("max_wall_seconds", api._REST_GOAL_MAX_WALL_SECONDS, "Time limit lowered",
+             lambda v: f"{v:,.0f} seconds", configured_max_wall_seconds)):
+        if effective[field] != bound:
+            continue
+        asked = getattr(payload, field)
+        if asked is not None and asked > bound:
+            reason = f"You asked for {unit(asked)}."
+        elif asked is None and (limit := workspace()) is not None and limit > bound:
+            reason = f"The workspace limit is {unit(limit)}."
+        else:
+            continue
+        rows.append({"label": label, "after": f"{reason} Tasks started from Copilot stop at {unit(bound)}, "
+                                              "the API's bound per task. To use more, start the task in Chat."})
+    return rows
+
+
 def start_snapshot(request, selection):
     auth.require_permission(request, "operate")
     from .task_model_selection_api import choices
@@ -210,6 +239,8 @@ def start_snapshot(request, selection):
          "Task spending limit": f"${policy['default_max_dollars']:g}" if policy["default_max_dollars"] is not None else "No spending limit",
          "Task time limit": f"{policy['default_max_wall_seconds']:g} seconds" if policy["default_max_wall_seconds"] is not None else "No time limit",
          "Levels of helpers": policy["default_max_depth"],
+         "Most a Copilot task can use": f"{_API_BOUND}, the API's bound per task, even where the workspace allows more. "
+                                        "To use more, start the task in Chat.",
          "Review settings": {"label": "Review task settings" if not steps["ready"] else "Review AI connection",
                              "href": steps["settings"]["href"] if not steps["ready"] else "/start"}},
         [{"name": "title", "label": "Task", "kind": "text", "required": True, "max_length": 200},
@@ -222,8 +253,8 @@ def start_snapshot(request, selection):
          {"name": "task_effort", "label": "Thinking depth (supported models only)", "kind": "select", "value": "",
           "choices": [{"value": "", "label": "Use the model’s usual thinking depth"},
                       *({"value": value, "label": label} for value, label in EFFORT_LABELS.items())]},
-         {"name": "max_dollars", "label": "Maximum dollars (blank uses workspace limit)", "kind": "number"},
-         {"name": "max_wall_seconds", "label": "Maximum seconds (blank uses workspace limit)", "kind": "number"},
+         {"name": "max_dollars", "label": f"Maximum dollars (at most ${api._REST_GOAL_MAX_DOLLARS:,.2f}; blank uses the workspace limit up to that)", "kind": "number"},
+         {"name": "max_wall_seconds", "label": f"Maximum seconds (at most {api._REST_GOAL_MAX_WALL_SECONDS:,.0f}; blank uses the workspace limit up to that)", "kind": "number"},
          {"name": "max_depth", "label": "Levels of helpers", "kind": "select", "value": None,
           "choices": [{"value": None, "label": f"Use workspace limit ({policy['default_max_depth']} levels)"},
                       *({"value": level, "label": f"{level} level{'s' if level != 1 else ''}"}
@@ -262,6 +293,7 @@ def start_prepare(request, selection, arguments):
          {"label": "AI team", "after": "This choice is for this task. Some specialists have their own AI settings. Workspace-approved backups keep their existing rules."},
          {"label": "Maximum dollars", "after": effective["max_dollars"]},
          {"label": "Maximum seconds", "after": effective["max_wall_seconds"]},
+         *_lowered_to_api_bound(payload, effective),
          {"label": "Levels of helpers", "after": effective["max_depth"]},
          {"label": "Most steps for each agent", "after": policy["agent_step_limit"]["max_steps"] or "No step limit"},
          {"label": "External effects", "after": "Work may use authorized tools; review task progress and any approvals."}],

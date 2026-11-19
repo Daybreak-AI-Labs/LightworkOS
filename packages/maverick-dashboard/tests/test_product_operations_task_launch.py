@@ -138,3 +138,34 @@ def test_find_returns_only_currently_accessible_task_links(task_actions):
     principal["value"] = "user:other"
     changed = _prepare(client, catalog, "tasks.find", {"query": "Quarterly"})
     assert changed.status_code == 409
+
+
+
+# Copilot starts a task through the native POST /api/v1/goals admission, so it
+# keeps that API's published $100 / 24-hour bound per task while Chat allows up
+# to the workspace limit. The bound was applied silently: Copilot must say so.
+def test_copilot_start_states_the_api_bound_when_the_workspace_allows_more(task_actions, monkeypatch):
+    import maverick.runner as runner
+    monkeypatch.setattr(runner, "configured_goal_ceiling_dollars", lambda: 25_000.01)
+    monkeypatch.setattr(actions, "configured_goal_ceiling_dollars", lambda: 25_000.01)
+    monkeypatch.setattr(runner, "configured_max_dollars", lambda: 25_000.01)
+    monkeypatch.setattr(api, "configured_max_dollars", lambda: 25_000.01)
+    client, _world, _runs, _principal = task_actions
+    catalog = _catalog(client)
+    item = next(row for row in catalog["operations"] if row["id"] == "tasks.start")
+    bound = item["details"]["Most a Copilot task can use"]
+    assert "$100.00 and 24 hours" in bound and "Chat" in bound
+    labels = {field["name"]: field["label"] for field in item["fields"]}
+    assert "at most $100.00" in labels["max_dollars"] and "at most 86,400" in labels["max_wall_seconds"]
+    review = _prepare(client, catalog, "tasks.start", {"title": "Large request", "max_dollars": 1000})
+    assert review.status_code == 200, review.text
+    changes = {row["label"]: row["after"] for row in review.json()["changes"]}
+    assert changes["Maximum dollars"] == 100.0
+    assert changes["Spending limit lowered"] == (
+        "You asked for $1,000.00. Tasks started from Copilot stop at $100.00, the API's bound per task. "
+        "To use more, start the task in Chat.")
+    blank = _prepare(client, catalog, "tasks.start", {"title": "Default request"})
+    changes = {row["label"]: row["after"] for row in blank.json()["changes"]}
+    assert changes["Spending limit lowered"].startswith("The workspace limit is $25,000.01. Tasks started from Copilot stop at $100.00")
+    small = _prepare(client, catalog, "tasks.start", {"title": "Small request", "max_dollars": 5})
+    assert "Spending limit lowered" not in {row["label"] for row in small.json()["changes"]}
