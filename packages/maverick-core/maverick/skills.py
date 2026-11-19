@@ -484,6 +484,20 @@ def learned_skill_use_key(skill: Skill) -> str:
     return "learned:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def installed_learned_use_keys(skills_dir: Path | None = None) -> dict[str, str]:
+    """Each installed learned skill's use-counter key, by name, for display.
+
+    Read without the recall-time source check: a skill learned from the sole
+    owner's tasks is recalled only inside that owner's tasks, so the Skills
+    page, which runs outside any task, still needs its counter."""
+    out: dict[str, str] = {}
+    for skill, _raw in _parse_skill_files(_resolved_skills_dir(skills_dir)):
+        key = learned_skill_use_key(skill)
+        if key:
+            out[skill.name] = key
+    return out
+
+
 def _decay_weights(names: list[str]) -> dict[str, float]:
     """Track-record multipliers for ``names`` (neutral 1.0 on any failure).
 

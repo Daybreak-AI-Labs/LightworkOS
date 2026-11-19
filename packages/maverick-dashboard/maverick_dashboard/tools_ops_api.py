@@ -245,6 +245,7 @@ def _learned_candidates() -> dict:
     from maverick.skills import (
         admitted_learned_skills,
         available_skills,
+        installed_learned_use_keys,
         learned_skill_candidates,
         learned_skill_use_key,
     )
@@ -255,7 +256,8 @@ def _learned_candidates() -> dict:
     recall_enabled = _default_use_skills()
     runtime = {skill.name: skill for skill in available_skills()
                if learned_skill_use_key(skill)}
-    use_keys = {name: learned_skill_use_key(skill) for name, skill in runtime.items()}
+    use_keys = {**installed_learned_use_keys(),
+                **{name: learned_skill_use_key(skill) for name, skill in runtime.items()}}
     uses = {row["name"]: row["uses"] for row in skill_stats.usage_rows(list(use_keys.values()))}
     tracking = skill_stats._enabled()
 

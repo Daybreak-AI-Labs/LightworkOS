@@ -898,3 +898,11 @@ def test_a_suggestion_from_the_sole_owners_tasks_says_so(client, monkeypatch, tm
     saved = client.get("/api/v1/skills/learned-candidates").json()["added"]
     assert [(row["name"], row["recall_ready"], row["status"]) for row in saved] == [
         ("renewal-timing", True, "Available for your matching new tasks.")]
+    # Its uses, recorded inside the owner's tasks, are counted on this page.
+    from maverick import skills
+    from maverick.skill import stats as skill_stats
+
+    key = skills.installed_learned_use_keys()["renewal-timing"]
+    skill_stats.record_use(["renewal-timing", key])
+    saved = client.get("/api/v1/skills/learned-candidates").json()["added"]
+    assert saved[0]["uses"] == 1
