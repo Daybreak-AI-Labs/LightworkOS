@@ -230,7 +230,8 @@ def _selected_text(data, pages, include_tables):
         return f"ERROR: PDF parse failed ({type(exc).__name__}); check the document and page selection"
 
 
-def _run_read_pdf(args: dict[str, Any], sandbox=None) -> str:
+def _run_read_pdf(args: dict[str, Any], sandbox=None, *, world=None,
+                  goal_id: int | None = None) -> str:
     source = args.get("source")
     if not isinstance(source, str):
         return "ERROR: source must be a PDF path or URL string"
@@ -248,13 +249,26 @@ def _run_read_pdf(args: dict[str, Any], sandbox=None) -> str:
     if type(max_chars) is not int or not 1 <= max_chars <= 1_000_000:
         return "ERROR: max_chars must be an integer between 1 and 1000000"
 
+    from .attachments import goal_attachment_bytes
+    attached = goal_attachment_bytes(world, goal_id, source)
     try:
-        data = _load_bytes(source, getattr(sandbox, "workdir", None))
+        data = attached[0] if attached is not None else _load_bytes(
+            source, getattr(sandbox, "workdir", None))
     except (OSError, ValueError):
         return "ERROR: PDF file could not be opened"
     if data is None:
         return f"ERROR: could not read PDF from {source!r}"
+    return pdf_text(data, pages=pages, include_tables=include_tables,
+                    force_ocr=force_ocr, max_chars=max_chars, sandbox=sandbox)
 
+
+def pdf_text(data: bytes, *, pages: str = "", include_tables: bool = False,
+             force_ocr: bool = False, max_chars: int = 100_000, sandbox=None) -> str:
+    """The selected pages' text, or an ``ERROR:`` line the agent can act on.
+
+    Shared by ``read_pdf`` and ``read_attachment``, so an uploaded PDF goes
+    through the same parser isolation and OCR fallback as a workspace one.
+    """
     text = "" if force_ocr else _selected_text(data, pages, include_tables)
     if text == "":
         try:
@@ -279,17 +293,18 @@ def _run_read_pdf(args: dict[str, Any], sandbox=None) -> str:
     return text
 
 
-def read_pdf(sandbox=None) -> Tool:
+def read_pdf(sandbox=None, *, world=None, goal_id: int | None = None) -> Tool:
     """Factory: builds the read_pdf tool."""
     return Tool(
         name="read_pdf",
         description=(
-            "Read text from a PDF (local path or http(s) URL). Supports "
+            "Read text from a PDF (local path, the path list_attachments gives "
+            "for an uploaded PDF, or http(s) URL). Supports "
             "pages='1-5,8,10-' for ranges, include_tables=true to extract "
             "tables as markdown. Tries pdfplumber first, falls back to "
             "pypdf. Enabled offline OCR handles scans; use ocr=true for mixed image/text pages. "
             "Install with: python -m pip install -e './packages/maverick-core[pdf]'."
         ),
         input_schema=_PDF_INPUT_SCHEMA,
-        fn=lambda args: _run_read_pdf(args, sandbox),
+        fn=lambda args: _run_read_pdf(args, sandbox, world=world, goal_id=goal_id),
     )

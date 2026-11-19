@@ -1141,7 +1141,7 @@ def base_registry(
     from ..tool_result_artifacts import read_tool_result
 
     reg.register(read_tool_result(goal_id=goal_id, principal=principal or None))
-    reg.register(read_attachment_tool(world, goal_id))
+    reg.register(read_attachment_tool(world, goal_id, sandbox=sandbox))
     _register_local_workspace_tool(reg, sandbox, repo_map, has_local_workdir)
     _register_local_workspace_tool(
         reg, sandbox, lambda sb: str_replace_editor(sb, goal_id=goal_id), has_local_workdir)
@@ -1393,9 +1393,10 @@ def base_registry(
     reg.register(http_fetch())
     from .control_tools import find_controls_tool
     reg.register(find_controls_tool())
-    _register_local_workspace_tool(reg, sandbox, read_pdf, has_local_workdir)
+    _register_local_workspace_tool(
+        reg, sandbox, lambda sb: read_pdf(sb, world=world, goal_id=goal_id), has_local_workdir)
     if has_local_workdir:
-        reg.register(view_image(sandbox, budget=budget))
+        reg.register(view_image(sandbox, budget=budget, world=world, goal_id=goal_id))
         reg.register(view_video(sandbox, budget=budget))
     _register_local_workspace_tool(reg, sandbox, dep_graph, has_local_workdir)
     _register_local_workspace_tool(reg, sandbox, ast_edit, has_local_workdir)

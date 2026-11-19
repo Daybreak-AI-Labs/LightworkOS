@@ -115,7 +115,8 @@ def _load_image(source: str, sandbox=None, *, workdir: Path | None = None) -> tu
         return None
 
 
-def _run_view_image(args: dict[str, Any], sandbox=None, *, budget=None) -> str:
+def _run_view_image(args: dict[str, Any], sandbox=None, *, budget=None,
+                    world=None, goal_id: int | None = None) -> str:
     source = (args.get("source") or "").strip()
     if not source:
         return "ERROR: source is required"
@@ -127,7 +128,12 @@ def _run_view_image(args: dict[str, Any], sandbox=None, *, budget=None) -> str:
         return "ERROR: image analysis requires an active run budget"
     model = os.environ.get("MAVERICK_VISION_MODEL") or model_for_role("vision")
 
-    loaded = _load_image(source, sandbox)
+    from .attachments import goal_attachment_bytes
+    attached = goal_attachment_bytes(world, goal_id, source)
+    if attached is not None and attached[1].mime.startswith("image/"):
+        loaded = attached[0], attached[1].mime
+    else:
+        loaded = _load_image(source, sandbox)
     if loaded is None:
         return f"ERROR: could not load image from {source!r}"
     image_bytes, mime = loaded
@@ -166,16 +172,17 @@ def _run_view_image(args: dict[str, Any], sandbox=None, *, budget=None) -> str:
         return f"ERROR: vision call failed: {type(e).__name__}: {e}"
 
 
-def view_image(sandbox=None, *, budget=None) -> Tool:
+def view_image(sandbox=None, *, budget=None, world=None, goal_id: int | None = None) -> Tool:
     """Factory: builds the view_image tool."""
     return Tool(
         name="view_image",
         description=(
-            "Look at an image (local path or http(s) URL) and describe / "
+            "Look at an image (local path, the path list_attachments gives for "
+            "an uploaded image, or http(s) URL) and describe / "
             "analyze it. Provide a `prompt` to focus the analysis (e.g. "
             "'What's the error message?'). Picks the configured vision "
             "model automatically from the operator's settings."
         ),
         input_schema=_VIEW_IMAGE_INPUT_SCHEMA,
-        fn=lambda args: _run_view_image(args, sandbox, budget=budget),
+        fn=lambda args: _run_view_image(args, sandbox, budget=budget, world=world, goal_id=goal_id),
     )

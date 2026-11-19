@@ -76,8 +76,73 @@ def test_a_query_on_a_non_table_attachment_is_refused(tmp_path, monkeypatch):
 def test_query_results_carry_no_floating_point_noise(tmp_path, monkeypatch):
     world = WorldModel(tmp_path / "w.db")
     gid = world.create_goal("g", "")
-    body = "region,revenue\nSouth,8820.87\nSouth,9542.12\nSouth,24596.34\n".encode()
+    body = b"region,revenue\nSouth,8820.87\nSouth,9542.12\nSouth,24596.34\n"
     rec = att.store(gid, "s.csv", "text/csv", body, root=tmp_path / "a")
     aid = world.add_attachment(gid, rec.filename, rec.mime, rec.size_bytes, rec.sha256, str(rec.path))
     out = read_attachment_tool(world, gid).fn({"id": aid, "sql": "SELECT SUM(revenue) AS total FROM data"})
     assert out == "total\n42959.33"
+
+
+def _pdf(text: str) -> bytes:
+    """A one-page PDF whose page shows ``text`` (Helvetica, no compression)."""
+    content = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode()
+    objs = [b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R "
+            b"/Resources << /Font << /F1 5 0 R >> >> >>",
+            b"<< /Length %d >>\nstream\n" % len(content) + content + b"\nendstream",
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+    out, offsets = b"%PDF-1.4\n", []
+    for number, body in enumerate(objs, 1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % number + body + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1)
+    out += b"".join(b"%010d 00000 n \n" % offset for offset in offsets)
+    return out + b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objs) + 1, xref)
+
+
+def test_a_pdf_attachment_is_read_as_text_sealed_and_plain(tmp_path, monkeypatch):
+    # A model that cannot take PDF document blocks (every provider but
+    # Anthropic) has no other way to read an uploaded PDF: read_pdf is
+    # confined to the workspace and attachments live outside it.
+    for sealed in (False, True):
+        if sealed:
+            monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
+        root = tmp_path / str(sealed)
+        world = WorldModel(root / "w.db")
+        gid = world.create_goal("g", "")
+        rec = att.store(gid, "incident.pdf", "application/pdf",
+                        _pdf("The belt snapped. Repair cost 1,180 USD."), root=root / "a")
+        aid = world.add_attachment(gid, rec.filename, rec.mime, rec.size_bytes, rec.sha256, str(rec.path))
+        text = read_attachment_tool(world, gid).fn({"id": aid})
+        assert "Repair cost 1,180 USD" in text, text
+        assert "Repair cost" in read_attachment_tool(world, gid).fn({"id": aid, "pages": "1"})
+
+
+def test_a_pdf_with_no_text_layer_says_so(tmp_path, monkeypatch):
+    world = WorldModel(tmp_path / "w.db")
+    gid = world.create_goal("g", "")
+    rec = att.store(gid, "scan.pdf", "application/pdf", _pdf(""), root=tmp_path / "a")
+    aid = world.add_attachment(gid, rec.filename, rec.mime, rec.size_bytes, rec.sha256, str(rec.path))
+    assert read_attachment_tool(world, gid).fn({"id": aid}).startswith("ERROR: no text found")
+
+
+def test_read_pdf_opens_its_goals_attachment_by_the_listed_path(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from maverick.tools.pdf_reader import read_pdf
+
+    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
+    world = WorldModel(tmp_path / "w.db")
+    gid = world.create_goal("g", "")
+    other = world.create_goal("other", "")
+    rec = att.store(gid, "incident.pdf", "application/pdf",
+                    _pdf("Stopped 3 hours 20 minutes."), root=tmp_path / "a")
+    world.add_attachment(gid, rec.filename, rec.mime, rec.size_bytes, rec.sha256, str(rec.path))
+    workspace = tmp_path / "task"
+    workspace.mkdir()
+    sandbox = SimpleNamespace(workdir=workspace)
+    assert "3 hours 20 minutes" in read_pdf(sandbox, world=world, goal_id=gid).fn({"source": str(rec.path)})
+    refused = read_pdf(sandbox, world=world, goal_id=other).fn({"source": str(rec.path)})
+    assert refused.startswith("ERROR: could not read PDF")
