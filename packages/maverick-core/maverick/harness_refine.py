@@ -341,6 +341,8 @@ def _park_approval(record: dict) -> int:
     from .world_model import open_world
 
     target = {"target": record["target"], "name": record["name"]}
+    # The name is a slug (``Say-who-refused-a-step``); the card reads it as words.
+    title = " ".join(str(record["name"]).replace("-", " ").replace("_", " ").split())
     parameters = {
         "proposal_id": record["id"],
         "change": record["change"],
@@ -350,27 +352,28 @@ def _park_approval(record: dict) -> int:
         record["action"], risk="high",
         detail=encode_operation_approval_detail(
             action=record["action"],
-            summary=f"Use the suggested instruction change \u201c{record['name']}\u201d for future tasks",
-            target_label=f"Instructions Lightwork gives its agents: {record['name']}",
+            summary=f"Use the suggested instruction change \u201c{title}\u201d for future tasks",
+            target_label=f"Instructions Lightwork gives its agents: {title}",
             target=target,
             parameters=parameters,
             parameter_summary=[
-                f"Proposal: {record['id']}",
-                f"Change SHA-256: {record['digest']}",
-                f"Rationale: {record['rationale'][:400]}",
+                f"New instruction: {record['change'][:400]}",
+                f"Why: {record['rationale'][:400]}",
+                f"Suggestion {record['id']}",
             ],
             actor=record["proposed_by"] or "local:operator",
             role=_APPROVAL_ROLE,
             authority_versions=_APPROVAL_AUTHORITY_VERSIONS,
             input_versions={"proposal_sha256": record["digest"]},
             known_effects=[
-                f"Updates the named {record['target']} refinement overlay."
+                "Agents follow this instruction in new tasks until someone undoes it."
             ],
             unresolved_assumptions=[
-                "The evaluator anchors will still pass at apply time."
+                "Lightwork's fixed quality checks must still pass when it is applied."
             ],
-            before="The proposed refinement is stored but has no effect.",
-            after="The exact reviewed refinement may be applied once.",
+            before="The suggestion is saved, but agents do not follow it yet.",
+            after=("Agents follow exactly this instruction in new tasks. It can be undone "
+                   "on the Learned page."),
             irreversible=False,
             ttl_seconds=7 * 24 * 3600,
         ),

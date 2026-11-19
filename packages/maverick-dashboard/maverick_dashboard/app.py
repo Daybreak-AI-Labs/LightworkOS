@@ -10025,10 +10025,11 @@ def _approval_source(provenance: str | None) -> str | None:
     if provenance == "external_agents":
         return "Outside agent"
     if provenance == "harness_refine":
-        # The agent is asking to change its OWN operating instructions.
-        # An approver must be able to see that at a glance, not read it as
-        # an ordinary task approval.
-        return "Agent wants to change its own instructions"
+        # A change to the standing instructions every agent follows. An
+        # approver must see that at a glance, not read it as an ordinary task
+        # approval. People suggest these (Learned page or CLI), so the label
+        # names the change, not an agent asking for itself.
+        return "Change to the instructions agents follow"
     if provenance == "assessment":
         return "Assessment review"
     if provenance == "plan":
