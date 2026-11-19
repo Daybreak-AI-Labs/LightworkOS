@@ -254,7 +254,7 @@ class TestAgentLoop:
         revision = next(m["content"] for m in fake_llm.calls[3]["messages"]
                         if m.get("role") == "user" and isinstance(m.get("content"), str)
                         and "A verifier rejected your FINAL answer" in m["content"])
-        frame = re.search(r"<verifier_notes id=([0-9a-f]{16})>\n(.*)\n</verifier_notes \1>", revision, re.S)
+        frame = re.search(r"<verifier_notes id=([0-9a-f]{16})>\n(.*)\n</verifier_notes \1>", revision, re.DOTALL)
         assert frame is not None
         assert "delete_everything" in frame.group(2)
         outside = revision.replace(frame.group(0), "")
