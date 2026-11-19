@@ -64,3 +64,27 @@ def test_a_team_cannot_be_made_outside_every_workspace(monkeypatch):
     client = TestClient(app, base_url="http://127.0.0.1", headers={"Origin": "http://127.0.0.1"})
     made = client.post("/api/v1/fleets", json={"name": "Desk", "agents": [{"name": "a", "role": "operator"}]})
     assert made.status_code == 409 and "workspace" in made.json()["detail"]
+
+
+def test_hiring_into_a_new_team_needs_a_workspace_too(monkeypatch):
+    # Seen live: the job-description "add to a team" step created a team in
+    # the installation root for a person with no workspace.
+    from fastapi.testclient import TestClient
+    from maverick_dashboard import api
+    from maverick_dashboard.app import app
+
+    _gate(monkeypatch, tenant=None, workspaces=["local"])
+    monkeypatch.setattr(api, "require_permission", lambda _request, _permission: None)
+    monkeypatch.setattr("maverick.jd_hiring.add_pack_to_fleet", lambda *_a, **_k: pytest.fail("made a team"))
+    client = TestClient(app, base_url="http://127.0.0.1", headers={"Origin": "http://127.0.0.1"})
+    made = client.post("/api/v1/fleets/Desk/agents", json={"pack": "finance_ap"})
+    assert made.status_code == 409 and "Workspace in the menu" in made.json()["detail"]
+
+
+def test_a_team_has_at_most_a_hundred_agents():
+    from maverick_dashboard.api_schemas import FleetCreateIn
+    from pydantic import ValidationError
+
+    FleetCreateIn(name="Desk", agents=[{"name": f"a{i}", "role": "viewer"} for i in range(100)])
+    with pytest.raises(ValidationError):
+        FleetCreateIn(name="Desk", agents=[{"name": f"a{i}", "role": "viewer"} for i in range(101)])

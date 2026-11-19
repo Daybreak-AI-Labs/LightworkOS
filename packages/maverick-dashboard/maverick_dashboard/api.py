@@ -13206,6 +13206,10 @@ def run_fleet_agent(
     return {"goal_id": goal_id, "principal": agent_principal, "role": agent.role}
 
 
+_TEAM_NAME_RULE = ("A team name starts with a letter or number and uses only letters, numbers, "
+                   "dashes or underscores (up to 64 characters).")
+
+
 @router.post("/fleets", status_code=201)
 async def create_fleet(request: Request, payload: FleetCreateIn) -> dict:
     """Create (or replace) a fleet from the operator console, owned by the caller.
@@ -13227,9 +13231,7 @@ async def create_fleet(request: Request, payload: FleetCreateIn) -> dict:
     from maverick.fleet import Fleet, FleetAgent, load_fleet, save_fleet, valid_name
 
     if not valid_name(payload.name):
-        raise HTTPException(status_code=400, detail=(
-            "A team name starts with a letter or number and uses only letters, numbers, "
-            "dashes or underscores (up to 64 characters)."))
+        raise HTTPException(status_code=400, detail=_TEAM_NAME_RULE)
     agents = tuple(
         FleetAgent(
             name=a.name.strip(),
@@ -13282,17 +13284,29 @@ async def add_fleet_agent(request: Request, fleet_name: str, payload: FleetAgent
     must cover the pack's suite — the same kernel gate department deploys use.
     """
     require_permission(request, "operate")
+    # The same rules as creating a team here: it may create one.
+    from ._shared import require_workspace_for_work
+
+    require_workspace_for_work()
+    from maverick.capability import agent_role_known, configured_roles
     from maverick.domain import suites_for_domain
     from maverick.fleet import load_fleet, valid_name
     from maverick.jd_hiring import add_pack_to_fleet
     from maverick.suite_grants import DepartmentAccessError, ensure_suite_allowed
 
     if not valid_name(fleet_name):
-        raise HTTPException(status_code=400, detail="invalid fleet name")
+        raise HTTPException(status_code=400, detail=_TEAM_NAME_RULE)
     principal = caller_principal(request)
     existing = load_fleet(fleet_name)
     if existing is not None and existing.owner != (principal or ""):
         raise HTTPException(status_code=404, detail="no such fleet")
+    # After the owner check, so a refusal never reveals someone else's team.
+    role = (payload.role or "").strip()
+    if role:
+        configured = configured_roles()
+        if (configured and role not in configured) or not agent_role_known(role):
+            raise HTTPException(status_code=400, detail=(
+                f"Lightwork doesn't know the role {role!r}. Choose one of the listed roles."))
     try:
         for suite in suites_for_domain(payload.pack):
             ensure_suite_allowed(principal, suite)
@@ -13301,7 +13315,7 @@ async def add_fleet_agent(request: Request, fleet_name: str, payload: FleetAgent
     owner = existing.owner if existing is not None else (principal or "")
     try:
         fleet = await run_in_threadpool(
-            lambda: add_pack_to_fleet(payload.pack, fleet_name, owner, role=payload.role)
+            lambda: add_pack_to_fleet(payload.pack, fleet_name, owner, role=role or None)
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e

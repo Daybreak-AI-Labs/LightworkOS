@@ -98,7 +98,10 @@ def test_retire_takes_only_the_offered_choices(client, monkeypatch):
 def test_snapshots_rollback_and_hindsight(client, monkeypatch, saved_point):
     from maverick import dreaming
     from maverick_dashboard.learning_actions_api import snapshot_label
-    assert snapshot_label("20260927T101500Z") == "27 Sep 2026, 10:15 UTC"
+    assert snapshot_label("20260927T101500Z") == "27 Sep 2026, 10:15:00 UTC"
+    assert snapshot_label("202609271015") == "27 Sep 2026, 10:15 UTC"
+    # Two saved points made in the same minute read differently.
+    assert snapshot_label("20260927T101517Z") != snapshot_label("20260927T101519Z")
     monkeypatch.setattr(dreaming, "list_snapshots", list)
     assert client.get("/api/v1/learning/snapshots").json() == {"snapshots": []}
     r = client.post("/api/v1/learning/hindsight", json={})

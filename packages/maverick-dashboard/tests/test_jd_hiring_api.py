@@ -253,3 +253,11 @@ def test_create_goal_with_unknown_domain_400(monkeypatch):
     monkeypatch.setattr(domain, "suites_unavailable_reason", lambda: "settings unreadable")
     resp = client.post("/api/v1/goals", json={"title": "x", "domain": "no_such_pack_xyz"})
     assert resp.status_code == 400 and resp.json()["detail"] == "settings unreadable"
+
+
+def test_add_pack_with_a_role_nobody_defined_400():
+    # A made-up role used to save and then run with the base grant.
+    resp = client.post("/api/v1/fleets/team-y/agents",
+                       json={"pack": "finance_ap", "role": "superuser"})
+    assert resp.status_code == 400
+    assert "superuser" in resp.json()["detail"]

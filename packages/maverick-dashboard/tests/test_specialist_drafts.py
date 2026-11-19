@@ -203,3 +203,18 @@ def test_agent_factory_lists_new_agents_saved_as_drafts(client):
     page = client.get("/agents").text
     assert 'id="unpublished-drafts"' in page and "Invoice checker" in page
     assert f"/agents?new=1&amp;specialist_draft=SPD-{saved.json()['operation']}#specialist-drafts" in page
+
+
+def test_a_first_decision_says_what_it_did_and_a_repeat_says_nothing_was_repeated(client):
+    # Seen live: a first publish answered "The original decision is confirmed.
+    # Nothing was repeated." as if it were a replay.
+    context = client.get(DRAFTS + "/history").json()["context"]
+    review = client.post(DRAFTS + "/review", json={
+        "name": "invoice_checker", "action": "save", "context": context,
+        "entered": {"description": "Invoice checker", "allow_tools": ["read_file"], "max_risk": "low",
+                    "persona": "Check supplier invoices against purchase orders and say pay, hold or reject."}})
+    first = _confirm(client, review)
+    assert first.status_code == 200 and first.json()["confirmed"], first.text
+    assert first.json()["message"] == "Saved a draft. It is recorded in this agent's history."
+    again = _confirm(client, review)
+    assert again.status_code == 200 and "Nothing was repeated" in again.json()["message"]

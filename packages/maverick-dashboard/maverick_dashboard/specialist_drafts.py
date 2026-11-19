@@ -575,6 +575,17 @@ def original(request, operation, *, prepared=None):
 
 
 def apply(request, prepared, operation):
+    """Carry out a reviewed decision once. A first run says what it did; only a
+    repeat of an earlier decision says that nothing was repeated."""
+    repeat = (isinstance(operation, str) and re.fullmatch(r"[a-f0-9]{32}", operation) is not None
+              and STORE.get("SPD-" + operation) is not None)
+    result = _apply(request, prepared, operation)
+    if not repeat and isinstance(result, dict) and result.get("confirmed") and result.get("action"):
+        result["message"] = f"{result['action']}. It is recorded in this agent's history."
+    return result
+
+
+def _apply(request, prepared, operation):
     if not isinstance(operation, str) or not re.fullmatch(r"[a-f0-9]{32}", operation):
         raise HTTPException(422, "This original decision could not be identified.")
     identifier = "SPD-" + operation

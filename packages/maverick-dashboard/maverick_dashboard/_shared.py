@@ -160,8 +160,8 @@ def require_workspace_for_work() -> None:
     if has_workspaces:
         raise HTTPException(
             status_code=409,
-            detail=("Choose a workspace before starting work. If you have no workspace, "
-                    "ask an administrator to add you to one."),
+            detail=("Choose a workspace before starting work: open Workspace in the menu and "
+                    "pick one. If none is listed, ask an administrator to add you to one."),
         )
 
 
