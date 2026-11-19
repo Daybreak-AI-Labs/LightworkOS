@@ -236,6 +236,15 @@ def _inventory(request):
         stores.append({"name": "Private notification destinations and original outcomes", "state": "unavailable",
                        "action": "The exact owned inventory could not be read; no zero count or erasure is claimed."})
     try:
+        from . import account_profiles
+        stores.append({"name": "Your name and verified email from company sign-in", "state": "available",
+                       "count": int(account_profiles.get(actor) is not None),
+                       "use": "Shows you by name in approvals, settings history and the Activity log, to people who already see your activity there.",
+                       "action": "Download Name and email above or select it below for reviewed deletion. Your next company sign-in records them again while the installation keeps sign-in names."})
+    except Exception:
+        stores.append({"name": "Your name and verified email from company sign-in", "state": "unavailable",
+                       "action": "The record could not be read; no zero count is claimed."})
+    try:
         from maverick.ux_store import shared
         navigation = shared().owned_navigation_inventory(actor)
         stores.append({"name": "Saved dashboard views and pinned tasks", "state": "available", "inventory": navigation,
@@ -414,7 +423,7 @@ def download_records(request: Request, token: str = Query(min_length=1, max_leng
 
 
 class AccountExportIn(ContextIn):
-    store: Literal["model_test_history", "conversation_inbox", "saved_views_and_pins"]
+    store: Literal["model_test_history", "conversation_inbox", "saved_views_and_pins", "account_name"]
 
 
 @router.post("/api/v1/my-data/account-export")

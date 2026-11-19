@@ -566,6 +566,12 @@ def _delete_tenant(uid: str, rec: dict | None = None) -> None:
         # SCIM record. If a later step fails, authentication still fails closed
         # and the IdP can safely retry the DELETE.
         _retire_user_identity(rec)
+        # The account is gone: so is the name and email its sign-in reported.
+        from . import account_profiles
+        from .subject_directory import subs_for
+        ids = _identity_values(rec)
+        subs = {sub for sub in (*subs_for(ids), str(rec.get("externalId") or ""), str(rec.get("id") or "")) if sub}
+        account_profiles.erase({sub if sub.startswith("user:") else "user:" + sub for sub in subs})
     from maverick.tenant import registry
     registry.delete_tenant(uid)
     # Keep the hashed identifier -> pairwise-sub binding. It contains no raw

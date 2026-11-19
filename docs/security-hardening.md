@@ -663,7 +663,21 @@ session_secret = "a-long-random-string"  # pragma: allowlist secret
 # Optional: skip discovery by pinning the endpoints explicitly.
 # authorization_endpoint = "https://login.example.com/authorize"
 # token_endpoint = "https://login.example.com/token"
+
+# Optional: what sign-in asks for (default "openid email profile").
+# scopes = "openid"
 ```
+
+Browser sign-in asks for the `openid email profile` scopes, so the ID token
+carries the person's name and email. An email counts only when the provider
+marks it verified (`email_verified`); then it is the session's verified address
+that invitations and email-shared knowledge sources match, as before, and the
+name and verified email name the person in approvals, settings history and the
+Activity log ([personal-data-controls.md](personal-data-controls.md)). Existing
+installs receive these claims from each person's next sign-in. Some providers
+show a consent screen for the extra scopes the first time. `scopes` (or
+`MAVERICK_OIDC_SCOPES`) can narrow the request, for example to `"openid"`; it
+cannot widen it beyond these three, and `openid` is always included.
 
 **Environment variables**
 
@@ -675,6 +689,8 @@ export MAVERICK_OIDC_SESSION_SECRET="a-long-random-string"  # pragma: allowlist 
 # Optional explicit endpoints (otherwise discovered from the issuer):
 export MAVERICK_OIDC_AUTHORIZATION_ENDPOINT="https://login.example.com/authorize"
 export MAVERICK_OIDC_TOKEN_ENDPOINT="https://login.example.com/token"
+# Optional: narrow what sign-in asks for (default "openid email profile").
+export MAVERICK_OIDC_SCOPES="openid"
 ```
 
 **Wizard toggle:** yes — under "Enable OIDC SSO token verification?", a follow-up

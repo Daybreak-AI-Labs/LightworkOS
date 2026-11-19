@@ -1,9 +1,10 @@
 """Who did something, in words a person reads.
 
 A sign-in identifier (``user:google-oauth2|1048...``) never reaches a page.
-The installation knows a person's name or email from three records: their
-company directory (SCIM) entry bound to the sign-in, the address an accepted
-invitation was sent to, and the signed-in person's own verified address.
+The installation knows a person's name or email from four records: their
+company directory (SCIM) entry bound to the sign-in, the name and verified
+email their company sign-in reported (:mod:`account_profiles`), the address an
+accepted invitation was sent to, and the signed-in person's own verified address.
 Without one of them the account kind is shown ("Google account"), as before.
 Lightwork's own background workers and AI specialists read as what they are.
 
@@ -47,6 +48,13 @@ def _directory_names() -> dict[str, str]:
                 names.setdefault(_principal(sub), label)
     except Exception:  # noqa: BLE001 -- an unreadable directory only means fewer names
         log.debug("company directory names unavailable", exc_info=True)
+    try:
+        from . import account_profiles
+
+        for principal, label in account_profiles.names().items():
+            names.setdefault(principal, label)
+    except Exception:  # noqa: BLE001 -- as above
+        log.debug("recorded sign-in names unavailable", exc_info=True)
     try:
         from . import invites
 
