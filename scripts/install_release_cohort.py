@@ -389,6 +389,36 @@ def _locked_wheel_requirements(
     return "".join(requirements)
 
 
+# The versions CI tests. requires-python has no upper bound, so pip would
+# install on a newer Python without a word; warn instead of refusing.
+SUPPORTED_PYTHON = ("3.11", "3.12")
+
+
+def _target_python_version(python: str) -> str | None:
+    if python == sys.executable:
+        return f"{sys.version_info[0]}.{sys.version_info[1]}"
+    try:
+        result = subprocess.run(
+            [python, "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return result.stdout.strip() or None
+
+
+def python_version_warning(version: str | None) -> str | None:
+    if version is None or version in SUPPORTED_PYTHON:
+        return None
+    return (
+        f"warning: this environment uses Python {version}. Lightwork supports "
+        "Python 3.11 or 3.12. The install continues; if something fails, "
+        "recreate the virtual environment with one of them."
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -445,6 +475,10 @@ def main(argv: list[str] | None = None) -> int:
             validate_source_metadata(version, selected, args.target_python)
         if not args.verify_only and not args.validate_only and not constraint.is_file():
             raise ValueError(f"constraint file does not exist: {constraint}")
+        if not args.verify_only and not args.validate_only:
+            warning = python_version_warning(_target_python_version(args.target_python))
+            if warning:
+                print(warning, file=sys.stderr)
         if args.validate_only:
             print(f"validated {len(selected)} Lightwork cohort source projects")
         elif args.verify_only:
