@@ -186,6 +186,31 @@ class TestGenerateCompanions:
         assert "ignore all previous" not in note
         assert "Do not imply that their contents were read" in note
 
+    def test_answer_only_names_a_document_whose_companion_did_not_fit(self, tmp_path, monkeypatch, clean_env):
+        """A text file embedded first can use up the shared text budget; the
+        document whose extracted text was then skipped must be named as unread."""
+        import io
+        import zipfile
+        monkeypatch.setattr(att, "_extract_document", lambda p: "quarterly targets " * 4)
+        monkeypatch.setattr(att, "_companion_text_budget", lambda model: 100)
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("[Content_Types].xml", "<Types/>")
+        wm = WorldModel(path=tmp_path / "w.db")
+        gid = wm.create_goal("doc", "")
+        _add(wm, gid, "notes.txt", "text/plain", b"n" * 80, tmp_path / "a")
+        _add(wm, gid, "plan.docx",
+             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+             buf.getvalue(), tmp_path / "a")
+        assert generate_companions(wm, gid, root=tmp_path / "a") == 1
+        blocks = content_blocks_for_goal(wm, gid, model="claude-opus-4-8", shield=_Shield(allowed=True),
+                                         answer_only=True)
+        texts = [b["text"] for b in blocks if b.get("type") == "text"]
+        assert any("[untrusted attachment data: notes.txt]" in t for t in texts)
+        assert not any("quarterly targets" in t for t in texts)
+        notes = [t for t in texts if "cannot read the following attached files" in t]
+        assert notes and "plan.docx" in notes[0]
+
     def test_user_cannot_spoof_companion_suffix(self, tmp_path, clean_env):
         wm = WorldModel(path=tmp_path / "w.db")
         gid = wm.create_goal("notes", "")
