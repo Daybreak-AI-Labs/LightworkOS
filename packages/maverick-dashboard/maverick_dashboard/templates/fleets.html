@@ -109,6 +109,7 @@
           <p class="muted" style="margin-bottom: 0;">No agents on this team yet. Add agents when you create or edit the team.</p>
         {% endif %}
         {% set runs = runs_by_fleet.get(fleet.name) %}
+        <div class="fl-runs" data-fleet="{{ fleet.name }}">
         <h3 class="fl-sub">Recent tasks</h3>
         {% if runs %}
           <table style="margin-top: 0.4rem;">
@@ -128,10 +129,11 @@
             </tbody>
           </table>
         {% else %}
-          <p class="muted" style="margin: 0.4rem 0 0;">
+          <p class="muted fl-runs-empty" style="margin: 0.4rem 0 0;">
             No tasks yet — give one to an agent with the form above.
           </p>
         {% endif %}
+        </div>
       </div>
     {% endfor %}
   {% else %}
@@ -211,6 +213,42 @@
         el.style.color = bad ? 'var(--danger)' : 'var(--muted)';
         if (window.mvStatus) window.mvStatus(el, text, {error: !!bad}); else el.textContent = text;
       }
+      // A started task joins its team's Recent tasks at once (it used to
+      // appear only after a reload).
+      function cell(row, text, cls) {
+        const td = document.createElement('td');
+        if (cls) td.className = cls;
+        if (text != null) td.textContent = text;
+        row.appendChild(td); return td;
+      }
+      function showStarted(fleet, pick, prompt, goalId) {
+        const box = Array.prototype.find.call(document.querySelectorAll('.fl-runs'),
+          function(el) { return el.dataset.fleet === fleet; });
+        if (!box) return;
+        let body = box.querySelector('tbody');
+        if (!body) {
+          const table = document.createElement('table');
+          table.style.marginTop = '0.4rem';
+          const head = table.createTHead().insertRow();
+          ['Agent', 'Task', 'Status', 'When'].forEach(function(label) {
+            const th = document.createElement('th'); th.scope = 'col'; th.textContent = label; head.appendChild(th);
+          });
+          body = table.createTBody();
+          const empty = box.querySelector('.fl-runs-empty');
+          if (empty) empty.replaceWith(table); else box.appendChild(table);
+        }
+        const row = document.createElement('tr');
+        const option = pick && pick.options[pick.selectedIndex];
+        cell(row, option ? option.textContent.trim() : '');
+        const link = document.createElement('a');
+        link.href = '/chat/goal/' + encodeURIComponent(goalId);
+        link.textContent = prompt.length > 120 ? prompt.slice(0, 119) + '…' : prompt;
+        cell(row, null).appendChild(link);
+        const badge = document.createElement('span'); badge.className = 'badge pending'; badge.textContent = 'Started';
+        cell(row, null).appendChild(badge);
+        cell(row, 'Just now', 'muted');
+        body.insertBefore(row, body.firstChild);
+      }
       document.querySelectorAll('form.fleet-run-form').forEach(function(form) {
         // Past runs of the chosen agent, from the recorded costs on its option.
         const typical = form.parentNode.querySelector('.fl-typical');
@@ -247,6 +285,7 @@
                 msg.appendChild(a);
               }
               form.querySelector('[name=prompt]').value = '';
+              if (j.goal_id != null) showStarted(fleet, pick, prompt, j.goal_id);
             } else {
               say(msg, problem(r, j, 'start the task'), true);
             }
