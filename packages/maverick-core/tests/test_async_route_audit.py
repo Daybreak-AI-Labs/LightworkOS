@@ -14,6 +14,13 @@ def _write(root, rel, body):
     return p
 
 
+def _give_reasons(lock_file):
+    entries = json.loads(lock_file.read_text())
+    for entry in entries:
+        entry["reason"] = "tracked for conversion"
+    lock_file.write_text(json.dumps(entries), encoding="utf-8")
+
+
 def test_flags_zero_await_route_with_blocking_call(tmp_path):
     _write(tmp_path, "maverick_dashboard/api.py", """
 from fastapi import APIRouter
@@ -101,6 +108,7 @@ async def get_x():
     monkeypatch.setattr(ara, "lock_path", lambda: lock_file)
     written = ara.write_lock(tmp_path)
     assert written == lock_file
+    _give_reasons(lock_file)
     locked = ara.load_lock()
     assert len(locked) == 1
     finding = next(iter(locked.values()))
@@ -189,6 +197,8 @@ async def get_x():
     lock_file = tmp_path / "lock.json"
     monkeypatch.setattr(ara, "lock_path", lambda: lock_file)
     assert ara.main(["--regen", "--dir", str(tmp_path)]) == 0
+    assert ara.main(["--ci", "--dir", str(tmp_path)]) == 1  # no reason yet
+    _give_reasons(lock_file)
     assert ara.main(["--ci", "--dir", str(tmp_path)]) == 0
 
 
@@ -231,3 +241,139 @@ async def probe3():
 """)
     names = {f.name for f in ara.scan(tmp_path)}
     assert names == {"store_page", "probe", "probe2", "probe3"}
+
+
+_STORE_MODULE = """
+from functools import partial
+from fastapi import APIRouter
+from starlette.concurrency import run_in_threadpool
+router = APIRouter()
+
+def _ops():
+    return object()
+
+def authority(request):
+    ops = _ops()
+    return ops, ThirdPartyIntelligenceStore(request.app.state.path)
+
+def open_authority(request):
+    factory = request.app.state.store_factory
+    return factory(tenant_id="t")
+
+off_loop = partial(run_in_threadpool, open_authority)
+
+@router.get("/sources")
+async def sources(request):
+    ops, store = authority(request)
+    return await run_in_threadpool(store.list_sources)
+
+@router.get("/vendors")
+async def vendors(request):
+    store = await off_loop(request)
+    other = await run_in_threadpool(open_authority, request)
+    return await run_in_threadpool(store.list_vendors, other)
+
+@router.get("/nested")
+async def nested(request):
+    return await run_in_threadpool(lambda: authority(request))
+
+@router.get("/argument")
+async def argument(request):
+    return await run_in_threadpool(len, open_authority(request))
+"""
+
+
+def test_flags_a_store_opened_on_the_loop_before_the_first_await(tmp_path):
+    """The hosted-demo freeze: each list awaited its query in the worker pool
+    but first opened the tenant store (SQLite, 30 s busy timeout) on the
+    event loop, so the old zero-await rule never saw it."""
+    _write(tmp_path, "maverick_dashboard/api.py", _STORE_MODULE)
+    found = {f.name: f for f in ara.scan(tmp_path)}
+    assert set(found) == {"sources", "argument"}
+    assert found["sources"].rule == ara.OPENS_STORE
+    assert found["sources"].blocking_calls == ("authority",)
+    assert found["argument"].blocking_calls == ("open_authority",)
+    assert found["sources"].key != ara.Finding(
+        path=found["sources"].path, name="sources", lineno=1, blocking_calls=()).key
+
+
+def test_flags_list_handlers_registered_through_add_api_route(tmp_path):
+    _write(tmp_path, "maverick_dashboard/api.py", """
+from fastapi import APIRouter
+router = APIRouter()
+
+def build(deps):
+    def authority(request):
+        return deps.store_for("tenant")
+
+    def _lister(name):
+        async def listing(request):
+            store = authority(request)
+            return {"items": await call(store, name)}
+        return listing
+
+    for path, name in (("/a", "a"), ("/b", "b")):
+        router.add_api_route(path, _lister(name), methods=["GET"])
+""")
+    found = ara.scan(tmp_path)
+    assert [(f.name, f.rule, f.blocking_calls) for f in found] == [
+        ("listing", ara.OPENS_STORE, ("authority",))]
+
+
+def test_flags_a_zero_await_page_that_renders_on_the_loop(tmp_path):
+    """Rendering a page reads its settings, permissions and navigation from
+    disk: about 290 file reads, all on the loop in an ``async def``."""
+    _write(tmp_path, "maverick_dashboard/app.py", """
+from fastapi import FastAPI
+app = FastAPI()
+
+@app.get("/third-party/intelligence")
+async def page(request):
+    return templates.TemplateResponse(request, "page.html", {})
+
+@app.get("/fine")
+def fine(request):
+    return templates.TemplateResponse(request, "page.html", {})
+""")
+    found = ara.scan(tmp_path)
+    assert [(f.name, f.rule) for f in found] == [("page", ara.NO_AWAIT)]
+
+
+def test_a_grandfathered_entry_needs_a_reason(tmp_path, monkeypatch):
+    _write(tmp_path, "maverick_dashboard/api.py", _STORE_MODULE)
+    lock_file = tmp_path / "lock.json"
+    monkeypatch.setattr(ara, "lock_path", lambda: lock_file)
+    ara.write_lock(tmp_path)
+    probs = ara.problems(tmp_path)
+    assert len(probs) == 2 and all("reason" in prob for prob in probs)
+
+    entries = json.loads(lock_file.read_text())
+    for entry in entries:
+        entry["reason"] = "tracked: converted with the next change to this module"
+    lock_file.write_text(json.dumps(entries), encoding="utf-8")
+    assert ara.problems(tmp_path) == []
+    ara.write_lock(tmp_path)  # regenerating keeps the reasons already given
+    assert ara.problems(tmp_path) == []
+
+
+def test_the_pages_that_froze_the_demo_are_not_grandfathered():
+    """The third-party intelligence and continuous-evidence pages (and the
+    pages reported stuck on Loading) must stay off the event loop."""
+    fixed = {
+        "third_party_intelligence_api.py", "trc_continuous_evidence_api.py", "trc_setup_api.py",
+        "privacy_data_discovery_api.py", "privacy_regulatory_intelligence_api.py",
+        "consent_profile_data_api.py", "ai_evidence_analysis_api.py",
+        "ai_evidence_analysis_authority_api.py", "privacy_rights_consumer_delivery_api.py",
+        "assessment_evidence_autopopulation_api.py", "privacy_rights_orchestration_api.py",
+        "third_party_lifecycle_api.py", "third_party_collaboration_api.py",
+        "ai_evidence_analysis_page.py", "assessment_evidence_autopopulation_page.py",
+        "consent_custom_index_page.py",
+    }
+    pages = {
+        "consent_profile_data_page", "privacy_data_discovery_page",
+        "privacy_regulatory_intelligence_page", "privacy_rights_consumer_delivery_page",
+        "third_party_intelligence_page", "trc_continuous_evidence_page",
+    }
+    locked = ara.load_lock().values()
+    assert not [f.key for f in locked if f.path.rsplit("/", 1)[-1] in fixed]
+    assert not [f.key for f in locked if f.path.endswith("/app.py") and f.name in pages]

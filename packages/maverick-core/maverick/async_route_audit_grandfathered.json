@@ -1,1 +1,4623 @@
-[]
+[
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 75,
+    "name": "console",
+    "path": "maverick_dashboard/agent_control_plane_page.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 56,
+    "name": "workbench",
+    "path": "maverick_dashboard/ai_entity_tasks_page.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 374,
+    "name": "apply_rollback",
+    "path": "maverick_dashboard/ai_governance_loop_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 308,
+    "name": "authorize_control",
+    "path": "maverick_dashboard/ai_governance_loop_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 344,
+    "name": "authorize_rollback",
+    "path": "maverick_dashboard/ai_governance_loop_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 285,
+    "name": "get_case",
+    "path": "maverick_dashboard/ai_governance_loop_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 291,
+    "name": "history",
+    "path": "maverick_dashboard/ai_governance_loop_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 302,
+    "name": "integrity",
+    "path": "maverick_dashboard/ai_governance_loop_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 338,
+    "name": "replay",
+    "path": "maverick_dashboard/ai_governance_loop_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 389,
+    "name": "revoke_case",
+    "path": "maverick_dashboard/ai_governance_loop_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 323,
+    "name": "revoke_control",
+    "path": "maverick_dashboard/ai_governance_loop_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 359,
+    "name": "revoke_rollback",
+    "path": "maverick_dashboard/ai_governance_loop_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 261,
+    "name": "status",
+    "path": "maverick_dashboard/ai_governance_loop_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 4928,
+    "name": "action_center_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 15525,
+    "name": "benchmarks_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 10406,
+    "name": "cache_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 8074,
+    "name": "compartments_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 8890,
+    "name": "compliance_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 9023,
+    "name": "compliance_scope_actions_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 9005,
+    "name": "compliance_scoping_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 15303,
+    "name": "connections_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 5737,
+    "name": "consent_delivery_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 5719,
+    "name": "consent_experiments_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 5671,
+    "name": "consent_preferences_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 5755,
+    "name": "consent_public_clients_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 5689,
+    "name": "consent_publishing_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 5790,
+    "name": "consent_scan_inventory_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 5808,
+    "name": "consent_scan_notice_proposals_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 5836,
+    "name": "consumer_trust_center_authority_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 5898,
+    "name": "data_use_providers_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 7975,
+    "name": "discovery_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 5614,
+    "name": "dsar_detail_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 15504,
+    "name": "embed_demo_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 7156,
+    "name": "environment_threats_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 7189,
+    "name": "finance_board_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 7201,
+    "name": "finance_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 15291,
+    "name": "flow_analytics_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 15353,
+    "name": "flow_designer_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 15405,
+    "name": "flow_run_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 15052,
+    "name": "goal_builder_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 6123,
+    "name": "governance_agents_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 5191,
+    "name": "learned_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 4555,
+    "name": "learning_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 9312,
+    "name": "mcp_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 7763,
+    "name": "partner_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 4614,
+    "name": "perf_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 9921,
+    "name": "permissions_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 7139,
+    "name": "platform_threats_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 9068,
+    "name": "plugins_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 8987,
+    "name": "policy_publication_links_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 6077,
+    "name": "privacy_board_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 6057,
+    "name": "privacy_notice_governance_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 6088,
+    "name": "privacy_report_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 6043,
+    "name": "privacy_rights_form_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 7525,
+    "name": "providers_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "SubmissionStore"
+    ],
+    "lineno": 12054,
+    "name": "recover_chat_submission",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing chat submission path, changed separately. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 4477,
+    "name": "redact_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 8467,
+    "name": "roles_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 8801,
+    "name": "safety_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 7991,
+    "name": "simulate_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 5177,
+    "name": "skills_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 4805,
+    "name": "styles_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 10489,
+    "name": "templates_market_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 5117,
+    "name": "tenant_features_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 5068,
+    "name": "tenants_overview_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 4969,
+    "name": "tenants_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 15070,
+    "name": "workflow_builder_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 4944,
+    "name": "workflow_readiness_page",
+    "path": "maverick_dashboard/app.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 105,
+    "name": "landing",
+    "path": "maverick_dashboard/autonomous_compliance_page.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "_service"
+    ],
+    "lineno": 477,
+    "name": "inspect_promotion",
+    "path": "maverick_dashboard/candidate_promotion_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_service"
+    ],
+    "lineno": 411,
+    "name": "promotion_overview",
+    "path": "maverick_dashboard/candidate_promotion_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_service"
+    ],
+    "lineno": 457,
+    "name": "request_promotion",
+    "path": "maverick_dashboard/candidate_promotion_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_service"
+    ],
+    "lineno": 488,
+    "name": "review_promotion",
+    "path": "maverick_dashboard/candidate_promotion_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 178,
+    "name": "page",
+    "path": "maverick_dashboard/commitment_viability_api.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "bound_authority"
+    ],
+    "lineno": 485,
+    "name": "approve_catalog_version",
+    "path": "maverick_dashboard/compliance_scope_actions_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "bound_authority"
+    ],
+    "lineno": 538,
+    "name": "approve_plan",
+    "path": "maverick_dashboard/compliance_scope_actions_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "bound_authority"
+    ],
+    "lineno": 447,
+    "name": "create_catalog_version",
+    "path": "maverick_dashboard/compliance_scope_actions_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "bound_authority"
+    ],
+    "lineno": 505,
+    "name": "create_plan",
+    "path": "maverick_dashboard/compliance_scope_actions_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "bound_authority"
+    ],
+    "lineno": 424,
+    "name": "create_report",
+    "path": "maverick_dashboard/compliance_scope_actions_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "bound_authority"
+    ],
+    "lineno": 594,
+    "name": "export_plan",
+    "path": "maverick_dashboard/compliance_scope_actions_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "bound_authority"
+    ],
+    "lineno": 467,
+    "name": "get_catalog_version",
+    "path": "maverick_dashboard/compliance_scope_actions_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "bound_authority"
+    ],
+    "lineno": 614,
+    "name": "get_export",
+    "path": "maverick_dashboard/compliance_scope_actions_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "bound_authority"
+    ],
+    "lineno": 525,
+    "name": "get_plan",
+    "path": "maverick_dashboard/compliance_scope_actions_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "bound_authority"
+    ],
+    "lineno": 531,
+    "name": "get_plan_history",
+    "path": "maverick_dashboard/compliance_scope_actions_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "bound_authority"
+    ],
+    "lineno": 620,
+    "name": "integrity",
+    "path": "maverick_dashboard/compliance_scope_actions_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "bound_authority"
+    ],
+    "lineno": 380,
+    "name": "records",
+    "path": "maverick_dashboard/compliance_scope_actions_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "bound_authority"
+    ],
+    "lineno": 630,
+    "name": "approve_scope",
+    "path": "maverick_dashboard/compliance_scoping_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "bound_authority"
+    ],
+    "lineno": 576,
+    "name": "compute_scope",
+    "path": "maverick_dashboard/compliance_scoping_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "bound_authority"
+    ],
+    "lineno": 506,
+    "name": "create_assessment",
+    "path": "maverick_dashboard/compliance_scoping_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "bound_authority"
+    ],
+    "lineno": 453,
+    "name": "create_questionnaire",
+    "path": "maverick_dashboard/compliance_scoping_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "bound_authority"
+    ],
+    "lineno": 429,
+    "name": "create_report",
+    "path": "maverick_dashboard/compliance_scoping_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "bound_authority"
+    ],
+    "lineno": 658,
+    "name": "export_scope",
+    "path": "maverick_dashboard/compliance_scoping_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "bound_authority"
+    ],
+    "lineno": 644,
+    "name": "finalize_scope",
+    "path": "maverick_dashboard/compliance_scoping_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "bound_authority"
+    ],
+    "lineno": 524,
+    "name": "get_assessment",
+    "path": "maverick_dashboard/compliance_scoping_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "bound_authority"
+    ],
+    "lineno": 678,
+    "name": "get_export",
+    "path": "maverick_dashboard/compliance_scoping_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "bound_authority"
+    ],
+    "lineno": 474,
+    "name": "get_questionnaire",
+    "path": "maverick_dashboard/compliance_scoping_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "bound_authority"
+    ],
+    "lineno": 598,
+    "name": "get_scope",
+    "path": "maverick_dashboard/compliance_scoping_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "bound_authority"
+    ],
+    "lineno": 690,
+    "name": "integrity",
+    "path": "maverick_dashboard/compliance_scoping_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "bound_authority"
+    ],
+    "lineno": 486,
+    "name": "publish_questionnaire",
+    "path": "maverick_dashboard/compliance_scoping_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "bound_authority"
+    ],
+    "lineno": 684,
+    "name": "purge",
+    "path": "maverick_dashboard/compliance_scoping_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "bound_authority"
+    ],
+    "lineno": 556,
+    "name": "record_response",
+    "path": "maverick_dashboard/compliance_scoping_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "bound_authority"
+    ],
+    "lineno": 365,
+    "name": "records",
+    "path": "maverick_dashboard/compliance_scoping_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "bound_authority"
+    ],
+    "lineno": 530,
+    "name": "required_questions",
+    "path": "maverick_dashboard/compliance_scoping_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "resolve"
+    ],
+    "lineno": 402,
+    "name": "get_application",
+    "path": "maverick_dashboard/consent_application_scanner_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "resolve"
+    ],
+    "lineno": 458,
+    "name": "get_scan",
+    "path": "maverick_dashboard/consent_application_scanner_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "resolve"
+    ],
+    "lineno": 477,
+    "name": "integrity",
+    "path": "maverick_dashboard/consent_application_scanner_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "resolve"
+    ],
+    "lineno": 393,
+    "name": "list_applications",
+    "path": "maverick_dashboard/consent_application_scanner_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "resolve"
+    ],
+    "lineno": 449,
+    "name": "list_scans",
+    "path": "maverick_dashboard/consent_application_scanner_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "resolve"
+    ],
+    "lineno": 380,
+    "name": "register",
+    "path": "maverick_dashboard/consent_application_scanner_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "resolve"
+    ],
+    "lineno": 464,
+    "name": "review_scan",
+    "path": "maverick_dashboard/consent_application_scanner_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "resolve"
+    ],
+    "lineno": 408,
+    "name": "revoke_application",
+    "path": "maverick_dashboard/consent_application_scanner_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "resolve"
+    ],
+    "lineno": 424,
+    "name": "scan_application",
+    "path": "maverick_dashboard/consent_application_scanner_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 52,
+    "name": "workbench",
+    "path": "maverick_dashboard/consent_application_scanner_page.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 61,
+    "name": "workbench",
+    "path": "maverick_dashboard/consent_bulk_jobs_page.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 436,
+    "name": "audit",
+    "path": "maverick_dashboard/consent_delivery_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 409,
+    "name": "dead_letters",
+    "path": "maverick_dashboard/consent_delivery_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 268,
+    "name": "destination",
+    "path": "maverick_dashboard/consent_delivery_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 257,
+    "name": "destinations",
+    "path": "maverick_dashboard/consent_delivery_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority",
+      "_preference_store"
+    ],
+    "lineno": 349,
+    "name": "dispatch",
+    "path": "maverick_dashboard/consent_delivery_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 240,
+    "name": "enroll_destination",
+    "path": "maverick_dashboard/consent_delivery_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 402,
+    "name": "message",
+    "path": "maverick_dashboard/consent_delivery_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 455,
+    "name": "purge",
+    "path": "maverick_dashboard/consent_delivery_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 419,
+    "name": "replay_dead_letter",
+    "path": "maverick_dashboard/consent_delivery_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 309,
+    "name": "revoke_destination",
+    "path": "maverick_dashboard/consent_delivery_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 292,
+    "name": "revoke_key",
+    "path": "maverick_dashboard/consent_delivery_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 275,
+    "name": "rotate_key",
+    "path": "maverick_dashboard/consent_delivery_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 385,
+    "name": "status",
+    "path": "maverick_dashboard/consent_delivery_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority",
+      "_preference_store"
+    ],
+    "lineno": 326,
+    "name": "sync_authority",
+    "path": "maverick_dashboard/consent_delivery_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 691,
+    "name": "analyze_experiment",
+    "path": "maverick_dashboard/consent_experiments_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 634,
+    "name": "assign_variant",
+    "path": "maverick_dashboard/consent_experiments_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 708,
+    "name": "audit_export",
+    "path": "maverick_dashboard/consent_experiments_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 398,
+    "name": "create_experiment",
+    "path": "maverick_dashboard/consent_experiments_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 545,
+    "name": "get_experiment",
+    "path": "maverick_dashboard/consent_experiments_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 432,
+    "name": "list_experiments",
+    "path": "maverick_dashboard/consent_experiments_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 530,
+    "name": "purge_retention",
+    "path": "maverick_dashboard/consent_experiments_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 653,
+    "name": "record_exposure",
+    "path": "maverick_dashboard/consent_experiments_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 672,
+    "name": "record_outcome",
+    "path": "maverick_dashboard/consent_experiments_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 49,
+    "name": "workbench",
+    "path": "maverick_dashboard/consent_global_opt_out_page.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "deps.public.preference_store_for"
+    ],
+    "lineno": 551,
+    "name": "current_link",
+    "path": "maverick_dashboard/consent_identity_federation_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 56,
+    "name": "workbench",
+    "path": "maverick_dashboard/consent_native_page.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 720,
+    "name": "ack_outbox",
+    "path": "maverick_dashboard/consent_preferences_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 639,
+    "name": "admit_scan",
+    "path": "maverick_dashboard/consent_preferences_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 402,
+    "name": "create_profile",
+    "path": "maverick_dashboard/consent_preferences_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 681,
+    "name": "decide",
+    "path": "maverick_dashboard/consent_preferences_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 556,
+    "name": "export_profile",
+    "path": "maverick_dashboard/consent_preferences_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 481,
+    "name": "identity_link_integrity",
+    "path": "maverick_dashboard/consent_preferences_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 528,
+    "name": "ingest_privacy_signal",
+    "path": "maverick_dashboard/consent_preferences_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 417,
+    "name": "link_profiles",
+    "path": "maverick_dashboard/consent_preferences_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 586,
+    "name": "list_access_log",
+    "path": "maverick_dashboard/consent_preferences_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 351,
+    "name": "list_policies",
+    "path": "maverick_dashboard/consent_preferences_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 375,
+    "name": "list_profiles",
+    "path": "maverick_dashboard/consent_preferences_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 661,
+    "name": "list_scan_observations",
+    "path": "maverick_dashboard/consent_preferences_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 606,
+    "name": "list_trackers",
+    "path": "maverick_dashboard/consent_preferences_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 392,
+    "name": "lookup_profiles",
+    "path": "maverick_dashboard/consent_preferences_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 432,
+    "name": "profile_identity_link",
+    "path": "maverick_dashboard/consent_preferences_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 461,
+    "name": "profile_identity_link_history",
+    "path": "maverick_dashboard/consent_preferences_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 364,
+    "name": "publish_policy",
+    "path": "maverick_dashboard/consent_preferences_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 762,
+    "name": "purge_operational_data",
+    "path": "maverick_dashboard/consent_preferences_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 696,
+    "name": "read_outbox",
+    "path": "maverick_dashboard/consent_preferences_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 499,
+    "name": "record_preferences",
+    "path": "maverick_dashboard/consent_preferences_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 619,
+    "name": "register_tracker",
+    "path": "maverick_dashboard/consent_preferences_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 742,
+    "name": "retention_due",
+    "path": "maverick_dashboard/consent_preferences_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 343,
+    "name": "summary",
+    "path": "maverick_dashboard/consent_preferences_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_registry"
+    ],
+    "lineno": 219,
+    "name": "create_client",
+    "path": "maverick_dashboard/consent_public_admin_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_registry"
+    ],
+    "lineno": 254,
+    "name": "list_clients",
+    "path": "maverick_dashboard/consent_public_admin_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_preference_store",
+      "_registry"
+    ],
+    "lineno": 274,
+    "name": "list_profile_bindings",
+    "path": "maverick_dashboard/consent_public_admin_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_registry"
+    ],
+    "lineno": 324,
+    "name": "revoke_client",
+    "path": "maverick_dashboard/consent_public_admin_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_registry"
+    ],
+    "lineno": 355,
+    "name": "revoke_profile",
+    "path": "maverick_dashboard/consent_public_admin_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "deps.preference_store_for"
+    ],
+    "lineno": 3826,
+    "name": "bootstrap_profile",
+    "path": "maverick_dashboard/consent_public_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "branding_material"
+    ],
+    "lineno": 4895,
+    "name": "consumer_trust_center_brand_asset",
+    "path": "maverick_dashboard/consent_public_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "deps.preference_store_for"
+    ],
+    "lineno": 3894,
+    "name": "current_preferences",
+    "path": "maverick_dashboard/consent_public_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "deps.preference_store_for"
+    ],
+    "lineno": 5277,
+    "name": "privacy_signal",
+    "path": "maverick_dashboard/consent_public_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "profile_assignment_store"
+    ],
+    "lineno": 4523,
+    "name": "profile_prompt",
+    "path": "maverick_dashboard/consent_public_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "profile_assignment_store"
+    ],
+    "lineno": 4636,
+    "name": "profile_prompt_interaction",
+    "path": "maverick_dashboard/consent_public_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "deps.preference_store_for"
+    ],
+    "lineno": 3951,
+    "name": "update_preferences",
+    "path": "maverick_dashboard/consent_public_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_catalog_authority"
+    ],
+    "lineno": 243,
+    "name": "catalog",
+    "path": "maverick_dashboard/consent_publishing_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_catalog_authority"
+    ],
+    "lineno": 254,
+    "name": "catalog_version",
+    "path": "maverick_dashboard/consent_publishing_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 439,
+    "name": "history",
+    "path": "maverick_dashboard/consent_publishing_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 388,
+    "name": "preview",
+    "path": "maverick_dashboard/consent_publishing_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 402,
+    "name": "publish",
+    "path": "maverick_dashboard/consent_publishing_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 288,
+    "name": "put_custom_preference",
+    "path": "maverick_dashboard/consent_publishing_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 308,
+    "name": "put_notice",
+    "path": "maverick_dashboard/consent_publishing_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 270,
+    "name": "put_purpose",
+    "path": "maverick_dashboard/consent_publishing_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 368,
+    "name": "put_rule_group",
+    "path": "maverick_dashboard/consent_publishing_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 339,
+    "name": "put_template",
+    "path": "maverick_dashboard/consent_publishing_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 348,
+    "name": "put_theme_token",
+    "path": "maverick_dashboard/consent_publishing_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 279,
+    "name": "put_topic",
+    "path": "maverick_dashboard/consent_publishing_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 317,
+    "name": "put_translation",
+    "path": "maverick_dashboard/consent_publishing_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 420,
+    "name": "rollback",
+    "path": "maverick_dashboard/consent_publishing_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 263,
+    "name": "upsert_property",
+    "path": "maverick_dashboard/consent_publishing_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 899,
+    "name": "approve_review_request",
+    "path": "maverick_dashboard/consent_scan_inventory_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 749,
+    "name": "audit",
+    "path": "maverick_dashboard/consent_scan_inventory_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 729,
+    "name": "bridge_report",
+    "path": "maverick_dashboard/consent_scan_inventory_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 434,
+    "name": "claim_jobs",
+    "path": "maverick_dashboard/consent_scan_inventory_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 527,
+    "name": "dead_letters",
+    "path": "maverick_dashboard/consent_scan_inventory_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 614,
+    "name": "discoveries",
+    "path": "maverick_dashboard/consent_scan_inventory_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 427,
+    "name": "enqueue_jobs",
+    "path": "maverick_dashboard/consent_scan_inventory_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 520,
+    "name": "job_detail",
+    "path": "maverick_dashboard/consent_scan_inventory_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 509,
+    "name": "jobs",
+    "path": "maverick_dashboard/consent_scan_inventory_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 887,
+    "name": "list_review_requests",
+    "path": "maverick_dashboard/consent_scan_inventory_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 364,
+    "name": "properties",
+    "path": "maverick_dashboard/consent_scan_inventory_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 374,
+    "name": "property_detail",
+    "path": "maverick_dashboard/consent_scan_inventory_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 381,
+    "name": "put_schedule",
+    "path": "maverick_dashboard/consent_scan_inventory_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 453,
+    "name": "renew_job_lease",
+    "path": "maverick_dashboard/consent_scan_inventory_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 543,
+    "name": "replay_dead_letter",
+    "path": "maverick_dashboard/consent_scan_inventory_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 606,
+    "name": "report_detail",
+    "path": "maverick_dashboard/consent_scan_inventory_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 560,
+    "name": "report_diff",
+    "path": "maverick_dashboard/consent_scan_inventory_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 579,
+    "name": "reports",
+    "path": "maverick_dashboard/consent_scan_inventory_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 853,
+    "name": "request_two_person_review",
+    "path": "maverick_dashboard/consent_scan_inventory_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 771,
+    "name": "retention_purge",
+    "path": "maverick_dashboard/consent_scan_inventory_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 764,
+    "name": "retention_status",
+    "path": "maverick_dashboard/consent_scan_inventory_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 662,
+    "name": "review_discovery",
+    "path": "maverick_dashboard/consent_scan_inventory_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 710,
+    "name": "reviews",
+    "path": "maverick_dashboard/consent_scan_inventory_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 991,
+    "name": "run_due_scans",
+    "path": "maverick_dashboard/consent_scan_inventory_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 472,
+    "name": "run_job",
+    "path": "maverick_dashboard/consent_scan_inventory_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 1002,
+    "name": "scan_property_now",
+    "path": "maverick_dashboard/consent_scan_inventory_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 420,
+    "name": "schedule_detail",
+    "path": "maverick_dashboard/consent_scan_inventory_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 410,
+    "name": "schedules",
+    "path": "maverick_dashboard/consent_scan_inventory_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 778,
+    "name": "status",
+    "path": "maverick_dashboard/consent_scan_inventory_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 344,
+    "name": "upsert_property",
+    "path": "maverick_dashboard/consent_scan_inventory_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 941,
+    "name": "withdraw_review_request",
+    "path": "maverick_dashboard/consent_scan_inventory_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 561,
+    "name": "accept_local_baseline",
+    "path": "maverick_dashboard/consent_scan_notice_proposals_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 528,
+    "name": "approve_proposal",
+    "path": "maverick_dashboard/consent_scan_notice_proposals_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 482,
+    "name": "create_proposal",
+    "path": "maverick_dashboard/consent_scan_notice_proposals_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 512,
+    "name": "create_rollback_proposal",
+    "path": "maverick_dashboard/consent_scan_notice_proposals_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 578,
+    "name": "export_proposal_metadata",
+    "path": "maverick_dashboard/consent_scan_notice_proposals_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 506,
+    "name": "get_proposal",
+    "path": "maverick_dashboard/consent_scan_notice_proposals_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 493,
+    "name": "list_proposals",
+    "path": "maverick_dashboard/consent_scan_notice_proposals_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 544,
+    "name": "revoke_proposal_approval",
+    "path": "maverick_dashboard/consent_scan_notice_proposals_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 593,
+    "name": "verify_integrity",
+    "path": "maverick_dashboard/consent_scan_notice_proposals_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 542,
+    "name": "activate",
+    "path": "maverick_dashboard/consent_web_publish_settings_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 490,
+    "name": "create_version",
+    "path": "maverick_dashboard/consent_web_publish_settings_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 506,
+    "name": "get_head",
+    "path": "maverick_dashboard/consent_web_publish_settings_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 527,
+    "name": "get_version",
+    "path": "maverick_dashboard/consent_web_publish_settings_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 606,
+    "name": "history",
+    "path": "maverick_dashboard/consent_web_publish_settings_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 622,
+    "name": "integrity",
+    "path": "maverick_dashboard/consent_web_publish_settings_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 514,
+    "name": "list_versions",
+    "path": "maverick_dashboard/consent_web_publish_settings_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 628,
+    "name": "recovery",
+    "path": "maverick_dashboard/consent_web_publish_settings_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 587,
+    "name": "retention_purge",
+    "path": "maverick_dashboard/consent_web_publish_settings_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 561,
+    "name": "rollback",
+    "path": "maverick_dashboard/consent_web_publish_settings_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 574,
+    "name": "withdraw",
+    "path": "maverick_dashboard/consent_web_publish_settings_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 72,
+    "name": "workbench",
+    "path": "maverick_dashboard/consent_web_publish_settings_page.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 834,
+    "name": "approve_capability_grant",
+    "path": "maverick_dashboard/consumer_trust_center_authority_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 910,
+    "name": "approve_rights_authorization",
+    "path": "maverick_dashboard/consumer_trust_center_authority_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 597,
+    "name": "create_context",
+    "path": "maverick_dashboard/consumer_trust_center_authority_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 988,
+    "name": "create_export",
+    "path": "maverick_dashboard/consumer_trust_center_authority_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 741,
+    "name": "get_context",
+    "path": "maverick_dashboard/consumer_trust_center_authority_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 1050,
+    "name": "get_export",
+    "path": "maverick_dashboard/consumer_trust_center_authority_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 958,
+    "name": "history",
+    "path": "maverick_dashboard/consumer_trust_center_authority_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 1119,
+    "name": "integrity",
+    "path": "maverick_dashboard/consumer_trust_center_authority_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 1163,
+    "name": "overview",
+    "path": "maverick_dashboard/consumer_trust_center_authority_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 624,
+    "name": "prepare_privacy_rights_context",
+    "path": "maverick_dashboard/consumer_trust_center_authority_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 807,
+    "name": "propose_capability_grant",
+    "path": "maverick_dashboard/consumer_trust_center_authority_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 882,
+    "name": "propose_rights_authorization",
+    "path": "maverick_dashboard/consumer_trust_center_authority_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_rights_store",
+      "authority"
+    ],
+    "lineno": 1284,
+    "name": "propose_rights_authorization_for_case",
+    "path": "maverick_dashboard/consumer_trust_center_authority_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 1096,
+    "name": "purge_retention",
+    "path": "maverick_dashboard/consumer_trust_center_authority_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 1071,
+    "name": "retention_due",
+    "path": "maverick_dashboard/consumer_trust_center_authority_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 759,
+    "name": "revise_context",
+    "path": "maverick_dashboard/consumer_trust_center_authority_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 858,
+    "name": "revoke_capability_grant",
+    "path": "maverick_dashboard/consumer_trust_center_authority_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 783,
+    "name": "revoke_context",
+    "path": "maverick_dashboard/consumer_trust_center_authority_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 934,
+    "name": "revoke_rights_authorization",
+    "path": "maverick_dashboard/consumer_trust_center_authority_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_rights_store"
+    ],
+    "lineno": 1257,
+    "name": "rights_cases",
+    "path": "maverick_dashboard/consumer_trust_center_authority_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 1022,
+    "name": "verify_export",
+    "path": "maverick_dashboard/consumer_trust_center_authority_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 430,
+    "name": "activate_policy",
+    "path": "maverick_dashboard/data_use_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 371,
+    "name": "assign_label",
+    "path": "maverick_dashboard/data_use_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 523,
+    "name": "authorize_request",
+    "path": "maverick_dashboard/data_use_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 494,
+    "name": "close_exception",
+    "path": "maverick_dashboard/data_use_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 541,
+    "name": "compile_decision",
+    "path": "maverick_dashboard/data_use_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 505,
+    "name": "create_request",
+    "path": "maverick_dashboard/data_use_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 287,
+    "name": "get_record",
+    "path": "maverick_dashboard/data_use_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 275,
+    "name": "list_records",
+    "path": "maverick_dashboard/data_use_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 397,
+    "name": "preview_policy",
+    "path": "maverick_dashboard/data_use_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 346,
+    "name": "publish_label",
+    "path": "maverick_dashboard/data_use_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 297,
+    "name": "put_asset",
+    "path": "maverick_dashboard/data_use_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 322,
+    "name": "put_context",
+    "path": "maverick_dashboard/data_use_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 304,
+    "name": "put_field",
+    "path": "maverick_dashboard/data_use_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 315,
+    "name": "put_lineage",
+    "path": "maverick_dashboard/data_use_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 412,
+    "name": "put_policy_version",
+    "path": "maverick_dashboard/data_use_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 455,
+    "name": "request_exception",
+    "path": "maverick_dashboard/data_use_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 362,
+    "name": "retire_label",
+    "path": "maverick_dashboard/data_use_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 448,
+    "name": "retire_policy",
+    "path": "maverick_dashboard/data_use_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_authority"
+    ],
+    "lineno": 476,
+    "name": "review_exception",
+    "path": "maverick_dashboard/data_use_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_adapter",
+      "_binding_store"
+    ],
+    "lineno": 614,
+    "name": "binding_runtime_status",
+    "path": "maverick_dashboard/data_use_provider_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_binding_store"
+    ],
+    "lineno": 551,
+    "name": "enroll_binding",
+    "path": "maverick_dashboard/data_use_provider_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_binding_store"
+    ],
+    "lineno": 539,
+    "name": "get_binding",
+    "path": "maverick_dashboard/data_use_provider_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_binding_store"
+    ],
+    "lineno": 769,
+    "name": "get_operation",
+    "path": "maverick_dashboard/data_use_provider_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_binding_store"
+    ],
+    "lineno": 523,
+    "name": "list_bindings",
+    "path": "maverick_dashboard/data_use_provider_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_binding_store"
+    ],
+    "lineno": 597,
+    "name": "revoke_binding",
+    "path": "maverick_dashboard/data_use_provider_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 488,
+    "name": "cancel_expectation",
+    "path": "maverick_dashboard/data_use_provider_audit_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 449,
+    "name": "counts",
+    "path": "maverick_dashboard/data_use_provider_audit_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 466,
+    "name": "get_expectation",
+    "path": "maverick_dashboard/data_use_provider_audit_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority",
+      "read_grants_for"
+    ],
+    "lineno": 555,
+    "name": "get_read_grant",
+    "path": "maverick_dashboard/data_use_provider_audit_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 522,
+    "name": "integrity",
+    "path": "maverick_dashboard/data_use_provider_audit_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority",
+      "read_grants_for"
+    ],
+    "lineno": 573,
+    "name": "issue_read_grant",
+    "path": "maverick_dashboard/data_use_provider_audit_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 472,
+    "name": "list_evidence",
+    "path": "maverick_dashboard/data_use_provider_audit_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 455,
+    "name": "list_expectations",
+    "path": "maverick_dashboard/data_use_provider_audit_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 505,
+    "name": "replay_expectation",
+    "path": "maverick_dashboard/data_use_provider_audit_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority",
+      "read_grants_for"
+    ],
+    "lineno": 593,
+    "name": "revoke_read_grant",
+    "path": "maverick_dashboard/data_use_provider_audit_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority",
+      "worker_for"
+    ],
+    "lineno": 535,
+    "name": "run_once",
+    "path": "maverick_dashboard/data_use_provider_audit_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 85,
+    "name": "draft_storage",
+    "path": "maverick_dashboard/draft_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 99,
+    "name": "read_draft",
+    "path": "maverick_dashboard/draft_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 92,
+    "name": "retire_draft_storage",
+    "path": "maverick_dashboard/draft_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 106,
+    "name": "save_draft",
+    "path": "maverick_dashboard/draft_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 217,
+    "name": "export_matter",
+    "path": "maverick_dashboard/ediscovery_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 146,
+    "name": "get_matter",
+    "path": "maverick_dashboard/ediscovery_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 125,
+    "name": "list_matters",
+    "path": "maverick_dashboard/ediscovery_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 446,
+    "name": "ekko_page",
+    "path": "maverick_dashboard/ekko_routes.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "_transition"
+    ],
+    "lineno": 646,
+    "name": "ekko_pause_session",
+    "path": "maverick_dashboard/ekko_routes.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_transition"
+    ],
+    "lineno": 655,
+    "name": "ekko_resume_session",
+    "path": "maverick_dashboard/ekko_routes.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_status_data"
+    ],
+    "lineno": 460,
+    "name": "ekko_status",
+    "path": "maverick_dashboard/ekko_routes.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_transition"
+    ],
+    "lineno": 664,
+    "name": "ekko_stop_session",
+    "path": "maverick_dashboard/ekko_routes.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "SubmissionStore",
+      "_result",
+      "public"
+    ],
+    "lineno": 277,
+    "name": "launch",
+    "path": "maverick_dashboard/employee_activation.py",
+    "reason": "Pre-existing chat submission path, changed separately. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 47,
+    "name": "console",
+    "path": "maverick_dashboard/evolution_ledger_page.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 677,
+    "name": "analyze",
+    "path": "maverick_dashboard/governance_agents_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 777,
+    "name": "execute",
+    "path": "maverick_dashboard/governance_agents_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 752,
+    "name": "get_run",
+    "path": "maverick_dashboard/governance_agents_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 1060,
+    "name": "integrity",
+    "path": "maverick_dashboard/governance_agents_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 735,
+    "name": "list_policies",
+    "path": "maverick_dashboard/governance_agents_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 758,
+    "name": "list_runs",
+    "path": "maverick_dashboard/governance_agents_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 648,
+    "name": "publish_policy",
+    "path": "maverick_dashboard/governance_agents_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 855,
+    "name": "purge",
+    "path": "maverick_dashboard/governance_agents_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 813,
+    "name": "recover",
+    "path": "maverick_dashboard/governance_agents_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 769,
+    "name": "review",
+    "path": "maverick_dashboard/governance_agents_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 663,
+    "name": "revoke_policy",
+    "path": "maverick_dashboard/governance_agents_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 849,
+    "name": "revoke_run",
+    "path": "maverick_dashboard/governance_agents_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 303,
+    "name": "audit_events",
+    "path": "maverick_dashboard/governed_document_vault_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 272,
+    "name": "deliver",
+    "path": "maverick_dashboard/governed_document_vault_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 235,
+    "name": "get_document",
+    "path": "maverick_dashboard/governed_document_vault_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 197,
+    "name": "ingest_document",
+    "path": "maverick_dashboard/governed_document_vault_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 313,
+    "name": "integrity",
+    "path": "maverick_dashboard/governed_document_vault_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 224,
+    "name": "list_documents",
+    "path": "maverick_dashboard/governed_document_vault_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 257,
+    "name": "purge_document",
+    "path": "maverick_dashboard/governed_document_vault_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 294,
+    "name": "reconcile",
+    "path": "maverick_dashboard/governed_document_vault_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 241,
+    "name": "revoke_document",
+    "path": "maverick_dashboard/governed_document_vault_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 181,
+    "name": "status",
+    "path": "maverick_dashboard/governed_document_vault_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 56,
+    "name": "workbench",
+    "path": "maverick_dashboard/governed_document_vault_page.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "_runtime"
+    ],
+    "lineno": 250,
+    "name": "enroll_identity_asset_binding",
+    "path": "maverick_dashboard/identity_governance_outcomes_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_control_runtime"
+    ],
+    "lineno": 303,
+    "name": "get_conditional_access_decision",
+    "path": "maverick_dashboard/identity_governance_outcomes_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_runtime"
+    ],
+    "lineno": 362,
+    "name": "get_identity_outcome",
+    "path": "maverick_dashboard/identity_governance_outcomes_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_runtime"
+    ],
+    "lineno": 233,
+    "name": "identity_outcome_status",
+    "path": "maverick_dashboard/identity_governance_outcomes_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_control_runtime"
+    ],
+    "lineno": 290,
+    "name": "list_conditional_access_decisions",
+    "path": "maverick_dashboard/identity_governance_outcomes_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_runtime"
+    ],
+    "lineno": 240,
+    "name": "list_identity_asset_bindings",
+    "path": "maverick_dashboard/identity_governance_outcomes_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_runtime"
+    ],
+    "lineno": 346,
+    "name": "list_identity_outcomes",
+    "path": "maverick_dashboard/identity_governance_outcomes_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_runtime"
+    ],
+    "lineno": 390,
+    "name": "replay_identity_outcome",
+    "path": "maverick_dashboard/identity_governance_outcomes_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_control_runtime"
+    ],
+    "lineno": 324,
+    "name": "revoke_conditional_access_decision",
+    "path": "maverick_dashboard/identity_governance_outcomes_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_runtime"
+    ],
+    "lineno": 273,
+    "name": "revoke_identity_asset_binding",
+    "path": "maverick_dashboard/identity_governance_outcomes_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_runtime"
+    ],
+    "lineno": 409,
+    "name": "revoke_identity_outcome",
+    "path": "maverick_dashboard/identity_governance_outcomes_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_runtime"
+    ],
+    "lineno": 376,
+    "name": "run_identity_outcome_worker",
+    "path": "maverick_dashboard/identity_governance_outcomes_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "CanaryStore"
+    ],
+    "lineno": 631,
+    "name": "compare_release",
+    "path": "maverick_dashboard/installation_ops_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "CanaryStore"
+    ],
+    "lineno": 616,
+    "name": "record_baseline",
+    "path": "maverick_dashboard/installation_ops_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_service"
+    ],
+    "lineno": 621,
+    "name": "archive_request",
+    "path": "maverick_dashboard/knowledge_access_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_service"
+    ],
+    "lineno": 595,
+    "name": "decide_request",
+    "path": "maverick_dashboard/knowledge_access_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_service"
+    ],
+    "lineno": 435,
+    "name": "detail",
+    "path": "maverick_dashboard/knowledge_access_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_service"
+    ],
+    "lineno": 448,
+    "name": "export",
+    "path": "maverick_dashboard/knowledge_access_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_service"
+    ],
+    "lineno": 547,
+    "name": "get_request",
+    "path": "maverick_dashboard/knowledge_access_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_service"
+    ],
+    "lineno": 745,
+    "name": "knowledge_access_page",
+    "path": "maverick_dashboard/knowledge_access_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_service"
+    ],
+    "lineno": 478,
+    "name": "list_requests",
+    "path": "maverick_dashboard/knowledge_access_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_service"
+    ],
+    "lineno": 635,
+    "name": "place_retention_hold",
+    "path": "maverick_dashboard/knowledge_access_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_service"
+    ],
+    "lineno": 407,
+    "name": "purposes",
+    "path": "maverick_dashboard/knowledge_access_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_service"
+    ],
+    "lineno": 511,
+    "name": "recovery_candidates",
+    "path": "maverick_dashboard/knowledge_access_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_service"
+    ],
+    "lineno": 662,
+    "name": "release_retention_hold",
+    "path": "maverick_dashboard/knowledge_access_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_service"
+    ],
+    "lineno": 420,
+    "name": "search",
+    "path": "maverick_dashboard/knowledge_access_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_service"
+    ],
+    "lineno": 565,
+    "name": "submit_request",
+    "path": "maverick_dashboard/knowledge_access_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_identity_control_runtime"
+    ],
+    "lineno": 3637,
+    "name": "compensate_identity_governance_purview_writeback",
+    "path": "maverick_dashboard/model_risk_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_identity_control_runtime"
+    ],
+    "lineno": 3472,
+    "name": "decide_identity_governance_capability",
+    "path": "maverick_dashboard/model_risk_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_identity_control_runtime"
+    ],
+    "lineno": 3496,
+    "name": "decide_identity_governance_conditional_access",
+    "path": "maverick_dashboard/model_risk_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_identity_control_runtime"
+    ],
+    "lineno": 3612,
+    "name": "execute_identity_governance_purview_writeback",
+    "path": "maverick_dashboard/model_risk_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_identity_control_runtime"
+    ],
+    "lineno": 3588,
+    "name": "get_identity_governance_purview_writeback",
+    "path": "maverick_dashboard/model_risk_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_identity_control_runtime"
+    ],
+    "lineno": 3445,
+    "name": "map_identity_governance_capabilities",
+    "path": "maverick_dashboard/model_risk_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_identity_control_runtime"
+    ],
+    "lineno": 3425,
+    "name": "observe_identity_governance_federation",
+    "path": "maverick_dashboard/model_risk_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_identity_control_runtime"
+    ],
+    "lineno": 3553,
+    "name": "prepare_identity_governance_purview_writeback",
+    "path": "maverick_dashboard/model_risk_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 54,
+    "name": "workbench",
+    "path": "maverick_dashboard/no_code_grc_studio_page.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 972,
+    "name": "auth_error",
+    "path": "maverick_dashboard/oidc_login.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 170,
+    "name": "page",
+    "path": "maverick_dashboard/outcome_pilots_api.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 973,
+    "name": "access_events",
+    "path": "maverick_dashboard/policy_publication_links_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 903,
+    "name": "apply_job",
+    "path": "maverick_dashboard/policy_publication_links_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 692,
+    "name": "artifact_status",
+    "path": "maverick_dashboard/policy_publication_links_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 957,
+    "name": "audit_events",
+    "path": "maverick_dashboard/policy_publication_links_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 749,
+    "name": "bind_public_path",
+    "path": "maverick_dashboard/policy_publication_links_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 886,
+    "name": "claim_jobs",
+    "path": "maverick_dashboard/policy_publication_links_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 646,
+    "name": "create_artifact",
+    "path": "maverick_dashboard/policy_publication_links_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 729,
+    "name": "create_link",
+    "path": "maverick_dashboard/policy_publication_links_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 917,
+    "name": "fail_job",
+    "path": "maverick_dashboard/policy_publication_links_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 760,
+    "name": "get_link",
+    "path": "maverick_dashboard/policy_publication_links_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 1011,
+    "name": "integrity",
+    "path": "maverick_dashboard/policy_publication_links_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 658,
+    "name": "list_artifacts",
+    "path": "maverick_dashboard/policy_publication_links_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 683,
+    "name": "list_jobs",
+    "path": "maverick_dashboard/policy_publication_links_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 667,
+    "name": "list_links",
+    "path": "maverick_dashboard/policy_publication_links_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 773,
+    "name": "publish_link",
+    "path": "maverick_dashboard/policy_publication_links_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 989,
+    "name": "purge_access",
+    "path": "maverick_dashboard/policy_publication_links_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 1000,
+    "name": "purge_content",
+    "path": "maverick_dashboard/policy_publication_links_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "deps.store_for"
+    ],
+    "lineno": 1027,
+    "name": "retrieve_policy",
+    "path": "maverick_dashboard/policy_publication_links_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 707,
+    "name": "review_artifact",
+    "path": "maverick_dashboard/policy_publication_links_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 812,
+    "name": "revoke_link",
+    "path": "maverick_dashboard/policy_publication_links_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 790,
+    "name": "rotate_capability",
+    "path": "maverick_dashboard/policy_publication_links_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 937,
+    "name": "run_due",
+    "path": "maverick_dashboard/policy_publication_links_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 849,
+    "name": "schedule_expiry",
+    "path": "maverick_dashboard/policy_publication_links_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 832,
+    "name": "schedule_publication",
+    "path": "maverick_dashboard/policy_publication_links_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "authority"
+    ],
+    "lineno": 866,
+    "name": "schedule_revocation",
+    "path": "maverick_dashboard/policy_publication_links_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 32,
+    "name": "workbench",
+    "path": "maverick_dashboard/privacy_drop_management_page.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "route_authority"
+    ],
+    "lineno": 937,
+    "name": "acknowledge_publication_intent",
+    "path": "maverick_dashboard/privacy_notice_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "route_authority"
+    ],
+    "lineno": 819,
+    "name": "approve_release",
+    "path": "maverick_dashboard/privacy_notice_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "route_authority"
+    ],
+    "lineno": 886,
+    "name": "claim_publication_intents",
+    "path": "maverick_dashboard/privacy_notice_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "route_authority"
+    ],
+    "lineno": 723,
+    "name": "create_notice_record",
+    "path": "maverick_dashboard/privacy_notice_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "route_authority"
+    ],
+    "lineno": 776,
+    "name": "create_release",
+    "path": "maverick_dashboard/privacy_notice_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "route_authority"
+    ],
+    "lineno": 1023,
+    "name": "create_update_proposal",
+    "path": "maverick_dashboard/privacy_notice_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "route_authority"
+    ],
+    "lineno": 998,
+    "name": "current_effective_release",
+    "path": "maverick_dashboard/privacy_notice_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "route_authority"
+    ],
+    "lineno": 1076,
+    "name": "export_notice",
+    "path": "maverick_dashboard/privacy_notice_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "route_authority"
+    ],
+    "lineno": 901,
+    "name": "fail_publication_intent",
+    "path": "maverick_dashboard/privacy_notice_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "route_authority"
+    ],
+    "lineno": 767,
+    "name": "get_approval_policy",
+    "path": "maverick_dashboard/privacy_notice_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "route_authority"
+    ],
+    "lineno": 1096,
+    "name": "get_export",
+    "path": "maverick_dashboard/privacy_notice_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "route_authority"
+    ],
+    "lineno": 789,
+    "name": "get_release",
+    "path": "maverick_dashboard/privacy_notice_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "route_authority"
+    ],
+    "lineno": 1048,
+    "name": "get_update_proposal",
+    "path": "maverick_dashboard/privacy_notice_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "route_authority"
+    ],
+    "lineno": 1102,
+    "name": "purge_expired",
+    "path": "maverick_dashboard/privacy_notice_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "route_authority"
+    ],
+    "lineno": 652,
+    "name": "records",
+    "path": "maverick_dashboard/privacy_notice_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "route_authority"
+    ],
+    "lineno": 919,
+    "name": "requeue_publication_intent",
+    "path": "maverick_dashboard/privacy_notice_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "route_authority"
+    ],
+    "lineno": 1054,
+    "name": "review_update_proposal",
+    "path": "maverick_dashboard/privacy_notice_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "route_authority"
+    ],
+    "lineno": 840,
+    "name": "revoke_approval",
+    "path": "maverick_dashboard/privacy_notice_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "route_authority"
+    ],
+    "lineno": 958,
+    "name": "rollback_release",
+    "path": "maverick_dashboard/privacy_notice_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "route_authority"
+    ],
+    "lineno": 866,
+    "name": "schedule_release",
+    "path": "maverick_dashboard/privacy_notice_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "route_authority"
+    ],
+    "lineno": 749,
+    "name": "set_approval_policy",
+    "path": "maverick_dashboard/privacy_notice_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "route_authority"
+    ],
+    "lineno": 799,
+    "name": "submit_for_review",
+    "path": "maverick_dashboard/privacy_notice_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "route_authority"
+    ],
+    "lineno": 1108,
+    "name": "verify_integrity",
+    "path": "maverick_dashboard/privacy_notice_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "route_authority"
+    ],
+    "lineno": 978,
+    "name": "withdraw_release",
+    "path": "maverick_dashboard/privacy_notice_governance_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 158,
+    "name": "reviews_page",
+    "path": "maverick_dashboard/project_reviews_api.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 149,
+    "name": "page",
+    "path": "maverick_dashboard/project_workspaces_api.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 246,
+    "name": "recovery_page",
+    "path": "maverick_dashboard/recovery_api.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 330,
+    "name": "research_page",
+    "path": "maverick_dashboard/research_api.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "_platform_store"
+    ],
+    "lineno": 1984,
+    "name": "create_platform_investigation",
+    "path": "maverick_dashboard/security_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_environment_store"
+    ],
+    "lineno": 3013,
+    "name": "execute_environment_response",
+    "path": "maverick_dashboard/security_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_environment_store"
+    ],
+    "lineno": 2819,
+    "name": "get_environment_finding",
+    "path": "maverick_dashboard/security_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_environment_store"
+    ],
+    "lineno": 2848,
+    "name": "get_environment_investigation",
+    "path": "maverick_dashboard/security_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_platform_store"
+    ],
+    "lineno": 1915,
+    "name": "get_platform_finding",
+    "path": "maverick_dashboard/security_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_platform_store"
+    ],
+    "lineno": 1944,
+    "name": "get_platform_investigation",
+    "path": "maverick_dashboard/security_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_environment_store"
+    ],
+    "lineno": 2888,
+    "name": "propose_environment_response",
+    "path": "maverick_dashboard/security_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_platform_store"
+    ],
+    "lineno": 2017,
+    "name": "propose_platform_containment",
+    "path": "maverick_dashboard/security_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_environment_store"
+    ],
+    "lineno": 2829,
+    "name": "update_environment_finding",
+    "path": "maverick_dashboard/security_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_environment_store"
+    ],
+    "lineno": 2862,
+    "name": "update_environment_investigation",
+    "path": "maverick_dashboard/security_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_platform_store"
+    ],
+    "lineno": 1925,
+    "name": "update_platform_finding",
+    "path": "maverick_dashboard/security_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_platform_store"
+    ],
+    "lineno": 1958,
+    "name": "update_platform_investigation",
+    "path": "maverick_dashboard/security_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 57,
+    "name": "workbench",
+    "path": "maverick_dashboard/shared_governance_inventory_page.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 218,
+    "name": "workspace_tenant",
+    "path": "maverick_dashboard/tenant_select_page.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 60,
+    "name": "workbench",
+    "path": "maverick_dashboard/third_party_contracts_page.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "runtime"
+    ],
+    "lineno": 432,
+    "name": "audit_history",
+    "path": "maverick_dashboard/third_party_executive_reports_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "runtime"
+    ],
+    "lineno": 274,
+    "name": "create_report",
+    "path": "maverick_dashboard/third_party_executive_reports_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "runtime"
+    ],
+    "lineno": 326,
+    "name": "get_report",
+    "path": "maverick_dashboard/third_party_executive_reports_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "runtime"
+    ],
+    "lineno": 349,
+    "name": "issue_download_grant",
+    "path": "maverick_dashboard/third_party_executive_reports_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "runtime"
+    ],
+    "lineno": 306,
+    "name": "list_reports",
+    "path": "maverick_dashboard/third_party_executive_reports_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "runtime"
+    ],
+    "lineno": 412,
+    "name": "purge_reports",
+    "path": "maverick_dashboard/third_party_executive_reports_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "runtime"
+    ],
+    "lineno": 368,
+    "name": "redeem_download",
+    "path": "maverick_dashboard/third_party_executive_reports_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "runtime"
+    ],
+    "lineno": 393,
+    "name": "revoke_report",
+    "path": "maverick_dashboard/third_party_executive_reports_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "runtime"
+    ],
+    "lineno": 448,
+    "name": "verify_integrity",
+    "path": "maverick_dashboard/third_party_executive_reports_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 69,
+    "name": "workbench",
+    "path": "maverick_dashboard/third_party_executive_reports_page.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 375,
+    "name": "bind_projection",
+    "path": "maverick_dashboard/trust_center_branding_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 324,
+    "name": "challenge_domain",
+    "path": "maverick_dashboard/trust_center_branding_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 367,
+    "name": "expire_domains",
+    "path": "maverick_dashboard/trust_center_branding_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 244,
+    "name": "get_asset",
+    "path": "maverick_dashboard/trust_center_branding_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 189,
+    "name": "list_assets",
+    "path": "maverick_dashboard/trust_center_branding_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 200,
+    "name": "list_domains",
+    "path": "maverick_dashboard/trust_center_branding_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 211,
+    "name": "list_projections",
+    "path": "maverick_dashboard/trust_center_branding_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 222,
+    "name": "propose_asset",
+    "path": "maverick_dashboard/trust_center_branding_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 316,
+    "name": "purge",
+    "path": "maverick_dashboard/trust_center_branding_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 257,
+    "name": "review_asset",
+    "path": "maverick_dashboard/trust_center_branding_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 393,
+    "name": "revoke_projection",
+    "path": "maverick_dashboard/trust_center_branding_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 308,
+    "name": "rotate_custody",
+    "path": "maverick_dashboard/trust_center_branding_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "_store"
+    ],
+    "lineno": 158,
+    "name": "status",
+    "path": "maverick_dashboard/trust_center_branding_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 45,
+    "name": "console",
+    "path": "maverick_dashboard/trust_receipts_page.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  },
+  {
+    "blocking_calls": [
+      "_binding"
+    ],
+    "lineno": 315,
+    "name": "upload_document",
+    "path": "maverick_dashboard/vendor_onboarding_api.py",
+    "reason": "Pre-existing; not on a page that stalled. Open the store in the worker pool.",
+    "rule": "opens-store"
+  },
+  {
+    "blocking_calls": [
+      "templates.TemplateResponse"
+    ],
+    "lineno": 506,
+    "name": "webhooks_page",
+    "path": "maverick_dashboard/webhooks_api.py",
+    "reason": "Pre-existing page render on the loop; not a page that stalled. Make it a plain def."
+  }
+]
