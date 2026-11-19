@@ -29,7 +29,10 @@ def test_initial_settings_create_once_and_preserve_private_configuration(client,
 
     page = client.get("/start")
     assert page.status_code == 200
-    assert "There is no spending or time limit for each task yet" in page.text
+    # The owner chose that first-run setup saves the documented standard limit
+    # (task-limits.md): the same $2 and 30 minutes Chat shows before saving.
+    assert "There is no spending or time limit for each task yet" not in page.text
+    assert "Each task stops after spending $2 or running for 30 minutes" in page.text
     assert "$1 limit" not in page.text
     with ThreadPoolExecutor(max_workers=2) as workers:
         responses = list(workers.map(lambda _: client.post("/api/v1/setup/initialize", json={"confirm": True}), range(2)))
@@ -37,10 +40,16 @@ def test_initial_settings_create_once_and_preserve_private_configuration(client,
     path = tmp_path / "config.toml"
     before = path.read_bytes()
     config = tomllib.loads(before.decode())
-    assert config["budget"] == {"strict_pricing": True}
+    from maverick.runner import DEFAULT_MAX_DOLLARS, DEFAULT_MAX_WALL_SECONDS
+    assert config["budget"] == {"strict_pricing": True, "max_dollars": DEFAULT_MAX_DOLLARS,
+                                "max_wall_seconds": DEFAULT_MAX_WALL_SECONDS}
+    assert (DEFAULT_MAX_DOLLARS, DEFAULT_MAX_WALL_SECONDS) == (2.0, 1800.0)
     budget = budget_from_config()
-    for key in ("max_dollars", "max_wall_seconds", "max_input_tokens", "max_output_tokens", "max_tool_calls"):
+    assert (budget.max_dollars, budget.max_wall_seconds) == (2.0, 1800.0)
+    for key in ("max_input_tokens", "max_output_tokens", "max_tool_calls"):
         assert getattr(budget, key) is None
+    settings = client.get("/settings").text
+    assert "it stops after spending $2.00 or running for 30 minutes" in settings
     assert config["capabilities"]["code_exec"] is False
     assert "shell" in config["security"]["denied_tools"]
     assert private_path_is_restricted(path)
@@ -63,6 +72,18 @@ def test_invalid_overlay_is_checked_fresh_and_preserved(client, tmp_path):
     assert client.post("/api/v1/setup/initialize", json={"confirm":True}).status_code == 401
     assert not (tmp_path / "config.toml").exists()
     assert overlay.read_text() == "[broken"
+
+
+def test_an_installation_that_already_saved_settings_keeps_its_no_limit_choice(client, tmp_path):
+    from maverick import runner
+
+    path = tmp_path / "config.toml"
+    path.write_text("[budget]\nstrict_pricing = true\n", encoding="utf-8")
+    before = path.read_bytes()
+    assert client.post("/api/v1/setup/initialize", json={"confirm": True}).status_code == 409
+    assert path.read_bytes() == before
+    assert runner.configured_max_dollars() is None
+    assert runner.configured_max_wall_seconds() is None
 
 
 def test_initial_settings_preserves_existing_settings_overlay(client, tmp_path):

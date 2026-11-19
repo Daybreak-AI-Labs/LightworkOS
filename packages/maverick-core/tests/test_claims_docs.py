@@ -350,3 +350,14 @@ def test_docker_docs_do_not_promise_an_automatic_init():
     assert "drops you into" not in dockerfile and "helpfully points" not in dockerfile
     docker = _read("docs/deployment.md").split("## Docker", 1)[1].split("\n## ", 1)[0]
     assert "Both host paths must exist before the first run" in docker
+
+
+def test_docs_say_first_run_setup_saves_the_standard_task_limit():
+    """The owner chose that the dashboard's Save initial settings, like
+    `lightwork init --fast`, saves $2 and 30 minutes (task-limits.md)."""
+    routes = _read("packages/maverick-dashboard/maverick_dashboard/in_app_routes.py")
+    assert "max_dollars = {DEFAULT_MAX_DOLLARS!r}" in routes
+    overview = _read("docs/technical-overview.md")
+    assert "set no per-task limit" not in overview
+    assert "no per-task spending limit" not in overview
+    assert "**Save initial settings** save $2 and 30 minutes" in overview

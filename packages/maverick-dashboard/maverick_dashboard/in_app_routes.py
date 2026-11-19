@@ -5,6 +5,7 @@ import hashlib
 import json
 
 from fastapi import APIRouter, HTTPException, Request
+from maverick.runner import DEFAULT_MAX_DOLLARS, DEFAULT_MAX_WALL_SECONDS
 from pydantic import BaseModel, ConfigDict, Field
 
 from .api_schemas import GOAL_DESCRIPTION_MAX_LENGTH, GOAL_TITLE_MAX_LENGTH
@@ -19,9 +20,13 @@ router = APIRouter(prefix="/api/v1", tags=["v1"])
 
 # These initial defaults grant no host mutation authority. Existing deployment
 # policy and Settings overlays retain precedence through the normal loader.
-INITIAL_SETTINGS = '''# Initial Lightwork settings. Manage these in the app.
+# The owner chose that first-run setup saves the documented standard task limit
+# (docs/task-limits.md), the one a goal gets before any settings exist.
+INITIAL_SETTINGS = f'''# Initial Lightwork settings. Manage these in the app.
 [budget]
 strict_pricing = true
+max_dollars = {DEFAULT_MAX_DOLLARS!r}
+max_wall_seconds = {DEFAULT_MAX_WALL_SECONDS!r}
 [safety]
 profile = "strict"
 block_threshold = "medium"
