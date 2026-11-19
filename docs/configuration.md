@@ -919,6 +919,18 @@ been initialized, installations may explicitly set `[dashboard] default_role =
 unassigned users need an explicit global assignment or workspace membership.
 The viewer role still grants read access where `view` permission is sufficient.
 
+Company sign-in (OIDC) keeps the display name and the verified email the
+provider reports, so approvals, settings history and the Activity log name
+people instead of "Google account". Turn it off with:
+
+```toml
+[auth]
+remember_account_names = false   # default true; MAVERICK_REMEMBER_ACCOUNT_NAMES wins
+```
+
+Off stops recording and naming; kept records stay in My data's export and
+reviewed deletion ([personal-data-controls.md](personal-data-controls.md)).
+
 ## External MCP servers
 
 Lightwork can consume any MCP server (filesystem, GitHub, Postgres,

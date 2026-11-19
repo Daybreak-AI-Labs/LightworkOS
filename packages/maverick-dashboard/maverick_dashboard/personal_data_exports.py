@@ -21,7 +21,7 @@ def link(request, *, channel=None, user_id=None, store=None):
     actor = native._actor(request)
     if store is None:
         personal_memory.require_scope(actor, channel, user_id)
-    elif store not in {"model_test_history", "conversation_inbox", "saved_views_and_pins"}:
+    elif store not in {"model_test_history", "conversation_inbox", "saved_views_and_pins", "account_name"}:
         raise ValueError("Choose an available owned account store.")
     token = crypto_at_rest.seal_to_str(json.dumps({"purpose": PURPOSE, "owner": actor,
         "context": context_for(request), "channel": channel, "user_id": user_id,
@@ -58,6 +58,10 @@ def download(request, token):
         elif store == "saved_views_and_pins":
             from maverick.ux_store import shared
             bundle = shared().export_owned_navigation(actor)
+        elif store == "account_name":
+            from . import account_profiles
+            bundle = {"store": store, "record": account_profiles.get(actor),
+                      "limits": "The name and verified email your company sign-in reported. Nothing else from your sign-in is kept."}
         elif store == "model_test_history":
             from maverick.model_test_retention import export_owned
             bundle = export_owned(actor)

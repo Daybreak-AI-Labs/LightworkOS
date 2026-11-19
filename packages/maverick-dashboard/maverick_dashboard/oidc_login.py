@@ -736,6 +736,7 @@ async def auth_callback(request: Request):
         ])
     except Exception:  # pragma: no cover -- directory never blocks login
         pass
+    _remember_account(principal)
 
     response = RedirectResponse(return_to, status_code=303)
     _set_cookie(
@@ -744,6 +745,17 @@ async def auth_callback(request: Request):
     )
     _clear_cookie(response, TX_COOKIE)
     return response
+
+
+def _remember_account(principal) -> None:
+    """Keep the verified email and display name this sign-in reported, so the
+    person reads by name (:mod:`account_profiles`). Never blocks sign-in."""
+    try:
+        from . import account_profiles
+
+        account_profiles.record_sign_in("user:" + principal.sub, dict(principal.claims or {}))
+    except Exception:  # noqa: BLE001 -- a name record never blocks sign-in
+        log.warning("OIDC callback: account name record unavailable", exc_info=True)
 
 
 def _csrf_reject():

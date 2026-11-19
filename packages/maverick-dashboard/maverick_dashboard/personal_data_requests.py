@@ -21,7 +21,7 @@ from .draft_store import DraftStore
 
 STORE = GovernedRecordStore("personal_data_requests", "PDR", "personal_data_request")
 KINDS = {"preference_notes", "conversation_history", "recovery_drafts",
-         "companion_history", "experience_preferences", "model_memory", "notification_receipts", "private_notification_destinations", "diagnostic_reports", "activation_drafts", "project_defaults", "model_test_history", "generated_tools", "conversation_inbox", "saved_views_and_pins", "comments", "policy_suggestions"}
+         "companion_history", "experience_preferences", "model_memory", "notification_receipts", "private_notification_destinations", "diagnostic_reports", "activation_drafts", "project_defaults", "model_test_history", "generated_tools", "conversation_inbox", "saved_views_and_pins", "comments", "policy_suggestions", "account_name"}
 DIAGNOSTICS = GovernedRecordStore("owned_task_diagnostics", "OTD", "owned_task_diagnostics")
 EXCEPTIONS = [
     {"store": "workspace_gallery_curation", "state": "retained", "reason": "Gallery curation is a separate workspace record. Erasing an account's saved views and task pins does not delete featured task content or curator history."},
@@ -99,7 +99,12 @@ def _diagnostic_records(actor):
 
 def _preview_owned_account(kind, actor):
     target = {}
-    if kind == "saved_views_and_pins":
+    if kind == "account_name":
+        from . import account_profiles
+        target["count"] = int(account_profiles.get(actor) is not None)
+        target["use"] = ("Your name and verified email as your company sign-in reported them, shown to people who already see "
+                         "your activity. Your next company sign-in records them again while the installation keeps sign-in names.")
+    elif kind == "saved_views_and_pins":
         from maverick.ux_store import shared
         target["inventory"] = shared().owned_navigation_inventory(actor)
         target["count"] = target["inventory"]["count"]
@@ -172,7 +177,7 @@ def preview(actor, channel, user_id, selected, world):
             target["records"] = owned_activation_inventory(actor, world=world)
             if any(record["blocked"] for record in target["records"]):
                 raise ValueError("Some activation drafts have active or uncertain task work. Reconcile them before reviewing draft erasure.")
-        elif kind in {"conversation_inbox", "generated_tools", "model_test_history", "saved_views_and_pins", "private_notification_destinations"}:
+        elif kind in {"conversation_inbox", "generated_tools", "model_test_history", "saved_views_and_pins", "private_notification_destinations", "account_name"}:
             target.update(_preview_owned_account(kind, actor))
         elif kind == "project_defaults":
             from maverick.project_workspaces import owned_defaults_inventory
@@ -281,6 +286,10 @@ def _erase_conversations(world, row, target):
 
 def _erase_owned_account(row, target, *, authorize=None):
     kind, actor = target["store"], row["owner"]
+    if kind == "account_name":
+        from . import account_profiles
+        return {"state": "purged", "removed": account_profiles.erase([actor]),
+                "retained": "Your next company sign-in records your name and verified email again while the installation keeps sign-in names."}
     if kind == "private_notification_destinations":
         from maverick.personal_push_devices import erase_owned
         def guard():
@@ -388,7 +397,7 @@ def _erase_target(world, row, target, *, authorize=None):
             if result["status"] == "unconfirmed":
                 raise ValueError("Activation erasure receipt is not confirmed.")
         return {"state": "purged", "removed": len(target["records"]), "retained": "Content-free erasure tombstones, task/admission history, audit evidence and separately created owned workflows remain."}
-    if kind in {"conversation_inbox", "generated_tools", "model_test_history", "saved_views_and_pins", "private_notification_destinations"}:
+    if kind in {"conversation_inbox", "generated_tools", "model_test_history", "saved_views_and_pins", "private_notification_destinations", "account_name"}:
         return _erase_owned_account(row, target, authorize=authorize)
     if kind == "project_defaults":
         from maverick.project_workspaces import erase_owned_defaults
