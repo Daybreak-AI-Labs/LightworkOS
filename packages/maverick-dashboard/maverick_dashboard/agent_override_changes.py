@@ -14,7 +14,7 @@ from maverick.governed_operations import digest
 from maverick.governed_records import GovernedRecordStore
 
 from . import tools_ops_api
-from .auth import caller_principal, caller_suites, is_dashboard_admin, require_permission
+from .auth import caller_principal, caller_suites, is_installation_admin, require_permission
 from .draft_api import context_for
 from .plain_labels import EFFORT_LABELS, agent_role_title, capability_label, model_label
 
@@ -68,7 +68,7 @@ def _damaged_snapshot(request, name):
     if rejected is None or not rejected["generation"]:
         raise HTTPException(409, "The saved setup is unavailable for a safe review. Nothing was changed.")
     principal = caller_principal(request)
-    if (principal is not None and not is_dashboard_admin(principal)) or caller_suites(request) is not None:
+    if (principal is not None and not is_installation_admin(principal)) or caller_suites(request) is not None:
         raise HTTPException(403, "An installation administrator with access to all departments must review this damaged setup.")
     built = domain.builtin_domains().get(name)
     return {"view": rejected, "definition": None, "saved_changes": {"damaged": True}, "damaged": True,
@@ -231,7 +231,7 @@ def catalog(request):
                 "action": "reset_builtin" if row["name"] in builtins else "remove_custom"}
                for row in domain_edit.list_agents() if editing and row["is_override"] and (allowed is None or set(row["suites"]) <= allowed)] if editing else []
     principal = caller_principal(request)
-    if editing and (principal is None or is_dashboard_admin(principal)) and allowed is None:
+    if editing and (principal is None or is_installation_admin(principal)) and allowed is None:
         for name in domain.rejected_workspace_domains():
             rejected = domain_edit.rejected_override_view(name)
             if rejected is not None and rejected["generation"]:

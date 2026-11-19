@@ -134,8 +134,13 @@ def pack_editor(principal: str) -> bool:
 
     from . import auth
 
-    if not principal or not auth.is_dashboard_admin(principal):
+    if not principal or not auth.is_installation_admin(principal):
         return False
+    if not auth.is_dashboard_admin(principal):
+        from maverick import suite_grants
+
+        if suite_grants.granted_suites(principal) is not None:
+            return False  # a department-scoped owner account is not the installation admin
     return bool(get_features().get("pack_editing", True))
 
 
