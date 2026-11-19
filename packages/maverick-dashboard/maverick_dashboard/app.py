@@ -886,6 +886,15 @@ async def _install_schedule_runner() -> None:
         log.exception("schedule runner not started")
 
 
+async def _stop_schedule_runner() -> None:
+    try:
+        from maverick_dashboard import schedule_runner
+
+        await run_in_threadpool(schedule_runner.stop)
+    except Exception:  # pragma: no cover -- shutdown continues
+        log.exception("schedule runner did not stop cleanly")
+
+
 async def _start_privacy_discovery_remediation_scheduler() -> None:
     try:
         from maverick_dashboard.privacy_data_discovery_scheduler import (
@@ -1403,13 +1412,8 @@ async def _lifespan(app: FastAPI):
             runtime_receipt.close()
         from .local_runtime_service import shutdown as stop_local_ai
 
-        try:
-            from . import schedule_runner
-
-            # No new scheduled task starts while in-flight goals drain.
-            await run_in_threadpool(schedule_runner.stop)
-        except Exception:  # pragma: no cover -- shutdown continues
-            log.exception("schedule runner did not stop cleanly")
+        # No new scheduled task starts while in-flight goals drain.
+        await _stop_schedule_runner()
         try:
             # Close goal admission and drain in-flight goals first: a goal still
             # running against the managed local server would otherwise lose it
