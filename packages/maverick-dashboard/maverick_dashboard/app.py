@@ -11533,13 +11533,13 @@ def chat_page(request: Request, compose: str = "") -> HTMLResponse:
     from maverick.runner import configured_max_dollars, configured_max_wall_seconds
 
     from .api import task_limit_ceilings
-    from .onboarding_state import workspace_readiness
+    from .onboarding_state import page_workspace_readiness
 
     compose_form = compose == "form"
     if compose_form:
         require_page_visible(request, "/goal-builder")
 
-    workspace = workspace_readiness()
+    workspace = page_workspace_readiness()
     w = _world()
     recent = [goal for goal in w.list_goals(owner=goal_owner_filter(request), limit=10, order="desc")
               if can_access_goal(request, goal)]

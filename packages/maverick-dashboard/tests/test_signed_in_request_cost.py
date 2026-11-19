@@ -278,3 +278,18 @@ def test_one_ai_readiness_answer_reads_the_configuration_once(signed_in, monkeyp
     with config.kept_reads():
         assert provider_readiness.workspace_readiness()["verdict"] != "not_ready"
     assert len(checks) <= 1, len(checks)
+
+
+def test_the_chat_page_works_out_ai_readiness_once(signed_in, monkeypatch):
+    from maverick_dashboard import provider_readiness
+
+    _ai_service_saved()
+    calls = []
+    real = provider_readiness.workspace_readiness
+    monkeypatch.setattr(provider_readiness, "workspace_readiness", lambda: calls.append(1) or real())
+    _sign_in(signed_in.client)
+    assert signed_in.client.get("/").status_code == 200
+    assert len(calls) == 1  # the home redirect's answer, reused by Chat in the same request
+    calls.clear()
+    assert signed_in.client.get("/").status_code == 200
+    assert len(calls) == 1  # the next request works it out again
