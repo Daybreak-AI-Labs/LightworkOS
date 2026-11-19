@@ -136,3 +136,26 @@ test("privacy requests: assign to a listed person, undo restores each earlier as
   assert.equal([...w.document.querySelectorAll(".pw-dsar-assignee")].map(c => c.textContent).join("|"), "Not assigned|Dana");
   w.close();
 });
+
+test("privacy requests: confirming receipt clears the late-receipt warning without a reload", async () => {
+  // The row kept "Receipt not confirmed in time" after a successful Confirm
+  // receipt until the page was reloaded.
+  const page = read("templates/privacy.html");
+  const w = boot(`<table><tbody id="pw-dsar-rows"><tr data-bulk-id="DSAR-1" data-bulk-label="jo (DSAR-1)" data-acknowledged="no" data-status="open">
+    <td>jo</td><td class="pw-dsar-assignee">Not assigned</td><td>3 days left<br><span class="badge warn pw-dsar-ack-late">Receipt not confirmed in time</span></td></tr></tbody></table>
+    <script type="application/json" id="pw-dsar-assignees">[]</script>`, "https://fixture.invalid/privacy");
+  const posts = [];
+  w.mvFetchJSON = async url => { posts.push(url); return {}; };
+  const marker = "  // Many requests at once: filter, select all matching, then assign";
+  const start = page.indexOf(marker);
+  w.eval(page.slice(start, page.indexOf("  // Incident register: record the notification decision", start)));
+  selectAll(w);
+  bulkButton(w, "Confirm receipt for selected").click();
+  await flush();
+  assert.deepEqual(posts, ["/api/v1/privacy/dsar/DSAR-1/acknowledge"]);
+  const row = w.document.querySelector("tr[data-bulk-id]");
+  assert.equal(row.dataset.acknowledged, "yes");
+  assert.doesNotMatch(row.textContent, /Receipt not confirmed in time/);
+  assert.match(row.textContent, /3 days left/);
+  w.close();
+});
