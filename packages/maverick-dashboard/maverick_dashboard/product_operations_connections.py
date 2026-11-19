@@ -8,7 +8,9 @@ from fastapi import HTTPException
 from maverick.governed_operations import digest
 from pydantic import Field
 
-from .auth import caller_principal, goal_owner_filter, require_permission
+# Resolve auth helpers at call time: the Copilot registry imports this module
+# lazily, and a by-name import would keep whatever ``auth`` held at that first import.
+from . import auth
 from .product_operations import Adapter, EmptyInput, Outcome, Preview, Snapshot, StrictInput
 
 
@@ -28,7 +30,7 @@ def _key_setup_current(request):
     from .connection_dependencies import require_connections as _require_connections
     from .draft_api import context_for
 
-    require_permission(request, "admin")
+    auth.require_permission(request, "admin")
     require_page_permission(request, "/connections")
     require_page_visible(request, "/connections")
     _require_connections()
@@ -66,9 +68,9 @@ def account_snapshot(request, selection):
 
 def account_prepare(request, selection, arguments):
     from maverick.template_connections import decode, validate
-    require_permission(request, "operate")
+    auth.require_permission(request, "operate")
     try:
-        reference = validate(caller_principal(request) or "", [decode(arguments["account"])])[0]
+        reference = validate(auth.caller_principal(request) or "", [decode(arguments["account"])])[0]
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
     return Preview("This account selection is current. Choose this account in the template form; task admission checks it again. No provider check or task execution occurred.",
@@ -80,7 +82,7 @@ def connection_snapshot(request, selection):
     from .connection_dependencies import owned_connections
     from .connection_dependencies import require_connections as _require_connections
 
-    require_permission(request, "operate")
+    auth.require_permission(request, "operate")
     _require_connections()
     rows = owned_connections(request)
     return Snapshot(digest(rows), "Connections", "Review readiness and affected work for one owned account.",
@@ -154,9 +156,9 @@ def _schedules(request):
 
     from .schedule_policy import require_scheduling as _require_scheduling
 
-    require_permission(request, "operate")
+    auth.require_permission(request, "operate")
     _require_scheduling()
-    return list_definitions(JobQueue(), owner=goal_owner_filter(request))
+    return list_definitions(JobQueue(), owner=auth.goal_owner_filter(request))
 
 
 def schedule_snapshot(request, selection):
@@ -186,7 +188,7 @@ def schedule_recover(request, selection, arguments, native, operation):
     _schedules(request)
     with JobQueue()._conn() as connection:
         row = connection.execute("SELECT revision FROM schedule_definition_versions WHERE id=? AND rationale=? AND actor=?",
-            (native["identity"], "Copilot reviewed schedule change " + operation, caller_principal(request) or "local")).fetchone()
+            (native["identity"], "Copilot reviewed schedule change " + operation, auth.caller_principal(request) or "local")).fetchone()
     if row:
         return Outcome("replayed", "This exact reviewed schedule change was already recorded. No work was dispatched again.", {"revision": row["revision"]})
     return None
@@ -205,7 +207,7 @@ def schedule_execute(request, selection, arguments, native, operation):
         return recovered
     try:
         result = change_definition(JobQueue(), native["identity"], expected_revision=native["revision"],
-            state=native["state"], owner=goal_owner_filter(request), actor=caller_principal(request) or "local",
+            state=native["state"], owner=auth.goal_owner_filter(request), actor=auth.caller_principal(request) or "local",
             rationale="Copilot reviewed schedule change " + operation)
     except (ValueError, KeyError) as exc:
         raise HTTPException(409, "The schedule changed. Refresh native status before reviewing again.") from exc
@@ -221,7 +223,7 @@ def recovery_snapshot(request, selection):
 
     from maverick.job_queue import JobQueue
 
-    require_permission(request, "admin")
+    auth.require_permission(request, "admin")
     with JobQueue()._conn() as connection:
         rows = [dict(row) for row in connection.execute("SELECT j.id,j.attempts,j.status,j.scheduled_at,j.updated_at,"
             "COALESCE(d.payload,j.recurrence_payload) AS source_payload FROM jobs j LEFT JOIN schedule_definitions d "
@@ -318,11 +320,11 @@ def repair_recover(request, selection, arguments, native, operation):
     from maverick.job_queue import JobQueue
 
     from .draft_api import context_for
-    require_permission(request, "admin")
+    auth.require_permission(request, "admin")
     if native["context"] != context_for(request):
         raise HTTPException(409, "Account or workspace changed. Review recurrence recovery again.")
     try:
-        successor = JobQueue().recovery_receipt(arguments["job_id"], actor=caller_principal(request) or "local",
+        successor = JobQueue().recovery_receipt(arguments["job_id"], actor=auth.caller_principal(request) or "local",
             operation_id=operation, expected_attempts=native["expected_attempts"],
             successor_id=arguments["successor_id"], rearm=arguments["action"] == "rearm",
             expected_evidence=native["expected_evidence"], rationale=arguments["rationale"])
@@ -354,7 +356,7 @@ def repair_execute(request, selection, arguments, native, operation):
 
 
 def receipt_snapshot(request, selection):
-    require_permission(request, "admin")
+    auth.require_permission(request, "admin")
     if (selection.get("kind") != "schedule_repair_receipt" or not isinstance(selection.get("reference"), str)
             or len(selection["reference"]) > 8000):
         return Snapshot(digest(selection), "Original schedule repair receipt", "Check the original repair without repeating it.",

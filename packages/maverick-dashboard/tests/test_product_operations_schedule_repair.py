@@ -12,9 +12,9 @@ def parked(tmp_path, monkeypatch):
     from maverick import job_queue
     monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
     monkeypatch.setattr(job_queue, "DEFAULT_DB", tmp_path / "jobs.db")
-    monkeypatch.setattr(operations, "require_permission", lambda *args: None)
+    monkeypatch.setattr(operations.auth, "require_permission", lambda *args: None)
     monkeypatch.setattr(schedule_ops_api, "require_permission", lambda *args: None)
-    monkeypatch.setattr(operations, "caller_principal", lambda *args: "user:admin")
+    monkeypatch.setattr(operations.auth, "caller_principal", lambda *args: "user:admin")
     monkeypatch.setattr(schedule_ops_api, "caller_principal", lambda *args: "user:admin")
     monkeypatch.setattr(draft_api, "context_for", lambda *args: "a" * 64)
     queue = JobQueue()
@@ -61,7 +61,7 @@ def test_intervening_recovery_evidence_and_revocation_refuse(parked, monkeypatch
     assert error.value.status_code == 409 and not queue.list(status="pending")
     def denied(*args):
         raise HTTPException(403, "Administrator role revoked")
-    monkeypatch.setattr(operations, "require_permission", denied)
+    monkeypatch.setattr(operations.auth, "require_permission", denied)
     with pytest.raises(HTTPException) as error:
         operations.repair_recover(request, {}, args, preview.native, "c" * 32)
     assert error.value.status_code == 403

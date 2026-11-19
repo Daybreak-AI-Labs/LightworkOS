@@ -456,3 +456,37 @@ def test_copilot_account_review_uses_native_authority_and_refuses_stale_selectio
             token="replacement-token", expected_revision=row["revision"])
     refused = client.post(base + "/prepare", json=body)
     assert refused.status_code == 409, refused.text
+
+
+def test_copilot_account_review_reads_the_live_caller_after_another_tests_auth_patch(customer, monkeypatch, tmp_path):
+    # The Copilot registry imports its adapter modules lazily, on the first
+    # catalog request. When that request belongs to a test that has patched
+    # ``auth.caller_principal`` (test_code_immune_actions._as does), a by-name
+    # import keeps the patched function after monkeypatch restores ``auth``,
+    # and every later account review in the worker validates the wrong caller.
+    import importlib
+    import sys
+
+    import maverick_dashboard
+    from maverick_dashboard import auth
+
+    client, _, token = _prepared_template(customer, monkeypatch, tmp_path)
+    name = "maverick_dashboard.product_operations_connections"
+    monkeypatch.setattr(maverick_dashboard, "product_operations_connections", importlib.import_module(name))
+    monkeypatch.delitem(sys.modules, name)
+    with monkeypatch.context() as other_test:
+        other_test.setattr(auth, "caller_principal", lambda _request: "user:someone-else")
+        importlib.import_module(name)
+    previous_global, previous_features = config.load_global_config, config.get_features
+    monkeypatch.setattr(config, "load_global_config", lambda: {**previous_global(),
+        "features": {**previous_global().get("features", {}), "copilot_operations": True},
+        "copilot": {"operation_families": ["connections"]}})
+    monkeypatch.setattr(config, "get_features", lambda: {**previous_features(), "copilot_operations": True})
+    base = "/api/v1/copilot/product-operations"
+    catalog = client.post(base + "/catalog", json={"page": "/templates"})
+    assert catalog.status_code == 200, catalog.text
+    operation = next(row for row in catalog.json()["operations"] if row["id"] == "templates.accounts")
+    reviewed = client.post(base + "/prepare", json={"page": "/templates", "operation": operation["id"],
+        "context": catalog.json()["context"], "revision": operation["revision"], "arguments": {"account": token}})
+    assert reviewed.status_code == 200, reviewed.text
+    assert reviewed.json()["details"]["executed"] is False
