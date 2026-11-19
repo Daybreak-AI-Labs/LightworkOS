@@ -377,7 +377,20 @@ def _budget_exceeded_message(budget: Any, goal_id: Any, detail: str = "") -> str
     """
     from .stop_reasons import budget_stop_text
 
-    return budget_stop_text(budget, goal_id, detail)
+    return budget_stop_text(budget, goal_id, detail,
+                            waiting_for_approval=_waiting_for_approval(goal_id))
+
+
+def _waiting_for_approval(goal_id: Any) -> bool:
+    """A step of this goal is still parked on the Approvals page (best effort)."""
+    if not isinstance(goal_id, int):
+        return False
+    try:
+        from .world_model import open_world
+
+        return bool(open_world().pending_goal_approval_ids([goal_id], limit=1))
+    except Exception:  # noqa: BLE001 -- the stop message never fails on this
+        return False
 
 
 def _usage_accounting_message(detail: str, goal_id: Any) -> str:

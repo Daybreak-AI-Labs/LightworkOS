@@ -325,3 +325,34 @@ def test_organization_allowance_stop_still_names_an_administrator():
     stop = explain_stop("Paused: the organization spending allowance cannot admit the next call.")
     assert stop.kind == "spending_limit"
     assert "administrator" in stop.action
+
+
+def test_a_time_stop_says_a_step_was_still_waiting_for_approval(tmp_path, monkeypatch):
+    # Seen live: a helper asked to run a command, nobody decided within the
+    # task's 10 minutes, and the stop only said "hit your time limit".
+    from maverick import orchestrator
+    from maverick.orchestrator import _budget_exceeded_message
+
+    world = WorldModel(tmp_path / "w.db")
+    gid = world.create_goal("look at the image", "")
+    monkeypatch.setattr("maverick.world_model.open_world", lambda path=None: world)
+    budget = Budget(max_dollars=1.0, max_wall_seconds=600)
+    detail = "wall time 601s >= 600s"
+    assert "waiting for approval" not in _budget_exceeded_message(budget, gid, detail)
+    from maverick.logging_config import reset_goal_context, set_goal_context
+    tokens = set_goal_context(goal_id=gid)
+    try:
+        world.create_approval("shell: python3 inspect.py", risk="medium")
+    finally:
+        reset_goal_context(tokens)
+    out = _budget_exceeded_message(budget, gid, detail)
+    assert "hit your time limit (10 minutes)" in out
+    assert "A step was still waiting for approval when time ran out, so it did not run." in out
+    from maverick.stop_reasons import explain_stop
+    stop = explain_stop(out, status="blocked")
+    assert stop.message == ("This task reached its time limit of 10 minutes while a step "
+                            "waited for approval. That step did not run.")
+    assert "decide its approvals sooner" in stop.action
+    # A spending stop is not about waiting.
+    assert "waiting for approval" not in _budget_exceeded_message(budget, gid, "$1.02 > $1.00")
+    assert orchestrator._waiting_for_approval(None) is False
