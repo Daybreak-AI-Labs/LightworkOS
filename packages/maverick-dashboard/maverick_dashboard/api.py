@@ -12807,8 +12807,12 @@ def requested_approval_history(request: Request, before_id: int | None = None) -
     # SQLite and Postgres both refuse an integer past 64 bits: a plain 422, not a 500.
     if before_id is not None and not 0 < before_id <= 2**63 - 1:
         raise HTTPException(status_code=422, detail="before_id must be a positive signed 64-bit approval ID")
+    from .approval_labels import action_label
+    from .person_names import labeler
+
     world = _world()
     who = _supervisor(request)
+    person = labeler(request)
     cursor = " AND id < ?" if before_id is not None else ""
     cursor_values = (before_id,) if before_id is not None else ()
     rows = world.tenant_query("SELECT id FROM approvals WHERE requested_by=? AND {tenant_exact:tenant_id}"
@@ -12825,14 +12829,16 @@ def requested_approval_history(request: Request, before_id: int | None = None) -
         card = context["cards"].get(approval.id)
         def text(value):
             return redact(str(value or ""))[0]
-        result.append({"id": approval.id, "action": context["approval_actions"][approval.id],
+        result.append({"id": approval.id, "action": action_label(context["approval_actions"][approval.id], card),
                        "summary": text(context["approval_details"][approval.id]), "status": approval.status,
                        "decided_by": text(approval.decided_by),
-                       "decided_by_name": _decider_name(approval.decided_by) if approval.decided_by else "",
+                       "decided_by_name": person(approval.decided_by) if approval.decided_by else "",
                        "decided_at": approval.decided_at,
                        "expires_at": card.get("expires_at") if card else None,
                        "before": text(card["preview"]["before"]) if card else "",
-                       "after": text(card["preview"]["after"]) if card else "",
+                       # A denied request never ran; its card's "after" is only what approval would have allowed.
+                       "after": ("The reviewed operation did not run, because this request was denied."
+                                 if card and approval.status == "denied" else text(card["preview"]["after"]) if card else ""),
                        "goal_id": approval.goal_id,
                        "execution": "Current task state: " + goal.status if goal else "No task execution outcome is attached to this decision."})
     return {"items": result, "has_more": len(rows) > 50,

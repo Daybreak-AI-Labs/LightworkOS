@@ -89,3 +89,37 @@ def test_an_out_of_range_cursor_is_a_plain_refusal_not_a_server_error(history, b
         api.requested_approval_history(SimpleNamespace(), before_id=before_id)
     assert refused.value.status_code == 422
     assert api.requested_approval_history(SimpleNamespace(), before_id=2**63 - 1)['items']
+
+
+def _card_approval(world, goal_id):
+    import time
+
+    from maverick.approval_cards import build_approval_card, encode_approval_detail
+
+    card = build_approval_card(
+        action="code_exec", summary="Run one Python script and its declared tool calls.", target_label="sandbox:/work",
+        target={"workdir": "/work"}, parameters={"code": "print(1)"}, parameter_summary=["Runs this exact script once."],
+        actor="user:alice", workspace="local", role="operator", authority_versions={}, input_versions={},
+        credential_versions={}, budget={}, expires_at=time.time() + 300, known_effects=["The script runs once."],
+        unresolved_assumptions=[], before="The reviewed operation has not run.",
+        after="The reviewed operation has run once and its effects may persist.", irreversible=True)
+    token = set_goal_context(goal_id=goal_id)
+    try:
+        return world.create_approval("code_exec", requested_by="user:alice", detail=encode_approval_detail(card))
+    finally:
+        reset_goal_context(token)
+
+
+def test_a_denied_request_says_the_operation_did_not_run(history):
+    """Live: a denied code_exec still read "The reviewed operation has not run.
+    → The reviewed operation has run once and its effects may persist."."""
+    world, allowed, _ = history
+    goal = world.create_goal('Task', owner='user:alice')
+    allowed.add(goal)
+    denied, approved = _card_approval(world, goal), _card_approval(world, goal)
+    assert world.decide_approval(denied, 'denied', decided_by='user:bob')
+    assert world.decide_approval(approved, 'approved', decided_by='user:bob')
+    rows = {item['id']: item for item in api.requested_approval_history(SimpleNamespace())['items']}
+    assert rows[denied]['after'] == 'The reviewed operation did not run, because this request was denied.'
+    assert 'has run once' not in json.dumps(rows[denied])
+    assert rows[approved]['after'] == 'The reviewed operation has run once and its effects may persist.'

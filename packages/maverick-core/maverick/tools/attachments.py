@@ -41,7 +41,6 @@ def list_attachments_tool(world, goal_id: int | None) -> Tool:
 
 
 _MAX_READ_CHARS = 100_000
-_TEXT_MIMES = ("text/", "application/json", "application/xml", "application/csv")
 
 
 def read_attachment_tool(world, goal_id: int | None) -> Tool:
@@ -55,11 +54,11 @@ def read_attachment_tool(world, goal_id: int | None) -> Tool:
         match = next((a for a in world.list_attachments(goal_id) if a.id == wanted), None)
         if match is None:
             return f"ERROR: no attachment {wanted} on this goal"
-        if not match.mime.startswith(_TEXT_MIMES):
+        from ..attachments import READABLE_TEXT_MIMES, read_bytes
+        if not match.mime.startswith(READABLE_TEXT_MIMES):
             return (f"ERROR: {match.filename} is {match.mime}; images are already "
                     "visible to you, and documents have a text companion when one "
                     "could be extracted")
-        from ..attachments import read_bytes
         try:
             text = read_bytes(match.path).decode("utf-8", errors="replace")
         except Exception as exc:  # noqa: BLE001 -- surfaced to the agent as data

@@ -204,11 +204,13 @@ def presets(request: Request):
         return JSONResponse({'presets': results, 'revision': page._revision(layers)}, headers=HEADERS)
 
 
-def _who(actor) -> str:
+def _who(actor, label=None) -> str:
     """Who changed a setting, as a person reads it: never a raw sign-in identifier."""
     from .identity_format import humanize_principal
 
-    return humanize_principal(actor).name if actor else "Unknown"
+    if not actor:
+        return "Unknown"
+    return label(actor) if label is not None else humanize_principal(actor).name
 
 
 @router.get('/api/v1/settings/history')
@@ -217,7 +219,10 @@ def history(request: Request):
     from maverick.audit.reader import iter_events
     from maverick.paths import data_dir
 
+    from .person_names import labeler
+
     events = deque(maxlen=100)
+    person = labeler(request)
     since = (datetime.now(timezone.utc) - timedelta(days=30)).date().isoformat()
     try:
         for event in iter_events(since=since, audit_dir=data_dir('audit', tenant=None), strict=True):
@@ -230,7 +235,7 @@ def history(request: Request):
                 continue
             old, new = payload.get('old'), payload.get('new')
             restorable = _can_export(setting) and old is not None
-            events.append({'id': key, 'label': setting.label, 'actor': _who(payload.get('actor')),
+            events.append({'id': key, 'label': setting.label, 'actor': _who(payload.get('actor'), person),
                            'at': datetime.fromtimestamp(event['ts'], timezone.utc).isoformat(),
                            'before': _present_value(setting, old), 'after': _present_value(setting, new),
                            'before_revision': payload.get('before_revision'), 'after_revision': payload.get('after_revision'),

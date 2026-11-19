@@ -70,3 +70,49 @@ test('a refused limit shows the plain reason', async t => {
   await settle();
   assert.match(doc.getElementById('chat-alternative-status').textContent, /Check the limits for this task\. Choose no more than \$2\.00/);
 });
+
+function page(goal, saved = {}) {
+  const dom = new JSDOM(`<body>${markup.replace('data-context="x"', `data-context="${CONTEXT}"`).replace('data-goal="x"', `data-goal="${goal}"`)}
+    <button data-chat-message-action="retry" data-goal="${goal}">Try again</button></body>`,
+  {url: `https://lightwork.invalid/chat/goal/${goal}`, runScripts: 'outside-only', pretendToBeVisual: true});
+  const {window} = dom;
+  Object.entries(saved).forEach(([name, value]) => window.sessionStorage.setItem(name, value));
+  window.HTMLElement.prototype.scrollIntoView = () => {};
+  return window;
+}
+
+test('the separate-conversation panel stays with the conversation it was started from', async t => {
+  // Live: after one Try again on #50, the panel opened by itself on #51 and #54.
+  const first = page(50); t.after(() => first.close());
+  const caps = {max_dollars: 2, max_wall_seconds: 1800, max_depth: 3};
+  first.fetch = async url => {
+    if (url.includes('/source?')) return json({context: CONTEXT, goal: 50, action: 'retry', turn: null, source: 'b'.repeat(64),
+      message: 'Hello', history: [], files: [], accounts: [], caps, notice: 'n'});
+    if (url.endsWith('/review')) return json({context: CONTEXT, operation: 'c'.repeat(32), token: 'sealed-original', action: 'Try again',
+      message: 'Hello', history: [], files: [], accounts: [], answer_only: true, caps, notice: 'n'});
+    if (url.endsWith('/apply')) return json({context: CONTEXT, confirmed: true, state: 'ready', goal: 51, href: '/chat/goal/51',
+      message: 'Started a separate conversation.'});
+    throw new Error('unexpected ' + url);
+  };
+  shell(first); first.eval(script);
+  const doc = first.document;
+  doc.querySelector('[data-chat-message-action]').click(); await settle();
+  doc.getElementById('chat-alternative-form').dispatchEvent(new first.Event('submit', {cancelable: true})); await settle();
+  doc.getElementById('chat-alternative-confirm').click();
+  doc.getElementById('chat-alternative-start').click(); await settle();
+  assert.equal(doc.getElementById('chat-alternative-open').getAttribute('href'), '/chat/goal/51');
+  const saved = {};
+  for (let i = 0; i < first.sessionStorage.length; i++) saved[first.sessionStorage.key(i)] = first.sessionStorage.getItem(first.sessionStorage.key(i));
+  assert.ok(Object.values(saved).includes('sealed-original'));
+
+  for (const goal of [51, 54]) {   // other task pages in the same tab
+    const other = page(goal, saved); t.after(() => other.close());
+    shell(other); other.eval(script);
+    assert.equal(other.document.getElementById('chat-message-actions').hidden, true, `#${goal}`);
+    assert.equal(other.document.getElementById('chat-alternative-original').hidden, true, `#${goal}`);
+  }
+  const back = page(50, saved); t.after(() => back.close());   // its own page keeps the protected original
+  shell(back); back.eval(script);
+  assert.equal(back.document.getElementById('chat-message-actions').hidden, false);
+  assert.equal(back.document.getElementById('chat-alternative-original').hidden, false);
+});

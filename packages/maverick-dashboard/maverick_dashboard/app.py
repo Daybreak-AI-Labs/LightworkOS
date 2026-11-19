@@ -7728,6 +7728,7 @@ async def audit_page(request: Request) -> HTMLResponse:
     # gathered before filtering so every choice stays selectable.
     kinds = sorted(kind_set, key=_audit_plain.kind_label)
     people = sorted(people_set - {""})
+    helpers = await run_in_threadpool(_audit_plain.page_helpers, request)
     return templates.TemplateResponse(
         request,
         "audit.html",
@@ -7740,7 +7741,7 @@ async def audit_page(request: Request) -> HTMLResponse:
             "kind": kind,
             "kinds": kinds,
             "person": person,
-            "people": [{"value": p, "label": _idfmt.humanize_principal(p).name} for p in people],
+            "people": [{"value": p, "label": helpers["person_label"](p)} for p in people],
             "agent": agent,
             "agents": [{"value": a, "label": _idfmt.humanize(a)} for a in sorted(agent_set)],
             "q": q,
@@ -7754,7 +7755,7 @@ async def audit_page(request: Request) -> HTMLResponse:
             "audit_filter_error": filter_error,
             "audit_next_href": next_href,
             "deployment_events": deployment_events,
-            **_audit_plain.page_helpers(),
+            **helpers,
         },
     )
 

@@ -746,7 +746,11 @@ def propose(request: Request, body: ProposeInput):
             if normalized in {adapter.label.lower(), *adapter.aliases}:
                 matches.append(adapter.id)
     operation, source = matches[0] if len(matches) == 1 else None, "built_in"
-    if operation is None and available:
+    from .copilot_live_state import intent as live_intent
+
+    # A question Copilot answers from live records (a task's cost, its status)
+    # is not a control request; it goes on to that live read.
+    if operation is None and available and live_intent(body.message) is None:
         from ._shared import _any_provider_key_set, require_provider_or_400
         from .app import check_goal_rate_limit
         check_goal_rate_limit(request, source="copilot")

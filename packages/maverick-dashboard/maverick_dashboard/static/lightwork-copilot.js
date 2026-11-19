@@ -423,7 +423,9 @@
       /^(?:(?:show(?: me)?|list) my (?:running|active|in.progress) tasks|(?:what|which) (?:of my )?tasks are (?:running|active|in.progress))(?: please)?$/.test(normalized) ||
       /^why (?:did|has|is) (?:my|this|the|goal|task|run|goal \d+|task \d+|run \d+) (?:goal |task |run )?(?:fail|failed|stop|stopped|blocked)(?: please)?$/.test(normalized) ||
       /^(?:what is (?:the status of )?(?:my |this |the )?(?:goal|task)(?: \d{1,18})?(?: status)?|(?:show|check) (?:my|this) (?:goal|task) status|how is (?:my|this) (?:goal|task) doing)(?: please)?$/.test(normalized) ||
-      /^(?:find|search for|look up) my task(?: called| named)? .{2,100}$/.test(normalized);
+      /^(?:find|search for|look up) my task(?: called| named)? .{2,100}$/.test(normalized) ||
+      // A task's own cost: the same questions copilot_live_state._TASK_COST reads.
+      /^(?:(?:how much (?:did|has|does)|what (?:did|does|has)) (?:my |this |the )?(?:goal|task|run)(?: #?\d{1,18})? cost(?: in (?:dollars|total))?(?: so far)?|(?:what is |what's )?the cost of (?:my |this |the )?(?:goal|task|run)(?: #?\d{1,18})?)(?:,? and why)?(?: please)?$/.test(normalized);
   }
   window.addEventListener('focus', expireRecent);
   document.addEventListener('visibilitychange', expireRecent);
