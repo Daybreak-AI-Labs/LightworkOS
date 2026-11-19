@@ -125,7 +125,7 @@ def test_copilot_names_a_tasks_files(monkeypatch):
     answer = client.post("/api/v1/copilot", json={"message": "What files did this task make?",
                                                   "page": "/chat/goal/34"}).json()
     assert answer["mode"] == "live"
-    assert "totals.csv" in answer["reply"] and "Files from this task" in answer["reply"]
+    assert "totals.csv" in answer["reply"] and "Download it under the answer" in answer["reply"]
     assert answer["action_link"]["href"] == "/chat/goal/34#task-files"
     denied = client.post("/api/v1/copilot", json={"message": "Which files did task 35 create?",
                                                   "page": "/chat"}).json()

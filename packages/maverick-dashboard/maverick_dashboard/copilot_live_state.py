@@ -329,7 +329,8 @@ def _task_files(request, message: str, page: str, selected_goal_id: int | None):
     released, note = release_state(world, goal)
     reply = (f"Checked task ‘{title}’ {_checked_at()}. It saved {len(files)} "
              f"{'file' if len(files) == 1 else 'files'}: {names}{more}. ")
-    reply += ("Download them under the answer, in Files from this task." if released else note)
+    pronoun = "it" if len(files) == 1 else "them"
+    reply += (f"Download {pronoun} under the answer, in Files from this task." if released else note)
     return _answer(reply, href, "Open the task's files", "Task files")
 
 
