@@ -9,6 +9,7 @@ authenticated dashboard request.
 from __future__ import annotations
 
 from dataclasses import asdict
+from functools import partial
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -132,7 +133,7 @@ def _tenant_id() -> str:
     return tenant
 
 
-def _registry(request: Request) -> EvidenceAuthorityRegistry:
+def _open_registry(request: Request) -> EvidenceAuthorityRegistry:
     tenant = _tenant_id()
     factory = getattr(
         request.app.state,
@@ -159,6 +160,11 @@ def _registry(request: Request) -> EvidenceAuthorityRegistry:
             detail="AI evidence-analysis authority registry is unavailable",
         )
     return registry
+
+
+# The gate reads the settings and the store opens tenant SQLite files (busy
+# timeout 30 s): on the event loop, one waiting store stopped every request.
+_registry = partial(run_in_threadpool, _open_registry)
 
 
 async def _call(function, *args: Any, **kwargs: Any):
@@ -206,7 +212,7 @@ def create_ai_evidence_analysis_authority_router() -> APIRouter:
     @router.get("/status")
     async def status(request: Request) -> dict[str, object]:
         require_global_permission(request, "audit")
-        report = await _call(_registry(request).verify_integrity)
+        report = await _call((await _registry(request)).verify_integrity)
         return {
             **asdict(report),
             "raw_artifact_content_persisted": False,
@@ -223,7 +229,7 @@ def create_ai_evidence_analysis_authority_router() -> APIRouter:
         same metadata an analysis record already exposes to viewers.
         """
         require_permission(request, "view")
-        items = await _call(_registry(request).list_usable_artifacts)
+        items = await _call((await _registry(request)).list_usable_artifacts)
         return {"items": items, "count": len(items)}
 
     @router.post("/artifacts/register")
@@ -260,7 +266,7 @@ def create_ai_evidence_analysis_authority_router() -> APIRouter:
         chunks.clear()
         try:
             authority, revision = await _call(
-                _registry(request).enroll_uploaded_artifact,
+                (await _registry(request)).enroll_uploaded_artifact,
                 content,
                 media_type=media_type,
                 display_name=name,
@@ -276,7 +282,7 @@ def create_ai_evidence_analysis_authority_router() -> APIRouter:
     async def list_criteria(request: Request) -> dict[str, object]:
         """Review criteria sets that can be used now, for the page picker."""
         require_permission(request, "view")
-        items = await _call(_registry(request).list_usable_criteria)
+        items = await _call((await _registry(request)).list_usable_criteria)
         return {"items": items, "count": len(items)}
 
     @router.post("/bootstrap")
@@ -284,7 +290,7 @@ def create_ai_evidence_analysis_authority_router() -> APIRouter:
         require_global_permission(request, "admin")
         extraction, analysis = await _call(
             bootstrap_local_adapter_authorities,
-            _registry(request),
+            await _registry(request),
         )
         return {
             "schema": "lightwork.ai-evidence.local-adapter-bootstrap.v1",
@@ -303,7 +309,7 @@ def create_ai_evidence_analysis_authority_router() -> APIRouter:
         values = body.model_dump()
         values["media_type"] = _MEDIA_BY_NAME[body.media_type]
         authority, revision = await _call(
-            _registry(request).enroll_artifact,
+            (await _registry(request)).enroll_artifact,
             artifact_id=artifact_id,
             **values,
         )
@@ -317,7 +323,7 @@ def create_ai_evidence_analysis_authority_router() -> APIRouter:
     ) -> dict[str, object]:
         require_global_permission(request, "admin")
         authority, revision = await _call(
-            _registry(request).revoke_artifact,
+            (await _registry(request)).revoke_artifact,
             artifact_id,
             **body.model_dump(),
         )
@@ -339,7 +345,7 @@ def create_ai_evidence_analysis_authority_router() -> APIRouter:
             for item in body.criteria
         )
         authority, revision = await _call(
-            _registry(request).enroll_criteria,
+            (await _registry(request)).enroll_criteria,
             criteria_set_id=criteria_set_id,
             criteria=criteria,
             **values,
@@ -354,7 +360,7 @@ def create_ai_evidence_analysis_authority_router() -> APIRouter:
     ) -> dict[str, object]:
         require_global_permission(request, "admin")
         authority, revision = await _call(
-            _registry(request).revoke_criteria,
+            (await _registry(request)).revoke_criteria,
             criteria_set_id,
             **body.model_dump(),
         )
@@ -368,7 +374,7 @@ def create_ai_evidence_analysis_authority_router() -> APIRouter:
     ) -> dict[str, object]:
         require_global_permission(request, "admin")
         authority, revision = await _call(
-            _registry(request).enroll_reviewer,
+            (await _registry(request)).enroll_reviewer,
             reviewer_ref=reviewer_ref,
             **body.model_dump(),
         )
@@ -382,7 +388,7 @@ def create_ai_evidence_analysis_authority_router() -> APIRouter:
     ) -> dict[str, object]:
         require_global_permission(request, "admin")
         authority, revision = await _call(
-            _registry(request).revoke_reviewer,
+            (await _registry(request)).revoke_reviewer,
             reviewer_ref,
             **body.model_dump(),
         )
@@ -398,7 +404,7 @@ def create_ai_evidence_analysis_authority_router() -> APIRouter:
     ) -> dict[str, object]:
         require_global_permission(request, "admin")
         authority, registry_revision = await _call(
-            _registry(request).revoke_adapter,
+            (await _registry(request)).revoke_adapter,
             stage=stage,
             adapter_id=adapter_id,
             revision=revision,
@@ -417,7 +423,7 @@ def create_ai_evidence_analysis_authority_router() -> APIRouter:
         require_global_permission(request, "admin")
         authority, registry_revision = await _call(
             rotate_local_adapter_authority,
-            _registry(request),
+            await _registry(request),
             stage=stage,
             adapter_id=adapter_id,
             revision=revision,

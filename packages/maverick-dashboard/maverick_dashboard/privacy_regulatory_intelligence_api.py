@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, is_dataclass
+from functools import partial
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -297,10 +298,14 @@ def create_privacy_intelligence_router(
         tags=["privacy-regulatory-intelligence"],
     )
 
-    def authority(request: Request):
+    def open_authority(request: Request):
         ops = _ops()
         tenant = _tenant_id()
         return ops, tenant, deps.store_for(tenant)
+
+    # The gate reads the settings and the store opens tenant SQLite files (busy
+    # timeout 30 s): on the event loop, one waiting store stopped every request.
+    authority = partial(run_in_threadpool, open_authority)
 
     async def call(ops, function, *args, **kwargs):
         try:
@@ -349,8 +354,10 @@ def _register_intelligence_status_routes(authority, call, router):
     @router.get("/status")
     async def status(request: Request) -> dict[str, Any]:
         require_permission(request, "view")
-        _ops()
+        await run_in_threadpool(_ops)
         from maverick import mailer
+
+        smtp_sender_configured = await run_in_threadpool(mailer.configured)
 
         return {
             "schema": "lightwork.privacy-regulatory-intelligence-status.v1",
@@ -366,7 +373,7 @@ def _register_intelligence_status_routes(authority, call, router):
                     None,
                 )
             ),
-            "smtp_sender_configured": mailer.configured(),
+            "smtp_sender_configured": smtp_sender_configured,
         }
 
     @router.get("/records")
@@ -375,7 +382,7 @@ def _register_intelligence_status_routes(authority, call, router):
         the page lists (no document text, no delivery lease tokens)."""
 
         require_permission(request, "view")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         listed = await call(ops, store.list_records, tenant)
         return {
             "documents": [
@@ -430,7 +437,7 @@ def _register_intelligence_source_routes(authority, call, router):
         body: SourceIn,
     ) -> dict[str, Any]:
         require_global_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         result = await call(
             ops,
             store.enroll_source,
@@ -444,14 +451,14 @@ def _register_intelligence_source_routes(authority, call, router):
     @router.get("/sources")
     async def list_sources(request: Request) -> dict[str, Any]:
         require_permission(request, "view")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         rows = await call(ops, store.list_sources, tenant)
         return {"items": _jsonable(rows), "count": len(rows)}
 
     @router.get("/sources/{source_id}")
     async def source_detail(request: Request, source_id: ObjectPath) -> dict[str, Any]:
         require_permission(request, "view")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(await call(ops, store.get_source, tenant, source_id))
 
     @router.post("/sources/{source_id}/review")
@@ -461,7 +468,7 @@ def _register_intelligence_source_routes(authority, call, router):
         body: SourceReviewIn,
     ) -> dict[str, Any]:
         require_global_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -480,7 +487,7 @@ def _register_intelligence_source_routes(authority, call, router):
         body: SourceRevokeIn,
     ) -> dict[str, Any]:
         require_global_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -502,7 +509,7 @@ def _register_intelligence_document_routes(authority, call, router):
         body: DocumentIn,
     ) -> dict[str, Any]:
         require_global_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         payload = body.model_dump()
         payload["citations"] = [item.model_dump() for item in body.citations]
         result = await call(
@@ -522,7 +529,7 @@ def _register_intelligence_document_routes(authority, call, router):
         version: int | None = Query(default=None, ge=1, le=2**31 - 1),
     ) -> dict[str, Any]:
         require_permission(request, "view")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(ops, store.get_document, tenant, document_id, version)
         )
@@ -533,21 +540,21 @@ def _register_intelligence_document_routes(authority, call, router):
         document_id: ObjectPath,
     ) -> dict[str, Any]:
         require_permission(request, "view")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         rows = await call(ops, store.list_document_versions, tenant, document_id)
         return {"items": _jsonable(rows), "count": len(rows)}
 
     @router.post("/search")
     async def search(request: Request, body: SearchIn) -> dict[str, Any]:
         require_permission(request, "view")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         rows = await call(ops, store.search, tenant, **body.model_dump())
         return {"items": _jsonable(rows), "count": len(rows)}
 
     @router.post("/research")
     async def research(request: Request, body: ResearchIn) -> dict[str, Any]:
         require_permission(request, "view")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         answer = await call(ops, store.research, tenant, **body.model_dump())
         payload = _jsonable(answer)
         payload["abstained"] = answer.status != "grounded"
@@ -557,7 +564,7 @@ def _register_intelligence_document_routes(authority, call, router):
     @router.post("/compare")
     async def compare(request: Request, body: CompareIn) -> dict[str, Any]:
         require_permission(request, "view")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -577,7 +584,7 @@ def _register_intelligence_collection_routes(authority, call, router):
         body: CollectionIn,
     ) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -595,7 +602,7 @@ def _register_intelligence_collection_routes(authority, call, router):
         collection_id: ObjectPath,
     ) -> dict[str, Any]:
         require_permission(request, "view")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -613,7 +620,7 @@ def _register_intelligence_collection_routes(authority, call, router):
         body: CollectionGrantIn,
     ) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -632,7 +639,7 @@ def _register_intelligence_collection_routes(authority, call, router):
         body: CollectionDocumentIn,
     ) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -655,7 +662,7 @@ def _register_intelligence_share_routes(authority, call, router):
         body: ShareIn,
     ) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -671,7 +678,7 @@ def _register_intelligence_share_routes(authority, call, router):
     @router.post("/shares/redeem")
     async def redeem_share(request: Request, body: RedeemShareIn) -> dict[str, Any]:
         require_permission(request, "view")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         collection = await call(
             ops,
             store.redeem_share,
@@ -685,7 +692,7 @@ def _register_intelligence_share_routes(authority, call, router):
     @router.post("/shares/{share_id}/revoke")
     async def revoke_share(request: Request, share_id: ObjectPath) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -706,7 +713,7 @@ def _register_intelligence_subscription_routes(authority, call, router):
         body: SubscriptionIn,
     ) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -724,7 +731,7 @@ def _register_intelligence_subscription_routes(authority, call, router):
         limit: int = Query(default=100, ge=1, le=100),
     ) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         rows = await call(ops, store.due_subscriptions, tenant, limit=limit)
         return {"items": _jsonable(rows), "count": len(rows)}
 
@@ -735,7 +742,7 @@ def _register_intelligence_subscription_routes(authority, call, router):
         body: RevisionIn,
     ) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -754,7 +761,7 @@ def _register_intelligence_subscription_routes(authority, call, router):
         body: RevisionIn,
     ) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -776,7 +783,7 @@ def _register_intelligence_delivery_routes(authority, call, router):
         body: GenerateAlertsIn,
     ) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         rows = await call(
             ops,
             store.generate_alerts,
@@ -793,7 +800,7 @@ def _register_intelligence_delivery_routes(authority, call, router):
         body: ClaimDeliveriesIn,
     ) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         rows = await call(
             ops,
             store.claim_deliveries,
@@ -811,7 +818,7 @@ def _register_intelligence_delivery_routes(authority, call, router):
         """Run the explicit external email/notification side-effect boundary."""
 
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         resolver = getattr(
             request.app.state,
             "privacy_intelligence_destination_resolver",
@@ -858,7 +865,7 @@ def _register_intelligence_receipt_routes(authority, call, router):
         body: FailDeliveryIn,
     ) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -876,7 +883,7 @@ def _register_intelligence_receipt_routes(authority, call, router):
         body: AcknowledgeDeliveryIn,
     ) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -894,7 +901,7 @@ def _register_intelligence_receipt_routes(authority, call, router):
         body: ReportIn,
     ) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         report = await call(
             ops,
             store.export_report,
@@ -908,14 +915,14 @@ def _register_intelligence_receipt_routes(authority, call, router):
     @router.get("/reports/{report_id}")
     async def report_detail(request: Request, report_id: ObjectPath) -> dict[str, Any]:
         require_permission(request, "view")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         report = await call(ops, store.get_report, tenant, report_id)
         return report.export()
 
     @router.get("/integrity")
     async def verify_integrity(request: Request) -> dict[str, Any]:
         require_permission(request, "view")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         verification = _jsonable(
             await call(ops, store.verify_integrity, tenant)
         )
@@ -925,7 +932,7 @@ def _register_intelligence_receipt_routes(authority, call, router):
     @router.post("/retention/purge")
     async def purge_retention(request: Request) -> dict[str, Any]:
         require_global_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,

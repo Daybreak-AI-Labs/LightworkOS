@@ -53,7 +53,7 @@ def create_ai_evidence_analysis_page_router(templates: Jinja2Templates) -> APIRo
         response_class=HTMLResponse,
         include_in_schema=False,
     )
-    async def workbench(request: Request) -> HTMLResponse:
+    def workbench(request: Request) -> HTMLResponse:
         require_permission(request, "view")
         workspace_selected = _tenant_selected() is not False
         if any(

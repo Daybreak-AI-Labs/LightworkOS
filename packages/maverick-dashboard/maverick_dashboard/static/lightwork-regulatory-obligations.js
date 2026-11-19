@@ -42,7 +42,12 @@
   function say(text) { window.mvStatus(operationState, text); }
 
   async function readJson(response) {
-    if (!response.ok) { throw response; }
+    if (!response.ok) {
+      // Callers need only the status. An unread error body leaves the request
+      // open, so the page never settles (a feed that is off answers 403).
+      if (response.body && typeof response.body.cancel === "function") { await response.body.cancel(); }
+      throw response;
+    }
     var declared = Number(response.headers.get("content-length") || 0);
     if (declared > maxResponseBytes) {
       if (response.body && typeof response.body.cancel === "function") { await response.body.cancel(); }

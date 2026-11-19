@@ -5769,7 +5769,7 @@ async def consent_public_clients_page(request: Request) -> HTMLResponse:
 
 
 @app.get("/consent/profile-data", response_class=HTMLResponse)
-async def consent_profile_data_page(request: Request) -> HTMLResponse:
+def consent_profile_data_page(request: Request) -> HTMLResponse:
     """Governed profile-data catalogs and progressive prompt journeys."""
 
     require_permission(request, "operate")
@@ -5929,7 +5929,7 @@ async def data_use_providers_page(request: Request) -> HTMLResponse:
 
 
 @app.get("/privacy/data-discovery", response_class=HTMLResponse)
-async def privacy_data_discovery_page(request: Request) -> HTMLResponse:
+def privacy_data_discovery_page(request: Request) -> HTMLResponse:
     """Bounded personal-data discovery, review, and RoPA delivery workspace."""
 
     require_permission(request, "view")
@@ -5979,7 +5979,7 @@ async def privacy_data_discovery_page(request: Request) -> HTMLResponse:
 
 
 @app.get("/privacy/regulatory-intelligence", response_class=HTMLResponse)
-async def privacy_regulatory_intelligence_page(request: Request) -> HTMLResponse:
+def privacy_regulatory_intelligence_page(request: Request) -> HTMLResponse:
     """Licensed-source privacy research, trackers, alerts, and reports."""
 
     require_permission(request, "operate")
@@ -6018,7 +6018,7 @@ def privacy_rights_orchestration_page(request: Request) -> HTMLResponse:
 
 
 @app.get("/privacy/rights-consumer-delivery", response_class=HTMLResponse)
-async def privacy_rights_consumer_delivery_page(request: Request) -> HTMLResponse:
+def privacy_rights_consumer_delivery_page(request: Request) -> HTMLResponse:
     """One-time, digest-only privacy-rights delivery workbench."""
 
     require_permission(request, "operate")
@@ -6100,7 +6100,7 @@ async def privacy_report_page(request: Request) -> HTMLResponse:
 
 
 @app.get("/third-party/intelligence", response_class=HTMLResponse)
-async def third_party_intelligence_page(request: Request) -> HTMLResponse:
+def third_party_intelligence_page(request: Request) -> HTMLResponse:
     """Governed screening, EDD, monitoring, delivery, and risk exchange."""
 
     require_permission(request, "operate")
@@ -9041,7 +9041,7 @@ async def compliance_scope_actions_page(request: Request) -> HTMLResponse:
 
 
 @app.get("/compliance/continuous-evidence", response_class=HTMLResponse)
-async def trc_continuous_evidence_page(request: Request) -> HTMLResponse:
+def trc_continuous_evidence_page(request: Request) -> HTMLResponse:
     """Continuous technical-evidence collector operations workbench."""
 
     require_permission(request, "operate")

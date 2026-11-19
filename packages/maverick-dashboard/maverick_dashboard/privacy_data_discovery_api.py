@@ -13,6 +13,7 @@ import re
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, is_dataclass
+from functools import partial
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -385,10 +386,15 @@ def _coordinator(request: Request, ops, tenant_id: str, store):
     )
 
 
-def _authority(request: Request):
+def _open_authority(request: Request):
     ops = _ops()
     tenant = _tenant_id()
     return ops, tenant, _store(ops, tenant, request)
+
+
+# The gate reads the settings and the store opens tenant SQLite files (busy
+# timeout 30 s): on the event loop, one waiting store stopped every request.
+_authority = partial(run_in_threadpool, _open_authority)
 
 
 def _jsonable(value: Any) -> Any:
@@ -1104,7 +1110,7 @@ def _limits(ops, body: ScanLimitsIn):
 @router.get("/status")
 async def status(request: Request) -> dict[str, Any]:
     require_permission(request, "view")
-    _ops()
+    await run_in_threadpool(_ops)
     tenant = _tenant_id()
     capabilities = await _runtime_capabilities(request, tenant)
     durable = capabilities["durable_outbox"]
@@ -1165,7 +1171,7 @@ async def status(request: Request) -> dict[str, Any]:
 @router.get("/posture")
 async def posture(request: Request) -> dict[str, Any]:
     require_permission(request, "view")
-    ops = _ops()
+    ops = await run_in_threadpool(_ops)
     tenant = _tenant_id()
     capabilities = await _runtime_capabilities(request, tenant)
     result = await _call(ops, ops.PrivacyDataDiscoveryStore.privacy_posture)
@@ -1196,7 +1202,7 @@ async def enroll_source(
     body: SourceEnrollmentIn,
 ) -> dict[str, Any]:
     require_global_permission(request, "admin")
-    ops, tenant, store = _authority(request)
+    ops, tenant, store = await _authority(request)
     await _setup_call(request, tenant, _validate_saved_source_references, body)
     result = await _call(
         ops,
@@ -1260,7 +1266,7 @@ def _setup_options(app, tenant):
 @router.get("/setup")
 async def setup_options(request: Request):
     require_global_permission(request, "admin")
-    _ops()
+    await run_in_threadpool(_ops)
     return await _setup_call(request, _tenant_id(), _setup_options, request.app, _tenant_id())
 
 
@@ -1269,7 +1275,7 @@ async def create_evidence_key(request: Request, name: ObjectPath, body: Evidence
     from maverick.privacy_discovery_credentials import create_or_rotate
 
     require_global_permission(request, "admin")
-    _ops()
+    await run_in_threadpool(_ops)
     result = await _setup_call(request, _tenant_id(), create_or_rotate, name, **body.model_dump())
     return {**result, "secret_returned": False, "sources_updated": False,
             "next_step": "Explicitly select this key version and save each source. Old key references cannot scan."}
@@ -1310,7 +1316,7 @@ def _test_source_access(app, tenant, store, source_id, expected_revision):
 @router.post("/sources/{source_id}/test-access")
 async def test_source_access(request: Request, source_id: ObjectPath, body: TestAccessIn):
     require_global_permission(request, "admin")
-    _, tenant, store = _authority(request)
+    _, tenant, store = await _authority(request)
     return await _setup_call(request, tenant, _test_source_access, request.app, tenant, store,
                              source_id, body.expected_revision)
 
@@ -1322,7 +1328,7 @@ async def set_source_state(
     body: SourceStateIn,
 ) -> dict[str, Any]:
     require_global_permission(request, "admin")
-    ops, tenant, store = _authority(request)
+    ops, tenant, store = await _authority(request)
     result = await _call(
         ops,
         store.set_source_state,
@@ -1340,11 +1346,11 @@ async def list_sources(
     limit: int = Query(default=100, ge=1, le=1_999),
 ) -> dict[str, Any]:
     require_permission(request, "view")
-    ops, tenant, store = _authority(request)
-    guard = _scan_guard(request, ops, tenant, store, permission="view")
-    guard()
+    ops, tenant, store = await _authority(request)
+    guard = await run_in_threadpool(_scan_guard, request, ops, tenant, store, permission="view")
+    await run_in_threadpool(guard)
     rows = await _call(ops, store.list_sources, tenant, limit=limit + 1)
-    guard()
+    await run_in_threadpool(guard)
     return {**_items(rows, limit), "permissions": {
         "operate": has_permission(request, "operate"),
         "admin": has_global_permission(request, "admin"),
@@ -1355,7 +1361,7 @@ async def list_sources(
 @router.get("/sources/{source_id}")
 async def source_detail(request: Request, source_id: ObjectPath) -> dict[str, Any]:
     require_permission(request, "view")
-    ops, tenant, store = _authority(request)
+    ops, tenant, store = await _authority(request)
     return _jsonable(await _call(ops, store.get_source, tenant, source_id))
 
 
@@ -1366,7 +1372,7 @@ async def upsert_schedule(
     body: ScheduleIn,
 ) -> dict[str, Any]:
     require_global_permission(request, "admin")
-    ops, tenant, store = _authority(request)
+    ops, tenant, store = await _authority(request)
     payload = body.model_dump(exclude={"limits"})
     result = await _call(
         ops,
@@ -1383,7 +1389,7 @@ async def upsert_schedule(
 @router.post("/schedules/enqueue-due")
 async def enqueue_due(request: Request, body: EnqueueDueIn) -> dict[str, Any]:
     require_permission(request, "operate")
-    ops, tenant, store = _authority(request)
+    ops, tenant, store = await _authority(request)
     rows = await _call(
         ops,
         store.enqueue_due,
@@ -1400,7 +1406,7 @@ async def list_schedules(
     limit: int = Query(default=100, ge=1, le=1_999),
 ) -> dict[str, Any]:
     require_permission(request, "view")
-    ops, tenant, store = _authority(request)
+    ops, tenant, store = await _authority(request)
     rows = await _call(ops, store.list_schedules, tenant, limit=limit + 1)
     return _items(rows, limit)
 
@@ -1408,7 +1414,7 @@ async def list_schedules(
 @router.get("/schedules/{schedule_id}")
 async def schedule_detail(request: Request, schedule_id: ObjectPath) -> dict[str, Any]:
     require_permission(request, "view")
-    ops, tenant, store = _authority(request)
+    ops, tenant, store = await _authority(request)
     return _jsonable(await _call(ops, store.get_schedule, tenant, schedule_id))
 
 
@@ -1419,7 +1425,7 @@ async def enqueue_manual_scan(
     body: ManualScanIn,
 ) -> dict[str, Any]:
     require_permission(request, "operate")
-    ops, tenant, store = _authority(request)
+    ops, tenant, store = await _authority(request)
     payload = body.model_dump(exclude={"limits"})
     result = await _call(
         ops,
@@ -1436,7 +1442,7 @@ async def enqueue_manual_scan(
 @router.post("/jobs/claim")
 async def claim_jobs(request: Request, body: ClaimIn) -> dict[str, Any]:
     require_permission(request, "operate")
-    ops, tenant, store = _authority(request)
+    ops, tenant, store = await _authority(request)
     rows = await _call(
         ops,
         store.claim_jobs,
@@ -1455,7 +1461,7 @@ async def execute_job(request: Request, job_id: ObjectPath) -> dict[str, Any]:
     """Execute one leased scan; injected adapters may perform external I/O."""
 
     require_global_permission(request, "admin")
-    ops, tenant, store = _authority(request)
+    ops, tenant, store = await _authority(request)
     job = await _call(ops, store.get_job, tenant, job_id)
     coordinator = await _call(ops, _coordinator, request, ops, tenant, store)
     from maverick import connections
@@ -1570,23 +1576,23 @@ def _run_reviewed_scan(request, ops, tenant, store, job_id, body):
 @router.get("/jobs/{job_id}/result")
 async def scan_result(request: Request, job_id: ObjectPath) -> dict[str, Any]:
     require_permission(request, "view")
-    ops, tenant, store = _authority(request)
-    guard = _scan_guard(request, ops, tenant, store, permission="view")
+    ops, tenant, store = await _authority(request)
+    guard = await run_in_threadpool(_scan_guard, request, ops, tenant, store, permission="view")
     return await _call(ops, _scan_original, store, tenant, job_id, guard)
 
 
 @router.post("/jobs/{job_id}/run")
 async def run_reviewed_scan(request: Request, job_id: ObjectPath, body: RunScanIn) -> dict[str, Any]:
     require_permission(request, "operate")
-    ops, tenant, store = _authority(request)
+    ops, tenant, store = await _authority(request)
     return await _call(ops, _run_reviewed_scan, request, ops, tenant, store, job_id, body)
 
 
 @router.post("/jobs/{job_id}/cancel")
 async def cancel_scan(request: Request, job_id: ObjectPath, body: CancelScanIn) -> dict[str, Any]:
     require_permission(request, "operate")
-    ops, tenant, store = _authority(request)
-    guard = _scan_guard(request, ops, tenant, store)
+    ops, tenant, store = await _authority(request)
+    guard = await run_in_threadpool(_scan_guard, request, ops, tenant, store)
     return _jsonable(await _call(ops, store.cancel_job, tenant, job_id,
         expected_revision=body.expected_revision, actor_ref=_actor_ref(request, tenant),
         idempotency_key=body.idempotency_key, before_write=guard))
@@ -1599,7 +1605,7 @@ async def fail_job(
     body: FailJobIn,
 ) -> dict[str, Any]:
     require_permission(request, "operate")
-    ops, tenant, store = _authority(request)
+    ops, tenant, store = await _authority(request)
     result = await _call(
         ops,
         store.fail_job,
@@ -1618,7 +1624,7 @@ async def replay_job(
     body: ReplayIn,
 ) -> dict[str, Any]:
     require_global_permission(request, "admin")
-    ops, tenant, store = _authority(request)
+    ops, tenant, store = await _authority(request)
     result = await _call(
         ops,
         store.replay_dead_letter,
@@ -1637,7 +1643,7 @@ async def list_jobs(
     limit: int = Query(default=100, ge=1, le=1_999),
 ) -> dict[str, Any]:
     require_permission(request, "view")
-    ops, tenant, store = _authority(request)
+    ops, tenant, store = await _authority(request)
     rows = await _call(ops, store.list_jobs, tenant, state=state, limit=limit + 1)
     return _items(rows, limit)
 
@@ -1645,7 +1651,7 @@ async def list_jobs(
 @router.get("/jobs/{job_id}")
 async def job_detail(request: Request, job_id: ObjectPath) -> dict[str, Any]:
     require_permission(request, "view")
-    ops, tenant, store = _authority(request)
+    ops, tenant, store = await _authority(request)
     return _jsonable(await _call(ops, store.get_job, tenant, job_id))
 
 
@@ -1660,7 +1666,7 @@ async def inventory(
     ),
 ) -> dict[str, Any]:
     require_permission(request, "view")
-    ops, tenant, store = _authority(request)
+    ops, tenant, store = await _authority(request)
     result = _jsonable(
         await _call(ops, store.inventory, tenant, source_id=source_id)
     )
@@ -1679,7 +1685,7 @@ async def diff_reports(
     limit: int = Query(default=1_000, ge=1, le=1_999),
 ) -> dict[str, Any]:
     require_permission(request, "view")
-    ops, tenant, store = _authority(request)
+    ops, tenant, store = await _authority(request)
     result = _jsonable(
         await _call(
             ops,
@@ -1715,7 +1721,7 @@ async def list_reports(
     limit: int = Query(default=100, ge=1, le=1_999),
 ) -> dict[str, Any]:
     require_permission(request, "view")
-    ops, tenant, store = _authority(request)
+    ops, tenant, store = await _authority(request)
     rows = await _call(
         ops,
         store.list_reports,
@@ -1733,7 +1739,7 @@ async def list_reports(
 @router.get("/reports/{report_id}")
 async def report_detail(request: Request, report_id: ObjectPath) -> dict[str, Any]:
     require_permission(request, "view")
-    ops, tenant, store = _authority(request)
+    ops, tenant, store = await _authority(request)
     return _report_payload(await _call(ops, store.get_report, tenant, report_id))
 
 
@@ -1744,7 +1750,7 @@ async def list_findings(
     limit: int = Query(default=100, ge=1, le=1_999),
 ) -> dict[str, Any]:
     require_permission(request, "view")
-    ops, tenant, store = _authority(request)
+    ops, tenant, store = await _authority(request)
     rows = await _call(
         ops,
         store.list_findings,
@@ -1762,7 +1768,7 @@ async def list_findings(
 @router.get("/findings/{finding_id}")
 async def finding_detail(request: Request, finding_id: ObjectPath) -> dict[str, Any]:
     require_permission(request, "view")
-    ops, tenant, store = _authority(request)
+    ops, tenant, store = await _authority(request)
     return _jsonable(await _call(ops, store.get_finding, tenant, finding_id))
 
 
@@ -1773,7 +1779,7 @@ async def propose_review(
     body: ReviewProposalIn,
 ) -> dict[str, Any]:
     require_global_permission(request, "admin")
-    ops, tenant, store = _authority(request)
+    ops, tenant, store = await _authority(request)
     finding = await _call(ops, store.get_finding, tenant, finding_id)
     result = await _call(
         ops,
@@ -1799,7 +1805,7 @@ async def list_reviews(
     limit: int = Query(default=100, ge=1, le=1_999),
 ) -> dict[str, Any]:
     require_permission(request, "view")
-    ops, tenant, store = _authority(request)
+    ops, tenant, store = await _authority(request)
     rows = await _call(
         ops,
         store.list_reviews,
@@ -1819,7 +1825,7 @@ async def list_all_reviews(
     """Review proposals across every finding, newest first (approval queue)."""
 
     require_permission(request, "view")
-    ops, tenant, store = _authority(request)
+    ops, tenant, store = await _authority(request)
     rows = await _call(ops, store.list_all_reviews, tenant, status=status, limit=limit + 1)
     return _items(rows, limit)
 
@@ -1831,7 +1837,7 @@ async def approve_review(
     body: ReviewApprovalIn,
 ) -> dict[str, Any]:
     require_global_permission(request, "admin")
-    ops, tenant, store = _authority(request)
+    ops, tenant, store = await _authority(request)
     capabilities = await _runtime_capabilities(request, tenant)
     callback_configured = _callback_authority(request, tenant) is not None
     before = await _call(ops, store.get_review, tenant, review_id)
@@ -1872,7 +1878,7 @@ async def run_remediation_worker(
     body: RemediationWorkerIn,
 ) -> dict[str, Any]:
     require_global_permission(request, "admin")
-    ops, tenant, store = _authority(request)
+    ops, tenant, store = await _authority(request)
     runtime = await _remediation_runtime(
         request,
         ops,
@@ -1908,7 +1914,7 @@ async def list_remediation_work(
     limit: int = Query(default=100, ge=1, le=100),
 ) -> dict[str, Any]:
     require_global_permission(request, "admin")
-    ops, tenant, store = _authority(request)
+    ops, tenant, store = await _authority(request)
     runtime = await _remediation_runtime(
         request,
         ops,
@@ -1951,7 +1957,7 @@ async def reconcile_remediation_work(
     body: RemediationReconcileIn,
 ) -> dict[str, Any]:
     require_global_permission(request, "admin")
-    ops, tenant, store = _authority(request)
+    ops, tenant, store = await _authority(request)
     runtime = await _remediation_runtime(
         request,
         ops,
@@ -1985,7 +1991,7 @@ async def maintain_remediation_runtime(
     body: RemediationMaintenanceIn,
 ) -> dict[str, Any]:
     require_global_permission(request, "admin")
-    ops, tenant, store = _authority(request)
+    ops, tenant, store = await _authority(request)
     runtime = await _remediation_runtime(
         request,
         ops,
@@ -2019,7 +2025,7 @@ async def audit_events(
     limit: int = Query(default=500, ge=1, le=999),
 ) -> dict[str, Any]:
     require_permission(request, "audit")
-    ops, tenant, store = _authority(request)
+    ops, tenant, store = await _authority(request)
     rows = await _call(ops, store.audit_events, tenant, limit=limit + 1)
     return _items(rows, limit)
 
@@ -2027,7 +2033,7 @@ async def audit_events(
 @router.get("/audit/verify")
 async def verify_audit(request: Request) -> dict[str, Any]:
     require_permission(request, "audit")
-    ops, tenant, store = _authority(request)
+    ops, tenant, store = await _authority(request)
     verified = await _call(ops, store.verify_audit_chain, tenant)
     return {"verified": bool(verified), "tenant_bound": True}
 
@@ -2035,7 +2041,7 @@ async def verify_audit(request: Request) -> dict[str, Any]:
 @router.post("/retention/purge")
 async def purge_retention(request: Request, body: RetentionIn) -> dict[str, Any]:
     require_global_permission(request, "admin")
-    ops, tenant, store = _authority(request)
+    ops, tenant, store = await _authority(request)
     count = await _call(
         ops,
         store.purge_expired,

@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, is_dataclass
+from functools import partial
 from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -284,7 +285,7 @@ def create_privacy_rights_consumer_delivery_router(  # noqa: C901
         tags=["privacy-rights-consumer-delivery"],
     )
 
-    def authority(request: Request):
+    def open_authority(request: Request):
         ops = _ops()
         tenant = _tenant_id()
         principal = _principal(request, tenant)
@@ -333,6 +334,10 @@ def create_privacy_rights_consumer_delivery_router(  # noqa: C901
                 detail="privacy-rights delivery authority returned an invalid contract",
             )
         return ops, tenant, store
+
+    # The gate reads the settings and the store opens tenant SQLite files (busy
+    # timeout 30 s): on the event loop, one waiting store stopped every request.
+    authority = partial(run_in_threadpool, open_authority)
 
     async def call(ops, function, *args, **kwargs):
         try:
@@ -451,7 +456,7 @@ def create_privacy_rights_consumer_delivery_router(  # noqa: C901
         _private(response)
         body = await _body(request, MintDeliveryIn)
         assert isinstance(body, MintDeliveryIn)
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         result = _expect(
             await call(
                 ops,
@@ -482,7 +487,7 @@ def create_privacy_rights_consumer_delivery_router(  # noqa: C901
     ):
         require_permission(request, "view")
         _private(response)
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             _expect(
                 await call(ops, store.get_delivery, tenant, delivery_id),
@@ -508,7 +513,7 @@ def create_privacy_rights_consumer_delivery_router(  # noqa: C901
         _private(response)
         body = await _body(request, RevokeDeliveryIn)
         assert isinstance(body, RevokeDeliveryIn)
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             _expect(
                 await call(
@@ -541,7 +546,7 @@ def create_privacy_rights_consumer_delivery_router(  # noqa: C901
         _private(response)
         body = await _body(request, ExportDeliveryIn)
         assert isinstance(body, ExportDeliveryIn)
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             _expect(
                 await call(
@@ -569,7 +574,7 @@ def create_privacy_rights_consumer_delivery_router(  # noqa: C901
         _private(response)
         body = await _body(request, EvidenceRecordIn)
         assert isinstance(body, EvidenceRecordIn)
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         current = _expect(
             await call(ops, store.get_delivery, tenant, delivery_id),
             ops.RightsConsumerDelivery,
@@ -602,7 +607,7 @@ def create_privacy_rights_consumer_delivery_router(  # noqa: C901
     ):
         require_global_permission(request, "audit")
         _private(response)
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             _expect(
                 await call(ops, store.get_export, tenant, export_id),
@@ -627,14 +632,14 @@ def create_privacy_rights_consumer_delivery_router(  # noqa: C901
         _private(response)
         body = await _body(request, PurgeDeliveryIn)
         assert isinstance(body, PurgeDeliveryIn)
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _purge_result(await call(ops, store.purge_expired, tenant, **body.model_dump()))
 
     @router.get("/integrity")
     async def integrity(request: Request, response: Response):
         require_global_permission(request, "audit")
         _private(response)
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         result = _jsonable(
             _expect(
                 await call(ops, store.verify_integrity, tenant),
