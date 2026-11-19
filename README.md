@@ -14,11 +14,10 @@
   <a href="https://github.com/Daybreak-AI-Labs/LightworkOS/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Daybreak-AI-Labs/LightworkOS/actions/workflows/ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg"></a>
   <a href="docs/source-install.md"><img alt="Python 3.11 | 3.12" src="https://img.shields.io/badge/python-3.11%20%7C%203.12-blue.svg"></a>
-  <img alt="Status: alpha" src="https://img.shields.io/badge/status-alpha-orange.svg">
 </p>
 
 <p align="center">
-  <b>Alpha.</b> Version 0.1.7 is unreleased: you install from source, and configuration and APIs
+  Version 0.1.7 is unreleased: you install from source, and configuration and APIs
   can change (<a href="CHANGELOG.md">CHANGELOG.md</a>).
 </p>
 
@@ -185,7 +184,7 @@ More to try without an AI key, and what is on by default: [technical overview](d
 
 ## Limits
 
-- **Alpha:** no release yet, and configuration and APIs can change.
+- **Compatibility:** Configuration and APIs can change.
 - **No isolation by default:** see the warning above.
 - **Teams work from what you supply.** They do not fetch from your systems, and their checks trust the values in the export you approve.
 - **Starter teams are qualified offline** on synthetic samples only, not yet for live AI output or customer acceptance ([details](docs/starter-teams.md#what-qualification-means)).
