@@ -1793,6 +1793,14 @@ class Budget:
                     f"{self._ceiling_note()}"
                 )
 
+    def dollars_headroom(self) -> float | None:
+        """Dollars left under the cap after spend and in-flight holds; None
+        without a dollar cap. A reading for sizing a call, not a hold."""
+        if self.max_dollars is None:
+            return None
+        with self._lock:
+            return max(0.0, self.max_dollars - self.dollars - getattr(self, "_reserved", 0.0))
+
     def reserve(self, est_cost: float) -> float:
         """Atomically hold ``est_cost`` against the cap for an in-flight call;
         return the amount held (0.0 if non-positive). Raises ``BudgetExceeded``

@@ -1808,6 +1808,51 @@ def _estimate_call_cost(model_id, system, messages, tools, max_tokens,
     return (chars / 4 / 1_000_000) * in_rate + (max_tokens / 1_000_000) * out_rate
 
 
+#: The smallest output allowance a call is fitted down to. Below it a step
+#: cannot say anything useful, so the reservation refuses it as before.
+MIN_FITTED_MAX_TOKENS = 1024
+
+
+def _fit_max_tokens_to_budget(budget, model_spec, system, messages, tools, max_tokens,
+                              thinking_budget, *, quote=None) -> int:
+    """The largest ``max_tokens`` (at most the requested one) whose worst-case
+    cost fits the budget's remaining dollars.
+
+    Each call reserves input plus ``max_tokens`` of output before it runs, so on
+    an expensive model a small cap refused even a one-word reply. Asking the
+    provider for fewer output tokens keeps the worst case inside the cap (the
+    provider never returns more than ``max_tokens``); the reservation below still
+    holds and checks it. Unchanged when it already fits, without a dollar cap,
+    or when fewer than ``MIN_FITTED_MAX_TOKENS`` would fit."""
+    if budget is None:
+        return max_tokens
+    try:
+        room = budget.dollars_headroom()
+        if room is None:
+            return max_tokens
+        if _estimate_call_cost(model_spec, system, messages, tools, max_tokens,
+                               thinking_budget=thinking_budget, quote=quote) <= room:
+            return max_tokens
+        from .budget import _lookup_price
+
+        _, out_rate = quote.rates if quote is not None else _lookup_price(model_spec, estimate_only=True)
+        if out_rate <= 0:
+            return max_tokens
+        base = _estimate_call_cost(model_spec, system, messages, tools, 0,
+                                   thinking_budget=thinking_budget, quote=quote)
+        fitted = min(int(max_tokens), int((room - base) / out_rate * 1_000_000))
+        if fitted < MIN_FITTED_MAX_TOKENS:
+            return max_tokens
+        # A provider may raise a small max_tokens (thinking headroom): keep the
+        # fit only if its own estimate really fits.
+        if _estimate_call_cost(model_spec, system, messages, tools, fitted,
+                               thinking_budget=thinking_budget, quote=quote) > room:
+            return max_tokens
+        return fitted
+    except Exception:  # noqa: BLE001 -- sizing never blocks; the reservation decides
+        return max_tokens
+
+
 def _check_recorded_budget(budget):
     if budget is not None:
         budget.check()  # canceled hedge cleanup may have recorded an overrun
@@ -2385,6 +2430,8 @@ class LLM:
         # local providers. Rewrites the outbound copy only.
         from .privacy_egress import maybe_redact_egress
         system, messages = maybe_redact_egress(provider, system, messages)
+        max_tokens = _fit_max_tokens_to_budget(budget, _price_spec, system, messages, tools,
+                                               max_tokens, thinking_budget, quote=_admitted_quote)
         _record_provider_call(provider)
         # Project this call's cost into the deployment-wide $ ceiling so a single
         # large call (or concurrent calls seeing the same under-cap spend) can't
@@ -2589,6 +2636,8 @@ class LLM:
         # local providers. Rewrites the outbound copy only.
         from .privacy_egress import maybe_redact_egress
         system, messages = maybe_redact_egress(provider, system, messages)
+        max_tokens = _fit_max_tokens_to_budget(budget, _price_spec, system, messages, tools,
+                                               max_tokens, thinking_budget, quote=_admitted_quote)
         _record_provider_call(provider)
         # Project this call's cost into the deployment-wide $ ceiling so a single
         # large call (or concurrent calls seeing the same under-cap spend) can't

@@ -324,3 +324,53 @@ async def test_complete_async_refuses_overbudget_before_calling_provider(monkeyp
             budget=b,
             max_tokens=100,
         )
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_a_call_shrinks_its_output_allowance_to_fit_a_small_cap(monkeypatch, asynchronous):
+    # Seen live on GPT-5.6 Terra: a $0.30 task cap stopped a one-word reply
+    # after $0.07, because each call reserved its full max_tokens output
+    # (about $0.23) up front. The call now asks for at most the output the
+    # remaining budget can pay for, so the cap still cannot be passed.
+    import maverick.llm as llm_mod
+    from maverick.llm import _estimate_call_cost
+
+    spec = "anthropic:claude-sonnet-4-6"
+    sent = []
+
+    class Client:
+        def complete(self, *, budget, **kwargs):
+            sent.append(kwargs["max_tokens"])
+            budget.record_tokens(10, 5, model=spec)
+            return _SelfHostedClient._resp()
+
+        async def complete_async(self, **kwargs):
+            return self.complete(**kwargs)
+
+    llm = llm_mod.LLM(model=spec)
+    monkeypatch.setattr(llm, "_get_client", lambda provider: Client())
+    messages = [{"role": "user", "content": "Reply with one word."}]
+    full = _estimate_call_cost(spec, "s", messages, None, 32_000)
+    budget = Budget(max_dollars=round(full * 0.6, 4))
+    result = (llm.complete_async if asynchronous else llm.complete)(
+        system="s", messages=messages, budget=budget, max_tokens=32_000)
+    response = asyncio.run(result) if asynchronous else result
+    assert response.text == "ok"
+    (allowed,) = sent
+    assert 1024 <= allowed < 32_000
+    assert _estimate_call_cost(spec, "s", messages, None, allowed) <= budget.max_dollars
+
+
+def test_the_fit_never_goes_below_a_usable_answer_or_above_the_request():
+    from maverick.llm import _estimate_call_cost, _fit_max_tokens_to_budget
+
+    spec = "anthropic:claude-sonnet-4-6"
+    messages = [{"role": "user", "content": "hi"}]
+    roomy = Budget(max_dollars=100.0)
+    assert _fit_max_tokens_to_budget(roomy, spec, "s", messages, None, 4096, None) == 4096
+    assert _fit_max_tokens_to_budget(None, spec, "s", messages, None, 4096, None) == 4096
+    assert _fit_max_tokens_to_budget(Budget(), spec, "s", messages, None, 4096, None) == 4096
+    tiny = Budget(max_dollars=_estimate_call_cost(spec, "s", messages, None, 500))
+    # Room for fewer than 1,024 output tokens: unchanged, so the reservation
+    # refuses the call with the usual stop message.
+    assert _fit_max_tokens_to_budget(tiny, spec, "s", messages, None, 4096, None) == 4096
