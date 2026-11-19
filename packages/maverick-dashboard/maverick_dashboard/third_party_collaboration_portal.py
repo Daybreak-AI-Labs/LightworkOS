@@ -212,7 +212,7 @@ _SECURITY_HEADERS = {
     "Cross-Origin-Resource-Policy": "same-origin",
     "Permissions-Policy": (
         "camera=(), microphone=(), geolocation=(), payment=(), usb=(), "
-        "serial=(), bluetooth=(), clipboard-read=(), clipboard-write=()"
+        "serial=(), clipboard-read=(), clipboard-write=()"
     ),
     "Referrer-Policy": "no-referrer",
     "X-Content-Type-Options": "nosniff",

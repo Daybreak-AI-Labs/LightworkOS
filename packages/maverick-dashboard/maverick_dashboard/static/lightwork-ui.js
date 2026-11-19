@@ -2071,11 +2071,25 @@
           }
         });
       }
-      fetch('/api/v1/approvals/waiting-count', {credentials: 'same-origin', cache: 'no-store',
-        headers: {Accept: 'application/json'}})
-        .then(function(response) { return response.ok ? response.json() : null; })
-        .then(function(data) { if (data && Number.isSafeInteger(data.waiting) && data.waiting >= 0) show(data.waiting); })
-        .catch(function() {});
+      function read() {
+        fetch('/api/v1/approvals/waiting-count', {credentials: 'same-origin', cache: 'no-store',
+          headers: {Accept: 'application/json'}})
+          .then(function(response) { return response.ok ? response.json() : null; })
+          .then(function(data) { if (data && Number.isSafeInteger(data.waiting) && data.waiting >= 0) show(data.waiting); })
+          .catch(function() {});
+      }
+      read();
+      // A decision, an undo or a bulk decision on this page changes the count:
+      // read it again rather than keep the number from page load.
+      let queued = false;
+      function reread() {
+        if (queued) return;
+        queued = true;
+        setTimeout(function() { queued = false; read(); }, 0);
+      }
+      document.addEventListener('lightwork:approval-decided', reread);
+      const queue = document.getElementById('approval-queue');
+      if (queue && typeof MutationObserver === 'function') new MutationObserver(reread).observe(queue, {childList: true});
     })();
 
     // Feature-gated workbenches must not advertise executable controls while

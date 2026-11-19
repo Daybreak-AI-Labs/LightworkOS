@@ -1312,15 +1312,17 @@ def task_limit_ceilings() -> dict[str, float]:
 
     The rule a stopped task's attempt limit follows: an operator-set
     ceiling (Settings or ``[budget]``), else the REST upper bound. So a
-    person's own limit can narrow the workspace's limit, never pass it.
+    person's own limit can narrow the workspace's limit, never pass it. An
+    operator ceiling above the REST bound is not lowered to it: a task with
+    no limit of its own runs under that ceiling, so a smaller "most you can
+    set" would contradict the limit the task actually stops at.
     """
     from maverick import runner
 
     dollars = runner.configured_goal_ceiling_dollars()
     seconds = runner.configured_goal_ceiling_wall_seconds()
-    return {"max_dollars": _REST_GOAL_MAX_DOLLARS if dollars is None else min(dollars, _REST_GOAL_MAX_DOLLARS),
-            "max_wall_seconds": (_REST_GOAL_MAX_WALL_SECONDS if seconds is None
-                                 else min(seconds, _REST_GOAL_MAX_WALL_SECONDS))}
+    return {"max_dollars": _REST_GOAL_MAX_DOLLARS if dollars is None else dollars,
+            "max_wall_seconds": _REST_GOAL_MAX_WALL_SECONDS if seconds is None else seconds}
 
 
 def person_task_limits(max_dollars: str = "", max_minutes: str = "") -> dict[str, float]:

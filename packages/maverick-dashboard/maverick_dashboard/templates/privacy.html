@@ -731,7 +731,7 @@
               {% if r.response_pending %}
                 {% if r.days_left == 0 %}{{ 'Deadline passed today' if r.overdue else 'Due today' }}{% elif not r.overdue %}{{ r.days_left }} day{{ '' if r.days_left == 1 else 's' }} left{% else %}{{ r.days_left | abs }} day{{ '' if (r.days_left | abs) == 1 else 's' }} overdue{% endif %}
                 {% if r.extended_until %}<br><span class="muted" style="font-size:var(--text-xs);">Extended</span>{% endif %}
-                {% if r.acknowledge_overdue %}<br><span class="badge warn">Receipt not confirmed in time</span>{% endif %}
+                {% if r.acknowledge_overdue %}<br class="pw-dsar-ack-late"><span class="badge warn pw-dsar-ack-late">Receipt not confirmed in time</span>{% endif %}
               {% else %}—{% endif %}</td>
             <td>
               {% if r.status == 'open' %}
@@ -2179,6 +2179,8 @@
            await mvFetchJSON('/api/v1/privacy/dsar/' + encodeURIComponent(item.id) + '/acknowledge',
              {method: 'POST'}, 'confirm receipt');
            item.row.dataset.acknowledged = 'yes';
+           // Receipt is confirmed now: its late warning no longer applies.
+           item.row.querySelectorAll('.pw-dsar-ack-late').forEach(function (node) { node.remove(); });
            return {note: 'receipt confirmed'};
          }}
       ]

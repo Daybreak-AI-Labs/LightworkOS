@@ -75,3 +75,21 @@ test("a page without an Approvals link asks for nothing", async () => {
   const {calls} = await render(ok(5), {links: 0});
   assert.deepEqual(calls, []);
 });
+
+test("a decision made on the page refreshes the count instead of keeping the stale one", async () => {
+  // The badge was read once per page: after approving on Approvals it still
+  // showed the old number until the page was reloaded.
+  const dom = new JSDOM(`<nav>${LINK}</nav>`, {url: "https://lightwork.test/approvals", runScripts: "outside-only"});
+  const w = dom.window, replies = [ok(2), ok(1)], calls = [];
+  w.fetch = async url => { calls.push(url); return replies.shift() || ok(1); };
+  w.eval(snippet);
+  for (let i = 0; i < 3; i++) await tick();
+  const badge = w.document.querySelector(".nav-count");
+  assert.equal(badge.textContent, "2");
+  w.document.dispatchEvent(new w.CustomEvent("lightwork:approval-decided", {detail: {id: 7, outcome: "approved"}}));
+  // The re-read is queued on a timer: wait for it rather than a fixed tick count.
+  for (let i = 0; i < 100 && badge.textContent !== "1"; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(calls.length, 2);
+  assert.equal(badge.textContent, "1");
+  assert.equal(w.document.querySelector("a").getAttribute("aria-label"), "Approvals, 1 waiting");
+});
