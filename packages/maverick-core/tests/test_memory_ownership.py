@@ -74,6 +74,16 @@ def test_any_second_person_ends_it(home, name, data):
     assert sole_person() == ""
 
 
+def test_an_invitation_that_expired_unused_does_not_count(home):
+    from maverick.memory_ownership import sole_person
+
+    _owner(home)
+    _write(home, "dashboard-invites.json", {"invite_1": {"email": OTHER, "expires_at": 1.0, "used_at": None}})
+    assert sole_person() == f"user:{OWNER}"
+    _write(home, "dashboard-invites.json", {"invite_1": {"email": OTHER, "expires_at": 1.0, "used_at": 2.0}})
+    assert sole_person() == ""
+
+
 @pytest.mark.parametrize("env", ["MAVERICK_OIDC_ENABLED", "MAVERICK_PROXY_AUTH", "MAVERICK_DASHBOARD_TOKEN"])
 def test_a_sign_in_that_admits_other_people_ends_it(home, monkeypatch, env):
     from maverick.memory_ownership import sole_person

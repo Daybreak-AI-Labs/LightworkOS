@@ -36,7 +36,13 @@ def source_allowed(goal_id, owner: str, *, world=None) -> bool:
 # maps the parsed JSON to the people it names; a shape it does not expect
 # raises, and the installation then does not count as single-person.
 def _invited(data):
-    return [row["email"] for row in data.values()]
+    # An invitation that expired unused can never be accepted; any other one
+    # (still open, or used) names a person who can sign in.
+    import time
+
+    now = time.time()
+    return [row["email"] for row in data.values()
+            if row.get("used_at") or float(row.get("expires_at") or now + 1) > now]
 
 
 def _accounts(data):

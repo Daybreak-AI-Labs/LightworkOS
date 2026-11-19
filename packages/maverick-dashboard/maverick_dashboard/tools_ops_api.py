@@ -231,6 +231,7 @@ def _learned_admission_allowed() -> tuple[bool, str]:
 
 
 def _learned_candidates() -> dict:
+    from maverick.memory_ownership import source_allowed
     from maverick.skill import stats as skill_stats
     from maverick.skills import (
         admitted_learned_skills,
@@ -274,6 +275,9 @@ def _learned_candidates() -> dict:
             "name": row.name, "triggers": row.triggers,
             "tools": row.tools_needed, "instructions": row.body,
             "source_tasks": row.source_goal_ids,
+            # On a single-person installation a suggestion may come from the
+            # owner's own tasks rather than shared ones; the card says which.
+            "from_your_tasks": not all(source_allowed(gid, "") for gid in row.source_goal_ids),
             "fingerprint": row.fingerprint, "ok": row.validation.ok,
             "problems": [_plain_problem(e) for e in row.validation.errors],
             "suggestions": [_plain_problem(w) for w in row.validation.warnings],
