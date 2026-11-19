@@ -51,3 +51,16 @@ def test_every_work_start_checks_it(monkeypatch):
     except HTTPException:
         pass
     assert calls == [1]
+
+
+def test_a_team_cannot_be_made_outside_every_workspace(monkeypatch):
+    from fastapi.testclient import TestClient
+    from maverick_dashboard import api
+    from maverick_dashboard.app import app
+
+    _gate(monkeypatch, tenant=None, workspaces=["local"])
+    monkeypatch.setattr(api, "require_permission", lambda _request, _permission: None)
+    monkeypatch.setattr("maverick.fleet.save_fleet", lambda *_a, **_k: pytest.fail("saved a team"))
+    client = TestClient(app, base_url="http://127.0.0.1", headers={"Origin": "http://127.0.0.1"})
+    made = client.post("/api/v1/fleets", json={"name": "Desk", "agents": [{"name": "a", "role": "operator"}]})
+    assert made.status_code == 409 and "workspace" in made.json()["detail"]

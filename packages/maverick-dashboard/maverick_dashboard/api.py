@@ -13219,6 +13219,10 @@ async def create_fleet(request: Request, payload: FleetCreateIn) -> dict:
     # fleet, not WHETHER the role may write one. A read-only viewer must be 403'd
     # (otherwise it could self-own a fleet here and then run it).
     require_permission(request, "operate")
+    # A team made outside every workspace could never run (work needs one).
+    from ._shared import require_workspace_for_work
+
+    require_workspace_for_work()
     from maverick.capability import agent_role_known, configured_roles
     from maverick.fleet import Fleet, FleetAgent, load_fleet, save_fleet, valid_name
 
