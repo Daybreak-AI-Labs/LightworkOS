@@ -15,7 +15,9 @@ submissions are accepted only with manifests that match such a measurement.
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
+import sqlite3
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, is_dataclass
 from functools import partial
@@ -29,6 +31,9 @@ from starlette.concurrency import run_in_threadpool
 
 from ._shared import authenticated_subject
 from .auth import require_permission
+from .store_failures import unavailable_if_busy
+
+log = logging.getLogger(__name__)
 
 _ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
 _OP_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,191}$"
@@ -408,6 +413,9 @@ def _default_store_for(tenant_id: str, principal_ref: str):
 async def _call(ops: Any, function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     try:
         return _jsonable(await run_in_threadpool(function, *args, **kwargs))
+    except sqlite3.OperationalError as exc:
+        unavailable_if_busy(log, exc, "third-party collaboration authority unavailable")
+        raise
     except ops.ThirdPartyCollaborationNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ops.ThirdPartyCollaborationPermissionDenied as exc:
@@ -486,6 +494,9 @@ def create_third_party_collaboration_router(
             else:
                 selected = deps.store_for or _default_store_for
                 store = selected(tenant, principal)
+        except sqlite3.OperationalError as exc:
+            unavailable_if_busy(log, exc, "third-party collaboration authority unavailable")
+            raise
         except (ops.ThirdPartyCollaborationError, OSError) as exc:
             raise HTTPException(
                 status_code=503,

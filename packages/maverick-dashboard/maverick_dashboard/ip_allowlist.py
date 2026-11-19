@@ -141,12 +141,16 @@ def address_allowed(addr: _Address | None, entries: list | tuple) -> bool:
 
 
 def installation_allows(request) -> bool:
-    """The installation list, checked before sign-in."""
-    addr = client_ip(request)
-    try:
-        entries = _policy()["cidrs"]
-    except Exception:
-        return addr is not None and addr.is_loopback
+    """The installation list, checked before sign-in. A gate: the trusted
+    proxies and the list come from one current read of the configuration."""
+    from maverick.config import single_read
+
+    with single_read(fresh=True):
+        addr = client_ip(request)
+        try:
+            entries = _policy()["cidrs"]
+        except Exception:
+            return addr is not None and addr.is_loopback
     return address_allowed(addr, entries)
 
 

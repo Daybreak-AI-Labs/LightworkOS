@@ -85,7 +85,10 @@ class RequestMemoMiddleware:
         token = _SCOPE.set({})
         try:
             with kept_reads():
-                if scope["type"] == "http":
+                from .auth import probe_path
+
+                if scope["type"] == "http" and not probe_path(scope):
+                    # A probe answers without configuration or a worker thread.
                     from starlette.concurrency import run_in_threadpool
 
                     await run_in_threadpool(_prime_request_configuration)
@@ -102,13 +105,16 @@ def _prime_request_configuration() -> None:
     every other request while it waited on the disk, which on a network file
     system is many round trips. The thread shares this request's memo and kept
     read (both are objects the copied context refers to), so the middlewares
-    then find the answers. A gate under :func:`fresh_configuration` still
-    reads the current files itself."""
+    then find the answers from one read of the files (``single_read``). A gate
+    under :func:`fresh_configuration` still reads the current files itself."""
     try:
+        from maverick.config import single_read
+
         from ._shared import dashboard_token
         from .request_size import max_request_bytes
 
-        dashboard_token()
-        max_request_bytes()
+        with single_read():
+            dashboard_token()
+            max_request_bytes()
     except Exception:  # noqa: BLE001 -- the middleware asks again and reports it
         pass

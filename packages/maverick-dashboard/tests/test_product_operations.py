@@ -227,3 +227,26 @@ def test_a_single_computer_feature_on_a_shared_deployment_is_unavailable_plainly
     assert item["available"] is False and "single-computer installation" in item["blocked"]
     review = prepare(client, state)
     assert review.status_code == 409 and "single-computer installation" in review.json()["detail"]
+
+
+def test_a_live_record_question_is_never_turned_into_a_control_proposal(registry, monkeypatch):
+    """Live: "How much did task #50 cost?" was given the "Find a saved record"
+    control by the model proposer instead of the task's own cost. A question
+    that Copilot answers from live records is not a control request."""
+    from maverick_dashboard import _shared
+    from maverick_dashboard import app as dashboard_app
+
+    client, state = registry
+    calls = []
+    monkeypatch.setattr(_shared, "_any_provider_key_set", lambda: True)
+    monkeypatch.setattr(_shared, "require_provider_or_400", lambda **_: None)
+    monkeypatch.setattr(dashboard_app, "check_goal_rate_limit", lambda *a, **k: None)
+    monkeypatch.setattr(ops, "_model_proposal", lambda message, choices: calls.append(message) or "preferences.example")
+    for message in ("How much did task #50 cost?", "What did this task cost in dollars?"):
+        response = client.post(BASE + "/propose", json={
+            "page": "/preferences", "selection": {}, "context": state["context"], "message": message})
+        assert response.status_code == 200 and response.json()["operation"] is None, message
+    assert calls == []
+    response = client.post(BASE + "/propose", json={
+        "page": "/preferences", "selection": {}, "context": state["context"], "message": "Change my example"})
+    assert response.json()["operation"] == "preferences.example" and calls == ["Change my example"]

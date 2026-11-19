@@ -1114,7 +1114,9 @@ def test_live_task_cost_answers_for_the_task_asked_about(client, monkeypatch):
     monkeypatch.setattr(api, "_copilot_model_route_status", lambda: pytest.fail("live records went to the provider route"))
     for message, page in (("How much did task 34 cost, and why?", "/chat"),
                           ("What did this task cost?", "/chat/goal/34"),
-                          ("how much did task #34 cost", "/spend")):
+                          ("how much did task #34 cost", "/spend"),
+                          ("What did this task cost in dollars?", "/chat/goal/34"),
+                          ("How much did task #34 cost in total?", "/spend")):
         answer = client.post("/api/v1/copilot", json={"message": message, "page": page}).json()
         assert answer["mode"] == "live", message
         assert "$0.43" in answer["reply"] and "3.43" not in answer["reply"], answer["reply"]

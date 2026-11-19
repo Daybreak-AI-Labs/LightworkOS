@@ -200,7 +200,9 @@
 
     /* ---- the top bar: on wide screens only the help and account cluster, at
        the same height and right edge as the product shell's top bar (HLP-1);
-       on small screens also the Menu, Copilot and New task buttons ---- */
+       on small screens also the Menu and New task buttons. Copilot shows at
+       every width: Chat has no floating Copilot button (it would cover the
+       composer) and the sidebar entry sits below the navigation ---- */
     .cs-topbar {
       grid-column: 2; grid-row: 1; display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2);
       min-height: var(--topbar-h); padding: var(--space-2) var(--space-5); border-bottom: 1px solid var(--border);
@@ -208,7 +210,7 @@
     .cs-topbar .topbar-utilities { display: flex; align-items: center; gap: var(--space-2); }
     .cs-topbar__halt { margin-inline-start: auto; }
     @media (min-width: 861px) {
-      .cs-topbar > #cs-menu, .cs-topbar__title, .cs-topbar__copilot, .cs-topbar > .personal-notification-link, .cs-topbar__new { display: none; }
+      .cs-topbar > #cs-menu, .cs-topbar__title, .cs-topbar > .personal-notification-link, .cs-topbar__new { display: none; }
     }
     /* ---- small screens: the sidebar becomes a drawer behind a Menu button ---- */
     .cs-backdrop { display: none; }

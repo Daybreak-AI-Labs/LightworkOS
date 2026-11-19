@@ -316,3 +316,102 @@ def test_a_malformed_source_list_stays_a_logged_outage(environment, caplog):
             api._collector_ids(SimpleNamespace(app=client.app))
     assert failed.value.status_code == 503
     assert any("TrcEvidenceSchedulerConfigurationError" in row.getMessage() for row in caplog.records)
+
+
+def _on_event_loop() -> bool:
+    import asyncio
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
+def test_reads_check_the_gate_and_open_the_store_off_the_event_loop(environment, monkeypatch):
+    """Opening the tenant store runs SQLite work with a 30 s busy timeout; on the
+    hosted demo this page's lists did that on the event loop and every other
+    request, health checks included, waited about 45 seconds."""
+    client, _database, state = environment
+    seen: list[tuple[str, bool]] = []
+    gate, enabled = evidence.require_enabled, evidence.enabled
+
+    def watched_gate() -> None:
+        seen.append(("gate", _on_event_loop()))
+        gate()
+
+    def watched_enabled() -> bool:
+        seen.append(("enabled", _on_event_loop()))
+        return enabled()
+
+    factory = client.app.state.trc_continuous_evidence_store_factory
+
+    def watched_factory(**kwargs):
+        seen.append(("store", _on_event_loop()))
+        return factory(**kwargs)
+
+    monkeypatch.setattr(evidence, "require_enabled", watched_gate)
+    monkeypatch.setattr(evidence, "enabled", watched_enabled)
+    client.app.state.trc_continuous_evidence_store_factory = watched_factory
+    for path in ("/definitions", "/enrollments", "/jobs?state=dead_letter", "/runs?limit=50",
+                 "/alerts?limit=100", "/integrity", "/status"):
+        assert client.get(f"/api/v1/compliance/continuous-evidence{path}").status_code == 200, path
+    assert {kind for kind, _loop in seen} == {"gate", "enabled", "store"}
+    assert not any(loop for _kind, loop in seen)
+    state["enabled"] = False
+    assert client.get("/api/v1/compliance/continuous-evidence/definitions").status_code == 403
+
+
+def test_a_waiting_store_does_not_stop_the_server_answering(environment):
+    import threading
+    import time
+
+    client, _database, _state = environment
+    app = client.app
+
+    @app.get("/livez")
+    async def livez() -> dict[str, str]:
+        return {"status": "ok"}
+
+    factory = app.state.trc_continuous_evidence_store_factory
+    entered, release = threading.Event(), threading.Event()
+
+    def waiting_factory(**kwargs):
+        entered.set()
+        release.wait(timeout=10)
+        return factory(**kwargs)
+
+    app.state.trc_continuous_evidence_store_factory = waiting_factory
+    with TestClient(app, base_url="http://127.0.0.1", headers={"Origin": "http://127.0.0.1"}) as shared:
+        listing: list[int] = []
+        worker = threading.Thread(
+            target=lambda: listing.append(
+                shared.get("/api/v1/compliance/continuous-evidence/definitions").status_code
+            ),
+            daemon=True,
+        )
+        worker.start()
+        try:
+            assert entered.wait(timeout=10)
+            started = time.monotonic()
+            assert shared.get("/livez").status_code == 200
+            assert time.monotonic() - started < 2, "the waiting store blocked the event loop"
+            assert not release.is_set() and worker.is_alive()
+        finally:
+            release.set()
+            worker.join(timeout=15)
+    assert listing == [200]
+
+
+def test_a_locked_store_answers_unavailable_not_a_server_error(environment):
+    import sqlite3
+
+    client, _database, _state = environment
+
+    def locked_factory(**_kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    client.app.state.trc_continuous_evidence_store_factory = locked_factory
+    response = client.get("/api/v1/compliance/continuous-evidence/definitions")
+    assert response.status_code == 503
+    assert response.json()["detail"] == "continuous-evidence store is unavailable"

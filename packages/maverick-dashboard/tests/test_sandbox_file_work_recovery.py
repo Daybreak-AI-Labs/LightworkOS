@@ -24,6 +24,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(wizard, "CONFIG_FILE", tmp_path / "config.toml")
     monkeypatch.setattr(wizard, "ENV_FILE", tmp_path / ".env")
     monkeypatch.setattr(wizard, "_docker_available", lambda: False)
+    monkeypatch.setattr(wizard, "_podman_available", lambda: False)
     assert wizard.write_consumer_config(
         user_name="Taylor", keys={}, workdir=str(tmp_path / "work"),
         budget={"max_dollars": 2, "max_wall_seconds": 1800},

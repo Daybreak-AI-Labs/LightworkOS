@@ -76,6 +76,40 @@ def test_oidc_reprompts_required_urls_and_masks_secrets(monkeypatch):
     assert login_enabled(actual) and len(seen) == 4
 
 
+@pytest.mark.parametrize("remember", [True, False])
+def test_browser_login_asks_whether_to_name_people_and_the_kernel_reads_it(monkeypatch, remember):
+    text = iter(['https://idp.example', 'opaque-audience', 'https://idp.example/keys',
+                 'dashboard', 'https://dash.example/auth/callback'])
+    secret = iter(['provider-secret', 's' * 32])
+    asked = []
+
+    def confirm(prompt, **kwargs):
+        if "name and verified email" in prompt:
+            asked.append(kwargs.get("default"))
+            return remember
+        return True
+
+    monkeypatch.setattr(wizard, "_q_text", lambda prompt, **kwargs: next(text))
+    monkeypatch.setattr(wizard, "_q_secret", lambda prompt: next(secret))
+    monkeypatch.setattr(wizard, "_q_confirm", confirm)
+    picked = advanced.pick_oidc()
+    parsed = _parsed(advanced._cfg_advanced_oidc({"oidc": picked}))
+    assert asked == [True]
+    assert parsed["auth"]["remember_account_names"] is remember
+    assert parsed["auth"]["oidc"]["audience"] == "opaque-audience"
+
+
+def test_name_question_is_not_asked_without_browser_login(monkeypatch):
+    text = iter(['https://idp.example', 'opaque-audience', 'https://idp.example/keys'])
+    prompts = []
+    monkeypatch.setattr(wizard, "_q_text", lambda prompt, **kwargs: next(text))
+    monkeypatch.setattr(wizard, "_q_confirm", lambda prompt, **kwargs: (prompts.append(prompt), prompt.startswith("Enable OIDC"))[1])
+    picked = advanced.pick_oidc()
+    assert "remember_account_names" not in picked
+    assert not any("name and verified email" in prompt for prompt in prompts)
+    assert "remember_account_names" not in _parsed(advanced._cfg_advanced_oidc({"oidc": picked})).get("auth", {})
+
+
 @pytest.mark.parametrize("change", [
     {"audience": ""}, {"audience": None}, {"issuer": ""}, {"jwks_uri": "http://keys.example"},
     {"client_id": "dash", "client_secret": "provider", "redirect_uri": "https://dash.example/auth/callback", "session_secret": "short"},

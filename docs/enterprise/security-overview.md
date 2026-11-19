@@ -189,6 +189,14 @@ to hold a second factor.
   session; "Sign out everywhere" ends every recorded session and bumps the
   person's revocation epoch, which also ends untracked sessions and API bearers
   issued before now. Every revoke writes a control-plane audit row.
+- **Sign-in names** (`account-profiles.json`, private, sealed with the
+  deployment key when at-rest encryption is on). Each company sign-in (OIDC)
+  keeps only the display name and the email the provider marks verified, so
+  approvals, settings history and the Activity log name the person where they
+  already show the activity. It grants nothing. My data exports it and its
+  reviewed deletion erases it; deleting the account in the company directory
+  (SCIM) erases it. `[auth] remember_account_names = false`
+  (`MAVERICK_REMEMBER_ACCOUNT_NAMES=0`) stops recording and naming.
 - **Allowed addresses** (`[auth.ip_allowlist] cidrs`, `MAVERICK_IP_ALLOWLIST`;
   `workspace_cidrs` per workspace, which a workspace's own `config.toml` can
   narrow). The installation list is enforced before sign-in for every request

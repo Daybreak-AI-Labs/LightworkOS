@@ -212,7 +212,7 @@
         <td><span class="badge {{ 'active' if route.ready else 'blocked' }}">{{ route.status }}</span></td>
       </tr>{% endfor %}</tbody>
     </table>
-    <p class="muted">Lightwork charges a safety ceiling for a self-hosted model server it cannot tell is private. Enter its price below, or mark it free here.</p>
+    <p class="muted">Lightwork charges a safety ceiling for a self-hosted model server it cannot tell is private. Enter its price below, or mark it free here. An OpenAI-compatible server, such as LM Studio or llama.cpp, stops until you set its price or mark it free. Only a server on this computer or your private network can be marked free.</p>
     <h4>Mark a self-hosted server free</h4>
     <table data-self-hosted-prices><thead><tr><th scope="col">Server</th><th scope="col">Charge now</th></tr></thead>
       <tbody>{% for row in self_hosted_states %}<tr><td>{{ row.label }}</td><td>{{ row.state }}</td></tr>{% endfor %}</tbody>
@@ -223,6 +223,7 @@
           <option value="ollama">Ollama</option>
           <option value="vllm">vLLM</option>
           <option value="tgi">Hugging Face TGI</option>
+          <option value="openai_compatible">OpenAI-compatible server</option>
         </select>
       </label>
       <label class="settings-field">Charge

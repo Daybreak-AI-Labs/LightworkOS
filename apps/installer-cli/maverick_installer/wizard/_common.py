@@ -89,3 +89,8 @@ def _append_nested_product_config(
                 append_table(f"{path}.{_toml_key(subsystem)}", nested)
 
     append_table(section, values)
+
+
+def _addressed(sentence: str, name: str) -> str:
+    """``"Setup saved"`` -> ``"Setup saved, Ana."``; with no name, ``"Setup saved."``"""
+    return f"{sentence}, {name}." if name else f"{sentence}."

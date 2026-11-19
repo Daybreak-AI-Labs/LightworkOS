@@ -9,8 +9,8 @@
 #
 # Runs as the unprivileged "maverick" user (uid/gid 1000), not root.
 #
-# First run drops you into `maverick init` so the wizard can set up the
-# config inside the mounted ~/.maverick directory.
+# With no command the image prints `maverick --help`; run `init` first to
+# create the config inside the mounted ~/.maverick directory.
 
 # Pin the image index to the reviewed release base, including for local builds.
 # Override with --build-arg PYTHON_DIGEST=@sha256:<digest> when reviewing an
@@ -117,7 +117,6 @@ WORKDIR /workspace
 # their Compose/Kubernetes/Helm definitions; the base CLI/worker image declares
 # no HTTP health check because those valid modes do not listen on port 8765.
 
-# Default entrypoint is the maverick CLI. First run — if config is missing —
-# helpfully points the user at `maverick init`.
+# Default entrypoint is the maverick CLI; with no arguments it prints its help.
 ENTRYPOINT ["/usr/local/bin/lightwork-entrypoint"]
 CMD ["--help"]

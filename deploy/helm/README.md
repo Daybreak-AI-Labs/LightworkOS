@@ -52,8 +52,11 @@ Keep `replicaCount=1` and `autoscaling.enabled=false`. Postgres centralizes the
 world model, but workflow releases/runs, A2A durable task claims, audit and
 learning ledgers, and tenant-local policy state still live in the mounted data
 root. Multiple dashboard/serve pods would split approval and idempotency
-authority. The chart fails closed on that topology; scale remote goal workers
-separately until every control-plane store has a shared transactional backend.
+authority. The chart fails closed on that topology. It defines no remote
+worker either: the `[queue] backend = "arq"` path needs Redis and the `queue`
+extra, which the image does not install, so extra goal capacity currently means
+running workers yourself. See
+[Capacity and scaling](../../docs/deployment.md#capacity-and-scaling).
 
 The state PVC is mandatory with either backend and must mount at
 `/home/maverick/.maverick`. Disabling it or redirecting `MAVERICK_HOME` elsewhere

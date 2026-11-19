@@ -1027,13 +1027,14 @@ def _read_witness() -> tuple | None:
     overlay = os.environ.get(CONFIG_OVERLAY_ENV)
     if overlay:
         paths.append(Path(overlay).expanduser())
-    keys = [key]
-    try:
-        with os.scandir(keyring) as entries:
-            keys.extend(sorted(keyring / e.name for e in entries if e.name.endswith(".key")))
-    except OSError:
-        pass
     files = tuple(_file_state(path) for path in paths)
+    keys = [key]
+    if isinstance(files[3], tuple):  # the keyring folder's own state: absent needs no listing
+        try:
+            with os.scandir(keyring) as entries:
+                keys.extend(sorted(keyring / e.name for e in entries if e.name.endswith(".key")))
+        except OSError:
+            pass
     key_folder = _file_state(key.parent, key_material=True, rechmodded=True)
     key_files = tuple(_file_state(path, key_material=True) for path in keys)
     if key_folder is None or None in files or None in key_files:
@@ -1057,16 +1058,25 @@ def _present(path: Path) -> bool:
     """``Path.exists`` for an optional source, except that a symlink loop is
     read so the read reports it: ``exists`` treats a loop as absent and
     silently dropped the policy. A permission error still raises, as callers
-    such as the workspace IP allowlist rely on it."""
-    if path.exists():
-        return True
+    such as the workspace IP allowlist rely on it. One stat answers: every
+    configuration load asks about the workspace overlay, and on network storage
+    each stat is a round trip."""
     try:
         path.stat()
     except OSError as e:
-        return e.errno == errno.ELOOP or getattr(e, "winerror", None) == 1921  # a loop
+        if e.errno == errno.ELOOP or getattr(e, "winerror", None) == 1921:
+            return True  # a loop
+        if e.errno in _ABSENT_ERRNOS or getattr(e, "winerror", None) in _ABSENT_WINERRORS:
+            return False
+        raise
     except ValueError:
         return False
-    return True  # created since
+    return True
+
+
+# What ``Path.exists`` (Python 3.11 and 3.12) treats as absent rather than raising.
+_ABSENT_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.EBADF})
+_ABSENT_WINERRORS = frozenset({21, 123})  # ERROR_NOT_READY, ERROR_INVALID_NAME
 
 
 def _read_global_config() -> dict:

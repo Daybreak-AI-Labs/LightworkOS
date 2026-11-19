@@ -23,6 +23,15 @@ from .draft_api import context_for
 PURPOSE = "lightwork.chat-alternative.v1"
 TTL = 600
 LABELS = {"retry": "Try again", "edit": "Edit and resend", "branch": "Branch from here"}
+STARTED = "Started a separate conversation. Open it to follow its progress; if its AI work cannot start, the conversation says why."
+_PROGRESS = {"pending": "Its AI work is about to start. Do not repeat this request; open the conversation to follow it.",
+             "running": "Its AI work is running. Open the conversation to follow its progress.",
+             "active": "Its AI work is running. Open the conversation to follow its progress.",
+             "done": "Its AI work finished. Open the conversation to read the answer.",
+             "completed": "Its AI work finished. Open the conversation to read the answer.",
+             "failed": "Its AI work stopped. Open the conversation to read why.",
+             "blocked": "Its AI work stopped. Open the conversation to read why.",
+             "cancelled": "Its AI work was stopped. Open the conversation to read what was kept."}
 NOTICE = "This creates a separate conversation. The original messages, answers and completed actions stay unchanged. Answer only generates text without taking actions. Allowing actions starts new work under your current permissions and may repeat earlier changes; it cannot undo them. AI use counts toward current spending and time limits."
 
 
@@ -167,11 +176,16 @@ def original(request, token):
     if goal is None or goal.owner != before["actor"]:
         raise HTTPException(409, "The retained admission's conversation is unavailable. Nothing was repeated.")
     authority(request, before["context"])
+    if receipt["state"] in {"dispatching", "dispatched"}:
+        # Nothing marks a started submission "dispatched"; the conversation's
+        # own status says whether its AI work ran.
+        progress = _PROGRESS.get(goal.status, "Open the conversation to read its current progress.")
+        return {"context": before["context"], "confirmed": True, "state": receipt["state"],
+                "goal": goal.id, "href": f"/chat/goal/{goal.id}",
+                "message": "Your original request created this separate conversation. No second attempt was started. " + progress}
     dispatch = {"draft": "AI work has not been confirmed as started; open its draft recovery controls.",
                 "admitted": "AI work has not been confirmed as started; open its draft recovery controls.",
                 "ready": "AI work has not been confirmed as started; open its draft recovery controls.",
-                "dispatching": "The start was reserved, but its dispatch outcome is unconfirmed. Do not repeat this request.",
-                "dispatched": "Its dispatch was recorded. Open the conversation to read its current progress.",
                 "rejected": "Preparation was refused. Open the conversation to read the actual reason."}
     return {"context": before["context"], "confirmed": True, "state": receipt["state"],
             "goal": goal.id, "href": f"/chat/goal/{goal.id}",
@@ -223,4 +237,7 @@ def apply(request, token):
             background.add_task(dispatch, _shared._world(), receipt, run_goal_in_background_async, receipt["goal_id"],
                 **caps, conversation_id=receipt["detail"]["conversation_id"], channel="dashboard",
                 user_id=auth.execution_user_id_from_request(request), allowed_suites=auth.caller_suites(request))
+            # This request created the conversation and asked it to start (after
+            # this response). "No second attempt" is only true of a repeat.
+            return {**original(request, token), "message": STARTED}, background
         return original(request, token), background

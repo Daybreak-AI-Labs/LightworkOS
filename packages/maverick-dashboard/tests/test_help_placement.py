@@ -72,3 +72,15 @@ def test_chat_sidebar_no_longer_carries_help():
     side = source.split('<aside class="cs-side"', 1)[1].split("</aside>", 1)[0]
     assert "_help_menu.html" not in side
     assert "_topbar_utilities.html" in source
+
+
+def test_chat_home_shows_a_copilot_button_on_wide_screens(client):
+    # Chat hides the floating Copilot button (it would cover the composer), and
+    # its sidebar entry sits below every navigation group and recent chat, so
+    # on a desktop Chat home showed no Copilot button at all. The top bar's
+    # Copilot button stays visible at every width.
+    page = client.get("/chat").text
+    assert "data-copilot-toggle" in _top_bar(page, "chat")
+    wide = re.search(r"@media \(min-width: 861px\) \{\s*([^{}]*)\{ display: none; \}", page)
+    assert wide, "the wide-screen top bar rule moved"
+    assert ".cs-topbar__copilot" not in wide.group(1)

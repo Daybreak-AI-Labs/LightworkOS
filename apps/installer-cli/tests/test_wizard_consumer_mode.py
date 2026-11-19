@@ -48,6 +48,20 @@ def test_advanced_task_limits_reask_invalid_dollars_time_and_calls(monkeypatch):
     budget = wizard.pick_budget()
     assert (budget["max_dollars"], budget["max_wall_seconds"], budget["max_tool_calls"]) == (4.5, 600.0, 20)
 
+def test_pick_mode_counts_the_questions_consumer_setup_asks(monkeypatch):
+    # The picker promised four questions; the consumer flow announces and asks six.
+    import io
+
+    from maverick_installer import wizard
+    from rich.console import Console
+    out = io.StringIO()
+    monkeypatch.setattr(wizard, "console", Console(file=out, width=120))
+    monkeypatch.setattr(wizard, "_q_select", lambda *_a, **kw: kw["default"])
+    wizard.pick_mode()
+    assert "Four questions" not in out.getvalue()
+    assert "consumer  Six questions" in out.getvalue()
+
+
 def test_pick_mode_default_is_consumer(monkeypatch):
     from maverick_installer import wizard
     captured = {}
@@ -180,6 +194,7 @@ def _stub_wizard_io(monkeypatch, tmp_path: Path, key: str = "sk-ant-test"):
     monkeypatch.setattr(wizard, "preflight", lambda: True)
     # Pretend Docker is unavailable so the test is hermetic.
     monkeypatch.setattr(wizard, "_docker_available", lambda: False)
+    monkeypatch.setattr(wizard, "_podman_available", lambda: False)
     # Stub the validator so we don't hit Anthropic.
     monkeypatch.setattr(
         wizard, "_validate_anthropic_key", lambda k: (True, "validated"),
@@ -236,6 +251,33 @@ def test_run_consumer_skip_key_succeeds(monkeypatch, tmp_path: Path):
     assert (tmp_path / ".maverick" / "config.toml").exists()
     # No .env created when no keys.
     assert not (tmp_path / ".maverick" / ".env").exists()
+
+
+def _closing_message(monkeypatch, tmp_path: Path, run: str, name: str) -> str:
+    import io
+
+    from rich.console import Console
+    wizard = _stub_wizard_io(monkeypatch, tmp_path, key="")
+    answers = iter([name, str(tmp_path / "workspace")])
+    monkeypatch.setattr(wizard, "_q_text", lambda *a, **kw: next(answers))
+    out = io.StringIO()
+    monkeypatch.setattr(wizard, "console", Console(file=out, width=200))
+    assert getattr(wizard, run)() == 0
+    return " ".join(out.getvalue().split())
+
+
+def test_closing_message_reads_correctly_without_a_name(monkeypatch, tmp_path: Path):
+    # A blank name used to print "Setup saved without an API key, you."
+    for run in ("run_consumer", "run_express"):
+        text = _closing_message(monkeypatch, tmp_path / run, run, "")
+        assert ", you." not in text
+        assert "Setup saved without an API key." in text
+
+
+def test_closing_message_addresses_a_given_name(monkeypatch, tmp_path: Path):
+    for run in ("run_consumer", "run_express"):
+        text = _closing_message(monkeypatch, tmp_path / run, run, "Ana")
+        assert "Setup saved without an API key, Ana." in text
 
 
 def test_run_consumer_docker_default_when_available(monkeypatch, tmp_path: Path):

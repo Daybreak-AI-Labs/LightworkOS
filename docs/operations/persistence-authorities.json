@@ -178,7 +178,7 @@
     "governed": 141,
     "artifact": 51,
     "a2a": 4,
-    "preferences": 7,
+    "preferences": 8,
     "learning": 61,
     "sqlite_domain": 81,
     "configuration": 71,
@@ -30313,6 +30313,48 @@
           "function": "start_over_limits",
           "kind": "cross_process_lock",
           "expression": "cross_process_lock(path)"
+        }
+      ]
+    },
+    {
+      "path": "packages/maverick-dashboard/maverick_dashboard/account_profiles.py",
+      "contract": "preferences",
+      "owner": "packages/maverick-dashboard/maverick_dashboard/account_profiles.py",
+      "purpose": "Per-person name and verified email reported at company sign-in, keyed by sign-in, used only to name people where they are already shown; exported and erased through My data and erased with a deleted company directory account.",
+      "referenced_store_owners": [],
+      "review": "module purpose and persistence seam read; contract-family classification (not every operation tested)",
+      "governed_namespaces": [],
+      "literal_path_hints": [
+        "account-profiles.json"
+      ],
+      "observed_mechanism_markers": {
+        "cross_process_lock": 1,
+        "atomic_replace": 1
+      },
+      "source_sites": [
+        {
+          "line": 41,
+          "function": "_path",
+          "kind": "maverick_home",
+          "expression": "maverick_home()"
+        },
+        {
+          "line": 61,
+          "function": "_locked",
+          "kind": "maverick_home",
+          "expression": "maverick_home()"
+        },
+        {
+          "line": 62,
+          "function": "_locked",
+          "kind": "cross_process_lock",
+          "expression": "cross_process_lock(_path())"
+        },
+        {
+          "line": 93,
+          "function": "_write",
+          "kind": "atomic_write_bytes",
+          "expression": "atomic_write_bytes(_path(), payload, mode=0o600)"
         }
       ]
     }

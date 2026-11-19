@@ -45,6 +45,7 @@ def _stub_wizard_io(monkeypatch, tmp_path: Path, key: str = "sk-ant-test"):
                         tmp_path / ".maverick" / "wizard-partial.json")
     monkeypatch.setattr(wizard, "preflight", lambda: True)
     monkeypatch.setattr(wizard, "_docker_available", lambda: False)
+    monkeypatch.setattr(wizard, "_podman_available", lambda: False)
     monkeypatch.setattr(
         wizard, "_validate_anthropic_key", lambda k: (True, "validated"),
     )

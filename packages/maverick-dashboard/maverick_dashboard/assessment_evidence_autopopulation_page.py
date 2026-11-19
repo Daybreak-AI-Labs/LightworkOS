@@ -29,7 +29,7 @@ _HEADERS = {
     "Cross-Origin-Resource-Policy": "same-origin",
     "Permissions-Policy": (
         "camera=(), microphone=(), geolocation=(), payment=(), usb=(), "
-        "serial=(), bluetooth=(), clipboard-read=(), clipboard-write=()"
+        "serial=(), clipboard-read=(), clipboard-write=()"
     ),
     "Referrer-Policy": "no-referrer",
     "X-Content-Type-Options": "nosniff",
@@ -90,7 +90,7 @@ def create_assessment_evidence_autopopulation_page_router(
     router = APIRouter(tags=["assessment-evidence-autopopulation-workbench"])
 
     @router.get(PAGE_PATH, response_class=HTMLResponse, include_in_schema=False)
-    async def workbench(request: Request) -> HTMLResponse:
+    def workbench(request: Request) -> HTMLResponse:
         require_permission(request, "view")
         workspace_selected = _tenant_selected() is not False
         if any(

@@ -947,3 +947,17 @@ def test_an_invalid_saved_config_points_every_blocked_check_at_the_config_fix(is
     for check_id in ("provider", "model_routes", "storage"):
         assert checks[check_id].status == "blocked"
         assert checks[check_id].remediation == "maverick config-lint"
+
+
+def test_keyless_openai_compatible_server_needs_a_key_only_off_this_network(isolated_config):
+    # The client accepts a key-less loopback or private-network server (LM
+    # Studio, llama.cpp); a public gateway without a key stays refused.
+    from maverick.operator_preflight import _route_configuration_missing
+
+    def missing(url):
+        cfg = {"providers": {"openai_compatible": {"base_url": url}}}
+        return _route_configuration_missing("openai_compatible", cfg)
+
+    assert missing("http://127.0.0.1:1234/v1") == ()
+    assert missing("http://192.168.1.20:8080/v1") == ()
+    assert missing("https://gateway.example.test/v1") == ("api_key",)

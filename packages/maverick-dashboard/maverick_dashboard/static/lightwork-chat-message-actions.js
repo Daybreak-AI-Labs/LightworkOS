@@ -8,7 +8,8 @@
   var answerOnly = document.getElementById('chat-alternative-answer-only'), review = document.getElementById('chat-alternative-full-review');
   var status = document.getElementById('chat-alternative-status'), original = document.getElementById('chat-alternative-original'), link = document.getElementById('chat-alternative-open');
   var ready = null, plan = null, pending = '', busy = false, current = true, generation = 0, dirty = false, controllers = new Set(), recovery = null;
-  var key = 'lightwork:chat-message-original:' + expected;
+  // The protected original belongs to the conversation it was started from, not to every task page in the tab.
+  var key = 'lightwork:chat-message-original:' + expected + ':' + root.dataset.goal;
   try { pending = sessionStorage.getItem(key) || ''; } catch (_) { /* Encrypted draft recovery also retains the protected original. */ }
   if (pending.length > 1048576) pending = '';
   original.hidden = !pending;

@@ -64,6 +64,7 @@ except ImportError:  # pragma: no cover
 # primitives, console and CONFIG_* paths through ._seams at call time, so a
 # monkeypatch on this facade applies to them too.
 from .. import models as catalog
+from ._common import _addressed as _addressed
 from ._common import _append_nested_product_config as _append_nested_product_config
 from ._common import _csv_list as _csv_list
 from ._common import _emit_kv as _emit_kv
@@ -613,7 +614,9 @@ def preflight() -> bool:
 
     # Docker availability determines whether the simple setup can safely
     # offer file changes and command execution in an isolated work area.
-    if shutil.which("docker"):
+    if not _docker_available() and _podman_available():
+        console.print("[green]✓[/green] Podman is available")
+    elif shutil.which("docker"):
         try:
             subprocess.run(
                 ["docker", "version"],
@@ -2692,22 +2695,26 @@ def pick_api_keys() -> dict[str, Any]:
     return result
 
 
-def _docker_available() -> bool:
-    """Return True iff the `docker` binary is on PATH AND the daemon
-    responds. Used to pick a safe sandbox default in consumer mode and
+def _docker_available(engine: str = "docker") -> bool:
+    """Return True iff the `docker` binary (or ``engine``) is on PATH AND
+    answers. Used to pick a safe sandbox default in consumer mode and
     to choose the wizard's default in dev mode."""
-    if not shutil.which("docker"):
+    if not shutil.which(engine):
         return False
     try:
-        subprocess.run(
-            ["docker", "version"],
-            capture_output=True,
-            timeout=2,
-            check=True,
-        )
+        subprocess.run([engine, "version"], capture_output=True, timeout=2, check=True)
         return True
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
         return False
+
+
+def _podman_available() -> bool:
+    return _docker_available("podman")
+
+
+def _container_backend() -> str:
+    """Docker when its daemon answers, else Podman, else local (file work off)."""
+    return "docker" if _docker_available() else "podman" if _podman_available() else "local"
 
 
 # Container backends pick their image from the coding language (see
@@ -5504,7 +5511,7 @@ def run_fast() -> int:
     # daemon isn't up -- otherwise fast-setup writes a docker config that the
     # very next `maverick start` can't run (the user never chose docker, yet
     # hits "Docker not available"). Mirrors write_consumer_config.
-    backend = "docker" if _docker_available() else "local"
+    backend = _container_backend()
     sandbox = {
         "backend": backend,
         "workdir": str(Path.home() / "maverick-workspace"),
@@ -5634,14 +5641,14 @@ def pick_mode() -> str:
     """First-screen picker: consumer vs advanced.
 
     Every launch starts here so a non-technical
-    user lands in a four-question flow with safe defaults, and a power
+    user lands in a six-question flow with safe defaults, and a power
     user can opt straight into the full wizard.
     """
     console.print()
     console.print(
         Panel.fit(
             "[bold]How do you want to set this up?[/bold]\n\n"
-            "  consumer  Four questions, safe defaults. About a minute.\n"
+            "  consumer  Six questions, safe defaults. About a minute.\n"
             "  express   A few questions, then turn ON all safe features.\n"
             "  advanced  Pick every model, channel, safety level, budget.",
             border_style="cyan",
@@ -5754,7 +5761,7 @@ def write_consumer_config(
         prepare_first_outcome(first_outcome, str(Path(workdir).expanduser()))
         if first_outcome else None
     )
-    backend = "docker" if _docker_available() else "local"
+    backend = _container_backend()
     # Computer + browser always require explicit opt-in (consumer is
     # never asked). When there's no Docker sandbox to contain it, also
     # deny the host-mutating tools — fail closed on the host. With
@@ -5792,7 +5799,7 @@ def write_consumer_config(
             "mcp_*": "20/60",
         },
         retention=dict(preset["retention"]),
-        persona={"name": "Lightwork", "style": "balanced", "user_name": user_name},
+        persona={"name": "Lightwork", "style": "balanced", "user_name": user_name or "you"},
         web_search_enabled=True,
         governance_profile=profile,
         first_outcome=first_outcome_table,
@@ -5826,7 +5833,7 @@ def run_consumer() -> int:
             "What should we call you?",
             default=os.environ.get("USER") or os.environ.get("USERNAME") or "",
         ).strip()
-        or "you"
+        or ""
     )
 
     profile = pick_governance_profile()
@@ -5876,9 +5883,9 @@ def run_consumer() -> int:
     if keys:
         console.print(
             Panel.fit(
-                (f"[bold yellow]Setup saved, {escape(user_name)}. File work is off.[/bold yellow]\n\n"
+                (f"[bold yellow]{escape(_addressed('Setup saved', user_name))} File work is off.[/bold yellow]\n\n"
                  if backend == "local" else
-                 f"[bold green]Setup complete, {escape(user_name)}.[/bold green]\n\n")
+                 f"[bold green]{escape(_addressed('Setup complete', user_name))}[/bold green]\n\n")
                 + f"Your first task ({outcome.label}, on sample data, waits in {outcome.lands_in}):\n"
                 + f"  [bold]{cli_command(department)}[/bold]\n\n"
                 + (_FILE_WORK_RECOVERY + "\n\n" if backend == "local" else "")
@@ -5891,7 +5898,7 @@ def run_consumer() -> int:
     else:
         console.print(
             Panel.fit(
-                f"[bold yellow]Setup saved without an API key, {escape(user_name)}.[/bold yellow]\n\n"
+                f"[bold yellow]{escape(_addressed('Setup saved without an API key', user_name))}[/bold yellow]\n\n"
                 "Open Lightwork Settings to add a provider key when ready.",
                 border_style="yellow",
             )
@@ -6131,7 +6138,7 @@ def run_express() -> int:
             "What should we call you?",
             default=os.environ.get("USER") or os.environ.get("USERNAME") or "",
         ).strip()
-        or "you"
+        or ""
     )
     profile = pick_governance_profile()
     keys = _consumer_api_key()
@@ -6142,7 +6149,7 @@ def run_express() -> int:
     budget = _consumer_budget()
 
     Path(workdir).expanduser().mkdir(parents=True, exist_ok=True)
-    backend = "docker" if _docker_available() else "local"
+    backend = _container_backend()
     # Express turns on every safe single-user feature; the governance level
     # layers its posture (signed audit, quotas, WORM, signed approvals) on
     # top. Union of two all-True dicts, so profile keys can only ADD.
@@ -6175,7 +6182,7 @@ def run_express() -> int:
                 "code_exec": False,
             },
             advanced={**_EXPRESS_ADVANCED, **preset["advanced"]},
-            persona={"name": "Lightwork", "style": "balanced", "user_name": user_name},
+            persona={"name": "Lightwork", "style": "balanced", "user_name": user_name or "you"},
             web_search_enabled=True,
             self_learning=dict(_EXPRESS_SELF_LEARNING),
             automation_import={"enable": True},
@@ -6210,9 +6217,9 @@ def run_express() -> int:
     if keys:
         console.print(
             Panel.fit(
-                (f"[bold yellow]Setup saved, {escape(user_name)}. File work is off.[/bold yellow]\n\n"
+                (f"[bold yellow]{escape(_addressed('Setup saved', user_name))} File work is off.[/bold yellow]\n\n"
                  if backend == "local" else
-                 f"[bold green]Setup saved, {escape(user_name)}.[/bold green]\n\n")
+                 f"[bold green]{escape(_addressed('Setup saved', user_name))}[/bold green]\n\n")
                 + "Open the dashboard:\n"
                 + "  [bold]maverick dashboard[/bold]   web UI at http://127.0.0.1:8765\n\n"
                 + (_FILE_WORK_RECOVERY + "\n\n" if backend == "local" else "")
@@ -6223,7 +6230,7 @@ def run_express() -> int:
     else:
         console.print(
             Panel.fit(
-                f"[bold yellow]Setup saved without an API key, {escape(user_name)}.[/bold yellow]\n\n"
+                f"[bold yellow]{escape(_addressed('Setup saved without an API key', user_name))}[/bold yellow]\n\n"
                 "Open Lightwork Settings to add a provider key.",
                 border_style="yellow",
             )

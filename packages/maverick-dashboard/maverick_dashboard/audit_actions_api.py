@@ -139,13 +139,18 @@ def field_label(key: object) -> str:
     return FIELD_LABELS.get(str(key), humanize(key))
 
 
-def value_text(key: str, value: Any) -> str:
+def _principal_name(value: str) -> str:
+    return humanize_principal(value).name
+
+
+def value_text(key: str, value: Any, label=_principal_name) -> str:
+    """``label`` names a person (see ``person_names.labeler``)."""
     if value is None or value == "":
         return "—"
     if isinstance(value, bool):
         return "Yes" if value else "No"
     if key in _NAMED_KEYS and isinstance(value, str):
-        return humanize_principal(value).name
+        return label(value)
     if key == "scope" and value == "deployment":
         return "Deployment-wide record (all workspaces)"
     if key in _SLUG_KEYS and isinstance(value, str) and _SLUG.fullmatch(value):
@@ -153,9 +158,9 @@ def value_text(key: str, value: Any) -> str:
     if isinstance(value, float):
         return f"{value:.2f}" if key == "cost_dollars" else f"{value:g}"
     if isinstance(value, (list, tuple, set)):
-        return ", ".join(value_text(key, v) for v in list(value)[:20]) or "—"
+        return ", ".join(value_text(key, v, label) for v in list(value)[:20]) or "—"
     if isinstance(value, dict):
-        parts = [f"{field_label(k)}: {value_text(str(k), v)}" for k, v in list(value.items())[:12]]
+        parts = [f"{field_label(k)}: {value_text(str(k), v, label)}" for k, v in list(value.items())[:12]]
         return "; ".join(parts) or "—"
     return str(value)
 
@@ -180,11 +185,11 @@ def _technical(key: str, value: Any) -> bool:
     return isinstance(value, str) and bool(_TECHNICAL_VALUE.fullmatch(value.strip()))
 
 
-def event_details(event: dict) -> list[tuple[str, str, str]]:
+def event_details(event: dict, label=_principal_name) -> list[tuple[str, str, str]]:
     """``[(raw key, label, text)]`` for the readable detail fields of an event."""
     # An approval step's action is already the event's name ("Approval confirmed").
     named = event.get("kind") == "consent_result" and event.get("action") in APPROVAL_ACTION_LABELS
-    return [(str(k), field_label(k), value_text(str(k), v))
+    return [(str(k), field_label(k), value_text(str(k), v, label))
             for k, v in event.items() if k not in _HIDDEN and not _technical(str(k), v)
             and not (named and k == "action")]
 
@@ -195,10 +200,10 @@ def event_technical(event: dict) -> list[tuple[str, str, str]]:
             for k, v in event.items() if k not in _HIDDEN and _technical(str(k), v)]
 
 
-def event_who(event: dict) -> str:
+def event_who(event: dict, label=_principal_name) -> str:
     person = event_person(event)
     if person:
-        return humanize_principal(person).name
+        return label(person)
     payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
     if event.get("decided_by_person") is True or payload.get("decided_by_person") is True:
         # A person decided, but the recorded name can't be shown as text.
@@ -207,9 +212,14 @@ def event_who(event: dict) -> str:
     return humanize(agent) if agent else "Lightwork"
 
 
-def page_helpers() -> dict:
+def page_helpers(request=None) -> dict:
+    """The Activity page's helpers, naming people as this installation knows them."""
+    from .person_names import labeler
+
+    label = labeler(request)
     return {"kind_label": kind_label, "event_label": event_label,
-            "event_details": event_details, "event_who": event_who,
+            "event_details": lambda event: event_details(event, label),
+            "event_who": lambda event: event_who(event, label), "person_label": label,
             "event_technical": event_technical, "is_time_key": is_time_key}
 
 
@@ -342,7 +352,7 @@ def csv_safe(value: object) -> object:
     return _neutralize_formula(value)
 
 
-def _rows(since: str | None, until: str | None, fmt: str) -> Iterator[str]:
+def _rows(since: str | None, until: str | None, fmt: str, label=_principal_name) -> Iterator[str]:
     from maverick.audit.export import iter_audit_events, to_cef, to_jsonl
 
     from .content_access import audit_metadata
@@ -359,8 +369,8 @@ def _rows(since: str | None, until: str | None, fmt: str) -> Iterator[str]:
             ts = ev.get("ts")
             when = (_dt.datetime.fromtimestamp(float(ts), _dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
                     if isinstance(ts, (int, float)) else "")
-            details = "; ".join(f"{label}: {text}" for _k, label, text in event_details(ev))
-            writer.writerow([when, csv_safe(event_label(ev)), csv_safe(event_who(ev)),
+            details = "; ".join(f"{name}: {text}" for _k, name, text in event_details(ev, label))
+            writer.writerow([when, csv_safe(event_label(ev)), csv_safe(event_who(ev, label)),
                              ev.get("goal_id") if ev.get("goal_id") is not None else "",
                              csv_safe(details)])
             yield buf.getvalue()
@@ -381,7 +391,10 @@ async def download(request: Request, fmt: Literal["csv", "json", "cef"] = Query(
     ext = {"csv": "csv", "json": "jsonl", "cef": "cef"}[fmt]
     name = f"activity-{since or 'start'}-to-{until or 'today'}.{ext}"
     media = {"csv": "text/csv", "json": "application/x-ndjson", "cef": "text/plain"}[fmt]
-    return StreamingResponse(_rows(since, until, fmt), media_type=media + "; charset=utf-8",
+    from .person_names import labeler
+
+    label = await run_in_threadpool(labeler, request)
+    return StreamingResponse(_rows(since, until, fmt, label), media_type=media + "; charset=utf-8",
                              headers={"Content-Disposition": f'attachment; filename="{name}"',
                                       "Cache-Control": "no-store"})
 

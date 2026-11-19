@@ -15,8 +15,11 @@ Switch to Postgres when **any** of these is true:
 
 The dashboard/serve control plane must still run as one replica. Workflow
 releases/runs, A2A durable claims, audit/learning ledgers, and tenant-local
-policy files are not yet all Postgres-backed. Scale remote workers separately;
-do not use Postgres as evidence that `replicaCount > 1` is safe.
+policy files are not yet all Postgres-backed; do not use Postgres as evidence
+that `replicaCount > 1` is safe. Postgres is also a prerequisite for remote
+workers (`[queue] backend = "arq"`), which additionally need Redis and the
+`queue` extra and are not packaged in the image or chart; see
+[Capacity and scaling](../../docs/deployment.md#capacity-and-scaling).
 
 Until then, SQLite is the right default — don't add a database you don't need.
 

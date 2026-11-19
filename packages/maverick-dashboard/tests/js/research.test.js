@@ -486,3 +486,17 @@ test('a refused first load replaces Checking and Loading with what happened', as
   assert.equal(document.getElementById('research-status').textContent, 'Your current account cannot perform that research action.');
   dom.window.close();
 });
+
+test('a workspace membership refusal says how to get research access', async () => {
+  const dom = new JSDOM(html(), {url:'https://lightwork.test/research', runScripts:'outside-only'});
+  const document = dom.window.document;
+  const said = "You're an installation administrator, but not a member of this workspace. Research needs workspace membership. Add yourself under Users → Workspace members, or choose another workspace.";
+  dom.window.fetch = async () => ({ok:false, status:403, json:async () => ({detail:{
+    schema:'lightwork.error.v1', code:'workspace_membership_required', message:said,
+    next_action:{label:'Add yourself as a member', href:'/users#wm-root'}}})});
+  shell(dom.window);
+  dom.window.eval(source);
+  await settle();
+  assert.equal(document.getElementById('research-status').textContent, said);
+  dom.window.close();
+});

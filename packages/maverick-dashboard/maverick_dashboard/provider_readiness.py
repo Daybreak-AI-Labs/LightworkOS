@@ -159,7 +159,15 @@ def _configured(name: str, state: dict[str, Any], table: dict[str, Any]) -> tupl
         if name == "openai_compatible" and not state.get("base_url_configured"):
             return False, ""
         return True, "key"
-    if name in _KEY_REQUIRED or name == "openai_compatible":
+    if name == "openai_compatible":
+        # The client accepts a key-less server only on this computer or a
+        # private network (LM Studio, llama.cpp); a public gateway needs a key.
+        from maverick.enterprise import _is_local_endpoint
+
+        if state.get("base_url_configured") and _is_local_endpoint(state.get("base_url")):
+            return True, "server address"
+        return False, ""
+    if name in _KEY_REQUIRED:
         return False, ""
     if name == "codex_cli":
         try:
@@ -307,7 +315,15 @@ def workspace_readiness() -> dict[str, Any]:
 
     Never raises: an unreadable configuration is itself a ``not_ready``
     verdict with a plain reason, so no page can crash on it or invent a
-    different answer."""
+    different answer. One answer reads the configuration once
+    (``single_read``): each provider row asked it again, about 23 times."""
+    from maverick.config import single_read
+
+    with single_read():
+        return _workspace_readiness()
+
+
+def _workspace_readiness() -> dict[str, Any]:
     try:
         from maverick.config import config_source_errors, load_config, provider_configuration_states
         from maverick.providers import KNOWN_PROVIDERS

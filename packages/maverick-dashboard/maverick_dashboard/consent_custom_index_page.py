@@ -24,7 +24,7 @@ _HEADERS = {
     "Cross-Origin-Resource-Policy": "same-origin",
     "Permissions-Policy": (
         "camera=(), microphone=(), geolocation=(), payment=(), usb=(), "
-        "serial=(), bluetooth=(), clipboard-read=(), clipboard-write=()"
+        "serial=(), clipboard-read=(), clipboard-write=()"
     ),
     "Referrer-Policy": "no-referrer",
     "X-Content-Type-Options": "nosniff",
@@ -57,7 +57,7 @@ def create_consent_custom_index_page_router(
         response_class=HTMLResponse,
         include_in_schema=False,
     )
-    async def workbench(request: Request) -> HTMLResponse:
+    def workbench(request: Request) -> HTMLResponse:
         require_permission(request, "view")
         _tenant_selected()
         if any(

@@ -323,3 +323,22 @@ def test_every_evidence_cause_has_plain_words_and_a_route():
             assert stop.link and stop.link_label
             for sentence in (stop.message + " " + stop.action).split(". "):
                 assert len(sentence.split()) <= 25, sentence
+
+
+@pytest.mark.parametrize("detail, flag", [("wall time 61s >= 60s", "--max-wall-seconds"),
+                                          ("$1.02 > $1.00", "--max-dollars")])
+def test_dashboard_stop_details_leave_the_terminal_resume_command_to_the_cli(detail, flag):
+    # The terminal command is how the CLI resumes; the dashboard offers its own
+    # Resume and Try again controls, so its stop details must not end with it.
+    from maverick.budget import Budget
+    from maverick.stop_reasons import budget_stop_text
+
+    text = budget_stop_text(Budget(max_dollars=1.0, max_wall_seconds=60), 54, detail)
+    assert f"maverick resume 54 {flag} <higher>" in text  # CLI output keeps it
+    stop = explain_stop(text, status="blocked")
+    assert stop.technical.startswith("Stopped: this goal hit your")
+    assert "maverick" not in stop.technical
+    assert "maverick" not in str(stop.as_dict(include_technical=True))
+    error = explain_stop("Stopped: the assistant ran into an error and couldn't finish.\n"
+                         "You can try again with: maverick resume 7")
+    assert "maverick resume" not in error.technical

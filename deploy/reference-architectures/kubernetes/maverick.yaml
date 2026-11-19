@@ -35,7 +35,8 @@ metadata:
 spec:
   # Keep exactly one dashboard/control-plane replica. Postgres can share the
   # world model, but flow/A2A/audit/learning/policy stores are not all shared;
-  # scale separate remote workers instead of raising this replica count.
+  # do not raise this replica count. Remote workers are not packaged; see
+  # docs/deployment.md (Capacity and scaling).
   replicas: 1
   strategy:
     type: Recreate          # RWO volume: tear down before re-attach

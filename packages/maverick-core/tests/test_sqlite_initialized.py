@@ -7,7 +7,9 @@ from pathlib import Path
 import pytest
 from maverick import privacy_rights_orchestration as privacy
 from maverick import third_party_collaboration as collaboration
+from maverick import third_party_intelligence as intelligence
 from maverick import third_party_lifecycle as lifecycle
+from maverick import trc_continuous_evidence as continuous_evidence
 from maverick.sqlite_initialized import InitializedFiles
 
 posix_only = pytest.mark.skipif(os.name == "nt", reason="privacy is an ACL on Windows")
@@ -137,3 +139,82 @@ def test_collaboration_store_runs_its_schema_script_once_per_file(
         )
         assert store.list_invitations("tenant-a")["items"] == []
     assert len(calls) == 1
+
+
+@posix_only
+def test_intelligence_store_runs_its_schema_script_once_per_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _count_initializations(monkeypatch, intelligence.ThirdPartyIntelligenceStore)
+    path = tmp_path / "intelligence.sqlite3"
+    for _ in range(3):
+        store = intelligence.ThirdPartyIntelligenceStore(path, config_gate=lambda: None)
+        assert store.list_sources("tenant-a") == ()
+    assert len(calls) == 1
+
+    def refuse() -> None:
+        raise intelligence.ThirdPartyIntelligenceConfigError("disabled")
+
+    with pytest.raises(intelligence.ThirdPartyIntelligenceConfigError):
+        intelligence.ThirdPartyIntelligenceStore(path, config_gate=refuse)
+
+
+def _continuous_evidence_store(path: Path, gate=lambda: None):
+    return continuous_evidence.ContinuousEvidenceStore(
+        path, tenant_id="tenant-a", principal_resolver=lambda: "owner", config_gate=gate,
+    )
+
+
+@posix_only
+def test_continuous_evidence_store_runs_its_schema_script_once_per_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _count_initializations(monkeypatch, continuous_evidence.ContinuousEvidenceStore)
+    path = tmp_path / "continuous-evidence.sqlite3"
+    for _ in range(3):
+        assert _continuous_evidence_store(path).list_definitions() == ()
+    assert len(calls) == 1
+
+    path.unlink()
+    assert _continuous_evidence_store(path).list_definitions() == ()
+    assert len(calls) == 2
+
+    def refuse() -> None:
+        raise continuous_evidence.ContinuousEvidenceConfigError("disabled")
+
+    with pytest.raises(continuous_evidence.ContinuousEvidenceConfigError):
+        _continuous_evidence_store(path, refuse)
+
+
+@posix_only
+@pytest.mark.parametrize("kind", ["intelligence", "continuous-evidence"])
+def test_reading_an_initialized_store_does_not_wait_for_another_writer(
+    tmp_path: Path, kind: str,
+) -> None:
+    """The schema script opens a write transaction (busy timeout 30 s). On the
+    hosted demo a request that only lists rows waited behind another writer;
+    once the file is initialized, opening the store again must not."""
+    import threading
+
+    path = tmp_path / f"{kind}.sqlite3"
+
+    def open_and_list():
+        if kind == "intelligence":
+            return intelligence.ThirdPartyIntelligenceStore(
+                path, config_gate=lambda: None,
+            ).list_sources("tenant-a")
+        return _continuous_evidence_store(path).list_definitions()
+
+    assert open_and_list() == ()
+    writer = sqlite3.connect(path, isolation_level=None)
+    writer.execute("BEGIN IMMEDIATE")
+    outcome: list[object] = []
+    reader = threading.Thread(target=lambda: outcome.append(open_and_list()), daemon=True)
+    try:
+        reader.start()
+        reader.join(timeout=5)
+        assert outcome == [()], "opening the store waited for another connection's write lock"
+    finally:
+        writer.execute("ROLLBACK")
+        writer.close()
+        reader.join(timeout=35)

@@ -1123,3 +1123,27 @@ def test_data_use_picker_revalidates_current_authority(monkeypatch):
     assert projected["state"] == "available"
     assert [item["decision_id"] for item in projected["items"]] == ["current-decision"]
     assert projected["items"][0]["purpose_codes"] == ["product_research"]
+
+
+def test_installation_admin_outside_the_workspace_is_told_how_to_get_research_access(client):
+    # The live org admin opened the Research lab in a workspace they were not a
+    # member of and got a bare 403 ("Your current account cannot perform that
+    # research action"). Research runs belong to workspace members, so this is
+    # policy; the refusal must say so and how to get access.
+    customer, calls = client
+    assert customer.post("/api/v1/admin/tenants", json={
+        "id": "research-c", "display_name": "research-c", "plan": "free"}).status_code == 201
+    _select(customer, "research-c")
+    denied = customer.get(BASE)
+    assert denied.status_code == 403, denied.text
+    detail = denied.json()["detail"]
+    assert detail["code"] == "workspace_membership_required"
+    assert "installation administrator, but not a member of this workspace" in detail["message"]
+    assert "Research" in detail["message"]
+    assert detail["next_action"]["href"] == "/users#wm-root"
+    page = customer.get("/research", headers={"Accept": "text/html"})
+    assert page.status_code == 403
+    assert "Workspace membership needed" in page.text
+    assert "Add yourself under Users" in page.text and "/users#wm-root" in page.text
+    assert "cannot perform that research action" not in page.text
+    assert calls == []

@@ -745,3 +745,33 @@ def test_content_classify_and_masking_sql_over_the_api():
     sql = client.get("/api/v1/data-map/masking-sql")
     assert sql.status_code == 200
     assert "MASKING POLICY" in sql.text
+
+
+def test_an_unusable_shared_record_store_answers_unavailable_not_a_bad_request(monkeypatch, caplog):
+    """The vendor register mapped every RuntimeError to 422, so a shared
+    record store refusing a Postgres login read as a bad request from the
+    browser, with the database message as its text."""
+    import logging
+
+    from maverick import vendor_management
+    from maverick.governed_records import (
+        PRIVILEGED_LOGIN_REFUSAL,
+        GovernedRecordBackendError,
+        GovernedRecordCapacityError,
+    )
+
+    def refused(**_kwargs):
+        raise GovernedRecordBackendError(PRIVILEGED_LOGIN_REFUSAL)
+
+    monkeypatch.setattr(vendor_management, "list_vendors", refused)
+    with caplog.at_level(logging.WARNING):
+        response = client.get("/api/v1/vendors")
+    assert response.status_code == 503, response.text
+    assert "superuser" not in response.json()["detail"]
+    assert any("superuser" in record.getMessage() for record in caplog.records)
+
+    def full(**_kwargs):
+        raise GovernedRecordCapacityError("this register is full")
+
+    monkeypatch.setattr(vendor_management, "list_vendors", full)
+    assert client.get("/api/v1/vendors").status_code == 422

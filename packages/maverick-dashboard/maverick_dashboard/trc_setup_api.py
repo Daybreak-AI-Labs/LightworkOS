@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import json
 import logging
+import sqlite3
 import time
 import uuid
 from typing import Any, Literal
@@ -20,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 
 from .auth import require_global_permission, require_permission
-from .store_failures import log_store_failure, remember_route
+from .store_failures import log_store_failure, remember_route, unavailable_if_busy
 
 router = APIRouter(prefix="/api/v1/compliance/continuous-evidence/setup", tags=["trc-setup"],
                    dependencies=[Depends(remember_route)])
@@ -65,6 +66,9 @@ def _store(request: Request):
             return evidence, tenant, factory(tenant_id=tenant, principal_ref=principal,
                                              principal_resolver=lambda: principal, request=request)
         return evidence, tenant, api._default_store_for(tenant, principal)
+    except sqlite3.OperationalError as exc:
+        unavailable_if_busy(log, exc, "Continuous evidence is not available right now.")
+        raise
     except (evidence.ContinuousEvidenceError, OSError) as exc:
         log_store_failure(log, exc)
         raise HTTPException(status_code=503, detail="Continuous evidence is not available right now.") from exc
@@ -141,7 +145,7 @@ def _plan(request: Request, tenant: str, key: str) -> dict[str, Any]:
 @router.get("")
 async def configured_sources(request: Request) -> dict[str, Any]:
     require_permission(request, "view")
-    _evidence, tenant, _store_value = _store(request)
+    _evidence, tenant, _store_value = await run_in_threadpool(_store, request)
     plans = await run_in_threadpool(_manifests, request, tenant)
     from . import trc_continuous_evidence_api as api
 
@@ -159,8 +163,8 @@ async def configured_sources(request: Request) -> dict[str, Any]:
 @router.post("/{key}/definition")
 async def register_definition(request: Request, key: str) -> dict[str, Any]:
     require_global_permission(request, "admin")
-    evidence, tenant, store = _store(request)
-    plan = _plan(request, tenant, key)
+    evidence, tenant, store = await run_in_threadpool(_store, request)
+    plan = await run_in_threadpool(_plan, request, tenant, key)
 
     def write():
         if plan.get("managed"):
@@ -184,8 +188,8 @@ async def register_definition(request: Request, key: str) -> dict[str, Any]:
 @router.post("/{key}/enrollment")
 async def enroll(request: Request, key: str, body: EnrollIn) -> dict[str, Any]:
     require_global_permission(request, "admin")
-    evidence, tenant, store = _store(request)
-    plan = _plan(request, tenant, key)
+    evidence, tenant, store = await run_in_threadpool(_store, request)
+    plan = await run_in_threadpool(_plan, request, tenant, key)
 
     def write():
         definition = store.get_definition(plan["definition_id"], plan["definition_version"])
@@ -643,7 +647,7 @@ async def source_save(request: Request, body: SourceSave):
             return _saved_request(request, body)
     try:
         definition, paused = await run_in_threadpool(write)
-        _source_access(request)
+        await run_in_threadpool(_source_access, request)
         return _source_result(definition, paused_enrollments=paused)
     except Exception as exc:
         raise _source_error(exc) from exc
@@ -653,7 +657,7 @@ async def source_save(request: Request, body: SourceSave):
 async def source_original(request: Request, body: SourceSave):
     try:
         original = await run_in_threadpool(_saved_request, request, body, historical=True)
-        _source_access(request, historical=True)
+        await run_in_threadpool(_source_access, request, historical=True)
         return {"found": original is not None, "result": _source_result(original[0], replayed=True, paused_enrollments=original[1]) if original is not None else None}
     except Exception as exc:
         raise _source_error(exc) from exc

@@ -580,6 +580,12 @@ def _bounded(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
+# A line that only tells a terminal user how to resume ("Resume with a higher
+# cap: maverick resume 54 --max-dollars <higher>"). The CLI prints the kernel
+# text as is; product surfaces offer their own Resume and Try again controls.
+_TERMINAL_RESUME_LINE = re.compile(r"(?m)^[^\n:]*:\s*`?maverick resume \d+[^\n]*\n?")
+
+
 def explain_stop(raw: str | None, *, status: str | None = None) -> StopReason:
     """Map the kernel's stop text to a :class:`StopReason`.
 
@@ -589,7 +595,7 @@ def explain_stop(raw: str | None, *, status: str | None = None) -> StopReason:
     """
     del status  # every stopped status is explained the same way today
     text = (raw or "").strip()
-    technical = _bounded(text, RAW_TEXT_LIMIT)
+    technical = _bounded(_TERMINAL_RESUME_LINE.sub("", text), RAW_TEXT_LIMIT)
     if not text:
         return StopReason("other", _GENERIC_MESSAGE, _GENERIC_ACTION)
     evidence = _evidence_stop(text, technical)

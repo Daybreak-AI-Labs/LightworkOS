@@ -41,6 +41,26 @@ learning exclusion policy; it is not model unlearning. Consolidated per-store
 erasure uses the reviewed request process below; authorized knowledge-lineage
 requests remain in Knowledge Access.
 
+## Name and email from company sign-in
+
+Each company sign-in (OIDC) keeps two facts the provider's verified ID token
+reports: the display name and the email, only when the provider marks it
+verified. Nothing else from the token is kept, and a sign-in reporting neither
+removes the record. The record lives in `account-profiles.json` under the
+Lightwork home (private, written atomically, sealed with the deployment key
+when at-rest encryption is on) and is bounded to the most recent 50,000
+sign-ins. It names the person in approvals, settings history, the Activity log
+and its download, for viewers who already see that activity; it grants no
+access. My Data lists it, downloads it (Name and email from company sign-in)
+and erases it through the reviewed deletion. The next company sign-in records
+it again while `[auth] remember_account_names` is on (the default;
+`MAVERICK_REMEMBER_ACCOUNT_NAMES=0` stops recording and naming). Deleting the
+account in the company directory (SCIM) erases it. Browser sign-in asks for the
+`email` and `profile` scopes by default, so existing installs receive these
+claims from each person's next sign-in; some providers show a consent screen
+for them. `[auth.oidc] scopes = "openid"` narrows the request, after which the
+provider sends them only if it releases them anyway.
+
 Installed-browser and live provider behavior are not qualified.
 
 ## Recalled content isolation

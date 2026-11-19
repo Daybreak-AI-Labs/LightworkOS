@@ -101,6 +101,7 @@ from .auth import (
     has_global_permission,
     has_permission,
     non_static_auth_configured,
+    probe_path,
     require_global_permission,
     require_permission,
     require_principal_in_request_context,
@@ -1428,6 +1429,14 @@ def enforce_page_visibility(
     require_page_visible(request, route_path(request))
 
 
+async def _page_visibility(request: Request = None) -> None:  # type: ignore[assignment]
+    """The app-level page-policy dependency: the check reads the settings, so
+    it runs in the worker pool, except for a probe, which is no page."""
+    if request is None or probe_path(request.scope):
+        return
+    await run_in_threadpool(enforce_page_visibility, request)
+
+
 def page_visible(request: Request, path: str) -> bool:
     """Whether the page governing ``path`` admits the caller: the same rule
     :func:`enforce_page_visibility` applies to every request for it."""
@@ -1501,7 +1510,7 @@ app = FastAPI(
     dependencies=[
         Depends(require_principal_in_request_context),
         Depends(enforce_expected_workspace_tenant),
-        Depends(enforce_page_visibility),
+        Depends(_page_visibility),
     ],
     lifespan=_lifespan,
     # The request span (below) is the server span; see request_spans.
@@ -4034,6 +4043,10 @@ async def bind_active_tenant(request: Request, call_next):
     """
     from maverick.paths import current_tenant_id, reset_tenant, set_tenant
 
+    if probe_path(request.scope) in ("/livez", "/readyz"):
+        # Process-wide probes; /healthz keeps the binding its provider verdict reads.
+        return await call_next(request)
+
     def _stored_selection() -> str | None:
         # current_tenant_id covers all three existing bindings -- request
         # context, MAVERICK_TENANT, and the enterprise client binding (the
@@ -5769,7 +5782,7 @@ async def consent_public_clients_page(request: Request) -> HTMLResponse:
 
 
 @app.get("/consent/profile-data", response_class=HTMLResponse)
-async def consent_profile_data_page(request: Request) -> HTMLResponse:
+def consent_profile_data_page(request: Request) -> HTMLResponse:
     """Governed profile-data catalogs and progressive prompt journeys."""
 
     require_permission(request, "operate")
@@ -5929,7 +5942,7 @@ async def data_use_providers_page(request: Request) -> HTMLResponse:
 
 
 @app.get("/privacy/data-discovery", response_class=HTMLResponse)
-async def privacy_data_discovery_page(request: Request) -> HTMLResponse:
+def privacy_data_discovery_page(request: Request) -> HTMLResponse:
     """Bounded personal-data discovery, review, and RoPA delivery workspace."""
 
     require_permission(request, "view")
@@ -5979,7 +5992,7 @@ async def privacy_data_discovery_page(request: Request) -> HTMLResponse:
 
 
 @app.get("/privacy/regulatory-intelligence", response_class=HTMLResponse)
-async def privacy_regulatory_intelligence_page(request: Request) -> HTMLResponse:
+def privacy_regulatory_intelligence_page(request: Request) -> HTMLResponse:
     """Licensed-source privacy research, trackers, alerts, and reports."""
 
     require_permission(request, "operate")
@@ -6018,7 +6031,7 @@ def privacy_rights_orchestration_page(request: Request) -> HTMLResponse:
 
 
 @app.get("/privacy/rights-consumer-delivery", response_class=HTMLResponse)
-async def privacy_rights_consumer_delivery_page(request: Request) -> HTMLResponse:
+def privacy_rights_consumer_delivery_page(request: Request) -> HTMLResponse:
     """One-time, digest-only privacy-rights delivery workbench."""
 
     require_permission(request, "operate")
@@ -6100,7 +6113,7 @@ async def privacy_report_page(request: Request) -> HTMLResponse:
 
 
 @app.get("/third-party/intelligence", response_class=HTMLResponse)
-async def third_party_intelligence_page(request: Request) -> HTMLResponse:
+def third_party_intelligence_page(request: Request) -> HTMLResponse:
     """Governed screening, EDD, monitoring, delivery, and risk exchange."""
 
     require_permission(request, "operate")
@@ -7728,6 +7741,7 @@ async def audit_page(request: Request) -> HTMLResponse:
     # gathered before filtering so every choice stays selectable.
     kinds = sorted(kind_set, key=_audit_plain.kind_label)
     people = sorted(people_set - {""})
+    helpers = await run_in_threadpool(_audit_plain.page_helpers, request)
     return templates.TemplateResponse(
         request,
         "audit.html",
@@ -7740,7 +7754,7 @@ async def audit_page(request: Request) -> HTMLResponse:
             "kind": kind,
             "kinds": kinds,
             "person": person,
-            "people": [{"value": p, "label": _idfmt.humanize_principal(p).name} for p in people],
+            "people": [{"value": p, "label": helpers["person_label"](p)} for p in people],
             "agent": agent,
             "agents": [{"value": a, "label": _idfmt.humanize(a)} for a in sorted(agent_set)],
             "q": q,
@@ -7754,7 +7768,7 @@ async def audit_page(request: Request) -> HTMLResponse:
             "audit_filter_error": filter_error,
             "audit_next_href": next_href,
             "deployment_events": deployment_events,
-            **_audit_plain.page_helpers(),
+            **helpers,
         },
     )
 
@@ -9040,7 +9054,7 @@ async def compliance_scope_actions_page(request: Request) -> HTMLResponse:
 
 
 @app.get("/compliance/continuous-evidence", response_class=HTMLResponse)
-async def trc_continuous_evidence_page(request: Request) -> HTMLResponse:
+def trc_continuous_evidence_page(request: Request) -> HTMLResponse:
     """Continuous technical-evidence collector operations workbench."""
 
     require_permission(request, "operate")
@@ -11528,18 +11542,28 @@ async def shield_calibration_api() -> JSONResponse:
 def chat_page(request: Request, compose: str = "") -> HTMLResponse:
     """Chat. ``?compose=form`` shows the task builder's form (the Task builder
     page's job in the job-named navigation): the same fields, checks and
-    submit, under that page's own check."""
-    from maverick import flow
-    from maverick.runner import configured_max_dollars, configured_max_wall_seconds
+    submit, under that page's own check.
 
-    from .api import task_limit_ceilings
-    from .onboarding_state import workspace_readiness
+    The page's display settings (spending limits, examples, threads, director
+    choices) share one read of the configuration, as a render does; every
+    permission and account check on it still reads the current files."""
+    from maverick.config import single_read
 
     compose_form = compose == "form"
     if compose_form:
         require_page_visible(request, "/goal-builder")
+    with single_read():
+        return _chat_page_now(request, compose_form)
 
-    workspace = workspace_readiness()
+
+def _chat_page_now(request: Request, compose_form: bool) -> HTMLResponse:
+    from maverick import flow
+    from maverick.runner import configured_max_dollars, configured_max_wall_seconds
+
+    from .api import task_limit_ceilings
+    from .onboarding_state import page_workspace_readiness
+
+    workspace = page_workspace_readiness()
     w = _world()
     recent = [goal for goal in w.list_goals(owner=goal_owner_filter(request), limit=10, order="desc")
               if can_access_goal(request, goal)]
@@ -11848,7 +11872,8 @@ async def home(request: Request) -> HTMLResponse | RedirectResponse:
         from .preferences_api import _state
 
         try:
-            start_state = await run_in_threadpool(_state, request)
+            # Only the start page is needed here: Chat reads its own choices.
+            start_state = await run_in_threadpool(_state, request, choices=False)
             start = start_state["values"]["start_page"]
             if start_state["sources"].get("start_page") == "product default":
                 # Areas navigation starts each role on its preset's page.

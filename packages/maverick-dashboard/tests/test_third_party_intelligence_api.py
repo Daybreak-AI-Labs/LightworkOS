@@ -989,3 +989,138 @@ def test_record_lists_need_view_permission(environment, monkeypatch) -> None:
     monkeypatch.setattr(api, "require_permission", deny)
     assert client.get(f"{API}/vendors").status_code == 403
     assert seen == ["view"]
+
+
+def _on_event_loop() -> bool:
+    import asyncio
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
+def test_reads_check_the_gate_and_open_the_store_off_the_event_loop(
+    environment, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Opening the tenant store runs SQLite work with a 30 s busy timeout; on the
+    hosted demo the page's thirteen lists did that on the event loop and the
+    server answered nothing, health checks included, for two minutes."""
+    client, _store, _clock, state = environment
+    seen: list[tuple[str, bool]] = []
+    gate = intelligence.require_enabled
+    enabled = intelligence.enabled
+
+    def watched_gate() -> None:
+        seen.append(("gate", _on_event_loop()))
+        gate()
+
+    def watched_enabled() -> bool:
+        seen.append(("enabled", _on_event_loop()))
+        return enabled()
+
+    factory = client.app.state.third_party_intelligence_store_factory
+
+    def watched_factory(**kwargs):
+        seen.append(("store", _on_event_loop()))
+        return factory(**kwargs)
+
+    monkeypatch.setattr(intelligence, "require_enabled", watched_gate)
+    monkeypatch.setattr(intelligence, "enabled", watched_enabled)
+    client.app.state.third_party_intelligence_store_factory = watched_factory
+    for path in (
+        "/sources", "/snapshots", "/vendors", "/screening/runs", "/risk/policies",
+        "/risk/decisions", "/edd/cases", "/monitors", "/monitoring/alerts",
+        "/exchange/consents", "/outbox", "/status",
+    ):
+        assert client.get(f"{API}{path}").status_code == 200, path
+    assert {kind for kind, _loop in seen} == {"gate", "enabled", "store"}
+    assert not any(loop for _kind, loop in seen)
+    state["enabled"] = False
+    assert client.get(f"{API}/sources").status_code == 403
+
+
+def test_mail_routes_check_access_off_the_event_loop(
+    environment, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, _store, _clock, _state = environment
+    seen: list[bool] = []
+    monkeypatch.setattr(api, "require_principal", lambda _request: seen.append(_on_event_loop()))
+    monkeypatch.setattr(api, "require_page_permission", lambda _request, _page: None)
+    from maverick_dashboard import app as dashboard_app
+
+    monkeypatch.setattr(dashboard_app, "require_page_visible", lambda _request, _page: None)
+    response = client.get(f"{API}/alert-recipients")
+    assert response.status_code == 200, response.text
+    assert response.json()["items"] == []
+    assert seen and not any(seen)
+
+
+def test_a_waiting_store_does_not_stop_the_server_answering(environment) -> None:
+    """While one list waits for its store (a held SQLite lock on the demo's
+    network volume), the same server still answers a liveness probe."""
+    import threading
+    import time
+
+    client, _store, _clock, _state = environment
+    app = client.app
+
+    @app.get("/livez")
+    async def livez() -> dict[str, str]:
+        return {"status": "ok"}
+
+    factory = app.state.third_party_intelligence_store_factory
+    entered, release = threading.Event(), threading.Event()
+
+    def waiting_factory(**kwargs):
+        entered.set()
+        release.wait(timeout=10)
+        return factory(**kwargs)
+
+    app.state.third_party_intelligence_store_factory = waiting_factory
+    with TestClient(app, base_url="http://127.0.0.1", headers={"Origin": "http://127.0.0.1"}) as shared:
+        listing: list[int] = []
+        worker = threading.Thread(
+            target=lambda: listing.append(shared.get(f"{API}/vendors").status_code), daemon=True,
+        )
+        worker.start()
+        try:
+            assert entered.wait(timeout=10)
+            started = time.monotonic()
+            assert shared.get("/livez").status_code == 200
+            assert time.monotonic() - started < 2, "the waiting store blocked the event loop"
+            assert not release.is_set() and worker.is_alive()
+        finally:
+            release.set()
+            worker.join(timeout=15)
+    assert listing == [200]
+
+
+def test_a_locked_store_answers_unavailable_not_a_server_error(environment, caplog) -> None:
+    """On a fresh process the first lists ran the schema script; while another
+    writer held the file they failed after 30 s with an uncaught
+    ``sqlite3.OperationalError``, a 500."""
+    import logging
+    import sqlite3
+
+    client, store, _clock, _state = environment
+
+    def locked_factory(**_kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    original = client.app.state.third_party_intelligence_store_factory
+    client.app.state.third_party_intelligence_store_factory = locked_factory
+    with caplog.at_level(logging.WARNING):
+        response = client.get(f"{API}/vendors")
+    assert response.status_code == 503
+    assert response.json()["detail"] == "third-party intelligence store is unavailable"
+    assert any("database is locked" in record.getMessage() for record in caplog.records)
+
+    client.app.state.third_party_intelligence_store_factory = original
+
+    def busy_list(*_args, **_kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    store.list_vendors = busy_list
+    assert client.get(f"{API}/vendors").status_code == 503

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import time
 from typing import Any, Literal
 
@@ -9,8 +10,10 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import auth
+from .store_failures import log_store_failure
 
 router = APIRouter()
+log = logging.getLogger(__name__)
 
 
 def _app():
@@ -19,15 +22,18 @@ def _app():
 
 
 def _identity(request):
+    """The person and both alert switches, now: one check with one current read."""
     from maverick import experience_preferences
+    from maverick.config import single_read
     from maverick.personal_notifications import personal_alerts_enabled
 
     from .preferences_api import _principal
-    principal = _principal(request)
-    if not experience_preferences.enabled():
-        raise HTTPException(403, "Personal preferences are turned off. An administrator can enable them in All settings.")
-    if not personal_alerts_enabled():
-        raise HTTPException(403, "Personal alerts are turned off. An administrator can enable them in All settings.")
+    with single_read(fresh=True):
+        principal = _principal(request)
+        if not experience_preferences.enabled():
+            raise HTTPException(403, "Personal preferences are turned off. An administrator can enable them in All settings.")
+        if not personal_alerts_enabled():
+            raise HTTPException(403, "Personal alerts are turned off. An administrator can enable them in All settings.")
     return principal
 
 
@@ -214,8 +220,17 @@ def _agent(goal) -> dict:
 
 def _state(request, *, seen_id=None):
     from maverick.authority_effects import authority_effect_fence
-    with authority_effect_fence():
-        return _state_locked(request, seen_id=seen_id)
+    from maverick.governed_records import GovernedRecordBackendError
+    try:
+        with authority_effect_fence():
+            return _state_locked(request, seen_id=seen_id)
+    except GovernedRecordBackendError as exc:
+        # A shared record store that refuses to open (a database login that
+        # skips row-level security, no shared encryption key) is a deployment
+        # setting, not an error in this request: say so, and log the cause.
+        log_store_failure(log, exc)
+        raise HTTPException(503, "Personal alerts cannot be checked right now. Ask whoever installed "
+                                 "Lightwork to check its database and encryption settings.") from exc
 
 
 def _state_locked(request, *, seen_id=None):

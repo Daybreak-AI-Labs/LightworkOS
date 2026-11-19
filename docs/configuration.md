@@ -919,6 +919,30 @@ been initialized, installations may explicitly set `[dashboard] default_role =
 unassigned users need an explicit global assignment or workspace membership.
 The viewer role still grants read access where `view` permission is sufficient.
 
+Browser sign-in asks the provider for `openid email profile`, so the ID token
+carries the person's name and email. Existing installs receive them from each
+person's next sign-in, and some providers show a consent screen for them. An
+email is used only when the provider marks it verified, as before. Narrow the
+request (it cannot widen beyond these three; `openid` is always included):
+
+```toml
+[auth.oidc]
+scopes = "openid"   # default "openid email profile"; MAVERICK_OIDC_SCOPES wins
+```
+
+Company sign-in (OIDC) keeps the display name and the verified email the
+provider reports, so approvals, settings history and the Activity log name
+people instead of "Google account". Setup asks about this when you turn on
+the built-in browser login. Turn it off with:
+
+```toml
+[auth]
+remember_account_names = false   # default true; MAVERICK_REMEMBER_ACCOUNT_NAMES wins
+```
+
+Off stops recording and naming; kept records stay in My data's export and
+reviewed deletion (Account > My Data).
+
 ## External MCP servers
 
 Lightwork can consume any MCP server (filesystem, GitHub, Postgres,
@@ -966,8 +990,11 @@ threads simultaneously. Override with:
 MAVERICK_MAX_CONCURRENT_GOALS=4 maverick dashboard
 ```
 
-Default is 16. Raise on a beefy machine; lower on a Raspberry Pi. (A
-separate per-principal cap also limits concurrent goals from any one caller.)
+Default is 16. The goals run inside the one dashboard process, so more CPU
+cores do not make a higher value useful: raise it only when tasks mostly wait
+for the AI provider, and lower it on a small machine such as a Raspberry Pi.
+(A separate per-principal cap also limits concurrent goals from any one
+caller.) See [Capacity and scaling](deployment.md#capacity-and-scaling).
 
 ## Swarm size
 

@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import sqlite3
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, is_dataclass
+from functools import partial
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -21,7 +23,7 @@ from starlette.concurrency import run_in_threadpool
 
 from ._shared import authenticated_subject
 from .auth import require_global_permission, require_permission
-from .store_failures import log_store_failure
+from .store_failures import log_store_failure, unavailable_if_busy
 
 log = logging.getLogger(__name__)
 
@@ -235,7 +237,7 @@ def create_trc_continuous_evidence_router(
         tags=["trc-continuous-evidence"],
     )
 
-    def authority(request: Request):
+    def open_authority(request: Request):
         from maverick import trc_continuous_evidence as evidence
 
         try:
@@ -260,6 +262,9 @@ def create_trc_continuous_evidence_router(
                 if callable(factory)
                 else deps.store_for(tenant, principal)
             )
+        except sqlite3.OperationalError as exc:
+            unavailable_if_busy(log, exc, "continuous-evidence store is unavailable")
+            raise
         except evidence.ContinuousEvidenceConfigError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
         except (evidence.ContinuousEvidenceError, OSError) as exc:
@@ -274,9 +279,17 @@ def create_trc_continuous_evidence_router(
             )
         return evidence, store
 
+    # The gate reads the settings and the store opens a tenant SQLite file
+    # (busy timeout 30 s): on the event loop, one waiting store stopped every
+    # other request, health checks included.
+    authority = partial(run_in_threadpool, open_authority)
+
     async def call(evidence, function, *args, **kwargs):
         try:
             return await run_in_threadpool(function, *args, **kwargs)
+        except sqlite3.OperationalError as exc:
+            unavailable_if_busy(log, exc, "continuous-evidence store is unavailable")
+            raise
         except evidence.ContinuousEvidenceNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except evidence.ContinuousEvidencePermissionDenied as exc:
@@ -348,9 +361,10 @@ def _register_continuous_evidence_runtime_routes(router):
                     "status_provider_network_io": False,
                     "live_provider_acceptance_verified": False,
                 }
+        enabled = await run_in_threadpool(_enabled)
         return {
             "schema": "lightwork.trc-continuous-evidence-status.v1",
-            "enabled": _enabled(),
+            "enabled": enabled,
             "scheduler": scheduler_status,
             "provider_network_io_in_core": False,
             "collector_dependency_injection_supported": True,
@@ -413,12 +427,12 @@ def _register_continuous_evidence_definition_routes(authority, call, router):
         body: DefinitionIn,
     ):
         require_global_permission(request, "admin")
-        if body.collector_id not in _collector_ids(request):
+        if body.collector_id not in await run_in_threadpool(_collector_ids, request):
             raise HTTPException(
                 status_code=403,
                 detail="collector is not enabled for this tenant",
             )
-        evidence, store = authority(request)
+        evidence, store = await authority(request)
         return _jsonable(
             await call(
                 evidence,
@@ -435,7 +449,7 @@ def _register_continuous_evidence_definition_routes(authority, call, router):
         limit: int = Query(default=100, ge=1, le=1_000),
     ):
         require_permission(request, "view")
-        evidence, store = authority(request)
+        evidence, store = await authority(request)
         items = await call(evidence, store.list_definitions, limit=limit)
         return {"items": _jsonable(items), "count": len(items)}
 
@@ -446,7 +460,7 @@ def _register_continuous_evidence_definition_routes(authority, call, router):
         version: Annotated[int, ApiPath(ge=1, le=2**31 - 1)],
     ):
         require_permission(request, "view")
-        evidence, store = authority(request)
+        evidence, store = await authority(request)
         return _jsonable(await call(evidence, store.get_definition, definition_id, version))
 
     @router.post("/definitions/{definition_id}/versions/{version}/approve")
@@ -457,9 +471,9 @@ def _register_continuous_evidence_definition_routes(authority, call, router):
         body: IntegrityIn,
     ):
         require_global_permission(request, "admin")
-        evidence, store = authority(request)
+        evidence, store = await authority(request)
         definition = await call(evidence, store.get_definition, definition_id, version)
-        if definition.collector_id not in _collector_ids(request):
+        if definition.collector_id not in await run_in_threadpool(_collector_ids, request):
             raise HTTPException(
                 status_code=403,
                 detail="collector is not enabled for this tenant",
@@ -485,7 +499,7 @@ def _register_continuous_evidence_definition_routes(authority, call, router):
         body: IntegrityIn,
     ):
         require_global_permission(request, "admin")
-        evidence, store = authority(request)
+        evidence, store = await authority(request)
         return _jsonable(
             await call(
                 evidence,
@@ -506,14 +520,14 @@ def _register_continuous_evidence_enrollment_routes(authority, call, router):
         body: EnrollmentIn,
     ):
         require_global_permission(request, "admin")
-        evidence, store = authority(request)
+        evidence, store = await authority(request)
         definition = await call(
             evidence,
             store.get_definition,
             body.definition_id,
             body.definition_version,
         )
-        if definition.collector_id not in _collector_ids(request):
+        if definition.collector_id not in await run_in_threadpool(_collector_ids, request):
             raise HTTPException(
                 status_code=403,
                 detail="collector is not enabled for this tenant",
@@ -536,14 +550,14 @@ def _register_continuous_evidence_enrollment_routes(authority, call, router):
         limit: int = Query(default=100, ge=1, le=1_000),
     ):
         require_permission(request, "view")
-        evidence, store = authority(request)
+        evidence, store = await authority(request)
         items = await call(evidence, store.list_enrollments, limit=limit)
         return {"items": _jsonable(items), "count": len(items)}
 
     @router.get("/enrollments/{enrollment_id}")
     async def get_enrollment(request: Request, enrollment_id: ObjectPath):
         require_permission(request, "view")
-        evidence, store = authority(request)
+        evidence, store = await authority(request)
         return _jsonable(await call(evidence, store.get_enrollment, enrollment_id))
 
     @router.post("/enrollments/{enrollment_id}/state")
@@ -553,7 +567,7 @@ def _register_continuous_evidence_enrollment_routes(authority, call, router):
         body: EnrollmentStateIn,
     ):
         require_global_permission(request, "admin")
-        evidence, store = authority(request)
+        evidence, store = await authority(request)
         guard = None
         if body.state == "active":
             from .trc_setup_api import managed_definition_guard
@@ -577,7 +591,7 @@ def _register_continuous_evidence_job_routes(authority, call, router):
     @router.post("/jobs/enqueue-due")
     async def enqueue_due(request: Request, body: EnqueueIn):
         require_global_permission(request, "admin")
-        evidence, store = authority(request)
+        evidence, store = await authority(request)
         items = await call(evidence, store.enqueue_due, **body.model_dump())
         return {"items": _jsonable(items), "count": len(items)}
 
@@ -588,14 +602,14 @@ def _register_continuous_evidence_job_routes(authority, call, router):
         limit: int = Query(default=100, ge=1, le=1_000),
     ):
         require_permission(request, "view")
-        evidence, store = authority(request)
+        evidence, store = await authority(request)
         items = await call(evidence, store.list_jobs, state=state, limit=limit)
         return {"items": _jsonable(items), "count": len(items)}
 
     @router.post("/jobs/{job_id}/requeue")
     async def requeue_job(request: Request, job_id: ObjectPath, body: RequeueIn):
         require_global_permission(request, "admin")
-        evidence, store = authority(request)
+        evidence, store = await authority(request)
         return _jsonable(
             await call(
                 evidence,
@@ -611,7 +625,7 @@ def _register_continuous_evidence_job_routes(authority, call, router):
         limit: int = Query(default=100, ge=1, le=1_000),
     ):
         require_permission(request, "view")
-        evidence, store = authority(request)
+        evidence, store = await authority(request)
         items = await call(evidence, store.list_runs, limit=limit)
         return {"items": _jsonable(items), "count": len(items)}
 
@@ -625,7 +639,7 @@ def _register_continuous_evidence_observation_routes(authority, call, router):
         limit: int = Query(default=100, ge=1, le=1_000),
     ):
         require_permission(request, "view")
-        evidence, store = authority(request)
+        evidence, store = await authority(request)
         items = await call(
             evidence,
             store.list_observations,
@@ -640,14 +654,14 @@ def _register_continuous_evidence_observation_routes(authority, call, router):
         limit: int = Query(default=100, ge=1, le=1_000),
     ):
         require_permission(request, "view")
-        evidence, store = authority(request)
+        evidence, store = await authority(request)
         items = await call(evidence, store.list_alerts, limit=limit)
         return {"items": _jsonable(items), "count": len(items)}
 
     @router.get("/integrity")
     async def integrity(request: Request):
         require_global_permission(request, "audit")
-        evidence, store = authority(request)
+        evidence, store = await authority(request)
         result = _jsonable(await call(evidence, store.verify_integrity))
         result["valid"] = True
         return result
@@ -655,7 +669,7 @@ def _register_continuous_evidence_observation_routes(authority, call, router):
     @router.post("/retention/purge")
     async def purge_expired(request: Request, body: PurgeIn):
         require_global_permission(request, "admin")
-        evidence, store = authority(request)
+        evidence, store = await authority(request)
         return _jsonable(await call(evidence, store.purge_expired, **body.model_dump()))
 
 

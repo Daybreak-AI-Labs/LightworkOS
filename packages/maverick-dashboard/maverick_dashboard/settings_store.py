@@ -742,7 +742,7 @@ def _complete_provider_audit() -> None:
 
 
 # Self-hosted servers an administrator may mark free on the Prices page.
-SELF_HOSTED_PROVIDERS = ("ollama", "vllm", "tgi")
+SELF_HOSTED_PROVIDERS = ("ollama", "vllm", "tgi", "openai_compatible")
 
 
 def set_self_hosted_free(name: str, free: bool) -> None:

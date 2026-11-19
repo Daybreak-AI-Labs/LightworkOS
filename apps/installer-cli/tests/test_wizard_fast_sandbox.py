@@ -28,6 +28,7 @@ def _stub_fast(monkeypatch, tmp_path: Path, *, docker: bool):
     # contract itself is covered in test_wizard_fast_smoke.py.
     monkeypatch.setattr(wizard, "smoke_test", lambda: True)
     monkeypatch.setattr(wizard, "_docker_available", lambda: docker)
+    monkeypatch.setattr(wizard, "_podman_available", lambda: False)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     return wizard
 
@@ -64,3 +65,19 @@ def test_fast_setup_uses_docker_when_daemon_up(monkeypatch, tmp_path):
     assert wizard.run_fast() == 0
     assert _backend(tmp_path) == "docker"
     assert _denied_tools(tmp_path) == {"computer", "browser"}
+
+
+def test_fast_setup_uses_podman_when_docker_is_down_but_podman_answers(monkeypatch, tmp_path):
+    # The setup copy says "Start Docker or Podman"; a running Podman must count.
+    wizard = _stub_fast(monkeypatch, tmp_path, docker=False)
+    monkeypatch.setattr(wizard, "_podman_available", lambda: True)
+    assert wizard.run_fast() == 0
+    assert _backend(tmp_path) == "podman"
+    assert _denied_tools(tmp_path) == {"computer", "browser"}
+
+
+def test_docker_is_preferred_when_both_engines_answer(monkeypatch, tmp_path):
+    wizard = _stub_fast(monkeypatch, tmp_path, docker=True)
+    monkeypatch.setattr(wizard, "_podman_available", lambda: True)
+    assert wizard.run_fast() == 0
+    assert _backend(tmp_path) == "docker"

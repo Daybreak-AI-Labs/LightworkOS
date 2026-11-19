@@ -166,6 +166,28 @@ def route_path(connection) -> str:
     return path
 
 
+#: Load-balancer probes. They are authentication-exempt and always answer a
+#: redacted payload about the process, never about a caller, so the per-request
+#: identity, workspace and page-policy work does not apply to them. Doing it
+#: anyway made /livez wait for a free worker thread behind slow requests.
+PROBE_PATHS = frozenset({"/livez", "/readyz", "/healthz"})
+
+
+class _ScopeView:
+    __slots__ = ("scope",)
+
+    def __init__(self, scope: dict) -> None:
+        self.scope = scope
+
+
+def probe_path(scope: dict) -> str | None:
+    """The probe a plain GET or HEAD request asks for, else None."""
+    if scope.get("type") != "http" or scope.get("method") not in ("GET", "HEAD"):
+        return None
+    path = route_path(_ScopeView(scope))
+    return path if path in PROBE_PATHS else None
+
+
 def _self_authenticated_path(path: str) -> bool:
     """Whether a route authenticates itself or bootstraps authentication.
 
@@ -560,7 +582,13 @@ def _tenant_pin_choice(request: Request, principal: VerifiedPrincipal) -> tuple[
 
     Reads the configuration, the workspace selection, the tenant roster and
     the membership, so the request dependency runs it in the thread pool.
+    One decision: its configuration questions share one current read.
     """
+    with single_read(fresh=True):
+        return _tenant_pin_choice_now(request, principal)
+
+
+def _tenant_pin_choice_now(request: Request, principal: VerifiedPrincipal) -> tuple[str, str] | None:
     try:
         from maverick.paths import current_tenant_id, tenant_by_user_enabled
 
@@ -1540,16 +1568,18 @@ def _enforce_workspace_policies(connection, principal) -> None:
     """Policies that need the caller's workspace: its allowed addresses and
     its second-factor requirement (the workspace's config overlay is active
     once the tenant is pinned). Sign-in bootstrap and sign-out paths are
-    skipped so a refused session can still end itself."""
+    skipped so a refused session can still end itself. One gate: both read
+    the current configuration once (``single_read(fresh=True)``)."""
     path = route_path(connection)
     if _self_authenticated_path(path):
         return
     from .ip_allowlist import BLOCKED_MESSAGE, workspace_allows
     from .mfa_policy import enforce_session_policy
 
-    if not workspace_allows(connection):
-        raise HTTPException(status_code=403, detail=BLOCKED_MESSAGE)
-    enforce_session_policy(principal)
+    with single_read(fresh=True):
+        if not workspace_allows(connection):
+            raise HTTPException(status_code=403, detail=BLOCKED_MESSAGE)
+        enforce_session_policy(principal)
 
 
 def _bind_principal(connection, principal):
@@ -1629,6 +1659,8 @@ async def require_principal_in_request_context(
     lifecycle are checked on every verification; tenant selection/membership is
     resolved at binding, so cached keys never become an authorization grant.
     """
+    if request is not None and probe_path(getattr(request, "scope", None) or {}):
+        return None  # a probe answers for the process, never for a caller
     principal = await _verify_off_loop(request, websocket)
     connection = request if request is not None else websocket
     pin_choice: object = _UNDECIDED

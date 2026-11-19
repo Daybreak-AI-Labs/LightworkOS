@@ -221,6 +221,8 @@ Notes:
   Lightwork dashboard/serve control plane must still run as one replica because
   other durable stores remain file-backed; replace that replica against the
   same persistent data root instead of running active-active control-plane pods.
+  For sizing and the status of remote workers, see
+  [Capacity and scaling](deployment.md#capacity-and-scaling).
   The single-node `maverick backup` cold-standby model is for the SQLite default.
 - **Single-writer enforcement:** on startup the control plane takes an exclusive advisory lock on `control-plane.lock` in its
   data root and holds it for the process lifetime; a second process refuses to

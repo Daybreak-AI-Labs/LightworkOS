@@ -519,7 +519,7 @@ async def auth_login(request: Request):
         "response_type": "code",
         "client_id": cfg.client_id,
         "redirect_uri": cfg.redirect_uri,
-        "scope": "openid",
+        "scope": cfg.scopes,
         "state": state,
         "nonce": nonce,
         "code_challenge": code_challenge,
@@ -724,9 +724,24 @@ async def auth_callback(request: Request):
         )
         return _fail(reason="store")
 
+    # Both records take a file lock and rewrite a shared file, so they run in
+    # the worker pool: a held lock must not stall the event loop and probes.
+    await asyncio.get_running_loop().run_in_executor(None, _record_sign_in, principal)
+
+    response = RedirectResponse(return_to, status_code=303)
+    _set_cookie(
+        response, SESSION_COOKIE, session_cookie,
+        max_age=ttl, secure=_cookie_secure(request),
+    )
+    _clear_cookie(response, TX_COOKIE)
+    return response
+
+
+def _record_sign_in(principal) -> None:
+    """Best-effort sign-in records; neither ever blocks sign-in."""
     # Record this sub against the user's stable IdP identifiers so a later SCIM
     # deprovision can revoke this session even if the IdP's sub is pairwise and
-    # appears in no SCIM attribute (Entra). Best-effort -- never blocks login.
+    # appears in no SCIM attribute (Entra).
     try:
         from .subject_directory import record_login
         claims = principal.claims or {}
@@ -736,14 +751,18 @@ async def auth_callback(request: Request):
         ])
     except Exception:  # pragma: no cover -- directory never blocks login
         pass
+    _remember_account(principal)
 
-    response = RedirectResponse(return_to, status_code=303)
-    _set_cookie(
-        response, SESSION_COOKIE, session_cookie,
-        max_age=ttl, secure=_cookie_secure(request),
-    )
-    _clear_cookie(response, TX_COOKIE)
-    return response
+
+def _remember_account(principal) -> None:
+    """Keep the verified email and display name this sign-in reported, so the
+    person reads by name (:mod:`account_profiles`). Never blocks sign-in."""
+    try:
+        from . import account_profiles
+
+        account_profiles.record_sign_in("user:" + principal.sub, dict(principal.claims or {}))
+    except Exception:  # noqa: BLE001 -- a name record never blocks sign-in
+        log.warning("OIDC callback: account name record unavailable", exc_info=True)
 
 
 def _csrf_reject():

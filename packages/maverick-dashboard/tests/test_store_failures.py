@@ -51,3 +51,21 @@ def test_outside_a_request_the_line_still_logs(caplog):
         log_store_failure(LOG, OSError("x" * 1000))
     line = caplog.records[-1].getMessage()
     assert "route=unknown" in line and "workspace=" in line and line.endswith("...")
+
+
+def test_a_locked_or_busy_store_is_answered_as_unavailable(caplog):
+    """A SQLite lock or busy wait that outlasts the busy timeout escaped as a
+    500 on the hosted demo's first lists after a restart."""
+    import sqlite3
+
+    import pytest
+    from maverick_dashboard.store_failures import unavailable_if_busy
+
+    for message in ("database is locked", "database table is locked", "database is busy"):
+        with caplog.at_level(logging.WARNING, logger=LOG.name), pytest.raises(HTTPException) as caught:
+            unavailable_if_busy(LOG, sqlite3.OperationalError(message), "example store is unavailable")
+        assert caught.value.status_code == 503
+        assert caught.value.detail == "example store is unavailable"
+        assert message in caplog.records[-1].getMessage()
+    unavailable_if_busy(LOG, sqlite3.OperationalError("no such table: records"), "unavailable")
+    unavailable_if_busy(LOG, ValueError("database is locked"), "unavailable")

@@ -97,3 +97,11 @@ def test_source_reader_never_guesses_missing_lineage(state):
     with pytest.raises(HTTPException) as error:
         operations.prepare(None, {}, {"scope_id": "dashboard", "note_id": "a" * 64}, action="note_source")
     assert error.value.status_code == 404
+
+
+def test_every_deletable_store_has_a_copilot_label():
+    # Copilot's deletion preview read a fixed label map, so a store My data
+    # could delete but the map lacked raised KeyError before any request.
+    labels = getattr(operations, "STORE_LABELS", {})
+    assert sorted(operations.deletion.KINDS - set(labels)) == []
+    assert all(labels[kind].strip() for kind in operations.deletion.KINDS)
