@@ -2619,6 +2619,20 @@ def _record_goal_success(*, world: WorldModel, goal: Any, goal_id: int, summary:
 
 
 
+def _learnable_done_goals(world: WorldModel, limit: int = 10) -> list:
+    """The newest finished tasks local skill learning may use: shared
+    (ownerless) tasks, plus the owner's own on an installation only they can
+    sign in to (:func:`maverick.memory_ownership.sole_person`)."""
+    from .memory_ownership import sole_person
+
+    done = world.list_goals(status="done", limit=limit, order="desc", owner="")
+    sole = sole_person()
+    if not sole:
+        return done
+    done = [*done, *world.list_goals(status="done", limit=limit, order="desc", owner=sole)]
+    return sorted(done, key=lambda g: getattr(g, "updated_at", 0.0) or 0.0, reverse=True)[:limit]
+
+
 async def _finish_goal_learning(*, world: WorldModel, goal: Any, goal_id: int,
                                 summary: str, is_rendered_diff: bool,
                                 result: Any, ctx: SwarmContext,
@@ -2777,7 +2791,7 @@ async def _finish_goal_learning(*, world: WorldModel, goal: Any, goal_id: int,
             trajectories = [
                 {"goal_id": g.id, "goal": g.title, "success": True, "tools": [],
                  "t": getattr(g, "updated_at", 0.0)}
-                for g in world.list_goals(status="done", limit=10, order="desc", owner="")
+                for g in _learnable_done_goals(world)
             ]
             # v2: gate on evidence + dedup against the learned-skills store
             # so the loop doesn't accumulate near-duplicate skills each run.

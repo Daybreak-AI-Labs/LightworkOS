@@ -534,3 +534,16 @@ def test_the_learned_page_offers_turning_learning_on_only_when_it_is_off(tmp_pat
     assert "Self-learning is on" in page
     monkeypatch.setattr(self_learning, "enabled", lambda: False)
     assert "Turn on self-learning" in client.get("/learned").text
+
+
+def test_the_page_says_when_learning_uses_the_owners_own_tasks(tmp_path, monkeypatch):
+    # A single-person installation learns from its owner's tasks; the page
+    # says so, and what happens once someone else can sign in.
+    _isolate(tmp_path, monkeypatch)
+    from maverick import memory_ownership
+
+    monkeypatch.setattr(memory_ownership, "sole_person", lambda: "user:owner@example.test")
+    text = client.get("/learning").text
+    assert 'id="lrn-owner-tasks"' in text and "learning uses your own tasks" in text
+    monkeypatch.setattr(memory_ownership, "sole_person", lambda: "")
+    assert 'id="lrn-owner-tasks"' not in client.get("/learning").text

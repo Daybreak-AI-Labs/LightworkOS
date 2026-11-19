@@ -4606,11 +4606,22 @@ async def learning_page(request: Request) -> HTMLResponse:
         {
             "snap": snap,
             "learning_can_manage": has_global_permission(request, "admin"),
+            "learning_from_owner_tasks": _learns_from_owner_tasks(),
             "agent_feedback": _agent_feedback_summary(),
             "flow_feedback": _flow_feedback_summary(),
             "learning_can_operate": has_permission(request, "operate"),
         },
     )
+
+
+def _learns_from_owner_tasks() -> bool:
+    """Whether skill learning may use the owner's own tasks (only person here)."""
+    try:
+        from maverick.memory_ownership import sole_person
+
+        return bool(sole_person())
+    except Exception:  # unreadable: the page says nothing rather than guess
+        return False
 
 
 def _agent_feedback_summary() -> list[dict]:

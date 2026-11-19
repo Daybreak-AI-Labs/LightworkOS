@@ -436,7 +436,11 @@ Settings and the installation wizard.
   LLM-free, so consolidation can't be steered by injected trajectory text.
   Reflexions also carry the recording run's department (`reflexion.py`
   `domain` field), and same-department lessons outrank equally-similar
-  generic ones at recall time.
+  generic ones at recall time. Learned skills are shared by a workspace, so
+  they come from ownerless tasks only, except on an installation only its
+  owner can sign in to (`memory_ownership.sole_person`): there the owner's
+  own tasks count too, and the review and recall checks re-ask every time,
+  so those skills stop being used once anyone else can sign in.
 - **Self-harness (model-specific harness learning)** — `maverick self-harness`
   (`self_harness.py`, default-on under the conservative `risk_limited` profile)
   mines one model's
