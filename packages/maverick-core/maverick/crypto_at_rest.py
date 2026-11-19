@@ -782,9 +782,37 @@ def _active_keyring_key() -> tuple[bytes, bytes] | None:
     return _read_keyring_key(latest), bytes.fromhex(latest.stem)
 
 
+def _workspace_bound_key(keyid: bytes) -> bytes | None:
+    """The key a process bound to the request's workspace seals with, when
+    its fingerprint is ``keyid``.
+
+    ``MAVERICK_TENANT=<workspace>`` (a worker, a migration) selects
+    ``tenants/<workspace>/keys/at_rest.key``; the dashboard serves every
+    workspace unbound and seals with the installation key. Its reads of what
+    such a process wrote then failed ("no at-rest key for key-id ..."). Only
+    an unbound process with a file key looks here, only in the current
+    request's own workspace, and only a key whose fingerprint is the blob's
+    key id is used; a workspace-bound process never reaches another key."""
+    if _KEY_PATH is not None or os.environ.get(_KEY_ENV) or _deployment_tenant():
+        return None
+    from .paths import current_tenant_id_strict
+
+    tenant = current_tenant_id_strict()
+    if not tenant:
+        return None
+    primary = data_dir("keys", "at_rest.key", tenant=tenant)
+    for candidate in (primary.parent / "at_rest.d" / (keyid.hex() + ".key"), primary):
+        if candidate.exists():
+            key = _read_keyring_key(candidate)
+            if _key_fingerprint(key) == keyid:
+                return key
+    return None
+
+
 def _resolve_key_by_id(keyid: bytes) -> bytes:
     """The key matching a v2 blob's ``keyid``: a keyring file, else the legacy
-    key when its fingerprint matches (so a v1 deployment's key can also back v2)."""
+    key when its fingerprint matches (so a v1 deployment's key can also back v2),
+    else the request workspace's own key (:func:`_workspace_bound_key`)."""
     path = _keyring_dir() / (keyid.hex() + ".key")
     if path.exists():
         return _read_keyring_key(path)
@@ -794,6 +822,9 @@ def _resolve_key_by_id(keyid: bytes) -> bytes:
             return legacy
     except EncryptionUnavailable:
         pass
+    workspace = _workspace_bound_key(keyid)
+    if workspace is not None:
+        return workspace
     raise EncryptionUnavailable(
         f"no at-rest key for key-id {keyid.hex()}: the key that sealed this data "
         "is not available (a rotated key was removed, or the wrong keyring)."
@@ -1196,6 +1227,8 @@ def unseal_bound(blob: bytes, context: str,
                 # (a result-set read must load the key once, not once per
                 # resolver layer).
                 key = _load_existing_key()
+                if _key_fingerprint(key) != keyid:
+                    key = _workspace_bound_key(keyid) or key
                 if _key_fingerprint(key) != keyid:
                     raise EncryptionUnavailable(
                         f"no at-rest key for key-id {keyid.hex()}: the key that "
