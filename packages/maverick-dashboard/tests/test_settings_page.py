@@ -117,6 +117,47 @@ def test_admin_can_mark_a_self_hosted_server_free(monkeypatch, tmp_path):
     assert _lookup_price_quote("ollama:llama3").rates == (0.0, 0.0)
 
 
+def test_admin_can_mark_a_local_openai_compatible_server_free(monkeypatch, tmp_path):
+    """LM Studio or llama.cpp on this computer can be marked free like Ollama;
+    a public gateway cannot, and an unmarked server still stops before spending."""
+    import pytest
+    from maverick.budget import UnpricedModelError, _lookup_price_quote
+    from maverick.config import config_path
+
+    _prep(monkeypatch, tmp_path)
+    monkeypatch.delenv("OPENAI_COMPATIBLE_BASE_URL", raising=False)
+    config_path().parent.mkdir(parents=True, exist_ok=True)
+    config_path().write_text('[providers.openai_compatible]\nbase_url = "http://127.0.0.1:1234/v1"\n',
+                             encoding="utf-8")
+    c = _client()
+    headers = {"origin": "http://127.0.0.1"}
+    with pytest.raises(UnpricedModelError):
+        _lookup_price_quote("openai_compatible:local-model")
+    page = c.get("/settings").text
+    assert '<option value="openai_compatible">OpenAI-compatible server</option>' in page
+    saved = c.post("/settings/models/self-hosted-free",
+                   data={"provider": "openai_compatible", "free": "on", "confirm": "on"},
+                   headers=headers, follow_redirects=False)
+    assert saved.status_code == 303
+    assert _lookup_price_quote("openai_compatible:local-model").rates == (0.0, 0.0)
+    cleared = c.post("/settings/models/self-hosted-free",
+                     data={"provider": "openai_compatible", "free": "off"},
+                     headers=headers, follow_redirects=False)
+    assert cleared.status_code == 303
+    with pytest.raises(UnpricedModelError):
+        _lookup_price_quote("openai_compatible:local-model")
+
+    config_path().write_text('[providers.openai_compatible]\nbase_url = "https://api.groq.com/openai/v1"\n',
+                             encoding="utf-8")
+    refused = c.post("/settings/models/self-hosted-free",
+                     data={"provider": "openai_compatible", "free": "on", "confirm": "on"},
+                     headers=headers, follow_redirects=False)
+    assert refused.status_code == 409
+    assert "this computer or your private network" in refused.json()["detail"]
+    with pytest.raises(UnpricedModelError):
+        _lookup_price_quote("openai_compatible:local-model")
+
+
 def test_copilot_marks_a_self_hosted_server_free_like_the_settings_form(monkeypatch, tmp_path):
     """The Copilot operation runs the form's own function: administrators
     only, the same confirmation, and the price in effect read back."""

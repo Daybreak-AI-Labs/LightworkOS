@@ -141,7 +141,7 @@ def execute_cancel(request, selection, arguments, review, operation_id):
 
 
 class SelfHostedPrice(StrictInput):
-    provider: str = Field(pattern=r"^(ollama|vllm|tgi)$")
+    provider: str = Field(pattern=r"^(ollama|vllm|tgi|openai_compatible)$")
     free: bool
     confirmed: bool = False
 

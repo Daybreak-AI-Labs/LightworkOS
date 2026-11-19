@@ -701,6 +701,8 @@ def _lookup_price_quote(  # noqa: C901 - ordered evidence and policy precedence
     provider = requested.split(":", 1)[0] if ":" in requested else requested
     if ":" in requested and provider in ("ollama", "vllm", "tgi"):
         return _self_hosted_quote(requested, provider)
+    if ":" in requested and provider == "openai_compatible" and _compatible_marked_free():
+        return _compatible_free_quote(requested)
 
     # OpenRouter publishes a per-model price list; a model it lists at $0 for
     # prompt and completion incurs no metered charge. The discovery cache holds
@@ -793,7 +795,7 @@ def _self_hosted_endpoint(provider: str) -> tuple[str | None, object]:
     url = url.strip() if isinstance(url, str) else ""
     for env_name in PROVIDER_BASE_URL_ENV_MAP.get(provider, ()):
         url = url or environment.get(env_name, "").strip()
-    return url or _SELF_HOSTED_DEFAULT_URLS[provider], table.get("price_per_mtok")
+    return url or _SELF_HOSTED_DEFAULT_URLS.get(provider), table.get("price_per_mtok")
 
 
 # Address ranges priced as private: loopback, RFC 1918, link-local, unique
@@ -856,7 +858,10 @@ def _declared_endpoint_price(value: object) -> tuple[float, float] | None:
 def self_hosted_price_state(provider: str) -> str:
     """How a self-hosted provider's routes are priced now: ``"marked_free"``,
     ``"private"`` (free because the server is private), ``"priced"`` (a set
-    price) or ``"ceiling"`` (the safety ceiling)."""
+    price) or ``"ceiling"`` (the safety ceiling). An OpenAI-compatible server is
+    ``"marked_free"`` or ``"needs_price"`` (it stops before a request)."""
+    if provider == "openai_compatible":
+        return "marked_free" if _compatible_marked_free() else "needs_price"
     url, raw_price = _self_hosted_endpoint(provider)
     declared = _declared_endpoint_price(raw_price)
     if declared == (0.0, 0.0):
@@ -895,6 +900,36 @@ def self_hosted_price_gaps() -> list[tuple[str, str]]:
             continue
         gaps.append((provider, url or "an address Lightwork cannot read"))
     return gaps
+
+
+def _compatible_marked_free() -> bool:
+    """An owner marked the OpenAI-compatible server free, and its address is on
+    this computer or a private network. Such a server also fronts paid public
+    gateways, so unlike Ollama, vLLM and TGI it is never free on its address
+    alone, and a "free" mark on a public address is not honoured."""
+    url, raw_price = _self_hosted_endpoint("openai_compatible")
+    return _declared_endpoint_price(raw_price) == (0.0, 0.0) and _is_private_endpoint(url)
+
+
+def _compatible_free_quote(requested: str) -> ModelPrice:
+    return ModelPrice(
+        model_id=requested,
+        input_per_mtok=0.0,
+        output_per_mtok=0.0,
+        source="config://providers.openai_compatible.price_per_mtok",
+        as_of="2026-11-19",
+        fetched_at="2026-11-19T00:00:00Z",
+        currency="USD",
+        confidence=0.0,
+        verified=False,
+        rate_card_version="operator-ceiling-v1",
+        evidence_id="self-hosted-declared-price-v1",
+        pricing_basis="Administrator marked this server on this computer or a private network free",
+        applicability=(
+            "Spend-limit estimate for a self-hosted route; the provider's "
+            "invoice remains authoritative."
+        ),
+    )
 
 
 def _self_hosted_quote(requested: str, provider: str) -> ModelPrice:
