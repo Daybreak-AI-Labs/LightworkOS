@@ -13227,7 +13227,9 @@ async def create_fleet(request: Request, payload: FleetCreateIn) -> dict:
     from maverick.fleet import Fleet, FleetAgent, load_fleet, save_fleet, valid_name
 
     if not valid_name(payload.name):
-        raise HTTPException(status_code=400, detail="invalid fleet name")
+        raise HTTPException(status_code=400, detail=(
+            "A team name starts with a letter or number and uses only letters, numbers, "
+            "dashes or underscores (up to 64 characters)."))
     agents = tuple(
         FleetAgent(
             name=a.name.strip(),
@@ -13241,16 +13243,16 @@ async def create_fleet(request: Request, payload: FleetCreateIn) -> dict:
     seen: set[str] = set()
     for a in agents:
         if not valid_name(a.name):
-            raise HTTPException(status_code=400, detail=f"invalid agent name: {a.name!r}")
+            raise HTTPException(status_code=400, detail=f"{a.name!r} can't be used as an agent name. Start with a letter or number and use only letters, numbers, dashes or underscores.")
         if a.name.casefold() in seen:
             raise HTTPException(status_code=400, detail=f"two agents are named {a.name!r}; give each agent its own name")
         seen.add(a.name.casefold())
         if not a.role:
-            raise HTTPException(status_code=400, detail=f"missing role for agent: {a.name!r}")
+            raise HTTPException(status_code=400, detail=f"Choose a role for the agent {a.name!r}.")
         # A role nobody defined used to save and then run with its owner's whole
         # grant. Only a configured role or one of the page's built-in roles.
         if (configured and a.role not in configured) or not agent_role_known(a.role):
-            raise HTTPException(status_code=400, detail=f"unknown role for agent: {a.name!r}")
+            raise HTTPException(status_code=400, detail=f"The agent {a.name!r} has a role Lightwork doesn't know ({a.role!r}). Choose one of the listed roles.")
 
     principal = caller_principal(request)
     owner = principal or ""
