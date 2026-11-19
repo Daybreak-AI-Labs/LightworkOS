@@ -8,8 +8,8 @@ const path = require('node:path');
 const {JSDOM} = require('jsdom');
 const script = fs.readFileSync(path.resolve(__dirname, '../../maverick_dashboard/static/lightwork-settings-review.js'), 'utf8');
 const settle = async () => { for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve)); };
-const BEFORE = '36f1490a4c272190bbd707eff8b31bdbaad9a803ab68fd1c035257dd8a238d1e';
-const AFTER = 'a730f236477dad3bf65382a789e5a5f4cc95a704219102fc9cb4038977fc0605';
+const BEFORE = '36f1490a4c272190bbd707eff8b31bdbaad9a803ab68fd1c035257dd8a238d1e'; // pragma: allowlist secret - fixture revision fingerprint
+const AFTER = 'a730f236477dad3bf65382a789e5a5f4cc95a704219102fc9cb4038977fc0605'; // pragma: allowlist secret - fixture revision fingerprint
 
 test('settings history keeps revision fingerprints out of the readable change', async t => {
   const dom = new JSDOM(`<body><section id="settings-tools"><p data-tools-status></p>
