@@ -424,6 +424,9 @@
       /^why (?:did|has|is) (?:my|this|the|goal|task|run|goal \d+|task \d+|run \d+) (?:goal |task |run )?(?:fail|failed|stop|stopped|blocked)(?: please)?$/.test(normalized) ||
       /^(?:what is (?:the status of )?(?:my |this |the )?(?:goal|task)(?: \d{1,18})?(?: status)?|(?:show|check) (?:my|this) (?:goal|task) status|how is (?:my|this) (?:goal|task) doing)(?: please)?$/.test(normalized) ||
       /^(?:find|search for|look up) my task(?: called| named)? .{2,100}$/.test(normalized) ||
+      // Code checks and evidence readiness: copilot_live_state._CODE_CHECKS and _EVIDENCE.
+      /^(?:what (?:was|has been) checked (?:on|in|for) (?:my |the )?(?:proposed )?code changes|(?:show|list) (?:my |the )?proposed code changes|(?:were|are|was) (?:my |the )?(?:proposed )?code changes? checked)(?: please)?$/.test(normalized) ||
+      /^(?:can tasks (?:run|finish) (?:here|in this workspace)|is (?:the |this workspace's )?(?:ai )?evidence (?:check|gateway|setup) (?:ready|working|blocking tasks)|why are (?:my |all )?tasks (?:held back|withheld)(?: in this workspace)?)(?: please)?$/.test(normalized) ||
       // A task's own cost: the same questions copilot_live_state._TASK_COST reads.
       /^(?:(?:how much (?:did|has|does)|what (?:did|does|has)) (?:my |this |the )?(?:goal|task|run)(?: #?\d{1,18})? cost(?: in (?:dollars|total))?(?: so far)?|(?:what is |what's )?the cost of (?:my |this |the )?(?:goal|task|run)(?: #?\d{1,18})?)(?:,? and why)?(?: please)?$/.test(normalized);
   }
