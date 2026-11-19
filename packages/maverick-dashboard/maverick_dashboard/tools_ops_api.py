@@ -230,6 +230,15 @@ def _learned_admission_allowed() -> tuple[bool, str]:
     return True, ""
 
 
+def _signed_skills_only() -> bool:
+    try:
+        from maverick import config
+
+        return bool(config.get_skills().get("require_signed"))
+    except Exception:  # unreadable: assume the stricter setting
+        return True
+
+
 def _learned_candidates() -> dict:
     from maverick.memory_ownership import source_allowed
     from maverick.skill import stats as skill_stats
@@ -251,14 +260,21 @@ def _learned_candidates() -> dict:
     tracking = skill_stats._enabled()
 
     def saved_row(row) -> dict:
-        ready = row.source_shared and recall_enabled and row.name in runtime
+        # A skill learned from the sole owner's own tasks is recalled only
+        # inside that owner's tasks, so this page (outside any task) never
+        # sees it in ``runtime``. Only the signed-skills setting can still
+        # hold it back: reviewed suggestions are unsigned.
+        own = row.source_shared and not all(source_allowed(gid, "") for gid in row.source_goal_ids)
+        usable = row.name in runtime or (own and not _signed_skills_only())
+        ready = row.source_shared and recall_enabled and usable
         status = (
             "Paused: the source task is no longer shared. Agents cannot use this skill."
             if not row.source_shared else
             "Paused: agent skills are turned off. Turn them on in Settings to use this."
             if not recall_enabled else
             "Paused: current skill trust settings prevent agents from using this skill."
-            if row.name not in runtime else
+            if not usable else
+            "Available for your matching new tasks." if own else
             "Available for matching new tasks."
         )
         return {

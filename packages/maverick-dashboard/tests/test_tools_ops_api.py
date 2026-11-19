@@ -891,3 +891,10 @@ def test_a_suggestion_from_the_sole_owners_tasks_says_so(client, monkeypatch, tm
                 "n_examples": 2, "source_goal_ids": [mine]}, tmp_path / "home" / "learned-skills")
     rows = client.get("/api/v1/skills/learned-candidates").json()["suggestions"]
     assert [(row["name"], row["from_your_tasks"]) for row in rows] == [("renewal-timing", True)]
+    # Once added, the page says it is in use for the owner's tasks (recall
+    # happens inside their tasks, never on this page).
+    added = _skill_change(client, "renewal-timing", "admit", rows[0]["fingerprint"], publish_name="renewal-timing")
+    assert added.status_code == 201, added.text
+    saved = client.get("/api/v1/skills/learned-candidates").json()["added"]
+    assert [(row["name"], row["recall_ready"], row["status"]) for row in saved] == [
+        ("renewal-timing", True, "Available for your matching new tasks.")]
