@@ -85,72 +85,13 @@ def read_attachment_tool(world, goal_id: int | None) -> Tool:
     )
 
 
-_MAX_QUERY_ROWS = 200
 _TABLE_MIMES = ("text/csv", "application/csv", "text/comma-separated-values")
 
 
-def _cell(value: str):
-    """A CSV cell as a number when it is one, so SUM and ORDER BY work on it."""
-    text = value.strip()
-    for kind in (int, float):
-        try:
-            return kind(text)
-        except ValueError:
-            continue
-    return value
-
-
 def query_table(filename: str, mime: str, text: str, sql: str) -> str:
-    """One read-only SELECT over a CSV attachment, in a private in-memory database.
-
-    The authorizer allows reading the ``data`` table and calling built-in
-    functions only, so a statement cannot write, attach a file, change
-    settings or load an extension."""
-    import csv
-    import io
-    import sqlite3
+    """One read-only SELECT over a CSV attachment, as the table ``data``."""
+    from .csv_query import query_tables
 
     if not (mime.startswith(_TABLE_MIMES) or filename.lower().endswith(".csv")):
         return f"ERROR: {filename} is not a CSV file; `sql` works only on CSV attachments"
-    rows = list(csv.reader(io.StringIO(text)))
-    if not rows or not any(cell.strip() for cell in rows[0]):
-        return f"ERROR: {filename} has no header row"
-    header = [cell.strip() or f"column_{i + 1}" for i, cell in enumerate(rows[0])]
-    if len(set(header)) != len(header):
-        return f"ERROR: {filename} repeats a column name in its header"
-    db = sqlite3.connect(":memory:")
-    try:
-        quoted = ", ".join('"' + name.replace('"', '""') + '"' for name in header)
-        db.execute(f"CREATE TABLE data ({quoted})")
-        width = len(header)
-        db.executemany(f"INSERT INTO data VALUES ({', '.join('?' * width)})",
-                       [[_cell(c) for c in (row + [""] * width)[:width]] for row in rows[1:] if row])
-        allowed = {sqlite3.SQLITE_SELECT, sqlite3.SQLITE_READ, sqlite3.SQLITE_FUNCTION}
-
-        def authorize(action, arg1, arg2, _db, _trigger):
-            if action not in allowed:
-                return sqlite3.SQLITE_DENY
-            if action == sqlite3.SQLITE_READ and arg1 != "data":
-                return sqlite3.SQLITE_DENY
-            if action == sqlite3.SQLITE_FUNCTION and str(arg2).lower() in {"load_extension", "readfile", "writefile"}:
-                return sqlite3.SQLITE_DENY
-            return sqlite3.SQLITE_OK
-
-        db.set_authorizer(authorize)
-        try:
-            cursor = db.execute(sql)
-        except (sqlite3.Error, sqlite3.Warning) as exc:
-            return f"ERROR: the query was refused or invalid: {exc}"
-        names = [d[0] for d in cursor.description or ()]
-        found = cursor.fetchmany(_MAX_QUERY_ROWS + 1)
-    finally:
-        db.close()
-    out = io.StringIO()
-    writer = csv.writer(out, lineterminator="\n")
-    writer.writerow(names)
-    # Round away binary floating-point noise (209166.05000000002) so the
-    # model reads the figure the data actually holds.
-    writer.writerows([[round(v, 9) if isinstance(v, float) else v for v in row]
-                      for row in found[:_MAX_QUERY_ROWS]])
-    note = f"\n... [first {_MAX_QUERY_ROWS} rows only]" if len(found) > _MAX_QUERY_ROWS else ""
-    return out.getvalue().rstrip("\n") + note
+    return query_tables({"data": (filename, text)}, sql)

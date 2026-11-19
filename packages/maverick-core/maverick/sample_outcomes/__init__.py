@@ -180,7 +180,9 @@ def goal_description(department: str) -> str:
     return (
         f"{SAMPLE_RULE}\n\n"
         f"Read these files from the workspace with read_file (the paths are relative to the workspace):\n{files}\n"
-        f"- {SAMPLE_WORKSPACE_DIRNAME}/{outcome.department}/README.md describes the data.\n\n"
+        f"- {SAMPLE_WORKSPACE_DIRNAME}/{outcome.department}/README.md describes the data.\n"
+        "Compare values across the CSV files exactly with spreadsheet_read op=query (one SELECT; "
+        "each file is a table named after it), not by eye.\n\n"
         f"Hand the result to a person: it waits in {outcome.lands_in} and nothing is sent, "
         "paid, provisioned or changed without their sign-off."
     )

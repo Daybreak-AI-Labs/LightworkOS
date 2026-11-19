@@ -324,3 +324,11 @@ def test_the_workspace_copy_does_not_hand_the_agent_the_answer(department, tmp_p
     assert "A correct result" not in copied
     assert "Synthetic" in copied and "never counts as real evidence" in copied
     assert "A correct result" in so.expected_result(department)
+
+
+def test_the_brief_asks_for_exact_comparison_not_by_eye():
+    # Compared by eye, the Finance specialist missed a duplicate invoice and an
+    # unknown vendor; the brief names the exact, read-only query to use.
+    brief = so.goal_description("finance")
+    assert "spreadsheet_read op=query" in brief and "not by eye" in brief
+    assert "INV-1043" not in brief and "A correct result" not in brief
