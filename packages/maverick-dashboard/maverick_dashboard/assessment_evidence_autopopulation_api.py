@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, is_dataclass
+from functools import partial
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -154,7 +155,7 @@ def _assessment_evidence_autopopulation_enabled_routes(deps):
             )
         return result
 
-    def service(request: Request) -> tuple[Any, str]:
+    def open_service(request: Request) -> tuple[Any, str]:
         tenant = _tenant_id()
         if not enabled(request, tenant):
             raise HTTPException(
@@ -198,6 +199,10 @@ def _assessment_evidence_autopopulation_enabled_routes(deps):
                 detail="assessment evidence authority is unavailable",
             )
         return value, actor
+
+    # The gate reads the settings and the store opens tenant SQLite files (busy
+    # timeout 30 s): on the event loop, one waiting store stopped every request.
+    service = partial(run_in_threadpool, open_service)
 
     def translate(exc: Exception) -> HTTPException:
         from maverick import assessment_evidence_autopopulation as autopop
@@ -261,7 +266,7 @@ def _assessment_evidence_autopopulation_status_routes(deps, enabled, router, ser
                     detail="assessment evidence readiness is unavailable",
                 )
             return _jsonable(result)
-        capability, _actor = service(request)
+        capability, _actor = await service(request)
         try:
             return _jsonable(await run_in_threadpool(capability.status))
         except Exception as exc:
@@ -273,7 +278,7 @@ def _assessment_evidence_autopopulation_status_routes(deps, enabled, router, ser
         body: CreateProposalIn,
     ) -> dict[str, Any]:
         require_permission(request, "operate")
-        capability, actor = service(request)
+        capability, actor = await service(request)
         try:
             record = await run_in_threadpool(
                 capability.create_proposal,
@@ -292,7 +297,7 @@ def _assessment_evidence_autopopulation_status_routes(deps, enabled, router, ser
         limit: int = Query(default=100, ge=1, le=500),
     ) -> dict[str, Any]:
         require_permission(request, "audit")
-        capability, _actor = service(request)
+        capability, _actor = await service(request)
         try:
             rows = await run_in_threadpool(capability.list_proposals, limit=limit)
         except Exception as exc:
@@ -321,7 +326,7 @@ def _assessment_evidence_autopopulation_status_routes(deps, enabled, router, ser
     @router.get("/proposals/{proposal_id}")
     async def get_proposal(request: Request, proposal_id: OpaqueId) -> dict[str, Any]:
         require_permission(request, "operate")
-        capability, _actor = service(request)
+        capability, _actor = await service(request)
         try:
             record = await run_in_threadpool(capability.get_proposal, proposal_id)
         except Exception as exc:
@@ -335,7 +340,7 @@ def _assessment_evidence_autopopulation_status_routes(deps, enabled, router, ser
         body: ReviewProposalIn,
     ) -> dict[str, Any]:
         require_permission(request, "operate")
-        capability, actor = service(request)
+        capability, actor = await service(request)
         try:
             record = await run_in_threadpool(
                 capability.review_proposal,
@@ -358,7 +363,7 @@ def _assessment_evidence_autopopulation_status_routes(deps, enabled, router, ser
         body: ApplyProposalIn,
     ) -> dict[str, Any]:
         require_permission(request, "operate")
-        capability, actor = service(request)
+        capability, actor = await service(request)
         try:
             record = await run_in_threadpool(
                 capability.apply_proposal,
@@ -375,7 +380,7 @@ def _assessment_evidence_autopopulation_status_routes(deps, enabled, router, ser
     @router.post("/maintenance/purge")
     async def purge_expired(request: Request, body: PurgeIn) -> dict[str, Any]:
         require_permission(request, "admin")
-        capability, actor = service(request)
+        capability, actor = await service(request)
         try:
             purged = await run_in_threadpool(
                 capability.purge_expired,
@@ -392,7 +397,7 @@ def _assessment_evidence_autopopulation_integrity_routes(router, service, transl
     @router.get("/integrity")
     async def integrity(request: Request) -> dict[str, Any]:
         require_permission(request, "audit")
-        capability, _actor = service(request)
+        capability, _actor = await service(request)
         try:
             report = await run_in_threadpool(capability.verify_integrity)
         except Exception as exc:

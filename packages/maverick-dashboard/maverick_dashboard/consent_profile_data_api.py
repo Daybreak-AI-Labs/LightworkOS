@@ -17,6 +17,7 @@ import sqlite3
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, is_dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any, Literal
 
@@ -381,7 +382,7 @@ def create_consent_profile_data_router(  # noqa: C901 - explicit route assembly
     deps = dependencies or ConsentProfileDataAdminDependencies()
     router = APIRouter(prefix="/consent/profile-data", tags=["consent-profile-data"])
 
-    def authority(request: Request) -> tuple[Any, str, Any]:
+    def open_authority(request: Request) -> tuple[Any, str, Any]:
         from maverick import consent_profile_data as ops
 
         gate = deps.gate or _default_gate
@@ -426,10 +427,14 @@ def create_consent_profile_data_router(  # noqa: C901 - explicit route assembly
             )
         return ops, tenant, store
 
+    # The gate reads the settings and the store opens tenant SQLite files (busy
+    # timeout 30 s): on the event loop, one waiting store stopped every request.
+    authority = partial(run_in_threadpool, open_authority)
+
     @router.get("/status")
     async def status(request: Request) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         integrity = await _call(ops, store.verify_integrity, tenant)
         return {
             "enabled": True,
@@ -447,14 +452,14 @@ def create_consent_profile_data_router(  # noqa: C901 - explicit route assembly
     async def list_catalogs(request: Request, limit: int = Query(100, ge=1, le=500)) -> dict:
         """Read-only list of the active workspace's catalog versions."""
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(await _call(ops, store.list_catalogs, tenant, limit=limit))
 
     @router.get("/journeys")
     async def list_journeys(request: Request, limit: int = Query(100, ge=1, le=500)) -> dict:
         """Read-only list of the active workspace's journey versions."""
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(await _call(ops, store.list_journeys, tenant, limit=limit))
 
     @router.get("/contract")
@@ -467,7 +472,7 @@ def create_consent_profile_data_router(  # noqa: C901 - explicit route assembly
     ) -> dict:
         """Read-only: the published facts a new catalog or journey must bind to."""
         require_permission(request, "operate")
-        authority(request)
+        await authority(request)
         from .consent_public_admin_api import _require_enabled
 
         _require_enabled()
@@ -489,7 +494,7 @@ def create_consent_profile_data_router(  # noqa: C901 - explicit route assembly
     @router.post("/catalogs", status_code=201)
     async def create_catalog(request: Request, body: CatalogCreateIn) -> dict[str, Any]:
         require_global_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         payload = body.model_dump()
         payload["definitions"] = [item.model_dump() for item in body.definitions]
         return _jsonable(await _call(ops, store.create_catalog_version, tenant, **payload))
@@ -497,7 +502,7 @@ def create_consent_profile_data_router(  # noqa: C901 - explicit route assembly
     @router.get("/catalogs/{catalog_id}/versions/{version}")
     async def get_catalog(request: Request, catalog_id: str, version: int) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(await _call(ops, store.get_catalog_version, tenant, catalog_id, version))
 
     @router.post("/catalogs/{catalog_id}/versions/{version}/approve")
@@ -508,7 +513,7 @@ def create_consent_profile_data_router(  # noqa: C901 - explicit route assembly
         body: RevisionIn,
     ) -> dict[str, Any]:
         require_global_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await _call(
                 ops,
@@ -523,7 +528,7 @@ def create_consent_profile_data_router(  # noqa: C901 - explicit route assembly
     @router.post("/journeys", status_code=201)
     async def create_journey(request: Request, body: JourneyCreateIn) -> dict[str, Any]:
         require_global_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         payload = body.model_dump()
         payload["stages"] = [item.model_dump() for item in body.stages]
         return _jsonable(await _call(ops, store.create_journey_version, tenant, **payload))
@@ -531,7 +536,7 @@ def create_consent_profile_data_router(  # noqa: C901 - explicit route assembly
     @router.get("/journeys/{journey_id}/versions/{version}")
     async def get_journey(request: Request, journey_id: str, version: int) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(await _call(ops, store.get_journey_version, tenant, journey_id, version))
 
     async def lifecycle(
@@ -542,7 +547,7 @@ def create_consent_profile_data_router(  # noqa: C901 - explicit route assembly
         action: str,
     ) -> dict[str, Any]:
         require_global_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         function = (
             store.approve_journey_version
             if action == "approve"
@@ -592,13 +597,13 @@ def create_consent_profile_data_router(  # noqa: C901 - explicit route assembly
     @router.get("/integrity")
     async def integrity(request: Request) -> dict[str, Any]:
         require_global_permission(request, "audit")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(await _call(ops, store.verify_integrity, tenant))
 
     @router.post("/retention/purge")
     async def purge(request: Request, body: PurgeIn) -> dict[str, Any]:
         require_global_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(await _call(ops, store.purge_expired, tenant, **body.model_dump()))
 
     return router

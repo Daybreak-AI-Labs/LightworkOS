@@ -12,6 +12,7 @@ import hashlib
 import hmac
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, is_dataclass
+from functools import partial
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
@@ -491,7 +492,7 @@ class ThirdPartyIntelligenceDependencies:
 
 def _third_party_intelligence_authority_routes(deps):
     """Bind authority and related router operations."""
-    def authority(request: Request):
+    def open_authority(request: Request):
         ops = _ops()
         tenant = _tenant_id()
         factory = getattr(
@@ -518,6 +519,11 @@ def _third_party_intelligence_authority_routes(deps):
                 detail="third-party intelligence store is unavailable",
             )
         return ops, tenant, store
+
+    # The gate reads the settings and the store opens a tenant SQLite file
+    # (busy timeout 30 s): on the event loop, one waiting store stopped every
+    # other request, health checks included.
+    authority = partial(run_in_threadpool, open_authority)
 
     async def call(ops, function, *args, **kwargs):
         try:
@@ -744,9 +750,11 @@ def _third_party_intelligence_status_routes(
                 "error_code": "scheduler_status_unavailable",
             }
 
+        enabled = await run_in_threadpool(_enabled)
+        smtp_sender_configured = await run_in_threadpool(mailer.configured)
         return {
             "schema": "lightwork.third-party-intelligence-status.v1",
-            "enabled": _enabled(),
+            "enabled": enabled,
             "principal_ref": _principal(request, tenant),
             "bundled_corpus": False,
             "live_feed_configured": False,
@@ -764,7 +772,7 @@ def _third_party_intelligence_status_routes(
             "provider_source_credential_checked": False,
             "outbound_delivery_runs_only_on_explicit_post": True,
             "delivery_destination_resolver_configured": True,
-            "smtp_sender_configured": mailer.configured(),
+            "smtp_sender_configured": smtp_sender_configured,
             "raw_credentials_accepted": False,
             "raw_profile_values_accepted": False,
             "silent_pep_sanctions_adverse_dismissal_allowed": False,
@@ -822,7 +830,7 @@ def _third_party_intelligence_status_routes(
     def _lister(name: str, method: str):
         async def listing(request: Request) -> dict[str, Any]:
             require_permission(request, "view")
-            ops, tenant, store = authority(request)
+            ops, tenant, store = await authority(request)
             return {"items": _jsonable(await call(ops, getattr(store, method), tenant, limit=500))}
 
         listing.__name__ = f"list_{name}"
@@ -854,7 +862,7 @@ def _third_party_intelligence_status_routes(
         request: Request, source_id: ObjectPath, body: SourceIn
     ) -> dict[str, Any]:
         require_global_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -869,7 +877,7 @@ def _third_party_intelligence_status_routes(
     @router.get("/sources/{source_id}")
     async def source_detail(request: Request, source_id: ObjectPath) -> dict[str, Any]:
         require_permission(request, "view")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(await call(ops, store.get_source, tenant, source_id))
 
     @router.post("/sources/{source_id}/approval")
@@ -877,7 +885,7 @@ def _third_party_intelligence_status_routes(
         request: Request, source_id: ObjectPath, body: ApprovalIn
     ) -> dict[str, Any]:
         require_global_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -894,7 +902,7 @@ def _third_party_intelligence_status_routes(
         request: Request, source_id: ObjectPath, body: RevisionRationaleIn
     ) -> dict[str, Any]:
         require_global_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -914,7 +922,7 @@ def _third_party_intelligence_status_routes(
         body: SnapshotIn,
     ) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -930,7 +938,7 @@ def _third_party_intelligence_status_routes(
     @router.get("/snapshots/{snapshot_id}")
     async def snapshot_detail(request: Request, snapshot_id: ObjectPath) -> dict[str, Any]:
         require_permission(request, "view")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(await call(ops, store.get_source_snapshot, tenant, snapshot_id))
 
     @router.put("/vendors/{vendor_id}")
@@ -938,10 +946,10 @@ def _third_party_intelligence_status_routes(
         request: Request, vendor_id: ObjectPath, body: VendorIn
     ) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         actor = _principal(request, tenant)
         from .vendor_profile import effect_guard
-        guard = effect_guard(request, tenant, actor, family="intelligence")
+        guard = await run_in_threadpool(effect_guard, request, tenant, actor, family="intelligence")
         return _jsonable(
             await call(
                 ops,
@@ -958,7 +966,7 @@ def _third_party_intelligence_status_routes(
     @router.get("/vendors/{vendor_id}")
     async def vendor_detail(request: Request, vendor_id: ObjectPath) -> dict[str, Any]:
         require_permission(request, "view")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(await call(ops, store.get_vendor, tenant, vendor_id))
 
 
@@ -971,7 +979,7 @@ def _third_party_intelligence_upsert_relationship_routes(authority, call, router
         body: RelationshipIn,
     ) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -986,13 +994,13 @@ def _third_party_intelligence_upsert_relationship_routes(authority, call, router
     @router.get("/relationships/{relationship_id}")
     async def relationship_detail(request: Request, relationship_id: ObjectPath) -> dict[str, Any]:
         require_permission(request, "view")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(await call(ops, store.get_relationship, tenant, relationship_id))
 
     @router.get("/vendors/{vendor_id}/relationships")
     async def vendor_relationships(request: Request, vendor_id: ObjectPath) -> dict[str, Any]:
         require_permission(request, "view")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         rows = await call(ops, store.list_relationships, tenant, vendor_id)
         return {"items": _jsonable(rows), "count": len(rows)}
 
@@ -1001,7 +1009,7 @@ def _third_party_intelligence_upsert_relationship_routes(authority, call, router
         request: Request, run_id: ObjectPath, body: ScreeningRunIn
     ) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -1016,7 +1024,7 @@ def _third_party_intelligence_upsert_relationship_routes(authority, call, router
     @router.get("/screening/runs/{run_id}")
     async def screening_detail(request: Request, run_id: ObjectPath) -> dict[str, Any]:
         require_permission(request, "view")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(await call(ops, store.get_screening_run, tenant, run_id))
 
     @router.put("/screening/runs/{run_id}/findings/{finding_id}")
@@ -1027,7 +1035,7 @@ def _third_party_intelligence_upsert_relationship_routes(authority, call, router
         body: FindingIn,
     ) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -1043,13 +1051,13 @@ def _third_party_intelligence_upsert_relationship_routes(authority, call, router
     @router.get("/screening/findings/{finding_id}")
     async def finding_detail(request: Request, finding_id: ObjectPath) -> dict[str, Any]:
         require_permission(request, "view")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(await call(ops, store.get_finding, tenant, finding_id))
 
     @router.get("/screening/runs/{run_id}/findings")
     async def findings_for_run(request: Request, run_id: ObjectPath) -> dict[str, Any]:
         require_permission(request, "view")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         rows = await call(ops, store.list_findings, tenant, run_id)
         return {"items": _jsonable(rows), "count": len(rows)}
 
@@ -1058,7 +1066,7 @@ def _third_party_intelligence_upsert_relationship_routes(authority, call, router
         request: Request, finding_id: ObjectPath, body: FindingReviewIn
     ) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -1075,7 +1083,7 @@ def _third_party_intelligence_upsert_relationship_routes(authority, call, router
         request: Request, run_id: ObjectPath, body: RevisionIn
     ) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -1092,7 +1100,7 @@ def _third_party_intelligence_upsert_relationship_routes(authority, call, router
         request: Request, policy_id: ObjectPath, body: RiskPolicyIn
     ) -> dict[str, Any]:
         require_global_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -1111,7 +1119,7 @@ def _third_party_intelligence_upsert_relationship_routes(authority, call, router
         version: int = ApiPath(ge=1, le=2**31 - 1),
     ) -> dict[str, Any]:
         require_permission(request, "view")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(await call(ops, store.get_risk_policy, tenant, policy_id, version))
 
     @router.post("/risk/policies/{policy_id}/versions/{version}/approval")
@@ -1122,7 +1130,7 @@ def _third_party_intelligence_upsert_relationship_routes(authority, call, router
         version: int = ApiPath(ge=1, le=2**31 - 1),
     ) -> dict[str, Any]:
         require_global_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -1140,7 +1148,7 @@ def _third_party_intelligence_upsert_relationship_routes(authority, call, router
         request: Request, decision_id: ObjectPath, body: RiskEvaluationIn
     ) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -1155,7 +1163,7 @@ def _third_party_intelligence_upsert_relationship_routes(authority, call, router
     @router.get("/risk/decisions/{decision_id}")
     async def risk_decision_detail(request: Request, decision_id: ObjectPath) -> dict[str, Any]:
         require_permission(request, "view")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(await call(ops, store.get_risk_decision, tenant, decision_id))
 
     @router.post("/risk/decisions/{decision_id}/overrides/{override_decision_id}")
@@ -1166,7 +1174,7 @@ def _third_party_intelligence_upsert_relationship_routes(authority, call, router
         body: RiskOverrideIn,
     ) -> dict[str, Any]:
         require_global_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -1187,7 +1195,7 @@ def _third_party_intelligence_upsert_relationship_routes(authority, call, router
         body: RiskRollbackIn,
     ) -> dict[str, Any]:
         require_global_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -1203,7 +1211,7 @@ def _third_party_intelligence_upsert_relationship_routes(authority, call, router
     @router.put("/edd/cases/{case_id}")
     async def open_edd(request: Request, case_id: ObjectPath, body: EDDCaseIn) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -1218,7 +1226,7 @@ def _third_party_intelligence_upsert_relationship_routes(authority, call, router
     @router.get("/edd/cases/{case_id}")
     async def edd_detail(request: Request, case_id: ObjectPath) -> dict[str, Any]:
         require_permission(request, "view")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(await call(ops, store.get_edd_case, tenant, case_id))
 
 
@@ -1232,7 +1240,7 @@ def _third_party_intelligence_set_edd_task_routes(authority, call, mail_guard, m
         body: EDDTaskIn,
     ) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -1253,7 +1261,7 @@ def _third_party_intelligence_set_edd_task_routes(authority, call, mail_guard, m
         body: EDDEvidenceIn,
     ) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -1271,7 +1279,7 @@ def _third_party_intelligence_set_edd_task_routes(authority, call, mail_guard, m
         request: Request, case_id: ObjectPath, body: EDDDecisionIn
     ) -> dict[str, Any]:
         require_global_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -1288,7 +1296,7 @@ def _third_party_intelligence_set_edd_task_routes(authority, call, mail_guard, m
         request: Request, monitor_id: ObjectPath, body: MonitorIn
     ) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         await call(ops, store.resolve_alert_recipient, tenant, body.destination_ref)
         return _jsonable(
             await call(
@@ -1304,7 +1312,7 @@ def _third_party_intelligence_set_edd_task_routes(authority, call, mail_guard, m
     @router.get("/monitors/{monitor_id}")
     async def monitor_detail(request: Request, monitor_id: ObjectPath) -> dict[str, Any]:
         require_permission(request, "view")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(await call(ops, store.get_monitor, tenant, monitor_id))
 
     @router.get("/monitoring/due")
@@ -1313,7 +1321,7 @@ def _third_party_intelligence_set_edd_task_routes(authority, call, mail_guard, m
         limit: int = Query(default=100, ge=1, le=100),
     ) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         rows = await call(ops, store.due_monitors, tenant, limit=limit)
         return {"items": _jsonable(rows), "count": len(rows)}
 
@@ -1322,7 +1330,7 @@ def _third_party_intelligence_set_edd_task_routes(authority, call, mail_guard, m
         request: Request, monitor_id: ObjectPath, body: ObservationIn
     ) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -1337,44 +1345,48 @@ def _third_party_intelligence_set_edd_task_routes(authority, call, mail_guard, m
     @router.get("/monitoring/alerts/{alert_id}")
     async def alert_detail(request: Request, alert_id: ObjectPath) -> dict[str, Any]:
         require_permission(request, "view")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(await call(ops, store.get_monitoring_alert, tenant, alert_id))
 
     @router.get("/alert-recipients")
     async def alert_recipients(request: Request, response: Response) -> dict[str, Any]:
-        _mail_access(request)
-        ops, tenant, store = authority(request)
+        await run_in_threadpool(_mail_access, request)
+        ops, tenant, store = await authority(request)
         response.headers["Cache-Control"] = "private, no-store"
         rows = await call(ops, store.list_alert_recipients, tenant)
-        mail_guard(request, tenant)()
-        return {"context": context_for(request), "items": rows, "count": len(rows)}
+
+        def current_context() -> str:
+            mail_guard(request, tenant)()
+            return context_for(request)
+
+        return {"context": await run_in_threadpool(current_context), "items": rows, "count": len(rows)}
 
     @router.get("/alert-recipients/{recipient_id}")
     async def alert_recipient(request: Request, recipient_id: ObjectPath, response: Response) -> dict[str, Any]:
-        _mail_access(request)
+        await run_in_threadpool(_mail_access, request)
         require_global_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         response.headers["Cache-Control"] = "private, no-store"
         result = await call(ops, store.get_alert_recipient, tenant, recipient_id)
-        mail_guard(request, tenant, admin=True)()
+        await run_in_threadpool(lambda: mail_guard(request, tenant, admin=True)())
         return _jsonable(result)
 
     @router.put("/alert-recipients/{recipient_id}")
     async def save_alert_recipient(request: Request, recipient_id: ObjectPath, body: RecipientIn) -> dict[str, Any]:
-        _mail_access(request)
+        await run_in_threadpool(_mail_access, request)
         require_global_permission(request, "admin")
-        ops, tenant, store = authority(request)
-        guard = mail_guard(request, tenant, context=body.context, admin=True)
+        ops, tenant, store = await authority(request)
+        guard = await run_in_threadpool(mail_guard, request, tenant, context=body.context, admin=True)
         return await call(ops, store.save_alert_recipient, tenant, recipient_id=recipient_id,
                           actor_ref=_principal(request, tenant), effect_guard=guard,
                           **body.model_dump(exclude={"context"}))
 
     @router.post("/alert-recipients/{recipient_id}/withdraw")
     async def withdraw_alert_recipient(request: Request, recipient_id: ObjectPath, body: RecipientWithdrawIn) -> dict[str, Any]:
-        _mail_access(request)
+        await run_in_threadpool(_mail_access, request)
         require_global_permission(request, "admin")
-        ops, tenant, store = authority(request)
-        guard = mail_guard(request, tenant, context=body.context, admin=True)
+        ops, tenant, store = await authority(request)
+        guard = await run_in_threadpool(mail_guard, request, tenant, context=body.context, admin=True)
         return await call(ops, store.withdraw_alert_recipient, tenant, recipient_id,
                           actor_ref=_principal(request, tenant), effect_guard=guard,
                           **body.model_dump(exclude={"context"}))
@@ -1382,7 +1394,7 @@ def _third_party_intelligence_set_edd_task_routes(authority, call, mail_guard, m
     @router.get("/outbox")
     async def outbox(request: Request, response: Response) -> dict[str, Any]:
         require_permission(request, "view")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         response.headers["Cache-Control"] = "private, no-store"
         rows = await call(ops, store.list_outbox, tenant)
         return {"items": [{key: value for key, value in _jsonable(row).items() if key != "lease_token"}
@@ -1390,15 +1402,15 @@ def _third_party_intelligence_set_edd_task_routes(authority, call, mail_guard, m
 
     @router.get("/outbox/review")
     async def outbox_review(request: Request, response: Response) -> dict[str, Any]:
-        _mail_access(request)
-        ops, tenant, store = authority(request)
+        await run_in_threadpool(_mail_access, request)
+        ops, tenant, store = await authority(request)
         response.headers["Cache-Control"] = "private, no-store"
         return await call(ops, mail_review, request, tenant, store)
 
     @router.post("/outbox/claim")
     async def claim_outbox(request: Request, body: ClaimOutboxIn) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         rows = await call(
             ops,
             store.claim_outbox,
@@ -1418,20 +1430,20 @@ def _third_party_intelligence_run_outbox_routes(authority, call, mail_guard, mai
     ) -> dict[str, Any]:
         """Run the explicit external alert-delivery side-effect boundary."""
 
-        _mail_access(request)
-        ops, tenant, store = authority(request)
+        await run_in_threadpool(_mail_access, request)
+        ops, tenant, store = await authority(request)
         from maverick import mailer
         from maverick import third_party_intelligence_delivery as delivery
 
         ids = tuple(item.delivery_id for item in body.items)
         pins = {item.delivery_id: item.pin for item in body.items}
-        access = mail_guard(request, tenant, context=body.context)
+        access = await run_in_threadpool(mail_guard, request, tenant, context=body.context)
         reviewed = await call(ops, mail_review, request, tenant, store, ids)
         if (reviewed["review_sha256"] != body.review_sha256 or reviewed["context"] != body.context
                 or {item["delivery_id"]: item["pin"] for item in reviewed["items"]} != pins):
             raise HTTPException(409, "The alerts, recipients or source permissions changed. Review the current alerts before sending.")
         reviewed_items = {item["delivery_id"]: item for item in reviewed["items"]}
-        sender_scope = mailer.sending_scope()
+        sender_scope = await run_in_threadpool(mailer.sending_scope)
 
         def resolver(current_tenant, reference):
             access()
@@ -1493,7 +1505,7 @@ def _third_party_intelligence_run_outbox_routes(authority, call, mail_guard, mai
         request: Request, delivery_id: ObjectPath, body: FailOutboxIn
     ) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -1511,7 +1523,7 @@ def _third_party_intelligence_run_outbox_routes(authority, call, mail_guard, mai
         body: AcknowledgeOutboxIn,
     ) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -1527,7 +1539,7 @@ def _third_party_intelligence_run_outbox_routes(authority, call, mail_guard, mai
         request: Request, monitor_id: ObjectPath, body: RevisionIn
     ) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -1544,7 +1556,7 @@ def _third_party_intelligence_run_outbox_routes(authority, call, mail_guard, mai
         request: Request, consent_id: ObjectPath, body: ExchangeConsentIn
     ) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -1559,7 +1571,7 @@ def _third_party_intelligence_run_outbox_routes(authority, call, mail_guard, mai
     @router.get("/exchange/consents/{consent_id}")
     async def exchange_consent_detail(request: Request, consent_id: ObjectPath) -> dict[str, Any]:
         require_permission(request, "view")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(await call(ops, store.get_exchange_consent, tenant, consent_id))
 
     @router.post("/exchange/consents/{consent_id}/review")
@@ -1567,7 +1579,7 @@ def _third_party_intelligence_run_outbox_routes(authority, call, mail_guard, mai
         request: Request, consent_id: ObjectPath, body: ExchangeReviewIn
     ) -> dict[str, Any]:
         require_global_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -1587,7 +1599,7 @@ def _third_party_intelligence_run_outbox_routes(authority, call, mail_guard, mai
         body: ExchangeContributionIn,
     ) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -1603,7 +1615,7 @@ def _third_party_intelligence_run_outbox_routes(authority, call, mail_guard, mai
     @router.get("/exchange/contributions/{contribution_id}")
     async def contribution_detail(request: Request, contribution_id: ObjectPath) -> dict[str, Any]:
         require_permission(request, "view")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -1616,7 +1628,7 @@ def _third_party_intelligence_run_outbox_routes(authority, call, mail_guard, mai
     @router.post("/exchange/query")
     async def query_exchange(request: Request, body: ExchangeQueryIn) -> dict[str, Any]:
         require_permission(request, "view")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         rows = await call(
             ops,
             store.query_exchange,
@@ -1641,7 +1653,7 @@ def _third_party_intelligence_withdraw_exchange_consent_routes(authority, call, 
         request: Request, consent_id: ObjectPath, body: RevisionRationaleIn
     ) -> dict[str, Any]:
         require_permission(request, "operate")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -1656,7 +1668,7 @@ def _third_party_intelligence_withdraw_exchange_consent_routes(authority, call, 
     @router.post("/retention/purge")
     async def purge_retention(request: Request) -> dict[str, Any]:
         require_global_permission(request, "admin")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         return _jsonable(
             await call(
                 ops,
@@ -1669,7 +1681,7 @@ def _third_party_intelligence_withdraw_exchange_consent_routes(authority, call, 
     @router.get("/integrity")
     async def verify_integrity(request: Request) -> dict[str, Any]:
         require_global_permission(request, "audit")
-        ops, tenant, store = authority(request)
+        ops, tenant, store = await authority(request)
         result = _jsonable(await call(ops, store.verify_integrity, tenant))
         result["valid"] = True
         return result

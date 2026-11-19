@@ -15,6 +15,7 @@ import hashlib
 import importlib.util
 import shutil
 from collections.abc import Callable, Mapping
+from functools import partial
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
@@ -549,7 +550,7 @@ def create_ai_evidence_analysis_router(
         if not enabled:
             raise HTTPException(status_code=403, detail="ai_evidence_analysis_disabled")
 
-    def authority(request: Request):
+    def open_authority(request: Request):
         evidence = _ops()
         tenant = _tenant_id()
         capability(request, tenant)
@@ -593,6 +594,10 @@ def create_ai_evidence_analysis_router(
                 detail="AI evidence-analysis authority is unavailable",
             )
         return evidence, tenant, actor, store
+
+    # The gate reads the settings and the store opens tenant SQLite files (busy
+    # timeout 30 s): on the event loop, one waiting store stopped every request.
+    authority = partial(run_in_threadpool, open_authority)
 
     def lifetime(request: Request, tenant_id: str, actor_ref: str) -> tuple[float, float]:
         resolver = _selected_callable(
@@ -802,7 +807,7 @@ def _register_analysis_status_routes(authority, call, deps, lifetime, router):
         require_permission(request, "operate")
         if request.query_params:
             raise HTTPException(status_code=422, detail="evidence upload query is invalid")
-        evidence, tenant, actor, store = authority(request)
+        evidence, tenant, actor, store = await authority(request)
         valid_until, retained_until = lifetime(request, tenant, actor)
         metadata = _metadata(request)
         media_type = _media_type(request, evidence)
@@ -875,7 +880,7 @@ def _register_analysis_record_routes(authority, call, router):
     ):
         """This workspace's analyses (current versions), for the page list."""
         require_permission(request, "view")
-        evidence, tenant, _actor, store = authority(request)
+        evidence, tenant, _actor, store = await authority(request)
         records = await call(evidence, store.list_analyses, tenant, status=status, limit=limit)
         items = [_safe_record(item) for item in records]
         _secure(response)
@@ -884,7 +889,7 @@ def _register_analysis_record_routes(authority, call, router):
     @router.get("/analyses/{analysis_id}")
     async def get_analysis(request: Request, response: Response, analysis_id: AnalysisPath):
         require_permission(request, "view")
-        evidence, tenant, _actor, store = authority(request)
+        evidence, tenant, _actor, store = await authority(request)
         record = await call(evidence, store.get, tenant, analysis_id)
         _secure(response)
         return _safe_record(record)
@@ -892,7 +897,7 @@ def _register_analysis_record_routes(authority, call, router):
     @router.get("/analyses/{analysis_id}/released")
     async def get_released(request: Request, response: Response, analysis_id: AnalysisPath):
         require_permission(request, "view")
-        evidence, tenant, _actor, store = authority(request)
+        evidence, tenant, _actor, store = await authority(request)
         record = await call(evidence, store.get_released, tenant, analysis_id)
         _secure(response)
         return _safe_record(record)
@@ -900,7 +905,7 @@ def _register_analysis_record_routes(authority, call, router):
     @router.get("/analyses/{analysis_id}/history")
     async def history(request: Request, response: Response, analysis_id: AnalysisPath):
         require_permission(request, "audit")
-        evidence, tenant, _actor, store = authority(request)
+        evidence, tenant, _actor, store = await authority(request)
         records = await call(evidence, store.history, tenant, analysis_id)
         try:
             items = [_record_out(item) for item in records]
@@ -923,7 +928,7 @@ def _register_analysis_review_routes(authority, call, router):
         body: ReviewIn,
     ):
         require_permission(request, "operate")
-        evidence, tenant, actor, store = authority(request)
+        evidence, tenant, actor, store = await authority(request)
         record = await call(
             evidence,
             store.review,
@@ -943,7 +948,7 @@ def _register_analysis_review_routes(authority, call, router):
         body: RevokeIn,
     ):
         require_permission(request, "admin")
-        evidence, tenant, actor, store = authority(request)
+        evidence, tenant, actor, store = await authority(request)
         record = await call(
             evidence,
             store.revoke,
@@ -958,7 +963,7 @@ def _register_analysis_review_routes(authority, call, router):
     @router.get("/integrity")
     async def integrity(request: Request, response: Response):
         require_permission(request, "audit")
-        evidence, tenant, _actor, store = authority(request)
+        evidence, tenant, _actor, store = await authority(request)
         report = await call(evidence, store.verify_integrity, tenant)
         try:
             payload = {
@@ -984,7 +989,7 @@ def _register_analysis_review_routes(authority, call, router):
         limit: int = Query(default=100, ge=1, le=500),
     ):
         require_permission(request, "audit")
-        evidence, tenant, _actor, store = authority(request)
+        evidence, tenant, _actor, store = await authority(request)
         identifiers = await call(evidence, store.retention_due, tenant, limit=limit)
         items = list(identifiers)
         _secure(response)
@@ -996,7 +1001,7 @@ def _register_analysis_purge_route(authority, call, deps, router):
     @router.post("/retention/purge")
     async def purge(request: Request, response: Response, body: PurgeIn):
         require_permission(request, "admin")
-        evidence, tenant, _actor, store = authority(request)
+        evidence, tenant, _actor, store = await authority(request)
         maintenance = _selected_callable(
             request,
             "ai_evidence_analysis_maintenance_runner",

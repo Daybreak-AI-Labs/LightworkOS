@@ -645,10 +645,10 @@ def _privacy_rights_orchestration_list_callbacks_routes(authority, call, router,
     @router.post("/source-runtime/run")
     async def run_source_worker(request: Request, body: SourceWorkerRunIn):
         require_global_permission(request, "admin")
-        _ops()
+        await run_in_threadpool(_ops)
         tenant = _tenant_id()
         principal = _principal(request, tenant)
-        selected = source_worker(request, tenant, principal)
+        selected = await run_in_threadpool(source_worker, request, tenant, principal)
         try:
             result = await run_in_threadpool(
                 selected.run_once,
@@ -671,10 +671,10 @@ def _privacy_rights_orchestration_list_callbacks_routes(authority, call, router,
         body: SourceReconciliationRunIn,
     ):
         require_global_permission(request, "admin")
-        _ops()
+        await run_in_threadpool(_ops)
         tenant = _tenant_id()
         principal = _principal(request, tenant)
-        selected = source_worker(request, tenant, principal)
+        selected = await run_in_threadpool(source_worker, request, tenant, principal)
         try:
             result = await run_in_threadpool(
                 selected.reconcile_once,
