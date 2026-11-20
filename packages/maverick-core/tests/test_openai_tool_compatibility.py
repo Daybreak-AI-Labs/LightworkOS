@@ -13,11 +13,31 @@ def _tool(name):
     return {"name": name, "description": name, "input_schema": {"type": "object"}}
 
 
-@pytest.mark.parametrize("model", ["o3", "gpt-5", "gpt-5.1", "gpt-5.6-sol"])
+@pytest.fixture(autouse=True)
+def _no_remembered_rejections(monkeypatch):
+    monkeypatch.setattr(OpenAIClient, "_TOOL_REASONING_REJECTED", set())
+
+
+@pytest.mark.parametrize("model", ["o3", "gpt-5", "gpt-5.1", "gpt-5.2"])
 def test_tools_preserve_requested_reasoning_until_provider_rejects_it(model):
     client = OpenAIClient.__new__(OpenAIClient)
     request = client._build_kwargs("system", [], [_tool("read")], 500, model, 1_000)
     assert request["reasoning_effort"] == "low"
+
+
+@pytest.mark.parametrize("model", ["gpt-5.4", "gpt-5.4-mini", "gpt-5.5", "gpt-5.6-terra", "gpt-6-astra"])
+@pytest.mark.parametrize("thinking_budget", [None, 1_000])
+def test_from_gpt_5_4_tool_calls_ask_for_no_reasoning_up_front(model, thinking_budget):
+    # OpenAI: "Starting with GPT-5.4, Chat Completions does not support tool
+    # calling with reasoning_effort values other than none." Live, every tool
+    # turn on gpt-5.4-mini was rejected first and resent, and each rejected
+    # attempt was kept as an unknown charge that blocks a provider spending cap.
+    client = OpenAIClient.__new__(OpenAIClient)
+    request = client._build_kwargs("system", [], [_tool("read")], 500, model, thinking_budget)
+    assert request["reasoning_effort"] == "none"
+    # Without tools the requested reasoning is unchanged.
+    plain = client._build_kwargs("system", [], None, 500, model, 1_000)
+    assert plain.get("reasoning_effort") == ("low" if model.startswith("gpt-5") else None)
 
 
 def test_cap_keeps_registration_priority_before_cache_sort(monkeypatch):
@@ -85,7 +105,7 @@ def _fake_client(errors):
 @pytest.mark.parametrize("thinking_budget", [None, 1_000])
 async def test_explicit_provider_rejection_retries_once_with_tools(asynchronous, thinking_budget):
     client, calls, expected = _fake_client([_bad_request(_REJECTION)])
-    kwargs = {"tools": [_tool("read")], "model": "gpt-5.6-sol", "thinking_budget": thinking_budget}
+    kwargs = {"tools": [_tool("read")], "model": "gpt-5.1", "thinking_budget": thinking_budget}
     if asynchronous:
         result = await client.complete_async("system", [], **kwargs)
     else:
@@ -102,9 +122,9 @@ async def test_second_compatibility_error_propagates_without_retry_loop(asynchro
     client, calls, _result = _fake_client([first, second])
     with pytest.raises(type(second)) as raised:
         if asynchronous:
-            await client.complete_async("system", [], tools=[_tool("read")], model="gpt-5.6-sol")
+            await client.complete_async("system", [], tools=[_tool("read")], model="gpt-5.1")
         else:
-            client.complete("system", [], tools=[_tool("read")], model="gpt-5.6-sol")
+            client.complete("system", [], tools=[_tool("read")], model="gpt-5.1")
     assert raised.value is second and len(calls) == 2
 
 
@@ -120,3 +140,19 @@ async def test_unrelated_request_error_is_not_rewritten(asynchronous):
             client.complete("system", [], tools=[_tool("read")], model="o3", thinking_budget=1_000)
     assert raised.value is error and len(calls) == 1
     assert calls[0]["reasoning_effort"] == "low"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_a_model_that_rejected_tool_reasoning_is_not_asked_again(asynchronous):
+    client, calls, expected = _fake_client([_bad_request(_REJECTION)])
+    kwargs = {"tools": [_tool("read")], "model": "gpt-5.1", "thinking_budget": 1_000}
+    for _ in range(2):
+        if asynchronous:
+            assert await client.complete_async("system", [], **kwargs) is expected
+        else:
+            assert client.complete("system", [], **kwargs) is expected
+    assert [call["reasoning_effort"] for call in calls] == ["low", "none", "none"]
+    # Another model still keeps its requested reasoning.
+    other = client._build_kwargs("system", [], [_tool("read")], 500, "o3", 1_000)
+    assert other["reasoning_effort"] == "low"

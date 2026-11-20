@@ -138,7 +138,11 @@
         holds.push(choice); el('spend-hold').append(option);
       });
     });
-    if (!holds.length) paragraph(el('spend-page'), 'Nothing is waiting to be settled. Holds appear here while a task is still spending.');
+    const unresolved = Number.isInteger(health.unresolved_count) ? health.unresolved_count : 0;
+    if (!holds.length && !state.providers.length && unresolved) {
+      paragraph(el('spend-page'), 'No spending limit is set, so requests with an unknown final cost do not stop any work. '
+        + 'To review and settle them here, set a limit for that provider.');
+    } else if (!holds.length) paragraph(el('spend-page'), 'Nothing is waiting to be settled. Holds appear here while a task is still spending.');
     await loadReviews();
     const retained = retainedReview();
     if (retained) {
