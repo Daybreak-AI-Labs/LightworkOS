@@ -2509,6 +2509,20 @@ class Agent:
                 pass
         return self.brief
 
+    def _note_skill_uses(self, recalled) -> None:
+        """Count each recalled skill once per task. Every agent in a task builds
+        its own instructions, some more than once, and the Skills page reads
+        the count as "Used on N later tasks"."""
+        from .skill import stats as skill_stats
+        from .skills import learned_skill_use_key
+
+        seen = self.ctx.skills_used
+        fresh = [s for s in recalled if s.name not in seen]
+        names = [s.name for s in fresh]
+        exact_uses = [key for s in fresh if (key := learned_skill_use_key(s))]
+        skill_stats.record_use(names + exact_uses)
+        seen.update(s.name for s in recalled)
+
     def _build_system(self) -> str:
         self._instruction_source_goals = set()
         self._instruction_capture_ready = True
@@ -2580,13 +2594,7 @@ class Agent:
             except Exception:
                 self._instruction_capture_ready = False
             try:
-                from .skill import stats as skill_stats
-                from .skills import learned_skill_use_key
-                names = [s.name for s in _skills]
-                exact_uses = [key for s in _skills
-                              if (key := learned_skill_use_key(s))]
-                skill_stats.record_use(names + exact_uses)
-                self.ctx.skills_used.update(names)
+                self._note_skill_uses(_skills)
             except Exception:
                 pass
 

@@ -73,7 +73,7 @@
             <tbody>
             {% for agent in fleet.agents %}
               <tr>
-                <td>{{ agent.name|humanize }}</td>
+                <td>{{ agent_labels.get(fleet.name, {}).get(agent.name) or agent.name|humanize }}</td>
                 <td><span class="badge active">{{ agent.role|role_label if agent.role else 'No role' }}</span></td>
                 <td class="muted">{{ agent.description or '' }}</td>
                 {% set check = specialist_readiness.get(agent.domain) if agent.domain else none %}
@@ -90,7 +90,7 @@
                 <option value="">Choose an agent or specialist</option>
                 {% for agent in fleet.agents %}
                   {% set check = specialist_readiness.get(agent.domain) if agent.domain else none %}
-                  <option value="{{ agent.name }}"{% if check and check.state != 'action_ready' %} disabled{% endif %} data-typical="{{ typical_cost_text(typical_costs.get(fleet.name ~ '/' ~ agent.name)) | striptags }}">{{ agent.name|humanize }} ({{ agent.role|role_label if agent.role else 'no role' }}){% if check %} · {{ check.label }}{% endif %}</option>
+                  <option value="{{ agent.name }}"{% if check and check.state != 'action_ready' %} disabled{% endif %} data-typical="{{ typical_cost_text(typical_costs.get(fleet.name ~ '/' ~ agent.name)) | striptags }}">{{ agent_labels.get(fleet.name, {}).get(agent.name) or agent.name|humanize }} ({{ agent.role|role_label if agent.role else 'no role' }}){% if check %} · {{ check.label }}{% endif %}</option>
                 {% endfor %}
               </select>
             </label>
@@ -120,7 +120,7 @@
             <tbody>
             {% for run in runs %}
               <tr>
-                <td>{{ run.agent|humanize }}</td>
+                <td>{{ agent_labels.get(fleet.name, {}).get(run.agent) or run.agent|humanize }}</td>
                 <td><a href="/chat/goal/{{ run.goal_id }}">{{ run.title }}</a></td>
                 <td><span class="badge {{ run.status }}">{{ run.status|humanize }}</span></td>
                 <td class="muted" style="white-space: nowrap;">{{ run.ts | datetime }}</td>

@@ -62,3 +62,24 @@ def test_a_sub_agent_and_a_missing_record_keep_the_brief():
     assert worker._skill_query() == "Check the supplier statement"
     root = _agent(0, "the brief", None)          # record unreadable
     assert root._skill_query() == "the brief"
+
+
+def test_a_skill_counts_once_per_task_however_many_agents_recall_it(monkeypatch):
+    # Live: one task moved the Skills page from "Used on 5 later tasks" to 7,
+    # because every agent in the task (and every rebuild) counted the recall.
+    from maverick import skills
+    from maverick.agent import Agent
+    from maverick.skill import stats as skill_stats
+
+    counted = []
+    monkeypatch.setattr(skill_stats, "record_use", lambda names, path=None: counted.extend(names))
+    monkeypatch.setattr(skills, "learned_skill_use_key", lambda s: f"learned:{s.name}")
+    ctx = SimpleNamespace(skills_used=set())
+    first, second = Agent.__new__(Agent), Agent.__new__(Agent)
+    first.ctx = second.ctx = ctx
+    skill = SimpleNamespace(name="number-only-reply")
+    first._note_skill_uses([skill])
+    first._note_skill_uses([skill])        # a rebuild of the same agent
+    second._note_skill_uses([skill])       # a worker in the same task
+    assert counted == ["number-only-reply", "learned:number-only-reply"]
+    assert ctx.skills_used == {"number-only-reply"}

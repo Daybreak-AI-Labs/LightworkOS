@@ -546,4 +546,8 @@ def test_the_page_says_when_learning_uses_the_owners_own_tasks(tmp_path, monkeyp
     text = client.get("/learning").text
     assert 'id="lrn-owner-tasks"' in text and "learning uses your own tasks" in text
     monkeypatch.setattr(memory_ownership, "sole_person", lambda: "")
-    assert 'id="lrn-owner-tasks"' not in client.get("/learning").text
+    shared = client.get("/learning").text
+    assert 'id="lrn-owner-tasks"' not in shared
+    # Live: "reviewed 0 finished tasks" with no reason given. A shared
+    # installation's page says why people's own tasks are not reviewed.
+    assert 'id="lrn-shared-tasks"' in shared and "stay private" in shared

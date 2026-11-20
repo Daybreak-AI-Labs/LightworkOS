@@ -343,17 +343,18 @@ def _park_approval(record: dict) -> int:
     target = {"target": record["target"], "name": record["name"]}
     # The name is a slug (``Say-who-refused-a-step``); the card reads it as words.
     title = " ".join(str(record["name"]).replace("-", " ").replace("_", " ").split())
+    target_label = f"Instructions Lightwork gives its agents: {title}"
     parameters = {
         "proposal_id": record["id"],
         "change": record["change"],
         "rationale": record["rationale"],
     }
     return open_world().create_approval(
-        record["action"], risk="high",
+        record["action"], risk="high", scope=target_label,
         detail=encode_operation_approval_detail(
             action=record["action"],
             summary=f"Use the suggested instruction change \u201c{title}\u201d for future tasks",
-            target_label=f"Instructions Lightwork gives its agents: {title}",
+            target_label=target_label,
             target=target,
             parameters=parameters,
             parameter_summary=[

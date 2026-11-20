@@ -149,3 +149,20 @@ def test_api_fleets_empty(monkeypatch, tmp_path):
     _isolate(monkeypatch, tmp_path)
     body = _client().get("/api/v1/fleets").json()
     assert body == {"fleets": []}
+
+
+def test_a_hired_specialist_shows_its_own_name(monkeypatch, tmp_path):
+    # Live: a hired "Government Invoice Prep" specialist was listed as
+    # "Gov invoice gov" in the roster, the task picker and recent tasks.
+    from maverick.domain import available_domains
+    from maverick.fleet import Fleet, FleetAgent, save_fleet
+    from maverick_dashboard.plain_labels import pack_display_name
+
+    _isolate(monkeypatch, tmp_path)
+    profile = available_domains()["gov_invoice_gov"]
+    shown = pack_display_name("gov_invoice_gov", profile.persona, profile.description)
+    save_fleet(Fleet(name="desk", owner="user:dana", agents=(
+        FleetAgent("gov_invoice_gov", "operator", profile.description, domain="gov_invoice_gov"),)))
+    text = _owner_client(monkeypatch).get("/fleets").text
+    assert shown in text and shown != "Gov invoice gov"
+    assert "Gov invoice gov" not in text

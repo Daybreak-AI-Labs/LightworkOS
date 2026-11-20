@@ -135,6 +135,9 @@ def test_department_scope_filters_catalog_before_ranking(monkeypatch):
     }
     seen = {}
 
+    import maverick.domain_router as dr
+
+    monkeypatch.setattr(dr, "_BUILDING", None)  # no build left over from another test
     monkeypatch.setattr(api, "caller_suites", lambda _request: {"finance"})
     monkeypatch.setattr(domain, "available_domains", lambda: profiles)
     monkeypatch.setattr(domain, "suite_for", suites.get)

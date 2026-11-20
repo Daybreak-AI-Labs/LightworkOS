@@ -10393,12 +10393,19 @@ def fleets_page(request: Request) -> HTMLResponse:
     # missing required action after the person has already assigned work.
     domains = {agent.domain for fleet in fleets for agent in fleet.agents if agent.domain}
     specialist_readiness: dict[str, dict] = {}
+    specialist_names: dict[str, str] = {}
     if domains:
         try:
             from maverick.domain import _disabled_suites, available_domains
             from maverick.domain_edit import _configured_tool_names, workflow_readiness
 
+            from .plain_labels import pack_display_name
+
             catalog = available_domains()
+            for domain in domains:
+                profile = catalog.get(domain)
+                if profile is not None:
+                    specialist_names[domain] = pack_display_name(domain, profile.persona, profile.description)
             known_tools = _configured_tool_names()
             disabled_suites = frozenset(_disabled_suites())
             for domain in domains:
@@ -10418,6 +10425,13 @@ def fleets_page(request: Request) -> HTMLResponse:
                          "fix_url": "/settings"}
                 for domain in domains
             }
+    # A hired specialist reads by its own name ("Government Invoice Prep"),
+    # not its pack id ("Gov invoice gov").
+    agent_labels = {
+        fleet.name: {agent.name: specialist_names[agent.domain]
+                     for agent in fleet.agents if agent.domain in specialist_names}
+        for fleet in fleets
+    }
     fleet_can_start = {
         fleet.name: any(
             not agent.domain
@@ -10441,6 +10455,7 @@ def fleets_page(request: Request) -> HTMLResponse:
         {
             "fleets": fleets,
             "specialist_readiness": specialist_readiness,
+            "agent_labels": agent_labels,
             "fleet_can_start": fleet_can_start,
             "role_options": role_options,
             "runs_by_fleet": runs_by_fleet,

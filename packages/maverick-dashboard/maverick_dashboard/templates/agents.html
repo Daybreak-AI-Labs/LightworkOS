@@ -853,7 +853,7 @@
             + '<strong><a href="/agents?name=' + encodeURIComponent(m.name) + '">' + esc(m.display_name || humanName(m.name)) + '</a></strong>'
             + (m.department ? '<span class="muted">' + esc(m.department) + '</span>' : '')
             + '<span class="muted" style="margin-left: auto;">' + relevance + '</span>'
-            + '<button type="button" class="btn jd-hire-btn" data-pack="' + esc(m.name) + '"'
+            + '<button type="button" class="btn jd-hire-btn" data-pack="' + esc(m.name) + '" data-label="' + esc(m.display_name || humanName(m.name)) + '"'
             + (ready ? '' : ' disabled title="Review setup before assigning this one"') + '>Add to team…</button>'
             + '</div>'
             + '<div class="muted" style="font-size: var(--text-sm);">' + esc(m.description || '') + '</div>'
@@ -896,6 +896,7 @@
         var btn = e.target.closest('.jd-hire-btn');
         if (!btn) return;
         var pack = btn.dataset.pack;
+        var label = btn.dataset.label || humanName(pack);
         var ask = fetch('/api/v1/fleets').then(function (r) { return r.ok ? r.json() : { fleets: [] }; })
           .catch(function () { return { fleets: [] }; })
           .then(function (data) {
@@ -906,7 +907,7 @@
               default: teams[0] });
             fields.push({ key: 'team', label: teams.length ? 'New team name (only if creating one)' : 'New team name',
               type: 'text', required: !teams.length, placeholder: 'Finance team' });
-            return mvForm('Add ' + humanName(pack) + ' to a team', fields, { okText: 'Add' });
+            return mvForm('Add ' + label + ' to a team', fields, { okText: 'Add' });
           });
         ask.then(function (vals) {
           var team = vals && ((vals.existing || '').trim() || (vals.team || '').trim());
@@ -916,7 +917,7 @@
             body: JSON.stringify({ pack: pack }),
           }).then(function (r) { return r.json().catch(function () { throw new Error('The result could not be confirmed. Refresh the page to check.'); }).then(function (j) { return { ok: r.ok, r: r, j: j }; }); })
             .then(function (res) {
-              if (res.ok) say(humanName(pack) + ' added to the team “' + team + '”.', true);
+              if (res.ok) say(label + ' added to the team “' + team + '”.', true);
               else say(plainError(res.r, 'add it to the team'), false);
             })
             .catch(function (e) { say(plainError(e, 'add it to the team'), false); });

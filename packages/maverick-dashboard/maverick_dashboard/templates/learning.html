@@ -429,7 +429,9 @@
       <p class="lrn__section-sub">Reviews recently finished tasks, writes lessons from repeated problems and turns repeated successes into skills.
         A saved point is made first, so you can go back.</p>
       {% if learning_from_owner_tasks %}<p class="lrn__section-sub" id="lrn-owner-tasks">You are the only person who can sign in here, so learning uses your own tasks.
-        If someone else is invited or can sign in, skills learned from your tasks stop being used for anyone. Learning then uses only shared tasks again.</p>{% endif %}
+        If someone else is invited or can sign in, skills learned from your tasks stop being used for anyone. Learning then uses only shared tasks again.</p>
+      {% else %}<p class="lrn__section-sub" id="lrn-shared-tasks">Learning uses only tasks that belong to nobody in particular, because what it learns is shared with everyone here.
+        Tasks people run for themselves stay private to them.</p>{% endif %}
       <div class="lrn__actions">
         <button type="button" class="btn btn--ghost" id="lrn-dream-preview">Preview what would change</button>
         <button type="button" class="btn btn--primary" id="lrn-dream-run">Learn now</button>
