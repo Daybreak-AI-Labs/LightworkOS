@@ -230,11 +230,22 @@ def _learned_admission_allowed() -> tuple[bool, str]:
     return True, ""
 
 
+def _signed_skills_only() -> bool:
+    try:
+        from maverick import config
+
+        return bool(config.get_skills().get("require_signed"))
+    except Exception:  # unreadable: assume the stricter setting
+        return True
+
+
 def _learned_candidates() -> dict:
+    from maverick.memory_ownership import source_allowed
     from maverick.skill import stats as skill_stats
     from maverick.skills import (
         admitted_learned_skills,
         available_skills,
+        installed_learned_use_keys,
         learned_skill_candidates,
         learned_skill_use_key,
     )
@@ -245,19 +256,27 @@ def _learned_candidates() -> dict:
     recall_enabled = _default_use_skills()
     runtime = {skill.name: skill for skill in available_skills()
                if learned_skill_use_key(skill)}
-    use_keys = {name: learned_skill_use_key(skill) for name, skill in runtime.items()}
+    use_keys = {**installed_learned_use_keys(),
+                **{name: learned_skill_use_key(skill) for name, skill in runtime.items()}}
     uses = {row["name"]: row["uses"] for row in skill_stats.usage_rows(list(use_keys.values()))}
     tracking = skill_stats._enabled()
 
     def saved_row(row) -> dict:
-        ready = row.source_shared and recall_enabled and row.name in runtime
+        # A skill learned from the sole owner's own tasks is recalled only
+        # inside that owner's tasks, so this page (outside any task) never
+        # sees it in ``runtime``. Only the signed-skills setting can still
+        # hold it back: reviewed suggestions are unsigned.
+        own = row.source_shared and not all(source_allowed(gid, "") for gid in row.source_goal_ids)
+        usable = row.name in runtime or (own and not _signed_skills_only())
+        ready = row.source_shared and recall_enabled and usable
         status = (
             "Paused: the source task is no longer shared. Agents cannot use this skill."
             if not row.source_shared else
             "Paused: agent skills are turned off. Turn them on in Settings to use this."
             if not recall_enabled else
             "Paused: current skill trust settings prevent agents from using this skill."
-            if row.name not in runtime else
+            if not usable else
+            "Available for your matching new tasks." if own else
             "Available for matching new tasks."
         )
         return {
@@ -274,6 +293,9 @@ def _learned_candidates() -> dict:
             "name": row.name, "triggers": row.triggers,
             "tools": row.tools_needed, "instructions": row.body,
             "source_tasks": row.source_goal_ids,
+            # On a single-person installation a suggestion may come from the
+            # owner's own tasks rather than shared ones; the card says which.
+            "from_your_tasks": not all(source_allowed(gid, "") for gid in row.source_goal_ids),
             "fingerprint": row.fingerprint, "ok": row.validation.ok,
             "problems": [_plain_problem(e) for e in row.validation.errors],
             "suggestions": [_plain_problem(w) for w in row.validation.warnings],

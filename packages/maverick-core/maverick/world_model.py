@@ -949,6 +949,22 @@ def _unbound_is_tampering() -> bool:
 # Returned in strict mode when a sealed column holds an unsealed value (legacy
 # plaintext that wasn't migrated, or tampering) -- never the real plaintext.
 _UNSEALED_WITHHELD = "‹withheld: unsealed value in an encrypted store›"
+# One unreadable value was logged at ERROR on every read: the navigation bell
+# polls, so a single bad row filled the log (1,198 lines in one day). Each
+# distinct cause is an ERROR once per process; repeats are DEBUG.
+_WITHHELD_LOGGED: set[str] = set()
+_WITHHELD_LOGGED_MAX = 256
+
+
+def _log_withheld_once(exc: Exception) -> None:
+    cause = str(exc)
+    if cause in _WITHHELD_LOGGED:
+        log.debug("at-rest: withholding a bound value that fails authentication (%s)", cause)
+        return
+    if len(_WITHHELD_LOGGED) < _WITHHELD_LOGGED_MAX:
+        _WITHHELD_LOGGED.add(cause)
+    log.error("at-rest: withholding a bound value that fails authentication "
+              "(%s); repeats of this cause are logged at debug level", cause)
 
 
 def _refuse_withheld_placeholder(value: str) -> None:
@@ -1014,8 +1030,7 @@ def _dec_field(text: str | None, *, at_rest: bool | None = None,
         except EncryptionUnavailable as exc:
             if bound_str_context(text) is None:
                 raise
-            log.error("at-rest: withholding a bound value that fails authentication "
-                      "(%s)", exc)
+            _log_withheld_once(exc)
             return _UNSEALED_WITHHELD
     if _strict_reads():
         log.error("at-rest strict: withholding an unsealed value in a sealed column "
@@ -1725,7 +1740,20 @@ class WorldModel:
     def __exit__(self, exc_type, exc, tb) -> None:
         self.close()
 
-    def reclaim_orphan_goals(
+    def reclaim_orphan_goals(self, **kwargs: Any) -> int:
+        """Reclaim stale goals (see :meth:`_reclaim_stale_goal_rows`), then take
+        the approval requests those dead runs were waiting on off the
+        Approvals page."""
+        reclaimed = self._reclaim_stale_goal_rows(**kwargs)
+        try:
+            from .safety.consent import withdraw_requests_of_ended_tasks
+
+            withdraw_requests_of_ended_tasks(self)
+        except Exception:  # noqa: BLE001 -- crash recovery never fails on this
+            log.warning("could not withdraw approval requests of stopped tasks", exc_info=True)
+        return reclaimed
+
+    def _reclaim_stale_goal_rows(
         self, *, max_age_seconds: float = 60.0,
         statuses: tuple[str, ...] = ("active",),
         resolved_window_seconds: float | None = None,

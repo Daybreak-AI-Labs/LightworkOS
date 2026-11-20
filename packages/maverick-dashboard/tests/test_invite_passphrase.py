@@ -1014,3 +1014,19 @@ def test_a_reset_record_for_a_long_workspace_id_reads_back():
            "used_at": None, "outcome": "", "first": True}
     assert passphrase_resets._valid("a" * 64, row)
     assert not passphrase_resets._valid("a" * 64, {**row, "tenant": "w" * (MAX_TENANT_SEGMENT_LENGTH + 1)})
+
+
+def test_the_invite_says_a_workspace_is_still_needed_when_workspaces_exist(workspace, monkeypatch):
+    # Seen live: an emailed invite let the colleague sign in with no workspace,
+    # and nothing told the inviter a second step remained.
+    from maverick_dashboard import admin_pages
+
+    made = workspace.post("/users/invite", data={"email": "no-space@example.test", "role": "operator"})
+    assert 'id="invite-workspace-note"' not in made.text  # no workspaces: nothing more to do
+    monkeypatch.setattr(admin_pages, "_workspace_options",
+                        lambda _request: ([{"id": "acme", "name": "Acme"}], "acme"))
+    made = workspace.post("/users/invite", data={"email": "needs-space@example.test", "role": "operator"})
+    assert made.status_code == 200, made.text
+    note = re.search(r'id="invite-workspace-note">(.*?)</p>', made.text, re.DOTALL)
+    assert note and "can't start work until they belong to one" in note[1]
+    assert 'href="#wi-root"' in note[1]

@@ -104,10 +104,13 @@
   async function load() {
     try {
       var data = await window.mvFetchJSON('/api/v1/decisions', {cache: 'no-store', timeout: 15000}, 'load decisions');
+      // On a task's own page (data-goal-id) only that task's decisions show.
+      var only = root.dataset.goal ? Number(root.dataset.goal) : null;
+      var rows = (data.decisions || []).filter(function (d) { return only === null || d.goal_id === only; });
       list.textContent = '';
-      (data.decisions || []).forEach(function (d) { list.appendChild(card(d)); });
-      root.hidden = !(data.decisions || []).length;
-      count((data.decisions || []).length);
+      rows.forEach(function (d) { list.appendChild(card(d)); });
+      root.hidden = !rows.length;
+      count(rows.length);
     } catch (error) {
       root.hidden = false;
       status.textContent = 'Decisions could not be loaded. Refresh this page.';

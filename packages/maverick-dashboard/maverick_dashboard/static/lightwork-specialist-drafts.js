@@ -156,10 +156,24 @@
     result.replaceChildren(); node('h3', value.action, result); node('p', value.message, result);
     if (value.run) {
       const run = value.run;
-      node('p', ({prepared: 'Waiting to start', running: 'Checking answers', done: 'Finished', stopped: 'Stopped', unknown: 'Result unconfirmed'}[run.state] || 'Result unconfirmed') + '. ' + run.results.length + ' answers received; ' + run.passed + ' passed. Recorded model spend: $' + Number(run.spent_dollars).toFixed(6) + '.', result);
+      node('p', ({prepared: 'Waiting to start', running: 'Checking answers', done: 'Finished', stopped: 'Stopped', unknown: 'Result unconfirmed'}[run.state] || 'Result unconfirmed') + '. ' + run.results.length + (run.results.length === 1 ? ' answer' : ' answers') + ' received; ' + run.passed + ' passed. Recorded model spend: $' + Number(run.spent_dollars).toFixed(6) + '.', result);
       run.results.forEach(item => { const section = node('section', undefined, result); node('h4', item.task, section); node('p', item.answer || 'No answer was received.', section); node('p', item.sample ? 'Sample answer only; no passing conditions were declared.' : item.passed ? 'Entered passing conditions met.' : 'Entered passing conditions not met.', section); });
     }
     if (!value.confirmed) node('p', 'This remains unknown. A matching current specialist does not confirm the original decision. Any later intentional decision needs its own full review.', result);
+  }
+  async function followAnswers(operation, current) {
+    // Bounded: the check itself stops after two minutes.
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      let value;
+      try { value = await request('/originals/' + encodeURIComponent(operation), undefined, current); }
+      catch (_) { if (current === generation) status.textContent = 'The answer could not be read yet. Choose Read original to check it; nothing will be repeated.'; return; }
+      if (current !== generation) return;
+      if (value.run && !['prepared', 'running'].includes(value.run.state)) {
+        showResult(value); status.textContent = 'The draft answered. Read it below; nothing was published.'; return;
+      }
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+    if (current === generation) status.textContent = 'The answer is taking longer than expected. Choose Read original to check it later; nothing will be repeated.';
   }
   async function readOriginal(identifier) {
     if (!identifier || busy) return;
@@ -181,7 +195,15 @@
       apply.addEventListener('click', async () => {
         if (!consent.checked || busy || reviewed !== value || current !== generation) return;
         lock(true); apply.disabled = true; pending = value.operation; readButton.hidden = false;
-        try { const outcome = await request('/apply', {token: value.token, confirmed: true}, current); if (current !== generation) return; invalidate(); showResult(outcome); status.textContent = outcome.message; if (outcome.draft) draft.value = outcome.draft; }
+        try {
+          const outcome = await request('/apply', {token: value.token, confirmed: true}, current); if (current !== generation) return; invalidate();
+          const answering = ['try', 'check'].includes(action);
+          if (answering && !(outcome.run && !['prepared', 'running'].includes(outcome.run.state))) {
+            // The answer check runs in the background: say so and follow its recorded outcome.
+            result.replaceChildren(); status.textContent = 'Checking the draft\u2019s answer\u2026'; await followAnswers(value.operation, current);
+          } else { showResult(outcome); status.textContent = outcome.message; }
+          if (outcome.draft) draft.value = outcome.draft;
+        }
         catch (error) { if (current === generation) { invalidate(); status.textContent = error.message + ' Read the original decision; this request will not be repeated automatically.'; } }
         finally { if (current === generation) { lock(false); await refreshChoices(current); } }
       });
@@ -213,7 +235,15 @@
     if (['publish', 'restore'].includes(action) && !selected) { status.textContent = 'Choose a named retained version first.'; return; }
     await submitReview(action, selected);
   }));
-  form?.addEventListener('input', () => { draftChanged = true; if (reviewed || busy) { generation++; invalidate(); lock(false); status.textContent = 'The entered draft changed. Review it again before confirming.'; } });
+  const NEEDS_NAME = 'Give the custom agent a short name before reviewing its draft.';
+  let nameTimer = null;
+  form?.addEventListener('input', () => {
+    draftChanged = true;
+    // A new agent's panel loads once it has a name, so Try and Save are usable.
+    if (!state && !busy && name()) { clearTimeout(nameTimer); nameTimer = setTimeout(() => { if (!state && !busy && name()) load(); }, 600); }
+    if (reviewed || busy) { generation++; invalidate(); lock(false); status.textContent = 'The entered draft changed. Review it again before confirming.'; }
+    else if (status.textContent === NEEDS_NAME && name()) status.textContent = 'Save, try or publish this draft below. Nothing changes until you confirm a full review.';
+  });
   [draft, earlier, title, task, reason, acknowledge].forEach(field => field.addEventListener('input', () => { generation++; invalidate(); lock(false); }));
   originals.addEventListener('change', () => readOriginal(originals.value)); readButton.addEventListener('click', () => readOriginal(pending));
   openAuthor = async (value, options = {}) => {

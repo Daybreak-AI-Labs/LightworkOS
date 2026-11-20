@@ -871,3 +871,17 @@ def test_fleet_memory_is_switched_on_where_the_message_says(client):
     on = client.post("/api/v1/features/switches", json={"section": "fleet_memory", "enabled": True})
     assert on.status_code == 200, on.text
     assert client.post("/api/v1/workforce-ops/outside-agents", json=body).json()["added"] is True
+
+
+def test_test_case_import_controls_say_they_are_not_set_up_without_an_error(client, monkeypatch):
+    # A new installation has no test-case location; the Learned page asked on
+    # every visit and logged a 409 in the browser console each time.
+    from maverick import self_harness
+
+    monkeypatch.setattr(self_harness, "settings", lambda: {"eval_corpus": ""})
+    state = client.get(f"{LO}/self-harness/test-cases/import")
+    assert state.status_code == 200, state.text
+    assert state.json()["configured"] is False and "not set up yet" in state.json()["notice"]
+    # The refusal to people without access is unchanged.
+    _as(monkeypatch, "operator")
+    assert client.get(f"{LO}/self-harness/test-cases/import").status_code == 403

@@ -496,6 +496,34 @@ class UnknownRoleError(ValueError):
     """Raised when a requested or assigned RBAC role is not configured."""
 
 
+#: What a team agent with a read-only role may use when ``[roles]`` does not
+#: define it: reading, searching, asking a person and handing work to its own
+#: helpers -- no commands, no file changes, no outside requests, no connector
+#: actions (an allow-list, so tools added later stay out until listed).
+_READ_ONLY_AGENT_TOOLS = (
+    "read_file", "list_dir", "repo_map", "read_tool_result", "read_attachment",
+    "list_attachments", "read_pdf", "view_image", "spreadsheet_read", "sql_query_read",
+    "knowledge_search", "web_search", "recall_past_goals", "memory", "ask_user",
+    "request_decision", "spawn_subagent", "spawn_swarm", "spawn_specialist",
+    "list_specialists",
+)
+#: Limits for the roles the Agent teams page offers (the dashboard's role
+#: names), used only when ``[roles.<role>]`` is not configured. Operator and
+#: administrator agents keep their owner's grant; commands still need approval.
+BUILTIN_AGENT_ROLE_SCOPES: dict[str, dict] = {
+    "viewer": {"allow_tools": list(_READ_ONLY_AGENT_TOOLS)},
+    "auditor": {"allow_tools": list(_READ_ONLY_AGENT_TOOLS)},
+    "operator": {},
+    "admin": {},
+}
+
+
+def agent_role_known(role_name: str) -> bool:
+    """A team agent's role is configured in ``[roles]`` or is a built-in one."""
+    name = role_name.strip() if isinstance(role_name, str) else ""
+    return role_exists(name) or name in BUILTIN_AGENT_ROLE_SCOPES
+
+
 def capability_for_role(role: str, *, principal: str = "agent") -> Capability:
     """The capability for ``principal`` scoped to the named RBAC ``role``.
 
@@ -509,6 +537,9 @@ def capability_for_role(role: str, *, principal: str = "agent") -> Capability:
     """
     role_name = role.strip() if isinstance(role, str) else role
     if not role_exists(role_name):
+        if isinstance(role_name, str) and role_name in BUILTIN_AGENT_ROLE_SCOPES:
+            return _apply_role(capability_from_config(principal), role_name,
+                               scope=BUILTIN_AGENT_ROLE_SCOPES[role_name])
         raise UnknownRoleError(f"undefined RBAC role: {role!r}")
     base = capability_from_config(principal)
     return _apply_role(base, role_name)
@@ -573,7 +604,7 @@ def role_for_principal(principal: str) -> str | None:
     return role.strip()
 
 
-def _apply_role(base: Capability, role_name: str) -> Capability:
+def _apply_role(base: Capability, role_name: str, *, scope: dict | None = None) -> Capability:
     """Narrow ``base`` by the named role's ``[roles.<role_name>]`` scope.
 
     Routes through :meth:`Capability.attenuate`, so a role can only ever
@@ -585,7 +616,8 @@ def _apply_role(base: Capability, role_name: str) -> Capability:
     Scope keys mirror the :class:`Capability` fields: ``allow_tools``,
     ``deny_tools``, ``max_risk``, ``allow_paths``, ``allow_hosts``.
     """
-    scope = _roles_config().get(role_name)
+    if scope is None:
+        scope = _roles_config().get(role_name)
     if not isinstance(scope, dict):
         raise UnknownRoleError(f"undefined RBAC role: {role_name!r}")
 
@@ -619,6 +651,8 @@ __all__ = [
     "capability_from_config",
     "deny_all_capability",
     "capability_for_role",
+    "agent_role_known",
+    "BUILTIN_AGENT_ROLE_SCOPES",
     "configured_roles",
     "role_exists",
     "role_for_principal",

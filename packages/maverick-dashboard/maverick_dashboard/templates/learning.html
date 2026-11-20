@@ -83,12 +83,13 @@
       <a href="/settings/all#self_harness.auto_run">Manage overnight learning</a></p>
     <p role="status">
     {% if snap.overnight.state == 'completed' %}
-      Last review: {{ snap.overnight.models_reviewed }} AI models reviewed,
-      {{ snap.overnight.patterns_found }} recurring patterns found,
-      {{ snap.overnight.improvements_adopted }} improvements adopted,
-      {{ snap.overnight.examples_prepared }} examples prepared.
+      {% set o = snap.overnight %}
+      Last review: {{ o.models_reviewed }} AI {{ 'model' if o.models_reviewed == 1 else 'models' }} reviewed,
+      {{ o.patterns_found }} recurring {{ 'pattern' if o.patterns_found == 1 else 'patterns' }} found,
+      {{ o.improvements_adopted }} {{ 'improvement' if o.improvements_adopted == 1 else 'improvements' }} adopted,
+      {{ o.examples_prepared }} {{ 'example' if o.examples_prepared == 1 else 'examples' }} prepared.
       {% if snap.overnight.inspection_only %}New improvements were inspected only; add reviewed examples on Learned before testing them.{% endif %}
-      {% if snap.overnight.reviews_held_back %}{{ snap.overnight.reviews_held_back }} reviews were held back by the configured learning checks.{% endif %}
+      {% if snap.overnight.reviews_held_back %}{{ snap.overnight.reviews_held_back }} {{ 'review was' if snap.overnight.reviews_held_back == 1 else 'reviews were' }} held back by the configured learning checks.{% endif %}
       {% if snap.overnight.transfer_held_back %}Sharing improvements between AI models needs separate approved checks and was held back.{% endif %}
     {% elif snap.overnight.state == 'running' %}
       A review started. Its completion has not yet been recorded.
@@ -427,6 +428,10 @@
       <h3 class="lrn__section-h">Learn from recent work</h3>
       <p class="lrn__section-sub">Reviews recently finished tasks, writes lessons from repeated problems and turns repeated successes into skills.
         A saved point is made first, so you can go back.</p>
+      {% if learning_from_owner_tasks %}<p class="lrn__section-sub" id="lrn-owner-tasks">You are the only person who can sign in here, so learning uses your own tasks.
+        If someone else is invited or can sign in, skills learned from your tasks stop being used for anyone. Learning then uses only shared tasks again.</p>
+      {% else %}<p class="lrn__section-sub" id="lrn-shared-tasks">Learning uses only tasks that belong to nobody in particular, because what it learns is shared with everyone here.
+        Tasks people run for themselves stay private to them.</p>{% endif %}
       <div class="lrn__actions">
         <button type="button" class="btn btn--ghost" id="lrn-dream-preview">Preview what would change</button>
         <button type="button" class="btn btn--primary" id="lrn-dream-run">Learn now</button>
@@ -494,10 +499,12 @@
     function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
     function dreamLines(d) {
       var head = d.preview ? 'If Lightwork learned now, it would:' : (d.activity_recorded ? 'Learning completed. Lightwork:' : 'Learning completion is unconfirmed. The cycle reported:');
+      var w = d.preview ? ['review ', 'write ', ' and learn ', 'retire ', ' that stopped working and tidy ']
+        : ['reviewed ', 'wrote ', ' and learned ', 'retired ', ' that stopped working and tidied '];
       return [head,
-        '• review ' + plural(d.tasks_reviewed, 'finished task', 'finished tasks') + ' and ' + plural(d.failures_reviewed, 'problem', 'problems'),
-        '• write ' + plural(d.lessons_written, 'lesson', 'lessons') + ' and learn ' + plural(d.skills_learned, 'skill', 'skills'),
-        '• retire ' + plural(d.skills_retired, 'skill', 'skills') + ' that stopped working and tidy ' + plural(d.notes_tidied, 'old note', 'old notes')]
+        '• ' + w[0] + plural(d.tasks_reviewed, 'finished task', 'finished tasks') + ' and ' + plural(d.failures_reviewed, 'problem', 'problems'),
+        '• ' + w[1] + plural(d.lessons_written, 'lesson', 'lessons') + w[2] + plural(d.skills_learned, 'skill', 'skills'),
+        '• ' + w[3] + plural(d.skills_retired, 'skill', 'skills') + w[4] + plural(d.notes_tidied, 'old note', 'old notes')]
         .concat(d.paused ? ['Learning is paused while its checks recover. Earlier changes may have been kept.'] : [])
         .concat(d.notice ? [d.notice] : []);
     }
@@ -896,8 +903,11 @@
     k.appendChild(B.kpi({ label: 'Decisions recorded', value: acc.decisions }));
     k.appendChild(B.kpi({ label: 'Human decisions', value: acc.human_decisions,
       sub: 'approvals: ' + B.fmt(acc.approvals) }));
-    k.appendChild(B.kpi({ label: 'Learned capabilities', value: learned === null ? 'Not available' : learned,
-      sub: grounded === null ? 'A current count could not be confirmed. Refresh the page and try again.' : B.fmt(grounded) + ' results checked against real outcomes' }));
+    var adminsOnly = acc.installation_totals === 'administrators_only';
+    k.appendChild(B.kpi({ label: 'Learned capabilities',
+      value: learned === null ? (adminsOnly ? 'Shown to installation administrators' : 'Not available') : learned,
+      sub: adminsOnly ? 'Learned capabilities are counted across the whole installation.'
+        : grounded === null ? 'A current count could not be confirmed. Refresh the page and try again.' : B.fmt(grounded) + ' results checked against real outcomes' }));
 
     B.donut(document.getElementById('bd-systems'), {
       segments: [

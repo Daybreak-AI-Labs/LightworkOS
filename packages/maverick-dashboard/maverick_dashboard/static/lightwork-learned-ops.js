@@ -203,6 +203,7 @@
       try {
         var state = await request('');
         if (access !== accessGeneration || current !== generation || isCurrent && !isCurrent()) return false;
+        if (state.configured === false) { context = ''; revision = ''; locked = true; $('lpo-import-notice').textContent = state.notice; originals.replaceChildren(placeholder()); lock(); return false; }
         if (expected && state.context !== expected) { clear(); throw new Error('Your account or workspace changed. Open the current controls again.'); }
         if (revision && revision !== state.revision) invalidate();
         context = state.context; revision = state.revision; locked = false;

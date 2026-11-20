@@ -658,6 +658,29 @@ def is_dashboard_admin(principal: str) -> bool:
     return is_admin_principal(principal)
 
 
+def is_installation_admin(principal: str | None) -> bool:
+    """A configured dashboard admin, or this installation's own ready local owner.
+
+    For the gates that change the installation itself (agents, specialists,
+    roles). The person who set up a self-hosted Lightwork administers it, but
+    first-run owner setup never writes the ``[dashboard] admins`` list, so a
+    roster-only gate left the owner unable to edit any agent. Unlike
+    :func:`is_dashboard_admin` this grants no view of other people's tasks and
+    no bypass of department scoping; callers still check the admin permission
+    and that the caller is not department-scoped."""
+    if not principal:
+        return False
+    if is_dashboard_admin(principal):
+        return True
+    from . import local_owner
+
+    try:
+        row = local_owner._read()
+    except Exception:  # an unreadable claim never grants anything
+        return False
+    return bool(row) and row.get("status") == "ready" and principal == "user:" + row["email"]
+
+
 def global_role_for_principal(principal: str | None) -> str | None:
     """The principal's dashboard-wide RBAC role, ignoring tenant memberships.
 

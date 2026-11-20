@@ -271,6 +271,19 @@ class TestOverrideLifecycle:
         assert r.json()["errors"]
         assert client.get(f"/api/v1/agents/{name}").json()["is_override"] is False
 
+    def test_check_settings_notes_are_plain_words(self):
+        # Seen live: "Check settings" on a new read-only agent showed "no
+        # knowledge_sources: ...", "no deny_tools: ..." and "read-only pack
+        # doesn't explicitly deny shell, write_file: add to deny_tools".
+        body = {"allow_tools": ["read_file"], "max_risk": "low",
+                "persona": "Check supplier invoices against purchase orders and say pay, hold or reject."}
+        checked = client.post("/api/v1/agents/invoice_checker/validate", json=body).json()
+        assert checked["ok"] and checked["warnings"]          # the raw lint stays for API callers
+        notes = checked["notes"]
+        assert "It only reads, but does not explicitly block tools that change things." in notes
+        assert not any("_" in note or "deny_tools" in note for note in notes), notes
+        assert len(notes) == len(set(notes))
+
     def test_factory_cannot_save_actions_missing_from_installed_registry(self, tmp_path):
         name = "invoice_chaser"
         body = {"allow_tools": ["files", "code"], "max_risk": "medium",
@@ -488,9 +501,9 @@ class TestPackEditingSafetyEnvelope:
 
         assert r.status_code == 422
         detail = r.json()["detail"]
-        assert "allow_tools cannot add tools" in detail
-        assert "deny_tools cannot remove" in detail
-        assert "max_risk cannot be raised" in detail
+        assert f"An edited agent cannot use tools its built-in version does not allow: {denied_tool}" in detail
+        assert "Tools the built-in version blocks must stay blocked" in detail
+        assert "The risk limit cannot be higher than the built-in version's" in detail
         assert client.get(f"/api/v1/agents/{name}").json()["is_override"] is False
 
 def test_restored_agent_revision_cannot_overwrite_a_newer_save():

@@ -263,3 +263,30 @@ def test_named_owner_invite_workspace_and_captured_review(monkeypatch, tmp_path)
         finally:
             reviewer.close()
     world.close()
+
+
+def test_the_installation_owner_may_edit_agents_without_seeing_others_work(monkeypatch):
+    # Seen live: the person who set up Lightwork opened Agent Factory and read
+    # "Agent editing is turned off by your administrator — viewing only": the
+    # editor gate asked for the [dashboard] admins list, which first-run owner
+    # setup never fills. The owner may now edit agents and roles; they still do
+    # not bypass task-owner or department scoping like a configured admin.
+    from maverick_dashboard import auth, editor_policy
+
+    enroll()
+    owner, colleague = "user:owner@example.com", "user:colleague@example.com"
+    assert auth.is_installation_admin(owner) and not auth.is_dashboard_admin(owner)
+    assert not auth.is_installation_admin(colleague) and not auth.is_installation_admin(None)
+
+    def denial(principal, suites=None):
+        monkeypatch.setattr(auth, "caller_suites", lambda _request: suites)
+        return editor_policy.pack_editing_denial(object(), caller=lambda _r: principal,
+                                                 has_permission=lambda *_: True)
+
+    assert denial(owner) is None
+    assert denial(colleague) == "pack editing requires a dashboard admin"
+    # A department-scoped owner account is not the installation administrator.
+    assert denial(owner, suites=frozenset({"finance"})) == "pack editing requires a dashboard admin"
+    monkeypatch.setattr(auth, "caller_principal", lambda _request: owner)
+    monkeypatch.setattr(auth, "caller_suites", lambda _request: None)
+    editor_policy.require_role_editing(object(), permission=lambda *_: None)  # no raise

@@ -104,8 +104,9 @@ def test_a_waiting_request_is_still_refused_when_nobody_decides(tmp_path, monkey
     monkeypatch.setattr(consent.time, "monotonic", lambda: clock["now"])
     monkeypatch.setattr(consent.time, "sleep", lambda seconds: clock.update(now=clock["now"] + seconds))
     card = {"binding_sha256": "x"}
-    assert consent._await_dashboard_decision(world, approval_id, card, "high", goal_id=None,
-                                             withdraw_on_timeout=True) is None
+    timed_out = consent._await_dashboard_decision(world, approval_id, card, "high", goal_id=None,
+                                                  withdraw_on_timeout=True)
+    assert timed_out is not None and not timed_out.granted and timed_out.source == "no-decision"
     assert clock["now"] >= 1000.0 + 1800
     assert world.get_approval(approval_id).status == "denied"
 

@@ -42,6 +42,7 @@ _CURATED = {
     "read_file": "Reads a file from the workspace.",
     "shell": "Runs a command in the protected work area.",
     "write_file": "Creates or replaces a file in the workspace.",
+    "deliver_file": "Offers a file from the workspace as a download on the task's page.",
 }
 
 

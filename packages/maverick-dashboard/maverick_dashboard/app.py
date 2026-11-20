@@ -875,6 +875,26 @@ async def _install_automation_scheduler() -> None:
         log.exception("automation worker not started")
 
 
+async def _install_schedule_runner() -> None:
+    """Run due Automations schedules in this process (schedule_runner). No-op
+    under TestClient, when scheduling is off, or when tasks run elsewhere."""
+    try:
+        from maverick_dashboard import schedule_runner
+
+        await run_in_threadpool(schedule_runner.start)
+    except Exception:  # pragma: no cover - never block startup
+        log.exception("schedule runner not started")
+
+
+async def _stop_schedule_runner() -> None:
+    try:
+        from maverick_dashboard import schedule_runner
+
+        await run_in_threadpool(schedule_runner.stop)
+    except Exception:  # pragma: no cover -- shutdown continues
+        log.exception("schedule runner did not stop cleanly")
+
+
 async def _start_privacy_discovery_remediation_scheduler() -> None:
     try:
         from maverick_dashboard.privacy_data_discovery_scheduler import (
@@ -1380,6 +1400,7 @@ async def _lifespan(app: FastAPI):
         # was stopped is claimed at once, and run beside the warm-up it
         # stretched from about 0.3 s to 3 s and delayed serving by as much.
         await _install_automation_scheduler()
+        await _install_schedule_runner()
         supervisor.phase = "running"
         from maverick.runtime_configuration import start as start_runtime_receipt
         runtime_receipt = start_runtime_receipt("dashboard")
@@ -1391,6 +1412,8 @@ async def _lifespan(app: FastAPI):
             runtime_receipt.close()
         from .local_runtime_service import shutdown as stop_local_ai
 
+        # No new scheduled task starts while in-flight goals drain.
+        await _stop_schedule_runner()
         try:
             # Close goal admission and drain in-flight goals first: a goal still
             # running against the managed local server would otherwise lose it
@@ -4583,11 +4606,22 @@ async def learning_page(request: Request) -> HTMLResponse:
         {
             "snap": snap,
             "learning_can_manage": has_global_permission(request, "admin"),
+            "learning_from_owner_tasks": _learns_from_owner_tasks(),
             "agent_feedback": _agent_feedback_summary(),
             "flow_feedback": _flow_feedback_summary(),
             "learning_can_operate": has_permission(request, "operate"),
         },
     )
+
+
+def _learns_from_owner_tasks() -> bool:
+    """Whether skill learning may use the owner's own tasks (only person here)."""
+    try:
+        from maverick.memory_ownership import sole_person
+
+        return bool(sole_person())
+    except Exception:  # unreadable: the page says nothing rather than guess
+        return False
 
 
 def _agent_feedback_summary() -> list[dict]:
@@ -8257,6 +8291,7 @@ async def agents_page(request: Request) -> HTMLResponse:
         "agents.html",
         {"agents": agents, "rejected_agents": rejected_agents,
          "selected": selected, "editable": editable, "creating": creating,
+         "unpublished_drafts": _unpublished_drafts(request) if editable else [],
          "model_options": model_options, "model_roles": model_roles,
          "published_work_available": published_work_available,
          "can_set_model_cost_tier": has_global_permission(request, "admin"),
@@ -10001,10 +10036,11 @@ def _approval_source(provenance: str | None) -> str | None:
     if provenance == "external_agents":
         return "Outside agent"
     if provenance == "harness_refine":
-        # The agent is asking to change its OWN operating instructions.
-        # An approver must be able to see that at a glance, not read it as
-        # an ordinary task approval.
-        return "Agent wants to change its own instructions"
+        # A change to the standing instructions every agent follows. An
+        # approver must see that at a glance, not read it as an ordinary task
+        # approval. People suggest these (Learned page or CLI), so the label
+        # names the change, not an agent asking for itself.
+        return "Change to the instructions agents follow"
     if provenance == "assessment":
         return "Assessment review"
     if provenance == "plan":
@@ -10357,12 +10393,19 @@ def fleets_page(request: Request) -> HTMLResponse:
     # missing required action after the person has already assigned work.
     domains = {agent.domain for fleet in fleets for agent in fleet.agents if agent.domain}
     specialist_readiness: dict[str, dict] = {}
+    specialist_names: dict[str, str] = {}
     if domains:
         try:
             from maverick.domain import _disabled_suites, available_domains
             from maverick.domain_edit import _configured_tool_names, workflow_readiness
 
+            from .plain_labels import pack_display_name
+
             catalog = available_domains()
+            for domain in domains:
+                profile = catalog.get(domain)
+                if profile is not None:
+                    specialist_names[domain] = pack_display_name(domain, profile.persona, profile.description)
             known_tools = _configured_tool_names()
             disabled_suites = frozenset(_disabled_suites())
             for domain in domains:
@@ -10382,6 +10425,13 @@ def fleets_page(request: Request) -> HTMLResponse:
                          "fix_url": "/settings"}
                 for domain in domains
             }
+    # A hired specialist reads by its own name ("Government Invoice Prep"),
+    # not its pack id ("Gov invoice gov").
+    agent_labels = {
+        fleet.name: {agent.name: specialist_names[agent.domain]
+                     for agent in fleet.agents if agent.domain in specialist_names}
+        for fleet in fleets
+    }
     fleet_can_start = {
         fleet.name: any(
             not agent.domain
@@ -10405,6 +10455,7 @@ def fleets_page(request: Request) -> HTMLResponse:
         {
             "fleets": fleets,
             "specialist_readiness": specialist_readiness,
+            "agent_labels": agent_labels,
             "fleet_can_start": fleet_can_start,
             "role_options": role_options,
             "runs_by_fleet": runs_by_fleet,
@@ -11737,6 +11788,17 @@ def _chat_threads(request: Request, w, *, active_root: int | None = None) -> lis
     return sorted(threads, key=lambda row: (not row["pinned"], -row["updated_at"]))
 
 
+def _is_web_conversation(w, goal_id: int) -> bool:
+    """A task started as a chat conversation (human help applies only there);
+    a starter sample or a scheduled run is not one."""
+    try:
+        from maverick.chat_threads import ChatThreads
+
+        return ChatThreads(w).binding(goal_id) is not None
+    except Exception:  # an unreadable binding keeps the panel, as before
+        return True
+
+
 def _thread_turns(w, goal) -> list:
     """Earlier turns of the goal's thread (older goals' messages and answers),
     for the page to render above the live turn. Never blocks the page."""
@@ -11748,6 +11810,16 @@ def _thread_turns(w, goal) -> list:
     except Exception:  # The history control exposes retry without losing this task.
         return []
 
+
+
+def _unpublished_drafts(request: Request) -> list:
+    try:
+        from .specialist_drafts import unpublished_drafts
+
+        return unpublished_drafts(request)
+    except Exception:  # the factory page renders without the list
+        log.warning("unpublished agent drafts could not be listed", exc_info=True)
+        return []
 
 
 def _director_run(profile: str, title: str, description: str, base_max_dollars: float | None = None):
@@ -12070,6 +12142,14 @@ async def chat_reply(
         effect_guard=task_ai_guard(request, task_selection, task_model_context),
     )
     new_id = receipt["goal_id"]
+    try:
+        # The next message continues the work, so the earlier task's question
+        # stops waiting (its decision card is the way to answer it in place).
+        from maverick.decision_requests import close_for_next_message
+
+        close_for_next_message(w, parent.id, actor=caller_principal(request) or "user")
+    except Exception:  # noqa: BLE001 -- closing a stale question never blocks the reply
+        log.warning("could not close the earlier task's open decision", exc_info=True)
     conversation_id = _submission_conversation(w, receipt)
     _dispatch_goal(request, bg, new_id, conversation_id=conversation_id, receipt=receipt)
     return RedirectResponse(f"/chat/goal/{new_id}", status_code=303)
@@ -13701,6 +13781,7 @@ def _chat_goal_page(request: Request, goal_id: int) -> HTMLResponse:
             "goal": g,
             "can_download_chat_answer": can_download_answer,
             "chat_answer_download_note": download_note,
+            **_task_files_context(w, g),
             "chat_answer_text": _chat_answer_text(g),
             "answered_questions": [q for q in w.all_questions(goal_id) if q.answer is not None],
             "can_operate": not handed_off and has_permission(request, "operate") and (caller_principal(request) or "") == (g.owner or ""),
@@ -13720,6 +13801,7 @@ def _chat_goal_page(request: Request, goal_id: int) -> HTMLResponse:
             "conversation_context": _conversation_context(request),
             "latest_chat_goal_id": ChatThreads(w).latest(g.id),
             "thread_turns": thread_turns,
+            "web_conversation": _is_web_conversation(w, g.id),
             "thread_stop_notes": thread_stop_notes,
             "thread_downloads": _chat_history_download_states(request, w, thread_turns),
             "thread_questions": thread_questions,
@@ -13792,6 +13874,52 @@ def download_chat_answer(request: Request, goal_id: int, turn_id: int | None = N
             "X-Content-Type-Options": "nosniff",
         },
     )
+def _task_files_context(w, goal) -> dict:
+    from .task_files_view import context as task_files_context
+
+    return task_files_context(w, goal)
+
+
+@app.get("/chat/goal/{goal_id}/task-files/{number}")
+def download_task_file(request: Request, goal_id: int, number: int) -> Response:
+    """One file this task saved, exactly as it saved it, with the same goal
+    access check as the task page and the answer's release rule."""
+    from maverick.task_files import TaskFileUnavailable, read_for_download
+
+    from .task_files_view import content_disposition, release_state
+
+    w = _world()
+    goal = w.get_goal(goal_id)
+    if goal is None:
+        raise HTTPException(status_code=404, detail="no such goal")
+    assert_goal_access(request, goal)
+    released, note = release_state(w, goal)
+    try:
+        if not released:
+            raise TaskFileUnavailable(note)
+        found, data = read_for_download(w, goal_id, number)
+    except TaskFileUnavailable as exc:
+        back = {"href": f"/chat/goal/{goal_id}", "label": "Back to the task"}
+        if not _wants_html(request):
+            return JSONResponse({"detail": str(exc)}, status_code=409)
+        return templates.TemplateResponse(
+            request, "error.html",
+            {"status": 409, "title": "This file can't be downloaded", "message": str(exc),
+             "path": request.url.path, "gate": "membership", "reauthenticate": "",
+             "feature": None, "action": back},
+            status_code=409)
+    return Response(
+        data,
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": content_disposition(found.name),
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "sandbox; default-src 'none'",
+        },
+    )
+
+
 @app.get("/api/v1/chat/goal/{goal_id}/permissions")
 def chat_goal_permissions(request: Request, goal_id: int) -> dict:
     """Fresh task authority for a long-lived page; ownership is not a role."""

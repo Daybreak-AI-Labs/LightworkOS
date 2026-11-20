@@ -1542,6 +1542,8 @@ def dream_cycle(
         except Exception as e:  # pragma: no cover -- capture read never blocks
             log.debug("dreaming: trajectory tool join skipped: %s", e)
         try:
+            from .memory_ownership import sole_person
+            sole = sole_person()
             for g in world.list_goals(status="done", limit=max_goals, order="desc"):
                 from .pilot_learning import excluded
                 if excluded(getattr(g, "id", None)):
@@ -1549,9 +1551,12 @@ def dream_cycle(
                 # Learned skill files are tenant-scoped but remain shared by
                 # every owner inside that tenant. Never fold an owner-scoped
                 # user's goal title into that tenant-wide artifact; missing
-                # owner metadata is ambiguous and therefore skipped. A future
-                # owner-scoped store *and retrieval path* can relax this.
-                if getattr(g, "owner", None) != "":
+                # owner metadata is ambiguous and therefore skipped. The one
+                # exception is an installation only its owner can sign in to:
+                # there "shared" means the owner, so their tasks count. Review
+                # and recall re-ask, so a second person never receives them.
+                owner = getattr(g, "owner", None)
+                if owner != "" and not (sole and owner == sole):
                     continue
                 successes.append({
                     "goal": getattr(g, "title", "") or "",

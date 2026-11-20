@@ -263,6 +263,12 @@ class DockerBackend:
         effective = self.timeout if timeout is None else timeout
         if not math.isfinite(effective) or effective <= 0:
             return ExecResult(stdout="", stderr="Invalid Docker command timeout", exit_code=1)
+        # Pull a missing image under its own limit, not the command's.
+        from .image_pull import missing_image_note
+
+        note = missing_image_note("docker", self.image, getattr(self, "pull", None))
+        if note:
+            return ExecResult(stdout="", stderr=note, exit_code=125)
         if self.reuse_container:
             return self._exec_warm(cmd, effective)
         container_name = f"maverick-sandbox-{uuid.uuid4().hex}"

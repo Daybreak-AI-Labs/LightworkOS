@@ -143,7 +143,7 @@ def projection(request, world, goal_id: int) -> dict:
     from maverick.stop_reasons import stop_payload
 
     from .answer_checks import answer_facts
-    from .app import _withheld_event_markers
+    from .app import _task_files_context, _withheld_event_markers
 
     stop = stop_payload(fresh.status, fresh.result)
     # Exceptional content grants never become permission to mutate the task.
@@ -153,6 +153,7 @@ def projection(request, world, goal_id: int) -> dict:
                    stop=stop,
                    can_download_chat_answer=can_download, chat_answer_download_note=download_note,
                    chat_answer_text=_chat_answer_text(fresh),
+                   **_task_files_context(world, fresh),
                    **answer_facts(world, fresh, frozenset(_withheld_event_markers()), request=request))
     validate_current(request, world, context, original_context)
     return context

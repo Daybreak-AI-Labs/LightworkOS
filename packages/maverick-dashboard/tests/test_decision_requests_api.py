@@ -168,3 +168,48 @@ def test_a_backlog_of_other_peoples_decisions_never_hides_your_own(env):
     assert native.selected(_request(), late.id).id == late.id
     response = client.post(f"/api/v1/decisions/{late.id}/answer", json={"option": 1})
     assert response.status_code == 200, response.text
+
+
+def test_a_new_message_closes_the_decision_it_replaces(env):
+    # The chat box is labelled "Your answer to the agent's question", but it
+    # starts the next task in the conversation; the earlier task then said
+    # "Waiting for a person" forever. Sending the message now closes it.
+    _client, world, goal, decision, _who, _started = env
+    assert dr.close_for_next_message(world, goal, actor="user:alice") == [decision.id]
+    closed = dr.get(world, decision.id)
+    assert closed.status == "closed" and closed.decided_by == "user:alice"
+    assert dr.open_for_goal(world, goal) == []
+    assert dr.close_for_next_message(world, goal, actor="user:alice") == []
+
+
+def test_replying_in_chat_closes_the_waiting_decision(env, monkeypatch):
+    client, world, goal, decision, _who, _started = env
+    from maverick_dashboard import app as dashboard
+
+    monkeypatch.setattr(dashboard, "_world", lambda: world)
+    monkeypatch.setattr(dashboard, "require_permission", lambda *a, **k: None)
+    monkeypatch.setattr(dashboard, "assert_goal_access", lambda *a, **k: None)
+    monkeypatch.setattr(dashboard, "require_provider_or_400", lambda: None)
+    monkeypatch.setattr(dashboard, "check_goal_rate_limit", lambda request: None)
+    monkeypatch.setattr(dashboard, "caller_principal", lambda request: "user:alice", raising=False)
+    monkeypatch.setattr(dashboard, "_dispatch_goal", lambda *a, **k: None)
+    monkeypatch.setattr(dashboard, "_submission_conversation", lambda *a, **k: None)
+
+    async def submit(w, files, **kwargs):
+        return {"goal_id": w.create_goal(kwargs["title"], kwargs["description"], owner="user:alice")}
+
+    monkeypatch.setattr("maverick_dashboard.attachment_submission.submit", submit)
+    response = client.post(f"/chat/goal/{goal}/reply", data={"message": "Report blocked."},
+                           follow_redirects=False)
+    assert response.status_code == 303, response.text
+    assert dr.get(world, decision.id).status == "closed"
+
+
+def test_the_task_page_carries_its_own_decision_card():
+    from pathlib import Path
+
+    import maverick_dashboard
+
+    page = (Path(maverick_dashboard.__file__).parent / "templates" / "chat_goal.html").read_text(encoding="utf-8")
+    assert 'id="decision-requests" data-goal="{{ goal.id }}"' in page
+    assert "lightwork-decisions.js" in page

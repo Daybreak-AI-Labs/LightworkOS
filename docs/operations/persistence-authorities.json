@@ -181,10 +181,10 @@
     "preferences": 8,
     "learning": 61,
     "sqlite_domain": 81,
-    "configuration": 71,
-    "read_projection": 26,
+    "configuration": 72,
+    "read_projection": 27,
     "audit": 24,
-    "transient": 26,
+    "transient": 27,
     "business_records": 21,
     "execution": 46,
     "recovery": 12,
@@ -30237,6 +30237,35 @@
       ]
     },
     {
+      "path": "packages/maverick-core/maverick/memory_ownership.py",
+      "contract": "read_projection",
+      "owner": "delegated; inspect source callsites below",
+      "purpose": "Resolve content ownership, and whether the installation has only one person who can sign in, so learning can use that owner's tasks; reads people records read-only.",
+      "referenced_store_owners": [
+        "maverick.cli._local_owner",
+        "packages/maverick-dashboard/maverick_dashboard/workspace_tenants.py"
+      ],
+      "review": "module purpose and persistence seam read; reads the owner record and the dashboard people files under the Lightwork home folder (size-capped, unreadable means not alone), no writes",
+      "governed_namespaces": [],
+      "literal_path_hints": [
+        "dashboard-invites.json",
+        "dashboard-passphrases.json",
+        "dashboard-users.json",
+        "dashboard-tenant-roles.json",
+        "dashboard-workspace-tenants.json",
+        "scim_users.json"
+      ],
+      "observed_mechanism_markers": {},
+      "source_sites": [
+        {
+          "line": 124,
+          "function": "sole_person",
+          "kind": "maverick_home",
+          "expression": "maverick_home()"
+        }
+      ]
+    },
+    {
       "path": "packages/maverick-core/maverick/learning_store_migration.py",
       "contract": "learning",
       "owner": "packages/maverick-core/maverick/self_harness.py",
@@ -30355,6 +30384,48 @@
           "function": "_write",
           "kind": "atomic_write_bytes",
           "expression": "atomic_write_bytes(_path(), payload, mode=0o600)"
+        }
+      ]
+    },
+    {
+      "path": "packages/maverick-core/maverick/cli/_local_owner.py",
+      "contract": "configuration",
+      "owner": "packages/maverick-dashboard/maverick_dashboard/local_owner.py",
+      "purpose": "Read-only: names the installation's local owner as the owner of tasks started from the command line. It writes nothing; the record belongs to local_owner.",
+      "referenced_store_owners": [
+        "maverick_dashboard.local_owner"
+      ],
+      "review": "module purpose and persistence seam read; read-only use of the local owner record",
+      "governed_namespaces": [],
+      "literal_path_hints": [
+        "dashboard-owner.json"
+      ],
+      "observed_mechanism_markers": {},
+      "source_sites": [
+        {
+          "line": 23,
+          "function": "goal_owner",
+          "kind": "maverick_home",
+          "expression": "maverick_home()"
+        }
+      ]
+    },
+    {
+      "path": "packages/maverick-core/maverick/tools/csv_query.py",
+      "contract": "transient",
+      "owner": "packages/maverick-core/maverick/tools/csv_query.py",
+      "purpose": "One read-only SELECT over CSV text in a private in-memory SQLite database that is discarded after the call; nothing is written to disk.",
+      "referenced_store_owners": [],
+      "review": "module purpose and persistence seam read; in-memory only",
+      "governed_namespaces": [],
+      "literal_path_hints": [],
+      "observed_mechanism_markers": {},
+      "source_sites": [
+        {
+          "line": 47,
+          "function": "query_tables",
+          "kind": "connect",
+          "expression": "sqlite3.connect(':memory:')"
         }
       ]
     }

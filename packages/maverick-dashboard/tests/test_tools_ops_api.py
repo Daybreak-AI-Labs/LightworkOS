@@ -137,6 +137,7 @@ def test_suggested_skill_requires_shared_source_review_and_audited_admission(
     row = data["suggestions"][0]
     assert "Check customer renewal timing" in row["instructions"]
     assert row["source_tasks"] == [shared]
+    assert row["from_your_tasks"] is False
     assert "private-payroll" not in listing.text
     # A private source cannot even be reviewed.
     assert _skill_change(client, "private-payroll", "admit", "a" * 64).status_code == 409
@@ -871,3 +872,37 @@ def test_page_scripts_are_served():
     for name in ("lightwork-tool-ops.js", "lightwork-insight-ops.js", "lightwork-code-sandbox.js"):
         r = c.get("/static/" + name)
         assert r.status_code == 200 and "javascript" in r.headers["content-type"], name
+
+
+
+def test_a_suggestion_from_the_sole_owners_tasks_says_so(client, monkeypatch, tmp_path):
+    # On a single-person installation a suggestion can come from the owner's
+    # own tasks; the card must not call them "shared tasks".
+    from maverick import memory_ownership, world_model
+    from maverick.skill.distillation_local import save_skill
+
+    monkeypatch.setenv("MAVERICK_DISTILL_LOCAL", "1")
+    monkeypatch.setattr(memory_ownership, "sole_person", lambda: "user:owner@example.test")
+    world = world_model.WorldModel(world_model.default_db_path())
+    mine = world.create_goal("Check customer renewal timing", owner="user:owner@example.test")
+    world.close()
+    save_skill({"name": "renewal-timing", "triggers": ["check customer renewal timing"],
+                "tools_needed": [], "summary": "Check customer renewal timing and report it",
+                "n_examples": 2, "source_goal_ids": [mine]}, tmp_path / "home" / "learned-skills")
+    rows = client.get("/api/v1/skills/learned-candidates").json()["suggestions"]
+    assert [(row["name"], row["from_your_tasks"]) for row in rows] == [("renewal-timing", True)]
+    # Once added, the page says it is in use for the owner's tasks (recall
+    # happens inside their tasks, never on this page).
+    added = _skill_change(client, "renewal-timing", "admit", rows[0]["fingerprint"], publish_name="renewal-timing")
+    assert added.status_code == 201, added.text
+    saved = client.get("/api/v1/skills/learned-candidates").json()["added"]
+    assert [(row["name"], row["recall_ready"], row["status"]) for row in saved] == [
+        ("renewal-timing", True, "Available for your matching new tasks.")]
+    # Its uses, recorded inside the owner's tasks, are counted on this page.
+    from maverick import skills
+    from maverick.skill import stats as skill_stats
+
+    key = skills.installed_learned_use_keys()["renewal-timing"]
+    skill_stats.record_use(["renewal-timing", key])
+    saved = client.get("/api/v1/skills/learned-candidates").json()["added"]
+    assert saved[0]["uses"] == 1

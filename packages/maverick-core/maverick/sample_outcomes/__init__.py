@@ -121,6 +121,12 @@ def expected_result(department: str) -> str:
     return load_fixtures(department)["README.md"]
 
 
+def _without_answer(readme: str) -> str:
+    """The README minus its "A correct result ..." paragraph."""
+    kept = [part for part in readme.split("\n\n") if not part.lstrip().startswith("A correct result")]
+    return "\n\n".join(kept).rstrip() + "\n"
+
+
 def sandbox_workdir(workdir: str | Path | None = None) -> Path:
     if workdir is None:
         from ..config import get_sandbox
@@ -152,8 +158,12 @@ def create_sample_workspace(department: str, workdir: str | Path | None = None) 
     target = sample_workspace_path(department, workdir)
     target.mkdir(parents=True, exist_ok=True)
     source = fixture_dir(department)
-    for name in (*outcome.files, "README.md"):
+    for name in outcome.files:
         shutil.copyfile(source / name, target / name)
+    # The agent reads this copy, so it describes the data but never says what a
+    # correct result contains: that paragraph is the grading reference
+    # (expected_result) and handing it over made the demo copy the answer.
+    (target / "README.md").write_text(_without_answer(expected_result(department)), encoding="utf-8")
     (target / SAMPLE_MARKER_FILENAME).write_text(
         "# Sample data\n\n"
         f"This folder was created by Lightwork for the {outcome.label} first outcome. "
@@ -163,6 +173,14 @@ def create_sample_workspace(department: str, workdir: str | Path | None = None) 
     return target
 
 
+def _exact_comparison(files) -> str:
+    """Only a sample with CSV files gets the exact-query instruction."""
+    if not any(str(name).lower().endswith(".csv") for name in files):
+        return ""
+    return ("Compare values across the CSV files exactly with spreadsheet_read op=query (one SELECT; "
+            "each file is a table named after it), not by eye.\n")
+
+
 def goal_description(department: str) -> str:
     """The brief a run gets: which files to read, what to hand back, the sample rule."""
     outcome = get(department)
@@ -170,7 +188,10 @@ def goal_description(department: str) -> str:
     return (
         f"{SAMPLE_RULE}\n\n"
         f"Read these files from the workspace with read_file (the paths are relative to the workspace):\n{files}\n"
-        f"- {SAMPLE_WORKSPACE_DIRNAME}/{outcome.department}/README.md describes the data.\n\n"
+        f"- {SAMPLE_WORKSPACE_DIRNAME}/{outcome.department}/README.md describes the data.\n"
+        f"{_exact_comparison(outcome.files)}"
+        "Everything you need is in these files, and this sample needs no decision from a person: "
+        "do not ask questions; deliver the result for review.\n\n"
         f"Hand the result to a person: it waits in {outcome.lands_in} and nothing is sent, "
         "paid, provisioned or changed without their sign-off."
     )

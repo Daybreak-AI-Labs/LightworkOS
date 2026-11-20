@@ -262,11 +262,19 @@ def _dispatch_editor_command(sandbox, args: dict, goal_id="default") -> str:
     )
 
 
-def str_replace_editor(sandbox, goal_id: str | int | None = "default") -> Tool:
+def str_replace_editor(sandbox, goal_id: str | int | None = "default", world=None) -> Tool:
     quota_goal_id = "default" if goal_id is None else goal_id
 
     def fn(args: dict) -> str:
-        return _dispatch_editor_command(sandbox, args, quota_goal_id)
+        out = _dispatch_editor_command(sandbox, args, quota_goal_id)
+        if world is not None and out.startswith(("created ", "edited ", "inserted at line ")):
+            # The task's current version of the file is what its page offers.
+            from ..task_files import record
+            try:
+                record(world, goal_id, sandbox.workdir, _safe_resolve(sandbox, args["path"]))
+            except (KeyError, ValueError):
+                pass
+        return out
 
     return Tool(
         name="str_replace_editor",

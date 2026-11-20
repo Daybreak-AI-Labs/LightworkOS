@@ -70,7 +70,7 @@ class JDMatch:
         }
 
 
-def match_jd(jd_text: str, k: int = 5, domains=None) -> list[JDMatch]:
+def match_jd(jd_text: str, k: int = 5, domains=None, *, wait: bool = True) -> list[JDMatch]:
     """Rank the specialist roster against a job description.
 
     Pure and offline: hybrid lexical(+embedding when installed) scoring via
@@ -79,13 +79,15 @@ def match_jd(jd_text: str, k: int = 5, domains=None) -> list[JDMatch]:
     this role?" is answered against the whole workforce. The internal ``fit``
     score is relative to the top hit and is deliberately not sent to the UI;
     the visible relevance band counts distinctive shared terms instead.
+    ``wait=False`` answers from shared words while the embedding index is
+    still being built (see :func:`maverick.domain_router.semantic_pending`).
     """
     jd_text = (jd_text or "").strip()[:MAX_JD_CHARS]
     if not jd_text:
         return []
     if domains is None:
         domains = available_domains()
-    ranked = rank_specialists(jd_text, k=max(1, int(k)), domains=domains)
+    ranked = rank_specialists(jd_text, k=max(1, int(k)), domains=domains, wait=wait)
     if not ranked:
         return []
     from .departments import SUITE_LABELS

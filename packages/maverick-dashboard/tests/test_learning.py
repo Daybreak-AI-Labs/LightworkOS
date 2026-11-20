@@ -501,3 +501,53 @@ def test_learning_policy_authority_is_separate_from_owned_content(tmp_path, monk
     monkeypatch.setattr(auth, "has_global_permission", lambda request, permission: False)
     data = api._learning_snapshot(None)
     assert data["dgm"] is None and data["flow_autonomy"] is None
+
+
+def test_a_scoped_view_says_who_sees_installation_totals(tmp_path, monkeypatch):
+    # Seen live: the Learning page told the owner "A current count could not
+    # be confirmed. Refresh the page and try again." for a count that is
+    # deliberately shown only to installation administrators.
+    _isolate(tmp_path, monkeypatch)
+    from maverick_dashboard import api, auth
+    monkeypatch.setattr(api, "goal_owner_filter", lambda request: "user:alice")
+    acc = client.get("/api/v1/learning").json()["accumulated"]
+    assert acc.get("installation_totals") == "administrators_only"
+    page = client.get("/learning").text
+    assert "Shown to installation administrators" in page
+
+    # The installation's own owner, without a department limit, sees them.
+    monkeypatch.setattr(auth, "is_installation_admin", lambda principal: True)
+    monkeypatch.setattr(auth, "caller_suites", lambda request: None)
+    acc = client.get("/api/v1/learning").json()["accumulated"]
+    assert "learned_capabilities" in acc and "grounded_outcomes" in acc
+
+
+def test_the_learned_page_offers_turning_learning_on_only_when_it_is_off(tmp_path, monkeypatch):
+    # Seen live: after turning every core learning component on, the empty
+    # Learned page still offered "Turn on self-learning".
+    _isolate(tmp_path, monkeypatch)
+    from maverick import self_learning
+
+    monkeypatch.setattr(self_learning, "enabled", lambda: True)
+    page = client.get("/learned").text
+    assert "Turn on self-learning" not in page
+    assert "Self-learning is on" in page
+    monkeypatch.setattr(self_learning, "enabled", lambda: False)
+    assert "Turn on self-learning" in client.get("/learned").text
+
+
+def test_the_page_says_when_learning_uses_the_owners_own_tasks(tmp_path, monkeypatch):
+    # A single-person installation learns from its owner's tasks; the page
+    # says so, and what happens once someone else can sign in.
+    _isolate(tmp_path, monkeypatch)
+    from maverick import memory_ownership
+
+    monkeypatch.setattr(memory_ownership, "sole_person", lambda: "user:owner@example.test")
+    text = client.get("/learning").text
+    assert 'id="lrn-owner-tasks"' in text and "learning uses your own tasks" in text
+    monkeypatch.setattr(memory_ownership, "sole_person", lambda: "")
+    shared = client.get("/learning").text
+    assert 'id="lrn-owner-tasks"' not in shared
+    # Live: "reviewed 0 finished tasks" with no reason given. A shared
+    # installation's page says why people's own tasks are not reviewed.
+    assert 'id="lrn-shared-tasks"' in shared and "stay private" in shared

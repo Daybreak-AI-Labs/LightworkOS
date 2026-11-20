@@ -324,9 +324,11 @@ def _require_cli_execution_allowed() -> None:
 
 
 # Servers choose a tenant per request or job; workspace and setup commands
-# manage the roster itself. They never adopt the owner's workspace.
+# manage the roster itself. They never adopt the owner's workspace. The job
+# worker does: its queue file is the current workspace's, and `schedule add`
+# and the dashboard both write the owner's workspace queue.
 _NO_OWNER_WORKSPACE = frozenset({
-    "dashboard", "serve", "mcp", "worker", "gateway", "a2a", "tenant", "init",
+    "dashboard", "serve", "mcp", "gateway", "a2a", "tenant", "init",
     "installation-maintenance", "channel-maintenance",
 })
 
@@ -4278,7 +4280,9 @@ def start(
         n_runs = max(1, repeat)
         for _run_i in range(n_runs):
             world = open_world(ctx.obj["db"])
-            goal_id = world.create_goal(title, description)
+            from ._local_owner import goal_owner
+
+            goal_id = world.create_goal(title, description, owner=goal_owner())
             _mark_sample(world, goal_id, sample)
             _label = f" [{_run_i + 1}/{n_runs}]" if n_runs > 1 else ""
             click.echo(f"goal #{goal_id} created{_label}: {title}")
@@ -4541,7 +4545,9 @@ def chat(ctx, max_depth: int, max_dollars: float, workdir) -> None:
                 continue
 
             title = full.splitlines()[0][:80]
-            goal_id = world.create_goal(title, full)
+            from ._local_owner import goal_owner
+
+            goal_id = world.create_goal(title, full, owner=goal_owner())
             # Record the user's turn so run_goal threads it (and the assistant's
             # reply, which run_goal appends) into the next turn's context.
             world.append_turn(conversation.id, "user", full, goal_id=goal_id)
@@ -7356,7 +7362,9 @@ def watch(ctx, path: str, run: bool, max_dollars: float | None) -> None:
                 continue
             world = open_world(ctx.obj["db"])
             budget = _cli_task_budget(title, max_dollars, 2.0)
-            goal_id = world.create_goal(title or "watch-mode goal", goal_text)
+            from ._local_owner import goal_owner
+
+            goal_id = world.create_goal(title or "watch-mode goal", goal_text, owner=goal_owner())
             click.echo(click.style(f"  -> goal #{goal_id}", fg="bright_black"))
             try:
                 with _cli_sandbox(k, workdir=str(p.parent if p.is_file() else p)) as sandbox:

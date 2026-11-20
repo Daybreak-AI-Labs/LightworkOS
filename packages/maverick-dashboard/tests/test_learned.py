@@ -104,8 +104,17 @@ def test_learned_panel_renders_ledger_entries(monkeypatch, tmp_path):
 
 def test_learned_page_renders_empty(monkeypatch, tmp_path):
     _isolate(monkeypatch, tmp_path)
+    from maverick import self_learning
+
+    # The empty state says what is true: with self-learning off it offers the
+    # switch; with it on it says skills arrive after work, not "turn it on".
+    monkeypatch.setattr(self_learning, "enabled", lambda: False)
+    off = _client().get("/learned").text
+    assert "Nothing learned yet" in off and "Turn on self-learning" in off
+    monkeypatch.setattr(self_learning, "enabled", lambda: True)
     text = _client().get("/learned").text
-    assert "Nothing learned yet" in text and "Turn on self-learning" in text
+    assert "Nothing learned yet" in text and "Self-learning is on" in text
+    assert "Turn on self-learning" not in text
     assert "Checking your retained tools" in text and 'id="generated-tools"' in text
     listing = _client().get("/api/v1/generated-tool-removals").json()
     assert listing["choices"] == []

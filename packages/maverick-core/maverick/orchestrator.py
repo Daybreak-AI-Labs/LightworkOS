@@ -377,7 +377,20 @@ def _budget_exceeded_message(budget: Any, goal_id: Any, detail: str = "") -> str
     """
     from .stop_reasons import budget_stop_text
 
-    return budget_stop_text(budget, goal_id, detail)
+    return budget_stop_text(budget, goal_id, detail,
+                            waiting_for_approval=_waiting_for_approval(goal_id))
+
+
+def _waiting_for_approval(goal_id: Any) -> bool:
+    """A step of this goal is still parked on the Approvals page (best effort)."""
+    if not isinstance(goal_id, int):
+        return False
+    try:
+        from .world_model import open_world
+
+        return bool(open_world().pending_goal_approval_ids([goal_id], limit=1))
+    except Exception:  # noqa: BLE001 -- the stop message never fails on this
+        return False
 
 
 def _usage_accounting_message(detail: str, goal_id: Any) -> str:
@@ -2287,13 +2300,22 @@ def _handle_root_error(*, result: Any, world: WorldModel, goal: Any, goal_id: in
 
 
 
+def _is_sample_run(world: Any, goal_id: int) -> bool:
+    from .sample_outcomes import is_sample_goal
+
+    goal = world.get_goal(goal_id)
+    return goal is not None and is_sample_goal(world, goal)
+
+
 def _brief_decisions_block(world: Any, goal_id: int, shield: Any) -> str:
     """The areas that always need a person, and the decisions people made for
     this run, as structured records (never a free-text answer to reinterpret)."""
     from . import decision_requests
 
     try:
-        rules = "\n" + decision_requests.rules_text() + "\n"
+        # A starter-team sample runs on bundled made-up files, takes no action
+        # and needs no decision; the rules made samples stop to ask one.
+        rules = "" if _is_sample_run(world, goal_id) else "\n" + decision_requests.rules_text() + "\n"
     except Exception:  # pragma: no cover -- never block a run on this
         rules = ""
     made = decision_requests.brief_block(
@@ -2597,6 +2619,20 @@ def _record_goal_success(*, world: WorldModel, goal: Any, goal_id: int, summary:
 
 
 
+def _learnable_done_goals(world: WorldModel, limit: int = 10) -> list:
+    """The newest finished tasks local skill learning may use: shared
+    (ownerless) tasks, plus the owner's own on an installation only they can
+    sign in to (:func:`maverick.memory_ownership.sole_person`)."""
+    from .memory_ownership import sole_person
+
+    done = world.list_goals(status="done", limit=limit, order="desc", owner="")
+    sole = sole_person()
+    if not sole:
+        return done
+    done = [*done, *world.list_goals(status="done", limit=limit, order="desc", owner=sole)]
+    return sorted(done, key=lambda g: getattr(g, "updated_at", 0.0) or 0.0, reverse=True)[:limit]
+
+
 async def _finish_goal_learning(*, world: WorldModel, goal: Any, goal_id: int,
                                 summary: str, is_rendered_diff: bool,
                                 result: Any, ctx: SwarmContext,
@@ -2755,7 +2791,7 @@ async def _finish_goal_learning(*, world: WorldModel, goal: Any, goal_id: int,
             trajectories = [
                 {"goal_id": g.id, "goal": g.title, "success": True, "tools": [],
                  "t": getattr(g, "updated_at", 0.0)}
-                for g in world.list_goals(status="done", limit=10, order="desc", owner="")
+                for g in _learnable_done_goals(world)
             ]
             # v2: gate on evidence + dedup against the learned-skills store
             # so the loop doesn't accumulate near-duplicate skills each run.

@@ -171,12 +171,14 @@ def _metered_limits(budget) -> str:
     return ", ".join(limits) or "a configured usage limit"
 
 
-def budget_stop_text(budget, goal_id, detail: str = "") -> str:
+def budget_stop_text(budget, goal_id, detail: str = "", *, waiting_for_approval: bool = False) -> str:
     """The stop message for a task that reached its own spending or time limit.
 
     ``detail`` is the kernel's ``BudgetExceeded`` text. It names the cap, the
     spend, the refused call's estimate and any safety ceiling behind it; the
     message keeps those facts instead of only what the meter shows.
+    ``waiting_for_approval``: a step was still parked for a person's decision,
+    which is why the time ran out; the message says so.
     """
     facts = budget_stop_facts(detail)
     if facts.limit == "other" and _time_ran_out(budget):
@@ -195,6 +197,8 @@ def budget_stop_text(budget, goal_id, detail: str = "") -> str:
         lines = [f"Stopped: this goal hit your spending limit (${spent:.2f} of ${cap:.2f} cap used)."]
     elif facts.limit == "time":
         lines = [f"Stopped: this goal hit your time limit ({_duration(facts.wall_cap or 0)})."]
+        if waiting_for_approval:
+            lines.append(_WAITED_FOR_APPROVAL)
     else:
         lines = [f"Stopped: this goal hit your spending or time limit ({_metered_limits(budget)})."]
     lines.extend(_ceiling_sentences(facts))
@@ -214,6 +218,7 @@ _STOP_PROJECTED = re.compile(
     rf"before its next step \({_AMOUNT} of {_AMOUNT} cap used\)\.\s*The next step was estimated "
     rf"at {_AMOUNT}, which would bring spending to {_AMOUNT}")
 _STOP_SPENT = re.compile(rf"hit your spending limit \({_AMOUNT} of {_AMOUNT} cap used\)")
+_WAITED_FOR_APPROVAL = "A step was still waiting for approval when time ran out, so it did not run."
 _STOP_TIME = re.compile(r"hit your time limit \(([^)]+)\)")
 _STOP_TOOL = re.compile(r"(?m)^(.+?) has no price set, so Lightwork counted each call")
 _STOP_MODEL = re.compile(r"(?m)^(.+?) has no price set, so Lightwork used a safety ceiling")
@@ -222,6 +227,11 @@ _STOP_MODEL = re.compile(r"(?m)^(.+?) has no price set, so Lightwork used a safe
 def _task_limit_reason(text: str, technical: str) -> StopReason | None:
     """A specific explanation for a stop at the task's own limit, else None."""
     if m := _STOP_TIME.search(text):
+        if _WAITED_FOR_APPROVAL in text:
+            return StopReason("time_limit", f"This task reached its time limit of {m.group(1)} "
+                              "while a step waited for approval. That step did not run.",
+                              "Start it again and decide its approvals sooner, or raise the time "
+                              "limit per task.", TIME_LIMIT_HREF, "Open Time limit per task", technical)
         return StopReason("time_limit", f"This task reached its time limit of {m.group(1)}. "
                           "Its recorded work is kept.",
                           "Start it again with a longer time limit, or raise the time limit per task.",

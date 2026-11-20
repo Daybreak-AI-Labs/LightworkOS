@@ -320,3 +320,13 @@ def fake_llm() -> FakeLLM:
 @pytest.fixture
 def make_llm_response():
     return make_response
+
+
+@pytest.fixture(autouse=True)
+def _container_image_already_present(request, monkeypatch):
+    """Container backend tests script every engine call they expect, so the
+    image check that runs before a command (sandbox.image_pull) reads as already
+    satisfied here. Its own behaviour is tested in test_sandbox_image_pull.py."""
+    if request.module.__name__.rsplit(".", 1)[-1] == "test_sandbox_image_pull":
+        return
+    monkeypatch.setattr("maverick.sandbox.image_pull.missing_image_note", lambda *a, **k: None)

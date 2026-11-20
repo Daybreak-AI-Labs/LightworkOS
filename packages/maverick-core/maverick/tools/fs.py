@@ -432,7 +432,7 @@ def read_file(sandbox) -> Tool:
     )
 
 
-def write_file(sandbox, goal_id: str | int | None = "default") -> Tool:
+def write_file(sandbox, goal_id: str | int | None = "default", world=None) -> Tool:
     quota_goal_id = "default" if goal_id is None else goal_id
 
     def fn(args: dict) -> str:
@@ -454,8 +454,10 @@ def write_file(sandbox, goal_id: str | int | None = "default") -> Tool:
         except (ValueError, PermissionError, OSError) as e:
             refund(charged, goal_id=quota_goal_id)  # the write did not complete
             return f"ERROR: {e}"
+        if world is not None:
+            from ..task_files import record
+            record(world, goal_id, sandbox.workdir, target)
         return f"wrote {len(content)} bytes to {target}"
-
     return Tool(
         name="write_file",
         description=(
@@ -489,6 +491,44 @@ def write_file(sandbox, goal_id: str | int | None = "default") -> Tool:
                 },
             },
             "required": ["path", "content"],
+        },
+        fn=fn,
+    )
+
+
+def deliver_file(sandbox, goal_id: int | None, world) -> Tool:
+    """Hand a workspace file to the person as a download on the task's page."""
+    def fn(args: dict) -> str:
+        if world is None or goal_id is None:
+            return "ERROR: no task to deliver the file to"
+        try:
+            target = _safe_resolve(sandbox, args["path"])
+        except (KeyError, ValueError) as e:
+            return f"ERROR: {e}"
+        if not target.is_file():
+            return f"ERROR: {args['path']} is not a file in the workspace"
+        from ..task_files import MAX_DOWNLOAD_BYTES, record
+        saved = record(world, goal_id, sandbox.workdir, target)
+        if saved is None:
+            return (f"ERROR: {args['path']} could not be offered (it must be a regular file "
+                    f"inside the workspace, at most {MAX_DOWNLOAD_BYTES // (1024 * 1024)} MB)")
+        return (f"{saved.name} ({saved.size} bytes) is now a download on the task's page. "
+                "Mention its file name in your answer; do not paste a file path or link.")
+
+    return Tool(
+        name="deliver_file",
+        description=(
+            "Give the person a file you made in the workspace, as a download on the "
+            "task's page. Files you save with write_file or str_replace_editor are "
+            "offered automatically; use this for a file a command or script created "
+            "(for example a chart, a spreadsheet or a zip). The page serves the file "
+            "exactly as it is now."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {"path": {"type": "string",
+                                    "description": "Workspace-relative path of the file."}},
+            "required": ["path"],
         },
         fn=fn,
     )

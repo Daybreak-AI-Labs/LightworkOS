@@ -907,3 +907,43 @@ def test_key_path_override_still_wins(tmp_path, monkeypatch):
     monkeypatch.setattr(car, "_KEY_PATH", pinned)
     assert car._key_path() == pinned
     assert car._keyring_dir() == pinned.parent / "at_rest.d"
+
+
+@requires_crypto
+def test_the_dashboard_reads_what_a_workspace_bound_process_sealed(monkeypatch, tmp_path):
+    """A worker run as ``MAVERICK_TENANT=<workspace>`` seals with that
+    workspace's key file; the dashboard serves the workspace unbound with the
+    installation key and could not read it ("no at-rest key for key-id")."""
+    from maverick import client, paths
+
+    monkeypatch.setattr(car, "_KEY_PATH", None)
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
+    monkeypatch.setattr(client, "strict_client_id", lambda: None)
+    with paths.tenant_scope(tenant="acme"):
+        car.seal_bound(b"installation", "goals.title")  # the dashboard's key exists too
+    monkeypatch.setenv("MAVERICK_TENANT", "acme")
+    blob = car.seal_bound(b"written by the bound worker", "goals.title")
+    monkeypatch.delenv("MAVERICK_TENANT")
+
+    with paths.tenant_scope(tenant="acme"):
+        assert car.unseal_bound(blob, "goals.title") == b"written by the bound worker"
+    # Another workspace's request never reaches acme's key.
+    with paths.tenant_scope(tenant="other"), pytest.raises(car.EncryptionUnavailable):
+        car.unseal_bound(blob, "goals.title")
+    # A process bound to another workspace does not either.
+    monkeypatch.setenv("MAVERICK_TENANT", "other")
+    with paths.tenant_scope(tenant="acme"), pytest.raises(car.EncryptionUnavailable):
+        car.unseal_bound(blob, "goals.title")
+
+
+def test_an_unreadable_value_is_logged_once_not_on_every_read(caplog):
+    from maverick import world_model
+
+    world_model._WITHHELD_LOGGED.clear()
+    with caplog.at_level("DEBUG", logger="maverick.world_model"):
+        for _ in range(5):
+            world_model._log_withheld_once(car.EncryptionUnavailable("no at-rest key for key-id 00"))
+    errors = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert len(errors) == 1 and "repeats of this cause" in errors[0].getMessage()
+    assert sum(r.levelname == "DEBUG" for r in caplog.records) == 4
