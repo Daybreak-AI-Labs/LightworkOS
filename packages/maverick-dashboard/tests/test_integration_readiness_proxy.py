@@ -39,20 +39,20 @@ def _no_host_proxy(monkeypatch):
 def test_a_hosted_provider_is_tested_through_the_configured_proxy(monkeypatch):
     monkeypatch.setenv("HTTPS_PROXY", "http://proxy.corp.example:3128")
     calls = _record(monkeypatch)
-    result = readiness.probe_provider("openai", {"api_key": "sk-test"})
+    result = readiness.probe_provider("openai", {"api_key": "sk-test"})  # pragma: allowlist secret
     assert result["verified"] is True
     url, kwargs = calls["httpx"]
     assert url == "https://api.openai.com/v1/models"
     assert kwargs["proxy"] == "http://proxy.corp.example:3128"
     # trust_env as the SDKs do, so a TLS-inspecting proxy's CA (SSL_CERT_FILE) is trusted.
     assert kwargs["follow_redirects"] is False and kwargs["trust_env"] is True
-    assert kwargs["headers"] == {"Authorization": "Bearer sk-test"}
+    assert kwargs["headers"] == {"Authorization": "Bearer sk-test"}  # pragma: allowlist secret
     assert "safe_get" not in calls
 
 
 def test_without_a_proxy_the_direct_pinned_probe_is_kept(monkeypatch):
     calls = _record(monkeypatch)
-    readiness.probe_provider("openai", {"api_key": "sk-test"})
+    readiness.probe_provider("openai", {"api_key": "sk-test"})  # pragma: allowlist secret
     assert calls["safe_get"][0] == "https://api.openai.com/v1/models"
     assert "httpx" not in calls
 
@@ -61,7 +61,7 @@ def test_a_host_excluded_from_the_proxy_is_probed_directly(monkeypatch):
     monkeypatch.setenv("HTTPS_PROXY", "http://proxy.corp.example:3128")
     monkeypatch.setenv("NO_PROXY", "api.openai.com")
     calls = _record(monkeypatch)
-    readiness.probe_provider("openai", {"api_key": "sk-test"})
+    readiness.probe_provider("openai", {"api_key": "sk-test"})  # pragma: allowlist secret
     assert "safe_get" in calls and "httpx" not in calls
 
 
@@ -70,7 +70,7 @@ def test_an_operator_supplied_address_keeps_the_pinned_probe(monkeypatch):
     # keeps the anti-SSRF checks.
     monkeypatch.setenv("HTTPS_PROXY", "http://proxy.corp.example:3128")
     calls = _record(monkeypatch)
-    readiness.probe_provider("openai", {"api_key": "sk-test", "base_url": "https://gateway.example/v1"})
+    readiness.probe_provider("openai", {"api_key": "sk-test", "base_url": "https://gateway.example/v1"})  # pragma: allowlist secret
     assert calls["safe_get"][0] == "https://gateway.example/v1/models"
     assert "httpx" not in calls
 
@@ -81,7 +81,7 @@ def test_the_outbound_policy_still_applies_through_the_proxy(monkeypatch):
     monkeypatch.setenv("HTTPS_PROXY", "http://proxy.corp.example:3128")
     monkeypatch.setattr(egress_guard, "_denied", lambda url: "outbound connections are locked")
     calls = _record(monkeypatch)
-    result = readiness.probe_provider("openai", {"api_key": "sk-test"})
+    result = readiness.probe_provider("openai", {"api_key": "sk-test"})  # pragma: allowlist secret
     assert result["verified"] is False
     assert result["evidence"]["blocked_by_egress_policy"] is True
     assert calls == {}
