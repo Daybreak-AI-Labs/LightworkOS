@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import math
 import re
+import threading
 from collections import Counter
 
 from .domain import DomainProfile, available_domains
@@ -170,39 +171,86 @@ _ALPHA = 0.6
 # a concurrent build for another roster can never pair this key with that
 # roster's index.
 _CACHE: tuple[tuple, DomainRouter, EmbeddingRouter | None] | None = None
+# Embedding the whole roster with the local model took 33 s live. A caller
+# that cannot wait gets the lexical index (0.3 s) while one background build
+# per roster runs; these hold that lexical index and the roster being built.
+_LEXICAL: tuple[tuple, DomainRouter] | None = None
+_BUILDING: tuple | None = None
+_BUILD_LOCK = threading.Lock()
 
 
-def _indexes(domains: dict[str, DomainProfile]):
-    """Build (and process-cache) the lexical + embedding indexes for a roster."""
-    global _CACHE
+def _key(domains: dict[str, DomainProfile]) -> tuple:
     # A workspace can edit a custom pack without changing its ID. Keying only
     # on names kept the previous tenant's text in the process-wide index and
     # made JD matches stale until restart.
-    key = tuple(
+    return tuple(
         (name, profile.description, profile.persona)
         for name, profile in sorted(domains.items())
     )
+
+
+def _embedding(domains: dict[str, DomainProfile]) -> EmbeddingRouter | None:
+    try:
+        return EmbeddingRouter(domains)
+    except Exception:  # embeddings are best-effort; lexical always works
+        return None
+
+
+def _indexes(domains: dict[str, DomainProfile], *, wait: bool = True):
+    """Build (and process-cache) the lexical + embedding indexes for a roster.
+
+    With ``wait=False`` a roster whose embedding index is not built yet gets
+    its lexical index and ``None``, and the embedding index is built in the
+    background for later calls."""
+    global _CACHE, _LEXICAL, _BUILDING
+    key = _key(domains)
     cached = _CACHE
     if cached is not None and cached[0] == key:
         return cached[1], cached[2]
-    lex = DomainRouter(domains)
-    emb: EmbeddingRouter | None
-    try:
-        emb = EmbeddingRouter(domains)
-    except Exception:  # embeddings are best-effort; lexical always works
-        emb = None
-    _CACHE = (key, lex, emb)
-    return lex, emb
+    if wait:
+        lex = DomainRouter(domains)
+        emb = _embedding(domains)
+        _CACHE = (key, lex, emb)
+        return lex, emb
+    lexical = _LEXICAL
+    if lexical is None or lexical[0] != key:
+        lexical = (key, DomainRouter(domains))
+        _LEXICAL = lexical
+    with _BUILD_LOCK:
+        start = key != _BUILDING
+        if start:
+            _BUILDING = key
+    if start:
+        roster = dict(domains)
+
+        def build() -> None:
+            global _CACHE, _BUILDING
+            try:
+                _CACHE = (key, lexical[1], _embedding(roster))
+            finally:
+                with _BUILD_LOCK:
+                    if key == _BUILDING:
+                        _BUILDING = None
+
+        threading.Thread(target=build, name="specialist-index", daemon=True).start()
+    return lexical[1], None
+
+
+def semantic_pending(domains: dict[str, DomainProfile]) -> bool:
+    """True while this roster's embedding index is still being built in the
+    background, so rankings for it are lexical only."""
+    return _BUILDING is not None and _key(domains) == _BUILDING
 
 
 def rank_specialists(query: str, k: int = 10,
                      domains: dict[str, DomainProfile] | None = None,
-                     *, alpha: float = _ALPHA) -> list[tuple[str, float]]:
+                     *, alpha: float = _ALPHA, wait: bool = True) -> list[tuple[str, float]]:
     """Rank the roster for ``query``, hybrid (semantic + lexical) when an
-    embedding model is installed, pure lexical otherwise. Cached per roster."""
+    embedding model is installed, pure lexical otherwise. Cached per roster.
+    ``wait=False`` never waits for the embedding index (see ``_indexes``)."""
     if domains is None:
         domains = available_domains()
-    lex, emb = _indexes(domains)
+    lex, emb = _indexes(domains, wait=wait)
     lexical = lex.score_all(query)
     semantic = emb.score_all(query) if (emb and emb.available) else {}
     blended = _blend(lexical, semantic, alpha)
@@ -211,4 +259,4 @@ def rank_specialists(query: str, k: int = 10,
     return scored[:k]
 
 
-__all__ = ["DomainRouter", "EmbeddingRouter", "rank_specialists"]
+__all__ = ["DomainRouter", "EmbeddingRouter", "rank_specialists", "semantic_pending"]

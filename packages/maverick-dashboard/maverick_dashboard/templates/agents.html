@@ -826,9 +826,13 @@
 
       if (!matchBtn) return;
 
-      function renderMatches(list) {
+      function renderMatches(list, pending) {
+        // The first match after a restart answers from shared words while the
+        // meaning-based matching is still being prepared.
+        var note = pending ? '<p class="muted" id="jd-pending">These matches use shared words only. '
+          + 'Better matching is still being prepared, so try again in a minute.</p>' : '';
         if (!list.length) {
-          results.innerHTML = '<p class="muted">No matches — draft a new agent instead.</p>';
+          results.innerHTML = '<p class="muted">No matches — draft a new agent instead.</p>' + note;
           return;
         }
         var rows = list.map(function (m, i) {
@@ -857,7 +861,7 @@
             + setup
             + '</div>';
         }).join('');
-        results.innerHTML = '<p class="muted" style="margin-top: 0.6rem;">Existing agents and specialists, ranked by relevance. Shared terms are a clue, not a readiness check.</p>' + rows;
+        results.innerHTML = '<p class="muted" style="margin-top: 0.6rem;">Existing agents and specialists, ranked by relevance. Shared terms are a clue, not a readiness check.</p>' + note + rows;
       }
 
       matchBtn.addEventListener('click', function () {
@@ -883,7 +887,7 @@
           .then(function (res) {
             if (!res.ok) { say(plainError(res.r, 'match the job description'), false); return; }
             say('', true);
-            renderMatches(res.j.matches || []);
+            renderMatches(res.j.matches || [], res.j.semantic_pending === true);
           })
           .catch(function (e) { say(plainError(e, 'match the job description'), false); });
       });

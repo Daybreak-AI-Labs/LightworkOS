@@ -11565,6 +11565,7 @@ def _require_jd_hiring() -> None:
 def _scoped_jd_matches(request: Request, jd_text: str, k: int) -> dict:
     from maverick.domain import available_domains, suites_for_domain
     from maverick.domain_edit import workflow_readiness
+    from maverick.domain_router import semantic_pending
     from maverick.jd_hiring import match_jd
 
     from .plain_labels import pack_display_name
@@ -11581,7 +11582,9 @@ def _scoped_jd_matches(request: Request, jd_text: str, k: int) -> dict:
             for name, profile in domains.items()
             if suites_for_domain(name, profile) <= allowed
         }
-    matches = match_jd(jd_text, k=k, domains=domains)
+    # The page never waits for the meaning-based index; the first build of it
+    # took 33 s live. It says when matches use shared words only.
+    matches = match_jd(jd_text, k=k, domains=domains, wait=False)
     rows = []
     for match in matches:
         profile = domains.get(match.name)
@@ -11596,7 +11599,7 @@ def _scoped_jd_matches(request: Request, jd_text: str, k: int) -> dict:
             "display_name": pack_display_name(match.name, profile.persona, profile.description),
             "readiness": readiness,
         })
-    return {"matches": rows}
+    return {"matches": rows, "semantic_pending": semantic_pending(domains)}
 
 
 @router.post("/agents/jd/match")

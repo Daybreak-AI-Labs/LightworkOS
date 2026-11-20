@@ -182,7 +182,7 @@
     "learning": 61,
     "sqlite_domain": 81,
     "configuration": 72,
-    "read_projection": 26,
+    "read_projection": 27,
     "audit": 24,
     "transient": 27,
     "business_records": 21,
@@ -30233,6 +30233,35 @@
           "function": "_stored_version",
           "kind": "connect",
           "expression": "sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True, timeout=10.0)"
+        }
+      ]
+    },
+    {
+      "path": "packages/maverick-core/maverick/memory_ownership.py",
+      "contract": "read_projection",
+      "owner": "delegated; inspect source callsites below",
+      "purpose": "Resolve content ownership, and whether the installation has only one person who can sign in, so learning can use that owner's tasks; reads people records read-only.",
+      "referenced_store_owners": [
+        "maverick.cli._local_owner",
+        "packages/maverick-dashboard/maverick_dashboard/workspace_tenants.py"
+      ],
+      "review": "module purpose and persistence seam read; reads the owner record and the dashboard people files under the Lightwork home folder (size-capped, unreadable means not alone), no writes",
+      "governed_namespaces": [],
+      "literal_path_hints": [
+        "dashboard-invites.json",
+        "dashboard-passphrases.json",
+        "dashboard-users.json",
+        "dashboard-tenant-roles.json",
+        "dashboard-workspace-tenants.json",
+        "scim_users.json"
+      ],
+      "observed_mechanism_markers": {},
+      "source_sites": [
+        {
+          "line": 124,
+          "function": "sole_person",
+          "kind": "maverick_home",
+          "expression": "maverick_home()"
         }
       ]
     },

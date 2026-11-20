@@ -501,9 +501,9 @@ class TestPackEditingSafetyEnvelope:
 
         assert r.status_code == 422
         detail = r.json()["detail"]
-        assert "allow_tools cannot add tools" in detail
-        assert "deny_tools cannot remove" in detail
-        assert "max_risk cannot be raised" in detail
+        assert f"An edited agent cannot use tools its built-in version does not allow: {denied_tool}" in detail
+        assert "Tools the built-in version blocks must stay blocked" in detail
+        assert "The risk limit cannot be higher than the built-in version's" in detail
         assert client.get(f"/api/v1/agents/{name}").json()["is_override"] is False
 
 def test_restored_agent_revision_cannot_overwrite_a_newer_save():

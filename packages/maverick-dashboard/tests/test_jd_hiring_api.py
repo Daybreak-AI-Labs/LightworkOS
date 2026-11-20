@@ -61,6 +61,33 @@ def test_jd_match_ranks_roster(monkeypatch):
     assert matches[0]["readiness"]["state"] in {"action_ready", "needs_setup", "unknown"}
 
 
+def test_jd_match_answers_without_waiting_for_the_meaning_index(monkeypatch):
+    # Live: the first match waited 33 s for the local model to embed every
+    # pack. The page now gets the word-based matches at once and is told
+    # better matching is still being prepared.
+    import threading
+
+    import maverick.domain_router as dr
+
+    release = threading.Event()
+
+    class SlowEmbeddingRouter(dr.EmbeddingRouter):
+        def __init__(self, domains):
+            release.wait(10)
+            super().__init__(domains, embed_fn=lambda texts: None)
+
+    for name in ("_CACHE", "_LEXICAL", "_BUILDING"):
+        monkeypatch.setattr(dr, name, None)
+    monkeypatch.setattr(dr, "EmbeddingRouter", SlowEmbeddingRouter)
+    try:
+        resp = client.post("/api/v1/agents/jd/match", json={"jd_text": FINANCE_JD, "k": 5})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["matches"] and body["semantic_pending"] is True
+    finally:
+        release.set()
+
+
 def test_jd_match_validates_input():
     assert client.post("/api/v1/agents/jd/match", json={"jd_text": ""}).status_code == 422
     assert client.post("/api/v1/agents/jd/match",
@@ -112,15 +139,17 @@ def test_department_scope_filters_catalog_before_ranking(monkeypatch):
     monkeypatch.setattr(domain, "available_domains", lambda: profiles)
     monkeypatch.setattr(domain, "suite_for", suites.get)
 
-    def fake_match(_text, *, k, domains):
+    def fake_match(_text, *, k, domains, wait):
         seen["k"] = k
         seen["domains"] = domains
+        seen["wait"] = wait
         return []
 
     monkeypatch.setattr(jd_hiring, "match_jd", fake_match)
 
-    assert api._scoped_jd_matches(object(), "accounts payable", 2) == {"matches": []}
+    assert api._scoped_jd_matches(object(), "accounts payable", 2) == {"matches": [], "semantic_pending": False}
     assert seen["k"] == 2
+    assert seen["wait"] is False  # the page never waits for the meaning index
     assert set(seen["domains"]) == {"finance_ap", "generic_helper"}
     assert "legal_privacy" not in seen["domains"]
     assert "generic_legal_fork" not in seen["domains"]

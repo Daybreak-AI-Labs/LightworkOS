@@ -220,6 +220,39 @@ def test_a_first_decision_says_what_it_did_and_a_repeat_says_nothing_was_repeate
     assert again.status_code == 200 and "Nothing was repeated" in again.json()["message"]
 
 
+def test_edits_beyond_the_built_in_limits_read_as_plain_sentences():
+    # The publish check speaks in field names ("max_risk cannot be raised above
+    # the built-in pack (medium)"), which once read "Max_risk cannot ...".
+    from maverick_dashboard.specialist_drafts import _plain_problems
+
+    text = _plain_problems(
+        "allow_tools cannot add tools beyond the built-in pack: shell; "
+        "deny_tools cannot remove built-in denied tools: browser, shell; "
+        "max_risk cannot be raised above the built-in pack (medium); "
+        "allow_paths cannot broaden the built-in pack's scope; "
+        "allow_hosts cannot broaden the built-in pack's scope; "
+        "mcp_servers cannot add entries beyond the built-in pack: crm; "
+        "refuse cannot remove the built-in pack's refusals; "
+        "workflow cannot remove the built-in pack's review gates; "
+        "output cannot remove the built-in pack's review gate; "
+        "compartment cannot differ from the built-in pack; "
+        "autonomy cannot give the agent more independence than the built-in pack; "
+        "some_field is not understood")
+    assert text == (
+        "An edited agent cannot use tools its built-in version does not allow: shell. "
+        "Tools the built-in version blocks must stay blocked: browser, shell. "
+        "The risk limit cannot be higher than the built-in version's (medium). "
+        "The files it may use cannot go beyond the built-in version's. "
+        "The websites it may reach cannot go beyond the built-in version's. "
+        "It cannot connect to services the built-in version does not use: crm. "
+        "It must keep refusing what the built-in version refuses. "
+        "Its playbook must keep the built-in version's review steps. "
+        "Its results must keep the built-in version's review step. "
+        "It must keep the built-in version's information boundary. "
+        "It cannot have more independence than the built-in version. "
+        "some_field is not understood.")
+
+
 def test_draft_problems_read_as_plain_sentences(client):
     # Seen live: "declared tool 'shell' is denied by this pack".
     from maverick_dashboard.specialist_drafts import _plain_problems

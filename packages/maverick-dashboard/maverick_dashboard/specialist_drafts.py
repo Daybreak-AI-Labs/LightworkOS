@@ -76,6 +76,26 @@ _PLAIN_PROBLEMS = (
     (re.compile(r"allow_tools is empty"),
      "Choose the tools this agent may use. With none chosen it could use every tool."),
     (re.compile(r"max_risk is unset"), "Choose how risky this agent's actions may be."),
+    # An edited built-in agent cannot loosen its built-in limits.
+    (re.compile(r"allow_tools cannot add tools beyond the built-in pack: (.+)"),
+     "An edited agent cannot use tools its built-in version does not allow: {0}."),
+    (re.compile(r"deny_tools cannot remove built-in denied tools: (.+)"),
+     "Tools the built-in version blocks must stay blocked: {0}."),
+    (re.compile(r"max_risk cannot be raised above the built-in pack \((\w+)\)"),
+     "The risk limit cannot be higher than the built-in version's ({0})."),
+    (re.compile(r"allow_paths cannot broaden"), "The files it may use cannot go beyond the built-in version's."),
+    (re.compile(r"allow_hosts cannot broaden"),
+     "The websites it may reach cannot go beyond the built-in version's."),
+    (re.compile(r"mcp_servers cannot add entries beyond the built-in pack: (.+)"),
+     "It cannot connect to services the built-in version does not use: {0}."),
+    (re.compile(r"refuse cannot remove"), "It must keep refusing what the built-in version refuses."),
+    (re.compile(r"workflow cannot remove the built-in pack's review gates"),
+     "Its playbook must keep the built-in version's review steps."),
+    (re.compile(r"output cannot remove the built-in pack's review gate"),
+     "Its results must keep the built-in version's review step."),
+    (re.compile(r"compartment cannot differ"), "It must keep the built-in version's information boundary."),
+    (re.compile(r"autonomy cannot give the agent more independence"),
+     "It cannot have more independence than the built-in version."),
 )
 
 
@@ -91,7 +111,9 @@ def _plain_problems(text: str) -> str:
                 out.append(plain.format(*match.groups()))
                 break
         else:
-            out.append(part[:1].upper() + part[1:])
+            # A leading field name ("some_field ...") keeps its spelling.
+            first = part.split(" ", 1)[0]
+            out.append(part if "_" in first else part[:1].upper() + part[1:])
     return " ".join(item if item.endswith((".", "?", "!")) else item + "." for item in out if item)
 
 

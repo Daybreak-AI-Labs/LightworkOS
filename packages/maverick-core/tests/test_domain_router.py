@@ -265,3 +265,56 @@ def test_concurrent_build_for_another_roster_cannot_leak_into_this_one(monkeypat
     monkeypatch.setattr(dr, "EmbeddingRouter", embedding)
     assert [n for n, _ in dr.rank_specialists("review an NDA", domains=mine)] == ["alpha_pack"]
     assert [n for n, _ in dr.rank_specialists("review an NDA", domains=mine)] == ["alpha_pack"]
+
+
+def test_a_first_match_need_not_wait_for_the_meaning_index(monkeypatch):
+    # Live: the first "Find matches" sat on "Matching against the roster..."
+    # for 33 s while the local model embedded all 2,031 packs. A caller that
+    # cannot wait gets the word-based ranking now, the meaning index builds in
+    # the background, and later calls use both.
+    import threading
+
+    import maverick.domain_router as dr
+
+    release, built = threading.Event(), threading.Event()
+
+    class SlowEmbeddingRouter(dr.EmbeddingRouter):
+        def __init__(self, domains):
+            release.wait(10)
+            super().__init__(domains, embed_fn=_fake_embed)
+            built.set()
+
+    domains = _toy_domains()
+    for name in ("_CACHE", "_LEXICAL", "_BUILDING"):
+        monkeypatch.setattr(dr, name, None)
+    monkeypatch.setattr(dr, "EmbeddingRouter", SlowEmbeddingRouter)
+
+    query = "please terminate"   # no shared words; only the meaning index finds it
+    try:
+        assert dr.rank_specialists(query, domains=domains, wait=False) == []
+        assert dr.semantic_pending(domains)
+        assert dr.rank_specialists(query, domains=domains, wait=False) == []  # one build, not two
+    finally:
+        release.set()
+    assert built.wait(10)
+    for _ in range(100):
+        if not dr.semantic_pending(domains):
+            break
+        threading.Event().wait(0.05)
+    assert not dr.semantic_pending(domains)
+    assert dr.rank_specialists(query, domains=domains, wait=False)[0][0] == "hr_offboarding"
+
+
+def test_waiting_callers_still_get_the_full_ranking_at_once(monkeypatch):
+    import maverick.domain_router as dr
+
+    class FakeEmbeddingRouter(dr.EmbeddingRouter):
+        def __init__(self, domains):
+            super().__init__(domains, embed_fn=_fake_embed)
+
+    for name in ("_CACHE", "_LEXICAL", "_BUILDING"):
+        monkeypatch.setattr(dr, name, None)
+    monkeypatch.setattr(dr, "EmbeddingRouter", FakeEmbeddingRouter)
+    ranked = dr.rank_specialists("please terminate", domains=_toy_domains())
+    assert ranked[0][0] == "hr_offboarding"
+    assert not dr.semantic_pending(_toy_domains())
