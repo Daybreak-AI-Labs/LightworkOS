@@ -49,6 +49,7 @@
 
   <div class="g-bar">
     {% if work_details_available %}<a class="btn btn--ghost" href="/work-details">Business fields and stages</a>{% endif %}
+    {% if background_available %}<a class="btn btn--ghost" id="goals-background-link" href="{{ '/goals' if goals_background else '/goals?owner=me&include=background' }}">{{ 'Hide background work' if goals_background else 'My background work' }}</a>{% endif %}
     <input id="run-search-q" type="search" placeholder="Search tasks…"
            aria-label="Search tasks by title, request or saved result" autocomplete="off" maxlength="256"
            class="input g-bar__search" data-context="{{ task_search_context }}">

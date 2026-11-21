@@ -24,13 +24,13 @@ STEPS = {
         ("request", "Describe the result you need", "Say what you want to achieve, who it is for and anything Lightwork must follow. Your draft stays here while you explore.", "composer-title", "composer-title", "operate"),
         ("files", "Give it the right supporting material", "Attach the documents this task should use. Check the selected files before starting; this tour never uploads a file.", "attach-btn", "attach-btn", "operate"),
         ("format", "Choose what it should create", "Choose an answer, document or other available result. Starting the task is a separate action and uses your workspace's spending limits and approvals.", "authoring-kind", "authoring-kind", "operate"),
-        ("help", "Ask for help where you are", "Copilot understands this page and can open its supported controls. Review an action before confirming it; opening help starts nothing.", "mv-copilot-fab", "mv-copilot-fab", "view")),
+        ("help", "Ask for help where you are", "Copilot understands this page and can open its supported controls. Review an action before confirming it; opening help starts nothing.", "cs-copilot", "cs-copilot", "view")),
     "/goals": (
         ("find", "Find work you already asked for", "Search Tasks by its name or request. Open a task to read its current progress, answer and available actions.", "run-search-q", "run-search-q", "view"),
-        ("background", "Keep track of background work", "My background work shows the jobs you can see. Check a retained original when a reply is interrupted instead of starting the same action again.", "my-work", "my-work-title", "view")),
+        ("background", "Keep track of background work", "My background work shows the jobs you can see. Check a retained original when a reply is interrupted instead of starting the same action again.", "goals-background-link", "goals-background-link", "view")),
     "/connections": (
         ("service", "Choose your business service", "Use the named service choices and the fields shown for that service. Saving a connection and checking its access are separate from giving an agent work.", "cx-form", "cx-preset", "admin"),
-        ("accounts", "Review saved accounts", "The list shows the connections currently available to you. Keep access limited to the people who need it; a saved account is not proof that a business action succeeded.", "cx-list", "cx-retry", "view")),
+        ("accounts", "Review saved accounts", "The list shows the connections currently available to you. Keep access limited to the people who need it; a saved account is not proof that a business action succeeded.", "cx-saved", "cx-retry", "view")),
     "/automations": (
         ("schedules", "See what is already scheduled", "Review current schedules before adding another one. Refresh reads their current state; it does not run them.", "auto-sched-section", "auto-sched-retry", "view"),
         ("create", "Set up repeat work", "Create schedule lets you choose the work, timing and time zone. Read its complete review before confirming. If the reply is lost, check the original creation request.", "auto-new-sched", "auto-new-title", "operate")),

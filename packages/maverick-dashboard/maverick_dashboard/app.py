@@ -4726,6 +4726,7 @@ def goals_page(request: Request, owner: str = "", include: str = "") -> HTMLResp
         "task_search_continuation": task_page["continuation"],
         "task_views_available": task_views_available,
         "work_details_available": page_visible(request, "/work-details") and has_permission(request, "operate"),
+        "background_available": page_visible(request, "/my-work") and has_permission(request, "view"),
         "page_size": GOALS_PAGE_SIZE,
         "has_more": has_more,
         "next_offset": GOALS_PAGE_SIZE if has_more else 0,
