@@ -80,6 +80,8 @@ def _own_name(request) -> tuple[str, str]:
 def _non_person(value: str) -> str:
     """A Lightwork worker or AI specialist, or "" for anything else."""
     kind, _, rest = value.partition(":")
+    if value == "system":
+        return "Lightwork (automatic)"
     if kind == "system" and rest:
         return humanize(rest.split(":", 1)[0]) + " (Lightwork)"
     run = _ROLE_RUN.fullmatch(value)

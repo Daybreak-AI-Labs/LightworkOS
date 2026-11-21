@@ -7795,7 +7795,9 @@ async def audit_page(request: Request) -> HTMLResponse:
             "person": person,
             "people": [{"value": p, "label": helpers["person_label"](p)} for p in people],
             "agent": agent,
-            "agents": [{"value": a, "label": _idfmt.humanize(a)} for a in sorted(agent_set)],
+            # A person recorded as the actor is named as a person, not "User:...".
+            "agents": [{"value": a, "label": helpers["person_label"](a) if a.startswith("user:") else _idfmt.humanize(a)}
+                       for a in sorted(agent_set)],
             "q": q,
             "order": order,
             "can_admin": has_permission(request, "admin"),

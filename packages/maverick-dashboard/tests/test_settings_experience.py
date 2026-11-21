@@ -102,6 +102,23 @@ def test_review_names_where_each_value_comes_from_in_plain_words(client):
     assert reset["resulting_source"] == "Default"
 
 
+def test_review_names_values_the_way_the_setting_shows_them(client):
+    # Live: changing Writing style read "Before:  After: formal".
+    revision = client.get("/api/v1/settings/catalog").json()["revision"]
+    (item,) = client.post("/api/v1/settings/catalog/review", json={
+        "changes": [{"id": "persona.style", "value": "formal"}], "expected_revision": revision}).json()["items"]
+    assert item["after"] == "formal"  # the recorded value is unchanged
+    assert (item["before_text"], item["after_text"]) == ("Balanced (default)", "Formal and professional")
+
+
+def test_the_review_dialog_prefers_the_plain_wording():
+    from pathlib import Path
+
+    script = (Path(__file__).resolve().parents[1] / "maverick_dashboard" / "static"
+              / "lightwork-settings-review.js").read_text(encoding="utf-8")
+    assert "shown(item.before)" not in script and script.count("shownText(item, 'before')") == 2
+
+
 def test_the_review_and_runtime_scripts_show_the_plain_area():
     from pathlib import Path
 

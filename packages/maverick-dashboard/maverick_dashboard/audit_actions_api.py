@@ -98,7 +98,7 @@ _PERSON_KEYS = ("principal", "actor", "user", "requested_by", "decided_by", "own
 # the person who undid it).
 _NAMED_KEYS = frozenset(_PERSON_KEYS) | {"previously_decided_by"}
 _SLUG_KEYS = {"name", "tool", "action", "stage", "provider", "rule", "outcome", "status",
-              "decision", "risk", "source", "phase", "labels", "agent", "channel"}
+              "decision", "risk", "source", "phase", "labels", "agent", "channel", "record_type"}
 _SLUG = re.compile(r"[a-z][a-z0-9]*(?:[_.:-][a-z0-9]+)*")
 
 

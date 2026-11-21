@@ -250,3 +250,28 @@ def test_a_live_record_question_is_never_turned_into_a_control_proposal(registry
     response = client.post(BASE + "/propose", json={
         "page": "/preferences", "selection": {}, "context": state["context"], "message": "Change my example"})
     assert response.json()["operation"] == "preferences.example" and calls == ["Change my example"]
+
+
+def test_copilot_proposes_a_control_only_when_it_does_what_was_asked(monkeypatch):
+    # Live: "How do I make answers shorter and more direct?" on Settings
+    # opened "Find a saved record", the only listed control it could pick.
+    from types import SimpleNamespace
+
+    from maverick import llm
+    from maverick_dashboard import product_operations as ops
+
+    seen = {}
+
+    class FakeLLM:
+        def __init__(self, model):
+            pass
+
+        def complete(self, *, system, messages, budget, max_tokens):
+            seen["system"] = system
+            return SimpleNamespace(text='{"operation_id": null}')
+
+    monkeypatch.setattr(llm, "LLM", FakeLLM)
+    monkeypatch.setattr(llm, "model_for_role", lambda role: "test-model")
+    choice = ops._model_proposal("How do I make answers shorter?", [{"id": "knowledge.history", "label": "Find a saved record"}])
+    assert choice is None
+    assert "only when it directly does what the person asks for; otherwise return null" in seen["system"]

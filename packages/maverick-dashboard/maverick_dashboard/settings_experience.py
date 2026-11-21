@@ -108,6 +108,10 @@ def review(request: Request, body: page.CatalogUpdate):
                 'id': setting.id, 'label': setting.label,
                 'before': _present_value(setting, change['old']),
                 'after': _present_value(setting, change['new']),
+                # What a person reads: option names, On/Off, "Not set" for a
+                # secret. before/after stay the recorded values.
+                'before_text': catalog.display_value(setting, change['old']),
+                'after_text': catalog.display_value(setting, change['new']),
                 'source': page.SOURCE_TEXT.get(current_source, current_source), 'resulting_source': resulting_source,
                 'scope': 'Organization / installation', 'restart': setting.restart,
                 'affected': 'Authorized workspaces inheriting this organization setting',
