@@ -31,7 +31,7 @@
 
   <details class="panel">
     <summary>About this page's safeguards</summary>
-    <p class="muted">Each result is checked against the exact version of its source, its approval, current rights, how fresh it is, consent and where it came from. If any of those change, the result is hidden from searches, downloads and queued work. <a href="/research">Add or review sources</a></p>
+    <p class="muted">Each result is checked against the exact version of its source, its approval, current rights, how fresh it is, consent and where it came from. If any of those change, the result is hidden from searches, downloads and queued work. <a href="#knowledge-sources">Add or review saved sources</a></p>
   </details>
 
   <section class="panel" aria-labelledby="ka-search-heading">
@@ -51,6 +51,7 @@
           {% for code in knowledge_purposes %}<option value="{{ code }}"{% if loop.first %} selected{% endif %}>{{ code | humanize }}</option>{% else %}<option value="">No approved uses yet — add sources first</option>{% endfor %}
         </select>
       </label>
+      {% if not knowledge_purposes %}<p class="muted ka-field--wide" id="ka-no-sources">Nothing can be searched yet: no source has an approved use. <a href="#knowledge-sources">Add a saved source</a> below.</p>{% endif %}
       <input type="hidden" id="ka-limit" name="limit" value="20">
       <div class="ka-actions ka-field--wide">
         <button class="btn" id="ka-retry-purposes" type="button">Refresh available uses</button>
