@@ -239,3 +239,15 @@ def test_a_team_agent_shows_its_specialists_name(client, monkeypatch):
     html = client.get("/spending-limits").text
     assert "Government Invoice Prep, Retest-team team" in html
     assert ">Retest-team.gov_invoice_gov<" not in html
+
+
+def test_the_spending_table_stacks_into_cards_on_a_phone(client, monkeypatch):
+    # Live at 390 px: the four-column table ran 46 px past the screen edge.
+    from maverick import spending_limits
+
+    real = spending_limits.overview
+    monkeypatch.setattr(spending_limits, "overview", lambda people: real(sorted({*people, "user:pat@example.test"})))
+    html = client.get("/spending-limits").text
+    assert '<table class="table--stacked">' in html
+    for label in ("Person", "Limit", "Spent today", "Spent this month"):
+        assert f'data-label="{label}"' in html

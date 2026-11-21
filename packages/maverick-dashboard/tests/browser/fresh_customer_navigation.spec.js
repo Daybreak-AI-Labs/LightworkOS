@@ -75,6 +75,17 @@ test('fresh owner can browse every sidebar destination and sign out at phone wid
         failureText.push({page:destination,phrase:phrase.trim()});
       visited.push(destination);
     }
+    // Common phone widths: the two-row top bar must fit without clipping its
+    // last control (eight 44 px controls), and a narrower phone wraps to three.
+    for(const width of [414,390,376,375,361]){
+      await page.setViewportSize({width,height:844});
+      await page.goto(origin+'/start');await expect(page.locator('main')).toBeVisible();
+      const bar=await page.evaluate(()=>({scroll:document.documentElement.scrollWidth,width:document.documentElement.clientWidth,
+        clipped:[...document.querySelectorAll('.topbar a, .topbar button')].filter(node=>{const box=node.getBoundingClientRect();
+          return box.width&&box.right>document.documentElement.clientWidth+0.5;}).map(node=>node.getAttribute('aria-label')||node.textContent.trim())}));
+      expect(bar.clipped,`top bar at ${width}px`).toEqual([]);
+      expect(bar.scroll,`page width at ${width}px`).toBeLessThanOrEqual(bar.width+1);
+    }
     await page.setViewportSize({width:320,height:740});
     await page.goto(origin+'/start');await page.waitForLoadState('networkidle');
     await expect(page.getByRole('link',{name:'Sign out',exact:true})).toBeVisible();

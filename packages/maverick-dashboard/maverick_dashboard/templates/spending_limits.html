@@ -134,7 +134,7 @@
   <div class="section-head"><h2>People</h2></div>
   <div class="panel">
     {% if view.people %}
-    <table>
+    <table class="table--stacked">
       <thead><tr>
         <th scope="col">Person</th><th scope="col">Limit</th>
         <th scope="col">Spent today</th><th scope="col">Spent this month</th>
@@ -143,10 +143,10 @@
       <tbody>
       {% for row in view.people %}
         <tr>
-          <td>{{ who(row.principal) }}</td>
-          <td>{% if row.limit %}{{ describe(row.limit) }}{% elif row.uses_default %}{{ describe(view.default) }} <span class="muted">(everyone's limit)</span>{% else %}<span class="muted">No limit</span>{% endif %}</td>
-          <td>{{ row.today | money }}</td>
-          <td>{{ row.month | money }}</td>
+          <td data-label="Person">{{ who(row.principal) }}</td>
+          <td data-label="Limit">{% if row.limit %}{{ describe(row.limit) }}{% elif row.uses_default %}{{ describe(view.default) }} <span class="muted">(everyone's limit)</span>{% else %}<span class="muted">No limit</span>{% endif %}</td>
+          <td data-label="Spent today">{{ row.today | money }}</td>
+          <td data-label="Spent this month">{{ row.month | money }}</td>
           <td>
             {% if row.limit %}
             <form method="post" action="/spending-limits/person" style="display: inline;"

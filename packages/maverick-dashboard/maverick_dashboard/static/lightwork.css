@@ -2134,13 +2134,15 @@ body.glass-on:not(.theme-hicontrast) .settings-index { backdrop-filter: blur(22p
 @media (max-width: 560px) {
   :root { --shell-topbar-h: calc(2 * var(--space-2) + 2 * 44px + var(--space-1) + 1px); }
   .topbar { flex-wrap: wrap; row-gap: var(--space-1); }
-  .topbar__controls { flex-basis: 100%; justify-content: space-between; }
+  /* Eight 44 px controls fill the second row from 376 px: the spacing comes
+     from space-between, not a fixed gap, so the last one is never clipped. */
+  .topbar__controls { flex-basis: 100%; justify-content: space-between; column-gap: 0; }
   /* Two rows cover too much of a phone while reading: scrolling down tucks
      the bar away and scrolling up brings it back (lightwork-ui.js). */
   body.topbar-tucked .topbar { transform: translateY(-100%); }
 }
-/* Below 360 px even that row is too narrow for seven 44 px controls. */
-@media (max-width: 360px) {
+/* At 375 px and below even that row is too narrow for eight 44 px controls. */
+@media (max-width: 375px) {
   :root { --shell-topbar-h: calc(2 * var(--space-2) + 3 * 44px + 2 * var(--space-1) + 1px); }
   .topbar__controls { flex-wrap: wrap; justify-content: flex-start; }
 }
