@@ -2,7 +2,7 @@
 {% block title %}Spending limits · Lightwork{% endblock %}
 {% block content %}
   {% from "_hero.html" import hero, state %}
-  {% macro who(principal) %}{% set p = principal | identity %}<span title="{{ p.raw }}">{{ p.name }}{% if p.detail %} <span class="muted" style="font-weight: normal;">· {{ p.detail }}</span>{% endif %}</span>{% endmacro %}
+  {% macro who(principal) %}{% set p = principal | identity %}<span title="{{ p.raw }}">{{ agent_names.get(principal) or p.name }}{% if p.detail %} <span class="muted" style="font-weight: normal;">· {{ p.detail }}</span>{% endif %}</span>{% endmacro %}
   {% macro describe(limit) %}{% if limit %}{{ limit.amount | money }} {{ period_labels[limit.period] }}{% else %}No limit{% endif %}{% endmacro %}
   {% macro limit_fields(prefix, limit, options, form_id, scope='') %}
     {% set drafted = draft.scope == scope and preview is not none %}
@@ -150,11 +150,11 @@
           <td>
             {% if row.limit %}
             <form method="post" action="/spending-limits/person" style="display: inline;"
-                  data-limit-remove="Remove the personal limit for {{ (row.principal | identity).name }}? They then follow the limit for everyone{{ '' if view.default else ', which is currently no limit' }}.">
+                  data-limit-remove="Remove the personal limit for {{ agent_names.get(row.principal) or (row.principal | identity).name }}? They then follow the limit for everyone{{ '' if view.default else ', which is currently no limit' }}.">
               <input type="hidden" name="principal" value="{{ row.principal }}" />
               <input type="hidden" name="action" value="remove" />
               <button type="submit" class="btn btn--ghost"
-                      aria-label="Remove the personal limit for {{ (row.principal | identity).name }}">Remove personal limit</button>
+                      aria-label="Remove the personal limit for {{ agent_names.get(row.principal) or (row.principal | identity).name }}">Remove personal limit</button>
             </form>
             {% endif %}
           </td>
@@ -172,7 +172,7 @@
         <span>Person</span>
         <select class="ctl" name="principal" required>
           {% for row in view.people %}
-          <option value="{{ row.principal }}"{% if draft.scope == 'person' and draft.principal == row.principal %} selected{% endif %}>{{ (row.principal | identity).name }}{% if (row.principal | identity).detail %} · {{ (row.principal | identity).detail }}{% endif %}</option>
+          <option value="{{ row.principal }}"{% if draft.scope == 'person' and draft.principal == row.principal %} selected{% endif %}>{{ agent_names.get(row.principal) or (row.principal | identity).name }}{% if (row.principal | identity).detail %} · {{ (row.principal | identity).detail }}{% endif %}</option>
           {% endfor %}
         </select>
       </label>

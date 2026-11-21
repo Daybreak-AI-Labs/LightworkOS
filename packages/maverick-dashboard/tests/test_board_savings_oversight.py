@@ -70,3 +70,23 @@ def test_pages_ship_the_board_skeleton(monkeypatch, tmp_path):
         assert 'id="bd-stamp"' in t and 'aria-label="Time range"' in t and 'data-days="90"' in t, path
         for marker in markers:
             assert marker in t, path
+
+
+def test_savings_names_each_specialist_not_its_pack(monkeypatch, tmp_path):
+    # Live: "By department" listed "Proc p2p exceptions" and "Gov invoice gov";
+    # the rows are the specialists that did the work.
+    _isolate(monkeypatch, tmp_path)
+    from maverick import savings
+    from maverick_dashboard import plain_labels
+
+    report = savings.SavingsReport(window_days=90, deliverables=3, by_department=[
+        savings.DepartmentSavings(department="proc_p2p_exceptions", deliverables=2, hourly_rate=50, hours_per_task=1),
+        savings.DepartmentSavings(department="(unattributed)", deliverables=1, hourly_rate=50, hours_per_task=1)])
+    monkeypatch.setattr(savings, "compute", lambda *a, **k: report)
+    monkeypatch.setattr(plain_labels, "specialist_names",
+                        lambda domains: {"proc_p2p_exceptions": "P2P Exception Clerk"})
+    html = _client().get("/savings").text
+    assert '<th scope="col">Specialist</th>' in html
+    assert "<td>P2P Exception Clerk</td>" in html and "<td>Not assigned to a specialist</td>" in html
+    assert "Proc p2p exceptions" not in html and "(unattributed)</td>" not in html
+    assert '"proc_p2p_exceptions": "P2P Exception Clerk"' in html  # the chart's names

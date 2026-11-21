@@ -211,7 +211,7 @@
         D.leaders.forEach(function (c) {
           var li = B.el('li', 'viz-legend__item');
           li.appendChild(B.el('span', 'viz-legend__label',
-            String(c.worker || '').replace(/_/g, ' ')));
+            c.worker_name || (window.mvHuman ? window.mvHuman(c.worker) : String(c.worker || '').replace(/_/g, ' '))));
           li.appendChild(B.el('span', 'viz-legend__val',
             (c.suite_title ? c.suite_title + ' · ' : '') + c.headline));
           ul.appendChild(li);

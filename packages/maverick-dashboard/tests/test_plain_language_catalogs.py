@@ -275,3 +275,22 @@ def test_grc_studio_and_pilot_review_use_pickers_not_typed_references():
     assert '<select class="select" id="op-review-reference"' in pilots
     assert "Pilot reference shared by its owner" not in pilots and 'pattern="OPL-' not in pilots
     assert "exclusion receipts" not in pilots
+
+
+def test_specialist_names_come_from_the_installed_packs(monkeypatch):
+    from types import SimpleNamespace
+
+    from maverick import domain
+    from maverick_dashboard.plain_labels import specialist_names
+
+    persona = "You are the P2P Exception Clerk specialist: match invoices."
+    monkeypatch.setattr(domain, "available_domains", lambda: {
+        "proc_p2p_exceptions": SimpleNamespace(persona=persona, description="")})
+    assert specialist_names(["proc_p2p_exceptions", "not_installed", ""]) == {
+        "proc_p2p_exceptions": pack_display_name("proc_p2p_exceptions", persona)}
+
+    def unreadable():
+        raise OSError("catalog unreadable")
+
+    monkeypatch.setattr(domain, "available_domains", unreadable)
+    assert specialist_names(["proc_p2p_exceptions"]) == {}

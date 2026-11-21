@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from .auth import caller_principal, has_permission, require_permission
+from .plain_labels import specialist_names
 
 router = APIRouter(prefix="/value-proof", tags=["value-proof"])
 
@@ -87,6 +88,25 @@ def _words(value: Any) -> str:
     return text[:1].upper() + text[1:200]
 
 
+def _task_kind(key: Any, names: dict[str, str]) -> str:
+    """A repeated-task group in words.
+
+    Groups are keyed ``specialist:first-word`` (or the first word alone), so
+    ``proc_p2p_exceptions:sample:`` reads "P2P Exception Clerk · tasks that
+    start “Sample”" instead of the key.
+    """
+    text = str(key or "")
+    head, _, rest = text.partition(":")
+    if rest or head in names:
+        who = names.get(head) or _words(head)
+        verb = rest
+    else:
+        who, verb = "", text
+    verb = verb.strip(" .,:;!?\"'()[]")
+    start = f"tasks that start “{verb[:1].upper() + verb[1:80]}”" if verb else "tasks"
+    return f"{who} · {start}" if who else start[:1].upper() + start[1:]
+
+
 @router.get("/access")
 async def access(request: Request) -> dict:
     """Which controls to show: the routes still enforce every check."""
@@ -103,8 +123,10 @@ async def compounding(request: Request, window: int = 5) -> dict:
     _pick(window, (3, 5, 10))
     world = _world()
     reps = await run_in_threadpool(lambda: report_from_world(world, window=window))
+    names = await run_in_threadpool(
+        lambda: specialist_names(str(r.task_class).partition(":")[0] for r in reps[:50]))
     return {"task_types": [
-        {"name": _words(r.task_class), "runs": int(r.runs),
+        {"name": _task_kind(r.task_class, names), "runs": int(r.runs),
          "cost_change_pct": float(r.cost_delta_pct),
          "success_change": round(float(r.success_delta), 4),
          "improving": bool(r.improving)}

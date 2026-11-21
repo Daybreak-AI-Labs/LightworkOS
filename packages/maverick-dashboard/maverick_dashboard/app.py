@@ -7360,10 +7360,14 @@ def savings_page(request: Request, days: int = 90) -> HTMLResponse:
     cfg = resolution["effective_assumptions"]
     value_view = value_scope(request)
     report = savings_mod.compute(_world(), window_days=days, cfg=cfg, owner=value_view["owner"])
+    from .plain_labels import specialist_names
+
     return templates.TemplateResponse(
         request,
         "savings.html",
         {
+            # Work is grouped by the specialist that ran it; show its name.
+            "specialist_names": specialist_names(d.department for d in report.by_department),
             "spend_recorded_at": _newest_cost_at(_world(), value_view["owner"]),
             "days": days,
             "cfg": cfg,
