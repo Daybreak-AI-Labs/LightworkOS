@@ -174,7 +174,8 @@
     }
     var response = await fetch("/api/v1/recovery/" + path, init);
     // Turned off is not lost access: say what the server said, keep the page.
-    if (response.status === 403 && response.headers.get("X-Lightwork-Reason") === "feature-off") {
+    if (response.status === 403 && response.headers && typeof response.headers.get === "function" &&
+        response.headers.get("X-Lightwork-Reason") === "feature-off") {
       var off = await response.json().catch(function () { return {}; });
       throw new Error(plainDetail(off.detail, response));
     }

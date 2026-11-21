@@ -1284,3 +1284,25 @@ test('changed review on item refresh focuses the visible review toggle rather th
   assert.equal(h.dom.window.document.activeElement.textContent, 'Review this connection');
   assert.equal(channelPosts(h).length, 0); h.dom.window.close();
 });
+
+test('a turned-off 403 keeps entered values and says the feature is off; a 403 without that reason still erases', async () => {
+  const h = await harness(async () => ({}));
+  h.select();
+  h.get('key-input').value = 'synthetic private recovery key';
+  let offRequests = 0;
+  h.dom.window.fetch = async () => { offRequests++; return { ok: false, status: 403,
+    headers: { get: name => name === 'X-Lightwork-Reason' ? 'feature-off' : null },
+    json: async () => ({ detail: 'Workspace recovery is turned off.' }) }; };
+  h.get('inspect').click(); await tick(); await tick();
+  assert.equal(offRequests, 1);
+  assert.equal(h.get('key-input').value, 'synthetic private recovery key');
+  assert.match(h.get('status').textContent, /turned off/);
+  assert.equal(h.get('snapshot').options.length > 0, true);
+  assert.doesNotMatch(h.get('status').textContent, /reload/i);
+  h.dom.window.fetch = async () => ({ ok: false, status: 403, headers: { get: () => null },
+    json: async () => { throw new Error('HTML denial must not be parsed'); } });
+  h.get('inspect').click(); await tick(); await tick();
+  assert.equal(h.get('key-input').value, '');
+  assert.match(h.get('status').textContent, /reload/i);
+  h.dom.window.close();
+});

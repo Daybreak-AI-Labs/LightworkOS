@@ -1150,7 +1150,7 @@
     }
     await loadPeople();
     if (root.dataset.enabled === "false") {
-      byId("cases").textContent = "No vendor requests yet.";
+      byId("cases").textContent = "Vendor requests appear here once vendor onboarding is turned on.";
       show("attention-summary", "");
       if (byId("page-status")) show("page-status", "Requests appear here once vendor onboarding is turned on.");
       return "Vendor onboarding is turned off for this workspace. Workspace setup above says how to turn it on.";
