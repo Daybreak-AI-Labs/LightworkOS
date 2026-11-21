@@ -1418,7 +1418,8 @@ def _users_context(request: Request) -> dict:
             "workspace_roles": workspace_role_options.get(wm_tenant, []),
             "workspace_member_count": len(member_rosters.get(wm_tenant, {})),
             "role_descriptions": role_descriptions(),
-            "bootstrap_admins": [], "auth_on": True, "default_role": rbac.default_role(), "workspace_roles_initialized": rbac.tenant_role_scope_initialized(),
+            "bootstrap_admins": [], "auth_on": True, "company_signin": oidc_enabled() or proxy_auth_enabled(),
+            "default_role": rbac.default_role(), "workspace_roles_initialized": rbac.tenant_role_scope_initialized(),
             "you": auth.caller_principal(request),
             "saved": ("Workspace invitation revoked."
                       if request.query_params.get("saved") == "workspace_invite_revoked" else ""),
@@ -1429,8 +1430,8 @@ def _users_context(request: Request) -> dict:
             "workspace_pending_invites": [inv for inv in workspace_invites if inv.pending],
             "workspace_recent_invites": [inv for inv in workspace_invites if inv.used_at is not None][:20],
         }
-    auth_on = (auth.caller_principal(request) is not None
-               or oidc_enabled() or proxy_auth_enabled())
+    company_signin = oidc_enabled() or proxy_auth_enabled()
+    auth_on = auth.caller_principal(request) is not None or company_signin
     env = (_os.environ.get("MAVERICK_DASHBOARD_ADMINS") or "").strip()
     if env:
         bootstrap = [a.strip() for a in env.split(",") if a.strip()]
@@ -1518,6 +1519,7 @@ def _users_context(request: Request) -> dict:
         "bootstrap_admins": sorted(bootstrap),
         "default_role": rbac.default_role(), "workspace_roles_initialized": rbac.tenant_role_scope_initialized(),
         "auth_on": auth_on,
+        "company_signin": company_signin,
         "you": auth.caller_principal(request),
         "saved": saved,
         "suite_grants": sorted(grants.items()),

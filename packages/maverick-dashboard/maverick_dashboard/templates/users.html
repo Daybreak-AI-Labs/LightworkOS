@@ -67,7 +67,7 @@
              (people_with_access ~ ' ' ~ ('person has' if people_with_access == 1 else 'people have') ~ ' access')
              if global_admin else
              (workspace_member_count ~ ' ' ~ ('member has' if workspace_member_count == 1 else 'members have') ~ ' a role in this workspace'),
-             badge='Company sign-in on' if auth_on else 'Sign-in off',
+             badge=('Company sign-in on' if company_signin else 'Email sign-in on') if auth_on else 'Sign-in off',
              badge_class='ok' if auth_on else 'warn',
              copy=((('1 of them is an administrator' if bootstrap_admins | length == 1 else
                      bootstrap_admins | length ~ ' of them are administrators') ~ ' set up during installation.')
