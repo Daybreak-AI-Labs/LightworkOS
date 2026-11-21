@@ -1149,6 +1149,12 @@
         throw new Error("The saved return to this request expired. Select the request again from this workspace.");
     }
     await loadPeople();
+    if (root.dataset.enabled === "false") {
+      byId("cases").textContent = "No vendor requests yet.";
+      show("attention-summary", "");
+      if (byId("page-status")) show("page-status", "Requests appear here once vendor onboarding is turned on.");
+      return "Vendor onboarding is turned off for this workspace. Workspace setup above says how to turn it on.";
+    }
     try { await refresh(); }
     catch (error) {
       // No list arrived: replace the queue's "Loading…" lines; the message at

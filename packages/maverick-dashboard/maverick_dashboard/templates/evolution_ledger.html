@@ -29,7 +29,7 @@
 {% endblock %}
 {% block content %}
 {% from "_hero.html" import hero %}
-<div class="elv-shell" id="elv-root" data-api-base="{{ api_base }}" data-copilot-page="{{ page_path }}" data-read-only="true">
+<div class="elv-shell" id="elv-root" data-api-base="{{ api_base }}" data-copilot-page="{{ page_path }}" data-read-only="true" data-history-present="{{ 'true' if history_present else 'false' }}">
   {{ hero('Learning', 'Learning history',
           lede='Recorded learning changes that Lightwork adopted or restored in this workspace.
                 This page checks the stored history; adopting a change does not establish that it improved results.') }}

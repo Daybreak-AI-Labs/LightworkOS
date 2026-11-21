@@ -24,8 +24,17 @@ def create_vendor_onboarding_page_router(templates: Jinja2Templates) -> APIRoute
         if current_tenant_id_strict() is None:
             raise HTTPException(409, "select an active tenant before using vendor onboarding")
         nonce = secrets.token_urlsafe(18)
+        # Off: the request list says so without asking (the API answers 409).
+        # Unreadable settings still ask, so the API explains what is wrong.
+        try:
+            from .vendor_onboarding_composition import settings as vendor_settings
+
+            vendor_enabled = bool(vendor_settings().enable)
+        except Exception:
+            vendor_enabled = True
         response = templates.TemplateResponse(request, "vendor_onboarding.html", {
             "csp_style_nonce": nonce,
+            "vendor_enabled": vendor_enabled,
             "offline_demo": getattr(request.app.state, "vendor_onboarding_demo", False) is True,
             "deployment": deployment_readiness(),
             "connection_workspace_context": context_for(request),

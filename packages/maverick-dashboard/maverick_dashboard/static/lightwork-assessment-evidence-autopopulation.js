@@ -294,6 +294,14 @@
   }
   function loadAnalyses() {
     var box = document.getElementById("aep-analysis-choices");
+    if (shell.dataset.moduleEnabled !== "true") {
+      Array.prototype.slice.call(box.querySelectorAll("label, p")).forEach(function (node) { node.remove(); });
+      var off = document.createElement("p");
+      off.className = "muted";
+      off.textContent = "Approved evidence appears here once suggested assessment answers are turned on.";
+      box.appendChild(off);
+      return Promise.resolve();
+    }
     return request("/ai-evidence-analysis/analyses?status=review_approved&limit=200", {}, "/api/v1").then(function (payload) {
       analyses = Array.isArray(payload.items) ? payload.items.filter(function (item) {
         return isRecord(item) && ID_PATTERN.test(String(item.analysis_id || ""));
@@ -375,6 +383,14 @@
     return button;
   }
   function refreshList() {
+    if (shell.dataset.moduleEnabled !== "true") {
+      clear(queue);
+      var row = document.createElement("tr");
+      var cell = document.createElement("td"); cell.colSpan = 5;
+      cell.textContent = "Suggestions appear here once suggested assessment answers are turned on.";
+      row.appendChild(cell); queue.appendChild(row);
+      return Promise.resolve();
+    }
     return request("/proposals?limit=100").then(renderQueue).catch(function (error) {
       clear(queue);
       var tr = document.createElement("tr");

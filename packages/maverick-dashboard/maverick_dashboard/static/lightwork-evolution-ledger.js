@@ -339,6 +339,13 @@
   }
   function refresh() {
     if (busy) { refreshPending = true; return; }
+    // Only the first look trusts the page: a later refresh asks again.
+    if (root.dataset.historyPresent === "false") {
+      delete root.dataset.historyPresent;
+      available = false; lock();
+      status.textContent = "There is no learning history to checkpoint yet. A checkpoint is offered once Lightwork adopts its first learned change.";
+      return Promise.resolve();
+    }
     var currentGeneration = generation;
     available = false; status.textContent = "Checking whether a complete checkpoint is available.";
     return perform(async function (current) {

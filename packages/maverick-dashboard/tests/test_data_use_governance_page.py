@@ -94,3 +94,15 @@ def test_enabled_authority_still_labels_disabled_compiler(isolated_page) -> None
         'data-module-gate="data_use_governance.compiler"'
         not in client.get("/data-use").text
     )
+
+
+def test_rule_suggestions_appear_only_while_data_use_rules_are_on(isolated_page, monkeypatch) -> None:
+    # Live: with data use rules off, every visit asked for rule suggestions,
+    # was refused (403) and showed "Could not load the suggestions".
+    from maverick import config, policy_suggestions
+
+    monkeypatch.setattr(policy_suggestions, "enabled", lambda: True)
+    assert "data-policy-suggestions" not in client.get("/data-use").text
+    isolated_page.write_text("[data_use_governance]\nenable = true\n", encoding="utf-8")
+    config.reset_config_cache()
+    assert "data-policy-suggestions" in client.get("/data-use").text

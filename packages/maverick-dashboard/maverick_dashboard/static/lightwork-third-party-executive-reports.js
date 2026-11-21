@@ -178,7 +178,9 @@
       { label: "Use as a starting point", when: function (r) { return canCreate && r.state === "active"; }, run: function (r) { return openStartingPoint(currentContext(), r.report_id, r.integrity_sha256, function () { return true; }); } },
       { label: "Download PDF", kind: "primary", when: function (r) { return r.state === "active" && r.artifact_available === true; }, run: downloadReport },
       { label: "Withdraw", kind: "danger", when: function (r) { return canAdmin && r.state === "active"; }, run: revokeReport },
-    ], { text: "No reports yet. Create one from the vendors, assessments and contracts you already track.", action: { label: "New report", run: openEditor } });
+    ], root.dataset.moduleEnabled === "true"
+      ? { text: "No reports yet. Create one from the vendors, assessments and contracts you already track.", action: { label: "New report", run: openEditor } }
+      : { text: "No reports yet. Reports can be created once executive vendor reports are turned on." });
     var select = document.getElementById("tper-revoke-form").elements.namedItem("report");
     var first = select.options[0];
     select.textContent = "";
@@ -454,6 +456,12 @@
       mark.textContent = state.ready ? "Ready" : (state.enabled ? "Not ready" : "Turned off");
       headline.textContent = state.ready ? "Reports are available" : "Reports aren't available yet";
       detail.textContent = state.ready ? "You can create and download reports." : (state.enabled ? "Reports are turned on but still need to be set up by your administrator." : "Reports are turned off. An administrator can turn them on above.");
+      if (!state.enabled) {
+        // Turned off: there is no list to read, and asking would only be refused.
+        S.reports = [];
+        renderReports();
+        return;
+      }
       var reports = await requestJson("/reports?limit=100");
       S.reports = Array.isArray(reports.items) ? reports.items : [];
       if (!S.namesLoaded) { await loadVendorNames(); S.namesLoaded = true; }

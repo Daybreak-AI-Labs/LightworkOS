@@ -1538,3 +1538,30 @@ def test_a_turned_off_or_unselected_workspace_reads_as_a_plain_sentence(web, mon
     for detail in (off.value.detail, unselected.value.detail):
         assert plain_sentence.fullmatch(detail) and len(detail) <= 300, detail
         assert "tenant" not in detail, detail
+
+
+def test_vendor_request_list_is_not_asked_for_while_onboarding_is_off(web, monkeypatch):
+    # Live: with vendor onboarding off, every visit asked for the request list,
+    # was refused (409) and showed "Could not finish that" and "Requests could
+    # not be loaded". Unreadable settings still ask, so the API explains.
+    from types import SimpleNamespace
+
+    from maverick_dashboard import vendor_onboarding_composition as composition
+
+    client, *_ = web
+
+    def root_tag():
+        response = client.get("/third-party/vendor-onboarding")
+        assert response.status_code == 200, response.text[:500]
+        return response.text.split('id="vendor-onboarding"')[1].split(">")[0]
+
+    monkeypatch.setattr(composition, "settings", lambda: SimpleNamespace(enable=False))
+    assert 'data-enabled="false"' in root_tag()
+    monkeypatch.setattr(composition, "settings", lambda: SimpleNamespace(enable=True))
+    assert 'data-enabled="true"' in root_tag()
+
+    def unreadable():
+        raise RuntimeError("settings unreadable")
+
+    monkeypatch.setattr(composition, "settings", unreadable)
+    assert 'data-enabled="true"' in root_tag()

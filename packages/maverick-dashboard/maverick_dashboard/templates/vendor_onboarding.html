@@ -48,7 +48,7 @@
 {# Both the setup form and the request intake form use the shared error summary,
    and the setup form is not rendered in the offline demonstration. #}
 {% from "_form_field.html" import error_summary %}
-<section id="vendor-onboarding" aria-labelledby="vo-title" data-api-base="/api/v1/vendor-onboarding" data-workspace-context="{{ connection_workspace_context }}" data-named-signin="{{ 'true' if vendor_named_signin else 'false' }}" data-offline-demo="{{ 'true' if offline_demo else 'false' }}">
+<section id="vendor-onboarding" aria-labelledby="vo-title" data-api-base="/api/v1/vendor-onboarding" data-workspace-context="{{ connection_workspace_context }}" data-named-signin="{{ 'true' if vendor_named_signin else 'false' }}" data-offline-demo="{{ 'true' if offline_demo else 'false' }}" data-enabled="{{ 'true' if vendor_enabled else 'false' }}">
   <h1 id="vo-title" class="page-title">AI vendor onboarding</h1>
   {% if offline_demo %}<p role="note"><strong>Offline simulation.</strong> All vendor evidence, reviewer identities and tickets in this demonstration are synthetic.</p>{% endif %}
   <p>Bring in evidence, review the assessment, and approve a verified Jira task. Renewals retain the previous evidence and decisions.</p>

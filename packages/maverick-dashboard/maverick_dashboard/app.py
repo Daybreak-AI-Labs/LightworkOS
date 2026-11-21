@@ -9139,6 +9139,7 @@ async def plugins_page(request: Request) -> HTMLResponse:
                 "install_enabled": _plugin_install_enabled(),
                 "install_env_forced_off": _plugin_install_env_state() is False,
                 "plugins_can_admin": has_global_permission(request, "admin"),
+                "workbench_enabled": _plugin_workbench_enabled(),
             },
         )
     discovery_errors = snapshot.get("discovery_errors") or []
@@ -9157,8 +9158,20 @@ async def plugins_page(request: Request) -> HTMLResponse:
             "install_enabled": _plugin_install_enabled(),
             "install_env_forced_off": _plugin_install_env_state() is False,
             "plugins_can_admin": has_global_permission(request, "admin"),
+            "workbench_enabled": _plugin_workbench_enabled(),
         },
     )
+
+
+def _plugin_workbench_enabled() -> bool:
+    """[plugins] workbench. Off: the page offers the setting and asks nothing.
+    An unreadable configuration still loads it, so the API can explain."""
+    try:
+        from maverick.config import load_config
+
+        return (load_config().get("plugins") or {}).get("workbench", False) is True
+    except Exception:
+        return True
 
 
 def _plugin_install_env_state() -> bool | None:
@@ -15598,6 +15611,12 @@ def automations_page(request: Request) -> HTMLResponse:
         event_triggers_enabled = _events_enabled()
     except Exception:  # pragma: no cover
         event_triggers_enabled = False
+    try:
+        from maverick import flow as _flow
+
+        flows_enabled = _flow.enabled()
+    except Exception:  # pragma: no cover -- never block the page on the flow engine
+        flows_enabled = False
     # Real inventory counts for the page hero, owner-scoped exactly like the
     # /api/v1 lists the page renders from (fail-soft: an unreadable store just
     # counts as zero, never a 500).
@@ -15645,6 +15664,7 @@ def automations_page(request: Request) -> HTMLResponse:
             "triggers_enabled": feats.get("triggers", True),
             "import_enabled": import_enabled,
             "event_triggers_enabled": event_triggers_enabled,
+            "flows_enabled": flows_enabled,
             "schedule_count": schedule_count,
             "trigger_count": trigger_count,
             "event_trigger_count": event_trigger_count,

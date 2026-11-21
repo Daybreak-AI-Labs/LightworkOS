@@ -286,6 +286,14 @@
     {% endif %}
   </div>
   {% endif %}
+  {% if not workbench_enabled %}
+  <section class="panel" aria-labelledby="plugin-workbench-off-title">
+    <h2 id="plugin-workbench-off-title">Qualification workbench</h2>
+    <p>The qualification workbench is turned off. It checks an installed plugin in a restricted local container before you rely on it.</p>
+    {% if plugins_can_admin %}<p><a class="btn btn--ghost" href="/settings/all?id=plugins.workbench">Turn on the qualification workbench</a></p>
+    {% else %}<p class="muted">Ask an administrator to turn it on.</p>{% endif %}
+  </section>
+  {% else %}
   <section id="plugin-workbench" class="panel" aria-labelledby="plugin-workbench-title">
     <h2 id="plugin-workbench-title">Qualification workbench</h2>
     <p>Review exact installed versions and declared access, then check synthetic inputs in a restricted local container. Starting a process is not acceptance by an external service. No credentials, network access, or host execution are permitted in these checks.</p>
@@ -294,6 +302,7 @@
     <button type="button" class="btn" data-workbench-cancel>Cancel active check</button>
     <p role="status" aria-live="polite"></p><div data-workbench-list></div>
   </section>
+  {% endif %}
   <style>
     .plg-flush { margin: 0; }
     .plg-gap { margin-top: var(--space-5); }

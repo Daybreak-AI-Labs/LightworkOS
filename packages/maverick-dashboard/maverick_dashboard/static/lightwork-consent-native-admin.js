@@ -199,6 +199,10 @@
       host.replaceChildren(CW.el("p", "muted", "You need audit access to see the list of apps."));
       return;
     }
+    if (root.dataset.moduleEnabled === "false") {
+      host.replaceChildren(CW.el("p", "muted", "Your apps appear here once mobile app consent is turned on."));
+      return;
+    }
     try {
       var result = await request(adminBase, "/applications", null, false);
       apps = Array.isArray(result.items) ? result.items : [];

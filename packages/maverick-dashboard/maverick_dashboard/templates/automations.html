@@ -279,7 +279,7 @@
   </section>
   {% endif %}
 
-  <section class="auto__section panel" id="auto-flows-section" aria-labelledby="auto-flows-h" hidden>
+  <section class="auto__section panel" id="auto-flows-section" aria-labelledby="auto-flows-h" data-flows-enabled="{{ 'true' if flows_enabled else 'false' }}" hidden>
     <div class="section-head">
       <h2 id="auto-flows-h" tabindex="-1">Flows</h2>
       <a class="btn" href="/flows/designer" id="fd-new">Design a flow</a>
@@ -1289,6 +1289,8 @@
     function statusText(st) { return STATUS_WORDS[st] || mvHuman(st || 'unknown'); }
     var ORIGIN_WORDS = { webhook: 'started by another app', schedule: 'started on schedule', event_trigger: 'started by a new item', retry: 'retry' };
     async function loadFlows() {
+      // Workflows turned off: the section stays hidden and nothing is asked.
+      if (flowsSection.dataset.flowsEnabled !== 'true') return;
       var data;
       try { data = await window.mvFetchJSON('/api/v1/flows'); }
       catch (e) { if (e.status) flowsSection.hidden = true; return; }  // a refusal: the engine is off

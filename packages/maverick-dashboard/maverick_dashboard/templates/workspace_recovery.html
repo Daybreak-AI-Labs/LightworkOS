@@ -11,7 +11,7 @@
   @media(forced-colors:active){.wrec-channel,.wrec-channel [aria-invalid=true]{border-color:CanvasText}.wrec-channel .wrec-field-error{color:CanvasText}}
 </style>{% endblock %}
 {% block content %}
-<div class="wrec" id="workspace-recovery">
+<div class="wrec" id="workspace-recovery" data-feature-on="{{ 'true' if feature_on else 'false' }}">
   <h1 class="page-title">Workspace recovery</h1>
   <p class="page-subtitle">Keep a protected copy of this workspace, check it, and prove it can be restored.</p>
   <p><a class="btn btn--ghost" href="/provider-spending">Review AI spending records</a></p>

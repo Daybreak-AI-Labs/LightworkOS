@@ -16,7 +16,7 @@ test('fresh owner can browse every sidebar destination and sign out at phone wid
     {cwd:__dirname,stdio:'ignore',windowsHide:true});
   const exited=new Promise(resolve=>child.once('exit',resolve));
   let context;
-  const visited=[],errors=[],failures=[];
+  const visited=[],errors=[],failures=[],refused=[],consoleErrors=[],failureText=[];
   try{
     await expect.poll(async()=>{try{return (await fetch(origin+'/livez')).status;}catch{return 0;}},{timeout:30000}).toBe(200);
     context=await browser.newContext({extraHTTPHeaders:{},viewport:{width:1280,height:900}});
@@ -24,6 +24,17 @@ test('fresh owner can browse every sidebar destination and sign out at phone wid
     const page=await context.newPage();
     page.on('pageerror',error=>errors.push({page:page.url(),error:error.message}));
     page.on('response',response=>{if(response.status()===500)failures.push(response.url());});
+    // A page's own requests on a default install. A switched-off feature must
+    // read as turned off, not as a failed request or a failure message.
+    let pending=0;
+    const ownApi=request=>{const url=new URL(request.url());return url.origin===origin&&url.pathname.startsWith('/api/');};
+    page.on('request',request=>{if(ownApi(request))pending+=1;});
+    page.on('requestfailed',request=>{if(ownApi(request))pending-=1;});
+    page.on('response',response=>{
+      if(!ownApi(response.request()))return;pending-=1;
+      if(response.status()>=400)refused.push({page:new URL(page.url()).pathname,status:response.status(),request:new URL(response.url()).pathname});
+    });
+    page.on('console',message=>{if(message.type()==='error')consoleErrors.push({page:new URL(page.url()).pathname,text:message.text()});});
     // A fresh install opens on owner creation before anything else; "Skip for
     // now" reaches Get started and is remembered for the next visit.
     await page.goto(origin+'/');
@@ -56,6 +67,12 @@ test('fresh owner can browse every sidebar destination and sign out at phone wid
       // not a product readiness signal for pages with continuing activity.
       await expect(page.locator('#navfinder-dialog')).toHaveAttribute('data-navfinder-ready','true');
       await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+      await expect.poll(()=>pending,{timeout:15000}).toBeLessThanOrEqual(0);
+      // An answer is rendered after its body is read; let that land first.
+      await page.waitForTimeout(400);
+      const said=await page.locator('main').innerText();
+      for(const phrase of said.match(/[^.\n]*(?:could not load|couldn't be loaded|could not be loaded|temporarily unavailable|access is unavailable|could not finish that)[^.\n]*/gi)||[])
+        failureText.push({page:destination,phrase:phrase.trim()});
       visited.push(destination);
     }
     await page.setViewportSize({width:320,height:740});
@@ -70,8 +87,9 @@ test('fresh owner can browse every sidebar destination and sign out at phone wid
     expect((await context.cookies()).some(cookie=>cookie.name==='mvk_session')).toBe(false);
     await page.goto(origin+'/goals');await expect(page).toHaveURL(/\/auth\/local-login/);
     expect(errors).toEqual([]);expect(failures).toEqual([]);
+    expect(refused).toEqual([]);expect(consoleErrors).toEqual([]);expect(failureText).toEqual([]);
   }finally{
-    await info.attach('fresh-customer-navigation',{body:JSON.stringify({visited,errors,failures},null,2),contentType:'application/json'});
+    await info.attach('fresh-customer-navigation',{body:JSON.stringify({visited,errors,failures,refused,consoleErrors,failureText},null,2),contentType:'application/json'});
     try{if(context)await context.close();}finally{child.kill();await exited;}
   }
 });
