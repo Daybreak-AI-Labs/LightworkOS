@@ -35,21 +35,41 @@ PLANS = {
 }
 
 
+def _has_signoff(goal) -> bool:
+    """Whether the goal's specialist releases its result through a sign-off."""
+    try:
+        from . import deliverable_policy
+
+        return bool(deliverable_policy.goal_gate(goal.domain or ""))
+    except Exception:  # noqa: BLE001 -- an unreadable policy offers no shortcut
+        return False
+
+
 def reviewed_goal(world, *, owner=None, principal=None, domain_allowed=lambda domain: True) -> dict:
     try:
         rows = world.list_goals(status="done", owner=owner, limit=2001, order="desc")
+        awaiting = None
         for goal in rows[:2000]:
             if not domain_allowed(goal.domain):
                 continue
             decision = world.signoff_for(goal.id)
+            if awaiting is None and not decision and _has_signoff(goal):
+                awaiting = goal
             reviewer = (decision or {}).get("decided_by", "")
             human = reviewer.startswith("user:") or (principal is None and reviewer == "operator")
             if decision and decision.get("decision") == "approved" and human:
                 return {"complete":True, "status":"reviewed", "title":goal.title,
                         "href":f"/chat/goal/{goal.id}", "reviewed_at":decision.get("created_at"),
                         "detail":"The current completed deliverable has a recorded human approval."}
-        return {"complete":False, "status":"partial" if len(rows) > 2000 else "incomplete",
-                "detail":"No approved deliverable was found in the latest 2,000 completed tasks accessible to you."}
+        status = "partial" if len(rows) > 2000 else "incomplete"
+        if awaiting is not None:
+            return {"complete":False, "status":status, "href":f"/chat/goal/{awaiting.id}",
+                    "detail":f"Approve or reject the result of “{awaiting.title}” to finish this step."}
+        # Only a specialist result with a release gate has a sign-off; an
+        # ordinary chat answer has nothing to accept, so say how to get one.
+        return {"complete":False, "status":status, "href":"/start#first-outcome-title",
+                "detail":("No result is waiting for your approval yet. Run the sample task on this page, "
+                          "or ask a specialist, then approve or reject its result.")}
     except Exception:
         return {"complete":False, "status":"unavailable", "detail":"Reviewed-outcome records could not be checked. Completion has not been assumed."}
 

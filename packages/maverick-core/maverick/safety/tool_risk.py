@@ -52,6 +52,7 @@ _DEFAULT_RISK: dict[str, str] = {
     "browser": "high",
     "apply_patch": "high",
     "write_file": "high",
+    "deliver_file": "low",  # records a workspace file for its own task's page
     "str_replace_editor": "high",
     "ast_edit": "high",
     "compute": "high",

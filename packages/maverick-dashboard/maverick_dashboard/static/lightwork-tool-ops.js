@@ -318,7 +318,7 @@
           'No new suggestions yet. Repeated shared successes can produce suggestions for review.'));
         rows.forEach(function (row) {
           var card = el('article', 'panel to-card'); card.appendChild(el('h3', null, human(row.name)));
-          card.appendChild(el('p', 'muted sk-small', 'Suggested from completed shared tasks. Review its sources and every instruction before adding it.'));
+          card.appendChild(el('p', 'muted sk-small', (row.from_your_tasks ? 'Suggested from your own completed tasks (you are the only person who can sign in here).' : 'Suggested from completed shared tasks.') + ' Review its sources and every instruction before adding it.'));
           var sources = el('p', 'muted sk-small');
           (row.source_tasks || []).forEach(function (id, index) {
             if (index) sources.appendChild(document.createTextNode(' · '));

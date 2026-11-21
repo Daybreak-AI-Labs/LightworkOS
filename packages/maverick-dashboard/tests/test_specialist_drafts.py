@@ -159,3 +159,116 @@ def test_a_refused_worker_admission_before_any_answer_is_not_a_hold(client, monk
     refused = app.post(DRAFTS + "/apply", json={"token": review.json()["token"], "confirmed": True})
     assert refused.status_code == 409 and "Nothing was started" in refused.json()["detail"], refused.text
     assert _review(app, "save", entered={"persona": NEW + " Again."}).status_code == 200
+
+
+def test_trying_a_draft_gives_its_answer_room_to_finish(client, monkeypatch):
+    # Seen live: "Try entered draft" on an invoice-checking agent returned
+    # "Quantity: matches — 10 units on both" and stopped there: draft answers
+    # were capped at 32 output tokens while the page offered a 640-token check.
+    from maverick import llm
+
+    asked = []
+
+    def answer(self, system, messages, **kwargs):
+        kwargs["dispatch_guard"]()
+        asked.append(kwargs["max_tokens"])
+        return llm.LLMResponse(text="Hold: the price differs ($12 vs $10).", thinking=None,
+                               tool_calls=[], stop_reason="end_turn")
+
+    monkeypatch.setattr(llm.LLM, "complete", answer)
+    tried = _confirm(client, _review(client, "try", entered={"persona": NEW},
+                                     task="Invoice INV-7: 10 at $12; PO-3: 10 at $10. Pay?"))
+    assert tried.status_code == 200, tried.text
+    original, deadline = tried.json(), time.time() + 20
+    while (original.get("run") or {}).get("state") not in {"done", "failed", "stopped", "unknown"}:
+        assert time.time() < deadline, original
+        time.sleep(.05)
+        original = client.get(DRAFTS + "/originals/" + tried.json()["operation"]).json()
+    assert original["run"]["state"] == "done", original
+    (allowance,) = asked
+    assert 128 <= allowance <= 1024 and allowance > 32
+    assert original["run"]["results"][0]["answer"].startswith("Hold:")
+
+
+def test_agent_factory_lists_new_agents_saved_as_drafts(client):
+    # Seen live: a new agent saved as a draft could only be found again by
+    # opening a blank builder and typing the same name.
+    context = client.get(DRAFTS + "/history").json()["context"]
+    review = client.post(DRAFTS + "/review", json={
+        "name": "invoice_checker", "action": "save", "context": context,
+        "entered": {"description": "Invoice checker", "allow_tools": ["read_file"], "max_risk": "low",
+                    "persona": "Check supplier invoices against purchase orders and say pay, hold or reject."}})
+    saved = _confirm(client, review)
+    assert saved.status_code == 200 and saved.json()["confirmed"], saved.text
+    page = client.get("/agents").text
+    assert 'id="unpublished-drafts"' in page and "Invoice checker" in page
+    assert f"/agents?new=1&amp;specialist_draft=SPD-{saved.json()['operation']}#specialist-drafts" in page
+
+
+def test_a_first_decision_says_what_it_did_and_a_repeat_says_nothing_was_repeated(client):
+    # Seen live: a first publish answered "The original decision is confirmed.
+    # Nothing was repeated." as if it were a replay.
+    context = client.get(DRAFTS + "/history").json()["context"]
+    review = client.post(DRAFTS + "/review", json={
+        "name": "invoice_checker", "action": "save", "context": context,
+        "entered": {"description": "Invoice checker", "allow_tools": ["read_file"], "max_risk": "low",
+                    "persona": "Check supplier invoices against purchase orders and say pay, hold or reject."}})
+    first = _confirm(client, review)
+    assert first.status_code == 200 and first.json()["confirmed"], first.text
+    assert first.json()["message"] == "Saved a draft. It is recorded in this agent's history."
+    again = _confirm(client, review)
+    assert again.status_code == 200 and "Nothing was repeated" in again.json()["message"]
+
+
+def test_edits_beyond_the_built_in_limits_read_as_plain_sentences():
+    # The publish check speaks in field names ("max_risk cannot be raised above
+    # the built-in pack (medium)"), which once read "Max_risk cannot ...".
+    from maverick_dashboard.specialist_drafts import _plain_problems
+
+    text = _plain_problems(
+        "allow_tools cannot add tools beyond the built-in pack: shell; "
+        "deny_tools cannot remove built-in denied tools: browser, shell; "
+        "max_risk cannot be raised above the built-in pack (medium); "
+        "allow_paths cannot broaden the built-in pack's scope; "
+        "allow_hosts cannot broaden the built-in pack's scope; "
+        "mcp_servers cannot add entries beyond the built-in pack: crm; "
+        "refuse cannot remove the built-in pack's refusals; "
+        "workflow cannot remove the built-in pack's review gates; "
+        "output cannot remove the built-in pack's review gate; "
+        "compartment cannot differ from the built-in pack; "
+        "autonomy cannot give the agent more independence than the built-in pack; "
+        "some_field is not understood")
+    assert text == (
+        "An edited agent cannot use tools its built-in version does not allow: shell. "
+        "Tools the built-in version blocks must stay blocked: browser, shell. "
+        "The risk limit cannot be higher than the built-in version's (medium). "
+        "The files it may use cannot go beyond the built-in version's. "
+        "The websites it may reach cannot go beyond the built-in version's. "
+        "It cannot connect to services the built-in version does not use: crm. "
+        "It must keep refusing what the built-in version refuses. "
+        "Its playbook must keep the built-in version's review steps. "
+        "Its results must keep the built-in version's review step. "
+        "It must keep the built-in version's information boundary. "
+        "It cannot have more independence than the built-in version. "
+        "some_field is not understood.")
+
+
+def test_draft_problems_read_as_plain_sentences(client):
+    # Seen live: "declared tool 'shell' is denied by this pack".
+    from maverick_dashboard.specialist_drafts import _plain_problems
+
+    text = _plain_problems("declared tool 'shell' is denied by this pack; declared tool 'shell' (high) "
+                           "exceeds max_risk='low'; use a scoped read tool or provide an approved export; "
+                           "an unrecognised problem")
+    assert text == ("“shell” is in both the allowed and the blocked tools. Remove it from one list. "
+                    "“shell” is a high-risk tool, above this agent's limit (low). Raise the limit or "
+                    "choose a lower-risk tool. An unrecognised problem.")
+    context = client.get(DRAFTS + "/history").json()["context"]
+    refused = client.post(DRAFTS + "/review", json={
+        "name": "invoice_checker", "action": "save", "context": context,
+        "entered": {"description": "Invoice checker", "allow_tools": ["read_file"], "deny_tools": ["read_file"],
+                    "max_risk": "low", "persona": "Check supplier invoices against purchase orders."}})
+    assert refused.status_code == 422
+    assert "“read_file” is in both the allowed and the blocked tools" in refused.json()["detail"]
+    named = client.post(DRAFTS + "/review", json={"name": "bad name!", "action": "save", "context": context})
+    assert named.status_code == 422 and "letters, numbers, dashes or underscores" in named.json()["detail"]

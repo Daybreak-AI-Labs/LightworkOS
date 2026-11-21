@@ -224,7 +224,38 @@ async def _run_child_and_report(parent, child) -> str:
         return result.final
     if result.blocked_on_user:
         return "BLOCKED_ON_USER: child agent queued a question."
-    return f"ERROR: child finished without final answer: {result.error or 'unknown'}"
+    refused = _child_refusals(parent.ctx, child.name)
+    detail = f" A step it needed was refused: {refused}" if refused else ""
+    return f"ERROR: child finished without final answer: {result.error or 'unknown'}.{detail}"
+
+
+def _child_refusals(ctx, child_name: str) -> str:
+    """What a person or a policy refused this child, from its recorded tool
+    results, so a parent can say truthfully that the step did not happen.
+    Only the kernel's own refusal lines (``agent._is_refusal``), last first."""
+    from ..agent import _is_refusal, unframe_tool_output
+
+    world, goal_id = getattr(ctx, "world", None), getattr(ctx, "goal_id", None)
+    if world is None or goal_id is None:
+        return ""
+    from ..task_files import iter_goal_events
+
+    try:
+        events = [e for e in iter_goal_events(world, goal_id) if e.agent == child_name]
+    except Exception:  # noqa: BLE001 -- the plain error still reaches the parent
+        return ""
+    lines: list[str] = []
+    for event in reversed(events):
+        if event.agent != child_name or event.kind != "observation":
+            continue
+        _, arrow, framed = str(event.content or "").partition(" -> ")
+        if arrow and _is_refusal(framed):
+            line = unframe_tool_output(framed).strip().splitlines()[0][:300]
+            if line not in lines:
+                lines.append(line)
+        if len(lines) == 3:
+            break
+    return " | ".join(lines)
 
 
 def spawn_subagent_tool(parent: Agent) -> Tool:

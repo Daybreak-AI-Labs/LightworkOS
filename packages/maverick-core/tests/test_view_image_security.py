@@ -171,3 +171,35 @@ def test_view_image_missing_file(tmp_path):
         {"source": str(tmp_path / "missing.png")}
     )
     assert "could not load" in out.lower()
+
+
+def test_a_helper_agent_can_look_at_its_goals_attached_image(tmp_path, monkeypatch):
+    # Helper agents get no vision blocks; list_attachments gives them the
+    # stored path, which sits outside their workspace and may be sealed.
+    from maverick import attachments as att
+    from maverick.llm import LLM
+    from maverick.world_model import WorldModel
+
+    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
+    world = WorldModel(tmp_path / "w.db")
+    gid = world.create_goal("g", "")
+    other = world.create_goal("other", "")
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 20
+    rec = att.store(gid, "target.png", "image/png", png, root=tmp_path / "a")
+    world.add_attachment(gid, rec.filename, rec.mime, rec.size_bytes, rec.sha256, str(rec.path))
+    seen = {}
+    monkeypatch.setattr(LLM, "__init__", lambda self, model=None: None)
+    def complete(self, **kwargs):
+        seen["image"] = kwargs["messages"][0]["content"][0]["source"]
+        return SimpleNamespace(text="4,250 units by 2026-09-30")
+    monkeypatch.setattr(LLM, "complete", complete)
+    workspace = tmp_path / "task"
+    workspace.mkdir()
+    tool = view_image(SimpleNamespace(workdir=workspace), budget=Budget(), world=world, goal_id=gid)
+    assert tool.fn({"source": str(rec.path)}) == "4,250 units by 2026-09-30"
+    import base64
+    assert base64.b64decode(seen["image"]["data"]) == png
+    assert seen["image"]["media_type"] == "image/png"
+    # Another goal's attachment stays out of reach.
+    foreign = view_image(SimpleNamespace(workdir=workspace), budget=Budget(), world=world, goal_id=other)
+    assert foreign.fn({"source": str(rec.path)}).startswith("ERROR: could not load image")

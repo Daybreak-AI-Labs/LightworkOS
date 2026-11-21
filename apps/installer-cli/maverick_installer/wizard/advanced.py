@@ -2287,7 +2287,7 @@ def _ask_model_followups(advanced: dict[str, Any]) -> None:
         default=True,
     )
     advanced["model_capability_tests"] = _q_confirm(
-        "Allow administrators to explicitly confirm bounded, potentially paid synthetic model tests (at most USD 0.05 and 64 output tokens, no retry)?", default=False,
+        "Allow administrators to explicitly confirm bounded, potentially paid model tests: a single model test (at most USD 0.05 and 64 output tokens) and Agent Factory draft checks (USD 0.25 for up to five saved questions, USD 0.05 each after that), never retried?", default=False,
     )
     advanced["model_discovery"] = _q_confirm(
         "Let Settings discover the models each provider key can reach (one "

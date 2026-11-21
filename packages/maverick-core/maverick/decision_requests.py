@@ -44,6 +44,8 @@ from __future__ import annotations
 import contextvars
 import json
 import logging
+import math
+import re
 import threading
 import time
 import weakref
@@ -60,7 +62,7 @@ AREAS: dict[str, str] = {
     "workspace_boundaries": "Workspace boundaries",
     "data_erasure_retention": "Data erasure and retention",
     "spending": "Spending and budgets",
-    "user_facing": "What people see, including the Copilot",
+    "user_facing": "What people see in Lightwork, including the Copilot",
     "governance": "Lightwork's own governance controls",
     "legal": "Legal and contract terms",
     "external_messages": "Messages sent outside the organisation",
@@ -340,7 +342,9 @@ def rules_text(chosen: list[str] | None = None) -> str:
         "Give two to five options, say what each one does, and say which you "
         "recommend and why. Lightwork cannot spot every such choice for you, so "
         "ask whenever a choice touches one of these areas. Never act on an "
-        "option before a person has chosen it."
+        "option before a person has chosen it. Choices about the format, length, "
+        "structure or wording of the work you deliver are yours: make a sensible "
+        "one and say what you chose."
     )
 
 
@@ -357,6 +361,9 @@ def _text(value: object, name: str, limit: int) -> str:
     return text
 
 
+_RECOMMENDED_MARK = re.compile(r"\s*[\(\[]\s*recommended\s*[\)\]]\s*$", re.IGNORECASE)
+
+
 def validate(args: dict) -> dict[str, Any]:
     """Check a ``request_decision`` call; raise ``ValueError`` with a fix."""
     question = _text(args.get("question"), "question", MAX_QUESTION)
@@ -367,7 +374,10 @@ def validate(args: dict) -> dict[str, Any]:
     for item in raw_options:
         if not isinstance(item, dict):
             raise ValueError("each option needs a label and what happens if it is chosen")
-        options.append({"label": _text(item.get("label"), "option label", MAX_LABEL),
+        label = _RECOMMENDED_MARK.sub("", _text(item.get("label"), "option label", MAX_LABEL)).strip()
+        # The card marks the recommended option itself; a label that only
+        # said "(recommended)" is still empty after that.
+        options.append({"label": _text(label, "option label", MAX_LABEL),
                         "effect": _text(item.get("effect"), "option effect", MAX_EFFECT)})
     if len({o["label"].lower() for o in options}) != len(options):
         raise ValueError("each option needs a different label")
@@ -764,6 +774,30 @@ def restart_repeats_note() -> str:
 
 
 ENDED = ("cancelled", "done", "completed", "failed", "error")
+
+
+def close_for_next_message(world, goal_id: int, *, actor: str, now: float | None = None) -> list[int]:
+    """Close a waiting task's open decisions because the person sent the next
+    message in the conversation instead of choosing an option: that message
+    continues the work, so nothing should keep waiting on the old question."""
+    from .audit import audit_event
+
+    now = time.time() if now is None else float(now)
+    closed: list[int] = []
+    store = _store(world)
+    for decision in open_for_goal(world, goal_id):
+        with store.transaction(f"decision-request:{decision.goal_id}") as connection:
+            changed = store.execute(
+                connection,
+                "UPDATE decision_requests SET status = 'closed', decided_by = ?, decided_at = ? "
+                "WHERE id = ? AND status = 'open'",
+                (str(actor), now, decision.id))
+            if changed.rowcount != 1:
+                continue
+            audit_event("decision_closed", agent=str(actor), goal_id=decision.goal_id,
+                        decision_id=decision.id, area=decision.area, reason="next_message")
+        closed.append(decision.id)
+    return closed
 
 
 def close_ended(world, *, now: float | None = None, goal_id: int | None = None) -> list[int]:
@@ -1415,12 +1449,35 @@ def recover_everywhere(world) -> int:
     return total
 
 
+def _own_task_limits(world, goal_id: int) -> dict[str, float]:
+    """The spending and time limits the person set when starting this task
+    (bound into its submission), so a resumed run keeps them. Each only
+    narrows the workspace limit, as on the first run."""
+    try:
+        from .attachment_submissions import SubmissionStore
+
+        row = SubmissionStore(world).for_goal(goal_id)
+    except Exception:  # noqa: BLE001 -- no submission record: workspace limits apply
+        return {}
+    limits = ((row or {}).get("detail") or {}).get("task_limits")
+    if not isinstance(limits, dict):
+        return {}
+    own: dict[str, float] = {}
+    for name in ("max_dollars", "max_wall_seconds"):
+        value = limits.get(name)
+        if (isinstance(value, (int, float)) and not isinstance(value, bool)
+                and math.isfinite(value) and value > 0):
+            own[name] = float(value)
+    return own
+
+
 def dispatch_resume(world, goal_id: int) -> bool:
     """Start a goal the answer moved back to ``pending``, on a background
     thread, under the goal's own execution identity."""
     kwargs = resume_kwargs(world.get_goal(int(goal_id)))
     if kwargs is None:
         return False
+    kwargs.update(_own_task_limits(world, int(goal_id)))
     from .runner import run_goal_in_background
 
     context = contextvars.copy_context()

@@ -105,6 +105,9 @@ def test_propose_stores_a_pending_proposal_and_parks_an_approval():
     assert parked.risk == "high"
     assert parked.status == "pending"
     assert parked.requested_by == "agent:sales"
+    # The queue's "Applies to" row reads the scope; without one it said
+    # "The item described".
+    assert parked.scope == "Instructions Lightwork gives its agents: quote approval"
     from maverick.approval_cards import decode_approval_detail
     card = decode_approval_detail(parked.detail)
     assert card is not None

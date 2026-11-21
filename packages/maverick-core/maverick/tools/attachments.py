@@ -30,7 +30,8 @@ def list_attachments_tool(world, goal_id: int | None) -> Tool:
         description=(
             "List files the user uploaded with this goal. Returns one line per "
             "attachment: id, filename, mime, size, path. Use `read_attachment` "
-            "with the id to read text content; images are already visible to you."
+            "with the id to read text, PDF or CSV content; pass an image's path "
+            "to `view_image` to look at it."
         ),
         input_schema={
             "type": "object",
@@ -43,7 +44,33 @@ def list_attachments_tool(world, goal_id: int | None) -> Tool:
 _MAX_READ_CHARS = 100_000
 
 
-def read_attachment_tool(world, goal_id: int | None) -> Tool:
+def goal_attachment_bytes(world, goal_id: int | None, source: str):
+    """``(plaintext, attachment)`` when ``source`` is the stored path of one of
+    this goal's uploads, else None.
+
+    Attachments live outside the agent workspace and may be sealed at rest,
+    so the path ``list_attachments`` reports cannot be opened as a workspace
+    file. Only an exact match to a path recorded for this goal is honoured:
+    nothing else outside the workspace becomes reachable.
+    """
+    if world is None or goal_id is None or not isinstance(source, str) or not source.strip():
+        return None
+    from ..attachments import AttachmentRejected, read_bytes
+
+    wanted = source.strip()
+    try:
+        match = next((a for a in world.list_attachments(goal_id) if a.path == wanted), None)
+    except Exception:  # noqa: BLE001 -- no attachment store: nothing to match
+        return None
+    if match is None:
+        return None
+    try:
+        return read_bytes(match.path), match
+    except (OSError, ValueError, AttachmentRejected):
+        return None
+
+
+def read_attachment_tool(world, goal_id: int | None, sandbox=None) -> Tool:
     def fn(args: dict) -> str:
         if goal_id is None:
             return "ERROR: no goal context; no attachments"
@@ -55,24 +82,102 @@ def read_attachment_tool(world, goal_id: int | None) -> Tool:
         if match is None:
             return f"ERROR: no attachment {wanted} on this goal"
         from ..attachments import READABLE_TEXT_MIMES, read_bytes
+        if match.mime == "application/pdf":
+            text = _pdf_attachment_text(match, args.get("pages"), sandbox)
+            return text if text.startswith("ERROR:") else _window(text, args)
         if not match.mime.startswith(READABLE_TEXT_MIMES):
-            return (f"ERROR: {match.filename} is {match.mime}; images are already "
-                    "visible to you, and documents have a text companion when one "
-                    "could be extracted")
+            return (f"ERROR: {match.filename} is {match.mime}; pass an image's path to "
+                    "view_image, and read a document through its .extracted.txt "
+                    "companion when list_attachments shows one")
         try:
             text = read_bytes(match.path).decode("utf-8", errors="replace")
         except Exception as exc:  # noqa: BLE001 -- surfaced to the agent as data
             return f"ERROR: {match.filename} could not be read: {exc}"
-        if len(text) > _MAX_READ_CHARS:
-            return text[:_MAX_READ_CHARS] + f"\n... [truncated, total {len(text)} chars]"
-        return text
+        if args.get("sql"):
+            return query_table(match.filename, match.mime, text, str(args["sql"]))
+        return _window(text, args)
 
     return Tool(
         name="read_attachment",
         description=("Read the text of one file the user uploaded with this goal, "
-                     "by the id `list_attachments` returns."),
+                     "by the id `list_attachments` returns. A PDF returns its page text; "
+                     "pass `pages` (for example '1-3,7') to read part of a long one. "
+                     "A long file returns its first 100,000 characters: pass `search` "
+                     "to get every line containing a phrase, or `offset` to read on. "
+                     "For a CSV file, pass `sql`: "
+                     "one read-only SELECT over the table `data` (its columns are the "
+                     "header row). Use it for totals, counts and averages instead of "
+                     "adding numbers yourself."),
         input_schema={"type": "object",
-                      "properties": {"id": {"type": "integer"}},
+                      "properties": {"id": {"type": "integer"},
+                                     "sql": {"type": "string",
+                                             "description": "Optional. One SELECT over `data` for a CSV."},
+                                     "pages": {"type": "string",
+                                               "description": "Optional. PDF page ranges, for example '1-3,7'."},
+                                     "search": {"type": "string",
+                                                "description": "Optional. Return only the lines containing this text (case-insensitive)."},
+                                     "offset": {"type": "integer",
+                                                "description": "Optional. Character position to start reading from."}},
                       "required": ["id"]},
         fn=fn,
     )
+
+
+def _pdf_attachment_text(match, pages, sandbox=None) -> str:
+    """Page text of an uploaded PDF (sealed or not), through ``read_pdf``'s parser."""
+    from ..attachments import AttachmentRejected, read_bytes
+    from .pdf_reader import pdf_text
+
+    if pages is not None and not isinstance(pages, str):
+        return "ERROR: pages must be a page-range string such as '1-3,7'"
+    try:
+        data = read_bytes(match.path)
+    except (OSError, ValueError, AttachmentRejected) as exc:
+        return f"ERROR: {match.filename} could not be read: {exc}"
+    return pdf_text(data, pages=pages or "", max_chars=_MAX_PDF_CHARS, sandbox=sandbox)
+
+
+_MAX_PDF_CHARS = 1_000_000  # whole-document text, so search and offset reach every page
+_MAX_MATCHES = 50
+_MAX_MATCH_LINE = 500
+
+
+def _window(text: str, args: dict) -> str:
+    """The part of ``text`` the call asked for: matching lines, or up to
+    ``_MAX_READ_CHARS`` from ``offset``, saying how to read on when cut."""
+    search = args.get("search")
+    if search is not None and str(search).strip():
+        return _matching_lines(text, str(search).strip())
+    raw = args.get("offset", 0)
+    if type(raw) is not int or raw < 0 or (raw and raw >= len(text)):
+        return f"ERROR: offset must be a whole number from 0 to {max(0, len(text) - 1)}"
+    end = raw + _MAX_READ_CHARS
+    part = text[raw:end]
+    if end < len(text):
+        part += (f"\n... [showing characters {raw}-{end} of {len(text)}; pass offset={end} "
+                 "to continue, or search to find a phrase]")
+    return part
+
+
+def _matching_lines(text: str, phrase: str) -> str:
+    wanted = phrase.casefold()
+    hits = [(number, line) for number, line in enumerate(text.splitlines(), 1)
+            if wanted in line.casefold()]
+    if not hits:
+        return f"no line matches {phrase!r}"
+    shown = [f"line {number}: {line[:_MAX_MATCH_LINE]}" for number, line in hits[:_MAX_MATCHES]]
+    more = f" (showing the first {_MAX_MATCHES})" if len(hits) > _MAX_MATCHES else ""
+    noun = "line matches" if len(hits) == 1 else "lines match"
+    return f"{len(hits)} {noun} {phrase!r}{more}:\n" + "\n".join(shown)
+
+
+_TABLE_MIMES = ("text/csv", "application/csv", "text/comma-separated-values")
+
+
+def query_table(filename: str, mime: str, text: str, sql: str) -> str:
+    """One read-only SELECT over a CSV attachment, as the table ``data``."""
+    from .csv_query import query_tables
+
+    if not (mime.startswith(_TABLE_MIMES) or filename.lower().endswith(".csv")):
+        return f"ERROR: {filename} is not a CSV file; `sql` works only on CSV attachments"
+    return query_tables({"data": (filename, text)}, sql)

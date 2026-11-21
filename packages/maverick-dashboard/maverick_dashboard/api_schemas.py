@@ -780,7 +780,8 @@ class FleetAgentIn(BaseModel):
 
 class FleetCreateIn(BaseModel):
     name: str = Field(..., max_length=64)
-    agents: list[FleetAgentIn] = Field(default_factory=list)
+    # A roster is people-sized; 5,000 agents saved a 2 MB team file.
+    agents: list[FleetAgentIn] = Field(default_factory=list, max_length=100)
 
 
 class RedactIn(BaseModel):

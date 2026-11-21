@@ -689,7 +689,7 @@ def test_save_playbook_rejects_lint_failure(monkeypatch, tmp_path):
         "workflow": [{"name": "go"}],
     })
     assert r.status_code == 422, r.text
-    assert "allow_tools" in r.json()["detail"]
+    assert "Choose the tools this agent may use" in r.json()["detail"]
 
 
 def test_refine_endpoint_routes_by_form(monkeypatch, tmp_path):

@@ -312,3 +312,46 @@ def test_sample_start_places_fixtures_in_effective_sandbox_workdir(monkeypatch, 
     assert seen["sample"] is True
     assert all((effective / rel).is_file() for rel in so.relative_paths("finance"))
     assert not (tmp_path / "work" / so.SAMPLE_WORKSPACE_DIRNAME).exists()
+
+
+@pytest.mark.parametrize("department", DEPARTMENTS)
+def test_the_workspace_copy_does_not_hand_the_agent_the_answer(department, tmp_path):
+    # The README in the agent's workspace stated the full answer key; the
+    # Finance run cited it as its source, so the first-run demo showed reading,
+    # not the specialist's work. The answer stays in the bundled README only.
+    target = so.create_sample_workspace(department, tmp_path)
+    copied = " ".join((target / "README.md").read_text(encoding="utf-8").split())
+    assert "A correct result" not in copied
+    assert "Synthetic" in copied and "never counts as real evidence" in copied
+    assert "A correct result" in so.expected_result(department)
+
+
+def test_the_brief_asks_for_exact_comparison_not_by_eye():
+    # Compared by eye, the Finance specialist missed a duplicate invoice and an
+    # unknown vendor; the brief names the exact, read-only query to use.
+    brief = so.goal_description("finance")
+    assert "spreadsheet_read op=query" in brief and "not by eye" in brief
+    assert "INV-1043" not in brief and "A correct result" not in brief
+
+
+def test_only_csv_samples_are_told_to_query_and_none_are_told_to_ask():
+    # Live: Tax (Markdown files) went looking for CSV files the brief named, and
+    # Security, HR and Customer support stopped to ask a "governance" question
+    # their sample does not need.
+    assert "op=query" not in so.goal_description("tax")
+    for department in DEPARTMENTS:
+        assert "do not ask questions" in so.goal_description(department)
+
+
+def test_a_sample_run_gets_no_decision_rules(tmp_path):
+    # The standing "some choices need a person; call request_decision" block
+    # made Customer support, Security and HR samples stop to ask a governance
+    # question the sample does not need. Ordinary tasks keep it.
+    from maverick.orchestrator import _brief_decisions_block
+    from maverick.world_model import WorldModel
+
+    world = WorldModel(tmp_path / "w.db")
+    sample = world.create_goal(so.SAMPLE_TITLE_PREFIX + "Tell me what drives tickets", "")
+    ordinary = world.create_goal("Tell me what drives tickets", "")
+    assert "request_decision" not in _brief_decisions_block(world, sample, None)
+    assert "request_decision" in _brief_decisions_block(world, ordinary, None)

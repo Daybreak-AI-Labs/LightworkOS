@@ -307,3 +307,21 @@ def test_conversation_localizes_governed_controls_without_translating_source(pag
     assert 'data-product-copy>Messages and task receipts</span>' not in response.text
     assert 'id="conversation-inbox"' in response.text
     assert '"review_status": "draft_partial"' in response.text
+
+
+def test_human_help_shows_only_on_a_chat_conversation(page_env):
+    # Seen live: a starter sample's page showed the bare error "Choose an
+    # existing web conversation." in its Human help panel.
+    from maverick.chat_threads import ChatThreads
+
+    client, world = page_env
+    sample = world.create_goal("Sample: answer a rights request", "")
+    world.set_goal_status(sample, "done", result="Done.")
+    assert "data-human-conversations" not in client.get(f"/chat/goal/{sample}").text
+
+    chat = world.create_goal("Plan the launch", "")
+    threads = ChatThreads(world)
+    with threads.store.transaction(f"chat-thread:{chat}") as connection:
+        threads.record(connection, root_id=chat, goal_id=chat, owner="", text="Plan the launch")
+    world.set_goal_status(chat, "done", result="Done.")
+    assert "data-human-conversations" in client.get(f"/chat/goal/{chat}").text

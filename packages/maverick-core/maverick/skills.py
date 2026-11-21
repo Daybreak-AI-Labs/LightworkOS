@@ -351,15 +351,23 @@ def _source_readable(skill: Skill) -> bool:
     if not skill.source_goal_ids:
         return False
     try:
-        from .memory_ownership import current_owner, source_allowed
+        from .memory_ownership import current_owner, sole_person, source_allowed
         # Provider-distilled skills live in the tenant-wide installed-skill
         # directory. Older private-source files may still be present there;
         # retain them for review but never serve them to any employee. A
         # personal skill needs a separate owner-scoped store and recall path.
-        if skill.source in {"auto-distilled-provider-v1", _REVIEWED_LOCAL_SOURCE}:
+        if skill.source == "auto-distilled-provider-v1":
             return (all(source_allowed(gid, "") for gid in skill.source_goal_ids)
                     and _learned_snapshot_current(skill))
         owner = current_owner()
+        if skill.source == _REVIEWED_LOCAL_SOURCE:
+            # A reviewed skill learned from the owner's own tasks on a
+            # single-person installation reaches only that owner's tasks, and
+            # only while nobody else can sign in.
+            sole = sole_person() if owner else ""
+            return (all(source_allowed(gid, "") or (sole and owner == sole and source_allowed(gid, sole))
+                        for gid in skill.source_goal_ids)
+                    and _learned_snapshot_current(skill))
         return all(source_allowed(gid, owner) or source_allowed(gid, "")
                    for gid in skill.source_goal_ids)
     except Exception:
@@ -474,6 +482,20 @@ def learned_skill_use_key(skill: Skill) -> str:
         "tools": skill.tools_needed, "body": skill.body,
     }, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return "learned:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def installed_learned_use_keys(skills_dir: Path | None = None) -> dict[str, str]:
+    """Each installed learned skill's use-counter key, by name, for display.
+
+    Read without the recall-time source check: a skill learned from the sole
+    owner's tasks is recalled only inside that owner's tasks, so the Skills
+    page, which runs outside any task, still needs its counter."""
+    out: dict[str, str] = {}
+    for skill, _raw in _parse_skill_files(_resolved_skills_dir(skills_dir)):
+        key = learned_skill_use_key(skill)
+        if key:
+            out[skill.name] = key
+    return out
 
 
 def _decay_weights(names: list[str]) -> dict[str, float]:
@@ -1032,10 +1054,14 @@ class LearnedSkillCandidate:
     text: str
 
 
+def _all_learnable(goal_ids, allowed, sole: str) -> bool:
+    return all(allowed(gid, sole=sole) for gid in goal_ids)
+
+
 def _learned_candidate(name: str, *, store: Path | None = None) -> LearnedSkillCandidate:
     """Read only a tenant-local proposal with currently shared provenance."""
     from .file_lock import atomic_read_bytes, ensure_private_file
-    from .memory_ownership import source_allowed
+    from .memory_ownership import learning_source_allowed, sole_person
     from .skill.distillation_local import _default_store
 
     if not isinstance(name, str) or len(name) > 96 or not _KEBAB_RE.fullmatch(name):
@@ -1061,7 +1087,7 @@ def _learned_candidate(name: str, *, store: Path | None = None) -> LearnedSkillC
         raise ValueError("This suggestion cannot be reviewed.") from exc
     if (skill.name != name or skill.source != "auto-distilled-local-v2"
             or not skill.source_goal_ids or len(skill.source_goal_ids) > 16
-            or not all(source_allowed(gid, "") for gid in skill.source_goal_ids)):
+            or not _all_learnable(skill.source_goal_ids, learning_source_allowed, sole_person())):
         raise ValueError("This suggestion has no current shared task sources.")
     return LearnedSkillCandidate(
         name=name, triggers=tuple(skill.triggers), tools_needed=tuple(skill.tools_needed),
@@ -1213,11 +1239,12 @@ def admitted_learned_skills(*, skills_dir: Path | None = None) -> list[AdmittedL
     loses sharing authority. Agent recall still uses ``_source_readable`` and
     refuses that skill while the source is unavailable.
     """
-    from .memory_ownership import source_allowed
+    from .memory_ownership import learning_source_allowed, sole_person
 
     root = _resolved_skills_dir(skills_dir)
     if not root.is_dir():
         return []
+    sole = sole_person()
     out = []
     for path in sorted(root.glob("*.md"))[:500]:
         try:
@@ -1225,9 +1252,8 @@ def admitted_learned_skills(*, skills_dir: Path | None = None) -> list[AdmittedL
         except ValueError:
             continue
         try:
-            shared = bool(item.source_goal_ids) and all(
-                source_allowed(gid, "") for gid in item.source_goal_ids
-            )
+            shared = bool(item.source_goal_ids) and _all_learnable(
+                item.source_goal_ids, learning_source_allowed, sole)
         except Exception:
             shared = False
         out.append(AdmittedLearnedSkill(

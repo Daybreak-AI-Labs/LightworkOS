@@ -56,6 +56,8 @@ _ROLE_LABELS = {
     "operator": "Operator",
     "auditor": "Auditor",
     "viewer": "Viewer",
+    # The approval authority for suggested instruction changes (harness_refine).
+    "harness_refinement_operator": "Instruction changes",
 }
 
 # Permission atoms -> plain verbs, for the custom-role builder.

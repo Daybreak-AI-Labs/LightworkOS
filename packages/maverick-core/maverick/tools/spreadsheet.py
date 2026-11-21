@@ -593,20 +593,63 @@ def spreadsheet_read(sandbox=None) -> Tool:
     """Read an existing workbook without permitting any file/engine mutation."""
     properties = {key: value for key, value in _SPREADSHEET_SCHEMA["properties"].items()
                   if key in {"op", "path", "sheet", "limit"}}
-    properties["op"] = {"type": "string", "enum": ["info", "read"]}
+    properties["op"] = {"type": "string", "enum": ["info", "read", "query"]}
+    properties["paths"] = {"type": "array", "items": {"type": "string"}, "maxItems": _MAX_QUERY_FILES,
+                           "description": "For query: workspace CSV files; each is a table named after its file."}
+    properties["sql"] = {"type": "string", "description": "For query: one read-only SELECT."}
 
     def run(args):
+        if args.get("op") == "query":
+            return _query(args, sandbox)
         if args.get("op") not in ("info", "read"):
-            return "ERROR: spreadsheet_read supports only info/read; draft changes in your response"
+            return "ERROR: spreadsheet_read supports only info/read/query; draft changes in your response"
         return _run(args, sandbox)
 
     return Tool(
         name="spreadsheet_read",
-        description=("Read existing workspace CSV/XLSX/XLSM metadata or rows. "
-                     "Only info/read; cannot write, edit or recalculate. Formula cells "
-                     "include cached values and freshness status. Draft proposed analysis "
-                     "and changes in the response for a human to apply."),
+        description=("Read existing workspace CSV/XLSX/XLSM metadata or rows, or compare CSV "
+                     "files exactly with op=query: one read-only SELECT over `paths`, each "
+                     "file a table named after it (invoices.csv -> invoices). Use query for "
+                     "totals, duplicates and cross-file checks instead of comparing by eye. "
+                     "Cannot write, edit or recalculate. Formula cells include cached values "
+                     "and freshness status. Draft proposed changes in the response for a "
+                     "human to apply."),
         input_schema={"type": "object", "properties": properties,
-                      "required": ["op", "path"], "additionalProperties": False},
+                      "required": ["op"], "additionalProperties": False},
         fn=run,
     )
+
+
+_MAX_QUERY_FILES = 10
+_MAX_QUERY_BYTES = 2_000_000
+
+
+def _query(args: dict[str, Any], sandbox) -> str:
+    """op=query: one read-only SELECT over workspace CSV files (tools.csv_query)."""
+    import re
+
+    from .csv_query import query_tables
+
+    paths, sql = args.get("paths"), str(args.get("sql") or "").strip()
+    if not isinstance(paths, list) or not paths or len(paths) > _MAX_QUERY_FILES:
+        return f"ERROR: query needs paths: 1 to {_MAX_QUERY_FILES} workspace CSV files"
+    if not sql:
+        return "ERROR: query needs sql: one SELECT"
+    tables: dict[str, tuple[str, str]] = {}
+    for raw in paths:
+        try:
+            path = _safe_path(sandbox, str(raw))
+            _workspace_gate(sandbox, str(raw), path, "read")
+        except ValueError as e:
+            return f"ERROR: {e}"
+        if path.suffix.lower() != ".csv":
+            return f"ERROR: {raw} is not a CSV file"
+        if not path.is_file():
+            return f"ERROR: no such file {raw}"
+        if path.stat().st_size > _MAX_QUERY_BYTES:
+            return f"ERROR: {raw} is larger than {_MAX_QUERY_BYTES:,} bytes"
+        name = re.sub(r"[^a-z0-9_]", "_", path.stem.lower()) or "data"
+        if name in tables:
+            return f"ERROR: two files would both be the table {name}"
+        tables[name] = (str(raw), path.read_text(encoding="utf-8", errors="replace"))
+    return query_tables(tables, sql)

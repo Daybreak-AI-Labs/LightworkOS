@@ -246,6 +246,21 @@ def _reviewable_command_error(cmd: str) -> str | None:
     return None
 
 
+def _refusal_text(denied) -> str:
+    """Say whether a person rejected the command or nobody decided in time."""
+    from ..safety.consent import PERSON_REFUSALS
+
+    source = getattr(denied, "source", "")
+    if source in PERSON_REFUSALS:
+        return ("ERROR: shell command was not approved: a person rejected it, so no "
+                "command was run. Do not ask to run it again.")
+    if source == "no-decision":
+        return ("ERROR: shell command was not approved: nobody approved it in time, "
+                "so no command was run")
+    return ("ERROR: shell command was not approved: no person could be asked to approve it "
+            "for this task, so no command was run")
+
+
 def shell(sandbox) -> Tool:
     def _sandbox_target() -> dict[str, str]:
         backend = type(sandbox)
@@ -388,8 +403,8 @@ def shell(sandbox) -> Tool:
                 allow_auto_approve=False,
                 consult_ledger=False,
             )
-        except ConsentDenied:
-            return "ERROR: shell command was not approved; no command was run"
+        except ConsentDenied as denied:
+            return _refusal_text(denied)
         except ApprovalCardError:
             return (
                 "ERROR: shell target, command, or approval authority changed; "

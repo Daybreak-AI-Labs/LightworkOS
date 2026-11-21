@@ -72,7 +72,10 @@ def snapshot_label(name: str) -> str:
         if len(digits) >= size:
             try:
                 when = _dt.datetime.strptime(digits[:size], fmt)
-                return when.strftime("%d %b %Y, %H:%M UTC").lstrip("0")
+                # Seconds when the name has them: two saved points made in the
+                # same minute (two learning runs) must read differently.
+                return when.strftime("%d %b %Y, %H:%M:%S UTC" if size == 14 else
+                                     "%d %b %Y, %H:%M UTC").lstrip("0")
             except ValueError:
                 continue
     return name

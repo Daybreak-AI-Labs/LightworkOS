@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import math
 import re
 import time
@@ -31,8 +32,12 @@ NOTICE = ("Saving a draft does not change the specialist people use. Preview che
 ACTIONS = {"save": "Saved a draft", "try": "Tried a draft answer", "check": "Checked the draft's saved questions",
            "publish": "Published a saved draft", "restore": "Restored an earlier definition",
            "promote": "Promoted a trial version", "rollback": "Rolled back a trial version"}
+# How the version that a publish or restore replaced is named in "Earlier versions".
+_BEFORE = {"publish": "Before a saved draft was published", "restore": "Before an earlier definition was restored"}
 TRIAL_LIVE = ("A trial version of this specialist is live. Promote it or roll it back in Workforce before "
               "publishing another change. Nothing was changed.")
+
+log = logging.getLogger(__name__)
 
 
 def authority(request, context=None, *, write=False):
@@ -51,8 +56,65 @@ def authority(request, context=None, *, write=False):
 
 def _name(name):
     if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", name):
-        raise HTTPException(422, "Choose a specialist or give a custom agent a short name.")
+        raise HTTPException(422, "Choose a specialist, or give the new agent a name that starts with a "
+                                 "letter or number and uses only letters, numbers, dashes or underscores.")
     return name
+
+
+# Setup checks speak in configuration terms ("declared tool 'shell' is denied
+# by this pack"); the Agent Factory says the same thing in plain words and
+# keeps the tool and level. Anything not recognised is shown as written.
+_PLAIN_PROBLEMS = (
+    (re.compile(r"declared tool '([^']+)' is denied by this pack"),
+     "“{0}” is in both the allowed and the blocked tools. Remove it from one list."),
+    (re.compile(r"declared tool '([^']+)' is not available in the installed registry"),
+     "“{0}” is not a tool installed here. Remove it or choose an installed tool."),
+    (re.compile(r"declared tool '([^']+)' \((\w+)\) exceeds max_risk='(\w+)'"),
+     "“{0}” is a {1}-risk tool, above this agent's limit ({2}). Raise the limit or choose a lower-risk tool."),
+    (re.compile(r"workflow tool '([^']+)' is not in allow_tools"),
+     "A playbook step uses “{0}”, which is not in the allowed tools."),
+    (re.compile(r"allow_tools is empty"),
+     "Choose the tools this agent may use. With none chosen it could use every tool."),
+    (re.compile(r"max_risk is unset"), "Choose how risky this agent's actions may be."),
+    # An edited built-in agent cannot loosen its built-in limits.
+    (re.compile(r"allow_tools cannot add tools beyond the built-in pack: (.+)"),
+     "An edited agent cannot use tools its built-in version does not allow: {0}."),
+    (re.compile(r"deny_tools cannot remove built-in denied tools: (.+)"),
+     "Tools the built-in version blocks must stay blocked: {0}."),
+    (re.compile(r"max_risk cannot be raised above the built-in pack \((\w+)\)"),
+     "The risk limit cannot be higher than the built-in version's ({0})."),
+    (re.compile(r"allow_paths cannot broaden"), "The files it may use cannot go beyond the built-in version's."),
+    (re.compile(r"allow_hosts cannot broaden"),
+     "The websites it may reach cannot go beyond the built-in version's."),
+    (re.compile(r"mcp_servers cannot add entries beyond the built-in pack: (.+)"),
+     "It cannot connect to services the built-in version does not use: {0}."),
+    (re.compile(r"refuse cannot remove"), "It must keep refusing what the built-in version refuses."),
+    (re.compile(r"workflow cannot remove the built-in pack's review gates"),
+     "Its playbook must keep the built-in version's review steps."),
+    (re.compile(r"output cannot remove the built-in pack's review gate"),
+     "Its results must keep the built-in version's review step."),
+    (re.compile(r"compartment cannot differ"), "It must keep the built-in version's information boundary."),
+    (re.compile(r"autonomy cannot give the agent more independence"),
+     "It cannot have more independence than the built-in version."),
+)
+
+
+def _plain_problems(text: str) -> str:
+    out = []
+    # The risk message carries its own advice after a "; ", which the plain
+    # sentence already gives.
+    text = str(text).replace("; use a scoped read tool or provide an approved export", "")
+    for part in text.split("; "):
+        for pattern, plain in _PLAIN_PROBLEMS:
+            match = pattern.search(part)
+            if match:
+                out.append(plain.format(*match.groups()))
+                break
+        else:
+            # A leading field name ("some_field ...") keeps its spelling.
+            first = part.split(" ", 1)[0]
+            out.append(part if "_" in first else part[:1].upper() + part[1:])
+    return " ".join(item if item.endswith((".", "?", "!")) else item + "." for item in out if item)
 
 
 def _source(request, name):
@@ -95,7 +157,7 @@ def _draft(request, name, entered, source):
     try:
         profile = domain_edit.preview_override(name, patch)
     except (TypeError, ValueError) as exc:
-        raise HTTPException(422, str(exc)) from exc
+        raise HTTPException(422, _plain_problems(str(exc))) from exc
     allowed = auth.caller_suites(request)
     if allowed is not None and not domain.suites_for_domain(name, profile) <= allowed:
         raise HTTPException(403, "The entered draft belongs to a department outside your current access.")
@@ -220,6 +282,13 @@ def unpublished_profiles(request, *, name=None) -> dict:
         return {}
     if len(rows) > MAX_RECORDS:
         return {}
+    return {row["name"]: domain._coerce(row["name"], row["profile"])
+            for row in _newest_unpublished(rows, actor, context, name)}
+
+
+def _newest_unpublished(rows, actor, context, name=None) -> list:
+    from maverick import domain
+
     published = domain.available_domains()
     found: dict = {}
     for row in sorted(rows, key=lambda item: (item["created_at"], item["id"]), reverse=True):
@@ -228,8 +297,27 @@ def unpublished_profiles(request, *, name=None) -> dict:
             continue
         if row["name"] in published or row["name"] in found or (name is not None and row["name"] != name):
             continue
-        found[row["name"]] = domain._coerce(row["name"], row["profile"])
-    return found
+        found[row["name"]] = row
+    return list(found.values())
+
+
+def unpublished_drafts(request) -> list[dict]:
+    """This person's new agents saved as drafts and not published yet, newest
+    first, with the link that opens each draft in the builder."""
+    try:
+        actor, context = authority(request)
+        rows = STORE.list(limit=MAX_RECORDS + 1)
+    except HTTPException:
+        return []
+    if len(rows) > MAX_RECORDS:
+        return []
+    out = []
+    for row in _newest_unpublished(rows, actor, context)[:20]:
+        description = str((row.get("profile") or {}).get("description") or "").strip()
+        out.append({"name": row["name"], "label": description or row["name"].replace("_", " "),
+                    "saved": time.strftime("%b %d, %Y %H:%M", time.localtime(row["created_at"])),
+                    "href": f"/agents?new=1&specialist_draft={row['id']}#specialist-drafts"})
+    return out
 
 
 def inventory(request, name):
@@ -240,7 +328,7 @@ def inventory(request, name):
     versions = [{"value": row["id"], "label": (row.get("title") or ACTIONS[row["action"]]) + " · " +
                  time.strftime("%b %d, %Y %H:%M", time.localtime(row["created_at"]))}
                 for row in rows if row["action"] == "save" and row["state"] == "confirmed" and not row.get("_audit_pending")]
-    earlier = [{"value": row["id"], "label": "Before " + ACTIONS[row["action"]].lower() + " · " +
+    earlier = [{"value": row["id"], "label": _BEFORE[row["action"]] + " · " +
                 time.strftime("%b %d, %Y %H:%M", time.localtime(row["created_at"]))}
                for row in rows if row["action"] in {"publish", "restore"} and row.get("before", {}).get("profile") and row["state"] != "not_started"]
     originals = [{"value": row["id"], "label": ACTIONS[row["action"]] + " · " +
@@ -544,6 +632,17 @@ def original(request, operation, *, prepared=None):
 
 
 def apply(request, prepared, operation):
+    """Carry out a reviewed decision once. A first run says what it did; only a
+    repeat of an earlier decision says that nothing was repeated."""
+    repeat = (isinstance(operation, str) and re.fullmatch(r"[a-f0-9]{32}", operation) is not None
+              and STORE.get("SPD-" + operation) is not None)
+    result = _apply(request, prepared, operation)
+    if not repeat and isinstance(result, dict) and result.get("confirmed") and result.get("action"):
+        result["message"] = f"{result['action']}. It is recorded in this agent's history."
+    return result
+
+
+def _apply(request, prepared, operation):
     if not isinstance(operation, str) or not re.fullmatch(r"[a-f0-9]{32}", operation):
         raise HTTPException(422, "This original decision could not be identified.")
     identifier = "SPD-" + operation
@@ -578,6 +677,8 @@ def apply(request, prepared, operation):
             if not began and _mark_not_started(prepared, row):
                 raise
         except Exception as exc:
+            # The person reads "unconfirmed"; the cause belongs in the server log.
+            log.warning("specialist draft %s (%s) did not finish", prepared["name"], prepared["action"], exc_info=True)
             if STORE.get(identifier) is None:
                 raise HTTPException(503, "The complete draft could not be retained. Your entered work is still in the editor.") from exc
         return original(request, identifier, prepared=prepared)

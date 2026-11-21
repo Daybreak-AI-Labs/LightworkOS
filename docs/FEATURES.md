@@ -12,7 +12,7 @@ catalogue of built features and tools.
 
 | Section | Entries |
 | --- | ---: |
-| [Agent kernel and orchestration](#agent-kernel-and-orchestration) | 215 |
+| [Agent kernel and orchestration](#agent-kernel-and-orchestration) | 216 |
 | [Tools](#tools) | 10 |
 | [Channels](#channels) | prose |
 | [Sandboxes](#sandboxes) | prose |
@@ -32,7 +32,7 @@ catalogue of built features and tools.
 | [Distribution and install](#distribution-and-install) | 19 |
 | [Customer workflow completion and readiness](#customer-workflow-completion-and-readiness) | 22 in 24 subsections |
 
-456 entries in 19 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
+457 entries in 19 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
 <!-- toc:end -->
 
 ## Agent kernel and orchestration
@@ -254,6 +254,14 @@ Settings and the installation wizard.
   process leases, path protection, per-file drift checks and retained requests
   guard review and interrupted retry. No shell or external-action rollback is
   claimed. See [task-file recovery](task-file-recovery.md) for limits.
+- **Files from this task** (`task_files.py`, `task_files_view.py`, the
+  `deliver_file` tool) — files a task saves with `write_file` or the editor, or
+  hands over with `deliver_file`, are listed under its answer and download from
+  `/chat/goal/{id}/task-files/{n}`, and an answer's `sandbox:` link to one becomes
+  its download link. The workspace is shared, so each download needs the task's
+  own access, follows the answer's sign-off rule, reads through a descriptor
+  confined to the workspace and is served only while its SHA-256 still matches
+  what the task saved. Copilot answers "what files did this task make?".
 - **Loop-guard suppression tier** — the long-standing repeated-identical-call
   nudge (`MAVERICK_LOOP_GUARD_THRESHOLD`) also covers byte-identical
   *successes* (a poll loop whose output never changes is burning budget on
@@ -428,7 +436,11 @@ Settings and the installation wizard.
   LLM-free, so consolidation can't be steered by injected trajectory text.
   Reflexions also carry the recording run's department (`reflexion.py`
   `domain` field), and same-department lessons outrank equally-similar
-  generic ones at recall time.
+  generic ones at recall time. Learned skills are shared by a workspace, so
+  they come from ownerless tasks only, except on an installation only its
+  owner can sign in to (`memory_ownership.sole_person`): there the owner's
+  own tasks count too, and the review and recall checks re-ask every time,
+  so those skills stop being used once anyone else can sign in.
 - **Self-harness (model-specific harness learning)** — `maverick self-harness`
   (`self_harness.py`, default-on under the conservative `risk_limited` profile)
   mines one model's

@@ -23,7 +23,7 @@ BRIEF = ("role=orchestrator depth=0 brief=Top-level goal: Summarize last quarter
     ("observation", ROOT, "tool=spawn_specialist -> done", "Asked an agent or specialist for help"),
     ("observation", ROOT, "tool=web_search -> 10 results", "Searched the web"),
     ("observation", ROOT, "tool=shell -> ERROR: shell command was not approved; no command was run",
-     "Tried to run a command, but it did not work"),
+     "Did not run a command: a person rejected it"),
     ("observation", ROOT, "tool=ledger_read -> rows", "Used a tool: read financial records"),
     ("observation", ROOT, "I will read the ledger next.", "Worked out the next step"),
     ("observation", HELPER, "**Total:** $412,800", "Researcher worked out its next step"),
@@ -108,3 +108,49 @@ def test_agents_read_as_roles_and_specialists_not_internal_names():
     assert who("Lightwork") == "Lightwork"
     specialist = who("proc_po_chaser-0-a1b2c3")
     assert specialist and "_" not in specialist and "0" not in specialist
+
+
+def _framed(tool: str, body: str) -> str:
+    return f"tool={tool} -> <tool_output tool='{tool}' id=c87793af89fc9533>\n{body}\n</tool_output c87793af89fc9533>"
+
+
+def test_a_framed_failure_is_not_narrated_as_done():
+    # Tool output arrives inside its <tool_output> frame, so "starts with ERROR"
+    # never matched: a failed calculation read "Ran a calculation".
+    from maverick_dashboard.step_narration import narrate
+
+    step = narrate("observation", "orchestrator-0-1646c8",
+                   _framed("compute", "ERROR: 'simplify' requires sympy."))
+    assert step.text == "Tried to run a calculation, but it did not work"
+
+
+def test_a_rejected_command_says_it_did_not_run():
+    from maverick_dashboard.step_narration import narrate
+
+    step = narrate("observation", "orchestrator-0-63fc0d",
+                   _framed("shell", "ERROR: shell command was not approved; no command was run"))
+    assert step.text == "Did not run a command: a person rejected it"
+
+
+def test_a_framed_success_still_reads_as_done():
+    from maverick_dashboard.step_narration import narrate
+
+    assert narrate("observation", "orchestrator-0-4d2072",
+                   _framed("shell", "Python 3.12.16\n42")).text == "Ran a command"
+
+
+def test_a_command_nobody_decided_on_is_not_called_rejected():
+    from maverick_dashboard.step_narration import narrate
+
+    step = narrate("observation", "orchestrator-0-63fc0d", _framed(
+        "shell", "ERROR: shell command was not approved: nobody approved it in time, "
+                 "so no command was run"))
+    assert step.text == "Did not run a command: nobody approved it in time"
+    step = narrate("observation", "orchestrator-0-63fc0d", _framed(
+        "shell", "ERROR: shell command was not approved: no person could be asked to approve it "
+                 "for this task, so no command was run"))
+    assert step.text == "Did not run a command: no person could be asked to approve it"
+    step = narrate("observation", "orchestrator-0-63fc0d", _framed(
+        "shell", "ERROR: shell command was not approved: a person rejected it, so no "
+                 "command was run. Do not ask to run it again."))
+    assert step.text == "Did not run a command: a person rejected it"

@@ -350,6 +350,20 @@ class OpenAIClient:
         generation = _GPT_GENERATION.match(model)
         return bool(generation) and int(generation.group(1)) >= _FIRST_MAX_COMPLETION_GPT
 
+    # OpenAI: "Starting with GPT-5.4, Chat Completions does not support tool
+    # calling with reasoning_effort values other than none" (Migrate to the
+    # Responses API guide). Asking anyway cost every tool turn a rejected
+    # attempt, kept as an unknown charge. Other names (deployments, proxies)
+    # are remembered here after their first explicit rejection, per process.
+    _TOOL_REASONING_REJECTED: set[str] = set()
+
+    @classmethod
+    def _tool_reasoning_must_be_none(cls, model: str) -> bool:
+        if model in cls._TOOL_REASONING_REJECTED:
+            return True
+        match = re.match(r"gpt-(\d+)(?:\.(\d+))?(?!\d)", model or "")
+        return bool(match) and (int(match.group(1)), int(match.group(2) or 0)) >= (5, 4)
+
     @staticmethod
     def _is_reasoning_model(model: str) -> bool:
         """True for models that accept ``reasoning_effort`` (o-series, gpt-5).
@@ -723,6 +737,8 @@ class OpenAIClient:
             )
         if oai_tools:
             kwargs["tools"] = oai_tools
+            if self._tool_reasoning_must_be_none(chosen_model):
+                kwargs["reasoning_effort"] = "none"
             # Forced / restricted tool selection and serialised calls.
             if mapped_choice is not None:
                 kwargs["tool_choice"] = mapped_choice
@@ -764,6 +780,8 @@ class OpenAIClient:
             return False
         log.warning("openai: provider requires reasoning_effort=none with function tools; retrying once")
         kwargs["reasoning_effort"] = "none"
+        if isinstance(kwargs.get("model"), str):
+            OpenAIClient._TOOL_REASONING_REJECTED.add(kwargs["model"])
         return True
 
     def _generation_timeout(self, kwargs: dict) -> dict:

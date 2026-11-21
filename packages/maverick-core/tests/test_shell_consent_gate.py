@@ -109,3 +109,25 @@ def test_shell_full_length_command_is_supplied_to_review(tmp_path, monkeypatch):
     cmd = "echo " + "x" * 3795
     assert "not approved" in shell(LocalBackend(workdir=tmp_path)).fn({"cmd": cmd})
     assert calls[0]["display_command"] == cmd
+
+
+def test_the_refusal_says_whether_a_person_rejected_the_command(tmp_path: Path, monkeypatch):
+    # Seen live: after a person rejected `date`, the answer said "the sandbox
+    # did not approve" it -- the refusal text never said who refused.
+    import maverick.safety.consent as consent
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    for source, expected, absent in (
+        ("dashboard", "a person rejected it", "in time"),
+        ("rejected-earlier", "a person rejected it", "in time"),
+        ("no-decision", "nobody approved it in time", "a person rejected"),
+        ("non-tty-deny", "no person could be asked to approve it", "in time"),
+    ):
+        monkeypatch.setattr(
+            consent, "require_consent",
+            lambda *_a, _source=source, **_k: SimpleNamespace(
+                granted=False, source=_source, actor="user:reviewer"),
+        )
+        out = shell(LocalBackend(workdir=tmp_path)).fn({"cmd": "date"})
+        assert out.startswith("ERROR: shell command was not approved"), out
+        assert expected in out and absent not in out, out

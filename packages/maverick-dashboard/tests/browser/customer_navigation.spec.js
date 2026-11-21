@@ -8,7 +8,16 @@ test.beforeEach(async ({context, page, baseURL}) => {
   page.__errors = []; page.__failed = [];
   page.on('pageerror', error => page.__errors.push(error.message));
   page.on('console', message => {if (message.type() === 'error') page.__errors.push(message.text());});
-  page.on('requestfailed', request => page.__failed.push({url: request.url(), error: request.failure().errorText}));
+  // Chromium asks for the page icon again whenever the address changes. The
+  // finder clears its ?find= address as Enter leaves the page, so that icon
+  // request is cut off by the navigation itself; nobody sees it. Any other
+  // failed request, or an icon that fails any other way, still counts.
+  const iconCutOff = request => request.resourceType() === 'other'
+    && new URL(request.url()).pathname === '/static/daybreak-logo.jpg'
+    && request.failure().errorText === 'net::ERR_ABORTED';
+  page.on('requestfailed', request => {
+    if (!iconCutOff(request)) page.__failed.push({url: request.url(), error: request.failure().errorText});
+  });
 });
 
 test.afterEach(async ({page}, info) => {

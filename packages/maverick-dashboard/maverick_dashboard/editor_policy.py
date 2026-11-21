@@ -6,10 +6,16 @@ from fastapi import HTTPException, Request
 from . import auth
 
 
+def _unscoped_installation_owner(request: Request, principal: str) -> bool:
+    """The installation's own owner, working without a department limit."""
+    return auth.is_installation_admin(principal) and auth.caller_suites(request) is None
+
+
 def pack_editing_denial(request: Request, *, caller=None, is_admin=None, has_permission=None) -> str | None:
     """Explain why a caller cannot edit packs, or return None when allowed."""
     principal = (caller or auth.caller_principal)(request)
-    if principal is not None and not (is_admin or auth.is_dashboard_admin)(principal):
+    if (principal is not None and not (is_admin or auth.is_dashboard_admin)(principal)
+            and not _unscoped_installation_owner(request, principal)):
         return "pack editing requires a dashboard admin"
     if principal is not None and not (has_permission or auth.has_permission)(request, "admin"):
         return "pack editing requires an API key with the administrator scope"
@@ -32,7 +38,8 @@ def require_pack_editing(request: Request, *, permission=None, denial=None) -> N
 
 def require_role_editing(request: Request, *, caller=None, is_admin=None, permission=None) -> None:
     principal = (caller or auth.caller_principal)(request)
-    if principal is not None and not (is_admin or auth.is_dashboard_admin)(principal):
+    if (principal is not None and not (is_admin or auth.is_dashboard_admin)(principal)
+            and not _unscoped_installation_owner(request, principal)):
         raise HTTPException(status_code=403, detail="role editing requires dashboard admin")
     (permission or auth.require_permission)(request, "admin")
     from maverick.config import get_features

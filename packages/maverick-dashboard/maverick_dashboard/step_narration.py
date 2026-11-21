@@ -22,6 +22,7 @@ _INTERNAL_KINDS = frozenset({"trace_meta", "tool_signal", "prm"})
 _TOOLS: dict[str, tuple[str, str]] = {
     "read_file": ("Read a file", "read a file"),
     "write_file": ("Saved a file", "save a file"),
+    "deliver_file": ("Offered a file to download", "offer a file to download"),
     "apply_patch": ("Changed a file", "change a file"),
     "str_replace_editor": ("Changed a file", "change a file"),
     "ast_edit": ("Changed a file", "change a file"),
@@ -192,15 +193,29 @@ def _tool_label(name: str) -> tuple[str, str]:
     return f"Used a tool: {lowered}", f"use a tool ({lowered})"
 
 
+def _unframed(output: str) -> str:
+    """The tool's own text inside its ``<tool_output ...>`` security frame, so a
+    failure is recognised by what the tool said, not by the frame around it."""
+    if output.startswith(("<tool_output ", "<tool_output_preview ")):
+        return output.split("\n", 1)[1].lstrip() if "\n" in output else ""
+    return output
+
+
 def _tool_step(kind: str, tool: str, rest: str) -> Step:
     done, base = _tool_label(tool)
-    output = rest.split("->", 1)[1].strip() if "->" in rest else ""
+    output = _unframed(rest.split("->", 1)[1].strip() if "->" in rest else "")
     head = rest.strip().upper()
     if kind == "error" or head.startswith(("DENIED", "BLOCKED", "GATED")) or " DENIED" in head[:120]:
         return Step(f"Was not allowed to {base}", group=f"denied:{tool}")
     if tool == "ask_user":
         return Step("Asked you a question", group="ask_user")
     if output.startswith(_FAILED_OUTPUT):
+        if "not approved" in output[:200].casefold():
+            if "nobody approved it in time" in output[:200].casefold():
+                return Step(f"Did not {base}: nobody approved it in time", group=f"unanswered:{tool}")
+            if "no person could be asked" in output[:200].casefold():
+                return Step(f"Did not {base}: no person could be asked to approve it", group=f"unasked:{tool}")
+            return Step(f"Did not {base}: a person rejected it", group=f"rejected:{tool}")
         return Step(f"Tried to {base}, but it did not work", group=f"failed:{tool}")
     return Step(done, group=f"tool:{tool}", plural=_PLURALS.get(tool, ""))
 

@@ -85,3 +85,14 @@ test("isolated repair leaves amounts blank and requires complete final receipt c
   const body = JSON.parse(prepared.body); assert.equal(body.receipts_complete, true); assert.deepEqual(body.totals[1], {provider: "anthropic", period: "2026-09-06", confirmed: 4});
   assert.equal(ui.calls.some(call => call.url.endsWith("/apply")), false); assert.equal(ui.el("confirm").checked, false);
 });
+test("with no spending limit, unknown final costs are explained instead of 'nothing is waiting'", async t => {
+  // Live: "391 requests still need a final cost" sat beside "Nothing is waiting
+  // to be settled" on an installation with no limit, where they block nothing.
+  const ui = await fixture(() => response({...current(), providers: [],
+    ledger_health: {format: "indexed", available: true, receipt_count: 995, unresolved_count: 391, message: "Spending records are healthy."}}));
+  t.after(() => ui.window.close());
+  const text = ui.el("page").textContent;
+  assert.doesNotMatch(text, /Nothing is waiting to be settled/);
+  assert.match(text, /No spending limit is set, so requests with an unknown final cost do not stop any work/);
+  assert.match(text, /set a limit/i);
+});

@@ -7275,10 +7275,20 @@ def _learned_snapshot(limit: int = 50, *, include_pending_items: bool = False, r
         "generated_tools": tools,
         "harness": harness,
         "harness_enabled": harness_enabled,
+        "self_learning_enabled": _self_learning_on(),
         "pending_corpus": {k: len(v) for k, v in pending.items()},
         "pending_items": pending if include_pending_items else {},
         "transfer_memory": _transfer_memory(),
     }
+
+
+def _self_learning_on() -> bool:
+    try:
+        from maverick import self_learning
+
+        return bool(self_learning.enabled())
+    except Exception:  # an unreadable switch reads as off: the page offers the control
+        return False
 
 
 def _pending_corpus_items() -> dict[str, list[dict]]:
@@ -10723,8 +10733,10 @@ def _probe_container_daemon(binary: str) -> dict:
     # CLI plugin's metadata command first, as ``docker info`` does (about 80
     # ms against 20 here, more with Docker Desktop's plugins); both fail the
     # same way when the daemon is unreachable.
+    # Podman's info has no ServerVersion (that is Docker's field), and the
+    # template error made every working Podman read as not running.
     query = (["version", "--format", "{{.Server.Version}}"] if binary == "docker"
-             else ["info", "--format", "{{.ServerVersion}}"])
+             else ["info", "--format", "{{.Version.Version}}"])
     try:
         proc = subprocess.run(  # noqa: S603 -- fixed argv, no shell
             [path, *query],
@@ -11127,7 +11139,7 @@ async def copilot_endpoint(request: Request, payload: CopilotIn, response: Respo
 
     # A task's cost is a live read even on its own page; the page guide
     # describes the task but holds no spending record.
-    if is_detail_page and live_intent(msg) != "task_cost" and (detail_reply := _copilot_detail_reply(
+    if is_detail_page and live_intent(msg) not in {"task_cost", "task_files"} and (detail_reply := _copilot_detail_reply(
         request, msg, permissions, context, record_context,
     )) is not None:
         return detail_reply
@@ -11435,7 +11447,11 @@ def validate_agent_override(request: Request, name: str, payload: AgentOverrideI
         errors.extend(_agent_action_errors(name, payload))
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Available actions could not be checked. Try again shortly.") from exc
-    return {"ok": not errors, "errors": errors, "warnings": warnings}
+    from .workforce_ops_api import _finding
+
+    # The page shows plain words; the lint's own text stays for API callers.
+    notes = list(dict.fromkeys(_finding(warning) for warning in warnings))
+    return {"ok": not errors, "errors": errors, "warnings": warnings, "notes": notes}
 
 
 @router.post("/agents/{name}/override")
@@ -11549,6 +11565,7 @@ def _require_jd_hiring() -> None:
 def _scoped_jd_matches(request: Request, jd_text: str, k: int) -> dict:
     from maverick.domain import available_domains, suites_for_domain
     from maverick.domain_edit import workflow_readiness
+    from maverick.domain_router import semantic_pending
     from maverick.jd_hiring import match_jd
 
     from .plain_labels import pack_display_name
@@ -11565,7 +11582,9 @@ def _scoped_jd_matches(request: Request, jd_text: str, k: int) -> dict:
             for name, profile in domains.items()
             if suites_for_domain(name, profile) <= allowed
         }
-    matches = match_jd(jd_text, k=k, domains=domains)
+    # The page never waits for the meaning-based index; the first build of it
+    # took 33 s live. It says when matches use shared words only.
+    matches = match_jd(jd_text, k=k, domains=domains, wait=False)
     rows = []
     for match in matches:
         profile = domains.get(match.name)
@@ -11580,7 +11599,7 @@ def _scoped_jd_matches(request: Request, jd_text: str, k: int) -> dict:
             "display_name": pack_display_name(match.name, profile.persona, profile.description),
             "readiness": readiness,
         })
-    return {"matches": rows}
+    return {"matches": rows, "semantic_pending": semantic_pending(domains)}
 
 
 @router.post("/agents/jd/match")
@@ -13190,6 +13209,10 @@ def run_fleet_agent(
     return {"goal_id": goal_id, "principal": agent_principal, "role": agent.role}
 
 
+_TEAM_NAME_RULE = ("A team name starts with a letter or number and uses only letters, numbers, "
+                   "dashes or underscores (up to 64 characters).")
+
+
 @router.post("/fleets", status_code=201)
 async def create_fleet(request: Request, payload: FleetCreateIn) -> dict:
     """Create (or replace) a fleet from the operator console, owned by the caller.
@@ -13203,11 +13226,15 @@ async def create_fleet(request: Request, payload: FleetCreateIn) -> dict:
     # fleet, not WHETHER the role may write one. A read-only viewer must be 403'd
     # (otherwise it could self-own a fleet here and then run it).
     require_permission(request, "operate")
-    from maverick.capability import configured_roles
+    # A team made outside every workspace could never run (work needs one).
+    from ._shared import require_workspace_for_work
+
+    require_workspace_for_work()
+    from maverick.capability import agent_role_known, configured_roles
     from maverick.fleet import Fleet, FleetAgent, load_fleet, save_fleet, valid_name
 
     if not valid_name(payload.name):
-        raise HTTPException(status_code=400, detail="invalid fleet name")
+        raise HTTPException(status_code=400, detail=_TEAM_NAME_RULE)
     agents = tuple(
         FleetAgent(
             name=a.name.strip(),
@@ -13218,19 +13245,30 @@ async def create_fleet(request: Request, payload: FleetCreateIn) -> dict:
         if a.name.strip()
     )
     configured = configured_roles()
+    seen: set[str] = set()
     for a in agents:
         if not valid_name(a.name):
-            raise HTTPException(status_code=400, detail=f"invalid agent name: {a.name!r}")
+            raise HTTPException(status_code=400, detail=f"{a.name!r} can't be used as an agent name. Start with a letter or number and use only letters, numbers, dashes or underscores.")
+        if a.name.casefold() in seen:
+            raise HTTPException(status_code=400, detail=f"two agents are named {a.name!r}; give each agent its own name")
+        seen.add(a.name.casefold())
         if not a.role:
-            raise HTTPException(status_code=400, detail=f"missing role for agent: {a.name!r}")
-        if configured and a.role not in configured:
-            raise HTTPException(status_code=400, detail=f"unknown role for agent: {a.name!r}")
+            raise HTTPException(status_code=400, detail=f"Choose a role for the agent {a.name!r}.")
+        # A role nobody defined used to save and then run with its owner's whole
+        # grant. Only a configured role or one of the page's built-in roles.
+        if (configured and a.role not in configured) or not agent_role_known(a.role):
+            raise HTTPException(status_code=400, detail=f"The agent {a.name!r} has a role Lightwork doesn't know ({a.role!r}). Choose one of the listed roles.")
 
     principal = caller_principal(request)
     owner = principal or ""
     existing = load_fleet(payload.name)
     if existing is not None and existing.owner != owner:
         raise HTTPException(status_code=404, detail="no such fleet")
+    if existing is not None:
+        # Creating used to replace the team silently, dropping its agents.
+        raise HTTPException(status_code=409, detail=(
+            f"A team called {payload.name} already exists. Choose another name, "
+            "or add agents to that team."))
 
     try:
         save_fleet(Fleet(name=payload.name, owner=owner, agents=agents))
@@ -13249,17 +13287,29 @@ async def add_fleet_agent(request: Request, fleet_name: str, payload: FleetAgent
     must cover the pack's suite — the same kernel gate department deploys use.
     """
     require_permission(request, "operate")
+    # The same rules as creating a team here: it may create one.
+    from ._shared import require_workspace_for_work
+
+    require_workspace_for_work()
+    from maverick.capability import agent_role_known, configured_roles
     from maverick.domain import suites_for_domain
     from maverick.fleet import load_fleet, valid_name
     from maverick.jd_hiring import add_pack_to_fleet
     from maverick.suite_grants import DepartmentAccessError, ensure_suite_allowed
 
     if not valid_name(fleet_name):
-        raise HTTPException(status_code=400, detail="invalid fleet name")
+        raise HTTPException(status_code=400, detail=_TEAM_NAME_RULE)
     principal = caller_principal(request)
     existing = load_fleet(fleet_name)
     if existing is not None and existing.owner != (principal or ""):
         raise HTTPException(status_code=404, detail="no such fleet")
+    # After the owner check, so a refusal never reveals someone else's team.
+    role = (payload.role or "").strip()
+    if role:
+        configured = configured_roles()
+        if (configured and role not in configured) or not agent_role_known(role):
+            raise HTTPException(status_code=400, detail=(
+                f"Lightwork doesn't know the role {role!r}. Choose one of the listed roles."))
     try:
         for suite in suites_for_domain(payload.pack):
             ensure_suite_allowed(principal, suite)
@@ -13268,7 +13318,7 @@ async def add_fleet_agent(request: Request, fleet_name: str, payload: FleetAgent
     owner = existing.owner if existing is not None else (principal or "")
     try:
         fleet = await run_in_threadpool(
-            lambda: add_pack_to_fleet(payload.pack, fleet_name, owner, role=payload.role)
+            lambda: add_pack_to_fleet(payload.pack, fleet_name, owner, role=role or None)
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e

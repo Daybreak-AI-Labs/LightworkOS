@@ -216,3 +216,13 @@ def test_every_agent_is_told_that_framed_tool_output_is_data(monkeypatch):
         built._with_harness_addendum = lambda base: base
         assert TOOL_OUTPUT_FRAME_NOTICE in built._build_system()
 
+
+
+def test_the_planner_sends_an_approval_step_to_one_child_and_never_retries_a_rejection():
+    # Seen live: one command went to two children (one "to verify"), so the
+    # person approved it twice; a rejected command was then retried directly.
+    from maverick.agent import select_base_template
+
+    text = select_base_template(role="orchestrator", depth=0, max_depth=2, coding_enabled=False)
+    assert "goes to ONE child only" in text
+    assert "A step a person rejected stays undone" in text

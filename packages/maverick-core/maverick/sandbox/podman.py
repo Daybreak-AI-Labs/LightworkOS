@@ -114,6 +114,12 @@ class PodmanBackend:
         effective = self.timeout if timeout is None else timeout
         if not math.isfinite(effective) or effective <= 0:
             return ExecResult(stdout="", stderr="Invalid Podman command timeout", exit_code=1)
+        # Pull a missing image under its own limit, not the command's.
+        from .image_pull import missing_image_note
+
+        note = missing_image_note("podman", self.image, getattr(self, "pull", None))
+        if note:
+            return ExecResult(stdout="", stderr=note, exit_code=125)
         container_name = f"maverick-sandbox-{uuid.uuid4().hex}"
         # `:Z` relabels the SELinux context for the mount so rootless
         # podman on Fedora / RHEL can read+write the workspace.

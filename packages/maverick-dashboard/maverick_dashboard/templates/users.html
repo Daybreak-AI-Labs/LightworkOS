@@ -106,6 +106,7 @@
       </label>
       <button type="button" class="btn" data-copy-target="invite-link">Copy link</button>
     </div>
+    {% if workspace_options %}<p class="muted users-help" id="invite-workspace-note">This installation has workspaces, so {{ invite_email }} can't start work until they belong to one. After they accept, give them a role under <a href="#wi-root">Workspace members</a>, or use <a href="#wi-root">Invite someone to a workspace</a> instead.</p>{% endif %}
   </section>
   {% endif %}
   </div>

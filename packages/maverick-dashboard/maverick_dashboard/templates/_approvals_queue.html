@@ -59,7 +59,7 @@
         <p>{{ approval_details.get(a.id, a.detail or '') if approval_details else (a.detail or '') }}</p>
         {% if card %}
         <section class="approval-card" aria-label="What you are approving">
-          <p class="approval-authority-note"><strong>This is Lightwork's suggestion — the decision is yours.</strong>
+          <p class="approval-authority-note"><strong>{% if a.provenance == 'harness_refine' %}{{ card.authority.actor | identity }} suggested this change — the decision is yours.{% else %}This is Lightwork's suggestion — the decision is yours.{% endif %}</strong>
             Your decision applies only to exactly what is described here.</p>
           <dl class="approval-card-grid">
             <div><dt>What it changes</dt><dd>{{ card.target.label }}</dd></div>
