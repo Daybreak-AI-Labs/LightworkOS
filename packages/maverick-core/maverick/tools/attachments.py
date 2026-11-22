@@ -112,8 +112,10 @@ def read_attachment_tool(world, goal_id: int | None, sandbox=None) -> Tool:
                      "to get every line containing a phrase, or `offset` to read on. "
                      "For a CSV file, pass `sql`: "
                      "one read-only SELECT over the table `data` (its columns are the "
-                     "header row). Use it for totals, counts and averages instead of "
-                     "adding numbers yourself."),
+                     "header row). Use it for totals, counts, averages and per-row "
+                     "calculations instead of working numbers out yourself, for example "
+                     "`SELECT name, ROUND(rate*(MIN(hours,40)+MAX(hours-40,0)*1.5),2) AS pay "
+                     "FROM data` or `SELECT dept, SUM(amount) FROM data GROUP BY dept`."),
         input_schema={"type": "object",
                       "properties": {"id": {"type": "integer"},
                                      "sql": {"type": "string",

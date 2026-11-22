@@ -238,3 +238,22 @@ def test_orchestrator_writes_a_requested_document_as_its_answer():
     text = select_base_template(role="orchestrator", depth=0, max_depth=3, coding_enabled=False)
     assert "Download Word document" in text
     assert "do not write a script" in text.lower()
+
+
+def test_agents_compute_figures_over_the_data_with_one_tool_call():
+    # Live: twice on a real payroll file, agents typed per-row overtime
+    # arithmetic into `compute` and got rows wrong (once 4 of 8), while one
+    # SELECT over the attached CSV gives every figure exactly.
+    from maverick.agent import select_base_template
+
+    for role in ("orchestrator", "analyst"):
+        text = select_base_template(role=role, depth=0 if role == "orchestrator" else 1,
+                                    max_depth=3, coding_enabled=False)
+        assert "one tool call" in text and "per-row" in text, role
+
+
+def test_read_attachment_shows_a_per_row_calculation():
+    from maverick.tools.attachments import read_attachment_tool
+
+    description = read_attachment_tool(None, None).description
+    assert "MIN(" in description and "GROUP BY" in description
