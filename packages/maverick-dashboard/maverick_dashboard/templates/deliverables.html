@@ -168,7 +168,7 @@
             {% if it.gate %}<span class="badge" title="Needs {{ it.gate|humanize|lower }} before it is acted on">Needs {{ it.gate|humanize|lower }}</span>{% endif %}
           </div>
           <p class="muted dlv-card__meta">
-            {%- if it.consumers %}For {{ it.consumers|map('humanize')|join(', ') }}{% else %}Not assigned to anyone yet{% endif -%}
+            {%- if it.consumers %}For {{ it.consumers|map('job_title')|join(', ') }}{% else %}Not assigned to anyone yet{% endif -%}
             {%- if it.cadence %} · {{ it.cadence|humanize }}{% endif -%}
             {%- if it.shape %} · {{ it.shape|humanize }}{% endif -%}
           </p>
