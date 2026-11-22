@@ -237,7 +237,7 @@ def test_with_a_workspace_selected_the_owner_authenticator_form_reaches_its_rout
     assert page.status_code == 200, page.text
     assert 'name="_expected_tenant" value="tenant-a"' in page.text
     refused = workspace.post("/account/owner-authenticator/setup",
-                             data={"password": "not the owner passphrase at all", "_expected_tenant": "tenant-a"})
+                             data={"password": "not the owner passphrase at all", "_expected_tenant": "tenant-a"})  # pragma: allowlist secret - synthetic wrong passphrase
     assert refused.status_code == 401, refused.text  # the passphrase check ran, not the stale-tab refusal
 
 
