@@ -1480,6 +1480,17 @@ def require_page_visible(request: Request, path: str) -> None:
         raise HTTPException(status_code=403, detail="this page is not enabled for your role")
 
 
+# Public submission routes write to the workspace their link names (a form
+# token, a rights-request page), never to the visitor's selected workspace, and
+# accept submissions from people without a session. The stale-tab check has
+# nothing to protect there; it only refused a signed-in person testing a form.
+_PUBLIC_SUBMISSION_ROUTES = frozenset({
+    "/form/{token}",
+    "/api/v1/public/rights/{slug}/requests",
+    "/api/v1/public/rights/verify/{token}",
+})
+
+
 async def enforce_expected_workspace_tenant(
     request: Request = None,  # type: ignore[assignment]
 ) -> None:
@@ -1493,6 +1504,9 @@ async def enforce_expected_workspace_tenant(
     explicit authority paths and are not made dependent on browser state.
     """
     if request is None or request.method in _CSRF_SAFE_METHODS:
+        return
+    route = request.scope.get("route")
+    if getattr(route, "path", None) in _PUBLIC_SUBMISSION_ROUTES:
         return
     expected = str(
         getattr(request.state, "workspace_expected_tenant", "") or ""
