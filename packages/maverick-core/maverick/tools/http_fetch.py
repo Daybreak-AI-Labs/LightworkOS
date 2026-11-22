@@ -1561,7 +1561,10 @@ def _scan_fetched(rendered: str) -> tuple[str, str]:
     except Exception:  # fail-open: scanning is a floor, never a hard dep
         return rendered, ""
     result = scan_remote_content(rendered)
-    if not result.suspicious:
+    # Zero-width joiners and direction marks are routine on real pages (every
+    # Wikipedia article has them): they are stripped, but only injection text
+    # or hidden tag characters, which can carry a whole instruction, warn.
+    if result.score < result.threshold and "tag_block" not in result.removed_unicode:
         return result.cleaned, ""
     bits: list[str] = []
     if result.matched_patterns:
