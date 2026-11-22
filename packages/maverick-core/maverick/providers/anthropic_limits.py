@@ -5,6 +5,14 @@ Cost admission and request construction use the same current configuration.
 from __future__ import annotations
 
 
+#: ``thinking_budget`` value meaning "send no thinking at all, and do not raise
+#: max_tokens for thinking headroom". The budget fit uses it when a task's
+#: remaining spending limit cannot pay for thinking headroom but can pay for a
+#: plain answer. Providers that map a budget to a reasoning setting treat any
+#: value <= 0 as "none".
+THINKING_OFF = -1
+
+
 def _adaptive_max_tokens_floor() -> int:
     """Headroom ceiling for AUTO-adaptive thinking (Opus 4.7/4.8, no explicit
     thinking_budget). Adaptive thinking bills as output (~5x input) and can
@@ -50,6 +58,8 @@ def effective_max_tokens(model_id: str, max_tokens: int,
     ids or "provider:model" specs.
     """
     mid = (model_id or "").split(":", 1)[-1]
+    if thinking_budget is not None and thinking_budget < 0:
+        return max_tokens
     if thinking_budget and thinking_budget > 0:
         return max(max_tokens, thinking_budget + 1024)
     if _is_opus_adaptive(mid):

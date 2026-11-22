@@ -584,7 +584,8 @@ class AnthropicClient:
         # For 4.6 and 4.7 models, interleaved is automatic in adaptive
         # mode — no header needed. Note: even WITHOUT thinking_budget,
         # callers may want adaptive default on Opus 4.7. Surface that:
-        if is_opus_47 and "thinking" not in kwargs:
+        thinking_off = thinking_budget is not None and thinking_budget < 0
+        if is_opus_47 and "thinking" not in kwargs and not thinking_off:
             # Opus 4.7 with no explicit thinking spec: let the model
             # decide via adaptive. This matches the docs' "adaptive is
             # the only supported mode" guidance.
@@ -626,6 +627,12 @@ class AnthropicClient:
         # maverick.effort.effort_for_role, but provider failover can carry a
         # primary model's effort to a lower-ceiling fallback. Defence-in-depth:
         # validate and re-clamp for the actual model so a stray effort never 400s.
+        if thinking_off:
+            # The remaining spending limit only pays for a short plain answer.
+            # On Opus 5.x and Fable, leaving `thinking` out still runs adaptive
+            # thinking, so lowest effort is what keeps the small allowance for
+            # the answer (Opus 4.7/4.8 already think less without the field).
+            effort = "low"
         if effort:
             from ..effort import effort_for_model
             model_effort = effort_for_model(effort, model_id)

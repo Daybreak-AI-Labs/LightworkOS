@@ -367,10 +367,72 @@ def test_the_fit_never_goes_below_a_usable_answer_or_above_the_request():
     spec = "anthropic:claude-sonnet-4-6"
     messages = [{"role": "user", "content": "hi"}]
     roomy = Budget(max_dollars=100.0)
-    assert _fit_max_tokens_to_budget(roomy, spec, "s", messages, None, 4096, None) == 4096
-    assert _fit_max_tokens_to_budget(None, spec, "s", messages, None, 4096, None) == 4096
-    assert _fit_max_tokens_to_budget(Budget(), spec, "s", messages, None, 4096, None) == 4096
+    assert _fit_max_tokens_to_budget(roomy, spec, "s", messages, None, 4096, None) == (4096, None)
+    assert _fit_max_tokens_to_budget(None, spec, "s", messages, None, 4096, None) == (4096, None)
+    assert _fit_max_tokens_to_budget(Budget(), spec, "s", messages, None, 4096, None) == (4096, None)
     tiny = Budget(max_dollars=_estimate_call_cost(spec, "s", messages, None, 500))
-    # Room for fewer than 1,024 output tokens: unchanged, so the reservation
-    # refuses the call with the usual stop message.
-    assert _fit_max_tokens_to_budget(tiny, spec, "s", messages, None, 4096, None) == 4096
+    # Room for fewer than 1,024 output tokens: the smallest step, which the
+    # reservation refuses, so the stop message quotes the cheapest next step.
+    from maverick.providers.anthropic_limits import THINKING_OFF
+
+    assert _fit_max_tokens_to_budget(tiny, spec, "s", messages, None, 4096, None) == (1024, THINKING_OFF)
+    with pytest.raises(BudgetExceeded):
+        tiny.reserve(_estimate_call_cost(spec, "s", messages, None, 1024, thinking_budget=THINKING_OFF))
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("spec,thinking", [
+    ("anthropic:claude-opus-5-5", None),        # adaptive thinking is added for every call
+    ("anthropic:claude-sonnet-4-6", 8000),      # a role that asks for 8,000 thinking tokens
+])
+def test_a_thinking_model_drops_thinking_to_fit_a_small_cap(monkeypatch, asynchronous, spec, thinking):
+    # Thinking headroom (the 8,192-token adaptive floor, or budget + 1,024)
+    # cannot be fitted down, so a small task limit refused every call on a
+    # thinking model before any work ran. The call now runs without thinking
+    # when only that fits; the reservation still holds the cap.
+    import maverick.llm as llm_mod
+    from maverick.llm import _estimate_call_cost
+    from maverick.providers.anthropic_limits import THINKING_OFF
+
+    sent = []
+
+    class Client:
+        def complete(self, *, budget, **kwargs):
+            sent.append((kwargs["max_tokens"], kwargs["thinking_budget"]))
+            budget.record_tokens(10, 5, model=spec)
+            return _SelfHostedClient._resp()
+
+        async def complete_async(self, **kwargs):
+            return self.complete(**kwargs)
+
+    llm = llm_mod.LLM(model=spec)
+    monkeypatch.setattr(llm, "_get_client", lambda provider: Client())
+    messages = [{"role": "user", "content": "Reply with one word."}]
+    with_thinking = _estimate_call_cost(spec, "s", messages, None, 4096, thinking_budget=thinking)
+    budget = Budget(max_dollars=round(with_thinking * 0.5, 4))
+    result = (llm.complete_async if asynchronous else llm.complete)(
+        system="s", messages=messages, budget=budget, max_tokens=4096, thinking_budget=thinking)
+    response = asyncio.run(result) if asynchronous else result
+    assert response.text == "ok"
+    ((allowed, sent_thinking),) = sent
+    assert sent_thinking == THINKING_OFF
+    assert 1024 <= allowed <= 4096
+    assert _estimate_call_cost(spec, "s", messages, None, allowed,
+                               thinking_budget=THINKING_OFF) <= budget.max_dollars
+
+
+def test_thinking_off_sends_no_thinking_and_keeps_the_fitted_allowance():
+    from maverick.providers.anthropic_limits import THINKING_OFF, effective_max_tokens
+
+    assert effective_max_tokens("claude-opus-5-5", 2000, THINKING_OFF) == 2000
+    assert effective_max_tokens("claude-opus-5-5", 2000) == 8192
+    from maverick.providers.anthropic_provider import AnthropicClient
+
+    provider = AnthropicClient.__new__(AnthropicClient)
+    request = provider._build_request(system="s", messages=[{"role": "user", "content": "hi"}],
+                                      tools=None, max_tokens=2000, thinking_budget=THINKING_OFF,
+                                      model="claude-opus-5-5")
+    assert "thinking" not in request
+    assert request["max_tokens"] == 2000
+    # Opus 5.x thinks even without the field; lowest effort keeps the answer room.
+    assert request["output_config"]["effort"] == "low"
