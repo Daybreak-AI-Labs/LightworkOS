@@ -213,7 +213,7 @@ python-docx==1.2.0
 python-socks==3.2.1
 python-telegram-bot==22.8
 qdrant-client==1.20.0
-redis==5.3.1
+redis==8.1.0
 requests-toolbelt==1.0.0
 slack-sdk==3.47.0
 sympy==1.14.0
