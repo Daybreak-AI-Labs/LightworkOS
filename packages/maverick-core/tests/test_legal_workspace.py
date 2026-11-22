@@ -271,11 +271,15 @@ def test_failed_provider_attempt_is_retained_without_automatic_retry(legal, monk
 
 def test_access_audit_failure_does_not_release_matter_details(legal, monkeypatch):
     row = setup_matter(legal)
+    material = legal.prepare("create_matter", MATTER)
+    legal.execute(material, "recover-audit")
     monkeypatch.setattr(audit, "audit_event", lambda *args, **kwargs: False)
     with pytest.raises(RuntimeError, match="access"):
         legal.get(row["id"])
     with pytest.raises(RuntimeError, match="access"):
         legal.overview()
+    with pytest.raises(RuntimeError, match="access"):
+        legal.recover(material, "recover-audit")
 
 
 def test_revoked_authority_prevents_prepared_worker_from_dispatching(legal, monkeypatch):

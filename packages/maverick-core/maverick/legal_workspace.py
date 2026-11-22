@@ -333,6 +333,7 @@ class LegalService:
             return None
         if receipt["digest"] != digest(material):
             raise RecordConflict("This action reference belongs to different work.")
+        self.record_access("legal_original_result_read", matter_id=identity, revision=row["revision"])
         return clean(row)
 
     def execute(self, material, operation_id):
