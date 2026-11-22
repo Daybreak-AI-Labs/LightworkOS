@@ -30,7 +30,10 @@ Lightwork does not verify that mailbox. Keep invitation links private.
 The owner can sign in again on this computer at `/auth/local-login`. Invitees
 use their single-use invitation and its expiring session. Someone who already
 has a sign-in cannot be sent another invitation; if they forget their
-passphrase, the owner resets it from **Users**. In **Workspaces**, create and select the
+passphrase, the owner resets it from **Users**. Anyone who signs in with a
+passphrase can change it under **Your account → Change your passphrase**: they
+enter the current one (and, for an owner with an authenticator app, a code), and
+every other browser where they are signed in is signed out. In **Workspaces**, create and select the
 workspace, then grant each colleague workspace permissions and department
 access in **Users**. Project reviewers receive only explicitly shared captured
 results; reviewing one does not authorize execution of the underlying task.
