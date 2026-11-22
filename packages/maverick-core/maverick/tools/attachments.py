@@ -23,6 +23,12 @@ def list_attachments_tool(world, goal_id: int | None) -> Tool:
             f"{a.id}  {a.filename}  {a.mime}  {a.size_bytes}B  {a.path}"
             for a in atts
         ]
+        # The paths are storage locations outside the workspace: file tools
+        # such as spreadsheet_read refuse them, and an agent that got that
+        # refusal computed a payroll table by hand and got a row wrong.
+        lines.append("Read text, PDF and CSV files with read_attachment and the id. For a CSV, "
+                     "pass `sql` (one SELECT over the table `data`) to compute totals or "
+                     "per-row values exactly. Only view_image and read_pdf accept these paths.")
         return "\n".join(lines)
 
     return Tool(
