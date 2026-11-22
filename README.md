@@ -119,7 +119,7 @@ API.
 | Starter teams | Every team's sample produces exactly its expected findings, with provenance, no AI calls and no outside effects | [`test_starter_teams.py`](packages/maverick-core/tests/test_starter_teams.py) |
 | Governance guarantees (`python proof/run_proof.py`) | **7 of 7** pass, including no money-moving tool in any finance specialist and segregation of duties | [proof/RESULTS.md](proof/RESULTS.md) |
 | Unsafe actions (governance frontier benchmark) | **72 of 72** scripted unsafe actions blocked; **48 of 48** harmless look-alikes allowed | [results](benchmarks/GOVERNANCE_FRONTIER_RESULTS.md) |
-| Cost of the controls (harness overhead benchmark) | **No** extra model calls or tokens; identical answers in **36 of 36** pairs; median **17.87 ms** per task | [results](benchmarks/HARNESS_OVERHEAD_RESULTS.md) |
+| Cost of the controls (harness overhead benchmark) | **No** extra model calls or tokens; identical answers in **36 of 36** pairs; median **50.07 ms** per task | [results](benchmarks/HARNESS_OVERHEAD_RESULTS.md) |
 | Prompt-attack screening (Agent Shield) | **83.9%** of 31 held-out attacks caught at the medium threshold the dashboard and setup wizard choose, **71.0%** at the high threshold used when no settings file exists; 2 of 32 harmless prompts flagged at both | [results](benchmarks/security/RESULTS.md) |
 | Engineering | **47,000+** tests; more than 20 CI gates beyond the linter | [CONTRIBUTING.md](CONTRIBUTING.md#lint-and-ci-gates) |
 
