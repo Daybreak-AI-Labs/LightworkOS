@@ -226,3 +226,15 @@ def test_the_planner_sends_an_approval_step_to_one_child_and_never_retries_a_rej
     text = select_base_template(role="orchestrator", depth=0, max_depth=2, coding_enabled=False)
     assert "goes to ONE child only" in text
     assert "A step a person rejected stays undone" in text
+
+
+def test_orchestrator_writes_a_requested_document_as_its_answer():
+    # Live: asked for an onboarding checklist "as a Word document", the
+    # orchestrator wrote a Python script to build a .docx and then waited on a
+    # shell approval. The answer page already downloads any answer as an
+    # editable Word document and prints it, so the content is the work.
+    from maverick.agent import select_base_template
+
+    text = select_base_template(role="orchestrator", depth=0, max_depth=3, coding_enabled=False)
+    assert "Download Word document" in text
+    assert "do not write a script" in text.lower()
