@@ -4013,6 +4013,15 @@ class Agent:
             )
             execution_status = _tool_status(output)
             explicit_state = output.state if isinstance(output, ToolResultText) else None
+            if shield is not None and isinstance(output, str):
+                # Invisible characters are cleaned, not grounds to withhold
+                # the whole result (see unicode_filter.clean_invisible).
+                from .safety.unicode_filter import clean_invisible
+
+                cleaned = clean_invisible(output)
+                if cleaned is not output:
+                    output = (ToolResultText(cleaned, explicit_state)
+                              if explicit_state is not None else cleaned)
             if shield is not None:
                 try:
                     out_verdict = shield.scan_output(output)

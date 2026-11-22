@@ -110,6 +110,35 @@ def normalize(text: str, *, nfkc: bool = True) -> UnicodeScanResult:
     return UnicodeScanResult("".join(cleaned_chars), removed, cats_seen)
 
 
+# Separators in the same ranges that are ordinary typography, not smuggling:
+# kept as the space or line break they stand for.
+_READABLE_SEPARATORS = {0x2028: "\n", 0x2029: "\n\n", 0x202F: " "}
+
+
+def _invisible(cp: int) -> bool:
+    return (0x200B <= cp <= 0x200F or 0x202A <= cp <= 0x202E
+            or 0x2060 <= cp <= 0x206F or cp in (0xFEFF, 0x061C)
+            or _TAG_BLOCK_START <= cp <= _TAG_BLOCK_END)
+
+
+def clean_invisible(text: str) -> str:
+    """``text`` with invisible and direction-control characters removed and
+    Unicode line/narrow-space separators turned into plain ones.
+
+    Used on tool output before Shield screens it. Web pages routinely contain
+    these characters (a narrow no-break space in a price, a joiner inside an
+    emoji, a direction mark around Arabic), and the screening rule for them
+    withheld whole pages. Removing them is also the safer handling: text
+    smuggled in the tag block disappears, and a word split with zero-width
+    characters to dodge the rules is rejoined and screened as written. No
+    NFKC here, so ordinary content is otherwise unchanged. Returns ``text``
+    itself when there is nothing to clean."""
+    if not text or not any(_invisible(ord(ch)) or ord(ch) in _READABLE_SEPARATORS for ch in text):
+        return text
+    return "".join(_READABLE_SEPARATORS.get(ord(ch), "") if (_invisible(ord(ch)) or ord(ch) in _READABLE_SEPARATORS)
+                   else ch for ch in text)
+
+
 def has_dangerous_unicode(text: str) -> bool:
     """Quick boolean check; doesn't allocate the cleaned string."""
     if not text:
