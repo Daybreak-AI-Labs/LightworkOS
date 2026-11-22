@@ -3631,6 +3631,7 @@ class PostgresWorldModel:
         statuses: tuple[str, ...] = ("active",),
         resolved_window_seconds: float | None = None,
         exact_tenant: bool = False,
+        goal_ids: object = None,
     ) -> int:
         """Mark stale active/pending goals as 'blocked' after a crash.
 
@@ -3644,12 +3645,21 @@ class PostgresWorldModel:
         Only ``active`` goals are reclaimed by default so queued ``pending``
         goals are left for their dispatcher; a caller may ask for both. ``exact_tenant``
         excludes compatibility-mode NULL rows from that background sweep.
-        Returns the number of rows reclaimed.
+        ``goal_ids`` limits the reclaim to those goals (a process stopping the
+        runs it is abandoning). Returns the number of rows reclaimed.
         """
         statuses = tuple(statuses)
         if not statuses or not set(statuses) <= {"active", "pending"}:
             raise ValueError("orphan reclaim statuses must be active and/or pending")
         marks = ", ".join("%s" for _ in statuses)
+        if goal_ids is not None:
+            only = tuple(int(goal_id) for goal_id in goal_ids)  # type: ignore[attr-defined]
+            if not only:
+                return 0
+            # Every statement below filters with ``status IN ({marks})`` and
+            # binds ``*statuses`` there, so the id list rides on that clause.
+            marks += ") AND id IN (" + ", ".join("%s" for _ in only)
+            statuses = (*statuses, *only)
         from ..world_model import reclaim_window_seconds
         max_age_seconds = (reclaim_window_seconds(default=max_age_seconds)
                            if resolved_window_seconds is None else float(resolved_window_seconds))
