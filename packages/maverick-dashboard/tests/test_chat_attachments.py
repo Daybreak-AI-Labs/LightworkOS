@@ -113,7 +113,7 @@ def test_chat_searches_published_specialists_instead_of_shipping_the_roster(monk
     assert found.status_code == 200 and found.headers["cache-control"].startswith("no-store")
     body = found.json()
     assert body["context"] == context and 0 < len(body["items"]) <= 5 and body["total"] >= len(body["items"])
-    assert all(set(item) == {"value", "label", "revision"} for item in body["items"])
+    assert all(set(item) == {"value", "label", "revision", "ready", "needs"} for item in body["items"])
     assert all("invoice" in (item["label"] + item["value"]).casefold() for item in body["items"])
     assert client.get("/api/v1/chat/specialists", params={"limit": 51}).status_code == 422
 
@@ -214,3 +214,30 @@ def test_only_the_person_who_sent_a_draft_can_discard_it(monkeypatch, tmp_path):
     r = _client().post(f"/chat/goal/{goal_id}/discard-draft", headers=_ORIGIN, follow_redirects=False)
     assert r.status_code in (403, 404)
     assert dash._world().get_goal(goal_id).status == "draft"
+
+
+def test_chat_says_which_specialists_cannot_start_before_a_task_is_sent(monkeypatch, tmp_path):
+    # Half the roster needs setup (for example Web search). Chat used to let a
+    # person pick one and only then say "Can't start"; the choice now carries
+    # the same readiness the Agent Factory shows.
+    import html
+
+    from maverick.domain import enabled_domains
+    from maverick.domain_edit import workflow_readiness
+
+    _prep(monkeypatch, tmp_path)
+    client = _client()
+    profiles = enabled_domains()
+    body = client.get("/api/v1/chat/specialists", params={"limit": 50}).json()
+    for item in body["items"]:
+        readiness = workflow_readiness(profiles[item["value"]])
+        assert item["ready"] is (readiness["state"] == "action_ready")
+        assert item["needs"] == ("" if item["ready"] else readiness["label"])
+    blocked = next((name for name, profile in sorted(profiles.items())
+                    if workflow_readiness(profile)["state"] == "needs_setup"), None)
+    if blocked is None:
+        return  # every specialist can start in this environment
+    page = client.get("/chat", params={"specialist": blocked}).text
+    picker = page.split('id="chat-specialist"', 1)[1].split("</select>", 1)[0]
+    needs = workflow_readiness(profiles[blocked])["label"]
+    assert f'data-needs="{html.escape(needs)}"' in picker

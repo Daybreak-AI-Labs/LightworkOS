@@ -81,3 +81,47 @@ def test_shutdown_racing_with_slot_admission_does_not_start_an_orphan_goal(monke
     assert runner.inflight_goals() == 0 and not runner._accepting_goals
     runner.open_goal_admission()
     assert runner._accepting_goals
+
+
+def test_a_shutdown_stops_the_runs_it_abandons_at_once(tmp_path, monkeypatch):
+    # After the drain runs out, the goals this process still runs are recorded
+    # as stopped by the restart right away, instead of showing "Working" until
+    # the next process's orphan window (a minute) passes.
+    from maverick.stop_reasons import explain_stop
+    from maverick.world_model import WorldModel
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "home"))
+    world = WorldModel(tmp_path / "world.db")
+    monkeypatch.setattr("maverick.world_model.open_world", lambda *a, **k: world)
+    monkeypatch.setattr("maverick.world_model.close_world_if_owned", lambda w: None)
+    running = world.create_goal("running here")
+    world.set_goal_status(running, "active")
+    queued = world.create_goal("queued here")
+    elsewhere = world.create_goal("running in another process")
+    world.set_goal_status(elsewhere, "active")
+    finished = world.create_goal("finished just now")
+    world.set_goal_status(finished, "done", result="all done")
+    with runner._submitted_here(running), runner._submitted_here(queued), \
+            runner._submitted_here(finished), runner._submitted_here(99, db_path=tmp_path / "other.db"):
+        assert runner.stop_runs_interrupted_by_shutdown() == 2
+    for goal_id in (running, queued):
+        goal = world.get_goal(goal_id)
+        assert goal.status == "blocked"
+        assert explain_stop(goal.result, status="blocked").kind == "process_restart"
+    assert world.get_goal(elsewhere).status == "active"   # not ours: the orphan window decides
+    assert world.get_goal(finished).status == "done"
+    assert runner.stop_runs_interrupted_by_shutdown() == 0  # nothing held any more
+
+
+def test_a_world_reclaim_can_be_limited_to_named_goals(tmp_path):
+    from maverick.world_model import WorldModel
+
+    world = WorldModel(tmp_path / "world.db")
+    mine, other = world.create_goal("mine"), world.create_goal("other")
+    for goal_id in (mine, other):
+        world.set_goal_status(goal_id, "active")
+    assert world.reclaim_orphan_goals(statuses=("active", "pending"), resolved_window_seconds=0,
+                                      goal_ids=[mine]) == 1
+    assert world.get_goal(mine).status == "blocked" and world.get_goal(other).status == "active"
+    assert world.reclaim_orphan_goals(resolved_window_seconds=0, goal_ids=[]) == 0
+    assert world.get_goal(other).status == "active"

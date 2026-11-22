@@ -139,7 +139,8 @@ class TestErrorMessageVoice:
         from maverick.sandbox import LocalBackend
         from maverick.world_model import WorldModel
 
-        fake_llm.scripted = [make_llm_response(text="")]  # empty -> error
+        # One empty reply is asked for again; a second one is an error.
+        fake_llm.scripted = [make_llm_response(text=""), make_llm_response(text="")]
         world = WorldModel(tmp_path / "w.db")
         gid = world.create_goal("err", "")
         out = await run_goal(

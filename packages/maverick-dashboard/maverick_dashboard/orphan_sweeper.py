@@ -161,6 +161,7 @@ def reclaim_registered_sqlite(
     world_factory: Callable,
     *,
     resolved_window_seconds: float | None = None,
+    statuses: tuple[str, ...] = ("active",),
 ) -> int:
     """Visit existing world files for registered UI workspaces in bounded batches.
 
@@ -168,6 +169,10 @@ def reclaim_registered_sqlite(
     world is only one of the worlds used by chat, so sweeping that file alone
     leaves crashed workspace chats active forever. Do not create a missing
     tenant database merely to inspect it.
+
+    ``statuses``: the periodic sweep keeps the default (a live process may hold
+    a queued goal); start-up passes ``runner.startup_reclaim_statuses()``, as
+    for the default world, so a stranded queued goal is recovered too.
     """
     from maverick.paths import tenant_scope
     from maverick.workspace import Workspace
@@ -188,7 +193,7 @@ def reclaim_registered_sqlite(
             with tenant_scope(tenant=tenant_id):
                 if Workspace(tenant_id).db_path.is_file():
                     reclaimed += world_factory().reclaim_orphan_goals(
-                        statuses=("active",), resolved_window_seconds=window,
+                        statuses=statuses, resolved_window_seconds=window,
                     )
         except Exception:
             # A tenant-local SQLite failure must not starve every later tenant.

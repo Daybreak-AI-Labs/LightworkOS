@@ -1633,6 +1633,11 @@ class _FinalVerification:
     skipped: bool = False
     skip_reason: str = ""
 
+# Shown on the task page when the model twice returned nothing.
+EMPTY_REPLY_ERROR = ("The AI model sent an empty reply twice, so Lightwork stopped. "
+                     "Try again. If it keeps happening, choose a different AI model for this task.")
+
+
 def _final_uncertainty_reasons(
     *,
     verifier_rejected: bool,
@@ -2099,6 +2104,8 @@ class Agent:
         # give a marker-less model one chance to comply before accepting its
         # answer un-nudged.
         self._final_marker_nudge_used = False
+        # Whether an empty reply was already asked for again (once per agent).
+        self._empty_reply_nudge_used = False
 
     def _resolve_capability(self, explicit):
         """Pick this agent's capability grant.
@@ -6190,11 +6197,22 @@ class Agent:
         """A reply with text but no FINAL marker and no tool calls: nudge the
         model ONCE to restate its answer with the marker; a second marker-less
         reply is accepted as the answer but reports that verification never
-        ran, never the default confidence of 1.0. An empty reply is an error."""
+        ran, never the default confidence of 1.0. An empty reply is asked for
+        again once (models occasionally return an empty turn); a second empty
+        reply stops with a plain reason."""
         if not resp.text:
-            return AgentResult(
-                error="empty response with no tools", role=self.role, name=self.name
-            )
+            if not self._empty_reply_nudge_used:
+                self._empty_reply_nudge_used = True
+                st.messages.append({
+                    "role": "user",
+                    "content": (
+                        "Your last reply was empty. Continue working on the goal: "
+                        "use a tool if you need one, or end your turn with a line "
+                        "starting `FINAL:` followed by your complete answer."
+                    ),
+                })
+                return _NEXT_TURN
+            return AgentResult(error=EMPTY_REPLY_ERROR, role=self.role, name=self.name)
         if not self._final_marker_nudge_used:
             self._final_marker_nudge_used = True
             st.messages.append({

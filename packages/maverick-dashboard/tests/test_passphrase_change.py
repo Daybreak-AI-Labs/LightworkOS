@@ -268,3 +268,45 @@ def test_signing_out_works_with_a_workspace_selected(workspace, monkeypatch):
     out = browser.post("/auth/logout", data={"_expected_tenant": "tenant-a"})
     assert out.status_code == 303, out.text
     assert browser.get("/api/v1/features/modules").status_code == 401
+
+
+def test_a_signed_in_person_can_submit_a_public_form_with_a_workspace_selected(workspace, monkeypatch):
+    # A public form writes to the workspace its link names, never to the
+    # visitor's selected one, and anyone without a session may submit it. The
+    # stale-tab check refused a signed-in person (an owner testing their own
+    # form) because the public page does not send the selected workspace.
+    from maverick.flow import store as flow_store
+    from maverick.flow.ir import Flow, FlowNode
+    from maverick.paths import reset_tenant, set_tenant
+    from maverick_dashboard import event_triggers_store
+
+    monkeypatch.setenv("MAVERICK_EVENT_TRIGGERS", "1")
+    monkeypatch.setenv("MAVERICK_FLOWS", "1")
+    _workspace_selected(monkeypatch)
+    scope = set_tenant("tenant-a")
+    try:
+        saved = flow_store.save_flow(Flow(
+            id="public-form", name="Public form", start="a",
+            nodes={"a": FlowNode(id="a", kind="agent", brief="Review the submission")},
+            inputs=[{"key": "name", "type": "text"}]))
+        release = flow_store.publish_flow(saved.id, expected_version=saved.version,
+                                          expected_revision=saved.revision)
+    finally:
+        reset_tenant(scope)
+    event_triggers_store.set_trigger(
+        "public-intake", "", "form", config={"token": "signup"}, flow=saved.id,
+        flow_owner=saved.owner, flow_revision=release["release_id"], tenant="tenant-a", owner="")
+    for sent in ({"json": {"name": "Ada"}}, {"data": {"name": "Ada"}}):
+        answer = workspace.post("/form/signup", **sent)
+        assert answer.status_code != 409, answer.text
+    # The person's own pages still refuse a stale tab.
+    assert workspace.post("/auth/logout").status_code == 409
+
+
+def test_the_stale_tab_exemption_is_exactly_the_public_submission_routes():
+    from maverick_dashboard.app import _PUBLIC_SUBMISSION_ROUTES
+    from maverick_dashboard.public_rights_api import PUBLIC_API_PREFIX
+
+    exempt = set(_PUBLIC_SUBMISSION_ROUTES)
+    assert exempt == {"/form/{token}", PUBLIC_API_PREFIX + "/{slug}/requests",
+                      PUBLIC_API_PREFIX + "/verify/{token}"}

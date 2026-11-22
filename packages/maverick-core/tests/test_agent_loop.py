@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 from maverick import killswitch
-from maverick.agent import Agent, AgentResult
+from maverick.agent import EMPTY_REPLY_ERROR, Agent, AgentResult
 from maverick.blackboard import Blackboard
 from maverick.budget import Budget, BudgetExceeded
 from maverick.llm import LLMResponse, ToolCall
@@ -134,11 +134,23 @@ class TestAgentLoop:
         assert result.final is not None
 
     @pytest.mark.asyncio
-    async def test_empty_response_yields_error(self, ctx, fake_llm, make_llm_response):
-        fake_llm.scripted = [make_llm_response(text="", tool_calls=[])]
+    async def test_one_empty_response_is_asked_again(self, ctx, fake_llm, make_llm_response):
+        # Models occasionally return an empty turn; one must not stop the task.
+        fake_llm.scripted = [make_llm_response(text="", tool_calls=[]),
+                             make_llm_response(text="FINAL: the answer is 42")]
         agent = Agent(ctx=ctx, role="researcher", brief="trivial")
         result = await agent.run()
-        assert result.error == "empty response with no tools"
+        assert result.error is None
+        assert result.final and "42" in result.final
+
+    @pytest.mark.asyncio
+    async def test_repeated_empty_responses_stop_with_a_plain_reason(self, ctx, fake_llm, make_llm_response):
+        fake_llm.scripted = [make_llm_response(text="", tool_calls=[]),
+                             make_llm_response(text="", tool_calls=[])]
+        agent = Agent(ctx=ctx, role="researcher", brief="trivial")
+        result = await agent.run()
+        assert result.error == EMPTY_REPLY_ERROR
+        assert "empty" in result.error and "tools" not in result.error
 
     @pytest.mark.asyncio
     async def test_marker_less_response_is_nudged_then_verified(

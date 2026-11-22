@@ -260,6 +260,9 @@ _ACQUIRE_TIMEOUT = env_float("MAVERICK_GOAL_ACQUIRE_TIMEOUT", 300.0)
 
 
 _submitted: dict[tuple[str, int], int] = {}
+# The database each held run uses (None: the default world), so a shutdown
+# stops only runs whose goal row it can find again.
+_submitted_dbs: dict[tuple[str, int], list] = {}
 _submitted_lock = threading.Lock()
 
 
@@ -270,12 +273,13 @@ def _submitted_key(goal_id: int) -> tuple[str, int]:
 
 
 @contextlib.contextmanager
-def _submitted_here(goal_id: int):
+def _submitted_here(goal_id: int, db_path: Path | None = None):
     """Hold this goal as handed to this process's runner until its run returns,
     including while it waits for an executor thread or a concurrency slot."""
     key = _submitted_key(goal_id)
     with _submitted_lock:
         _submitted[key] = _submitted.get(key, 0) + 1
+        _submitted_dbs.setdefault(key, []).append(db_path)
     try:
         yield
     finally:
@@ -285,6 +289,43 @@ def _submitted_here(goal_id: int):
                 _submitted[key] = left
             else:
                 _submitted.pop(key, None)
+            paths = _submitted_dbs.get(key, [])
+            if db_path in paths:
+                paths.remove(db_path)
+            if not paths:
+                _submitted_dbs.pop(key, None)
+
+
+def stop_runs_interrupted_by_shutdown() -> int:
+    """Record the runs this process is abandoning as stopped by the restart.
+
+    Called when a graceful shutdown's drain runs out. These goals are run here
+    and nowhere else, so they are marked at once (the same stop the next
+    process's orphan sweep would record a minute later) instead of showing
+    "Working" until then. Only active or pending goals change: one that
+    finished or is waiting on a person keeps its state. Never raises.
+    """
+    from .paths import tenant_scope
+    from .world_model import close_world_if_owned, open_world
+
+    with _submitted_lock:
+        held = [key for key, paths in _submitted_dbs.items() if paths and all(p is None for p in paths)]
+    by_tenant: dict[str, list[int]] = {}
+    for tenant, goal_id in held:
+        by_tenant.setdefault(tenant, []).append(goal_id)
+    stopped = 0
+    for tenant, goal_ids in by_tenant.items():
+        try:
+            with tenant_scope(tenant=tenant or None):
+                world = open_world()
+                try:
+                    stopped += world.reclaim_orphan_goals(
+                        statuses=("active", "pending"), resolved_window_seconds=0, goal_ids=goal_ids)
+                finally:
+                    close_world_if_owned(world)
+        except Exception:  # noqa: BLE001 -- the next process's orphan sweep still recovers them
+            log.exception("could not record runs stopped by this shutdown")
+    return stopped
 
 
 def goal_submitted_here(goal_id: int) -> bool:
@@ -604,7 +645,7 @@ def _run_world(db_path: Path | None):
 
 def run_goal_in_thread(goal_id: int, *args: Any, **kwargs: Any) -> str | None | GoalRunUnavailable:
     """:func:`_run_goal_in_thread`, holding the goal as queued here meanwhile."""
-    with _submitted_here(goal_id):
+    with _submitted_here(goal_id, kwargs.get("db_path")):
         return _run_goal_in_thread(goal_id, *args, **kwargs)
 
 
@@ -1071,7 +1112,7 @@ async def start_goal_observed_async(
         **({"db_path": db_path} if db_path is not None else {}),
     )
     try:
-        with _submitted_here(goal_id):  # queued for an executor thread counts too
+        with _submitted_here(goal_id, db_path):  # queued for an executor thread counts too
             observation = await loop.run_in_executor(_goal_executor, call)
     except Exception:
         # An exception can follow a remote acceptance or an effect. Preserve the

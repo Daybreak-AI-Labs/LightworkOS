@@ -2,6 +2,8 @@
 next step and a link; raw exception text is admin-only technical detail."""
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from maverick.stop_reasons import RAW_TEXT_LIMIT, exception_stop_text, explain_stop
 
@@ -342,3 +344,19 @@ def test_dashboard_stop_details_leave_the_terminal_resume_command_to_the_cli(det
     error = explain_stop("Stopped: the assistant ran into an error and couldn't finish.\n"
                          "You can try again with: maverick resume 7")
     assert "maverick resume" not in error.technical
+
+
+def test_a_run_waiting_on_a_decision_points_to_approvals_not_to_try_again():
+    # "Try again" starts the task over and drops the pending choice; the run
+    # continues by itself once someone chooses on Approvals.
+    from maverick.decision_requests import waiting_text
+
+    one = explain_stop(waiting_text([SimpleNamespace(question="Daily or weekly backups?")]),
+                       status="blocked")
+    assert one.kind == "decision_waiting"
+    assert "Daily or weekly backups?" in one.message
+    assert one.link == "/approvals" and one.link_label == "Open Approvals"
+    assert "continues" in one.action and "Try again" not in one.action
+    several = explain_stop(waiting_text([SimpleNamespace(question="a"), SimpleNamespace(question="b")]),
+                           status="blocked")
+    assert several.kind == "decision_waiting" and "2 decisions" in several.message
