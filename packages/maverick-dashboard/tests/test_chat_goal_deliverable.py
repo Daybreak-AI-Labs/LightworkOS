@@ -35,7 +35,7 @@ def test_forecast_goal_renders_as_a_deliverable_grid(tmp_path, monkeypatch):
     # Titled, gated deliverable card keyed off the pack's output contract.
     assert "13-week cash forecast" in t
     assert "Needs review</span>" in t       # plain sign-off label
-    assert "Fpa analyst" in t and "fpa_analyst" not in t
+    assert "FP&amp;A analyst" in t and "fpa_analyst" not in t
     # The result is a real table, not a <pre> dump.
     assert '<table class="deliverable__table">' in t
     assert "<th scope=\"col\">Week</th>" in t
