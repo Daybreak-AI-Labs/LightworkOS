@@ -127,3 +127,42 @@ def test_the_review_and_runtime_scripts_show_the_plain_area():
         text = (static / name).read_text(encoding="utf-8")
         assert "item.module" not in text, name
         assert "item.area" in text, name
+
+
+@pytest.mark.parametrize("query, expected", [
+    ("dark mode", "Your colour theme"),
+    ("answer style", "Writing style"),
+    ("turn off emails", "Your notifications"),
+])
+def test_everyday_wording_finds_the_setting(client, monkeypatch, query, expected):
+    # People describe a setting in their own words; a query that does not
+    # contain every word of a setting still finds the closest ones.
+    _signed_in(monkeypatch, "admin")
+    titles = [item["title"] for item in _items(client, query)]
+    assert expected in titles[:8], titles[:8]
+
+
+def test_the_rarer_word_orders_partial_matches(client, monkeypatch):
+    # "answer" appears in many settings, "style" in few: style settings come
+    # before settings that only mention answers.
+    _signed_in(monkeypatch, "admin")
+    items = _items(client, "answer style")
+    exact = [item["title"] for item in _items(client, "answer style") if "answer" in item["title"].lower() and "style" in item["title"].lower()]
+    titles = [item["title"] for item in items]
+    first_answer_only = next(i for i, title in enumerate(titles) if "answer" in title.lower() and "style" not in title.lower())
+    assert titles.index("Writing style") < first_answer_only, titles[:10]
+    assert not exact or titles[0] in exact
+
+
+def test_partial_matches_follow_every_exact_match(client, monkeypatch):
+    _signed_in(monkeypatch, "admin")
+    exact = [item["title"] for item in _items(client, "theme")]
+    mixed = [item["title"] for item in _items(client, "theme zzzunknownword")]
+    assert mixed[:len(exact)] == exact or set(exact) <= set(mixed)
+    assert _items(client, "zzzunknownword qqqnothing") == []
+
+
+def test_partial_words_match_from_the_start_of_a_word(client, monkeypatch):
+    _signed_in(monkeypatch, "admin")
+    titles = [item["title"] for item in _items(client, "dark mode")]
+    assert titles and not any("model" in title.lower() and "mode " not in title.lower() + " " for title in titles[:10]), titles[:10]
