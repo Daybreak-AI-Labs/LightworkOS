@@ -8,7 +8,8 @@
           lede='Who you are signed in as, what your role lets you do, and the limits on the
                 tools your tasks may use. Ask an administrator if something here should change.') }}
   <p><a class="btn" href="/preferences">Your preferences</a> <a class="btn btn--ghost" href="/today">Today</a> <a class="btn btn--ghost" href="/account/api-keys">Access keys for scripts and integrations</a></p>
-  {% if owner_authenticator %}<p><a class="btn btn--ghost" href="/account/owner-authenticator">Authenticator app</a></p>{% endif %}
+  {% if passphrase_change or owner_authenticator %}<p>{% if passphrase_change %}<a class="btn btn--ghost" href="/account/passphrase">Change your passphrase</a>{% endif %}
+    {% if owner_authenticator %}<a class="btn btn--ghost" href="/account/owner-authenticator">Authenticator app</a>{% endif %}</p>{% endif %}
   <section class="panel" id="fa-account" aria-labelledby="fa-account-title">
     <h2 id="fa-account-title" class="sr-only">Account details</h2>
     <p class="muted" id="fa-account-status" role="status" aria-live="polite">Loading your account…</p>

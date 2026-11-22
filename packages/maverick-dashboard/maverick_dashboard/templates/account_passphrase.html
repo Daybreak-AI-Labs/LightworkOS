@@ -1,0 +1,38 @@
+{% extends "public_base.html" %}
+{% from "_passphrase_fields.html" import styles, passphrase, script with context %}
+{% from "_back_link.html" import back_link with context %}
+{% block title %}Change your passphrase · Lightwork{% endblock %}
+{% block public_label %}Your sign-in{% endblock %}
+{% block head_extra %}{{ styles() }}{% endblock %}
+{% block content %}
+<div class="panel own">
+  <p>{{ back_link('/account', 'Your account') }}</p>
+  <h1 class="page-title">Change your passphrase</h1>
+  {% if changed %}
+    <p class="own__lede" role="status">Your passphrase was changed. Other browsers signed in as you were signed out; this one stays signed in.</p>
+    <p class="own__hint">Access keys for scripts and paired phones keep working. To end those too, use <a href="/settings/sessions">Sign out everywhere</a>.</p>
+    <div class="own__actions"><a class="btn" href="/account">Back to your account</a></div>
+  {% elif not who %}
+    <p class="own__lede">Your sign-in does not use a passphrase here. If you sign in with a company account, change your password with your company.</p>
+  {% else %}
+    <p class="own__lede">Enter your current passphrase, then the new one twice. Saving signs out every other browser where you are signed in; this one stays signed in.</p>
+    {% if who == 'owner' %}<p class="own__hint">As the owner of this installation, you can change it only on the computer running Lightwork.</p>{% endif %}
+    {% if message %}<p class="own__alert" role="alert">{{ message }}</p>{% endif %}
+    <form method="post" action="{{ page }}" id="owner-form" novalidate>
+      <input type="hidden" name="_expected_tenant" value="{{ request.state.workspace_expected_tenant | default('', true) }}">
+      <div class="own__field"><label for="current-password">Current passphrase</label>
+        <input class="input" type="password" name="current" id="current-password" maxlength="1024" required autocomplete="current-password">
+      </div>
+      {{ passphrase(new=True, label='New passphrase') }}
+      {% if needs_code %}
+      <div class="own__field"><label for="owner-code">Code from your authenticator app, or a recovery code</label>
+        <input class="input" type="text" name="code" id="owner-code" maxlength="16" required autocomplete="one-time-code">
+      </div>
+      {% endif %}
+      <div class="own__actions"><button type="submit" class="btn btn--primary">Change passphrase</button>
+        <a class="btn btn--ghost" href="/account">Cancel</a></div>
+    </form>
+    {{ script() }}
+  {% endif %}
+</div>
+{% endblock %}

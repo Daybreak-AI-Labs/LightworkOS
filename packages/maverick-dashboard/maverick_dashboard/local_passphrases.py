@@ -287,6 +287,47 @@ def login(request: Request, *, email: str, password: str) -> str:
     return mint_local_session(email, request=request)
 
 
+CURRENT_NOT_ACCEPTED = "Your current passphrase was not accepted. Nothing was changed."
+
+
+def change(email: str, current: str, prepared: dict, *, before_commit) -> None:
+    """Replace a colleague's own passphrase after checking the current one.
+
+    The current passphrase is checked exactly as :func:`login` checks it: the
+    attempt is reserved (and the account locked on the fifth) before the slow
+    hash, which runs outside the store lock. ``prepared`` comes from
+    :func:`prepare`. ``before_commit(row)`` runs under the store lock just
+    before the new hash is saved; if it raises, nothing is saved."""
+    email = _normal(email)
+    if not isinstance(current, str) or not 14 <= len(current) <= 1024:
+        raise HTTPException(401, CURRENT_NOT_ACCEPTED)
+    file_lock.ensure_private_directory(maverick_home())
+    with _LOCK, file_lock.cross_process_lock(path(), strict=True):
+        accounts = _read()
+        row = accounts.get(email)
+        if row is None:
+            raise HTTPException(404, "This account does not sign in with a passphrase here.")
+        if row["locked_until"] > time.time():
+            raise HTTPException(429, LOCKED)
+        if row["failures"] >= 5:
+            row["failures"] = 0
+        row["failures"] = min(5, row["failures"] + 1)
+        row["locked_until"] = time.time() + 60 if row["failures"] == 5 else 0
+        _write(accounts)
+        salt, expected = row["salt"], row["password_hash"]
+    if not hmac.compare_digest(local_owner._password(current, salt), expected):
+        raise HTTPException(401, CURRENT_NOT_ACCEPTED)  # the reserved attempt stands
+    with _LOCK, file_lock.cross_process_lock(path(), strict=True):
+        accounts = _read()
+        row = accounts.get(email)
+        if row is None or row["salt"] != salt or row["password_hash"] != expected:
+            raise HTTPException(409, "Your passphrase changed while this was being checked. Nothing else was changed.")
+        before_commit(dict(row))
+        row.update(salt=prepared["salt"], password_hash=prepared["password_hash"], failures=0,
+                   locked_until=0, updated_at=time.time())
+        _write(accounts)
+
+
 _ATTEMPTS = None
 _UNKNOWN: OrderedDict[str, tuple[int, float]] = OrderedDict()
 _UNKNOWN_LIMIT = 20_000
@@ -337,6 +378,6 @@ def reset_attempt_limit() -> None:
         _ATTEMPTS.reset()
 
 
-__all__ = ["ACCOUNT_EXISTS", "NOT_ACCEPTED", "NOT_INVITABLE", "TOO_MANY", "available", "emails", "has_account",
-           "limit_attempts", "login", "owner_of", "prepare", "require_same_origin", "reset_attempt_limit",
+__all__ = ["ACCOUNT_EXISTS", "CURRENT_NOT_ACCEPTED", "NOT_ACCEPTED", "NOT_INVITABLE", "TOO_MANY", "available", "emails", "has_account",
+           "change", "limit_attempts", "login", "owner_of", "prepare", "require_same_origin", "reset_attempt_limit",
            "revoke", "store"]

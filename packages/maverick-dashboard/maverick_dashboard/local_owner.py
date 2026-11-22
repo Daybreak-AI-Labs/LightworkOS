@@ -394,3 +394,46 @@ def verify_recovery(request: Request, *, email: str, password: str, flow: str, c
             row.update(failures=0, locked_until=0)
             _write(row)
         return row
+
+
+def change_passphrase(request: Request, *, current: str, prepared: dict, code: object = "",
+                      before_commit) -> dict:
+    """Replace the owner's passphrase, signed in on this computer.
+
+    The current passphrase is checked with the owner's lockout. An owner with
+    an authenticator app must also give a current code or an unused recovery
+    code; a wrong one counts toward the lock. ``prepared`` comes from
+    ``local_passphrases.prepare``. ``before_commit(row)`` runs under the owner
+    lock just before the new hash is saved; if it raises, nothing is saved.
+    Returns the saved owner record."""
+    from maverick.authority_effects import authority_effect_fence
+
+    _local(request, mutate=True)
+    _policy()
+    if not isinstance(current, str) or not 14 <= len(current) <= 1024:
+        raise HTTPException(401, "Your current passphrase was not accepted. Nothing was changed.")
+    with authority_effect_fence(), _LOCK, file_lock.cross_process_lock(path(), strict=True):
+        row = _read()
+        if row is None or row["status"] != "ready":
+            raise HTTPException(409, "Complete this computer's owner setup first.")
+        if prepared["email"] != row["email"]:
+            raise HTTPException(403, "Only the owner can change the owner's passphrase.")
+        if row["locked_until"] > time.time():
+            raise HTTPException(429, "Wait one minute before trying the owner passphrase again.")
+        if not hmac.compare_digest(_password(current, row["salt"]), row["password_hash"]):
+            _count_failure(row)
+            raise HTTPException(401, "Your current passphrase was not accepted. Nothing was changed.")
+        if "totp" in row:
+            from . import local_owner_second_factor as second
+            how = second._accept(row, code, now=second._now())
+            if how is None:
+                if not second._strip(code):
+                    raise HTTPException(401, second.CODE_REQUIRED)
+                _count_failure(row)
+                raise HTTPException(401, second.WRONG_CODE)
+            if how == "recovery":
+                second._audit("owner_recovery_code_used", row["email"])
+        before_commit(dict(row))
+        row.update(salt=prepared["salt"], password_hash=prepared["password_hash"], failures=0, locked_until=0)
+        _write(row)
+        return row
