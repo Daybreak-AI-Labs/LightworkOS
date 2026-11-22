@@ -57,22 +57,24 @@ def _dependencies(request):
 
         for flow in store.list_flows():
             if _can_access_flow(request, flow):
-                from .connection_dependencies import _tools
+                from .connection_dependencies import _flow_href, _tools
 
                 flows.append({"id": flow.id, "name": flow.name, "tools": sorted(_tools(flow.to_dict())),
-                              "revision": flow.revision, "href": "/flows"})
+                              "revision": flow.revision, "href": _flow_href(flow.id)})
     except Exception:
         coverage.append("Saved-flow inventory is unavailable.")
     run_pins = []
     try:
         from maverick.flow import store
+
+        from .connection_dependencies import _run_href
         for path in sorted((data_dir() / "plugin-flow-pins").glob("*.json"))[:2000]:
             run = store.load_run(path.stem, owner=caller_principal(request) or "")
             flow = store.load_flow(run.flow_id) if run is not None else None
             if run is None or flow is None or not _can_access_flow(request, flow):
                 continue
             for pin in json.loads(path.read_text(encoding="utf-8")).values():
-                run_pins.append({**pin, "state": run.status, "title": flow.name, "href": "/flows"})
+                run_pins.append({**pin, "state": run.status, "title": flow.name, "href": _run_href(flow.id, run.run_id)})
         coverage.append("Direct workflow pins survive resumed runs. Each task and run inventory shows up to 2000 pin records; no version is silently migrated.")
     except Exception:
         coverage.append("Workflow pin inventory is unavailable.")

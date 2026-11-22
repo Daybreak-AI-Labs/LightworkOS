@@ -297,7 +297,7 @@ def held_execute(request, _selection, _arguments, native, _operation):
 def entries():
     from .product_operations_knowledge_feedback import feedback_entries
     return (*feedback_entries(), Adapter("knowledge.sources.configure", "Manage company Knowledge sources", "learning", "/knowledge-access#knowledge-sources",
-                                        ("/knowledge-access", "/knowledge", "/agents", "/connections", "/research"),
+                                        ("/knowledge-access", "/agents", "/connections", "/research"),
                                         EmptyInput, sources_snapshot, sources_prepare,
                                         aliases=("connect company knowledge", "refresh SharePoint knowledge", "attach approved sources")),
             Adapter("knowledge.assessment_precedents", "Review precedent answers and sources", "learning", "/privacy", ("/privacy", "/finance", "/security", "/approvals", "/knowledge-access"), PrecedentInput, precedent_snapshot, precedent_prepare),

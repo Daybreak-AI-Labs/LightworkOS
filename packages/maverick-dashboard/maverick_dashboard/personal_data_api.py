@@ -268,7 +268,7 @@ def _inventory(request):
         stores.append({"name": "Employee companion history", "state": "available", "count": len(history),
                        "expiry": str(policy["retention_days"]) + " days under administrator policy",
                        "use": "Private owner history; audit metadata only for administrators",
-                       "action": "Clear your history in Employee companion", "href": "/employee-companion"})
+                       "action": "Clear your history in Employee companion", "href": "/companion"})
     except Exception:
         stores.append({"name": "Employee companion history", "state": "unavailable", "action": "Open Employee companion to review its current policy; no zero count is claimed"})
     try:
