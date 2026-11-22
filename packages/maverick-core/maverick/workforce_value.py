@@ -111,6 +111,7 @@ def compute(
     world: Any, *, window_days: int = 90, human_cost: float | None = None,
     human_cost_for: Any = None, episode_limit: int = 5000,
     now: float | None = None, owner: str | None = None,
+    governance: bool = True,
 ) -> WorkforceValue:
     """Assemble the workforce value report from existing signals (read-only).
 
@@ -191,7 +192,10 @@ def compute(
         depts.values(), key=lambda d: d.cost_avoided, reverse=True,
     )
     out.coverage_trend = _coverage_trend(cutoff)
-    out.governance = _governance_summary()
+    # Verifying the signed audit chain walks every line ever written; skip it
+    # for callers that never show the result (Savings).
+    if governance:
+        out.governance = _governance_summary()
     return out
 
 

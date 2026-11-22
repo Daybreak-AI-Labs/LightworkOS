@@ -372,7 +372,7 @@ def capabilities(request):
                             "blocking_reason": item.blocking_reason} for item in maybe_propose(flow)]})
     allowed = auth.domain_suites_checker(request)  # The caller's grants are read once for the whole catalogue.
     for name, profile in available_domains().items():
-        if not allowed(name):
+        if not allowed(name, profile):
             continue
         intents = _domain_intents(profile.description)
         if intents:

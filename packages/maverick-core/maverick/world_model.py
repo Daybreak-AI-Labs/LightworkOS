@@ -2859,8 +2859,8 @@ class WorldModel:
             "(status NOT IN ('done','cancelled') OR updated_at>=? OR "
             "EXISTS(SELECT 1 FROM questions q WHERE q.goal_id=goals.id AND q.answer IS NULL)) "
             "ORDER BY id LIMIT ?", (owner, after_id, since, max(1, min(500, limit))))
-        return [(_goal_from_row(row), int(row["alert_state_revision"]),
-                 int(row["alert_result_revision"])) for row in rows]
+        return [(goal, int(row["alert_state_revision"]), int(row["alert_result_revision"]))
+                for goal, row in zip(_goals_from_rows(rows), rows, strict=True)]
 
     def conversation_summaries(self, *, owner: str | None = None,
                                limit: int = 25, before_id: int | None = None):

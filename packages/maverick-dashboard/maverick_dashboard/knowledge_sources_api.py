@@ -195,8 +195,9 @@ def catalog(request: Request):
         decisions = research_workspace_api._data_use_choices(current.tenant)
         choices = [row for row in decisions["items"] if row["action"] == "analyze"]
         from maverick import domain
+        allowed = auth.domain_suites_checker(request)
         specialists = [{"value": name, "label": profile.description or name.replace("_", " ")} for name, profile in sorted(domain.available_domains().items())
-                       if auth.domain_suites_allowed(request, name)]
+                       if allowed(name, profile)]
         authority(request, context)
         return response({"context": context, "sources": current.catalog(), "accounts": accounts,
                          "kinds": [{"value": name, "label": spec["label"]} for name, spec in readers.SOURCES.items()],

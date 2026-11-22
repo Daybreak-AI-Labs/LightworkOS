@@ -278,6 +278,10 @@
   }
   async function loadUpdates() {
     var notices, stale;
+    if (root.dataset.feedEnabled !== "true") {
+      updatesMessage("Regulatory updates are not turned on for this workspace.");
+      return;
+    }
     try {
       notices = (await request(feedBase + "/notices")).notices || [];
       stale = (await request(feedBase + "/staleness")).staleness || [];

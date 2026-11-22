@@ -317,7 +317,7 @@
       if (!d) return;
       var lines = [];
       if (!d.days_checked) lines.push('There is nothing recorded for these dates to check.');
-      else if (d.intact) lines.push('The saved signatures and retained links match for all ' + plural(d.days_checked, 'day', 'days') + ' checked. A receipt kept elsewhere is needed to check whether newer history was removed.');
+      else if (d.intact) lines.push('The saved signatures and retained links match for ' + (d.days_checked === 1 ? 'the 1 day' : 'all ' + plural(d.days_checked, 'day', 'days')) + ' checked. A receipt kept elsewhere is needed to check whether newer history was removed.');
       else if (d.problems.length) lines = ['Some entries were changed or could not be confirmed:'].concat(d.problems);
       if (d.unsigned_days) lines.push(plural(d.unsigned_days, 'day was', 'days were') + ' recorded before tamper-evident records were turned on, so they cannot be checked.');
       if (d.removed_by_policy) lines.push(plural(d.removed_by_policy, 'older day was', 'older days were') + ' deleted by your record-keeping policy; that deletion is itself recorded.');

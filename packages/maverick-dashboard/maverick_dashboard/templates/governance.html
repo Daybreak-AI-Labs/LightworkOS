@@ -111,7 +111,7 @@
       <th scope="row">{{ asset_name(row.asset_id) }}</th><td>{{ row.context|humanize }}</td>
       <td><span class="badge {% if row.status == 'completed' %}ok{% elif row.status == 'outdated' %}warn{% else %}idle{% endif %}">{{ STATUS.get(row.status, row.status|humanize) }}</span></td>
       <td>{{ row.progress }} of 6 questions answered</td>
-      <td><button class="btn btn--ghost" type="button" data-fria-open-record="{{ row.id }}" data-revision="{{ row.revision }}" aria-label="Work on the assessment for {{ ASSET_NAMES.get(row.asset_id, 'this AI system') }}">Work on it</button></td>
+      <td><button class="btn btn--ghost" type="button" data-fria-open-record="{{ row.id }}" data-revision="{{ row.revision }}" aria-label="Work on it: assessment for {{ ASSET_NAMES.get(row.asset_id, 'this AI system') }}">Work on it</button></td>
     </tr>{% endfor %}
     </tbody></table></div>
   {% else %}<p class="muted">No assessments yet. Start one below; it takes under a minute.</p>{% endif %}

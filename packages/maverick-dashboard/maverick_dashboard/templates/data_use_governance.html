@@ -229,7 +229,8 @@
         <p class="muted cw-wide" id="dug-policy-preview-result" role="status"></p>
       </fieldset>
     </form>
-    {% if suggestions_enabled is defined and suggestions_enabled() %}{% from "_policy_suggestions.html" import policy_suggestions, policy_suggestions_script %}{{ policy_suggestions("data-use-rule", "A draft takes effect only after another administrator reviews and activates it.", "h3") }}{{ policy_suggestions_script() }}{% endif %}
+    {# Drafting a rule needs data use rules on; the API refuses it otherwise. #}
+    {% if du_on and suggestions_enabled is defined and suggestions_enabled() %}{% from "_policy_suggestions.html" import policy_suggestions, policy_suggestions_script %}{{ policy_suggestions("data-use-rule", "A draft takes effect only after another administrator reviews and activates it.", "h3") }}{{ policy_suggestions_script() }}{% endif %}
   </section>
 
   <section class="panel" aria-labelledby="dug-exceptions-heading">

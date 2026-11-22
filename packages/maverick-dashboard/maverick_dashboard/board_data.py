@@ -272,9 +272,20 @@ def _board_workforce(w, owner, days: int) -> dict:
         "depts": sorted(depts.values(), key=lambda r: (r["completed"], r["total"]), reverse=True)[
             :8
         ],
-        "leaders": [c.to_dict() for c in cards[:6]],
+        "leaders": _named_leaders(cards[:6]),
         "platforms": _external_platform_workforce(w, owner),
     }
+
+
+def _named_leaders(cards) -> list[dict]:
+    """Leader cards with each specialist's readable name beside its pack name."""
+    from .plain_labels import specialist_names
+
+    rows = [c.to_dict() for c in cards]
+    names = specialist_names(row.get("worker") for row in rows)
+    for row in rows:
+        row["worker_name"] = names.get(str(row.get("worker") or ""), "")
+    return rows
 
 
 def _external_platform_workforce(w, owner) -> list[dict]:

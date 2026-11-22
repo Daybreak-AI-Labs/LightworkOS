@@ -665,3 +665,19 @@ def test_recovery_mode_still_identifies_itself_to_the_desktop_readiness_check(mo
             assert home.headers["cache-control"] == "no-store"
         assert client.post("/", follow_redirects=False).status_code == 503
         assert client.get("/", follow_redirects=True).url.path == "/workspace/recovery"
+
+
+def test_recovery_page_does_not_ask_for_status_while_recovery_is_off(monkeypatch):
+    # Live: with recovery off, every visit asked for its status, was refused
+    # (403) and told the owner "Your recovery access is unavailable". The page
+    # says whether the feature is on, so its script does not ask.
+    client = api_client()
+
+    def root_tag():
+        response = client.get("/workspace/recovery")
+        assert response.status_code == 200
+        return response.text.split('id="workspace-recovery"')[1].split(">")[0]
+
+    assert 'data-feature-on="true"' in root_tag()
+    monkeypatch.setattr(config, "get_features", lambda: {"workspace_recovery": False})
+    assert 'data-feature-on="false"' in root_tag()

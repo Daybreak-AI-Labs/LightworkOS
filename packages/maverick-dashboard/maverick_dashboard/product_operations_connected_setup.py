@@ -42,7 +42,7 @@ def signin_prepare(request, selection, _arguments):
 def entries():
     return (
         Adapter("automations.connected.configure", "Set up a connected-app automation", "schedules", "/automations#auto-event-form",
-            ("/automations", "/connections", "/tasks"), EmptyInput, event_snapshot, event_prepare,
+            ("/automations", "/connections", "/goals"), EmptyInput, event_snapshot, event_prepare,
             aliases=("watch SharePoint", "watch Salesforce", "watch ServiceNow", "watch Teams", "connected event source")),
         Adapter("settings.company_signin.configure", "Set up and check company sign-in", "preferences", "/settings/all#settings-signin-guide",
             ("/settings", "/settings/all", "/users"), EmptyInput, signin_snapshot, signin_prepare,

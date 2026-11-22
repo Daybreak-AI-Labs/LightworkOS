@@ -1,6 +1,8 @@
 """Reviewed configuration portability and history over the existing catalog writer."""
 from __future__ import annotations
 
+import math
+import re
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -108,6 +110,10 @@ def review(request: Request, body: page.CatalogUpdate):
                 'id': setting.id, 'label': setting.label,
                 'before': _present_value(setting, change['old']),
                 'after': _present_value(setting, change['new']),
+                # What a person reads: option names, On/Off, "Not set" for a
+                # secret. before/after stay the recorded values.
+                'before_text': catalog.display_value(setting, change['old']),
+                'after_text': catalog.display_value(setting, change['new']),
                 'source': page.SOURCE_TEXT.get(current_source, current_source), 'resulting_source': resulting_source,
                 'scope': 'Organization / installation', 'restart': setting.restart,
                 'affected': 'Authorized workspaces inheriting this organization setting',
@@ -247,6 +253,13 @@ def history(request: Request):
                          'coverage': 'Last 100 setting changes in the past 30 days. Secret values are never restorable from history.'}, headers=HEADERS)
 
 
+# Words that say how someone asks rather than what they want ("how do I turn
+# off ..."); partial matching ignores them.
+_FILLER_WORDS = frozenset({'a', 'an', 'the', 'my', 'me', 'i', 'to', 'of', 'for', 'in', 'on', 'is', 'are', 'how',
+                           'do', 'can', 'where', 'what', 'change', 'turn', 'set', 'make', 'want', 'please', 'off',
+                           'long', 'with', 'and', 'or'})
+
+
 def _title_rank(title: str, terms: list[str], aliases: str = '') -> int:
     """0 exact title, 1 title starts with the words, 2 every word starts a title
     word, 3 words in the title, 4 in the curated search words, 5 elsewhere."""
@@ -263,6 +276,51 @@ def _title_rank(title: str, terms: list[str], aliases: str = '') -> int:
     return 4 if all(term in title + ' ' + aliases.lower() for term in terms) else 5
 
 
+def _matches(text: str, terms: list[str], significant: list[str], partial: bool) -> bool:
+    text = text.lower()
+    if partial:
+        # Whole words: "mode" is not "model".
+        return any(_starts_word(term, text) for term in significant)
+    return all(word in text for word in terms)
+
+
+def _starts_word(term: str, text: str) -> bool:
+    """The whole word, or its plural: "email" finds "emails", "mode" not "model"."""
+    return re.search(r"(?<![a-z0-9])" + re.escape(term) + r"(?:s|es)?(?![a-z0-9])", text) is not None
+
+
+def _rank(title: str, aliases: str, text: str, terms: list[str], significant: list[str],
+          weight: dict[str, float], partial: bool) -> float:
+    if not partial:
+        return _title_rank(title, terms, aliases)
+    # A rarer word says more ("style" over "answer"), and a word in the title
+    # counts more than one in the search words or the description. Higher
+    # scores sort first, after every exact match.
+    title, aliases, text = title.lower(), aliases.lower(), text.lower()
+    return -sum(weight[term] * (3 if _starts_word(term, title) else 2 if _starts_word(term, aliases)
+                                else 1 if _starts_word(term, text) else 0)
+                for term in significant)
+
+
+def _partial_pass(collect, results, catalogue, mode, weight, significant):
+    """Run the search again matching any meaningful word; return the new
+    matches best first, leaving the exact matches in place."""
+    exact, exact_catalogue = list(results), list(catalogue)
+    seen = {item['href'] for _rank, item in exact + exact_catalogue}
+    results.clear()
+    catalogue.clear()
+    texts = [page._search_text(setting) for setting in catalog.SETTINGS]
+    weight.update({term: math.log((len(texts) + 1) / (1 + sum(term in text for text in texts))) + 1
+                   for term in significant})
+    mode['partial'] = True
+    collect()
+    partial = [pair for pair in sorted(results + catalogue, key=lambda pair: (pair[0], pair[1]['title'].casefold()))
+               if pair[1]['href'] not in seen]
+    results[:] = exact
+    catalogue[:] = exact_catalogue
+    return partial
+
+
 @router.get('/api/v1/settings/search')
 def search(request: Request, q: str = Query('', max_length=200)):
     auth.require_permission(request, 'view')
@@ -273,67 +331,84 @@ def search(request: Request, q: str = Query('', max_length=200)):
         # The registry page that governs the destination, e.g. /settings for /settings/all.
         governing = ui_visibility.page_for(href.split('?')[0].split('#')[0])
         return governing is not None and governing['path'] in allowed
+    significant = [term[:-1] if term.endswith('s') and len(term) > 3 else term
+                   for term in terms if term not in _FILLER_WORDS]
+    mode = {'partial': False}
+    weight: dict[str, float] = {}
+
     def matches(text):
-        return all(word in text.lower() for word in terms)
+        return _matches(text, terms, significant, mode['partial'])
+
+    def rank(title, aliases, text):
+        return _rank(title, aliases, text, terms, significant, weight, mode['partial'])
+
     def add(title, href, aliases, *, scope='Organization', value='Open this control to review current state', source='Dedicated control', role='Global administrator'):
         if opens(href) and matches(title + ' ' + aliases):
-            results.append((_title_rank(title, terms, aliases), {'title': title, 'href': href, 'group': scope, 'id': href,
+            results.append((rank(title, aliases, title + ' ' + aliases), {'title': title, 'href': href, 'group': scope, 'id': href,
                             'scope': scope, 'required_role': role, 'effective': value, 'source': source}))
-    if auth.has_global_permission(request, 'admin'):
-        layers = page._sources()
-        # A single letter matches most of All settings: wait for a second one.
-        for setting in (catalog.SETTINGS if opens("/settings/all") and len(q.strip()) >= 2 else ()):
-            if matches(page._search_text(setting)):
-                state = page._resolve(setting, layers)
-                if setting.secret:
-                    value = 'Set' if state['value'] else 'Not set'
-                elif setting.control in {'table', 'rules', 'document', 'keys', 'picks'}:
-                    value = 'Configured' if state['value'] else 'Not configured'
-                else:
-                    value = catalog.display_value(setting, state['value'])
-                anchor = 'sa-' + setting.id.replace('.', '-').replace('*', 'all') + '-label'
-                catalogue.append((_title_rank(setting.label, terms, setting.aliases), {'title': setting.label, 'href': '/settings/all?group=' + page._slug(setting.group) + '&id=' + quote(setting.id) + '#' + anchor,
-                                'group': setting.group, 'id': setting.id, 'scope': 'Organization', 'required_role': 'Global administrator',
-                                'effective': value if state['known'] else 'Controlled by deployment', 'source': state['source'], 'locked': state['locked']}))
-        add('AI provider keys', '/settings#settings-integrations', 'ai service ai provider api key model key credentials')
-        for provider in settings_store.state()['providers']:
-            add(provider['label'] + ' provider key', '/settings?focus=provider-key-' + quote(provider['name']), 'api credentials provider key password ai service model key ' + provider['name'],
-                value='Set' if provider['configured'] else 'Not set', source=provider['api_key_source'])
-        add('Default AI model', '/settings?focus=settings-model-default', 'models route provider model choices')
-        add('Your colour theme', '/settings?focus=settings-theme', 'appearance theme color display', scope='Personal / device')
-        add('Your page spacing', '/settings?focus=settings-density', 'appearance density compact display', scope='Personal / device')
-        add('Your font', '/settings?focus=settings-font', 'appearance accessibility dyslexic font display', scope='Personal / device')
-        add('Task spending cap', '/settings?focus=settings-task-budget', 'budget spending per task cost')
-        add('Page visibility', '/settings?focus=ui-visibility', 'roles navigation visibility')
-        for href, title, aliases in [('/channels','Chat channels','slack teams telegram whatsapp'),
-                                     ('/connections','Connected accounts','oauth connectors integrations'),
-                                     ('/plugins','Plugins','tools extensions plugins'),
-                                     ('/learning','Learning controls','learning consent improvement')]:
-            add(title, href, aliases)
-    add('Choose a workspace', '/workspace/tenant#tsel-title', 'workspace tenant switch current', scope='Current workspace', role='Signed-in member')
-    principal = auth.caller_principal(request)
-    if principal:
-        from maverick import experience_preferences
-        personal = experience_preferences.state(principal) if experience_preferences.enabled() else None
-        for key, title, aliases in [('tone','Your writing tone','writing tone voice personality'),
-                                    ('preferred_name','Your preferred name','name personalization'),
-                                    ('output_style','Your response style','style format response output'),
-                                    ('language','Your response language','language locale'),
-                                    ('verbosity','Your response detail','verbosity detail concise'),
-                                    ('start_page','Your starting page','home start today landing'),
-                                    ('theme','Your theme','theme colors appearance system'),
-                                    ('font','Your font','font dyslexia accessibility'),
-                                    ('density','Your page spacing','density display compact'),
-                                    ('text_size','Your text size','text size reading accessibility'),
-                                    ('glass','Your glass effects','glass blur translucent transparency appearance')]:
-            if personal:
-                add(title, '/preferences#preference-' + key, aliases, scope='Personal', role='Signed-in member',
-                    value=str(personal['values'][key]) or 'Inherited', source=personal['sources'][key])
-        add('Your notifications', '/notifications#notification-preferences', 'notification alerts digest quiet hours mute', scope='Personal', role='Signed-in member')
+    def collect():
+        if auth.has_global_permission(request, 'admin'):
+            layers = page._sources()
+            # A single letter matches most of All settings: wait for a second one.
+            for setting in (catalog.SETTINGS if opens("/settings/all") and len(q.strip()) >= 2 else ()):
+                if matches(page._search_text(setting)):
+                    state = page._resolve(setting, layers)
+                    if setting.secret:
+                        value = 'Set' if state['value'] else 'Not set'
+                    elif setting.control in {'table', 'rules', 'document', 'keys', 'picks'}:
+                        value = 'Configured' if state['value'] else 'Not configured'
+                    else:
+                        value = catalog.display_value(setting, state['value'])
+                    anchor = 'sa-' + setting.id.replace('.', '-').replace('*', 'all') + '-label'
+                    catalogue.append((rank(setting.label, setting.aliases, page._search_text(setting)), {'title': setting.label, 'href': '/settings/all?group=' + page._slug(setting.group) + '&id=' + quote(setting.id) + '#' + anchor,
+                                    'group': setting.group, 'id': setting.id, 'scope': 'Organization', 'required_role': 'Global administrator',
+                                    'effective': value if state['known'] else 'Controlled by deployment', 'source': state['source'], 'locked': state['locked']}))
+            add('AI provider keys', '/settings#settings-integrations', 'ai service ai provider api key model key credentials')
+            for provider in settings_store.state()['providers']:
+                add(provider['label'] + ' provider key', '/settings?focus=provider-key-' + quote(provider['name']), 'api credentials provider key password ai service model key ' + provider['name'],
+                    value='Set' if provider['configured'] else 'Not set', source=provider['api_key_source'])
+            add('Default AI model', '/settings?focus=settings-model-default', 'models route provider model choices')
+            add('Your colour theme', '/settings?focus=settings-theme', 'appearance theme color colour display dark mode light mode', scope='Personal / device')
+            add('Your page spacing', '/settings?focus=settings-density', 'appearance density compact display', scope='Personal / device')
+            add('Your font', '/settings?focus=settings-font', 'appearance accessibility dyslexic font display', scope='Personal / device')
+            add('Task spending cap', '/settings?focus=settings-task-budget', 'budget spending per task cost')
+            add('Page visibility', '/settings?focus=ui-visibility', 'roles navigation visibility')
+            for href, title, aliases in [('/channels','Chat channels','slack teams telegram whatsapp'),
+                                         ('/connections','Connected accounts','oauth connectors integrations'),
+                                         ('/plugins','Plugins','tools extensions plugins'),
+                                         ('/learning','Learning controls','learning consent improvement')]:
+                add(title, href, aliases)
+        add('Choose a workspace', '/workspace/tenant#tsel-title', 'workspace tenant switch current', scope='Current workspace', role='Signed-in member')
+        principal = auth.caller_principal(request)
+        if principal:
+            from maverick import experience_preferences
+            personal = experience_preferences.state(principal) if experience_preferences.enabled() else None
+            for key, title, aliases in [('tone','Your writing tone','writing tone voice personality'),
+                                        ('preferred_name','Your preferred name','name personalization'),
+                                        ('output_style','Your response style','style format response output'),
+                                        ('language','Your response language','language locale'),
+                                        ('verbosity','Your response detail','verbosity detail concise'),
+                                        ('start_page','Your starting page','home start today landing'),
+                                        ('theme','Your theme','theme colors colours appearance system dark mode light mode'),
+                                        ('font','Your font','font dyslexia accessibility'),
+                                        ('density','Your page spacing','density display compact'),
+                                        ('text_size','Your text size','text size reading accessibility'),
+                                        ('glass','Your glass effects','glass blur translucent transparency appearance')]:
+                if personal:
+                    add(title, '/preferences#preference-' + key, aliases, scope='Personal', role='Signed-in member',
+                        value=str(personal['values'][key]) or 'Inherited', source=personal['sources'][key])
+            add('Your notifications', '/notifications#notification-preferences', 'notification alerts digest quiet hours mute email emails turn off', scope='Personal', role='Signed-in member')
+    collect()
+    # Few or no exact matches: also offer settings that share some of the
+    # meaningful words, after every exact match and ranked by how many words
+    # they share ("dark mode", "answer style", "turn off emails").
+    partial = []
+    if len(results) + len(catalogue) < 5 and significant and len(terms) > 1:
+        partial = _partial_pass(collect, results, catalogue, mode, weight, significant)
     # Personal first, then the dedicated controls above, then All settings rows;
     # within each the closest match first (see _title_rank). The 50 shown are
     # the best ones.
     def order(pair):
         return pair[1]['scope'] != 'Personal', pair[0], pair[1]['title'].casefold()
-    results = [item for _rank, item in sorted(results, key=order) + sorted(catalogue, key=order)]
+    results = [item for _rank, item in sorted(results, key=order) + sorted(catalogue, key=order) + partial]
     return JSONResponse({'items': results[:50], 'total': len(results)}, headers=HEADERS)

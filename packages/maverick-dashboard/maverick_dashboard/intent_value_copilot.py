@@ -68,8 +68,9 @@ def _entities(request, query, kind):
         choices.update({flow.id: flow.name for flow in store.list_flows() if _can_access_flow(request, flow)})
     elif kind == "specialists":
         from maverick.domain import available_domains
+        allowed = auth.domain_suites_checker(request)
         choices.update({name: profile.description.split(":")[0] for name, profile in available_domains().items()
-                        if auth.domain_suites_allowed(request, name)})
+                        if allowed(name, profile)})
     return choices
 
 

@@ -20,6 +20,16 @@ def test_template_choices_never_publish_ownerless_installed_or_other_person(monk
     assert set(today.template_choices(object())) == {'mine', 'bundled'}
 
 
+def test_template_choices_show_blanks_as_readable_markers(monkeypatch):
+    monkeypatch.setattr(today.auth, 'caller_principal', lambda request: 'user:a')
+    monkeypatch.setattr(today.auth, 'has_permission', lambda *args: True)
+    monkeypatch.setattr(templates, 'list_templates', lambda: ['compare'])
+    monkeypatch.setattr(templates, 'can_read_template', lambda template, principal: True)
+    monkeypatch.setattr(templates, 'load_template', lambda name: SimpleNamespace(
+        name=name, title='Compare {{ category }} — {{option_a}} vs {{ option_b }}'))
+    assert today.template_choices(object())['compare']['title'] == 'Compare [Category] — [Option A] vs [Option B]'
+
+
 def test_active_projection_does_not_hide_old_active_tasks_behind_recent_completed(monkeypatch):
     mine = SimpleNamespace(id=7, owner='user:a', status='active', title='Old but active', updated_at=1, domain='general')
     other = SimpleNamespace(id=8, owner='user:b', status='active', title='Private', updated_at=2, domain='general')

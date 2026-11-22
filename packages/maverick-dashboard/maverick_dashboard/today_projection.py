@@ -8,6 +8,7 @@ from urllib.parse import quote
 from maverick import config
 
 from . import auth
+from .plain_labels import fill_placeholders
 
 CARDS = {"tasks": "In-flight work", "decisions": "Pending decisions", "recent": "Recently changed results",
          "schedules": "Upcoming occurrences", "templates": "Pinned templates"}
@@ -28,7 +29,7 @@ def template_choices(request):
         template = load_template(name)
         if not can_read_template(template, principal):
             continue
-        result[name] = {"name": name, "title": template.title, "href": "/templates#template-" + quote(name, safe="")}
+        result[name] = {"name": name, "title": fill_placeholders(template.title), "href": "/templates#template-" + quote(name, safe="")}
     return result
 
 

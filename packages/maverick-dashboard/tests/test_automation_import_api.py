@@ -329,6 +329,18 @@ def test_automations_page_shows_import_section_when_enabled():
     assert 'id="air-disabled" hidden' in r.text
 
 
+def test_automations_page_does_not_ask_for_flows_while_workflows_are_off(monkeypatch):
+    # Live: every visit logged a refused /api/v1/flows (403) in the browser
+    # console. The page says whether workflows are on, so its script never asks.
+    from maverick import flow
+    monkeypatch.setattr(flow, "enabled", lambda: False)
+    r = _client().get("/automations")
+    assert r.status_code == 200
+    assert 'id="auto-flows-section"' in r.text and 'data-flows-enabled="false"' in r.text
+    monkeypatch.setattr(flow, "enabled", lambda: True)
+    assert 'data-flows-enabled="true"' in _client().get("/automations").text
+
+
 def test_automations_page_says_import_is_off_when_disabled(monkeypatch):
     monkeypatch.setenv("MAVERICK_AUTOMATION_IMPORT", "0")
     r = _client().get("/automations")

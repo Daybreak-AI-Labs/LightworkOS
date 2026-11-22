@@ -3457,7 +3457,8 @@ class PostgresWorldModel:
         with self._tx() as cur:
             cur.execute(sql, tuple(params))
             rows = cur.fetchall()
-        return [(_dec_goal_row(row[:14]), int(row[14]), int(row[15])) for row in rows]
+        return [(goal, int(row[14]), int(row[15]))
+                for goal, row in zip(_dec_goal_rows([row[:14] for row in rows]), rows, strict=True)]
 
     def conversation_summaries(self, *, owner: str | None = None,
                                limit: int = 25, before_id: int | None = None):

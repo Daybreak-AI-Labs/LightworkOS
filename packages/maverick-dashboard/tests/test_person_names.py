@@ -58,6 +58,8 @@ def test_lightwork_workers_and_ai_specialists_read_as_what_they_are(known):
     assert label("pe_content_writing-0") == "Content & UX-Writing Specialist (AI)"
     assert label("orchestrator-0") == "Planner (AI)"
     assert label("alice-2") == "alice-2"  # not a known role: shown as recorded
+    # Live: the Activity log's Person filter listed "system".
+    assert label("system") == "Lightwork (automatic)"
 
 
 def test_an_unreadable_directory_still_names_the_account_kind(monkeypatch):
@@ -143,3 +145,34 @@ def test_approval_history_names_the_decider_and_the_action(known, monkeypatch, t
     assert row["action"] == "Run one Python script and its declared tool calls"
     assert "code_exec" not in json.dumps({key: row[key] for key in ("action", "decided_by_name", "summary")})
     world.close()
+
+
+def test_the_activity_log_names_a_person_actor_and_record_types_in_words(known, monkeypatch, tmp_path):
+    # Live: the "Agent or specialist" filter listed "User:owner@..." and rows
+    # read "Record type settings_catalog_request".
+    import re
+
+    from fastapi.testclient import TestClient
+    from maverick import audit, world_model
+    from maverick_dashboard.audit_actions_api import value_text
+
+    assert value_text("record_type", "settings_catalog_request") == "Settings catalog request"
+    from maverick_dashboard import audit_search
+
+    monkeypatch.delenv("MAVERICK_DASHBOARD_TOKEN", raising=False)
+    monkeypatch.setattr(world_model, "DEFAULT_DB", tmp_path / "world.db")
+    assert audit.audit_event("control_plane_action", agent="dashboard", action="settings_saved", actor=GOOGLE)
+    real = audit_search.search_events
+
+    def with_person_actor(*args, **kwargs):
+        # A governed record change records the person as its actor.
+        result = real(*args, **kwargs)
+        return {**result, "agents": {*result["agents"], GOOGLE}}
+
+    monkeypatch.setattr(audit_search, "search_events", with_person_actor)
+    from maverick_dashboard.app import app
+
+    page = TestClient(app, base_url="http://127.0.0.1", headers={"Origin": "http://127.0.0.1"}).get("/audit")
+    assert page.status_code == 200, page.text[:500]
+    agents = re.search(r'<select id="aud-agent".*?</select>', page.text, re.DOTALL).group(0)
+    assert ">dana@northwind.example</option>" in agents and "User:" not in agents

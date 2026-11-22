@@ -4,7 +4,7 @@
 {% block title %}Mobile app consent · Lightwork{% endblock %}
 {% block head_extra %}<link rel="stylesheet" href="/static/lightwork-consent-workbench.css">{% endblock %}
 {% block content %}
-<div class="governance-workbench" id="nca-root" data-admin-api-base="{{ admin_api_base }}" data-public-keys-base="{{ public_keys_base }}" data-copilot-page="{{ page_path }}" data-can-audit="{{ 'true' if native_can_audit else 'false' }}" data-can-admin="{{ 'true' if native_can_admin else 'false' }}">
+<div class="governance-workbench" id="nca-root" data-admin-api-base="{{ admin_api_base }}" data-public-keys-base="{{ public_keys_base }}" data-copilot-page="{{ page_path }}" data-can-audit="{{ 'true' if native_can_audit else 'false' }}" data-can-admin="{{ 'true' if native_can_admin else 'false' }}" data-module-enabled="{{ 'true' if native_module_enabled else 'false' }}">
   {% call hero('Consent integration', 'Mobile app consent',
                lede='Show your consent banner inside your mobile and TV apps, see which devices are connected, and remove a device’s access when you need to.') %}
     {{ state('Readiness', 'Checking…', badge='Checking', badge_class='idle') }}
@@ -76,7 +76,7 @@
     </div>
     <p class="muted">Anyone can use these public keys to confirm that a consent receipt from your app really came from Lightwork. Older keys stay listed so older receipts can still be checked.</p>
     <div id="nca-keys"></div>
-    <p><a class="btn btn--ghost" id="nca-public-key-link" href="{{ public_keys_base }}" rel="noopener noreferrer" target="_blank">Open the public key list</a></p>
+    <p><a class="btn btn--ghost" id="nca-public-key-link" href="{{ public_keys_base }}" rel="noopener noreferrer" target="_blank">Open the public key list<span class="sr-only"> (opens in a new tab)</span></a></p>
   </section>
 
   <section class="panel" aria-labelledby="nca-check-heading">

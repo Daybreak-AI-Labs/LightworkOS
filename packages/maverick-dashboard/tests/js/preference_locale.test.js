@@ -32,6 +32,8 @@ test('interface preference review is localized while custom guidance, revision a
   const field=doc.querySelector('[data-pref="interface_language"]');field.value='fr';field.dispatchEvent(new w.Event('change',{bubbles:true}));
   doc.getElementById('preference-form').dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await wait();
   assert.equal(reviews.length,1);assert.equal(reviews[0].options.productCopy,true);assert.equal(reviews[0].options.values.scope,'Personnel');
+  // Values read as the choices shown in the field, never stored codes or JSON quotes.
+  assert.equal(reviews[0].options.values.changes,'Langue de l’interface: English (Personnel) → Français');
   const body=JSON.parse(requests[0].options.body);assert.deepEqual(body.changes,{interface_language:'fr'});assert.equal(body.expected_revision,'before');assert.equal(body.context,'scope');
   assert.equal(doc.querySelector('[data-ui-preference]').dataset.savedValue,'fr');
   retainedDefaults();

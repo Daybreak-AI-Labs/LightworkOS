@@ -63,10 +63,10 @@
       {% if not it.captions %} · no captions{% endif %}
     </p>
     <p class="wt-actions">
-      <a class="btn btn--ghost" href="/walkthroughs/media/{{ it.name }}" download aria-label="Download the video of {{ label }}">Download video</a>
+      <a class="btn btn--ghost" href="/walkthroughs/media/{{ it.name }}" download aria-label="Download video of {{ label }}">Download video</a>
       {% if it.goal_id is not none %}
-      <a class="btn btn--ghost" href="/api/v1/goals/{{ it.goal_id }}/tutorial.md" download aria-label="Download the written guide for {{ label }}">Download written guide</a>
-      <a class="btn btn--ghost" href="/goals/{{ it.goal_id }}/trajectory" aria-label="Open the step-by-step timeline for {{ label }}">Open timeline</a>
+      <a class="btn btn--ghost" href="/api/v1/goals/{{ it.goal_id }}/tutorial.md" download aria-label="Download written guide for {{ label }}">Download written guide</a>
+      <a class="btn btn--ghost" href="/goals/{{ it.goal_id }}/trajectory" aria-label="Open timeline for {{ label }}, step by step">Open timeline</a>
       {% endif %}
     </p>
   </div>

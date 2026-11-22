@@ -2063,9 +2063,9 @@
           badge.textContent = count > 99 ? '99+' : String(count);
           badge.setAttribute('aria-hidden', 'true');
           if (count > 0) {
-            const i18n = window.LightworkI18n, values = {page: label.textContent.trim(), count: count};
+            const i18n = window.LightworkI18n, values = {page: label.textContent.trim(), count: badge.textContent};
             link.setAttribute('aria-label', i18n ? i18n.text('{page}, {count} waiting', values)
-              : values.page + ', ' + count + ' waiting');
+              : values.page + ', ' + values.count + ' waiting');
           } else {
             link.removeAttribute('aria-label');
           }

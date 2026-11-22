@@ -4,10 +4,19 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from urllib.parse import quote
 
 from fastapi import HTTPException
 
 from .auth import has_permission
+
+
+def _flow_href(flow_id) -> str:
+    return "/flows/designer/" + quote(str(flow_id), safe="")
+
+
+def _run_href(flow_id, run_id) -> str:
+    return "/flows/" + quote(str(flow_id), safe="") + "/runs/" + quote(str(run_id), safe="")
 
 
 def require_connections() -> None:
@@ -116,7 +125,8 @@ def _active_flow_impact(request, name, record, owner, items, coverage):
                 items.append({"kind": "active_flow", "id": run.run_id, "title": flow.name,
                               "revision": str(run.updated), "owner": run.owner,
                               "binding": "run authority includes saved credential inventory", "state": run.status,
-                              "external_outcome": "unknown; never replayed by connection repair", "href": "/flows"})
+                              "external_outcome": "unknown; never replayed by connection repair",
+                              "href": _run_href(run.flow_id, run.run_id)})
         coverage.append({"kind": "active flows and approvals", "state": "partial" if count > 2000 else "current"})
     except Exception:
         coverage.append({"kind": "active flows and approvals", "state": "unavailable"})
@@ -156,11 +166,11 @@ def impact(request, name):
                 items.append({"kind": "flow", "id": flow.id, "title": flow.name, "revision": flow.revision,
                               "version": flow.version, "owner": flow.owner,
                               "binding": "exact reference" if exact else "possible connector fallback; environment credentials may take precedence",
-                              "state": "needs-review after a credential change", "href": "/flows"})
+                              "state": "needs-review after a credential change", "href": _flow_href(flow.id)})
                 if flow.schedule:
                     items.append({"kind": "flow_schedule", "id": flow.id, "title": flow.name,
                                   "revision": flow.revision, "version": flow.version, "owner": flow.owner,
-                                  "binding": "scheduled flow", "state": "review its published release", "href": "/flows"})
+                                  "binding": "scheduled flow", "state": "review its published release", "href": _flow_href(flow.id)})
         coverage.append({"kind": "saved flows", "state": "current"})
     except Exception:
         coverage.append({"kind": "saved flows", "state": "unavailable"})

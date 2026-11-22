@@ -11,6 +11,8 @@
     }
   }
   function shown(value) { return typeof value === 'string' ? value : JSON.stringify(value); }
+  // The plain wording the server adds (option names, On/Off); the recorded value otherwise.
+  function shownText(item, side) { var text = item[side + '_text']; return typeof text === 'string' && text ? text : shown(item[side]); }
   function pickReview(plan, changes) {
     return new Promise(function (resolve) {
       var dialog = document.createElement('dialog'); dialog.className = 'settings-review panel';
@@ -27,7 +29,7 @@
       plan.items.forEach(function (item) {
         var section = document.createElement('section'), title = document.createElement('h3'); title.textContent = item.label + (item.automatic ? ' (dependent change)' : ''); section.appendChild(title);
         var detail = document.createElement('p'); detail.textContent = item.scope + '. Now: ' + item.source + '. After saving: ' + item.resulting_source + '. ' + item.timing + '. Affects: ' + item.affected + '. Area: ' + item.area + '.'; section.appendChild(detail);
-        var before = document.createElement('pre'); before.textContent = 'Before: ' + shown(item.before) + '\nAfter: ' + shown(item.after); section.appendChild(before); dialog.appendChild(section);
+        var before = document.createElement('pre'); before.textContent = 'Before: ' + shownText(item, 'before') + '\nAfter: ' + shownText(item, 'after'); section.appendChild(before); dialog.appendChild(section);
       });
       plan.warnings.forEach(function (warning) { var p = document.createElement('p'); p.textContent = warning.label + ': ' + warning.warning; dialog.appendChild(p); });
       var error = document.createElement('p'); error.setAttribute('role','status'); dialog.appendChild(error);
@@ -104,7 +106,7 @@
         var history = await call('/api/v1/settings/history'), list = panel.querySelector('[data-history-items]'); list.replaceChildren();
         history.items.forEach(function (item) {
           var row=document.createElement('li'), text=document.createElement('p'); text.textContent=item.label + ' - ' + item.actor + ' - ' + (window.mvTimeAbsolute && !isNaN(Date.parse(item.at)) ? window.mvTimeAbsolute(Date.parse(item.at) / 1000) : item.at);
-          var detail=document.createElement('pre');detail.textContent='Before: ' + shown(item.before) + '\nAfter: ' + shown(item.after);
+          var detail=document.createElement('pre');detail.textContent='Before: ' + shownText(item, 'before') + '\nAfter: ' + shownText(item, 'after');
           row.appendChild(text);row.appendChild(detail);
           if(item.before_revision||item.after_revision){
             // Settings-version fingerprints are for support; shortened, behind a toggle.

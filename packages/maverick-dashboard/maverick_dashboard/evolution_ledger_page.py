@@ -49,6 +49,15 @@ def create_evolution_ledger_page_router(templates: Jinja2Templates) -> APIRouter
         if any(key not in {"theme", "density", "font", "lang"} for key in request.query_params):
             raise HTTPException(status_code=404, detail="evolution ledger unavailable")
         nonce = secrets.token_urlsafe(18)
+        # With no learning history yet the checkpoint panel says so without
+        # asking (the API answers 409 there). Any other state, unreadable
+        # included, is still checked and explained by the API.
+        try:
+            from .evolution_ledger_api import _promotion_ledger_source
+
+            history_present = _promotion_ledger_source()[1] != "not_present"
+        except Exception:
+            history_present = True
         response = templates.TemplateResponse(
             request,
             "evolution_ledger.html",
@@ -56,6 +65,7 @@ def create_evolution_ledger_page_router(templates: Jinja2Templates) -> APIRouter
                 "api_base": API_BASE,
                 "page_path": PAGE_PATH,
                 "csp_style_nonce": nonce,
+                "history_present": history_present,
             },
         )
         for name, value in _HEADERS.items():

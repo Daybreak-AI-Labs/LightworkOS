@@ -297,11 +297,11 @@
         },
         "brand": {
           "$type": "color",
-          "$value": "#4fa3d8"
+          "$value": "#8cc4ec"
         },
         "brand-hi": {
           "$type": "color",
-          "$value": "#73b6e4"
+          "$value": "#a6d2f1"
         },
         "brand-fg": {
           "$type": "color",

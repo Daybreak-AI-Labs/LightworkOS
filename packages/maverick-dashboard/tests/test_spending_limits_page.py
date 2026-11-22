@@ -218,3 +218,36 @@ def test_page_names_the_per_task_limit_the_composer_shows(client, monkeypatch, c
     from maverick import runner
     monkeypatch.setattr(runner, "configured_max_dollars", lambda: cap)
     assert words in client.get("/spending-limits").text
+
+
+def test_a_team_agent_shows_its_specialists_name(client, monkeypatch):
+    # Live: a hired specialist read "Retest-team.gov_invoice_gov · AI agent".
+    from types import SimpleNamespace
+
+    from maverick import fleet as fleet_mod
+    from maverick import spending_limits
+    from maverick_dashboard import plain_labels
+
+    principal = "agent:Retest-team.gov_invoice_gov"
+    team = SimpleNamespace(name="Retest-team", agents=[SimpleNamespace(name="gov_invoice_gov", domain="gov_invoice_gov")],
+                           principal_for=lambda agent: f"agent:Retest-team.{agent}")
+    monkeypatch.setattr(fleet_mod, "list_fleets", lambda: [team])
+    monkeypatch.setattr(plain_labels, "specialist_names",
+                        lambda domains: {"gov_invoice_gov": "Government Invoice Prep"})
+    real = spending_limits.overview
+    monkeypatch.setattr(spending_limits, "overview", lambda people: real(sorted({*people, principal})))
+    html = client.get("/spending-limits").text
+    assert "Government Invoice Prep, Retest-team team" in html
+    assert ">Retest-team.gov_invoice_gov<" not in html
+
+
+def test_the_spending_table_stacks_into_cards_on_a_phone(client, monkeypatch):
+    # Live at 390 px: the four-column table ran 46 px past the screen edge.
+    from maverick import spending_limits
+
+    real = spending_limits.overview
+    monkeypatch.setattr(spending_limits, "overview", lambda people: real(sorted({*people, "user:pat@example.test"})))
+    html = client.get("/spending-limits").text
+    assert '<table class="table--stacked">' in html
+    for label in ("Person", "Limit", "Spent today", "Spent this month"):
+        assert f'data-label="{label}"' in html

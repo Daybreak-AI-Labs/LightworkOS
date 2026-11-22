@@ -1050,11 +1050,13 @@ def domain_suites_checker(request: Request):
 
     grants: list = []  # Read on first need; ``None`` (unrestricted) must stay distinct from unread.
 
-    def allowed(domain: str | None) -> bool:
+    def allowed(domain: str | None, profile=None) -> bool:
+        # ``profile``: the pack as the caller's listing already read it, so a
+        # listing does not resolve the whole catalogue once per pack.
         if not domain:
             return True
         try:
-            for suite in suites_for_domain(domain):
+            for suite in suites_for_domain(domain, profile):
                 if not grants:
                     grants.append(caller_suites(request))
                 if suite is not None and grants[0] is not None and suite not in grants[0]:

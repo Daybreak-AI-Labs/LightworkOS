@@ -77,7 +77,7 @@
                {% if f.placeholder %}placeholder="{{ f.placeholder }}"{% endif %} autocomplete="off"
                {% if f.help %}aria-describedby="mcp-{{ key }}-{{ f.key }}-help"{% endif %} />
         {% if f.help %}<span class="muted mcp-help" id="mcp-{{ key }}-{{ f.key }}-help">{{ f.help }}
-          {% if f.link %}<a href="{{ f.link }}" target="_blank" rel="noopener noreferrer">Open that page</a>{% endif %}</span>{% endif %}
+          {% if f.link %}<a href="{{ f.link }}" target="_blank" rel="noopener noreferrer">Open that page<span class="sr-only"> (opens in a new tab)</span></a>{% endif %}</span>{% endif %}
       </label>
       {% endfor %}
       <label class="mcp-field">

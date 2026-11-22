@@ -17,7 +17,7 @@
   {% set saved = report.saved %}
   {% set cur = 'USD' %}
   {% macro amount(v) %}{% if v is none %}Unavailable{% else %}{{ v | money }}{% endif %}{% endmacro %}
-  {% set field_words = {'hourly_rate': 'hourly rate', 'hours_per_task': 'hours per task', 'currency': 'currency', 'departments': 'department numbers'} %}
+  {% set field_words = {'hourly_rate': 'hourly rate', 'hours_per_task': 'hours per task', 'currency': 'currency', 'departments': 'specialist numbers'} %}
   {% from "_hero.html" import hero, state %}
   {% call hero('Value & spend', 'Savings',
                subtitle='Estimates based on your assumptions',
@@ -73,7 +73,7 @@
       <div id="bd-delivered"></div>
     </div>
     <div class="panel viz-card">
-      <h2>Estimated savings by department</h2>
+      <h2>Estimated savings by specialist</h2>
       <p class="viz-sub">Solid bar: estimated difference. Pale bar: assumed human cost.</p>
       <div id="bd-dept-savings"></div>
     </div>
@@ -130,12 +130,12 @@
       <p class="sv-note">These are <em>your</em> numbers: what an hour of similar work by a person
         costs you (pay, benefits and overheads) and how long one of these tasks takes them.
         Savings = finished tasks × hours per task × hourly cost, minus what Lightwork spent.
-        You can set different numbers for each department below.</p>
+        You can set different numbers for each specialist below.</p>
       <p class="sv-note" id="sv-status" role="status" aria-live="polite"></p>
     </form>
   </div>
 
-  <div class="section-head"><h2>By department</h2></div>
+  <div class="section-head"><h2>By specialist</h2></div>
   <div class="panel">
     <form method="get" action="/savings" class="sv-range">
       <label for="sv-days">Period</label>
@@ -149,7 +149,7 @@
     <table>
       <thead>
         <tr>
-          <th scope="col">Department</th><th scope="col">Finished</th>
+          <th scope="col">Specialist</th><th scope="col">Finished</th>
           <th scope="col">Hourly cost</th><th scope="col">Hours per task</th>
           <th scope="col">Cost for people</th><th scope="col">Lightwork cost</th>
           <th scope="col">Saved</th>
@@ -157,20 +157,21 @@
       </thead>
       <tbody>
         {% for d in report.by_department %}
+        {% set who = 'Not assigned to a specialist' if d.department == '(unattributed)' else (specialist_names.get(d.department) or (d.department | humanize)) %}
         <tr data-dept="{{ d.department }}">
-          <td>{{ d.department | humanize }}</td>
+          <td>{{ who }}</td>
           <td>{{ d.deliverables }}</td>
           <td>
             <input class="sv-dept-input" type="number" min="0" step="0.01"
                    name="rate::{{ d.department }}" value="{{ d.hourly_rate }}"
                    form="sv-assumptions"
-                   aria-label="Hourly cost for {{ d.department | humanize }}"{% if not can_manage_assumptions %} disabled{% endif %}>
+                   aria-label="Hourly cost for {{ who }}"{% if not can_manage_assumptions %} disabled{% endif %}>
           </td>
           <td>
             <input class="sv-dept-input" type="number" min="0" step="0.1"
                    name="hours::{{ d.department }}" value="{{ d.hours_per_task }}"
                    form="sv-assumptions"
-                   aria-label="Hours per task for {{ d.department | humanize }}"{% if not can_manage_assumptions %} disabled{% endif %}>
+                   aria-label="Hours per task for {{ who }}"{% if not can_manage_assumptions %} disabled{% endif %}>
           </td>
           <td>{{ amount(d.human_cost) }}</td>
           <td>{{ amount(d.agent_cost) }}</td>
@@ -179,8 +180,8 @@
         {% endfor %}
       </tbody>
     </table>
-    <p class="sv-note">A department uses the numbers above until you change its row here.
-      Changed rows are saved as that department's own numbers.</p>
+    <p class="sv-note">A specialist uses the numbers above until you change its row here.
+      Changed rows are saved as that specialist's own numbers.</p>
     {% else %}
       <p class="muted">No finished work in this period yet. Savings appear as soon as tasks
         finish; Lightwork never invents a number.</p>
@@ -263,6 +264,7 @@
 (function () {
   'use strict';
   var B = window.LWBoard;
+  var NAMES = {{ specialist_names | tojson }};
 
   function render(D) {
     var rep = D.report;
@@ -281,14 +283,14 @@
       sub: uniform
         ? tasks + ' × ' + A.hours_per_task + ' h × ' + B.money(A.hourly_rate) + ' an hour, minus ' +
           B.money(rep.agent_cost) + ' Lightwork cost, last ' + D.days + ' days'
-        : tasks + ' at each department\'s numbers (see By department), last ' + D.days + ' days' }));
+        : tasks + ' at each specialist\'s numbers (see By specialist), last ' + D.days + ' days' }));
     k.appendChild(B.kpi({ label: 'Cost for people (estimate)', value: rep.human_cost,
       format: B.money }));
     k.appendChild(B.kpi({ label: 'Lightwork cost', value: rep.agent_cost,
       format: B.money }));
     k.appendChild(B.kpi({ label: 'Hours of people\'s time (estimate)', value: rep.human_hours,
       sub: !rep.deliverables ? 'no tasks yet'
-        : uniform ? 'at ' + A.hours_per_task + ' hours per task' : 'at each department\'s hours per task' }));
+        : uniform ? 'at ' + A.hours_per_task + ' hours per task' : 'at each specialist\'s hours per task' }));
 
     var doneTotal = 0;
     D.daily_done.forEach(function (r) { doneTotal += r.n; });
@@ -315,14 +317,15 @@
       depts.forEach(function (r) { maxHuman = Math.max(maxHuman, r.human_cost); });
       B.hbars(document.getElementById('bd-dept-savings'),
         depts.map(function (r) {
-          var name = window.mvHuman ? window.mvHuman(r.department) : String(r.department || '').replace(/_/g, ' ');
+          var name = r.department === '(unattributed)' ? 'Not assigned to a specialist'
+            : NAMES[r.department] || (window.mvHuman ? window.mvHuman(r.department) : String(r.department || '').replace(/_/g, ' '));
           return { label: name, value_text: B.money(r.saved),
                    pct: Math.max(0, r.saved) / maxHuman * 100,
                    pct_bg: r.human_cost / maxHuman * 100,
                    cls: r.saved < 0 ? 'danger' : 'ok',
                    title: name + ' — estimated difference ' + B.money(r.saved) +
                           ' of ' + B.money(r.human_cost) + ' assumed human cost' };
-        }), 'Estimated savings by department, scaled to the largest assumed human cost.');
+        }), 'Estimated savings by specialist, scaled to the largest assumed human cost.');
     } else {
       B.empty(document.getElementById('bd-dept-savings'),
         'No finished work in this period yet. Estimates appear as tasks finish.');

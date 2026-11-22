@@ -77,7 +77,7 @@
     <p class="auto__hint">Run daily reports, weekly digests, and other recurring work while Lightwork’s background service is running.</p>
     <p id="auto-sched-status" class="auto__hint" role="status" aria-live="polite">Loading schedules.</p>
     <button class="btn btn--ghost" id="auto-sched-retry" type="button">Refresh schedules</button>
-    <a href="/login" id="auto-sched-signin" hidden>Sign in again</a>
+    <a href="/automations" id="auto-sched-signin" hidden>Sign in again</a>
     <ul class="auto__list" id="auto-sched-list" aria-label="Schedules"></ul>
     {{ empty_state('No schedules yet',
                    'Schedules you create appear here with their next run. Create one below, or put a saved workflow on a schedule from the builder.',
@@ -279,7 +279,7 @@
   </section>
   {% endif %}
 
-  <section class="auto__section panel" id="auto-flows-section" aria-labelledby="auto-flows-h" hidden>
+  <section class="auto__section panel" id="auto-flows-section" aria-labelledby="auto-flows-h" data-flows-enabled="{{ 'true' if flows_enabled else 'false' }}" hidden>
     <div class="section-head">
       <h2 id="auto-flows-h" tabindex="-1">Flows</h2>
       <a class="btn" href="/flows/designer" id="fd-new">Design a flow</a>
@@ -1289,6 +1289,8 @@
     function statusText(st) { return STATUS_WORDS[st] || mvHuman(st || 'unknown'); }
     var ORIGIN_WORDS = { webhook: 'started by another app', schedule: 'started on schedule', event_trigger: 'started by a new item', retry: 'retry' };
     async function loadFlows() {
+      // Workflows turned off: the section stays hidden and nothing is asked.
+      if (flowsSection.dataset.flowsEnabled !== 'true') return;
       var data;
       try { data = await window.mvFetchJSON('/api/v1/flows'); }
       catch (e) { if (e.status) flowsSection.hidden = true; return; }  // a refusal: the engine is off

@@ -92,3 +92,25 @@ def test_page_has_nav_and_closed_copilot_context() -> None:
     assert context.title == "Mobile app consent"
     assert any("no permissive fallback" in item for item in context.boundaries)
     assert any("live-device" in item for item in context.boundaries)
+
+
+def test_app_list_is_not_asked_for_while_mobile_app_consent_is_off(monkeypatch) -> None:
+    # Live: with the feature off, every visit asked for the app list, was
+    # refused (403) and showed "Could not load your apps". The page says
+    # whether the feature is on, so its script does not ask.
+    from maverick_dashboard import module_activation
+
+    monkeypatch.setattr(page, "require_permission", lambda *_: None)
+    monkeypatch.setattr(page, "_tenant_selected", lambda: None)
+    monkeypatch.setattr(page, "has_global_permission", lambda _request, _permission: True)
+    app = FastAPI()
+    app.include_router(page.create_consent_native_page_router(_templates()))
+    client = TestClient(app, base_url="http://127.0.0.1")
+
+    def root_tag() -> str:
+        return client.get(page.PAGE_PATH).text.split('id="nca-root"')[1].split(">")[0]
+
+    monkeypatch.setattr(module_activation, "module_activation_enabled", lambda _section: False)
+    assert 'data-module-enabled="false"' in root_tag()
+    monkeypatch.setattr(module_activation, "module_activation_enabled", lambda _section: True)
+    assert 'data-module-enabled="true"' in root_tag()

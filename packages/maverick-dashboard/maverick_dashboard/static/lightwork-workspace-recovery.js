@@ -173,6 +173,12 @@
       else { headers["Content-Type"] = "application/json"; init.body = JSON.stringify(body); }
     }
     var response = await fetch("/api/v1/recovery/" + path, init);
+    // Turned off is not lost access: say what the server said, keep the page.
+    if (response.status === 403 && response.headers && typeof response.headers.get === "function" &&
+        response.headers.get("X-Lightwork-Reason") === "feature-off") {
+      var off = await response.json().catch(function () { return {}; });
+      throw new Error(plainDetail(off.detail, response));
+    }
     if (response.status === 401 || response.status === 403) {
       clearPrivateState();
       throw new Error(accessMessage);
@@ -1168,7 +1174,13 @@
     await load();
     say("The selected installation point was retired. A signed retirement receipt has been kept.");
   });
-  action(async function () { await load(); say("Review coverage and keep a separate recovery key copy before relying on snapshots."); });
+  action(async function () {
+    if (root.dataset.featureOn === "false") {
+      say("Nothing to show while workspace recovery is turned off. Turn it on under Features in Settings, then reload this page.");
+      return;
+    }
+    await load(); say("Review coverage and keep a separate recovery key copy before relying on snapshots.");
+  });
   // Recovery mode has its own shell, so the ordinary clipboard/toast helpers
   // are not present. Keep the result beside the button where it is visible.
   var copyCode = document.getElementById("wrec-installation-code-copy");

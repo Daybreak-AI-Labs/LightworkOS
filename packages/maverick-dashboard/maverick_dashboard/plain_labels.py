@@ -449,6 +449,29 @@ def pack_display_name(name: object, persona: object = "", description: object = 
     return _title_case(str(name or "").replace("_", " ").replace("-", " ").strip()) or "Agent"
 
 
+def specialist_names(domains: object) -> dict[str, str]:
+    """Readable names for installed specialist packs, keyed by pack name.
+
+    Packs that are not installed (or a catalog that cannot be read) are left
+    out, so callers fall back to their own humanized text.
+    """
+    wanted = {str(d) for d in (domains or []) if d}
+    if not wanted:
+        return {}
+    try:
+        from maverick.domain import available_domains
+
+        catalog = available_domains()
+    except Exception:
+        return {}
+    names: dict[str, str] = {}
+    for domain in wanted:
+        profile = catalog.get(domain)
+        if profile is not None:
+            names[domain] = pack_display_name(domain, getattr(profile, "persona", ""), getattr(profile, "description", ""))
+    return names
+
+
 _PLACEHOLDER = re.compile(r"\{\{\s*([A-Za-z0-9_\-]+)\s*\}\}")
 
 

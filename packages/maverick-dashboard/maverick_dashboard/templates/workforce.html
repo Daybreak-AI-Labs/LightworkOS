@@ -97,12 +97,12 @@
           {% if not entitlements.get(d.key) %}<span class="badge">Add-on required</span>{% endif %}
         </p>
         <p>
-          <button type="button" class="btn btn--ghost" data-key="{{ d.key }}" data-act="team" aria-label="View {{ d.title }} team">View team</button>
-          <button type="button" class="btn btn--ghost" data-key="{{ d.key }}" data-act="review" aria-label="Review {{ d.title }} performance">Performance review</button>
+          <button type="button" class="btn btn--ghost" data-key="{{ d.key }}" data-act="team" aria-label="View team: {{ d.title }}">View team</button>
+          <button type="button" class="btn btn--ghost" data-key="{{ d.key }}" data-act="review" aria-label="Performance review: {{ d.title }}">Performance review</button>
           {% if entitlements.get(d.key) %}
-          <button type="button" class="btn" data-key="{{ d.key }}" data-act="deploy" aria-label="Set up {{ d.title }} team">Set up team</button>
+          <button type="button" class="btn" data-key="{{ d.key }}" data-act="deploy" aria-label="Set up team: {{ d.title }}">Set up team</button>
           {% else %}
-          <button type="button" class="btn" data-key="{{ d.key }}" data-act="deploy" aria-label="Set up {{ d.title }} team" aria-describedby="addon-note-{{ d.key }}">Set up team</button>
+          <button type="button" class="btn" data-key="{{ d.key }}" data-act="deploy" aria-label="Set up team: {{ d.title }}" aria-describedby="addon-note-{{ d.key }}">Set up team</button>
           <span id="addon-note-{{ d.key }}" class="muted">add-on required</span>
           {% endif %}
         </p>
@@ -211,7 +211,7 @@
         D.leaders.forEach(function (c) {
           var li = B.el('li', 'viz-legend__item');
           li.appendChild(B.el('span', 'viz-legend__label',
-            String(c.worker || '').replace(/_/g, ' ')));
+            c.worker_name || (window.mvHuman ? window.mvHuman(c.worker) : String(c.worker || '').replace(/_/g, ' '))));
           li.appendChild(B.el('span', 'viz-legend__val',
             (c.suite_title ? c.suite_title + ' · ' : '') + c.headline));
           ul.appendChild(li);

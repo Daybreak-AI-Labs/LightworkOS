@@ -56,7 +56,7 @@ def test_extending_pages_leave_the_main_landmark_to_base(template_name: str) -> 
             (
                 'aria-label="Turn off {{ pname }}"',
                 'aria-label="Turn on {{ pname }}"',
-                'aria-label="Use your organization\'s default for {{ pname }}"',
+                'aria-label="Use default for {{ pname }}, your organization\'s setting"',
                 'aria-label="Install plugin {{ plabel }}"',
             ),
         ),
@@ -79,14 +79,14 @@ def test_extending_pages_leave_the_main_landmark_to_base(template_name: str) -> 
                 'aria-label="Use standard role for {{ name_of(principal) }}"',
                 'aria-label="Save departments for {{ name_of(principal) }}"',
                 'aria-label="Use standard departments for {{ name_of(principal) }}"',
-                'aria-label="Cancel the invitation for {{ inv.email }}"',
+                'aria-label="Cancel invitation for {{ inv.email }}"',
             ),
         ),
         (
             "model_risk_assurance.html",
             (
                 'aria-label="Review the {{ row.vendor }} assessment"',
-                'aria-label="Attach the {{ row.vendor }} review to an AI system"',
+                'aria-label="Attach to an AI system: {{ row.vendor }} review"',
             ),
         ),
         (
@@ -99,15 +99,15 @@ def test_extending_pages_leave_the_main_landmark_to_base(template_name: str) -> 
         (
             "workforce.html",
             (
-                'aria-label="View {{ d.title }} team"',
-                'aria-label="Review {{ d.title }} performance"',
-                'aria-label="Set up {{ d.title }} team"',
+                'aria-label="View team: {{ d.title }}"',
+                'aria-label="Performance review: {{ d.title }}"',
+                'aria-label="Set up team: {{ d.title }}"',
             ),
         ),
         (
             "agents.html",
             (
-                'aria-label="Deploy \' + esc(d.title) + \' team"',
+                'aria-label="Deploy team: \' + esc(d.title) + \'"',
                 'aria-label="View \' + esc(d.title) + \' details"',
             ),
         ),
@@ -121,3 +121,48 @@ def test_repeated_actions_include_their_target(
 
     for label in labels:
         assert label in source
+
+
+def test_spoken_names_contain_the_visible_words():
+    """WCAG 2.5.3 (label in name): a voice-control user says what they see.
+
+    When a button or link has both visible words and an ``aria-label``, the
+    label contains those words in order: "Use template: Weekly update" for a
+    "Use template" button, not "Use the Weekly update template".
+    """
+    tag = re.compile(r"""<(button|a)\b[^>]*?\baria-label="([^"]*)"[^>]*>([^<]*)</\1>""", re.DOTALL)
+
+    def words(text: str) -> str:
+        text = re.sub(r"\{\{.*?\}\}|\{%.*?%\}|'\s*\+.*?\+\s*'", " ", text)
+        return " ".join(re.sub(r"[^\w\s]", " ", text.lower()).split())
+
+    static = TEMPLATES.parent / "static"
+    broken = []
+    for source in sorted(TEMPLATES.rglob("*.html")) + sorted(static.glob("lightwork*.js")):
+        text = source.read_text(encoding="utf-8", errors="ignore")
+        for match in tag.finditer(text):
+            label, visible = match.group(2), match.group(3)
+            if not visible.strip() or any(mark in visible for mark in ("{{", "{%", "'")):
+                continue
+            if words(label) and words(visible) not in words(label):
+                line = text[:match.start()].count("\n") + 1
+                broken.append(f"{source.name}:{line}: shows {visible.strip()!r}, named {label!r}")
+    assert not broken, "\n".join(broken)
+
+
+def test_links_that_open_a_new_tab_say_so():
+    """A link that opens a new tab says so to every reader (the product uses
+    a screen-reader cue, "(opens in a new tab)") and never hands the opener
+    to the new page."""
+    link = re.compile(r"<a\b[^>]*target=\"_blank\"[^>]*>.*?</a>", re.DOTALL)
+    missing = []
+    for source in sorted(TEMPLATES.rglob("*.html")):
+        text = source.read_text(encoding="utf-8")
+        for match in link.finditer(text):
+            whole = match.group(0)
+            line = text[:match.start()].count("\n") + 1
+            if not re.search(r"new tab|new window|another tab", whole, re.IGNORECASE):
+                missing.append(f"{source.name}:{line}: no new-tab cue")
+            if "noopener" not in whole and "noreferrer" not in whole:
+                missing.append(f"{source.name}:{line}: no rel=noopener")
+    assert not missing, "\n".join(missing)

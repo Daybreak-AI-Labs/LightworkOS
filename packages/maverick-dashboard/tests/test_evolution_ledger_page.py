@@ -135,3 +135,26 @@ def test_main_dashboard_mounts_page_api_static_asset_and_context() -> None:
     assert f"{page.API_BASE}/snapshot" in paths
     assert f"{page.API_BASE}/verify-receipt" in paths
     assert client.get(page.ASSET_PATH).status_code == 200
+
+
+def test_checkpoint_status_is_not_asked_for_before_any_learning_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Live: with no learning history yet, every visit logged a refused
+    # checkpoint-status request (409) in the browser console. The page says
+    # whether history exists; any other state, unreadable included, still asks.
+    from maverick_dashboard import evolution_ledger_api as api
+
+    def root_tag(body: str) -> str:
+        return body.split('id="elv-root"')[1].split(">")[0]
+
+    monkeypatch.setattr(api, "_promotion_ledger_source", lambda: (None, "not_present"))
+    assert 'data-history-present="false"' in root_tag(_app(monkeypatch).get(page.PAGE_PATH).text)
+    monkeypatch.setattr(api, "_promotion_ledger_source", lambda: (object(), "available"))
+    assert 'data-history-present="true"' in root_tag(_app(monkeypatch).get(page.PAGE_PATH).text)
+
+    def unreadable():
+        raise api.EvolutionLedgerError("promotion ledger source cannot be inspected")
+
+    monkeypatch.setattr(api, "_promotion_ledger_source", unreadable)
+    assert 'data-history-present="true"' in root_tag(_app(monkeypatch).get(page.PAGE_PATH).text)

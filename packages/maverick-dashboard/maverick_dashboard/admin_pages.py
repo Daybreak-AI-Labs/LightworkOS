@@ -1418,7 +1418,8 @@ def _users_context(request: Request) -> dict:
             "workspace_roles": workspace_role_options.get(wm_tenant, []),
             "workspace_member_count": len(member_rosters.get(wm_tenant, {})),
             "role_descriptions": role_descriptions(),
-            "bootstrap_admins": [], "auth_on": True, "default_role": rbac.default_role(), "workspace_roles_initialized": rbac.tenant_role_scope_initialized(),
+            "bootstrap_admins": [], "auth_on": True, "company_signin": oidc_enabled() or proxy_auth_enabled(),
+            "default_role": rbac.default_role(), "workspace_roles_initialized": rbac.tenant_role_scope_initialized(),
             "you": auth.caller_principal(request),
             "saved": ("Workspace invitation revoked."
                       if request.query_params.get("saved") == "workspace_invite_revoked" else ""),
@@ -1429,8 +1430,8 @@ def _users_context(request: Request) -> dict:
             "workspace_pending_invites": [inv for inv in workspace_invites if inv.pending],
             "workspace_recent_invites": [inv for inv in workspace_invites if inv.used_at is not None][:20],
         }
-    auth_on = (auth.caller_principal(request) is not None
-               or oidc_enabled() or proxy_auth_enabled())
+    company_signin = oidc_enabled() or proxy_auth_enabled()
+    auth_on = auth.caller_principal(request) is not None or company_signin
     env = (_os.environ.get("MAVERICK_DASHBOARD_ADMINS") or "").strip()
     if env:
         bootstrap = [a.strip() for a in env.split(",") if a.strip()]
@@ -1518,6 +1519,7 @@ def _users_context(request: Request) -> dict:
         "bootstrap_admins": sorted(bootstrap),
         "default_role": rbac.default_role(), "workspace_roles_initialized": rbac.tenant_role_scope_initialized(),
         "auth_on": auth_on,
+        "company_signin": company_signin,
         "you": auth.caller_principal(request),
         "saved": saved,
         "suite_grants": sorted(grants.items()),
@@ -2193,6 +2195,7 @@ def spending_limits_page(request: Request, saved: str = "", error: str = "",
         task_cap = None
     return _app().templates.TemplateResponse(request, "spending_limits.html", {
         "view": view,
+        "agent_names": _team_agent_names(row.get("principal") for row in view.get("people") or []),
         # The same per-task limit the chat composer shows ("Task limits").
         "task_cap": task_cap,
         "alert_at": _alert_points(),
@@ -2207,6 +2210,31 @@ def spending_limits_page(request: Request, saved: str = "", error: str = "",
         "error": _LIMIT_ERRORS.get(error, ""),
         "load_error": load_error,
     })
+
+
+def _team_agent_names(principals) -> dict[str, str]:
+    """Readable names for team agents (``agent:<team>.<agent>``) that run a
+    specialist: "Government Invoice Prep, Retest-team team" instead of the
+    pack name. Other principals keep their usual identity text."""
+    wanted = {str(p) for p in principals if str(p or "").startswith("agent:") and "." in str(p)}
+    if not wanted:
+        return {}
+    try:
+        from maverick.fleet import list_fleets
+
+        from .plain_labels import specialist_names
+
+        domains: dict[str, tuple[str, str]] = {}
+        for fleet in list_fleets():
+            for agent in fleet.agents:
+                principal = fleet.principal_for(agent.name)
+                if principal in wanted and agent.domain:
+                    domains[principal] = (agent.domain, fleet.name)
+        names = specialist_names(domain for domain, _team in domains.values())
+    except Exception:  # noqa: BLE001 -- names are a convenience; identities still show
+        return {}
+    return {principal: f"{names[domain]}, {team} team"
+            for principal, (domain, team) in domains.items() if domain in names}
 
 
 def _limit_preview(scope: str, amount: str, period: str, principal: str) -> tuple[dict | None, str]:

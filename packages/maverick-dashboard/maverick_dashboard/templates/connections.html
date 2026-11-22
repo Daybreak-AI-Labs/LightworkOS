@@ -78,7 +78,7 @@
     <div class="cx__fld">
       <label for="cx-token">Key from the service <span class="sub">— encrypted, never shown again</span></label>
       <input class="input" id="cx-token" type="password" placeholder="Paste the key">
-      <p class="cx__sub"><a id="cx-key-help" href="#" target="_blank" rel="noopener noreferrer" hidden>Where do I find this key?</a></p>
+      <p class="cx__sub"><a id="cx-key-help" href="#" target="_blank" rel="noopener noreferrer" hidden>Where do I find this key?<span class="sr-only"> (opens in a new tab)</span></a></p>
       <p class="cx__sub" id="cx-credential-help"></p>
     </div>
     <fieldset id="cx-aws" hidden><legend>Amazon Web Services sign-in</legend>
@@ -145,8 +145,10 @@
     <pre id="cx-conflict-current"></pre>
     <button class="btn" type="button" id="cx-reload-edit">Load current record for review</button>
   </section>
+  <div id="cx-saved">
   <ul class="cx__list" id="cx-list"></ul>
   <p class="cx__sub" id="cx-empty" hidden>None yet — save your first connection above and it appears here, ready to test.</p>
+  </div>
 
   <section aria-labelledby="to-connectors-title" id="to-connectors-panel" hidden>
   <div class="section-head"><h2 id="to-connectors-title">Systems Lightwork may change</h2></div>

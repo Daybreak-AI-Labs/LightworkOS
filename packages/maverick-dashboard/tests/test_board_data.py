@@ -43,3 +43,18 @@ def test_workspace_projection_uses_the_supplied_department_types(monkeypatch):
     assert board["kpis"]["approved"] == 1
     assert board["kpis"]["open"] == 1
     assert board["risk"]["high"] == 1
+
+
+def test_top_performers_carry_the_specialists_own_name(monkeypatch):
+    # Live: Workforce listed "proc p2p exceptions" under Top performers.
+    from types import SimpleNamespace
+
+    from maverick_dashboard import board_data, plain_labels
+
+    monkeypatch.setattr(plain_labels, "specialist_names",
+                        lambda domains: {"proc_p2p_exceptions": "P2P Exception Clerk"})
+    cards = [SimpleNamespace(to_dict=lambda: {"worker": "proc_p2p_exceptions"}),
+             SimpleNamespace(to_dict=lambda: {"worker": "retired_pack"})]
+    rows = board_data._named_leaders(cards)
+    assert [(row["worker"], row["worker_name"]) for row in rows] == [
+        ("proc_p2p_exceptions", "P2P Exception Clerk"), ("retired_pack", "")]

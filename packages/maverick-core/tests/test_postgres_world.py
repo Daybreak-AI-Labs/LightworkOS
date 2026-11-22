@@ -3435,3 +3435,20 @@ def test_raw_reads_need_a_tenant_boundary_while_tenancy_is_on(world):
             cursor.execute("DELETE FROM episodes WHERE goal_id IN "
                            "(SELECT id FROM goals WHERE tenant_id IN (%s, %s))", (mine, other))
             cursor.execute("DELETE FROM goals WHERE tenant_id IN (%s, %s)", (mine, other))
+
+
+def test_personal_alert_goals_decode_a_page_at_once(world, monkeypatch):
+    # The notification badge reads this page on every page view; each page of
+    # tasks is decoded in one batch, in either at-rest posture.
+    from maverick.world_model_backends import postgres
+    owner = "user:alerts-" + uuid.uuid4().hex
+    for i in range(5):
+        world.create_goal(f"sealed {i}", "private", owner=owner)
+    pages = []
+    original = postgres._dec_goal_rows
+    monkeypatch.setattr(postgres, "_dec_goal_rows", lambda rows: pages.append(len(rows)) or original(rows))
+    rows = world.personal_alert_goals(owner, since=0)
+    assert [goal.title for goal, _state, _result in rows] == [f"sealed {i}" for i in range(5)]
+    assert all(goal.description == "private" for goal, _state, _result in rows)
+    assert all(isinstance(state, int) and isinstance(result, int) for _goal, state, result in rows)
+    assert pages == [5]

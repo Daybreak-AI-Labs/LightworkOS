@@ -281,8 +281,11 @@ def collect(world) -> list[dict]:
                                      "WHERE t.id=? AND {tenant:c.tenant_id}", (row[0],))
             output[key] = _observation(key, "unattributed-channel", row[3], classify(_dec_field(raw[0][0], context="turns.content")))
         output[key]["sources"].append({"kind": "turn", "id": str(row[0]), "at": row[3]})
+    # One sealed spend-ledger read for every linked task, not one per task.
+    from ..cost_provenance import for_goals
+    catalogues = for_goals([gid for item in output.values() for gid in item["goal_ids"]])
     for item in output.values():
-        _provider_costs(item)
+        _provider_costs(item, catalogues)
         for cost in item["costs"]:
             cost.pop("_from", None)
         _flow_cost_residuals(item)
@@ -349,7 +352,7 @@ def _root(group, index):
     return index
 
 
-def _provider_costs(item):
+def _provider_costs(item, catalogues=None):
     """Receipts replace, never add to, their goal's episode estimate.
 
     Receipt periods are UTC days (``YYYY-MM-DD``, the provider-cap default) or
@@ -361,7 +364,7 @@ def _provider_costs(item):
     from ..cost_provenance import for_goal
 
     for gid in item["goal_ids"]:
-        catalogue = for_goal(gid)
+        catalogue = catalogues[gid] if catalogues is not None and gid in catalogues else for_goal(gid)
         item["provider_evidence"].append({"goal_id": gid, **catalogue})
         receipts = catalogue["receipts"]
         if not receipts:

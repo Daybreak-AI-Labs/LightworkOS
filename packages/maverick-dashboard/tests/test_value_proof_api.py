@@ -238,3 +238,21 @@ def test_value_proof_script_is_served(client):
     r = client.get("/static/lightwork-value-proof.js")
     assert r.status_code == 200 and "javascript" in r.headers["content-type"]
     assert "window.confirm(" not in r.text and "mvConfirm" in r.text
+
+
+def test_repeated_task_groups_read_as_words_not_keys(client, monkeypatch):
+    # Live: the Savings page listed "Data pii scan:sample:", "From" and "In".
+    # Groups are keyed specialist:first-word; they read as words instead.
+    from types import SimpleNamespace
+
+    from maverick import compounding_metric
+    from maverick_dashboard import value_proof_api
+
+    rows = [SimpleNamespace(task_class=key, runs=5, cost_delta_pct=-10.0, success_delta=0.0, improving=True)
+            for key in ("proc_p2p_exceptions:sample:", "reply", "sample:", "retired_pack:run")]
+    monkeypatch.setattr(compounding_metric, "report_from_world", lambda world, window: rows)
+    monkeypatch.setattr(value_proof_api, "specialist_names",
+                        lambda domains: {"proc_p2p_exceptions": "P2P Exception Clerk"})
+    names = [row["name"] for row in client.get(API + "/compounding").json()["task_types"]]
+    assert names == ["P2P Exception Clerk · tasks that start “Sample”", "Tasks that start “Reply”",
+                     "Tasks that start “Sample”", "Retired pack · tasks that start “Run”"]

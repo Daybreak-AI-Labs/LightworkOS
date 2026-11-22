@@ -21,7 +21,8 @@
 {% endblock %}
 {% block content %}
 <div class="rob-shell" id="rob-root" data-api-base="{{ api_base }}" data-copilot-page="{{ page_path }}"
-     data-can-admin="{{ 'true' if rob_can_admin else 'false' }}">
+     data-can-admin="{{ 'true' if rob_can_admin else 'false' }}"
+     data-feed-enabled="{{ 'true' if rob_feed_enabled else 'false' }}">
   {% from "_hero.html" import hero %}
   {% call hero('Compliance', 'Regulations and rules',
                subtitle='Which rules your AI workers follow',

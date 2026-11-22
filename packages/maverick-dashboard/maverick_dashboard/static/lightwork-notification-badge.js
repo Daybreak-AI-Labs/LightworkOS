@@ -4,13 +4,17 @@
   if (!links.length || links[0].dataset.enabled !== 'true' || location.pathname === '/notifications') return;
   let controller = null;
 
+  // The badge and its spoken name say the same number (99+ when capped).
+  function shownCount(unseen) { return unseen > 99 ? '99+' : String(unseen); }
+
   function show(unseen, partial) {
-    const label = unseen ? 'Your notifications, ' + unseen + ' new' : 'Your notifications';
+    const shown = shownCount(unseen);
+    const label = unseen ? 'Your notifications, ' + shown + ' new' : 'Your notifications';
     links.forEach(function (link) {
       const count = link.querySelector('.notification-count');
       count.classList.remove('notification-count--error');
       count.hidden = unseen === 0;
-      count.textContent = unseen > 99 ? '99+' : String(unseen);
+      count.textContent = shown;
       link.setAttribute('aria-label', label + (partial ? '. Some assigned decisions could not be checked.' : ''));
       link.title = partial ? 'Some notifications could not be checked. Open your inbox to refresh.' : label;
     });

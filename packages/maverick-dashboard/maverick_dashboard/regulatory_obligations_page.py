@@ -47,6 +47,12 @@ def create_regulatory_obligations_page_router(templates: Jinja2Templates) -> API
         if any(key not in {"theme", "density", "font", "lang"} for key in request.query_params):
             raise HTTPException(status_code=404, detail="regulatory obligations unavailable")
         nonce = secrets.token_urlsafe(18)
+        try:
+            from maverick.ai_regulatory_feed import enabled as _feed_enabled
+
+            feed_enabled = _feed_enabled()
+        except Exception:  # never block the page on the optional feed
+            feed_enabled = False
         response = templates.TemplateResponse(
             request,
             "regulatory_obligations.html",
@@ -56,6 +62,7 @@ def create_regulatory_obligations_page_router(templates: Jinja2Templates) -> API
                 "csp_style_nonce": nonce,
                 "rob_can_audit": has_permission(request, "audit"),
                 "rob_can_admin": has_global_permission(request, "admin"),
+                "rob_feed_enabled": feed_enabled,
             },
         )
         for name, value in _HEADERS.items():

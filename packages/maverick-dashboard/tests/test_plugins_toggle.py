@@ -93,3 +93,32 @@ def test_toggle_blocks_dns_rebinding_host(monkeypatch, tmp_path):
         follow_redirects=False,
     )
     assert r.status_code == 401
+
+
+def test_plugins_page_offers_the_workbench_setting_instead_of_loading_it_while_off(monkeypatch, tmp_path):
+    # Live: with the workbench off, every visit asked for it and was refused
+    # (403). Off, the page names the setting and loads no workbench.
+    _prep(monkeypatch, tmp_path)
+    from maverick_dashboard import app as dash_app
+
+    monkeypatch.setattr(dash_app, "_plugin_workbench_enabled", lambda: False)
+    r = _client().get("/plugins")
+    assert r.status_code == 200
+    assert 'id="plugin-workbench"' not in r.text
+    assert "The qualification workbench is turned off." in r.text
+    assert 'href="/settings/all?id=plugins.workbench"' in r.text
+    monkeypatch.setattr(dash_app, "_plugin_workbench_enabled", lambda: True)
+    r = _client().get("/plugins")
+    assert 'id="plugin-workbench"' in r.text
+    assert "The qualification workbench is turned off." not in r.text
+
+
+def test_plugin_workbench_is_off_by_default(monkeypatch, tmp_path):
+    _prep(monkeypatch, tmp_path)
+    from maverick import config
+    from maverick_dashboard import app as dash_app
+
+    monkeypatch.setattr(config, "load_config", dict)
+    assert dash_app._plugin_workbench_enabled() is False
+    monkeypatch.setattr(config, "load_config", lambda: {"plugins": {"workbench": True}})
+    assert dash_app._plugin_workbench_enabled() is True

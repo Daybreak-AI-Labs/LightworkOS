@@ -833,6 +833,11 @@ def test_domain_suites_checker_matches_each_pack_check(monkeypatch):
         check = auth.domain_suites_checker(request)
         assert {name: check(name) for name in names} == expected, label
         assert len(reads) <= 1, label
+        # A listing that already holds each profile gets the same answer
+        # without resolving the whole catalogue again for every pack.
+        catalogue = available_domains()
+        check = auth.domain_suites_checker(request)
+        assert {name: check(name, catalogue[name]) for name in names} == expected, label
 
     def broken(request):
         raise RuntimeError("grant store unavailable")
@@ -1218,3 +1223,18 @@ def test_plain_validation_messages_still_reach_the_page(context):
     response = client.get(BASE + "?start=2026-13-40", headers=headers())
     assert response.status_code == 422
     assert response.json()["detail"] == "Use UTC calendar dates in YYYY-MM-DD format."
+
+
+def test_opportunities_resolve_the_specialist_catalogue_once(context, monkeypatch):
+    # Work value lists every specialist pack; looking each pack up in a freshly
+    # resolved catalogue made the list quadratic in the number of packs.
+    from maverick import domain
+    client, world = context
+    seed(world, count=2)
+    get(client)
+    calls = []
+    original = domain._resolved_catalog
+    monkeypatch.setattr(domain, "_resolved_catalog", lambda *a, **k: calls.append(1) or original(*a, **k))
+    response = client.get(BASE + "/opportunities", headers=headers())
+    assert response.status_code == 200, response.text
+    assert len(calls) <= 3, len(calls)

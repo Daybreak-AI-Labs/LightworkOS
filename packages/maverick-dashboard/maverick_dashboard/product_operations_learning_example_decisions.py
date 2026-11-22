@@ -93,7 +93,7 @@ def original_snapshot(request, selection):
 
 
 def entries():
-    common = {"family": "learning", "pages": ("/flows/*/runs/*",), "direct_ui": "/flows"}
+    common = {"family": "learning", "pages": ("/flows/*/runs/*",), "direct_ui": "/workflows"}
     result = []
     for kind, label in (("accept", "Accept this learning example"), ("reject", "Do not use this learning example"), ("grant", "Allow learning from this example")):
         result.append(Adapter("learning.example_" + kind, label, input_model=GrantIn if kind == "grant" else ReasonIn,

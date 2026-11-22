@@ -241,7 +241,7 @@ ROWS = [
     ("Most used", "Les plus utilisés", "Häufig genutzt", "よく使う項目", "常用"),
     ("Help", "Aide", "Hilfe", "ヘルプ", "帮助"),
     ("{page}, {count} waiting", "{page}, {count} en attente", "{page}, {count} offen", "{page}、{count}件が保留中", "{page}，{count} 项待处理"),
-    ("{page} (turned off)", "{page} (désactivé)", "{page} (ausgeschaltet)", "{page}（オフ）", "{page}（已关闭）"),
+    ("{page}, Off", "{page}, Désactivé", "{page}, Aus", "{page}、オフ", "{page}，关闭"),
     # Page names of newer destinations (sidebar, finder and areas navigation).
     ("Recheck affected rules", "Revérifier les règles concernées", "Betroffene Regeln erneut prüfen", "影響を受けるルールを再確認", "重新检查受影响的规则"),
     ("Find missing distinctions", "Trouver les distinctions manquantes", "Fehlende Unterscheidungen finden", "足りない区別を見つける", "找出缺失的区分"),

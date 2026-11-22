@@ -421,3 +421,20 @@ def test_first_login_baseline_reads_plainly(client):
     text = visible_text(client.get("/users").text)
     assert "Current fallback" not in text and "with powers" not in text
     assert "Anyone who signs in without an assigned role gets Viewer" in text
+
+
+def test_users_badge_names_the_kind_of_sign_in(client, monkeypatch):
+    # Live on a fresh install: the owner's email-and-password account read
+    # "Company sign-in on" though no company sign-in was set up.
+    from maverick import oidc, proxy_auth
+    from maverick_dashboard import auth, rbac
+
+    rbac.set_role("user:owner@example.test", "admin")
+    monkeypatch.setattr(auth, "caller_principal", lambda request: "user:owner@example.test")
+    monkeypatch.setattr(oidc, "oidc_enabled", lambda: False)
+    monkeypatch.setattr(proxy_auth, "proxy_auth_enabled", lambda: False)
+    text = visible_text(client.get("/users").text)
+    assert "Email sign-in on" in text and "Company sign-in on" not in text
+    monkeypatch.setattr(oidc, "oidc_enabled", lambda: True)
+    text = visible_text(client.get("/users").text)
+    assert "Company sign-in on" in text

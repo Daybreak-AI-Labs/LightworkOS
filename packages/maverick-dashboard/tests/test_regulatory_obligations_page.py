@@ -143,3 +143,17 @@ readJson(new Response(body, { status: 403 })).then(
     )
     assert completed.returncode == 0, completed.stderr
     assert json.loads(completed.stdout) == {"thrown": True, "status": 403, "released": True}
+
+
+def test_regulatory_updates_are_not_asked_for_while_the_feed_is_off(monkeypatch) -> None:
+    # Live: every visit logged a refused regulatory-feed request (403) in the
+    # browser console. The page says whether the feed is on, so its script
+    # shows the turned-off line without asking.
+    from maverick import ai_regulatory_feed
+
+    monkeypatch.setattr(ai_regulatory_feed, "enabled", lambda: False)
+    body = _app(monkeypatch, {"view"}).get(page.PAGE_PATH).text
+    assert 'data-feed-enabled="false"' in body.split('id="rob-root"')[1].split(">")[0]
+    monkeypatch.setattr(ai_regulatory_feed, "enabled", lambda: True)
+    body = _app(monkeypatch, {"view"}).get(page.PAGE_PATH).text
+    assert 'data-feed-enabled="true"' in body.split('id="rob-root"')[1].split(">")[0]

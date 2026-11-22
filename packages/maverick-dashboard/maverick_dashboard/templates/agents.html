@@ -1108,8 +1108,8 @@
           var unavailable = blockedTeam(d);
           var disable = unavailable ? ' disabled title="Set up at least one specialist before deploying this team"' : '';
           var deploy = d.entitled
-            ? '<button type="button" class="btn dep-deploy" data-key="' + esc(d.key) + '" aria-label="Deploy ' + esc(d.title) + ' team" style="font-size:var(--text-sm);"' + disable + '>Deploy team</button>'
-            : '<button type="button" class="btn dep-deploy" data-key="' + esc(d.key) + '" aria-label="Deploy ' + esc(d.title) + ' team" style="font-size:var(--text-sm);"' + disable + '>Deploy team</button><span class="dept__addon">add-on required</span>';
+            ? '<button type="button" class="btn dep-deploy" data-key="' + esc(d.key) + '" aria-label="Deploy team: ' + esc(d.title) + '" style="font-size:var(--text-sm);"' + disable + '>Deploy team</button>'
+            : '<button type="button" class="btn dep-deploy" data-key="' + esc(d.key) + '" aria-label="Deploy team: ' + esc(d.title) + '" style="font-size:var(--text-sm);"' + disable + '>Deploy team</button><span class="dept__addon">add-on required</span>';
           return '<div class="dept" data-key="' + esc(d.key) + '">'
             + '<div class="dept__head"><span class="dept__avatar">' + esc(initials(d.title)) + '</span>'
             + '<span><div class="dept__name">' + esc(d.title) + '</div>'

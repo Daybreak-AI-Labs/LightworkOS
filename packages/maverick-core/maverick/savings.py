@@ -104,7 +104,7 @@ def compute(world: Any, *, window_days: int = 90,
         return rate * hours
 
     wv = workforce_value.compute(world, window_days=window_days,
-                                 human_cost_for=_cost_for, now=now, owner=owner)
+                                 human_cost_for=_cost_for, now=now, owner=owner, governance=False)
     out = SavingsReport(
         available=wv.available, incomplete=wv.incomplete, unavailable_reason=wv.unavailable_reason,
         window_days=window_days,

@@ -322,3 +322,47 @@ def test_a_hot_journal_from_a_stopped_writer_is_rolled_back_before_the_seal_is_j
     assert indexed.seal_path(path).read_text().strip() == indexed._digest_file(database) == sealed
     with sqlite3.connect(database) as connection:
         assert connection.execute("SELECT COUNT(*) FROM attempts WHERE attempt_key LIKE 'k%'").fetchone() == (0,)
+
+
+def _receipts_for_goals(tmp_path, monkeypatch, goals):
+    _indexed_ledger(tmp_path, monkeypatch)
+    for goal in goals:
+        for attempt in (1, 2):
+            hold = cap.reserve("openai", 0.5, operation_id=f"g{goal}-a{attempt}", category="inference",
+                               attempt_no=attempt, work_item_id=f"goal:{goal}")
+            cap.settle(hold, 0.25)
+
+
+def test_catalogues_for_many_work_items_match_one_at_a_time(tmp_path, monkeypatch):
+    # Spend and the cost export list one row per task; each must read the same
+    # receipts it would read alone, including a task with none.
+    _receipts_for_goals(tmp_path, monkeypatch, [1, 2, 3])
+    items = ["goal:1", "goal:2", "goal:3", "goal:404"]
+    together = cap.reservation_catalogues_for_work_items(items)
+    assert list(together) == items
+    for item in items:
+        alone = cap.reservation_catalogue_for_work_item(item)
+        assert together[item] == alone
+    assert [len(together[item].receipts) for item in items] == [2, 2, 2, 0]
+
+
+def test_catalogues_for_many_work_items_check_the_seal_once(tmp_path, monkeypatch):
+    # Each sealed read hashes the whole ledger file. One page of 50 tasks must
+    # not hash it 50 times.
+    _receipts_for_goals(tmp_path, monkeypatch, range(1, 6))
+    digests = []
+    original = indexed._digest_file
+    monkeypatch.setattr(indexed, "_digest_file", lambda path: digests.append(path) or original(path))
+    together = cap.reservation_catalogues_for_work_items([f"goal:{goal}" for goal in range(1, 6)])
+    assert all(len(row.receipts) == 2 for row in together.values())
+    assert len(digests) == 1
+
+
+def test_catalogues_for_many_work_items_fail_closed_on_tampering(tmp_path, monkeypatch):
+    _receipts_for_goals(tmp_path, monkeypatch, [1, 2])
+    database = indexed.database_path(cap._ledger_path())
+    with sqlite3.connect(database) as connection:
+        connection.execute("UPDATE meta SET value=value WHERE key='schema'")
+        connection.execute("INSERT INTO meta(key, value) VALUES ('tampered', 'yes')")
+    together = cap.reservation_catalogues_for_work_items(["goal:1", "goal:2"])
+    assert all(isinstance(value, cap.ProviderAccountingUnavailable) for value in together.values())

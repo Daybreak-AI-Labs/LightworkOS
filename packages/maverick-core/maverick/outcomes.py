@@ -3,7 +3,7 @@
 Billing meters tokens and credits; the useful question is "what did it get
 *done*?" This rolls the Operating Record (:mod:`maverick.operating_record`) up
 into per-worker *outcomes* — goals completed, completion rate, spend — so a
-worker card can lead with delivery ("12 of 14 goals completed this period")
+worker card can lead with delivery ("12 of 14 tasks finished this period")
 instead of usage. A firm-level rollup adds human approvals and total spend
 across the whole record.
 
@@ -38,7 +38,7 @@ class Outcome:
         """The single line a worker card leads with."""
         if not self.goals_total:
             return "No work recorded yet"
-        return f"{self.goals_completed} of {self.goals_total} goals completed"
+        return f"{self.goals_completed} of {self.goals_total} tasks finished"
 
     def to_dict(self) -> dict:
         return {

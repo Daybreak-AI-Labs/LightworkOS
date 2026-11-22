@@ -32,7 +32,7 @@ def test_by_worker_rolls_up_goals_per_specialist(world):
     assert fin.goals_total == 2 and fin.goals_completed == 1
     assert fin.completion_rate == 0.5
     assert fin.suite == "finance" and fin.suite_title == "Finance"
-    assert "1 of 2 goals completed" in fin.headline()
+    assert "1 of 2 tasks finished" in fin.headline()
 
 
 def test_worker_cards_sorted_by_delivery_and_top(world):

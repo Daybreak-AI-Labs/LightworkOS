@@ -28,3 +28,17 @@ test('private task count reaches both chat navigation controls and recovers afte
   assert(links.every(node => node.querySelector('.notification-count').hidden));
   assert.equal(links[0].getAttribute('aria-label'), 'Your notifications');
 });
+
+test('a capped badge names the same 99+ that it shows', async t => {
+  const link = '<a class="personal-notification-link" data-enabled="true" href="/notifications" aria-label="Your notifications"><span class="notification-count" hidden></span></a>';
+  const dom = new JSDOM(link, {url:'https://lightwork.example.test/chat', runScripts:'outside-only', pretendToBeVisual:true});
+  t.after(() => dom.window.close());
+  dom.window.setInterval = () => 1;
+  dom.window.fetch = async () => ({ok:true, json:async()=>({unseen:120, partial:false})});
+  shell(dom.window);
+  dom.window.eval(fs.readFileSync(path.resolve(__dirname, '../../maverick_dashboard/static/lightwork-notification-badge.js'), 'utf8'));
+  await settle();
+  const node = dom.window.document.querySelector('.personal-notification-link');
+  assert.equal(node.querySelector('.notification-count').textContent, '99+');
+  assert.equal(node.getAttribute('aria-label'), 'Your notifications, 99+ new');
+});
