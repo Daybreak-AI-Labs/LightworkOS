@@ -4,9 +4,11 @@
   if (!links.length || links[0].dataset.enabled !== 'true' || location.pathname === '/notifications') return;
   let controller = null;
 
+  // The badge and its spoken name say the same number (99+ when capped).
+  function shownCount(unseen) { return unseen > 99 ? '99+' : String(unseen); }
+
   function show(unseen, partial) {
-    // Name the number the badge shows (99+), so the spoken name contains it.
-    const shown = unseen > 99 ? '99+' : String(unseen);
+    const shown = shownCount(unseen);
     const label = unseen ? 'Your notifications, ' + shown + ' new' : 'Your notifications';
     links.forEach(function (link) {
       const count = link.querySelector('.notification-count');

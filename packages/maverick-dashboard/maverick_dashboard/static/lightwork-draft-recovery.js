@@ -187,10 +187,13 @@
       if (label) label.querySelectorAll('[data-mv-required]').forEach(function (marker) { marker.remove(); });
       var text = label ? label.textContent : control ? control.getAttribute('aria-label') : '';
       text = String(text || '').replace(/\s+/g, ' ').trim();
-      if (text) return text;
-      if (root.mvHuman) return root.mvHuman(row.name || row.key);
+      // A translated label carries its language; keep it so the heading is
+      // pronounced in that language, not the page's.
+      var marked = label && (label.querySelector('[lang]') || control.labels[0].closest('[lang]'));
+      if (text) return {text: text, lang: marked ? marked.getAttribute('lang') : ''};
+      if (root.mvHuman) return {text: root.mvHuman(row.name || row.key), lang: ''};
       var words = String(row.name || row.key).replace(/[_.-]+/g, ' ').trim();
-      return words.charAt(0).toUpperCase() + words.slice(1);
+      return {text: words.charAt(0).toUpperCase() + words.slice(1), lang: ''};
     }
     function compare(saved, current) {
       if (typeof options.compare === 'function') { contents.replaceChildren(); options.compare(contents, saved, current); return; }
@@ -212,7 +215,9 @@
       changedRows.forEach(function (key) {
         var field = doc.createElement('section'), heading = doc.createElement('h4'), values = doc.createElement('div');
         field.className = 'draft-recovery__field';
-        heading.textContent = fieldLabel(rows[key].row);
+        var named = fieldLabel(rows[key].row);
+        heading.textContent = named.text;
+        if (named.lang && named.lang !== doc.documentElement.lang) heading.lang = named.lang;
         heading.style.cssText = 'margin-block:var(--space-3) var(--space-2);font-size:var(--text-sm);overflow-wrap:anywhere';
         values.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,18rem),1fr));gap:var(--space-2);min-width:0';
         [['Recovery copy', rows[key].saved], ['Current draft', rows[key].current]].forEach(function (value) {

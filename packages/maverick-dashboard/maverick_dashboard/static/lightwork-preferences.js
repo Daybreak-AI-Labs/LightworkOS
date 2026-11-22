@@ -39,7 +39,13 @@
     if (key === 'chat_specialist') { var selected = (model.chat_specialists || []).find(function (row) { return row.value === value; }); return selected ? selected.label : value ? 'Saved specialist — no longer available' : 'Let Lightwork choose the team'; }
     if (key === 'chat_model') { var row = (model.chat_models || []).find(function (item) { return item.value === value; }); return row ? row.label : value ? 'Saved model — no longer available' : 'Use workspace settings'; }
     if (key === 'chat_effort') { var item = (model.chat_models || []).flatMap(function (row) { return row.efforts; }).find(function (row) { return row.value === value; }); return item ? item.label : value || 'Use the model’s usual thinking depth'; }
-    return JSON.stringify(value);
+    // Show the choice as the field shows it, never a stored code.
+    var field = form.querySelector('[data-pref="' + key + '"]');
+    var shown = field && field.tagName === 'SELECT' && Array.from(field.options).find(function (item) { return item.value === String(value == null ? '' : value); });
+    if (shown && shown.textContent.trim()) return shown.textContent.trim();
+    if (value == null || value === '') return text('Not set');
+    if (Array.isArray(value)) return value.length === 1 ? text('1 item') : text('{count} items', {count: value.length});
+    return typeof value === 'string' ? '“' + value + '”' : String(value);
   }
   function syncSpecialist() {
     if (!specialist) return;
@@ -150,7 +156,7 @@
   function describe(draft, state) {
     var effective = state.effective_by_scope[thread ? 'conversation' : scope.value] || state;
     return Object.keys(draft).map(function (key) {
-      return fieldLabel(key) + ': ' + savedValue(key,effective.values[key]) + ' (' + sourceLabel(effective.sources[key]) + ') -> ' +
+      return fieldLabel(key) + ': ' + savedValue(key,effective.values[key]) + ' (' + sourceLabel(effective.sources[key]) + ') → ' +
         (draft[key] === null ? text('Use inherited value') : savedValue(key,draft[key]));
     }).join('\n');
   }

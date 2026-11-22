@@ -239,3 +239,18 @@ test('a recovery copy to review changes the row words without opening or coverin
   assert.equal(details.open,false,'the person can close it while a choice is pending');
   ui.dom.window.close();
 });
+
+test('a translated field label keeps its language in the comparison heading',async()=>{
+  const ui=await fixture({remote:{brief:'unfinished'},revision:1,initial:'current'});
+  const label=ui.d.createElement('label');label.htmlFor='brief';
+  label.innerHTML='<span lang="fr" dir="ltr">Décrire une tâche à confier à Lightwork</span>';
+  ui.d.getElementById('brief').before(label);
+  ui.edit('current draft');await tick();
+  const details=ui.recovery.panel.querySelector('details');
+  Object.defineProperty(details,'open',{value:true});details.dispatchEvent(new ui.w.Event('toggle'));
+  const heading=details.querySelector('.draft-recovery__field h4');
+  assert.equal(heading.textContent,'Décrire une tâche à confier à Lightwork');
+  // A screen reader pronounces the French label as French, not English.
+  assert.equal(heading.lang,'fr');
+  ui.dom.window.close();
+});
