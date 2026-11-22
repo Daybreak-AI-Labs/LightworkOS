@@ -98,6 +98,26 @@ def test_all_starter_team_stores_retain_recovery_authority(tmp_path: Path) -> No
         assert (stage / relative).read_bytes() == originals[relative]
 
 
+def test_legal_restore_retains_access_and_consumed_worker_receipts_without_replay(tmp_path: Path) -> None:
+    stage = file_lock.ensure_private_directory(tmp_path / "stage")
+    relative = "tenants/acme/legal-workspace/LGL-restored.json"
+    path = _write(stage, relative, {
+        "id": "LGL-restored", "owner": "user:counsel", "members": ["user:colleague"],
+        "assignments": [{"id": "assignment", "state": "running", "run_id": "consumed"}],
+        "_operations": {"consumed": {"digest": "prior-reviewed-packet"}},
+    })
+    original = path.read_bytes()
+    assert authority_policy(relative, is_sqlite=False) == "legal_matter_authority"
+    removed, report = recovery._reconcile_bootstrap_stage(stage)
+    assert removed == set()
+    assert report["queued_work"]["automatic_replay_blocked"] is True
+    entry = next(item for item in report["items"] if item["source"] == relative)
+    assert entry["state"] == "unresolved"
+    assert entry["safe_state"] == "global_start_blocked"
+    assert entry["requires_external_readback"] is True
+    assert path.read_bytes() == original
+
+
 def test_retained_knowledge_rights_are_protected_recovery_authority(tmp_path: Path) -> None:
     relative = "tenants/acme/knowledge-rights-archive/recovered.json"
     assert authority_policy(relative, is_sqlite=False) == "knowledge_access_authority"

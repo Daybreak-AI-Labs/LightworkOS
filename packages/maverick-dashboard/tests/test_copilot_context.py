@@ -46,6 +46,7 @@ CANONICAL_CONTEXTS = {
     "/agents": "Agent Factory",
     "/workforce": "Workforce",
     "/fleets": "Agent teams",
+    "/legal": "Legal",
     "/approvals": "Approvals",
     "/facts": "Facts",
     "/content-access": "Content access",

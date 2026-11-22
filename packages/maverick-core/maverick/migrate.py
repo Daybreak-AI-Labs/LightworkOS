@@ -86,7 +86,7 @@ KNOWN_SECTIONS = frozenset({
     "erp", "event_triggers",
     "experience", "features", "federation", "finance", "finance_operations", "flows", "github",
     "governance", "governed_connectors", "governed_records", "grpc", "grpc_dispatch", "image_edit", "intake", "intent_value",
-    "kms", "knowledge", "knowledge_sources",
+    "kms", "knowledge", "knowledge_sources", "legal_workspace",
     "langchain", "latency", "limits", "local_first", "local_runtime",
     "logging", "lsp", "mcp_registries", "mcp_servers", "mcp_sidecar", "memory",
     # [mcp]: the tool server's limits and switches (maverick_mcp.settings),

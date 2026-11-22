@@ -87,6 +87,7 @@ jobs:
             .browser-consent-creation-results
             .browser-department-boards-results
             .browser-department-team-results
+            .browser-legal-workspace-results
             .browser-results-ekko-discovery
             .browser-results-intent-value
             .browser-privacy-handoff-results

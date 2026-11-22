@@ -30,6 +30,7 @@ Work
 	Workflow builder
 	Automations
 	Agent teams
+	Legal
 	Starter teams
 	Help and diagnostics
 	Your notifications

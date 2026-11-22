@@ -96,6 +96,11 @@ audit outbox. There are no new dependencies or separate storage credentials.
 Local behavior is covered by the module tests; deployment-specific Postgres
 acceptance remains required before relying on a shared deployment.
 
+Bootstrap restore preserves legal matter records and blocks application startup
+until their restored access, approvals and worker receipts are reconciled.
+There is no automatic legal-authority rebind: an older backup cannot renew
+access or authorize another provider attempt.
+
 The bounded inventory supports 1,000 matters, 200 records of each kind per
 matter, 500,000 source-text characters per matter and 2,000 operations per
 matter. A worker packet contains at most 20 sources and 120,000 characters.

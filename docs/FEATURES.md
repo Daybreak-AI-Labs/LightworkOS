@@ -31,8 +31,9 @@ catalogue of built features and tools.
 | [Unified cross-suite audit projection](#unified-cross-suite-audit-projection) | 6 |
 | [Distribution and install](#distribution-and-install) | 19 |
 | [Customer workflow completion and readiness](#customer-workflow-completion-and-readiness) | 22 in 24 subsections |
+| [In-house legal workspace](#in-house-legal-workspace) | prose |
 
-457 entries in 19 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
+457 entries in 20 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
 <!-- toc:end -->
 
 ## Agent kernel and orchestration

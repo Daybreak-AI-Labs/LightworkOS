@@ -1498,6 +1498,7 @@ PAGE_AREAS: dict[str, tuple[str, str]] = {
     "/roles": ("Agents", "Workforce"),
     "/workforce": ("Agents", "Workforce"),
     "/starter-teams": ("Agents", "Workforce"),
+    "/legal": ("Work", "Legal"),
     "/workflows": ("Work", "Workflows"),
     "/flows/designer": ("Work", "Workflows"),
     "/workflow-builder": ("Work", "Workflows"),
@@ -1652,11 +1653,13 @@ def group_title(group: str) -> str:
 # then an exact heading, then an exact synonym first (see
 # static/lightwork-navfinder.js). Neither ever changes who can see a page.
 HEADINGS: dict[str, str] = {
+    "/legal": "Your digital legal team",
     "/budget": "Your budget before work starts",
     "/companion": "Your companion",
     "/companion/admin": "Companion policies",
 }
 SYNONYMS: dict[str, tuple[str, ...]] = {
+    "/legal": ("counsel", "contracts", "paralegals", "associates", "legal matters"),
     "/approvals": ("approve", "approval", "decision", "decisions", "decide", "sign-off", "sign off"),
     # Agent controls holds the emergency stop and resume controls, and every
     # role that can find it can open it.
@@ -1724,7 +1727,7 @@ def pin_preset(role: str | None, allowed) -> list[str]:
 AREAS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("Ask", "/chat", ("Ask", "Conversations", "Start from a template", "My companion")),
     ("Home", "/today", ("Home",)),
-    ("Work", "/goals", ("Tasks", "Business details", "Approvals", "Results", "Projects", "Workflows", "Automations",
+    ("Work", "/goals", ("Tasks", "Business details", "Approvals", "Results", "Projects", "Workflows", "Automations", "Legal",
                         "Code changes", "Commitment reviews", "Shared decision reviews",
                         "Hand over a team's work")),
     ("Agents", "/workforce", ("Workforce", "Build an agent", "Skills", "Tools", "Knowledge", "Learning",

@@ -61,6 +61,10 @@ GLOBAL_START_JSON_AUTHORITY_POLICIES = {
     "commitment_viability_archive": "commitment_review_authority",
     "deliverable_bundles": "deliverable_release_authority",
     "project_workspaces": "project_workspace_membership_authority",
+    # Matter membership, human approvals and consumed worker receipts must
+    # survive recovery without reviving revoked access or admitting a retry.
+    # Preserve the aggregate and block startup until authority is reconciled.
+    "legal-workspace": "legal_matter_authority",
     "task_handoffs": "task_handoff_authority",
     "billing_sync_reviews": "billing_sync_review_authority",
     "budget_accounting_cases": "budget_reconciliation_authority",
