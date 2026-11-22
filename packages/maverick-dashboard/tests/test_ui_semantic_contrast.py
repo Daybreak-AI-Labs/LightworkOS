@@ -76,7 +76,7 @@ def _raised(palette: dict[str, str]) -> tuple[float, ...]:
     return tuple(0.86 * p + 0.14 * t for p, t in zip(panel, text, strict=True))
 
 
-@pytest.mark.parametrize("theme", ["dark", "light", "hicontrast"])
+@pytest.mark.parametrize("theme", ["dark", "light", "solarized", "hicontrast"])
 def test_brand_text_reads_on_raised_surfaces(theme):
     # Approval "Technical details" toggles and template chips put brand text
     # on --surface-2; the dark theme measured 4.1:1 there before.

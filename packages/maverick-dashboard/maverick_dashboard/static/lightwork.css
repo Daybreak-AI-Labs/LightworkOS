@@ -133,7 +133,7 @@
       --bg: #002b36; --panel: #073642; --border: #586e75;
       --text: #eee8d5; --muted: #b1bdbd; --accent: #b0cc57;
       --warn: #e2b24b; --danger: #ff948a; --danger-fg: #000000;
-      --brand: #4fa3d8; --brand-hi: #73b6e4; --brand-fg: #000000; --info: #69c5bf;
+      --brand: #8cc4ec; --brand-hi: #a6d2f1; --brand-fg: #000000; --info: #69c5bf;
     }
     body.theme-hicontrast {
       color-scheme: dark;
