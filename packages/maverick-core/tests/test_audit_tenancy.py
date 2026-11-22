@@ -246,3 +246,51 @@ def test_module_record_is_tenant_isolated(monkeypatch, tmp_path):
     assert "globex-only secret" in globex_text
     assert "globex-only secret" not in acme_text
     assert not _today_file(tmp_path / ".maverick" / "audit").exists()
+
+
+def test_global_record_under_a_tenant_signs_with_the_deployment_key(monkeypatch, tmp_path):
+    # A dashboard request runs with the selected workspace active. A
+    # deployment-global row written from it lands in the shared chain, so it
+    # must be signed with the shared key: a row signed with the workspace's key
+    # breaks verification of the shared chain for every later reader.
+    pytest.importorskip("cryptography")
+    import json
+
+    from maverick.audit.signing import verify_chain
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    monkeypatch.setenv("MAVERICK_AUDIT_SIGN", "1")
+    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
+    _reset_default_logs(monkeypatch)
+    assert record_global(EventKind.LEARNING_CONTROL_CHANGED, control="first", enabled=True)
+    token = set_tenant("acme")
+    try:
+        assert record_global(EventKind.LEARNING_CONTROL_CHANGED, control="from_workspace", enabled=True)
+    finally:
+        reset_tenant(token)
+    assert record_global(EventKind.LEARNING_CONTROL_CHANGED, control="after", enabled=True)
+
+    global_file = _today_file(tmp_path / "audit")
+    rows = [json.loads(line) for line in global_file.read_text(encoding="utf-8").splitlines()]
+    assert [row["control"] for row in rows] == ["first", "from_workspace", "after"]
+    assert len({row["key_id"] for row in rows}) == 1
+    assert verify_chain(global_file) == []
+    assert not (tmp_path / "tenants" / "acme" / "audit" / "keys").exists()
+
+
+def test_global_writer_first_used_under_a_tenant_signs_with_the_deployment_key(monkeypatch, tmp_path):
+    pytest.importorskip("cryptography")
+    from maverick.audit.signing import verify_chain
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    monkeypatch.setenv("MAVERICK_AUDIT_SIGN", "1")
+    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
+    _reset_default_logs(monkeypatch)
+    token = set_tenant("acme")
+    try:
+        assert record_global(EventKind.LEARNING_CONTROL_CHANGED, control="from_workspace", enabled=True)
+    finally:
+        reset_tenant(token)
+    assert record_global(EventKind.LEARNING_CONTROL_CHANGED, control="after", enabled=True)
+    assert verify_chain(_today_file(tmp_path / "audit")) == []
+    assert not (tmp_path / "tenants" / "acme" / "audit" / "keys").exists()
