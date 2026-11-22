@@ -11,7 +11,7 @@ test('missing specialist action explains setup and does not offer a blind retry'
   await expect(page.locator('#halt-card')).toBeVisible();
   await expect(page.locator('#halt-title')).toHaveText("Can't start");
   await expect(page.locator(`#chat-status-${root_id}`)).toHaveText("Can't start");
-  await expect(page.locator('#halt-reason')).toContainText('Web search is unavailable');
+  await expect(page.locator('#halt-reason')).toContainText("needs an action that isn't available");
   await expect(page.locator('#halt-specialist-alternative a[href="/agents"]')).toBeVisible();
   await expect(page.locator('#halt-specialist-alternative a[href="/chat"]')).toBeVisible();
   await expect(page.locator('#halt-resume-form')).toBeHidden();
@@ -22,5 +22,5 @@ test('missing specialist action explains setup and does not offer a blind retry'
   await expect(page.locator('#halt-resume-form')).toBeHidden();
   await expect(page.locator('#halt-technical')).not.toHaveAttribute('open', '');
   await expect(page.locator('#halt-technical-text')).toBeHidden();
-  await expect(page.locator('#halt-reason')).not.toContainText('legal_research');
+  await expect(page.locator('#halt-reason')).not.toContainText('legal_data_breach_legal');
 });

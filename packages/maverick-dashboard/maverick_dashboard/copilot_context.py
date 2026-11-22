@@ -437,7 +437,7 @@ _CONTEXTS = tuple(
             boundaries=(
                 "Sending a message starts work and may use a paid AI service; spending limits and approval rules still apply.",
                 "Starting or continuing work depends on your access and whether an AI service is ready.",
-                "An alternative keeps the original conversation and starts separately reviewed work. Connected actions may repeat effects, so answer-only is the default.",
+                "Try again, Edit and resend and Branch keep the original conversation and start separate work with the same tools. That work can repeat an action the original already took; tick Answer only for a new written reply with no actions.",
             ),
             next_steps=(
                 "Describe the result you need, then add any useful files or details.",

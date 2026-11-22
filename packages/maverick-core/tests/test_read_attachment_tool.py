@@ -179,3 +179,20 @@ def test_a_long_attachment_reads_on_from_an_offset(tmp_path):
     assert "BAT-77341" in window[:200]
     assert tool.fn({"id": aid, "offset": len(body) + 5}).startswith("ERROR: offset")
     assert tool.fn({"id": aid, "offset": "x"}).startswith("ERROR: offset")
+
+
+def test_attachment_list_and_workspace_tools_point_to_reading_by_id(tmp_path, monkeypatch):
+    # Live: an agent passed the stored path list_attachments printed to
+    # spreadsheet_read, got "escapes the workspace", and computed payroll by
+    # hand-written formulas (one wrong row) instead of one exact SQL query.
+    from types import SimpleNamespace
+
+    from maverick.tools import spreadsheet as ss
+    from maverick.tools.attachments import list_attachments_tool
+
+    world, gid, _other, aid, _iid = _setup(tmp_path, monkeypatch, False)
+    listing = list_attachments_tool(world, gid).fn({})
+    assert "read_attachment" in listing and "`sql`" in listing
+    stored = next(a.path for a in world.list_attachments(gid) if a.id == aid)
+    out = ss._run({"op": "info", "path": stored}, SimpleNamespace(workdir=str(tmp_path / "work")))
+    assert "read_attachment" in out and "sql" in out

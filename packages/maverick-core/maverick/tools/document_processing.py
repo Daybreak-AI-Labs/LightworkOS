@@ -24,6 +24,7 @@ from ..config import get_document_tools
 from ..file_lock import cross_process_lock, ensure_private_directory
 from ..paths import data_dir
 from ..sandbox.docker import DockerBackend
+from ..sandbox.image_pull import local_image_missing
 from ..sandbox.kubernetes import KubernetesBackend
 from ..sandbox.local import LocalBackend
 from ..sandbox.podman import PodmanBackend
@@ -166,7 +167,18 @@ def conversion_unavailable(sandbox) -> str | None:
     """Why office conversion cannot run with ``sandbox``, or None when it can."""
     if sandbox is None or isinstance(sandbox, LocalBackend):
         return local_convert_launch()[1]
-    if isinstance(sandbox, (DockerBackend, PodmanBackend, KubernetesBackend)):
+    if isinstance(sandbox, (DockerBackend, PodmanBackend)):
+        image = get_document_tools()["engine_image"]
+        engine = "podman" if isinstance(sandbox, PodmanBackend) else "docker"
+        if local_image_missing(engine, image):
+            # Offered anyway, every conversion failed and the agent fell back
+            # to a shell command that waited for approval.
+            return (f"Office conversion needs the document engine image {image}, which is not "
+                    f"built on this computer. An administrator can build it with: docker build "
+                    f"-f deploy/docker/Dockerfile.documents -t {image} . "
+                    "(see docs/document-processing.md).")
+        return None
+    if isinstance(sandbox, KubernetesBackend):
         return None
     return NO_CONTAINER
 

@@ -73,10 +73,58 @@ def _safe_path(sandbox, user_path: str) -> str:
     return str(candidate)
 
 
+_MARKDOWN_READERS = frozenset({"markdown", "markdown_strict", "commonmark", "commonmark_x", "gfm"})
+_BUILTIN_SOURCE_LIMIT = 2 * 1024 * 1024
+
+
+def _builtin_word(args: dict, sandbox) -> str | None:
+    """Markdown or plain text to .docx with the built-in Word writer, used when
+    the pandoc program is not installed. ``None`` when the request is not a
+    Markdown-to-Word conversion, so the caller reports pandoc missing."""
+    src = (args.get("input_path") or "").strip()
+    dst = (args.get("output_path") or "").strip()
+    if not src or not dst or sandbox is None:
+        return None
+    source_suffix = Path(src).suffix.lower()
+    reader = args.get("from_") or ("markdown" if source_suffix == ".txt" else _EXTENSIONS.get(source_suffix))
+    writer = args.get("to") or _EXTENSIONS.get(Path(dst).suffix.lower())
+    if writer != "docx" or reader not in _MARKDOWN_READERS | {"plain"}:
+        return None
+    from ..markdown_word import UnwritableText, word_answer
+    from ..sandbox.workspace_transfer import WorkspaceTransferError, _read, _write
+    from .document_processing import workspace_path
+
+    try:
+        root, source = workspace_path(sandbox, src)
+        _root, target = workspace_path(sandbox, dst)
+    except (ValueError, WorkspaceTransferError) as e:
+        return f"ERROR: {e}"
+    if any(part.rstrip(" .").casefold() == ".git" for part in target.split("/")):
+        return "ERROR: refusing to write under .git/"
+    try:
+        raw = _read(root, source)
+    except FileNotFoundError:
+        return f"ERROR: {src!r} is not a file in the workspace"
+    except (OSError, WorkspaceTransferError) as e:
+        return f"ERROR: {e}"
+    if len(raw) > _BUILTIN_SOURCE_LIMIT:
+        return "ERROR: the document is larger than 2 MB; split it into smaller files"
+    try:
+        document = word_answer(raw.decode("utf-8", errors="replace"), "")
+    except UnwritableText as e:
+        return f"ERROR: {e}"
+    try:
+        _write(root, target, document, 0o600)
+    except (OSError, WorkspaceTransferError) as e:
+        return f"ERROR: could not write {dst!r}: {e}"
+    dst_path = root / target
+    return f"wrote {dst_path} (built-in Word writer; pandoc is not installed)"
+
+
 def _op_convert(args: dict, sandbox) -> str:
     err = _need_pandoc()
     if err:
-        return err
+        return _builtin_word(args, sandbox) or err
     src = (args.get("input_path") or "").strip()
     dst = (args.get("output_path") or "").strip()
     if not src or not dst:
@@ -248,7 +296,8 @@ def pandoc_tool(sandbox=None) -> Tool:
             "optional from/to/args), formats (list), markdown_to_html "
             "(string), html_to_markdown (string). File conversion accepts "
             "supported built-in formats and basic options; PDF requires an "
-            "isolated document worker. Requires pandoc on PATH."
+            "isolated document worker. Markdown or text to Word (.docx) works "
+            "without pandoc; everything else requires pandoc on PATH."
         ),
         input_schema=_PANDOC_SCHEMA,
         fn=lambda args: _run(args, sandbox),

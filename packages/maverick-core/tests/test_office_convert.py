@@ -169,8 +169,10 @@ def test_local_conversion_is_offered_only_when_it_can_run(monkeypatch, tmp_path,
 
 def test_other_backends_offer_conversion_only_where_it_runs(monkeypatch, tmp_path):
     from maverick.sandbox.docker import DockerBackend
+    from maverick.tools import document_processing
 
     monkeypatch.setattr(DockerBackend, "_verify_docker", lambda self: None)
+    monkeypatch.setattr(document_processing, "local_image_missing", lambda engine, image: False)
     docker = office_convert(DockerBackend(workdir=tmp_path))
     assert "to_pdf" in docker.input_schema["properties"]["op"]["enum"]
 
@@ -224,3 +226,36 @@ def test_local_conversion_with_this_python_converts_or_is_not_offered(tmp_path):
     assert out.startswith("wrote "), out
     assert (tmp_path / "page.pdf").read_bytes().startswith(b"%PDF-")
     assert hits == []
+
+
+def test_a_container_sandbox_without_the_document_image_does_not_offer_conversion(monkeypatch, tmp_path):
+    # Live: with the Podman sandbox and no lightwork-documents:local image,
+    # office_convert was offered, every conversion failed with "the
+    # environment could not be downloaded", and the agent fell back to shell.
+    import subprocess as _subprocess
+
+    from maverick.sandbox.podman import PodmanBackend
+    from maverick.tools import document_processing
+    from maverick.tools.office_convert import office_convert
+
+    monkeypatch.setattr(PodmanBackend, "_verify_podman", lambda self: None)
+    present = {"value": False}
+    calls = []
+
+    def fake_run(argv, **_kw):
+        calls.append(argv)
+        return _subprocess.CompletedProcess(argv, 0 if present["value"] else 1, "", "")
+    from maverick.sandbox import image_pull
+
+    monkeypatch.setattr(image_pull.subprocess, "run", fake_run)
+    image_pull._LOCAL_IMAGE_SEEN.clear()
+    backend = PodmanBackend(workdir=tmp_path)
+
+    tool = office_convert(backend)
+    assert tool.input_schema["properties"]["op"]["enum"] == ["formats"]
+    assert "lightwork-documents:local" in tool.description and "docker build" in tool.description
+    assert calls and calls[0][:3] == ["podman", "image", "exists"]
+
+    present["value"] = True
+    image_pull._LOCAL_IMAGE_SEEN.clear()
+    assert document_processing.conversion_unavailable(backend) is None

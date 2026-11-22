@@ -85,12 +85,11 @@
     value.accounts.forEach(function (account) { history.append(node('p', account.name)); });
     history.append(node('p', value.answer_only ? 'Answer only. This conversation generates text without taking actions, including after Resume.' : 'Actions are allowed under your current permissions. This is new work and may repeat earlier changes.'),
       node('p', 'This attempt stops at $' + value.caps.max_dollars.toFixed(2) + ' or ' + limitMinutes(value.caps.max_wall_seconds) + ', whichever comes first.'));
-    var acknowledge = node('label', ''), checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.id = 'chat-alternative-confirm';
-    acknowledge.append(checkbox, document.createTextNode(' I reviewed all included messages, files, limits and the new attempt’s effects.'));
-    var start = node('button', 'Start separate conversation'); start.type = 'button'; start.id = 'chat-alternative-start'; start.className = 'btn btn--primary'; start.disabled = true;
-    checkbox.addEventListener('change', function () { start.disabled = !checkbox.checked || busy; });
+    // Pressing Start after reading this review is the confirmation; a separate
+    // "I reviewed" box only added a click.
+    var start = node('button', 'Start separate conversation'); start.type = 'button'; start.id = 'chat-alternative-start'; start.className = 'btn btn--primary';
     start.addEventListener('click', async function () {
-      if (!plan || busy || !checkbox.checked) return;
+      if (!plan || busy) return;
       busy = true; start.disabled = true; var accepted = plan; remember(accepted.token); var ticket = generation;
       try {
         var result = await call('/apply', {token:accepted.token,confirmed:true}, ticket); outcome(result);
@@ -100,7 +99,7 @@
       catch (failure) { if (current) { say(failure.message + ' Read original request before making a new decision.'); invalidate(); } }
       finally { busy = false; }
     });
-    review.append(history, acknowledge, start); review.hidden = false;
+    review.append(history, start); review.hidden = false;
   }
   form.addEventListener('input', function () { dirty = true; invalidate(); });
   form.addEventListener('submit', async function (event) {
@@ -113,7 +112,7 @@
       var value = await call('/review', submitted, ticket);
       if (!ready || stamp !== JSON.stringify({context:expected,goal:ready.goal,action:ready.action,turn:ready.turn,source:ready.source,message:message.value,answer_only:answerOnly.checked,
         max_dollars:maxDollars.value.trim(),max_minutes:maxMinutes.value.trim()})) { say('Your choices changed while their review was loading. Review the current draft again.'); return; }
-      fullReview(value); plan = value; say('Nothing has started. Review every included message and confirm this separate attempt.');
+      fullReview(value); plan = value; say('Nothing has started yet. Check what is included, then press Start separate conversation.');
     } catch (failure) { if (current) say(failure.message); }
     finally { busy = false; }
   });
@@ -129,7 +128,7 @@
     if (recovery || !window.mvDraftRecovery) return;
     recovery = window.mvDraftRecovery.create({host:root,key:'chat-message-actions:' + root.dataset.goal,compact:true,
       read:function () { return {message:message.value,answer_only:answerOnly.checked,selected:ready ? {goal:ready.goal,action:ready.action,turn:ready.turn} : null,pending:pending}; },
-      restore:function (draft) { if (!current) return; invalidate(); message.value = typeof draft.message === 'string' ? draft.message : ''; answerOnly.checked = draft.answer_only !== false; dirty = true;
+      restore:function (draft) { if (!current) return; invalidate(); message.value = typeof draft.message === 'string' ? draft.message : ''; answerOnly.checked = draft.answer_only === true; dirty = true;
         if (draft.selected && ['retry','edit','branch'].includes(draft.selected.action) && Number.isSafeInteger(draft.selected.goal)) ready = {goal:draft.selected.goal,action:draft.selected.action,turn:draft.selected.turn || null};
         if (typeof draft.pending === 'string' && draft.pending.length <= 1048576) remember(draft.pending);
         root.hidden = false; say('Your edited message and protected original request were restored. Check current context before a new review; nothing was repeated.'); }});

@@ -100,3 +100,32 @@ def test_known_label_keeps_codes_that_are_already_names():
     from maverick_dashboard.identity_format import known_label
     assert known_label("eu_ai_act_article_50") == "EU AI Act, Article 50"
     assert known_label("AI-DISCLOSURE-01") == "AI-DISCLOSURE-01"
+
+
+@pytest.mark.parametrize("raw,label", [
+    ("it_manager", "IT manager"),
+    ("ciso", "CISO"),
+    ("cfo", "CFO"),
+    ("hr_business_partner", "HR business partner"),
+    ("qa_lead", "QA lead"),
+    ("sre_oncall", "SRE oncall"),
+    ("ehs_manager", "EHS manager"),
+    ("fp_a_lead", "FP&A lead"),
+    ("rd_manager", "R&D manager"),
+    ("m_and_a_lead", "M&A lead"),
+    ("vp_sales", "VP sales"),
+    ("finance_manager", "Finance manager"),
+])
+def test_job_titles_read_the_way_people_write_them(raw, label):
+    # A deliverable "For It manager, Ciso" read as a bug on the task page.
+    from maverick_dashboard.identity_format import job_title
+    assert job_title(raw) == label
+
+
+def test_deliverable_audience_uses_job_titles():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1] / "maverick_dashboard" / "templates"
+    for name in ("_deliverable.html", "deliverables.html", "compartments.html"):
+        text = (root / name).read_text(encoding="utf-8")
+        assert "consumers|map('humanize')" not in text, name
+        assert "consumers|map('job_title')" in text, name

@@ -343,7 +343,9 @@ def test_deployed_department_agent_runs_under_domain_capability(monkeypatch, tmp
     assert r.status_code == 200, r.text
     agent = next(a for a in fleet.agents if a.name == "gtm_deal_inspection")
     assert agent.domain == "gtm_deal_inspection"  # bound to its pack
-    assert not any(a.name == "gtm_demand_gen" for a in fleet.agents)
+    # Demand gen's workflow uses web search, which is off here. It still
+    # deploys: it starts with a note that live search is off.
+    assert any(a.name == "gtm_demand_gen" for a in fleet.agents)
 
     rr = c.post("/api/v1/fleets/dept-sales_gtm/run",
                 json={"agent": "gtm_deal_inspection", "prompt": "inspect pipeline risks"})
@@ -439,8 +441,10 @@ def test_fleets_show_missing_specialist_action_and_refuse_assignment(monkeypatch
     _isolate(monkeypatch, tmp_path)
     _install_specialist_pack(monkeypatch, tmp_path)
     pack = tmp_path / "packs" / "ledger_reviewer.toml"
+    pack.write_text(pack.read_text(encoding="utf-8").replace(
+        '"web_search", "write_file"]', '"web_search", "write_file", "ledger_read"]'), encoding="utf-8")
     with pack.open("a", encoding="utf-8") as handle:
-        handle.write('\n[[workflow]]\nname = "lookup"\ntools = ["web_search"]\n')
+        handle.write('\n[[workflow]]\nname = "lookup"\ntools = ["ledger_read"]\n')
     _save_specialist_fleet()
     from maverick import domain_edit
 
@@ -448,9 +452,9 @@ def test_fleets_show_missing_specialist_action_and_refuse_assignment(monkeypatch
     calls = _stub_runner(monkeypatch)
     page = _client().get("/fleets")
     assert page.status_code == 200
-    assert "Needs Web search" in page.text
+    assert "Needs 1 workflow action" in page.text
     assert 'value="ledger_reviewer" disabled' in page.text
-    assert 'href="/settings/all?id=capabilities.web_search"' in page.text
+    assert 'href="/connections"' in page.text
 
     denied = _client().post("/api/v1/fleets/dept-ledger/run", json={
         "agent": "ledger_reviewer", "prompt": "review the March ledger",
@@ -551,8 +555,9 @@ def test_deployed_department_specialist_reaches_model_with_persona_and_capabilit
     assert deployed.status_code == 200, deployed.text
     assert any(agent.name == "gtm_deal_inspection" and agent.domain == "gtm_deal_inspection"
                for agent in fleet.agents)
-    assert any(row["Specialist"] == pack_display_name("gtm_demand_gen") and row["Reason"] == "Needs Web search"
-               for row in preview["Setup still needed"])
+    # Web search being off no longer holds a specialist back from deployment.
+    assert not any(row["Specialist"] == pack_display_name("gtm_demand_gen")
+                   for row in preview.get("Setup still needed", []))
 
     assigned = client.post("/api/v1/fleets/dept-sales_gtm/run", json={
         "agent": "gtm_deal_inspection", "prompt": "Inspect pipeline risks",

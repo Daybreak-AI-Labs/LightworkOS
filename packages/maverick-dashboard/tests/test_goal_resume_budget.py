@@ -127,7 +127,9 @@ def test_missing_specialist_action_blocks_restart_until_setup_check_passes(resum
     world.set_goal_domain(goal_id, "legal_research")
     world.set_goal_status(goal_id, "blocked", result=(
         "domain 'legal_research' agent build failed: Domain 'legal_research' "
-        "cannot deploy: required workflow tools unavailable: web_search. No model work has started."))
+        "cannot deploy: required workflow tools unavailable: case_docket. No model work has started."))
+    monkeypatch.setattr(domain_edit, "workflow_readiness", lambda profile: {
+        "state": "needs_setup", "missing_tools": ["case_docket"], "label": "Needs 1 workflow action"})
     review = client.get(f"/api/v1/goals/{goal_id}/resume-review")
     assert review.status_code == 200
     assert "needs setup" in review.json()["blocked"]

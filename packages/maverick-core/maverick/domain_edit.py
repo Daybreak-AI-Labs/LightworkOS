@@ -167,21 +167,27 @@ def workflow_readiness(
                 "fix_url": "/settings", "label": "Setup check unavailable"}
     missing = sorted(required - known_tools)
     optional = sorted(set(profile.allow_tools) - required - known_tools)
+    # A missing web_search does not block: the deployment check
+    # (domain.agent_from_profile) starts the specialist and tells it search is
+    # off. It is reported as an optional action so the setup link still shows.
+    search_off = "web_search" in missing
+    if search_off:
+        missing.remove("web_search")
+        optional = sorted({*optional, "web_search"})
     if missing:
         return {
             "state": "needs_setup", "missing_tools": missing,
             "missing_labels": [_action_label(name) for name in missing],
             "missing_optional_tools": optional,
-            "fix_url": ("/settings/all?id=capabilities.web_search"
-                        if "web_search" in missing else "/connections"),
-            "label": ("Needs Web search" if set(missing) == {"web_search"}
-                      else f"Needs {len(missing)} workflow action{'s' if len(missing) != 1 else ''}"),
+            "fix_url": "/connections",
+            "label": f"Needs {len(missing)} workflow action{'s' if len(missing) != 1 else ''}",
         }
     return {
         "state": "action_ready", "missing_tools": [],
         "missing_optional_tools": optional,
-        "fix_url": None,
-        "label": ("Can start; some optional actions need setup" if optional
+        "fix_url": "/settings/all?id=capabilities.web_search" if search_off else None,
+        "label": ("Can start; turn on Web search for live lookups" if search_off
+                  else "Can start; some optional actions need setup" if optional
                   else "Can start"),
     }
 

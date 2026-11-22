@@ -66,7 +66,7 @@
             {% if d.output.deliverable %}
               <div class="muted cmp-wide">
                 <strong>Delivers:</strong> {{ d.output.deliverable }}
-                {%- if d.output.consumers %} to {{ d.output.consumers|map('humanize')|join(', ') }}{% endif -%}
+                {%- if d.output.consumers %} to {{ d.output.consumers|map('job_title')|join(', ') }}{% endif -%}
                 {%- if d.output.cadence %} ({{ d.output.cadence | humanize | lower }}){% endif -%}
                 {%- if d.output.gate %} · needs {{ d.output.gate | humanize | lower }}{% endif -%}
               </div>

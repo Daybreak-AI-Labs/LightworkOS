@@ -11,7 +11,7 @@
   </div>
   {% if deliverable.consumers or deliverable.cadence %}
     <p class="deliverable__meta muted">
-      {%- if deliverable.consumers %}For {{ deliverable.consumers|map('humanize')|join(', ') }}{% endif -%}
+      {%- if deliverable.consumers %}For {{ deliverable.consumers|map('job_title')|join(', ') }}{% endif -%}
       {%- if deliverable.consumers and deliverable.cadence %} · {% endif -%}
       {%- if deliverable.cadence %}{{ deliverable.cadence|humanize }}{% endif -%}
     </p>
