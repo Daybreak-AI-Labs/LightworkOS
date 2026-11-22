@@ -37,6 +37,17 @@ log = logging.getLogger(__name__)
 # OpenAI Chat Completions hard limit on the `tools` array. Requests with more
 # are rejected with a 400 ("Invalid 'tools': array too long"). Overridable for
 # providers/gateways with a different ceiling.
+def _unreadable_reply():
+    """A 200 reply whose body was not JSON (a proxy's or gateway's HTML page):
+    raised as a dropped connection so the retry loop tries again."""
+    import httpx
+    import openai
+
+    return openai.APIConnectionError(
+        message="The AI service's reply could not be read.",
+        request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions"))
+
+
 def _max_tools_setting() -> int:
     """``[models] openai_max_tools`` read at startup (env ``MAVERICK_OPENAI_MAX_TOOLS`` wins)."""
     from ..env_setting import env_or_config_int
@@ -819,10 +830,15 @@ class OpenAIClient:
         def request():
             try:
                 return sync_physical_attempt(lambda: self._sync.chat.completions.create(**kwargs, **wait))
+            except json.JSONDecodeError as exc:
+                raise _unreadable_reply() from exc
             except Exception as exc:
                 if not self._disable_rejected_tool_reasoning(kwargs, exc):
                     raise
-                return sync_physical_attempt(lambda: self._sync.chat.completions.create(**kwargs, **wait))
+                try:
+                    return sync_physical_attempt(lambda: self._sync.chat.completions.create(**kwargs, **wait))
+                except json.JSONDecodeError as again:
+                    raise _unreadable_reply() from again
 
         resp = sync_retry(request, observe_attempts=False)
         # Meter under the id the caller admitted. A subclass may send another
@@ -856,10 +872,15 @@ class OpenAIClient:
         async def request():
             try:
                 return await async_physical_attempt(lambda: self._async.chat.completions.create(**kwargs, **wait))
+            except json.JSONDecodeError as exc:
+                raise _unreadable_reply() from exc
             except Exception as exc:
                 if not self._disable_rejected_tool_reasoning(kwargs, exc):
                     raise
-                return await async_physical_attempt(lambda: self._async.chat.completions.create(**kwargs, **wait))
+                try:
+                    return await async_physical_attempt(lambda: self._async.chat.completions.create(**kwargs, **wait))
+                except json.JSONDecodeError as again:
+                    raise _unreadable_reply() from again
 
         resp = await async_retry(request, observe_attempts=False)
         # Meter under the id the caller admitted. A subclass may send another
