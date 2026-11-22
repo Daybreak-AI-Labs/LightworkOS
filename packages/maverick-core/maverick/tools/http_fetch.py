@@ -38,6 +38,10 @@ log = logging.getLogger(__name__)
 
 # Match the adjacent remote-image tool ceiling; ordinary page reads stay 64KB.
 _MAX_RESPONSE_BYTES = 10 * 1024 * 1024
+# For a rendered page (markdown or text) ``max_bytes`` bounds the readable text
+# returned, and the download may be up to this size: a large article's first
+# 64 KB of HTML is often only navigation markup.
+_READABLE_DOWNLOAD_BYTES = 4 * 1024 * 1024
 _FETCH_TIMEOUT_SECONDS = 30.0
 
 
@@ -1481,7 +1485,9 @@ def _run_fetch(args: dict[str, Any]) -> str:
     # a bounded decoded chunk at a time and retain at most max_bytes + 1;
     # the extra byte proves whether content was actually omitted.
     request = {"method": method, "url": url, "headers": headers, "body": body}
-    streamed = _send_reviewed(request, parsed, max_bytes)
+    readable = render in ("markdown", "text") and not _sends_data(method, body)
+    download_limit = max(max_bytes, _READABLE_DOWNLOAD_BYTES) if readable else max_bytes
+    streamed = _send_reviewed(request, parsed, download_limit)
     if isinstance(streamed, str):
         return streamed
     (status_code, reason_phrase, resp_url, encoding, content_type,
@@ -1510,6 +1516,11 @@ def _run_fetch(args: dict[str, Any]) -> str:
     else:  # markdown
         rendered = _to_markdown(text)
 
+    text_cut = ""
+    if readable and len(rendered) > max_bytes:
+        text_cut = (f"\n\n[Readable text cut at {max_bytes:,} of {len(rendered):,} characters. "
+                    "Fetch again with a larger max_bytes to read further.]")
+        rendered = rendered[:max_bytes]
     size_note = f"{len(raw_bytes)}{'+' if truncated else ''} bytes"
     if truncated == "deadline":
         size_note += f"; body cut off: not finished within {_FETCH_TIMEOUT_SECONDS:.0f}s"
@@ -1518,13 +1529,15 @@ def _run_fetch(args: dict[str, Any]) -> str:
     header = (
         f"HTTP {status_code} {_printable(reason_phrase, 64)} "
         f"({_printable(content_type, 128) or 'unknown'}; {size_note})\n"
-        f"URL: {resp_url}\n"
+        # The address asked for: the connection is pinned to the checked IP,
+        # so the client's own URL names that IP, which a model then reuses.
+        f"URL: {url}\n"
     )
     if location:
         # Server-chosen too, so it travels with the scanned content.
         rendered = f"Redirect location (not followed): {location[:2048]}\n\n{rendered}"
     rendered, warning = _scan_fetched(rendered)
-    return header + warning + "\n" + rendered
+    return header + warning + "\n" + rendered + text_cut
 
 
 def _printable(value: Any, limit: int) -> str:
