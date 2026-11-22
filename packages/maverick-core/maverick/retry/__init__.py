@@ -257,8 +257,14 @@ def _is_terminal(exc: Exception) -> bool:
     return False
 
 
-def sync_retry(fn: Callable[[], T], *, observe_attempts: bool = True) -> T:
-    """Retry transient errors; explicit SDK boundaries can own observation."""
+def sync_retry(fn: Callable[[], T], *, observe_attempts: bool = True,
+               may_retry: Callable[[BaseException], bool] | None = None) -> T:
+    """Retry transient errors; explicit SDK boundaries can own observation.
+
+    ``may_retry`` is asked before each further attempt after a retryable
+    error; ``False`` re-raises it (a stream that already showed text it
+    cannot take back).
+    """
     retryable = _retryable_exception_classes()
     last: Exception | None = None
     for attempt in range(MAX_ATTEMPTS):
@@ -274,6 +280,8 @@ def sync_retry(fn: Callable[[], T], *, observe_attempts: bool = True) -> T:
             last = e
             if attempt == MAX_ATTEMPTS - 1:
                 break
+            if may_retry is not None and not may_retry(e):
+                raise
             delay = _compute_delay(attempt, e)
             log.warning(
                 "LLM call failed (attempt %d/%d): %s; retry in %.1fs",
@@ -290,7 +298,8 @@ def sync_retry(fn: Callable[[], T], *, observe_attempts: bool = True) -> T:
     raise last
 
 
-async def async_retry(fn: Callable[[], Awaitable[T]], *, observe_attempts: bool = True) -> T:
+async def async_retry(fn: Callable[[], Awaitable[T]], *, observe_attempts: bool = True,
+                      may_retry: Callable[[BaseException], bool] | None = None) -> T:
     """Async retry with the same optional explicit SDK observation boundary."""
     retryable = _retryable_exception_classes()
     last: Exception | None = None
@@ -305,6 +314,8 @@ async def async_retry(fn: Callable[[], Awaitable[T]], *, observe_attempts: bool 
             last = e
             if attempt == MAX_ATTEMPTS - 1:
                 break
+            if may_retry is not None and not may_retry(e):
+                raise
             delay = _compute_delay(attempt, e)
             log.warning(
                 "LLM call failed (attempt %d/%d): %s; retry in %.1fs",

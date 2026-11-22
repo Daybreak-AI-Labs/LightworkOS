@@ -15,6 +15,7 @@ from collections.abc import Callable
 from typing import Any
 
 import anthropic
+import httpx
 
 from ..budget import Budget, UsageAccountingError
 from ..llm import MODEL_OPUS, MODEL_OPUS_FAST, LLMResponse, ToolCall
@@ -364,6 +365,52 @@ def _usage_count(value: Any, default: int, *, strict: bool) -> int:
         if not strict:
             return default
         raise UsageAccountingError(f"invalid Anthropic usage token count {value!r}") from exc
+
+
+def _complete_message(final):
+    """The streamed message, only if the service said it finished.
+
+    When the connection closes mid-answer the SDK ends iteration quietly and
+    returns the text so far with no stop reason. That is a dropped connection,
+    not an answer: raised as one, so it is retried like any other.
+    """
+    if final is None or getattr(final, "stop_reason", None) is None:
+        raise _unfinished_stream()
+    return final
+
+
+def _unfinished_stream() -> anthropic.APIConnectionError:
+    """A streamed reply that was cut off or was not a readable event stream
+    (for example a proxy's HTML page): retried like a dropped connection."""
+    return anthropic.APIConnectionError(
+        message="The AI service's answer stopped before it finished.",
+        request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"))
+
+
+class _StreamDelivery:
+    """Pass streamed text on, and say whether a failed stream may be retried.
+
+    Before any text was shown a retry is invisible. After text was shown it
+    is retried only when the callback can start over (``reset``, as the
+    agent's answer preview does), so the person never sees a prefix twice.
+    """
+
+    def __init__(self, on_delta):
+        self.on_delta, self.shown = on_delta, False
+
+    def __call__(self, text):
+        self.shown = True
+        self.on_delta(text)
+
+    def may_retry(self, _error: BaseException) -> bool:
+        if not self.shown:
+            return True
+        reset = getattr(self.on_delta, "reset", None)
+        if not callable(reset):
+            return False
+        reset()
+        self.shown = False
+        return True
 
 
 class AnthropicClient:
@@ -820,22 +867,29 @@ class AnthropicClient:
             resp = sync_retry(lambda: endpoint.create(**kwargs, **wait))
             return self._parse_response(resp, budget, model=billing_model)
 
-        # Wrapping the streaming path in sync_retry
-        # would replay every on_delta callback after a mid-stream
-        # failure, so consumers see duplicate prefixes. Streaming is
-        # called from interactive paths (CLI --stream, dashboard chat);
-        # surface the error directly and let the caller retry the
-        # higher-level request without partial output.
-        with endpoint.stream(**kwargs) as stream:
-            final = None
-            try:
-                for event in stream.text_stream:
-                    on_delta(event)
-                final = stream.get_final_message()
-            except BaseException:
-                self._record_aborted_stream_usage(stream, budget, billing_model)
-                raise
-            self._record_stream_usage(stream, final, budget, billing_model)
+        # A stream is retried on the same transient errors as a buffered
+        # call. Text already shown is never repeated: a retry after partial
+        # text needs a preview that can start over (``reset``).
+        delivery = _StreamDelivery(on_delta)
+
+        def attempt():
+            with endpoint.stream(**kwargs) as stream:
+                final = None
+                try:
+                    for event in stream.text_stream:
+                        delivery(event)
+                    try:
+                        final = stream.get_final_message()
+                    except AssertionError as exc:  # the body was not an event stream
+                        raise _unfinished_stream() from exc
+                    final = _complete_message(final)
+                except BaseException:
+                    self._record_aborted_stream_usage(stream, budget, billing_model)
+                    raise
+                self._record_stream_usage(stream, final, budget, billing_model)
+            return final
+
+        final = sync_retry(attempt, may_retry=delivery.may_retry)
         return self._parse_response(final, None, model=billing_model)
 
     async def complete_async(
@@ -861,18 +915,27 @@ class AnthropicClient:
             wait = self._generation_timeout(kwargs)
             resp = await async_retry(lambda: endpoint.create(**kwargs, **wait))
             return self._parse_response(resp, budget, model=billing_model)
-        # Streaming mirrors complete(): no retry wrapper, so a mid-stream
-        # failure never replays deltas the caller has already shown.
-        async with endpoint.stream(**kwargs) as stream:
-            final = None
-            try:
-                async for text in stream.text_stream:
-                    on_delta(text)
-                final = await stream.get_final_message()
-            except BaseException:
-                self._record_aborted_stream_usage(stream, budget, billing_model)
-                raise
-            self._record_stream_usage(stream, final, budget, billing_model)
+        # Retried as in complete(): never repeats text already shown.
+        delivery = _StreamDelivery(on_delta)
+
+        async def attempt():
+            async with endpoint.stream(**kwargs) as stream:
+                final = None
+                try:
+                    async for text in stream.text_stream:
+                        delivery(text)
+                    try:
+                        final = await stream.get_final_message()
+                    except AssertionError as exc:  # the body was not an event stream
+                        raise _unfinished_stream() from exc
+                    final = _complete_message(final)
+                except BaseException:
+                    self._record_aborted_stream_usage(stream, budget, billing_model)
+                    raise
+                self._record_stream_usage(stream, final, budget, billing_model)
+            return final
+
+        final = await async_retry(attempt, may_retry=delivery.may_retry)
         return self._parse_response(final, None, model=billing_model)
 
     def prewarm(
