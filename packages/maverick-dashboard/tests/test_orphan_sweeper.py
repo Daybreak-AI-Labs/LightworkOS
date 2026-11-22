@@ -101,6 +101,46 @@ def test_unbound_sqlite_dashboard_recovers_registered_workspace_chats(
             handle.close()
 
 
+def test_startup_recovers_a_stranded_queued_task_in_a_workspace_world(tmp_path, monkeypatch):
+    # Every task lives in the workspace world once setup selects a workspace.
+    # Startup recovery reclaimed queued ("pending") tasks only in the shared
+    # world, so a scheduled run stranded by a restart stayed "Queued" forever.
+    from maverick import client, paths, world_model_backends
+    from maverick.tenant import registry
+    from maverick_dashboard import _shared
+
+    app_module = importlib.import_module("maverick_dashboard.app")
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    monkeypatch.setenv("MAVERICK_ORPHAN_RECLAIM_SECONDS", "60")
+    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
+    monkeypatch.setattr(client, "strict_client_id", lambda: None)
+    monkeypatch.setattr(world_model_backends, "is_postgres_configured", lambda: False)
+    monkeypatch.setattr(registry, "list_tenants", lambda: [registry.TenantRecord(id="local")])
+    worlds = {None: WorldModel(tmp_path / "world.db"),
+              "local": WorldModel(tmp_path / "tenants" / "local" / "world.db")}
+
+    def factory():
+        return worlds[paths.current_tenant_id_strict()]
+
+    monkeypatch.setattr(_shared, "_world", factory)
+    monkeypatch.setattr(app_module, "_world", factory)
+    monkeypatch.setattr(orphan_sweeper, "start_orphan_sweeper", lambda: True)
+    monkeypatch.setattr(orphan_sweeper, "_last_periodic_tenant", None)
+    try:
+        stranded = worlds["local"].create_goal("Scheduled run", "")
+        _age(worlds["local"], stranded, 600)
+        queued_later = worlds["local"].create_goal("Queued after start", "")
+        asyncio.run(app_module._reclaim_orphans())
+        assert worlds["local"].get_goal(stranded).status == "blocked"
+        # The periodic sweep still never stops a queued task: a live process may hold it.
+        _age(worlds["local"], queued_later, 600)
+        orphan_sweeper.sweep_once()
+        assert worlds["local"].get_goal(queued_later).status == "pending"
+    finally:
+        for handle in worlds.values():
+            handle.close()
+
+
 def test_live_heartbeat_prevents_reclaim_then_stopping_allows_it(world):
     goal_id = _active(world, age=61)
     # Separate connections stand in for the dashboard and a surviving worker.

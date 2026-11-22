@@ -2601,7 +2601,9 @@ async def _reclaim_orphans() -> None:
             from maverick.paths import current_tenant_id_strict
             if current_tenant_id_strict() is None:
                 from .orphan_sweeper import reclaim_registered_sqlite
-                n += reclaim_registered_sqlite(_world)
+                # Workspace worlds hold every task once a workspace is selected:
+                # recover their stranded queued goals at start-up too.
+                n += reclaim_registered_sqlite(_world, statuses=startup_reclaim_statuses())
         if n:
             log.warning("reclaimed %d orphan goal(s) from prior crash", n)
     except Exception:
