@@ -2426,6 +2426,9 @@ from .session_expiry import router as session_expiry_router  # noqa: E402
 
 app.include_router(local_owner_router)
 app.include_router(local_owner_mfa_router)
+from .passphrase_change import router as passphrase_change_router  # noqa: E402
+
+app.include_router(passphrase_change_router)
 app.include_router(session_expiry_router)
 # The page shell's sign-in timer (lightwork-session.js): when this browser's
 # sign-in ends and how to stay signed in. None when nobody is signed in.

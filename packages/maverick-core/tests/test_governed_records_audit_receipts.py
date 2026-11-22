@@ -92,6 +92,12 @@ def test_only_literal_true_clears_committed_receipts_after_native_reload(
         assert "_audit_pending" not in recovered
         assert reloaded.retry_pending() == 0
         audit_log = audit.default_audit_log() if authority_scope == "tenant" else audit.global_audit_log()
+        if authority_scope == "tenant":
+            events = list(audit.iter_events(audit_dir=audit_log.audit_dir, all_days=True, strict=True, verify=True))
+    if authority_scope != "tenant":
+        # The deployment chain is signed with the deployment key, whatever
+        # workspace was active when the row was written; verify it as a
+        # deployment reader does.
         events = list(audit.iter_events(audit_dir=audit_log.audit_dir, all_days=True, strict=True, verify=True))
 
     events = [event for event in events if event.get("record_type") == "receipt_review"]

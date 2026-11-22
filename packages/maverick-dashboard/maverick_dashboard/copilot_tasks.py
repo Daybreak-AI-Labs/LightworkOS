@@ -129,6 +129,17 @@ TASKS: dict[str, tuple[CopilotTask, ...]] = {
                     "/agents", "Open Agent Factory", "",
                     ("change history", "who changed", "what changed"), "view"),
     ),
+    # A passphrase is typed only into the page's own form, never into Copilot:
+    # the task explains the steps and opens the form.
+    "/account": (
+        CopilotTask("Change your passphrase",
+                    "Open Change your passphrase, enter your current passphrase and the new one twice, then "
+                    "press Change passphrase. Other browsers are signed out; this one stays signed in. If you "
+                    "sign in with a company account, change your password with your company instead.",
+                    "/account/passphrase", "Open Change your passphrase", "current-password",
+                    ("change my password", "change password", "change my passphrase", "change passphrase",
+                     "new password", "new passphrase", "reset my password"), "view"),
+    ),
     # Administrators only, like the answer itself; with the Connections
     # Copilot actions on, the live answer (channels.held_replies) comes first.
     "/channels": (

@@ -33,7 +33,7 @@ def _projection(monkeypatch, goals, *, questions=None, approvals=(), states=None
         list_projects=lambda **_: [], get_project=lambda _id: None,
         pending_approvals=lambda: list(approvals),
         approval_state=lambda approval_id: (states or {}).get(approval_id))
-    monkeypatch.setattr(api.auth, "can_access_goal", lambda *_: True)
+    monkeypatch.setattr(api.auth, "can_access_goal", lambda *_, **_kw: True)
     monkeypatch.setattr(api.auth, "has_permission", lambda *_: True)
     monkeypatch.setattr(api.auth, "caller_suites", lambda *_: None)
     monkeypatch.setattr(flow_approval_inbox, "pending_for_request",
@@ -170,3 +170,33 @@ def test_a_new_alert_kind_still_says_why_what_and_by_when(monkeypatch):
                 "href": "/approvals#approval-1"}
     sources = _projection(monkeypatch, [], budget=[reminder])
     _assert_explained(sources["reminder:1"])
+
+
+def test_the_projection_reads_grants_and_the_world_once_for_every_task(monkeypatch):
+    # The badge checks every task the person started. Each check still runs in
+    # full; only the caller's grants and the world handle are read once.
+    goals = [(_goal(n, "failed"), 1, 0) for n in range(1, 6)]
+    world = SimpleNamespace(
+        personal_alert_goals=lambda actor, **kw: [] if kw["after_id"] else goals,
+        open_questions=lambda goal_id: [], list_projects=lambda **_: [], get_project=lambda _id: None,
+        pending_approvals=list, approval_state=lambda approval_id: None)
+    checkers, checks = [], []
+
+    def checker(request):
+        checkers.append(1)
+        return lambda domain, profile=None: True
+
+    def can_access(request, goal, *, world=None, domain_allowed=None):
+        checks.append((goal.id, world, domain_allowed))
+        return True
+
+    monkeypatch.setattr(api.auth, "domain_suites_checker", checker)
+    monkeypatch.setattr(api.auth, "can_access_goal", can_access)
+    monkeypatch.setattr(api.auth, "has_permission", lambda *_: True)
+    monkeypatch.setattr(api.auth, "caller_suites", lambda *_: None)
+    monkeypatch.setattr(flow_approval_inbox, "pending_for_request", lambda _request: {"items": [], "coverage": "current"})
+    monkeypatch.setattr(budget_guidance, "warning_sources", lambda _actor: [])
+    api._projection(object(), "user:alice", world=world)
+    assert checkers == [1]
+    assert [goal_id for goal_id, _w, _d in checks] == [1, 2, 3, 4, 5]
+    assert all(w is world and callable(d) for _g, w, d in checks)

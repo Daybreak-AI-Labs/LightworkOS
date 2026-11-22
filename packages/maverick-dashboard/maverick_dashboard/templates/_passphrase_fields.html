@@ -26,8 +26,8 @@
 
 {# The Show button and the live hints sit beside each label, not inside it,
    so they are not read out as part of the field's name. #}
-{% macro passphrase(new=True) %}
-    <div class="own__field"><label for="owner-password">Passphrase{% if new %} (at least 14 characters){% endif %}</label>
+{% macro passphrase(new=True, label='Passphrase') %}
+    <div class="own__field"><label for="owner-password">{{ label }}{% if new %} (at least 14 characters){% endif %}</label>
       <span class="own__row">
         <input class="input" type="password" name="password" id="owner-password" minlength="14" maxlength="1024" required
                autocomplete="{{ 'new-password' if new else 'current-password' }}"{% if new %} aria-describedby="owner-strength"{% endif %}>
@@ -39,7 +39,7 @@
       {% endif %}
     </div>
     {% if new %}
-    <div class="own__field"><label for="owner-password2">Confirm passphrase</label>
+    <div class="own__field"><label for="owner-password2">Confirm {{ label | lower }}</label>
       <input class="input" type="password" name="password2" id="owner-password2" minlength="14" maxlength="1024" required autocomplete="new-password" aria-describedby="owner-match">
       <span class="own__hint" id="owner-match" aria-live="polite"></span>
     </div>

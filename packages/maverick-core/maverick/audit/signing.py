@@ -39,6 +39,7 @@ Optional [audit-signing] extra (cryptography>=44.0.1).
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import io
 import json
@@ -110,6 +111,37 @@ def _key_dir() -> Path:
     from ..paths import data_dir
 
     return data_dir("audit", "keys")
+
+
+def _same_dir(left: Path, right: Path) -> bool:
+    try:
+        return Path(left).resolve() == Path(right).resolve()
+    except OSError:
+        return Path(left) == Path(right)
+
+
+@contextlib.contextmanager
+def shared_keys_for(audit_dir: Path):
+    """Use the shared key folder while signing or checking the shared audit folder.
+
+    The key folder follows the active workspace, but the shared (deployment)
+    activity log is written from requests that have a workspace selected and
+    is checked from the CLI, which adopts the owner's workspace. Its rows are
+    signed with the shared key, so they are signed and checked with that key
+    whatever workspace is active. A no-op for any other folder, and when a
+    thread override or a replaced ``KEY_DIR`` (tests, the proof probe) is set.
+    """
+    from ..paths import data_dir
+
+    if (getattr(_KEY_DIR_OVERRIDE, "path", None) is not None or KEY_DIR is not _LEGACY_KEY_DIR
+            or not _same_dir(audit_dir, data_dir("audit", tenant=None))):
+        yield
+        return
+    _KEY_DIR_OVERRIDE.path = data_dir("audit", "keys", tenant=None)
+    try:
+        yield
+    finally:
+        _KEY_DIR_OVERRIDE.path = None
 
 
 _KEY_ID_RE = re.compile(r"^[0-9a-f]{16}$")

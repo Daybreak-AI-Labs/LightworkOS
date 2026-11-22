@@ -7530,56 +7530,61 @@ def audit_verify(
             err=True,
         )
 
-    any_break = False
-    for path in paths:
-        breaks = verify_chain(path, pubkey_hex=pubkey)
-        if breaks and all(b.reason == "unsigned" for b in breaks):
-            # Default deployment: signing was never on. One actionable line
-            # instead of per-row tamper vocabulary -- but still exit 1, so
-            # automation cannot pass unverifiable evidence as clean.
+    from ..audit.signing import shared_keys_for
+
+    # The CLI adopts the owner's workspace; a file in the shared activity log
+    # is still checked against the shared key it was signed with.
+    with shared_keys_for(anchor_dir):
+        any_break = False
+        for path in paths:
+            breaks = verify_chain(path, pubkey_hex=pubkey)
+            if breaks and all(b.reason == "unsigned" for b in breaks):
+                # Default deployment: signing was never on. One actionable line
+                # instead of per-row tamper vocabulary -- but still exit 1, so
+                # automation cannot pass unverifiable evidence as clean.
+                any_break = True
+                click.echo(
+                    f"UNVERIFIABLE: {path} — {len(breaks)} unsigned row(s); audit "
+                    "signing is off. Set [audit] sign = true in "
+                    "~/.maverick/config.toml (or MAVERICK_AUDIT_SIGN=1) so future "
+                    "rows are hash-chained and tamper-evident.",
+                    err=True,
+                )
+            elif breaks:
+                any_break = True
+                click.echo(f"FAIL: {len(breaks)} issue(s) in {path}", err=True)
+                for b in breaks:
+                    click.echo(f"  line {b.line_no}: {b.reason} — {b.detail}", err=True)
+            else:
+                click.echo(f"OK: chain intact ({path})")
+
+        # Cross-file check: a whole deleted/truncated day-file is invisible to the
+        # per-file chain above; the signed tip-ledger catches it.
+        anchor_breaks = verify_anchors(anchor_dir, pubkey_hex=pubkey)
+        if anchor_breaks:
             any_break = True
             click.echo(
-                f"UNVERIFIABLE: {path} — {len(breaks)} unsigned row(s); audit "
-                "signing is off. Set [audit] sign = true in "
-                "~/.maverick/config.toml (or MAVERICK_AUDIT_SIGN=1) so future "
-                "rows are hash-chained and tamper-evident.",
+                f"FAIL: {len(anchor_breaks)} cross-file tip-ledger issue(s) in {anchor_dir}",
                 err=True,
             )
-        elif breaks:
-            any_break = True
-            click.echo(f"FAIL: {len(breaks)} issue(s) in {path}", err=True)
-            for b in breaks:
-                click.echo(f"  line {b.line_no}: {b.reason} — {b.detail}", err=True)
+            for b in anchor_breaks:
+                click.echo(f"  anchor: {b.reason} — {b.detail}", err=True)
         else:
-            click.echo(f"OK: chain intact ({path})")
+            click.echo(f"OK: tip-ledger intact ({anchor_dir})")
 
-    # Cross-file check: a whole deleted/truncated day-file is invisible to the
-    # per-file chain above; the signed tip-ledger catches it.
-    anchor_breaks = verify_anchors(anchor_dir, pubkey_hex=pubkey)
-    if anchor_breaks:
-        any_break = True
-        click.echo(
-            f"FAIL: {len(anchor_breaks)} cross-file tip-ledger issue(s) in {anchor_dir}",
-            err=True,
-        )
-        for b in anchor_breaks:
-            click.echo(f"  anchor: {b.reason} — {b.detail}", err=True)
-    else:
-        click.echo(f"OK: tip-ledger intact ({anchor_dir})")
-
-    # State the deletions the tip-ledger stopped reporting as breaks. Without
-    # this line "OK" would read as "nothing was removed" when the truth is
-    # "these days were removed by policy and here is the signed record".
-    from ..audit.signing import retention_purged_days
-    retired = retention_purged_days(anchor_dir)
-    if retired:
-        click.echo(
-            f"note: {len(retired)} day-file(s) retired by [retention] policy "
-            "and recorded in the signed tip-ledger:")
-        for entry in retired:
+        # State the deletions the tip-ledger stopped reporting as breaks. Without
+        # this line "OK" would read as "nothing was removed" when the truth is
+        # "these days were removed by policy and here is the signed record".
+        from ..audit.signing import retention_purged_days
+        retired = retention_purged_days(anchor_dir)
+        if retired:
             click.echo(
-                f"  {entry.get('day')}: {entry.get('row_count')} row(s), "
-                f"tip {str(entry.get('tip_hash'))[:12]}...")
+                f"note: {len(retired)} day-file(s) retired by [retention] policy "
+                "and recorded in the signed tip-ledger:")
+            for entry in retired:
+                click.echo(
+                    f"  {entry.get('day')}: {entry.get('row_count')} row(s), "
+                    f"tip {str(entry.get('tip_hash'))[:12]}...")
 
     if any_break:
         raise SystemExit(1)

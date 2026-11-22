@@ -202,8 +202,10 @@ def account_page(request: Request) -> HTMLResponse:
     require_permission(request, "view")
     from .app import templates
     from .local_owner_mfa_routes import owner_link_visible
+    from .passphrase_change import offered
     return templates.TemplateResponse(request, "account.html",
-                                      {"owner_authenticator": owner_link_visible(request)},
+                                      {"owner_authenticator": owner_link_visible(request),
+                                       "passphrase_change": offered(request)},
                                       headers={"Cache-Control": "private, no-store"})
 
 

@@ -516,8 +516,11 @@ class AuditLog:
             # day-file is detectable. Best-effort -- anchoring must never block
             # an audit write.
             try:
-                from .signing import ensure_anchors
-                ensure_anchors(self.audit_dir)
+                from .signing import ensure_anchors, shared_keys_for
+                # The shared folder is signed with the shared key, whatever
+                # workspace the writing request has selected.
+                with shared_keys_for(self.audit_dir):
+                    ensure_anchors(self.audit_dir)
             # failure-policy: fail_soft_with_audit
             except Exception as e:  # pragma: no cover - defensive
                 log.debug("audit: ensure_anchors failed: %s", e)
@@ -726,9 +729,10 @@ class AuditLog:
             return None
         if self._signer is None or self._signer_path != path:
             try:
-                from .signing import AuditSigner
+                from .signing import AuditSigner, shared_keys_for
 
-                self._signer = AuditSigner(path)
+                with shared_keys_for(self.audit_dir):
+                    self._signer = AuditSigner(path)
                 self._signer_path = path
             # failure-policy: fail_soft_with_audit
             except Exception as e:

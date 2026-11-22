@@ -14,7 +14,7 @@ def test_budget_sources_preserve_current_owned_task_sources(monkeypatch):
                "title": "Budget needs attention", "label": "Monthly cap approaching",
                "href": "/budget", "goal_id": None, "project_id": None}
     monkeypatch.setattr(api, "_app", lambda: SimpleNamespace(_world=lambda: world))
-    monkeypatch.setattr(api.auth, "can_access_goal", lambda *_: True)
+    monkeypatch.setattr(api.auth, "can_access_goal", lambda *_, **_kw: True)
     monkeypatch.setattr(api.auth, "has_permission", lambda *_: False)
     monkeypatch.setattr(api.auth, "caller_suites", lambda *_: None)
     observed = []

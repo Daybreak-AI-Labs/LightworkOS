@@ -145,3 +145,27 @@ def test_verify_reports_no_crypto_state_and_exits_one(tmp_path, monkeypatch):
     assert result.exit_code == 1, result.output
     assert "no_crypto" in result.output
     assert "cryptography not installed" in result.output
+
+
+@pytest.mark.skipif(not _HAVE_CRYPTO, reason="cryptography not installed")
+def test_verify_a_shared_log_file_while_a_workspace_is_active(tmp_path, monkeypatch):
+    # The CLI adopts the owner's workspace. A file in the shared activity log
+    # is signed with the shared key, so it must be checked against that key,
+    # not the workspace's, or an intact shared log reads as tampered.
+    from maverick.paths import reset_tenant, set_tenant
+
+    shared = _isolate_home(monkeypatch, tmp_path)
+    day_file = _write_signed_events(shared, n=2)
+    token = set_tenant("acme")
+    try:
+        _write_signed_events(_isolate_home(monkeypatch, tmp_path), n=1)  # the workspace's own key
+        result = CliRunner().invoke(main, ["audit", "verify", "--file", str(day_file)])
+        lines = day_file.read_text(encoding="utf-8").splitlines()
+        day_file.write_text("\n".join([lines[0].replace('"i": 0', '"i": 9', 1), *lines[1:]]) + "\n",
+                            encoding="utf-8")
+        tampered = CliRunner().invoke(main, ["audit", "verify", "--file", str(day_file)])
+    finally:
+        reset_tenant(token)
+    assert result.exit_code == 0, result.output
+    assert "OK: chain intact" in result.output
+    assert tampered.exit_code == 1 and "FAIL" in tampered.output

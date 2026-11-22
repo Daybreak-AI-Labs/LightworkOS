@@ -438,3 +438,26 @@ def test_users_badge_names_the_kind_of_sign_in(client, monkeypatch):
     monkeypatch.setattr(oidc, "oidc_enabled", lambda: True)
     text = visible_text(client.get("/users").text)
     assert "Company sign-in on" in text
+
+
+def test_can_access_goal_uses_a_listing_checker_with_the_same_answer(monkeypatch):
+    # A listing passes one per-request domain checker; the answer is the one
+    # domain_suites_allowed gives, so passing it changes only the cost.
+    from types import SimpleNamespace
+
+    from maverick_dashboard import auth
+    goal = SimpleNamespace(id=7, owner="user:alice", domain="finance_ap")
+    monkeypatch.setattr(auth, "_authorization_principal", lambda request: "user:alice")
+    monkeypatch.setattr("maverick.chat_message_actions.require_copy_sources", lambda *a, **k: None)
+    request = SimpleNamespace(state=SimpleNamespace(), method="GET")
+    for verdict in (True, False):
+        monkeypatch.setattr(auth, "domain_suites_allowed",
+                            lambda request, domain, verdict=verdict: verdict)
+        seen = []
+
+        def checker(domain, profile=None, verdict=verdict, seen=seen):
+            seen.append(domain)
+            return verdict
+        assert auth.can_access_goal(request, goal, world=object(), domain_allowed=checker) is verdict
+        assert auth.can_access_goal(request, goal, world=object()) is verdict
+        assert seen == ["finance_ap"]

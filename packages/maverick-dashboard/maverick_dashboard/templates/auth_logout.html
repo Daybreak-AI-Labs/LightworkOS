@@ -7,6 +7,9 @@
   <h1 id="sign-out-title" class="page-title">Sign out</h1>
   <p>{% if all_sessions %}End all your sessions?{% else %}End this browser session?{% endif %}</p>
   <form method="post" action="logout{% if all_sessions %}?all=1{% endif %}">
+    {# This page has no shared page script: name the workspace it was rendered
+       under, or the stale-tab check refuses the sign-out. #}
+    <input type="hidden" name="_expected_tenant" value="{{ request.state.workspace_expected_tenant | default('', true) }}">
     <button class="btn btn--primary" type="submit">Sign out</button>
     <a href="/">Cancel</a>
   </form>

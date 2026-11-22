@@ -22,6 +22,7 @@
       <h2>Turn off the authenticator app</h2>
       <p class="own__hint">Enter your passphrase and a code from the app, or a recovery code. Sign-in will then use your passphrase only.</p>
       <form method="post" action="{{ page }}/disable" novalidate>
+        <input type="hidden" name="_expected_tenant" value="{{ request.state.workspace_expected_tenant | default('', true) }}">
         <label class="own__field"><span>Passphrase</span>
           <input class="input" type="password" name="password" required autocomplete="current-password"></label>
         <label class="own__field"><span>Code</span>
@@ -32,6 +33,7 @@
       <h2>New recovery codes</h2>
       <p class="own__hint">Making new codes stops the old ones from working. Enter a code from the app, or one of your recovery codes.</p>
       <form method="post" action="{{ page }}/recovery" novalidate>
+        <input type="hidden" name="_expected_tenant" value="{{ request.state.workspace_expected_tenant | default('', true) }}">
         <label class="own__field"><span>Code</span>
           <input class="input" type="text" name="code" maxlength="16" required autocomplete="one-time-code"></label>
         <div class="own__actions"><button type="submit" class="btn">Make new recovery codes</button></div>
@@ -42,6 +44,7 @@
   {% else %}
     <p>{% if state.mode == 'required' %}This installation requires an authenticator app. Set one up now.{% else %}You have not set up an authenticator app.{% endif %}</p>
     <form method="post" action="{{ page }}/setup" novalidate>
+        <input type="hidden" name="_expected_tenant" value="{{ request.state.workspace_expected_tenant | default('', true) }}">
       <label class="own__field"><span>Passphrase</span>
         <input class="input" type="password" name="password" required autocomplete="current-password">
         <span class="own__hint">Enter your passphrase again to start the set-up.</span>

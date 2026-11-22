@@ -934,3 +934,32 @@ def test_ending_a_flow_is_recorded_without_its_token_and_a_refused_log_does_not_
     assert f"Path={second.FLOW_PATHS[FLOW]}" in response.headers["set-cookie"]
     with pytest.raises(HTTPException):
         local_owner.verify_recovery(proof_request(live), email=EMAIL, password=PASSPHRASE, flow=FLOW)
+
+
+def test_changing_the_passphrase_needs_a_current_code_when_the_app_is_on(clock):
+    from fastapi import HTTPException
+    from maverick_dashboard import local_owner, local_passphrases
+    from maverick_dashboard import local_owner_second_factor as second
+
+    enroll_owner()
+    secret, _codes = turn_on(clock)
+    new = "a brand new owner passphrase for tests"  # pragma: allowlist secret - synthetic fixture passphrase
+    prepared = local_passphrases.prepare(EMAIL, new)
+    commits = []
+    with pytest.raises(HTTPException) as missing:
+        local_owner.change_passphrase(request(), current=PASSPHRASE, prepared=prepared, code="",
+                                      before_commit=commits.append)
+    assert missing.value.status_code == 401 and missing.value.detail == second.CODE_REQUIRED
+    with pytest.raises(HTTPException) as wrong:
+        local_owner.change_passphrase(request(), current=PASSPHRASE, prepared=prepared, code="000000",
+                                      before_commit=commits.append)
+    assert wrong.value.status_code == 401 and row()["failures"] >= 1
+    assert commits == []
+    saved = local_owner.change_passphrase(request(), current=PASSPHRASE, prepared=prepared,
+                                          code=current_code(secret, clock), before_commit=commits.append)
+    assert len(commits) == 1 and saved["password_hash"] == prepared["password_hash"]
+    assert row()["failures"] == 0 and "totp" in row()
+    # The new passphrase signs in (then asks for the app's code); the old one does not.
+    with pytest.raises(HTTPException):
+        local_owner.login(request(), email=EMAIL, password=PASSPHRASE)
+    assert isinstance(local_owner.login(request(), email=EMAIL, password=new), second.Challenge)
