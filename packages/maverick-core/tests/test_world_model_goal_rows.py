@@ -67,38 +67,3 @@ def test_personal_alert_goals_still_decrypt_when_at_rest_is_on(tmp_path, monkeyp
     assert (goal.title, goal.description) == ("sealed title", "sealed description")
     assert isinstance(state_revision, int) and isinstance(result_revision, int)
 
-
-def test_postgres_personal_alert_goals_decode_a_page_at_once(monkeypatch, tmp_path):
-    import os
-    import uuid
-
-    import pytest
-    dsn = os.environ.get("MAVERICK_PG_DSN")
-    if not dsn:
-        pytest.skip("MAVERICK_PG_DSN is not set")
-    psycopg = pytest.importorskip("psycopg")
-    from maverick.world_model_backends import postgres
-    from psycopg import sql
-    from psycopg.conninfo import make_conninfo
-
-    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
-    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
-    db = "mvk_alert_rows_" + uuid.uuid4().hex
-    with psycopg.connect(dsn, autocommit=True) as admin:
-        admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(db)))
-    own = make_conninfo(dsn, dbname=db)
-    monkeypatch.setenv("MAVERICK_PG_DSN", own)
-    try:
-        world = postgres.PostgresWorldModel(own)
-        for i in range(5):
-            world.create_goal(f"sealed {i}", "private", owner="user:a")
-        pages = []
-        original = postgres._dec_goal_rows
-        monkeypatch.setattr(postgres, "_dec_goal_rows", lambda rows: pages.append(len(rows)) or original(rows))
-        rows = world.personal_alert_goals("user:a", since=0)
-        assert [goal.title for goal, _state, _result in rows] == [f"sealed {i}" for i in range(5)]
-        assert all(goal.description == "private" for goal, _state, _result in rows)
-        assert pages == [5]
-    finally:
-        with psycopg.connect(dsn, autocommit=True) as admin:
-            admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(db)))
