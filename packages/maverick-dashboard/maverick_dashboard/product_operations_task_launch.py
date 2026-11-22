@@ -51,7 +51,7 @@ def published_specialists(request, *, only=None, revisions=True):
 def specialist_readiness():
     """``(ready, needs)`` for a specialist profile, from the Agent Factory's
     check (``workflow_readiness``): whether it can start here, and if not what
-    it needs, for example "Needs Web search". The configured tools are read
+    it needs, for example "Needs 1 workflow action". The configured tools are read
     once per call of this function; the run-time check still decides."""
     from maverick.domain_edit import _configured_tool_names, _disabled_suites, workflow_readiness
 
