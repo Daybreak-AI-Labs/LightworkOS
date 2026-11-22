@@ -70,12 +70,15 @@ def _projection(request, actor: str, *, world=None) -> tuple[list[dict], list[di
     limited = False
     projects = {project["id"]: {"id": project["id"], "name": project["name"]}
                 for project in world.list_projects(owner=actor) if project.get("owner") == actor}
+    # One read of the caller's grants for every task; each task is still checked in full.
+    domain_allowed = auth.domain_suites_checker(request) if request is not None else None
     for goal, state_revision, result_revision in _goal_pages(world, actor):
         if goal.owner != actor:
             continue
         # A task the person started but can no longer open (a department grant
         # was removed) is left out; it must not fail every other alert.
-        if request is not None and not auth.can_access_goal(request, goal):
+        if request is not None and not auth.can_access_goal(request, goal, world=world,
+                                                            domain_allowed=domain_allowed):
             continue
         tasks.append({"id": goal.id, "title": goal.title})
         project_id = getattr(goal, "project_id", None)

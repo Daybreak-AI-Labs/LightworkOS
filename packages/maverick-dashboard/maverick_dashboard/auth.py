@@ -1129,7 +1129,7 @@ def can_access_goal_principal(principal: str | None, goal) -> bool:
     return getattr(goal, "owner", "") == principal
 
 
-def _goal_read_policy(request: Request, goal) -> bool:
+def _goal_read_policy(request: Request, goal, *, domain_allowed=None) -> bool:
     """Whether the caller may read/mutate ``goal``.
 
     Ownership grants normal access. A named administrator needs an independent
@@ -1137,8 +1137,14 @@ def _goal_read_policy(request: Request, goal) -> bool:
     A read approval never grants mutation or publishing authority. A current
     department grant is also required for a specialist-owned goal, including
     when the specialist's pack was removed after the goal was created.
+
+    ``domain_allowed``: a :func:`domain_suites_checker` for this request, so a
+    listing reads the caller's grants once; the answer is the same.
     """
-    if goal is None or not domain_suites_allowed(request, getattr(goal, "domain", None)):
+    if goal is None:
+        return False
+    domain = getattr(goal, "domain", None)
+    if not (domain_allowed(domain) if domain_allowed is not None else domain_suites_allowed(request, domain)):
         return False
     principal = _authorization_principal(request)
     if getattr(request.state, "paired_device_id", None):
@@ -1154,9 +1160,13 @@ def _goal_read_policy(request: Request, goal) -> bool:
                                      resource_kind="goal", resource_id=str(goal.id))
 
 
-def can_access_goal(request: Request, goal) -> bool:
-    """A copied conversation keeps every original source's current access rules."""
-    if not _goal_read_policy(request, goal):
+def can_access_goal(request: Request, goal, *, world=None, domain_allowed=None) -> bool:
+    """A copied conversation keeps every original source's current access rules.
+
+    A listing may pass the world it already holds and one
+    :func:`domain_suites_checker`; each goal is still checked in full.
+    """
+    if not _goal_read_policy(request, goal, domain_allowed=domain_allowed):
         return False
     from maverick.attachments import AttachmentRejected
     from maverick.chat_message_actions import require_copy_sources
@@ -1165,11 +1175,11 @@ def can_access_goal(request: Request, goal) -> bool:
     from ._shared import _world
 
     def authorize(source):
-        if not _goal_read_policy(request, source):
+        if not _goal_read_policy(request, source, domain_allowed=domain_allowed):
             raise PermissionError("A copied source is unavailable to this account.")
 
     try:
-        require_copy_sources(_world(), goal.id, authorize=authorize)
+        require_copy_sources(world if world is not None else _world(), goal.id, authorize=authorize)
     except (PermissionError, SourceContextUnavailable, AttachmentRejected):
         return False
     return True
