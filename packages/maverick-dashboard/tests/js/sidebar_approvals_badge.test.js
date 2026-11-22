@@ -68,7 +68,10 @@ test("large counts stay short and the label follows the interface language", asy
   const {document} = await render(ok(250), {links: 1, i18n});
   const link = document.querySelector("a[data-approvals-badge]");
   assert.equal(link.querySelector(".nav-count").textContent, "99+");
-  assert.equal(link.getAttribute("aria-label"), "Approvals : 250 en attente");
+  // The name says what the badge shows (WCAG 2.5.3 label in name).
+  assert.equal(link.getAttribute("aria-label"), "Approvals : 99+ en attente");
+  const plain = (await render(ok(250), {links: 1})).document.querySelector("a[data-approvals-badge]");
+  assert.equal(plain.getAttribute("aria-label"), "Approvals, 99+ waiting");
 });
 
 test("a page without an Approvals link asks for nothing", async () => {

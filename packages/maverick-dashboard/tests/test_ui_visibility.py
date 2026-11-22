@@ -578,8 +578,10 @@ def test_fresh_install_marks_switched_off_pages_for_administrators(monkeypatch, 
     c = _client(monkeypatch, tmp_path)  # the local owner can turn modules on
     body = c.get("/goals").text
     [consent] = _sidebar_link(body, "/consent")
-    assert 'aria-label="Consent and preferences (turned off)"' in consent
-    assert '<span class="nav-off" aria-hidden="true">' in consent and ">Off</span>" in consent
+    # The name starts with the visible words (WCAG 2.5.3), and a space keeps
+    # "Off" a separate word for voice control.
+    assert 'aria-label="Consent and preferences, Off"' in consent
+    assert '</span> <span class="nav-off" aria-hidden="true">' in consent and ">Off</span>" in consent
     tasks = _sidebar_link(body, "/goals")  # listed once (Most used); pages that work stay plain
     assert len(tasks) == 1 and not any("aria-label" in link or "nav-off" in link for link in tasks)
 

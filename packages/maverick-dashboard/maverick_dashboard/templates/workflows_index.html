@@ -98,7 +98,7 @@
       {% for t in templates %}
       <li class="mv-row">
         <div class="mv-row__main">
-          <div class="mv-row__title">{{ t.title or (t.name|humanize) }}</div>
+          <div class="mv-row__title">{{ (t.title | fill_placeholders) or (t.name|humanize) }}</div>
           <div class="mv-row__sub">{% if t.params %}You'll be asked for: {{ t.params|map('humanize')|map('lower')|join(', ') }}{% else %}Ready to use with your instructions{% endif %}</div>
           <details hidden><summary>Technical details</summary><p class="muted">Template reference: <code>{{ t.name }}</code></p></details>
         </div>

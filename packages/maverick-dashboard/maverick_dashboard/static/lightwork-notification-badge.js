@@ -5,12 +5,14 @@
   let controller = null;
 
   function show(unseen, partial) {
-    const label = unseen ? 'Your notifications, ' + unseen + ' new' : 'Your notifications';
+    // Name the number the badge shows (99+), so the spoken name contains it.
+    const shown = unseen > 99 ? '99+' : String(unseen);
+    const label = unseen ? 'Your notifications, ' + shown + ' new' : 'Your notifications';
     links.forEach(function (link) {
       const count = link.querySelector('.notification-count');
       count.classList.remove('notification-count--error');
       count.hidden = unseen === 0;
-      count.textContent = unseen > 99 ? '99+' : String(unseen);
+      count.textContent = shown;
       link.setAttribute('aria-label', label + (partial ? '. Some assigned decisions could not be checked.' : ''));
       link.title = partial ? 'Some notifications could not be checked. Open your inbox to refresh.' : label;
     });
