@@ -48,6 +48,23 @@ def published_specialists(request, *, only=None, revisions=True):
         return _published_specialists(request, only=only, revisions=revisions)
 
 
+def specialist_readiness():
+    """``(ready, needs)`` for a specialist profile, from the Agent Factory's
+    check (``workflow_readiness``): whether it can start here, and if not what
+    it needs, for example "Needs Web search". The configured tools are read
+    once per call of this function; the run-time check still decides."""
+    from maverick.domain_edit import _configured_tool_names, _disabled_suites, workflow_readiness
+
+    known, disabled = _configured_tool_names(), frozenset(_disabled_suites())
+
+    def check(profile) -> tuple[bool, str]:
+        result = workflow_readiness(profile, known, disabled_suites=disabled)
+        ready = result.get("state") == "action_ready"
+        return ready, "" if ready else str(result.get("label") or "Needs setup")
+
+    return check
+
+
 def _published_specialists(request, *, only=None, revisions=True):
     """Current named choices only; the complete definition stays native.
 
@@ -69,6 +86,7 @@ def _published_specialists(request, *, only=None, revisions=True):
     personal_default = saved_chat_specialist(request)  # inside this re-check pair
     wanted = None if only is None else only(personal_default)
     choices = []
+    readiness = None
     for name, profile in sorted(enabled_domains().items()):
         if len(name) > 120 or (wanted is not None and name not in wanted):
             continue
@@ -77,6 +95,9 @@ def _published_specialists(request, *, only=None, revisions=True):
         choice = {"value": name, "label": pack_display_name(name, profile.persona, profile.description)}
         if revisions:
             choice["revision"] = dataclass_digest(profile)
+            if wanted is not None:  # the few choices a page ships say whether they can start
+                readiness = readiness or specialist_readiness()
+                choice["ready"], choice["needs"] = readiness(profile)
         else:
             choice["profile"] = profile
         choices.append(choice)

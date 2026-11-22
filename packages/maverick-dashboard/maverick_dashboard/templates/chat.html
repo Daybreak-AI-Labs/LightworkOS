@@ -163,7 +163,7 @@
               data-requested="{{ '' if requested_specialist is none else '1' }}">
         <option value="">{{ ui('Let Lightwork choose the team') }}</option>
         {% for choice in published_specialists.choices %}
-        <option value="{{ choice.value }}" data-revision="{{ choice.revision }}"{% if choice.value == requested_specialist %} selected{% endif %}>{{ choice.label }}</option>
+        <option value="{{ choice.value }}" data-revision="{{ choice.revision }}"{% if choice.needs %} data-needs="{{ choice.needs }}"{% endif %}{% if choice.value == requested_specialist %} selected{% endif %}>{{ choice.label }}{% if choice.needs %} — {{ ui(choice.needs) }}{% endif %}</option>
         {% endfor %}
       </select>
     </label>
@@ -330,7 +330,9 @@
     var form = choice.form, revision = form.querySelector('[name="specialist_revision"]'), unavailable = false;
     function selected() {
       revision.value = choice.selectedOptions[0]?.dataset.revision || '';
+      var needs = choice.selectedOptions[0]?.dataset.needs || '';
       if (choice.value && !revision.value) chatCopy(document.getElementById('chat-specialist-help'), 'Your saved specialist is kept but is unavailable here. Choose a current specialist or let Lightwork choose the team before starting.');
+      else if (choice.value && needs) chatCopy(document.getElementById('chat-specialist-help'), 'This specialist cannot start here yet: {needs}. Ask an administrator to set it up, or let Lightwork choose the team.', {needs: chatText(needs)});
       else if (!unavailable) chatCopy(document.getElementById('chat-specialist-help'), choice.dataset.notice);
     }
     // Server values travel as data attributes, so this script stays plain JavaScript.
@@ -356,7 +358,9 @@
           keep.textContent = chatText('Earlier selection — choose the current specialist below.');
         }
         var option = choice.ownerDocument.createElement('option');
-        option.value = row.value; option.textContent = row.label; option.dataset.revision = row.revision;
+        option.value = row.value; option.dataset.revision = row.revision;
+        option.textContent = row.needs ? row.label + ' — ' + chatText(row.needs) : row.label;
+        if (row.needs) option.dataset.needs = row.needs;
         choice.append(option);
       });
       if (keep && keep.value) choice.value = keep.value;

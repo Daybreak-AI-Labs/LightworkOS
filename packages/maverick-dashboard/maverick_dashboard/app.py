@@ -8398,8 +8398,14 @@ def chat_specialist_choices(
     ]
     matches.sort(key=lambda choice: (not choice["label"].casefold().startswith(query), choice["label"].casefold()))
     # Each revision digests a whole specialist: only the page returned needs one.
-    items = [{"value": choice["value"], "label": choice["label"], "revision": dataclass_digest(choice["profile"])}
-             for choice in matches[:limit]]
+    from .product_operations_task_launch import specialist_readiness
+
+    readiness = specialist_readiness()
+    items = []
+    for choice in matches[:limit]:
+        ready, needs = readiness(choice["profile"])
+        items.append({"value": choice["value"], "label": choice["label"],
+                      "revision": dataclass_digest(choice["profile"]), "ready": ready, "needs": needs})
     return JSONResponse(
         {"context": current["context"], "items": items, "total": len(matches)},
         headers={"Cache-Control": "no-store, private"},
