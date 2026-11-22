@@ -65,6 +65,15 @@ grant access or deploy. Every run is a saved case you can return to. Open
 **Workforce**, then **Starter teams**; the Copilot panel offers the same
 operations under the same permissions.
 
+## In-house legal workspace
+
+Enable **Legal workspace** in Settings to manage legal intake, contracts, outside
+counsel, assignments for four digital paralegals and five digital associates,
+and the general counsel’s review queue. Workers draft from selected evidence
+under an approved budget; supervising counsel reviews the result.
+See the [legal workspace guide](docs/legal-workspace.md) for setup, workflow
+coverage and integration boundaries.
+
 ## Autonomous Shoring
 
 Starter teams are the front line of Autonomous Shoring: moving a whole

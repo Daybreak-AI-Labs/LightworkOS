@@ -348,6 +348,10 @@ PAGES: tuple[dict, ...] = (
         "floor": "view",
         "default": "view",
     },
+    {
+        "path": "/legal", "label": "Legal", "group": "Operate",
+        "icon": "fleets", "floor": "operate", "default": "operate",
+    },
     # Reviewed team setup reached from Workforce and Agent Factory.
     {
         "path": "/starter-teams",

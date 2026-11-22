@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Legal · Lightwork{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+{% set hero_actions %}<a class="btn" href="/settings/all">Legal settings</a>{% endset %}
+{{ hero('Legal department', 'Your digital legal team', subtitle='Clear ownership. Connected matters. Counsel in control.',
+        lede='Give your associates and paralegals a defined assignment. Keep the evidence, work product and decisions together as work moves through your company and outside counsel.', actions=hero_actions) }}
+<style>
+ .legal-metrics,.legal-team{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:var(--space-3)}
+ .legal-metric strong{display:block;font-size:2rem;line-height:1.3}.legal-muted{color:var(--text-muted,var(--text));font-size:.92rem}
+ .legal-layout{display:grid;grid-template-columns:minmax(230px,1fr) minmax(0,3fr);gap:var(--space-4);margin-top:var(--space-4)}
+ .legal-toolbar{display:flex;align-items:center;gap:var(--space-2);flex-wrap:wrap;margin:var(--space-3) 0}
+ .legal-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-3)}
+ .legal-field{display:flex;flex-direction:column;gap:var(--space-1)}.legal-field--wide{grid-column:1/-1}
+ .legal-field textarea{min-height:110px}.legal-field select[multiple]{min-height:120px}
+ .legal-card{border:1px solid var(--border);border-radius:var(--radius-lg);padding:var(--space-3);margin:var(--space-2) 0;background:var(--panel)}
+ .legal-card h3{margin-top:0}.legal-card p,.legal-record dd{white-space:pre-wrap;overflow-wrap:anywhere}
+ .legal-record dt{font-weight:600;margin-top:var(--space-2)}.legal-record dd{margin-left:0}
+ .legal-dialog{color:var(--text);background:var(--panel);border:1px solid var(--border);border-radius:var(--radius-lg);width:min(760px,92vw);max-height:85vh;overflow:auto;padding:var(--space-5)}
+ .legal-dialog::backdrop{background:rgb(0 0 0 / .55)}.legal-dialog pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}
+ .legal-tabs button[aria-pressed="true"]{outline:2px solid currentColor;outline-offset:2px}
+ .legal-count{font-weight:600}.legal-empty{padding:var(--space-4);border:1px dashed var(--border);border-radius:var(--radius-lg)}
+ .legal-matter-button{display:block;width:100%;text-align:left;margin:var(--space-2) 0;white-space:normal}
+ #legal-source-file{max-width:100%}.legal-checklist{display:grid;gap:var(--space-2)}
+ @media(max-width:850px){.legal-layout{grid-template-columns:1fr}.legal-fields{grid-template-columns:1fr}.legal-field--wide{grid-column:auto}}
+ @media(prefers-reduced-transparency:reduce){.legal-card,.legal-dialog{backdrop-filter:none;background:var(--bg)}}
+</style>
+{% if not legal_enabled %}
+<section class="panel"><h2>Set up your legal workspace</h2><p>Turn on <strong>Legal workspace</strong> in Settings, then return here to open your first matter. Your department gets four digital paralegals and five digital associates.</p><a class="btn btn--primary" href="/settings/all">Open settings</a></section>
+{% else %}
+<p id="legal-message" role="status" aria-live="polite">Loading your authorized legal work…</p>
+<div class="legal-toolbar"><button class="btn btn--primary" id="legal-new" type="button">Open a legal request</button><button class="btn" id="legal-refresh" type="button">Refresh work</button><button class="btn" id="legal-team-toggle" type="button" aria-expanded="false" aria-controls="legal-team-section">Meet your nine workers</button></div>
+<section class="legal-metrics" id="legal-metrics" aria-label="Legal department overview"></section>
+<section class="panel" id="legal-team-section" hidden aria-labelledby="legal-team-title"><h2 id="legal-team-title">Your digital legal workforce</h2><p>{{ notice }}</p><div class="legal-team" id="legal-team"></div></section>
+<div class="legal-layout">
+ <aside class="panel" aria-labelledby="legal-matters-title"><h2 id="legal-matters-title">Your matters</h2><label for="legal-search">Find a matter</label><input id="legal-search" class="input" type="search" placeholder="Name, department or legal area"><div id="legal-matters"></div><p class="legal-muted">Only matters shared with you appear here.</p></aside>
+ <div>
+  <section class="panel" id="legal-overview"><h2>General counsel desk</h2><p class="legal-muted">Upcoming work, decisions and exceptions across matters you can access. Proposed dates still need counsel confirmation.</p><div id="legal-attention"></div><h3>Outside counsel spend</h3><div id="legal-spend"></div></section>
+  <section class="panel" id="legal-matter" hidden aria-labelledby="legal-matter-title">
+   <div class="legal-toolbar"><button class="btn" id="legal-back" type="button">Department overview</button><button class="btn" id="legal-edit" type="button">Update matter</button></div>
+   <h2 id="legal-matter-title"></h2><p id="legal-matter-objective"></p><p class="legal-muted" id="legal-matter-meta"></p>
+   <div class="legal-toolbar legal-tabs" id="legal-tabs" aria-label="Matter records"></div><div id="legal-records"></div>
+  </section>
+  <section class="panel" id="legal-editor" hidden aria-labelledby="legal-editor-title">
+   <h2 id="legal-editor-title">Move the work forward</h2><label for="legal-action">What would you like to do?</label><select class="select" id="legal-action"></select>
+   <p class="legal-muted" id="legal-action-help"></p>
+   <form id="legal-form"><div class="legal-fields" id="legal-fields"></div><div class="legal-toolbar"><button class="btn btn--primary" type="submit" id="legal-review-button">Review this operation</button><button class="btn" type="button" id="legal-editor-cancel">Close editor</button></div></form>
+  </section>
+ </div>
+</div>
+<dialog class="legal-dialog" id="legal-review" aria-labelledby="legal-review-title"><h2 id="legal-review-title">Review the exact work</h2><div id="legal-preview"></div><p id="legal-review-message" role="status" aria-live="polite"></p><div class="legal-toolbar"><button class="btn btn--primary" id="legal-confirm" type="button">Confirm reviewed work</button><button class="btn" id="legal-original" type="button" hidden>Check original result</button><button class="btn" id="legal-review-cancel" type="button">Close</button></div></dialog>
+<script nonce="{{ csp_script_nonce }}" src="/static/lightwork-legal.js" defer></script>
+{% endif %}
+{% endblock %}

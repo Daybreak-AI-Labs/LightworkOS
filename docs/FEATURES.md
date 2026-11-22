@@ -6233,3 +6233,15 @@ Copilot's standard change review shows named business headings and complete
 values. When both an existing and proposed value are supplied, their comparison
 is explicit. Other review shapes keep all their details, and an incomplete
 review still cannot be applied from the compact panel.
+
+## In-house legal workspace
+
+The optional Legal workspace connects intake, contracts, outside counsel, nine
+digital legal roles and general counsel oversight. Matter permissions, immutable
+evidence, reviewed provider runs, human decisions and operation recovery share
+one service across the dashboard and Copilot. See [legal-workspace.md](legal-workspace.md)
+for the operating journey, supported boundaries and validation evidence.
+
+Implementation: `legal_workspace.py`, `legal_workspace_models.py`,
+`legal_workforce_catalog.py`, `legal_workspace_runtime.py`,
+`legal_workspace_api.py` and `product_operations_legal.py`.
