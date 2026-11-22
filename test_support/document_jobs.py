@@ -12,6 +12,8 @@ from maverick.sandbox.local import ExecResult
 def install_backend(monkeypatch, tmp_path, *, mode="success"):
     state = {"mode": mode, "calls": [], "stages": [], "requests": []}
     monkeypatch.setattr(DockerBackend, "_verify_docker", lambda self: None)
+    from maverick.tools import document_processing
+    monkeypatch.setattr(document_processing, "local_image_missing", lambda engine, image: False)
 
     def execute(self, command, timeout=None):
         stage = Path(self.workdir)
