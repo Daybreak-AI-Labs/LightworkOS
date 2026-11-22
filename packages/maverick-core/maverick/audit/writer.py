@@ -459,31 +459,6 @@ class AuditLog:
         with _live_logs_lock:
             _live_logs.add(self)
 
-    @contextlib.contextmanager
-    def _shared_keys_for_shared_dir(self):
-        """Sign the shared (no-workspace) chain with the shared key.
-
-        The signing-key folder follows the active workspace, but the shared
-        writer is also used from requests that have a workspace selected
-        (deployment-global records). A row signed there with the workspace's
-        key would break verification of the shared chain, so key lookups for
-        this writer's folder use the shared key folder. A thread override or a
-        replaced ``KEY_DIR`` (tests, the proof probe) still wins.
-        """
-        from ..paths import data_dir
-        from . import signing
-
-        override = signing._KEY_DIR_OVERRIDE
-        if (getattr(override, "path", None) is not None or signing.KEY_DIR is not signing._LEGACY_KEY_DIR
-                or self.audit_dir != data_dir("audit", tenant=None)):
-            yield
-            return
-        override.path = data_dir("audit", "keys", tenant=None)
-        try:
-            yield
-        finally:
-            override.path = None
-
     def _path_for(self, day_str: str) -> Path:
         # ``day_str`` becomes a path component; refuse anything that isn't a
         # bare YYYY-MM-DD so a crafted ``day`` (e.g. ``../../etc/passwd``)
@@ -541,8 +516,10 @@ class AuditLog:
             # day-file is detectable. Best-effort -- anchoring must never block
             # an audit write.
             try:
-                from .signing import ensure_anchors
-                with self._shared_keys_for_shared_dir():
+                from .signing import ensure_anchors, shared_keys_for
+                # The shared folder is signed with the shared key, whatever
+                # workspace the writing request has selected.
+                with shared_keys_for(self.audit_dir):
                     ensure_anchors(self.audit_dir)
             # failure-policy: fail_soft_with_audit
             except Exception as e:  # pragma: no cover - defensive
@@ -752,9 +729,9 @@ class AuditLog:
             return None
         if self._signer is None or self._signer_path != path:
             try:
-                from .signing import AuditSigner
+                from .signing import AuditSigner, shared_keys_for
 
-                with self._shared_keys_for_shared_dir():
+                with shared_keys_for(self.audit_dir):
                     self._signer = AuditSigner(path)
                 self._signer_path = path
             # failure-policy: fail_soft_with_audit
