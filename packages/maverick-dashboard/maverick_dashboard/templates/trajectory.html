@@ -97,7 +97,7 @@
           <span class="ev-kind">{{ KIND_LABELS.get(ev.kind) or (ev.kind | humanize) }}</span>
           {% if fork_enabled and can_operate %}
           <button type="button" class="btn btn--ghost ev-branch" data-event="{{ ev.id }}"
-                  aria-label="Branch from step {{ loop.index }}">Branch from here</button>
+                  aria-label="Branch from here, step {{ loop.index }}">Branch from here</button>
           {% endif %}
         </span>
         {# The step in plain words; what Lightwork recorded is folded away. #}

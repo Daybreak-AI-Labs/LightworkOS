@@ -35,7 +35,7 @@
           <form method="post" action="/settings/providers/test">
             <input type="hidden" name="provider" value="{{ provider.name }}" />
             <input type="hidden" name="next" value="providers" />
-            <button type="submit" class="btn" aria-label="Test the {{ label }} connection">Test connection</button>
+            <button type="submit" class="btn" aria-label="Test connection for {{ label }}">Test connection</button>
           </form>
           {% elif is_admin %}
           <a class="btn btn--ghost" href="/settings#provider-{{ provider.name }}" aria-label="Set up {{ label }}">Set up</a>

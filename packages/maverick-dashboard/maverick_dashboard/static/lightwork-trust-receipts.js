@@ -160,7 +160,7 @@
         var button = document.createElement("button");
         button.type = "button"; button.className = "btn";
         button.textContent = "Create receipt";
-        button.setAttribute("aria-label", "Create a receipt for " + human(row.kind) + " at " + when(row.ts));
+        button.setAttribute("aria-label", "Create receipt for " + human(row.kind) + " at " + when(row.ts));
         button.addEventListener("click", function () {
           button.disabled = true;
           mint(loadedRows.day, row).catch(explain("rcp-mint-msg", "create the receipt"))

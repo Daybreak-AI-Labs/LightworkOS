@@ -452,7 +452,7 @@
               data-users-confirm="Cancel the invitation for {{ inv.email }}? The link will stop working." data-users-ok="Cancel invitation">
           {{ workspace_binding() }}
           <input type="hidden" name="invite_id" value="{{ inv.id }}" />
-          <button type="submit" class="btn btn--danger" aria-label="Cancel the invitation for {{ inv.email }}">Cancel invitation</button>
+          <button type="submit" class="btn btn--danger" aria-label="Cancel invitation for {{ inv.email }}">Cancel invitation</button>
         </form>
       </li>
       {% endfor %}
@@ -504,7 +504,7 @@
           {{ workspace_binding() }}
           <input type="hidden" name="email" value="{{ account.email }}" />
           <input type="hidden" name="confirm" value="reset" />
-          <button type="submit" class="btn" aria-label="Create a sign-in link for {{ account.email }}">Create sign-in link</button>
+          <button type="submit" class="btn" aria-label="Create sign-in link for {{ account.email }}">Create sign-in link</button>
         </form>
         {% endif %}
       </li>
@@ -579,7 +579,7 @@
           {{ workspace_binding() }}
           <input type="hidden" name="expected_context" value="{{ workspace_people_context }}">
           <input type="hidden" name="invite_id" value="{{ inv.id }}" />
-          <button type="submit" class="btn btn--danger" aria-label="Cancel the workspace invitation for {{ inv.email }}">Cancel invitation</button>
+          <button type="submit" class="btn btn--danger" aria-label="Cancel invitation for {{ inv.email }} to this workspace">Cancel invitation</button>
         </form>
       </li>
       {% endfor %}

@@ -674,7 +674,7 @@
         if (working >= 0) whereSel.value = String(working);
         addWrap.appendChild(whereSel);
       }
-      addWrap.appendChild(btn('Add step', 'btn--primary', 'Add a step at the end', function () {
+      addWrap.appendChild(btn('Add step', 'btn--primary', 'Add step at the end', function () {
         showProps(); engine().add(addSel.value, whereSel ? ends[Number(whereSel.value)] : undefined); render();
       }));
       foot.appendChild(addWrap);

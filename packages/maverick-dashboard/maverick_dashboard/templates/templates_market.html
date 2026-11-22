@@ -46,10 +46,10 @@
           </details>
           {% endif %}
           <div class="tplm__actions">
-            {% if can_create_goal %}<button class="btn btn--primary" type="button" data-prepare-template aria-label="Use the {{ label }} template">Use template</button>{% endif %}
+            {% if can_create_goal %}<button class="btn btn--primary" type="button" data-prepare-template aria-label="Use template: {{ label }}">Use template</button>{% endif %}
             <a class="btn btn--ghost" href="/workflow-builder?edit={{ e.name | urlencode }}" aria-label="Edit {{ label }}">Edit</a>
             {% if scheduling_enabled or triggers_enabled %}
-            <a class="btn btn--ghost" href="/workflow-builder?template={{ e.name | urlencode }}" aria-label="Run {{ label }} automatically">Run automatically</a>
+            <a class="btn btn--ghost" href="/workflow-builder?template={{ e.name | urlencode }}" aria-label="Run automatically: {{ label }}">Run automatically</a>
             {% endif %}
           </div>
           {% if can_create_goal %}

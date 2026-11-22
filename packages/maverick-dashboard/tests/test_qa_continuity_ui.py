@@ -178,7 +178,7 @@ def test_privacy_decision_network_failure_restores_the_draft_control():
 def test_repeated_department_actions_name_their_target():
     workforce = (TEMPLATES / "workforce.html").read_text(encoding="utf-8")
     agents = (TEMPLATES / "agents.html").read_text(encoding="utf-8")
-    assert 'aria-label="Set up {{ d.title }} team"' in workforce
-    assert 'aria-label="View {{ d.title }} team"' in workforce
-    assert "aria-label=\"Deploy ' + esc(d.title) + ' team\"" in agents
+    assert 'aria-label="Set up team: {{ d.title }}"' in workforce
+    assert 'aria-label="View team: {{ d.title }}"' in workforce
+    assert "aria-label=\"Deploy team: ' + esc(d.title) + '\"" in agents
     assert "aria-label=\"View ' + esc(d.title) + ' details\"" in agents

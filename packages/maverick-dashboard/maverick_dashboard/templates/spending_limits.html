@@ -154,7 +154,7 @@
               <input type="hidden" name="principal" value="{{ row.principal }}" />
               <input type="hidden" name="action" value="remove" />
               <button type="submit" class="btn btn--ghost"
-                      aria-label="Remove the personal limit for {{ agent_names.get(row.principal) or (row.principal | identity).name }}">Remove personal limit</button>
+                      aria-label="Remove personal limit for {{ agent_names.get(row.principal) or (row.principal | identity).name }}">Remove personal limit</button>
             </form>
             {% endif %}
           </td>

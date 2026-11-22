@@ -61,7 +61,7 @@
           {% if t.plan %}<div class="tsel__row-meta">{{ t.plan | capitalize }} plan</div>{% endif %}
         </div>
         {% if can_select and t.active and t.id != selected %}
-        <button type="button" class="btn btn--primary tsel-pick" data-tenant="{{ t.id }}" aria-label="Work in {{ t.name }}{% if t.reference %}, reference {{ t.reference }}{% endif %}">Work in this workspace</button>
+        <button type="button" class="btn btn--primary tsel-pick" data-tenant="{{ t.id }}" aria-label="Work in this workspace: {{ t.name }}{% if t.reference %}, reference {{ t.reference }}{% endif %}">Work in this workspace</button>
         {% elif can_select and t.id == selected %}
         <button type="button" class="btn tsel-clear">Clear selection</button>
         {% endif %}

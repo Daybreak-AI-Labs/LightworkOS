@@ -78,7 +78,7 @@ test("workspace admin picker shows only the selected workspace's members and pro
   const settle=async()=>{for(let i=0;i<10;i++)await new Promise(done=>setImmediate(done));};
   el("refresh").click();await settle();
   assert.deepEqual(Array.from(el("principal").options).map(option=>option.value),["","user:acme","user:owner"]);
-  assert.equal(el("list").querySelector("button[aria-label=\"Clear Owner's role in Acme\"]").disabled,true);
+  assert.equal(el("list").querySelector("button[aria-label=\"Clear role for Owner in Acme\"]").disabled,true);
   el("tenant").value="beta";el("tenant").dispatchEvent(new window.Event("change"));await settle();
   assert.deepEqual(Array.from(el("principal").options).map(option=>option.value),["","user:beta","user:owner"]);
   assert.deepEqual(Array.from(el("role").options).map(option=>option.value),["","admin"]);

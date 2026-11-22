@@ -69,7 +69,7 @@
     for(const [principal,role] of Object.entries(members)){
       const li=node("li","",""),name=node("span",label(principal),"wm-name"),badge=node("span",roleLabel(role),"badge");
       const edit=node("button","Change role","btn"),remove=node("button","Clear role","btn btn--danger");edit.type=remove.type="button";
-      edit.setAttribute("aria-label","Change "+label(principal)+"'s role");remove.setAttribute("aria-label","Clear "+label(principal)+"'s role in "+workspaceName());
+      edit.setAttribute("aria-label","Change role for "+label(principal));remove.setAttribute("aria-label","Clear role for "+label(principal)+" in "+workspaceName());
       if((!globalAdmin&&principal===you)||(adminCount<=1&&roleHasAdmin(role))){remove.disabled=true;remove.title="Keep a workspace administrator in place before clearing this role.";}
       edit.addEventListener("click",()=>{if(Array.from(el("principal").options||[]).some(o=>o.value===principal))el("principal").value=principal;el("role").value=role;el("role").focus();});
       remove.addEventListener("click",()=>action(async()=>{if(!await ask("Clear "+label(principal)+"'s workspace role in "+workspaceName()+"? This removes direct membership. Their standard access still applies elsewhere, and installation administrators may still enter. To keep them here with limited access, give them the Viewer role.","Clear role"))return;await api("/"+encodeURIComponent(principal),{method:"DELETE"},"clear this workspace role");await load();}));
