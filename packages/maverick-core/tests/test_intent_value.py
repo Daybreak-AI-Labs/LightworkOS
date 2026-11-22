@@ -553,7 +553,9 @@ def test_measured_receipts_replace_runtime_and_reprocessing_does_not_double_coun
     period = datetime.now(timezone.utc).strftime("%Y-%m")
     receipt = {"reference": "synthetic-receipt", "period": period, "state": "settled", "actual": 3,
                "currency": "USD", "basis": "recorded"}
-    fake_for_goal = lambda gid: {"state": "available", "receipts": [receipt] if gid == identifier else []}
+    def fake_for_goal(gid):
+        return {"state": "available", "receipts": [receipt] if gid == identifier else []}
+
     monkeypatch.setattr(cost_provenance, "for_goal", fake_for_goal)
     monkeypatch.setattr(cost_provenance, "for_goals", lambda ids: {gid: fake_for_goal(gid) for gid in ids})
     first = report(world)
@@ -574,7 +576,9 @@ def test_day_period_receipts_replace_runtime_without_a_parse_error(world, monkey
     period = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     receipt = {"reference": "synthetic-day-receipt", "period": period, "state": "settled", "actual": 3,
                "currency": "USD", "basis": "recorded"}
-    fake_for_goal = lambda gid: {"state": "available", "receipts": [receipt] if gid == identifier else []}
+    def fake_for_goal(gid):
+        return {"state": "available", "receipts": [receipt] if gid == identifier else []}
+
     monkeypatch.setattr(cost_provenance, "for_goal", fake_for_goal)
     monkeypatch.setattr(cost_provenance, "for_goals", lambda ids: {gid: fake_for_goal(gid) for gid in ids})
     totals = report(world)["totals"]
@@ -606,7 +610,9 @@ def test_episode_across_midnight_is_reconciled_once_against_both_day_receipts(wo
                  "state": "settled", "actual": 4, "currency": "USD", "basis": "recorded"},
                 {"reference": "after-midnight", "period": midnight.strftime("%Y-%m-%d"),
                  "state": "settled", "actual": 6, "currency": "USD", "basis": "recorded"}]
-    fake_for_goal = lambda gid: {"state": "available", "receipts": receipts if gid == identifier else []}
+    def fake_for_goal(gid):
+        return {"state": "available", "receipts": receipts if gid == identifier else []}
+
     monkeypatch.setattr(cost_provenance, "for_goal", fake_for_goal)
     monkeypatch.setattr(cost_provenance, "for_goals", lambda ids: {gid: fake_for_goal(gid) for gid in ids})
     item = service.refresh(world)[0]
@@ -619,7 +625,9 @@ def test_unreadable_receipt_period_is_a_limitation_not_a_failure(world, monkeypa
     identifier = goal(world, cost=2)
     receipt = {"reference": "synthetic-bad-period", "period": "2026-11-16T00:00:00-05:00", "state": "settled",
                "actual": 3, "currency": "USD", "basis": "recorded"}
-    fake_for_goal = lambda gid: {"state": "available", "receipts": [receipt] if gid == identifier else []}
+    def fake_for_goal(gid):
+        return {"state": "available", "receipts": [receipt] if gid == identifier else []}
+
     monkeypatch.setattr(cost_provenance, "for_goal", fake_for_goal)
     monkeypatch.setattr(cost_provenance, "for_goals", lambda ids: {gid: fake_for_goal(gid) for gid in ids})
     item = service.refresh(world)[0]
@@ -634,7 +642,9 @@ def test_unknown_receipt_retains_incurred_runtime_with_incomplete_net(world, mon
     goal(world, cost=2)
     receipt = {"reference": "synthetic-unknown", "period": datetime.now(timezone.utc).strftime("%Y-%m"),
                "state": "unknown", "actual": None, "currency": "USD", "basis": "unknown"}
-    fake_for_goal = lambda gid: {"state": "available", "receipts": [receipt]}
+    def fake_for_goal(gid):
+        return {"state": "available", "receipts": [receipt]}
+
     monkeypatch.setattr(cost_provenance, "for_goal", fake_for_goal)
     monkeypatch.setattr(cost_provenance, "for_goals", lambda ids: {gid: fake_for_goal(gid) for gid in ids})
     result = report(world)["totals"]
@@ -784,10 +794,10 @@ def test_withheld_draft_says_completed_runs_have_no_recorded_cost(world):
 
 
 def test_sync_reads_provider_evidence_for_all_tasks_at_once(world, monkeypatch):
-    from maverick.intent_value import sources
     # Each per-task read verifies the sealed spend ledger; a sync over many
     # tasks reads it once.
     from maverick import cost_provenance
+    from maverick.intent_value import sources
     ids = [goal(world, f"Review proposal {n}") for n in range(4)]
     batches = []
 
