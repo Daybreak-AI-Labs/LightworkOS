@@ -4,7 +4,6 @@ Cost admission and request construction use the same current configuration.
 """
 from __future__ import annotations
 
-
 #: ``thinking_budget`` value meaning "send no thinking at all, and do not raise
 #: max_tokens for thinking headroom". The budget fit uses it when a task's
 #: remaining spending limit cannot pay for thinking headroom but can pay for a

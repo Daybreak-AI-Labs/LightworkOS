@@ -387,6 +387,18 @@ def _unfinished_stream() -> anthropic.APIConnectionError:
         request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"))
 
 
+def _effort_for_thinking(thinking_budget: int | None, effort: str | None) -> str | None:
+    """Lowest effort when thinking is off for the spending limit.
+
+    The remaining limit only pays for a short plain answer. On Opus 5.x and
+    Fable, leaving ``thinking`` out still runs adaptive thinking, so lowest
+    effort is what keeps the small allowance for the answer (Opus 4.7/4.8
+    already think less without the field)."""
+    if thinking_budget is not None and thinking_budget < 0:
+        return "low"
+    return effort
+
+
 class _StreamDelivery:
     """Pass streamed text on, and say whether a failed stream may be retried.
 
@@ -627,12 +639,7 @@ class AnthropicClient:
         # maverick.effort.effort_for_role, but provider failover can carry a
         # primary model's effort to a lower-ceiling fallback. Defence-in-depth:
         # validate and re-clamp for the actual model so a stray effort never 400s.
-        if thinking_off:
-            # The remaining spending limit only pays for a short plain answer.
-            # On Opus 5.x and Fable, leaving `thinking` out still runs adaptive
-            # thinking, so lowest effort is what keeps the small allowance for
-            # the answer (Opus 4.7/4.8 already think less without the field).
-            effort = "low"
+        effort = _effort_for_thinking(thinking_budget, effort)
         if effort:
             from ..effort import effort_for_model
             model_effort = effort_for_model(effort, model_id)
