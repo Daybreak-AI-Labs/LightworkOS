@@ -128,6 +128,7 @@ ROWS = [
     ("Start from a template", "Partir d’un modèle", "Mit einer Vorlage beginnen", "テンプレートから始める", "从模板开始"),
     ("Code changes", "Modifications de code", "Codeänderungen", "コードの変更", "代码变更"),
     ("Hand over a team's work", "Transmettre le travail d’une équipe", "Die Arbeit eines Teams übergeben", "チームの作業を引き継ぐ", "移交团队的工作"),
+    ("Legal", "Juridique", "Recht", "法務", "法务"),
     ("Build an agent", "Créer un agent", "Einen Agenten erstellen", "エージェントを作成", "构建智能体"),
     ("Discover work to automate", "Trouver du travail à automatiser", "Automatisierbare Arbeit entdecken", "自動化できる作業を見つける", "发现可自动化的工作"),
     ("What Lightwork can do", "Ce que Lightwork peut faire", "Was Lightwork tun kann", "Lightworkにできること", "Lightwork 能做什么"),

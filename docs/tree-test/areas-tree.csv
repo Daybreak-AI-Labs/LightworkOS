@@ -30,6 +30,7 @@ Work,Workflows,Flow designer,/flows/designer
 Work,Workflows,Workflow builder,/workflow-builder
 Work,Workflows,Flow results,/flows/analytics
 Work,Automations,,/automations
+Work,Legal,,/legal
 Work,Code changes,Code,/code
 Work,Commitment reviews,,/commitment-reviews
 Work,Shared decision reviews,,/decision-evidence

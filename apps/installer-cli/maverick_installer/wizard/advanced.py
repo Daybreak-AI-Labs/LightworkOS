@@ -1010,6 +1010,11 @@ def _pick_governance_monitor_toggles() -> dict[str, Any]:
             "OFF by default.",
             default=False,
         ),
+        "legal_workspace": _q_confirm(
+            "Legal workspace? In-house legal intake, contracts, outside counsel, digital paralegals "
+            "and associates, with evidence-scoped drafts for supervising counsel. OFF by default.",
+            default=False,
+        ),
         "ediscovery": _q_confirm(
             "Legal holds and matter export? Hold the records of a legal matter for "
             "named custodians and date ranges, so bulk deletion pauses and their "
@@ -3603,6 +3608,8 @@ def _cfg_advanced_governance_monitors(advanced: dict[str, Any]) -> list[str]:
         lines.append("")
         lines.append("[breach_notification]")
         lines.append("enable = true")
+    if advanced.get("legal_workspace"):
+        lines.extend(["", "[legal_workspace]", "enable = true"])
     if advanced.get("ediscovery"):
         lines.append("")
         lines.append("[ediscovery]")

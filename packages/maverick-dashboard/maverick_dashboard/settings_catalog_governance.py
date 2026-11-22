@@ -120,6 +120,10 @@ _MORE_TEXT = "More text from each file from outside will be kept and passed on."
 
 def entries(S, C, Column) -> tuple:  # noqa: ARG001 -- filled by the group
     return (
+        S("legal_workspace", "enable", "Legal workspace",
+          "Enable in-house legal intake, contracts, outside counsel, nine digital legal roles and GC oversight. "
+          "Worker drafts use selected evidence and require supervising counsel review.",
+          "toggle", "AI governance", False, "maverick.legal_workspace", subgroup="Legal operations"),
         *_evidence_analysis(S),
         *_file_readers(S),
         *_evidence_records(S),

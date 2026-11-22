@@ -175,7 +175,7 @@
     }
   },
   "counts": {
-    "governed": 141,
+    "governed": 142,
     "artifact": 51,
     "a2a": 4,
     "preferences": 8,
@@ -30426,6 +30426,33 @@
           "function": "query_tables",
           "kind": "connect",
           "expression": "sqlite3.connect(':memory:')"
+        }
+      ]
+    },
+    {
+      "path": "packages/maverick-core/maverick/legal_workspace.py",
+      "contract": "governed",
+      "owner": "packages/maverick-core/maverick/legal_workspace.py",
+      "purpose": "Matter-scoped legal membership, source evidence, decisions, outside counsel work and reviewed digital-worker attempts.",
+      "referenced_store_owners": [
+        ".governed_records"
+      ],
+      "review": "Atomic matter aggregate; restored grants, approvals and replay receipts are retained and block startup pending current-authority reconciliation. No automatic retry or authority rebind.",
+      "governed_namespaces": [
+        {
+          "namespace": "legal-workspace",
+          "line": 23,
+          "recovery_policy": "legal_matter_authority"
+        }
+      ],
+      "literal_path_hints": [],
+      "observed_mechanism_markers": {},
+      "source_sites": [
+        {
+          "line": 23,
+          "function": "module",
+          "kind": "GovernedRecordStore",
+          "expression": "GovernedRecordStore('legal-workspace', 'LGL', 'legal_matter', archive_when_full=False)"
         }
       ]
     }

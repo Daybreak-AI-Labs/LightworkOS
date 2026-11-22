@@ -2103,6 +2103,12 @@ from .starter_teams_api import create_page_router as create_starter_teams_page_r
 from .starter_teams_api import router as starter_teams_router  # noqa: E402
 
 app.include_router(department_team_updates_router)
+from .legal_workspace_api import create_page_router as create_legal_page_router  # noqa: E402
+from .legal_workspace_api import router as legal_workspace_router  # noqa: E402
+
+app.include_router(legal_workspace_router)
+app.include_router(create_legal_page_router(templates))
+
 app.include_router(starter_teams_router)
 app.include_router(starter_team_schedule_router)
 app.include_router(create_starter_teams_page_router(templates))

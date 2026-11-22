@@ -399,6 +399,7 @@ KNOWN_SCHEMA: dict[str, set[str] | None] = {
     "data_map": {"enable", "graph_token_env", "graph_token"},
     "breach_notification": {"enable"},
     "ediscovery": {"enable"},
+    "legal_workspace": {"enable"},
     "dsar_fulfillment": {"enable"},
     "grc_sync": {"enable", "connector", "findings_path", "acceptances_path",
                  "incidents_path", "backlink_base", "response_field_params"},

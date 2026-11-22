@@ -150,3 +150,23 @@ overflow, and uncaught JavaScript errors. The expected failed confirmation reque
 in its console output is the injected lost response. Scheduled evidence approval
 and native specialist dispatch are separately covered by focused offline tests;
 this browser smoke does not run them.
+
+## Legal workspace
+
+Run the registered journey from this directory with
+`npx playwright test --config legal_workspace.config.js`. It also runs in the
+ordinary `npm test` sequence. The journey captures desktop and mobile layouts,
+recovers a lost confirmation response, and clears private content after an
+expired-session response.
+
+For an interactive fixture from the repository root:
+
+Start the isolated native application with:
+
+```sh
+python packages/maverick-dashboard/tests/browser/legal_workspace_server.py --port 8910
+```
+
+Then run `node packages/maverick-dashboard/tests/browser/legal_workspace_smoke.cjs`.
+Set `LIGHTWORK_SCREENSHOT_DIR` to capture desktop and mobile layouts. Identity and
+AI output are synthetic; legal storage, approvals, access, UI and recovery are native.
