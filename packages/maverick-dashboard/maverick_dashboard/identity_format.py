@@ -253,6 +253,34 @@ def humanize(value: object) -> str:
     return text[0].upper() + text[1:]
 
 
+# Job-title words: abbreviations as people write them in a role name. Kept
+# apart from ``_WORDS`` because some ("it", "ir", "rd") are ordinary words or
+# fragments elsewhere.
+_TITLE_WORDS = {
+    "it": "IT", "ciso": "CISO", "cfo": "CFO", "ceo": "CEO", "coo": "COO", "cio": "CIO",
+    "chro": "CHRO", "hr": "HR", "hris": "HRIS", "qa": "QA", "qc": "QC", "sre": "SRE",
+    "soc": "SOC", "ehs": "EHS", "hse": "HSE", "esg": "ESG", "noc": "NOC", "pmo": "PMO",
+    "sdr": "SDR", "seo": "SEO", "ui": "UI", "csm": "CSM", "cx": "CX", "bi": "BI",
+    "ir": "IR", "ip": "IP", "ml": "ML", "dpo": "DPO", "ot": "OT", "gp": "GP",
+    "vp": "VP", "ap": "AP", "dr": "DR", "iam": "IAM", "rd": "R&D", "fpa": "FP&A",
+    "revops": "RevOps", "devops": "DevOps", "bsa": "BSA", "mlro": "MLRO",
+}
+_TITLE_PHRASES = (("fp a", "FP&A"), ("m and a", "M&A"), ("f and b", "F&B"))
+
+
+def job_title(value: object) -> str:
+    """A role identifier as a job title: ``it_manager`` -> ``IT manager``,
+    ``ciso`` -> ``CISO``, ``fp_a_lead`` -> ``FP&A lead``. Empty in, empty out."""
+    words = ("" if value is None else str(value)).replace("-", " ").replace("_", " ").lower().split()
+    if not words:
+        return ""
+    text = " ".join(words)
+    for phrase, label in _TITLE_PHRASES:
+        text = (" " + text + " ").replace(" " + phrase + " ", " " + label + " ").strip()
+    text = " ".join(_TITLE_WORDS.get(word, _WORDS.get(word, word)) for word in text.split())
+    return text[0].upper() + text[1:]
+
+
 __all__ = [
     "Identity",
     "POWERS",
@@ -262,5 +290,6 @@ __all__ = [
     "permission_label",
     "humanize",
     "known_label",
+    "job_title",
     "LABELS",
 ]

@@ -120,6 +120,12 @@ class ShutdownSupervisor:
         self.missed = [component.name for component in self.components.values() if component.alive()]
         if left:
             self.missed.append("goals")
+            # The runs still going here stop when this process exits: record
+            # that now, so their pages do not show "Working" until the next
+            # process's orphan window passes.
+            stopped = runner.stop_runs_interrupted_by_shutdown()
+            if stopped:
+                log.warning("shutdown stopped %d task(s) that were still running", stopped)
         if self.missed or self.errors:
             self.phase = "degraded"
             log.warning("shutdown incomplete: active=%s cleanup_errors=%s", self.missed, self.errors)

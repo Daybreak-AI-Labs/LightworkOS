@@ -204,5 +204,5 @@ def test_deliverables_page_shows_plain_role_names(tmp_path, monkeypatch):
     assert "{{" not in page_text
     badges = element_texts(r.text, "span", {"class": "badge"})
     assert badges and all(not label.endswith(" gate") for label in badges)
-    assert element_texts(r.text, "option", {"value": "fpa_analyst"}) == ["Fpa analyst"]
+    assert element_texts(r.text, "option", {"value": "fpa_analyst"}) == ["FP&A analyst"]
     assert "fpa_analyst" not in page_text

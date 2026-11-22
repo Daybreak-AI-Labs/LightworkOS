@@ -973,6 +973,18 @@ def test_reclaim_includes_goal_exactly_at_cutoff(world, monkeypatch):
     assert world.get_goal(g).status == "blocked"
 
 
+def test_reclaim_can_be_limited_to_named_goals(world):
+    # A shutting-down process stops only the runs it is abandoning.
+    mine, other = world.create_goal("mine"), world.create_goal("other")
+    for goal_id in (mine, other):
+        world.set_goal_status(goal_id, "active")
+    assert world.reclaim_orphan_goals(statuses=("active", "pending"), resolved_window_seconds=0,
+                                      goal_ids=[mine]) == 1
+    assert world.get_goal(mine).status == "blocked"
+    assert world.get_goal(other).status == "active"
+    assert world.reclaim_orphan_goals(resolved_window_seconds=0, goal_ids=[]) == 0
+
+
 def test_reclaim_skips_fresh_goals(world):
     g = world.create_goal("fresh")
     world.set_goal_status(g, "active")

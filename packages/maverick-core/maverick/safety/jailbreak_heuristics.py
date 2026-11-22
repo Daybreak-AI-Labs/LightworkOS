@@ -86,13 +86,27 @@ _PATTERNS: list[_Pat] = [
              r"(?:prompt|instructions?|training\s+data|guidelines?)\b",
              re.IGNORECASE,
          ), 2.0),
+    # "DAN" only in capitals: the persona is written that way, and "Dan" is a
+    # name (every Wikipedia article citing an author named Dan was flagged).
     _Pat("dan_persona",
          re.compile(
-             r"\b(?:DAN|developer\s+mode|jail.?broken|jailbreak|"
-             r"GPT.?unfiltered|GPT.?Unfiltered|uncensored\s+mode|"
-             r"maintenance\s+mode|admin\s+mode|sudo\s+mode|godmode)\b",
+             r"\b(?:(?-i:DAN)|jail.?broken|jailbreak|"
+             r"GPT.?unfiltered|uncensored\s+mode|godmode)\b",
              re.IGNORECASE,
          ), 2.0),
+    # Device and app modes are ordinary words in documentation ("put the
+    # router in maintenance mode"), so a mode counts only when the text then
+    # lifts the model's limits ("... all restrictions are disabled").
+    _Pat("privileged_mode",
+         re.compile(
+             r"\b(?:developer|maintenance|admin|sudo)\s+mode\b",
+             re.IGNORECASE,
+         ), 2.0,
+         then=re.compile(
+             r"\b(?:restrictions?|rules?|filters?|guidelines?|safety|polic(?:y|ies)|"
+             r"censor\w*|unfiltered|unrestricted|never\s+refuse|anything)\b",
+             re.IGNORECASE,
+         )),
     _Pat("be_unrestricted",
          re.compile(
              r"\b(?:no|without|zero)\s+(?:rules?|restrictions?|filters?|"

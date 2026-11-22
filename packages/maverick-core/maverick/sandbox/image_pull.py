@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import subprocess
 import threading
+import time
 
 from .local import scrub_env
 
@@ -55,3 +56,32 @@ def missing_image_note(engine: str, image: str, pull_policy: str | None) -> str 
 def _remember(engine: str, image: str) -> None:
     with _READY_LOCK:
         _READY.add((engine, image))
+
+
+# (engine, image) -> (re-check after, missing). A present image is kept; a
+# missing one is checked again after a minute, so building it takes effect.
+_LOCAL_IMAGE_SEEN: dict[tuple[str, str], tuple[float, bool]] = {}
+_IMAGE_CHECK_SECONDS = 10.0
+
+
+def local_image_missing(engine: str, image: str) -> bool:
+    """True only when ``engine`` reports the local document image is absent.
+
+    A reference with a registry path (``registry/image@sha256:…``) is pulled by
+    the run itself, so only a local build tag such as the default
+    ``lightwork-documents:local`` is checked. Any doubt (no engine binary, a
+    slow answer) leaves the decision to the run, as before."""
+    if "/" in image:
+        return False
+    key, now = (engine, image), time.monotonic()
+    seen = _LOCAL_IMAGE_SEEN.get(key)
+    if seen is not None and (not seen[1] or now < seen[0]):
+        return seen[1]
+    check = [engine, "image", "exists", image] if engine == "podman" else [engine, "image", "inspect", image]
+    try:
+        missing = subprocess.run(check, capture_output=True, timeout=_IMAGE_CHECK_SECONDS,
+                                 check=False).returncode != 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    _LOCAL_IMAGE_SEEN[key] = (now + 60.0, missing)
+    return missing

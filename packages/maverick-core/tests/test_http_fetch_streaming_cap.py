@@ -108,3 +108,34 @@ def test_trickled_body_stops_at_the_overall_deadline_and_redirects_are_reported(
     out = _fetch(moved, monkeypatch)
     assert "Redirect location (not followed): https://www.example.com/" in out
     assert "\x1b" not in out.splitlines()[0] and len(out.splitlines()[0]) < 200
+
+
+def test_a_readable_page_is_cut_by_its_text_not_by_its_markup(monkeypatch):
+    # Live: Wikipedia's Paris article is 1.9 MB of HTML whose first 50 KB is
+    # navigation markup, so a 50,000-byte fetch never reached the population
+    # figure and the agent fell back to a shell command. For a rendered page
+    # the limit now bounds the readable text returned, not the raw download.
+    nav = "<nav>" + "<a href='/wiki/x'><span class='menu'>x</span></a>" * 3000 + "</nav>"
+    page = f"<html><body>{nav}<p>Population: 2,047,602 (2026)</p></body></html>".encode()
+    assert len(page) > 100_000
+    out = _fetch(_StreamResp([page], content_type="text/html"), monkeypatch,
+                 max_bytes=50_000, render="text")
+    assert "2,047,602" in out
+
+
+def test_long_readable_text_is_cut_at_the_limit_and_says_so(monkeypatch):
+    page = ("<html><body>" + "<p>word</p>" * 30_000 + "</body></html>").encode()
+    out = _fetch(_StreamResp([page], content_type="text/html"), monkeypatch,
+                 max_bytes=5_000, render="text")
+    assert out.count("word") <= 5_000 // 4
+    assert "larger max_bytes" in out
+
+
+def test_the_reply_names_the_address_that_was_asked_for(monkeypatch):
+    # The connection is pinned to the checked IP; the reply showed that IP
+    # (https://208.80.153.224/wiki/Paris) and the agent then fetched it.
+    resp = _StreamResp([b"hello"])
+    resp.url = "https://93.184.216.34/"
+    out = _fetch(resp, monkeypatch)
+    assert "URL: https://example.com/" in out
+    assert "93.184.216.34" not in out

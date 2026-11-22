@@ -80,10 +80,12 @@ def install(app, world, tenant, principal):
     @app.post("/__browser_fixture/chat/{chat_goal_id}/specialist-setup-fail", include_in_schema=False)
     async def fixture_chat_specialist_setup_fail(chat_goal_id: int):
         with tenant_scope(tenant=tenant):
-            world.set_goal_domain(chat_goal_id, "legal_research")
+            # Web search alone no longer blocks a specialist, so this one
+            # misses a connector action (reading the incident record).
+            world.set_goal_domain(chat_goal_id, "legal_data_breach_legal")
             world.set_goal_status(chat_goal_id, "blocked", result=(
-                "domain 'legal_research' agent build failed: Domain 'legal_research' "
-                "cannot deploy: required workflow tools unavailable: web_search. "
+                "domain 'legal_data_breach_legal' agent build failed: Domain 'legal_data_breach_legal' "
+                "cannot deploy: required workflow tools unavailable: incident_record_read. "
                 "No model work has started."))
         return {"synthetic": True, "provider_calls": 0}
 

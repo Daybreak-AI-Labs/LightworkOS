@@ -347,7 +347,9 @@ async def test_failed_run_records_reflexion(monkeypatch, tmp_path: Path, fake_ll
     )
 
     # Empty response with no tools -> AgentResult(error=...) -> failure path.
+    # One empty reply is asked for again; the second one is the error.
     fake_llm.scripted = [
+        LLMResponse(text="", thinking=None, stop_reason="end_turn", tool_calls=[]),
         LLMResponse(text="", thinking=None, stop_reason="end_turn", tool_calls=[]),
     ]
 

@@ -1173,6 +1173,14 @@ def _department_memory(profile: DomainProfile, task: str, *,
     return "\n".join(blocks)
 
 
+WEB_SEARCH_OFF_NOTE = (
+    "Note: Web search is not enabled in this workspace, so you cannot search the web. "
+    "Use pages you can open directly by address, the files and details the person gave you, "
+    "and what you already know. Say plainly which facts you could not check live and where "
+    "a live search would have helped, and do not present unchecked figures as current."
+)
+
+
 def agent_from_profile(profile: DomainProfile, ctx, task: str, *,
                        parent=None, depth: int = 0, principal: str | None = None):
     """Spawn a live agent from a domain pack -- the factory's "spit out an agent".
@@ -1268,6 +1276,15 @@ def agent_from_profile(profile: DomainProfile, ctx, task: str, *,
     # bindings. The plain base catalog cannot establish deployment readiness.
     names = {tool.name for tool in agent.tools.all()}
     missing = sorted({name for step in profile.workflow for name in step.tools} - names)
+    # Web search is off until an administrator sets up a search backend, and
+    # many specialists list it. Refusing them all made half the roster unusable
+    # on a fresh install, so a missing web_search alone does not block: the
+    # specialist works from pages it can fetch, the person's files and what it
+    # knows, and says so. Any other missing tool (a connector, an adapter)
+    # still blocks, because the work cannot be done without it.
+    if "web_search" in missing:
+        missing.remove("web_search")
+        agent.brief += "\n\n" + WEB_SEARCH_OFF_NOTE
     from .chat_message_actions import answer_only_runtime
     if missing and not answer_only_runtime():
         raise ValueError(

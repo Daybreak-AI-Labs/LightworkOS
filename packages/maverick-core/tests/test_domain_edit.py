@@ -33,18 +33,33 @@ from maverick.domain_edit import (
 def test_workflow_readiness_names_missing_actions_without_claiming_live_service():
     profile = DomainProfile(
         name="example", allow_tools=["read_file", "web_search", "ledger_read"],
-        workflow=[WorkflowStep(name="research", tools=["web_search"])],
+        workflow=[WorkflowStep(name="read", tools=["ledger_read"])],
     )
     blocked = workflow_readiness(profile, frozenset({"read_file"}))
     assert blocked["state"] == "needs_setup"
-    assert blocked["missing_tools"] == ["web_search"]
-    assert blocked["fix_url"] == "/settings/all?id=capabilities.web_search"
-    assert blocked["missing_optional_tools"] == ["ledger_read"]
+    assert blocked["missing_tools"] == ["ledger_read"]
+    assert blocked["fix_url"] == "/connections"
+    assert blocked["missing_optional_tools"] == ["web_search"]
 
-    can_start = workflow_readiness(profile, frozenset({"read_file", "web_search"}))
+    can_start = workflow_readiness(profile, frozenset({"read_file", "ledger_read"}))
     assert can_start["state"] == "action_ready"
-    assert can_start["missing_optional_tools"] == ["ledger_read"]
+    assert can_start["missing_optional_tools"] == ["web_search"]
     assert workflow_readiness(profile, None)["state"] == "unknown"
+
+
+def test_a_workflow_that_only_lacks_web_search_can_start_and_points_at_the_setting():
+    # The deployment check starts such a specialist and tells it search is
+    # off, so the catalogue must not call it blocked.
+    profile = DomainProfile(
+        name="example", allow_tools=["read_file", "web_search"],
+        workflow=[WorkflowStep(name="research", tools=["web_search"])],
+    )
+    ready = workflow_readiness(profile, frozenset({"read_file"}))
+    assert ready["state"] == "action_ready"
+    assert ready["missing_tools"] == []
+    assert ready["missing_optional_tools"] == ["web_search"]
+    assert ready["fix_url"] == "/settings/all?id=capabilities.web_search"
+    assert "Web search" in ready["label"]
 
 
 def test_workflow_readiness_does_not_call_a_turned_off_department_ready():

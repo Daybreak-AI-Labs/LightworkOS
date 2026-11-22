@@ -509,7 +509,7 @@
       {% set pilot_prepared = stop and stop.kind == 'pilot_prepared' %}
       {% set specialist_setup = stop and stop.kind in ('specialist_setup', 'specialist_needs_web_search', 'specialist_needs_connection') %}
       {% set provider_stop = stop and stop.kind in ('provider_authentication', 'provider_rate_limit', 'provider_model_not_found', 'provider_unavailable', 'provider_connection', 'provider_configuration', 'provider_not_ready') %}
-      <div class="halt-card__title" id="halt-title">{{ ui('Ready to start' if pilot_prepared else "Can't start" if specialist_setup else 'Lightwork stopped') }}</div>
+      <div class="halt-card__title" id="halt-title">{{ ui('Ready to start' if pilot_prepared else "Can't start" if specialist_setup else 'Waiting for your decision' if stop and stop.kind == 'decision_waiting' else 'Lightwork stopped') }}</div>
       {# The reason is the mapped plain-language stop (maverick.stop_reasons),
          never the kernel's raw text; the raw text is admin-only, below. #}
       <p id="halt-reason" class="muted" style="margin: var(--space-1) 0 0;">{{ stop.message if stop else '' }}</p>
@@ -519,7 +519,9 @@
       </p>
       {# Take over with full context: what is done, what is left, and whether
          Resume continues from saved progress (stop_progress.py). #}
-      <div id="halt-progress" class="halt-card__progress"{% if not stop_progress %} hidden{% endif %}>
+      {# A run waiting on a decision continues by itself: no "stopped after"
+         or "Try again starts over" guidance. #}
+      <div id="halt-progress" class="halt-card__progress"{% if not stop_progress or (stop and stop.kind == 'decision_waiting') %} hidden{% endif %}>
         <p id="halt-progress-headline" class="halt-card__headline">{% if stop_progress %}{{ ut(stop_progress.headline.text, **stop_progress.headline['values']) }}{% endif %}</p>
         <div class="halt-card__lists">
           <div>
@@ -917,7 +919,7 @@
         note.hidden = !p.remaining_note; if (p.remaining_note) cgCopy(note, p.remaining_note);
         cgCopy(document.getElementById('halt-progress-next'), p.next.text, p.next.values);
         haltCard.dataset.resumeMode = p.mode;
-        box.hidden = false;
+        box.hidden = haltCard.dataset.stopKind === 'decision_waiting';
         document.dispatchEvent(new CustomEvent('lightwork:task-stop-changed'));
       }
 
@@ -926,8 +928,9 @@
         const setup = specialistSetupKinds.has(s.kind);
         const prepared = s.kind === 'pilot_prepared';
         haltCard.dataset.stopKind = s.kind || '';
+        if (s.kind === 'decision_waiting') { const progressBox = document.getElementById('halt-progress'); if (progressBox) progressBox.hidden = true; }
         const haltTitle = document.getElementById('halt-title');
-        if (haltTitle) cgCopy(haltTitle,prepared ? 'Ready to start' : setup ? "Can't start" : 'Lightwork stopped');
+        if (haltTitle) cgCopy(haltTitle,prepared ? 'Ready to start' : setup ? "Can't start" : s.kind === 'decision_waiting' ? 'Waiting for your decision' : 'Lightwork stopped');
         haltReasonEl.textContent = s.message || 'The task stopped before producing a result.';
         const actionText = document.getElementById('halt-action-text');
         const actionLink = document.getElementById('halt-action-link');

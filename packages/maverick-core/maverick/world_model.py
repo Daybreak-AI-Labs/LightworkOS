@@ -1757,6 +1757,7 @@ class WorldModel:
         self, *, max_age_seconds: float = 60.0,
         statuses: tuple[str, ...] = ("active",),
         resolved_window_seconds: float | None = None,
+        goal_ids: Any = None,
     ) -> int:
         """Mark goals stuck in 'active' (or, when asked, 'pending') as 'blocked'.
 
@@ -1785,12 +1786,24 @@ class WorldModel:
         a schedule or a concurrency slot). A caller that knows its pending rows
         have no other owner passes ``("active", "pending")``.
 
+        ``goal_ids`` limits the reclaim to those goals: a process that is
+        shutting down stops the runs it is abandoning, and no other.
+
         Returns rows reclaimed.
         """
         statuses = tuple(statuses)
         if not statuses or not set(statuses) <= {"active", "pending"}:
             raise ValueError("orphan reclaim statuses must be active and/or pending")
         marks = ", ".join("?" for _ in statuses)
+        only: tuple[int, ...] = ()
+        if goal_ids is not None:
+            only = tuple(int(goal_id) for goal_id in goal_ids)
+            if not only:
+                return 0
+            # Every statement below filters with ``status IN ({marks})`` and
+            # binds ``*statuses`` there, so the id list rides on that clause.
+            marks += ") AND id IN (" + ", ".join("?" for _ in only)
+            statuses = (*statuses, *only)
         max_age_seconds = (reclaim_window_seconds(default=max_age_seconds)
                            if resolved_window_seconds is None else float(resolved_window_seconds))
         if not math.isfinite(max_age_seconds) or max_age_seconds < 0:

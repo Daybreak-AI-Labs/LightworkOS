@@ -84,8 +84,11 @@ def _safe_path(sandbox, user_path: str) -> Path:
     try:
         candidate.relative_to(workdir)
     except ValueError as e:
+        hint = ("" if not Path(user_path).is_absolute() else
+                ". If it is a file attached to this task, read it with read_attachment and "
+                "its id; for a CSV, pass `sql` to compute totals and per-row values exactly")
         raise ValueError(
-            f"path {user_path!r} escapes the workspace"
+            f"path {user_path!r} escapes the workspace{hint}"
         ) from e
     return candidate
 

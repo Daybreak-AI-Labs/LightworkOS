@@ -227,6 +227,7 @@ templates.env.filters["identity"] = _idfmt.humanize_principal
 templates.env.filters["role_label"] = _idfmt.role_label
 templates.env.filters["permission_label"] = _idfmt.permission_label
 templates.env.filters["humanize"] = _idfmt.humanize
+templates.env.filters["job_title"] = _idfmt.job_title
 templates.env.filters["known_label"] = _idfmt.known_label
 from .approval_labels import action_label as _approval_action_label  # noqa: E402
 
@@ -1480,6 +1481,17 @@ def require_page_visible(request: Request, path: str) -> None:
         raise HTTPException(status_code=403, detail="this page is not enabled for your role")
 
 
+# Public submission routes write to the workspace their link names (a form
+# token, a rights-request page), never to the visitor's selected workspace, and
+# accept submissions from people without a session. The stale-tab check has
+# nothing to protect there; it only refused a signed-in person testing a form.
+_PUBLIC_SUBMISSION_ROUTES = frozenset({
+    "/form/{token}",
+    "/api/v1/public/rights/{slug}/requests",
+    "/api/v1/public/rights/verify/{token}",
+})
+
+
 async def enforce_expected_workspace_tenant(
     request: Request = None,  # type: ignore[assignment]
 ) -> None:
@@ -1493,6 +1505,9 @@ async def enforce_expected_workspace_tenant(
     explicit authority paths and are not made dependent on browser state.
     """
     if request is None or request.method in _CSRF_SAFE_METHODS:
+        return
+    route = request.scope.get("route")
+    if getattr(route, "path", None) in _PUBLIC_SUBMISSION_ROUTES:
         return
     expected = str(
         getattr(request.state, "workspace_expected_tenant", "") or ""
@@ -2593,7 +2608,9 @@ async def _reclaim_orphans() -> None:
             from maverick.paths import current_tenant_id_strict
             if current_tenant_id_strict() is None:
                 from .orphan_sweeper import reclaim_registered_sqlite
-                n += reclaim_registered_sqlite(_world)
+                # Workspace worlds hold every task once a workspace is selected:
+                # recover their stranded queued goals at start-up too.
+                n += reclaim_registered_sqlite(_world, statuses=startup_reclaim_statuses())
         if n:
             log.warning("reclaimed %d orphan goal(s) from prior crash", n)
     except Exception:
@@ -8390,8 +8407,14 @@ def chat_specialist_choices(
     ]
     matches.sort(key=lambda choice: (not choice["label"].casefold().startswith(query), choice["label"].casefold()))
     # Each revision digests a whole specialist: only the page returned needs one.
-    items = [{"value": choice["value"], "label": choice["label"], "revision": dataclass_digest(choice["profile"])}
-             for choice in matches[:limit]]
+    from .product_operations_task_launch import specialist_readiness
+
+    readiness = specialist_readiness()
+    items = []
+    for choice in matches[:limit]:
+        ready, needs = readiness(choice["profile"])
+        items.append({"value": choice["value"], "label": choice["label"],
+                      "revision": dataclass_digest(choice["profile"]), "ready": ready, "needs": needs})
     return JSONResponse(
         {"context": current["context"], "items": items, "total": len(matches)},
         headers={"Cache-Control": "no-store, private"},

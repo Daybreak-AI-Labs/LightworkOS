@@ -26,7 +26,9 @@ async def test_failed_run_grounds_negative_outcome(monkeypatch, tmp_path: Path, 
     monkeypatch.setenv("MAVERICK_CONSEQUENCE", "1")
     _isolate(monkeypatch, tmp_path)
     # Empty response, no tools -> AgentResult(error=...) -> the failure exit.
+    # One empty reply is asked for again; the second one is the error.
     fake_llm.scripted = [
+        LLMResponse(text="", thinking=None, stop_reason="end_turn", tool_calls=[]),
         LLMResponse(text="", thinking=None, stop_reason="end_turn", tool_calls=[]),
     ]
     world = WorldModel(path=tmp_path / "world.db")
@@ -46,7 +48,9 @@ async def test_failed_run_grounds_negative_outcome(monkeypatch, tmp_path: Path, 
 async def test_failed_run_not_grounded_when_consequence_off(monkeypatch, tmp_path: Path, fake_llm):
     monkeypatch.setenv("MAVERICK_CONSEQUENCE", "0")
     _isolate(monkeypatch, tmp_path)
+    # One empty reply is asked for again; the second one is the error.
     fake_llm.scripted = [
+        LLMResponse(text="", thinking=None, stop_reason="end_turn", tool_calls=[]),
         LLMResponse(text="", thinking=None, stop_reason="end_turn", tool_calls=[]),
     ]
     world = WorldModel(path=tmp_path / "world.db")

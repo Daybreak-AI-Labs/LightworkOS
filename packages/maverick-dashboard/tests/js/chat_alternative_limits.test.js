@@ -98,7 +98,6 @@ test('the separate-conversation panel stays with the conversation it was started
   const doc = first.document;
   doc.querySelector('[data-chat-message-action]').click(); await settle();
   doc.getElementById('chat-alternative-form').dispatchEvent(new first.Event('submit', {cancelable: true})); await settle();
-  doc.getElementById('chat-alternative-confirm').click();
   doc.getElementById('chat-alternative-start').click(); await settle();
   assert.equal(doc.getElementById('chat-alternative-open').getAttribute('href'), '/chat/goal/51');
   const saved = {};
@@ -115,4 +114,40 @@ test('the separate-conversation panel stays with the conversation it was started
   shell(back); back.eval(script);
   assert.equal(back.document.getElementById('chat-message-actions').hidden, false);
   assert.equal(back.document.getElementById('chat-alternative-original').hidden, false);
+});
+
+test('Try again redoes the work by default and starts from the review in one click', async t => {
+  // Try again used to default to Answer only, which could not fetch anything
+  // or take any action, so "try again" on a task that needed tools quietly
+  // became a different, weaker task. It also needed a separate "I reviewed"
+  // box before Start. The review itself is the confirmation now.
+  const dom = new JSDOM(`<body>${markup.replace('data-context="x"', `data-context="${CONTEXT}"`)}
+    <button data-chat-message-action="retry" data-goal="7">Try again</button></body>`,
+  {url: 'https://lightwork.invalid/chat/goal/7', runScripts: 'outside-only', pretendToBeVisual: true});
+  const {window} = dom; t.after(() => window.close());
+  const sent = [];
+  const caps = {max_dollars: 2, max_wall_seconds: 1800, max_depth: 3};
+  window.fetch = async (url, options = {}) => {
+    sent.push({url, body: options.body ? JSON.parse(options.body) : null});
+    if (url.includes('/source?')) return json({context: CONTEXT, goal: 7, action: 'retry', turn: null, source: 'b'.repeat(64),
+      message: 'Hello', history: [], files: [], accounts: [], caps, notice: 'n'});
+    if (url.endsWith('/review')) return json({context: CONTEXT, operation: 'c'.repeat(32), token: 'sealed', action: 'Try again',
+      message: 'Hello', history: [], files: [], accounts: [], answer_only: false, caps, notice: 'n'});
+    if (url.endsWith('/apply')) return json({context: CONTEXT, confirmed: true, state: 'ready', goal: 8, href: '/chat/goal/8',
+      message: 'Started a separate conversation.'});
+    throw new Error('unexpected ' + url);
+  };
+  window.HTMLElement.prototype.scrollIntoView = () => {};
+  shell(window); window.eval(script);
+  const doc = window.document;
+  doc.querySelector('[data-chat-message-action]').click(); await settle();
+  assert.equal(doc.getElementById('chat-alternative-answer-only').checked, false);
+  doc.getElementById('chat-alternative-form').dispatchEvent(new window.Event('submit', {cancelable: true})); await settle();
+  assert.equal(sent.find(call => call.url.endsWith('/review')).body.answer_only, false);
+  assert.equal(doc.getElementById('chat-alternative-confirm'), null);
+  const start = doc.getElementById('chat-alternative-start');
+  assert.equal(start.disabled, false);
+  start.click(); await settle();
+  assert.deepEqual(sent.find(call => call.url.endsWith('/apply')).body, {token: 'sealed', confirmed: true});
+  assert.equal(doc.getElementById('chat-alternative-open').getAttribute('href'), '/chat/goal/8');
 });

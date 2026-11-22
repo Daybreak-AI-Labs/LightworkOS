@@ -596,6 +596,28 @@ def _bounded(text: str, limit: int) -> str:
 _TERMINAL_RESUME_LINE = re.compile(r"(?m)^[^\n:]*:\s*`?maverick resume \d+[^\n]*\n?")
 
 
+_DECISION_ONE = re.compile(r"^Waiting for a person to decide: (?P<question>.+)$", re.DOTALL)
+_DECISION_MANY = re.compile(r"^Waiting for a person to make (?P<count>\d+) decisions\.$")
+
+
+def _decision_reason(text: str, technical: str) -> StopReason | None:
+    """A run waiting on a person's choice (``decision_requests.waiting_text``).
+
+    It is not stopped for good: it continues with the chosen option. Try again
+    would start it over and drop the pending choice, so the next step is
+    Approvals, where the choice is made.
+    """
+    action = ("Choose an option on the Approvals page. The task continues with your "
+              "choice; you do not need to start it again.")
+    if m := _DECISION_ONE.match(text):
+        message = "This task is waiting for a decision: " + _bounded(m.group("question").strip(), _MESSAGE_LIMIT)
+    elif m := _DECISION_MANY.match(text):
+        message = f"This task is waiting for {m.group('count')} decisions."
+    else:
+        return None
+    return StopReason("decision_waiting", message, action, "/approvals", "Open Approvals", technical)
+
+
 def explain_stop(raw: str | None, *, status: str | None = None) -> StopReason:
     """Map the kernel's stop text to a :class:`StopReason`.
 
@@ -613,6 +635,8 @@ def explain_stop(raw: str | None, *, status: str | None = None) -> StopReason:
         return evidence
     if (task_limit := _task_limit_reason(text, technical)) is not None:
         return task_limit
+    if (decision := _decision_reason(text, technical)) is not None:
+        return decision
     for kind, pattern, message, action, link, label in _RULES:
         if pattern.search(text):
             return StopReason(kind, message, action, link, label, technical)
