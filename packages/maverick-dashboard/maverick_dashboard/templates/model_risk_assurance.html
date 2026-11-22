@@ -484,8 +484,7 @@
           {% for citation in row.citations|default([], true) %}
             <li><a href="{{ citation.record_url|default(citation.url, true) }}"
                    target="_blank" rel="noopener noreferrer">
-              {{ citation.official_citation|default(citation.source_name, true) }}
-            </a></li>
+              {{ citation.official_citation|default(citation.source_name, true) }}<span class="sr-only"> (opens in a new tab)</span></a></li>
           {% else %}
             <li>No source recorded.</li>
           {% endfor %}
@@ -611,7 +610,7 @@
         <td>{{ row.platform|default("Unknown", true) }}<br>
           {{ row.model|default("Unknown model", true) }}
           {% if row.source_url is string and row.source_url.startswith("https://") %}<br><a href="{{ row.source_url }}" target="_blank"
-             rel="noopener noreferrer">Open in the provider</a>{% endif %}</td>
+             rel="noopener noreferrer">Open in the provider<span class="sr-only"> (opens in a new tab)</span></a>{% endif %}</td>
         <td>{{ row.owner|default("Nobody assigned", true) }}</td>
         <td>{% set strength = row.binding_strength|default("unknown", true) %}{{ {'immutable_provider_revision': 'Pinned to one provider version', 'mutable_alias': 'Follows a name that can change', 'unknown': 'Unknown'}.get(strength, strength|humanize) }}</td>
         <td>{{ MRA_STATUS.get(row.discovery_status|default(row.status, true), (row.discovery_status|default(row.status, true))|humanize) }}

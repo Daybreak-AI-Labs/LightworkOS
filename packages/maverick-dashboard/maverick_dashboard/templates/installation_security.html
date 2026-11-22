@@ -13,7 +13,7 @@
   <p>A connection check can confirm that a service answers. It does not prove a person can sign in or that a task has complete isolation.</p>
   <div class="is-actions"><button class="btn" data-check="work-area" type="button">Check work area</button><button class="btn" data-check="company-signin" type="button">Check company sign-in provider</button><button class="btn" data-check="single-signon" type="button">Check single sign-on provider</button></div>
   <p id="is-check-status" role="status" aria-live="polite"></p>
-  <p id="is-try-signin" hidden><a class="btn btn--ghost" target="_blank" rel="noopener" id="is-signin-link">Try a real sign-in</a> Keep this administrator session open while checking the other window.</p>
+  <p id="is-try-signin" hidden><a class="btn btn--ghost" target="_blank" rel="noopener" id="is-signin-link">Try a real sign-in<span class="sr-only"> (opens in a new tab)</span></a> Keep this administrator session open while checking the other window.</p>
   <h2>Review a policy change</h2>
   <form id="is-form">
     <label for="is-group">Area<select id="is-group" class="input"><option value="work">Protected work area</option><option value="signin">Company sign-in</option><option value="lockdown">Locked-down work</option></select></label>

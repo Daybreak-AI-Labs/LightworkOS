@@ -30,7 +30,7 @@
       <p>Save the copied address in <a href="/settings/all?id=auth.oidc.redirect_uri">Return address after sign-in</a>, and register the same address with your provider. Then <a href="/settings/all?id=auth.oidc.issuer">enter the provider address and application details</a>. Use the provider's application name for both Lightwork's name and accepted sign-in audience, unless your provider specifies a different audience.</p>
       <button class="btn btn--ghost" type="button" data-signin-check="oidc">Check provider connection</button>
       <button class="btn btn--ghost" type="button" data-signin-try>Try company sign-in</button>
-      <a class="btn btn--ghost" data-signin-provider-link hidden target="_blank" rel="noopener noreferrer">Continue to your sign-in provider</a>
+      <a class="btn btn--ghost" data-signin-provider-link hidden target="_blank" rel="noopener noreferrer">Continue to your sign-in provider<span class="sr-only"> (opens in a new tab)</span></a>
       <p>This opens your provider in another tab and verifies a real sign-in against the saved details. It keeps your current access and does not turn company sign-in on or grant anyone access. Save the provider details first; unsaved edits are not tested.</p>
       <p data-signin-results role="status" aria-live="polite"></p>
       <button class="btn btn--ghost" type="button" data-signin-refresh>Refresh sign-in results</button>
@@ -49,7 +49,7 @@
       <button class="btn btn--ghost" type="button" data-signin-copy="saml-name">Copy identity</button>
       <p>Save the copied return address in <a href="/settings/all?id=auth.saml.acs_url">Single sign-on return address</a> and the copied identity in <a href="/settings/all?id=auth.saml.sp_entity_id">Lightwork's name for single sign-on</a>. Register those same values with your provider. Then <a href="/settings/all?id=auth.saml.idp_metadata_url">enter your provider's metadata address</a>; using that address avoids moving a file onto the server.</p>
       <button class="btn btn--ghost" type="button" data-signin-check="saml">Check provider metadata</button>
-      {% if saml_login_active %}<a class="btn btn--ghost" href="/saml/login" target="_blank" rel="noopener">Try a real sign-in</a>{% endif %}
+      {% if saml_login_active %}<a class="btn btn--ghost" href="/saml/login" target="_blank" rel="noopener">Try a real sign-in<span class="sr-only"> (opens in a new tab)</span></a>{% endif %}
       <p data-signin-status="saml" role="status" aria-live="polite"></p>
     </div>
     <div class="settings-all-index">

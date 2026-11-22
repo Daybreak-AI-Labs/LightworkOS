@@ -438,7 +438,7 @@
               {{ 'Do not sign as drafted' if r.recommendation == 'do_not_sign_without_changes' else 'Acceptable with changes' if r.recommendation == 'acceptable_with_changes' else 'Acceptable' }}</span></td>
             <td>{% if r.created_at %}{{ r.created_at | datetime('date') }}{% else %}—{% endif %}</td>
             <td>
-              <a class="btn" href="/api/v1/privacy/paper-reviews/{{ r.id }}/memo" target="_blank" rel="noopener">Read the memo</a>
+              <a class="btn" href="/api/v1/privacy/paper-reviews/{{ r.id }}/memo" target="_blank" rel="noopener">Read the memo<span class="sr-only"> (opens in a new tab)</span></a>
               {% if r.redline_bytes %}<a class="btn" href="/api/v1/privacy/paper-reviews/{{ r.id }}/redline">Download marked-up copy</a>{% endif %}
             </td>
           </tr>
@@ -1750,7 +1750,7 @@
                 ' change(s) need manual review before they can be applied ' +
                 'safely — the memo explains each one.</p>' : '') +
             '<p><a class="btn" href="/api/v1/privacy/paper-reviews/' + rec.id +
-            '/memo" target="_blank">Read the memo</a> ' +
+            '/memo" target="_blank" rel="noopener">Read the memo<span class="sr-only"> (opens in a new tab)</span></a> ' +
             '<a class="btn" href="/api/v1/privacy/paper-reviews/' +
             rec.id + '/redline">Download the tracked-changes document</a></p>' +
             '</div>';

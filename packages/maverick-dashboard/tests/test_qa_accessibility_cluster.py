@@ -148,3 +148,21 @@ def test_spoken_names_contain_the_visible_words():
                 line = text[:match.start()].count("\n") + 1
                 broken.append(f"{source.name}:{line}: shows {visible.strip()!r}, named {label!r}")
     assert not broken, "\n".join(broken)
+
+
+def test_links_that_open_a_new_tab_say_so():
+    """A link that opens a new tab says so to every reader (the product uses
+    a screen-reader cue, "(opens in a new tab)") and never hands the opener
+    to the new page."""
+    link = re.compile(r"<a\b[^>]*target=\"_blank\"[^>]*>.*?</a>", re.DOTALL)
+    missing = []
+    for source in sorted(TEMPLATES.rglob("*.html")):
+        text = source.read_text(encoding="utf-8")
+        for match in link.finditer(text):
+            whole = match.group(0)
+            line = text[:match.start()].count("\n") + 1
+            if not re.search(r"new tab|new window|another tab", whole, re.IGNORECASE):
+                missing.append(f"{source.name}:{line}: no new-tab cue")
+            if "noopener" not in whole and "noreferrer" not in whole:
+                missing.append(f"{source.name}:{line}: no rel=noopener")
+    assert not missing, "\n".join(missing)

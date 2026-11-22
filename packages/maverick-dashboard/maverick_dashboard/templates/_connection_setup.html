@@ -26,9 +26,9 @@
     <details id="cs-app-details" hidden>
       <summary>For the person who installed Lightwork: set up the account provider</summary>
       <p>Before anyone can connect an account, the app Lightwork uses must be set up once.
-        <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer">Google Cloud Console</a> ·
-        <a href="https://developer.atlassian.com/console/myapps/" target="_blank" rel="noopener noreferrer">Atlassian developer console</a> ·
-        <a href="https://entra.microsoft.com/" target="_blank" rel="noopener noreferrer">Microsoft Entra app registrations</a>.
+        <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer">Google Cloud Console<span class="sr-only"> (opens in a new tab)</span></a> ·
+        <a href="https://developer.atlassian.com/console/myapps/" target="_blank" rel="noopener noreferrer">Atlassian developer console<span class="sr-only"> (opens in a new tab)</span></a> ·
+        <a href="https://entra.microsoft.com/" target="_blank" rel="noopener noreferrer">Microsoft Entra app registrations<span class="sr-only"> (opens in a new tab)</span></a>.
         Create an app there, add the return address below, then paste the app's ID and secret here. The secret is encrypted and never shown again.</p>
       <div id="cs-microsoft-help" hidden>
         <p>For Microsoft email, register an app that allows accounts in any organizational directory.
@@ -37,7 +37,7 @@
           sending its replies. Microsoft calls these <strong>IMAP.AccessAsUser.All</strong> and <strong>SMTP.Send</strong>.
           Your administrator may need to approve the app and enable incoming mail and authenticated
           outgoing mail for the mailbox. Lightwork cannot change your organization's Microsoft rules.</p>
-        <p><a href="https://learn.microsoft.com/en-us/exchange/client-developer/legacy-protocols/how-to-authenticate-an-imap-pop-smtp-application-by-using-oauth" target="_blank" rel="noopener noreferrer">Microsoft's mail account requirements</a></p>
+        <p><a href="https://learn.microsoft.com/en-us/exchange/client-developer/legacy-protocols/how-to-authenticate-an-imap-pop-smtp-application-by-using-oauth" target="_blank" rel="noopener noreferrer">Microsoft's mail account requirements<span class="sr-only"> (opens in a new tab)</span></a></p>
       </div>
       <label for="cs-callback">Return address to add in the provider's app settings</label><input id="cs-callback" class="input" readonly>
       <button id="cs-callback-copy" class="btn" type="button">Copy return address</button>
