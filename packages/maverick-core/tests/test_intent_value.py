@@ -810,3 +810,72 @@ def test_sync_reads_provider_evidence_for_all_tasks_at_once(world, monkeypatch):
     rows = sources.collect(world)
     assert {row["key"] for row in rows} >= {f"goal:{gid}" for gid in ids}
     assert len(batches) == 1 and set(ids) <= set(batches[0])
+
+
+@pytest.fixture
+def signed(world, monkeypatch):
+    from maverick.audit import signing
+    from maverick.intent_value import sources
+
+    monkeypatch.setenv("MAVERICK_AUDIT_SIGN", "1")
+    calls = []
+    real = signing.verify_chain
+
+    def counting(path, *args, **kwargs):
+        calls.append(path.name)
+        return real(path, *args, **kwargs)
+    monkeypatch.setattr(signing, "verify_chain", counting)
+    sources._AUDIT_DAYS.clear()
+    yield world, calls
+    sources._AUDIT_DAYS.clear()
+
+
+def _today_audit_file():
+    from maverick.audit.reader import event_paths
+
+    (path,) = event_paths(all_days=True)
+    return path
+
+
+def test_unchanged_audit_days_are_not_verified_again(signed):
+    # The Work value page syncs before every read. A day whose exact bytes
+    # were already verified under the same trust roots is reused; a day that
+    # changed is read and verified again. The result is the same as a full read.
+    from maverick.intent_value import sources
+
+    world, calls = signed
+    goal(world)
+    goal(world)
+    today = _today_audit_file()
+    older = today.with_name("2000-01-01.ndjson")
+    older.write_bytes(today.read_bytes())  # a self-contained signed chain
+    first = sources.audit_population()
+    assert sorted(calls) == ["2000-01-01.ndjson", today.name]
+    assert sources.audit_population() == first
+    assert len(calls) == 2
+    goal(world)
+    third = sources.audit_population()
+    assert calls[2:] == [today.name]
+    sources._AUDIT_DAYS.clear()
+    assert sources.audit_population() == third
+    assert third != first
+
+
+def test_a_changed_or_no_longer_trusted_day_is_verified_again(signed, monkeypatch):
+    from maverick.audit import signing
+    from maverick.audit.segments import SegmentReadError
+    from maverick.intent_value import sources
+
+    world, calls = signed
+    goal(world)
+    path = _today_audit_file()
+    original = path.read_bytes()
+    sources.audit_population()
+    path.write_bytes(original.replace(b'"succeeded"', b'"cancelled"'))
+    with pytest.raises(SegmentReadError):
+        sources.audit_population()
+    path.write_bytes(original)
+    sources.audit_population()
+    monkeypatch.setattr(signing, "trusted_audit_public_keys", dict)
+    with pytest.raises(SegmentReadError):
+        sources.audit_population()

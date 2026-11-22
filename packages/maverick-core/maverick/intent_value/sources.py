@@ -6,6 +6,7 @@ not an empty report. All adapters inherit the current tenant's native storage.
 """
 from __future__ import annotations
 
+import copy
 import re
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -25,39 +26,107 @@ def _bounded(rows, label):
     return rows
 
 
-def audit_population():
-    from ..audit import default_audit_log, iter_events
+# Per audit day-file: what audit_population needs from it, keyed by the exact
+# bytes that were read and verified and by the trust roots they verified under.
+# The Work value page syncs before every read; without this every visit parsed
+# and signature-checked the whole audit history again.
+_AUDIT_DAYS: dict[tuple, tuple[str, list]] = {}
+_AUDIT_DAYS_LIMIT = 4096
 
+
+def audit_population():
+    from ..audit import default_audit_log
+    from ..audit.reader import event_paths
+
+    verify = default_audit_log().signing_enabled
+    trust = _trust_roots() if verify else ()
     goals, flows, actions, agents = defaultdict(list), defaultdict(list), defaultdict(set), defaultdict(set)
     requests = {}
-    for event in iter_events(all_days=True, strict=True, verify=default_audit_log().signing_enabled):
+    for path in event_paths(all_days=True):
+        for record in _day_records(path, verify, trust):
+            kind, gid = record[0], record[1]
+            if kind == "start":
+                requests[gid] = copy.deepcopy(record[2])
+            elif kind == "agent":
+                agents[gid].add(record[2])
+            elif kind == "end":
+                goals[gid].append({**record[2], "request_intent": copy.deepcopy(requests.get(gid))})
+            elif kind == "action":
+                actions[gid].add(record[2])
+            else:
+                flows[gid].append(copy.deepcopy(record[2]))
+    return goals, flows, actions, agents
+
+
+def _trust_roots() -> tuple:
+    from ..audit.signing import _have_crypto, trusted_audit_public_keys
+
+    return (_have_crypto(), tuple(sorted(trusted_audit_public_keys().items())))
+
+
+def _day_records(path, verify: bool, trust: tuple) -> list:
+    """The records of one day-file, reused only when its bytes and trust roots are unchanged.
+
+    A miss reads the day exactly as before (``iter_events``: strict, and
+    signature-checked when signing is on). The result is kept only when the
+    file still holds the bytes hashed before that read, and only for plaintext
+    day-files: a sealed one is decrypted and checked on every read.
+    """
+    import hashlib
+
+    from ..audit.reader import iter_events
+    from ..audit.segments import SegmentReadError
+    from ..crypto_at_rest import is_sealed
+    from ..sealed_stream import STREAM_MAGIC
+
+    key = (str(path), verify, trust)
+    try:
+        before = path.read_bytes()
+    except FileNotFoundError:
+        before = None
+    plain = before is not None and not before.startswith(STREAM_MAGIC) and not is_sealed(before[:8])
+    fingerprint = hashlib.sha256(before).hexdigest() if plain else None
+    cached = _AUDIT_DAYS.get(key)
+    if fingerprint is not None and cached is not None and cached[0] == fingerprint:
+        return cached[1]
+    records = list(_records(iter_events(since=path.stem, until=path.stem, strict=True, verify=verify)))
+    if not path.exists():
+        raise SegmentReadError(f"audit segment {path.name} disappeared while it was read")
+    if fingerprint is not None and hashlib.sha256(path.read_bytes()).hexdigest() == fingerprint:
+        if len(_AUDIT_DAYS) >= _AUDIT_DAYS_LIMIT:
+            _AUDIT_DAYS.clear()
+        _AUDIT_DAYS[key] = (fingerprint, records)
+    return records
+
+
+def _records(events):
+    """What audit_population uses from each event, in log order."""
+    for event in events:
         gid = event.get("goal_id")
         named = event.get("agent")
         if type(gid) is int and event.get("kind") == "goal_start" and named == "orchestrator":
             # Keep only the classification, never copied request content. The
             # run-start snapshot survives later task-map title edits.
-            requests[gid] = _classify_request(event.get("title", ""), event.get("description"))
+            yield ("start", gid, _classify_request(event.get("title", ""), event.get("description")))
         if (type(gid) is int and event.get("kind") in {"llm_response", "tool_result", "goal_end"}
                 and isinstance(named, str) and re.fullmatch(r"[A-Za-z0-9_:./-]{1,120}", named)):
-            agents[gid].add(named)
+            yield ("agent", gid, named)
         if (type(gid) is int and event.get("kind") == "goal_end" and event.get("status") in SUCCESS
                 and (event.get("agent") == "orchestrator" or event.get("mode") == "source_analysis")):
-            goals[gid].append({"id": digest(event), "at": event["ts"], "kind": "goal_end",
-                               "status": event["status"], "signed": bool(event.get("sig") or event.get("signature")),
-                               "request_intent": requests.get(gid)})
+            yield ("end", gid, {"id": digest(event), "at": event["ts"], "kind": "goal_end",
+                                "status": event["status"], "signed": bool(event.get("sig") or event.get("signature"))})
         if event.get("kind") == "tool_result" and event.get("status") == "ok" and type(gid) is int:
             tool = event.get("tool") or event.get("name")
             if isinstance(tool, str) and len(tool) <= 120:
-                actions[gid].add(tool)
+                yield ("action", gid, tool)
         if (event.get("kind") == "control_plane_action" and event.get("action") == "intent_value.flow_state"
                 and event.get("performed_work_nodes", 0) > 0):
-            flows[event.get("run_id")].append({"id": digest(event), "at": event["ts"],
+            yield ("flow", event.get("run_id"), {"id": digest(event), "at": event["ts"],
                 "run_id": event.get("run_id"),
                 "kind": "flow_state", "status": event.get("status"),
                 "release_id": event.get("release_id", ""), "revision": event.get("definition_revision", ""),
                 "work_node_count": event["performed_work_nodes"],
                 "work_node_ids": event.get("performed_work_node_ids")})
-    return goals, flows, actions, agents
 
 
 def _goal_rows(world):
