@@ -8,6 +8,7 @@
 {{ hero('', rf.verify_title, lede=rf.verify_intro, compact=true) }}
 <section class="panel">
   <form method="post" action="/rights/verify/{{ token }}">
+      <input type="hidden" name="_expected_tenant" value="{{ request.state.workspace_expected_tenant | default('', true) }}">
     <button class="btn btn--primary" type="submit">{{ rf.verify_button }}</button>
   </form>
 </section>

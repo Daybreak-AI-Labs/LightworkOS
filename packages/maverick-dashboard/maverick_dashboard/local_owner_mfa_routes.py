@@ -6,7 +6,7 @@ recovery codes; it is for the owner, signed in on this computer.
 """
 from __future__ import annotations
 
-from urllib.parse import parse_qs, urlencode
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -122,22 +122,35 @@ def _retry_after(response, exc: HTTPException) -> None:
         response.headers["Retry-After"] = "60"
 
 
+# Every signed-in form names the workspace its page was rendered under; the
+# app's stale-tab check compares it before the route runs.
+WORKSPACE_FIELD = "_expected_tenant"
+
+
 async def _fields(request: Request, allowed: set[str]) -> dict[str, str]:
-    """One value for each named form field, from a bounded urlencoded body."""
+    """One value for each named form field, from a bounded urlencoded body.
+
+    Read through ``request.form()``, which caches the parsed form: when a
+    workspace is selected the stale-tab check has already read the body that
+    way, and the raw stream can be read only once."""
     if request.headers.get("content-type", "").split(";", 1)[0] != "application/x-www-form-urlencoded":
         raise HTTPException(415, "Submit the form from this page.")
-    body = bytearray()
-    async for chunk in request.stream():
-        body.extend(chunk)
-        if len(body) > 16384:
-            raise HTTPException(413, "The form exceeds its supported size.")
     try:
-        data = parse_qs(bytes(body).decode("utf-8"), max_num_fields=5, keep_blank_values=True)
-    except (UnicodeError, ValueError) as exc:
+        length = int(request.headers.get("content-length") or 0)
+    except ValueError:
+        length = 0
+    if length > 16384:
+        raise HTTPException(413, "The form exceeds its supported size.")
+    allowed = set(allowed) | {WORKSPACE_FIELD}
+    try:
+        form = await request.form(max_fields=len(allowed))
+    except Exception as exc:  # malformed body or too many fields
         raise HTTPException(422, "Check the submitted form values.") from exc
-    if set(data) - allowed or any(len(v) != 1 for v in data.values()):
+    items = list(form.multi_items())
+    names = [name for name, _value in items]
+    if set(names) - allowed or len(names) != len(set(names)) or not all(isinstance(v, str) for _n, v in items):
         raise HTTPException(422, "Submit one value for each field.")
-    return {k: v[0] for k, v in data.items()}
+    return {name: value for name, value in items if name != WORKSPACE_FIELD}
 
 
 @router.post(SECOND_STEP, response_class=HTMLResponse)

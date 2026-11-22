@@ -12,6 +12,7 @@
   <p class="muted">{{ detail }}</p>
   {% if undo_token %}
   <form method="post" action="/unsubscribe/{{ undo_token }}">
+      <input type="hidden" name="_expected_tenant" value="{{ request.state.workspace_expected_tenant | default('', true) }}">
     <button class="btn" type="submit">Undo</button>
   </form>
   {% endif %}
@@ -19,6 +20,7 @@
   <h1 id="unsubscribe-title">{{ question }}</h1>
   <p class="muted">{{ detail }}</p>
   <form method="post" action="/unsubscribe/{{ token }}">
+      <input type="hidden" name="_expected_tenant" value="{{ request.state.workspace_expected_tenant | default('', true) }}">
     <button class="btn btn--primary" type="submit">{{ button }}</button>
   </form>
   {% endif %}
