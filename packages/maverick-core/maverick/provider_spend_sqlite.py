@@ -336,6 +336,32 @@ def read_receipt(legacy: Path, period: str, provider: str, request_id: str, cap)
         connection.close()
 
 
+def _find_page(connection, work_item_sha256: str, limit: int, after, cap):
+    """One work item's bounded page inside the caller's sealed transaction."""
+    sql = (
+        "SELECT r.period, r.provider, r.request_id, t.dollars, r.payload "
+        "FROM receipts AS r LEFT JOIN totals AS t "
+        "ON t.period=r.period AND t.provider=r.provider "
+        "WHERE r.work_item_sha256=?"
+    )
+    params: list[object] = [work_item_sha256]
+    if after is not None:
+        sql += " AND (r.period, r.provider, r.request_id) > (?, ?, ?)"
+        params.extend(after)
+    sql += " ORDER BY r.period, r.provider, r.request_id LIMIT ?"
+    params.append(limit)
+    result = []
+    for period, provider, request_id, total, payload in connection.execute(sql, params):
+        if total is None:
+            raise cap.ProviderAccountingUnavailable
+        receipt = json.loads(payload)
+        cap._validate_receipts(float(total), {request_id: receipt})
+        if receipt.get("work_item_sha256") != work_item_sha256:
+            raise cap.ProviderAccountingUnavailable
+        result.append((period, provider, request_id, float(total), receipt))
+    return result
+
+
 @_authority_read
 def find_receipts(legacy: Path, work_item_sha256: str, *, limit: int,
                   after: tuple[str, str, str] | None, cap):
@@ -343,29 +369,32 @@ def find_receipts(legacy: Path, work_item_sha256: str, *, limit: int,
     connection = _connect(ensure(legacy, cap))
     try:
         connection.execute("BEGIN")
-        sql = (
-            "SELECT r.period, r.provider, r.request_id, t.dollars, r.payload "
-            "FROM receipts AS r LEFT JOIN totals AS t "
-            "ON t.period=r.period AND t.provider=r.provider "
-            "WHERE r.work_item_sha256=?"
-        )
-        params: list[object] = [work_item_sha256]
-        if after is not None:
-            sql += " AND (r.period, r.provider, r.request_id) > (?, ?, ?)"
-            params.extend(after)
-        sql += " ORDER BY r.period, r.provider, r.request_id LIMIT ?"
-        params.append(limit)
-        result = []
-        for period, provider, request_id, total, payload in connection.execute(sql, params):
-            if total is None:
-                raise cap.ProviderAccountingUnavailable
-            receipt = json.loads(payload)
-            cap._validate_receipts(float(total), {request_id: receipt})
-            if receipt.get("work_item_sha256") != work_item_sha256:
-                raise cap.ProviderAccountingUnavailable
-            result.append((period, provider, request_id, float(total), receipt))
+        result = _find_page(connection, work_item_sha256, limit, after, cap)
         connection.commit()
         return result
+    finally:
+        connection.close()
+
+
+@_authority_read
+def find_receipts_many(legacy: Path, work_item_hashes: list[str], *, limit: int, cap) -> dict:
+    """First pages for several work items from one sealed, coherent snapshot.
+
+    The seal is verified once for the whole set instead of once per item. A
+    row that fails validation fails only its own item: its value is the
+    exception, and the other items keep their pages.
+    """
+    connection = _connect(ensure(legacy, cap))
+    try:
+        connection.execute("BEGIN")
+        pages: dict = {}
+        for work_item_sha256 in dict.fromkeys(work_item_hashes):
+            try:
+                pages[work_item_sha256] = _find_page(connection, work_item_sha256, limit, None, cap)
+            except Exception as exc:  # one bad item fails alone, as a one-item read would
+                pages[work_item_sha256] = exc
+        connection.commit()
+        return pages
     finally:
         connection.close()
 

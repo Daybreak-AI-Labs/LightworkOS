@@ -113,6 +113,19 @@ def test_cost_csv_headers_and_rows(client, world_with_tree):
     assert len(lines) >= 3
     # The saved file carries the product name, like every other download.
     assert resp.headers["content-disposition"] == 'attachment; filename="lightwork-cost-all.csv"'
+    # Readable UTC times follow the original columns, whose positions never move.
+    import csv
+    from datetime import datetime, timezone
+    rows = list(csv.reader(lines))
+    header = rows[0]
+    assert header[:4] == ["episode_id", "goal_id", "started_at", "ended_at"]
+    assert header[-2:] == ["started_at_utc", "ended_at_utc"]
+    for row in rows[1:]:
+        if row[0] == "practice":
+            continue
+        assert len(row) == len(header)
+        assert datetime.fromisoformat(row[-2]) == datetime.fromtimestamp(float(row[2]), timezone.utc)
+        assert datetime.fromisoformat(row[-1]) == datetime.fromtimestamp(float(row[3]), timezone.utc)
 
 
 def test_cost_csv_month_filter_rejects_bad_format(client):

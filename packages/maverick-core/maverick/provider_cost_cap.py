@@ -1939,6 +1939,24 @@ def reservations_for_work_item(
         raise ProviderAccountingUnavailable from exc
 
 
+def _collect_receipts(snapshots, work_item_sha256, limit, period, provider, total, receipts):
+    """Validate one ledger bucket and keep this work item's receipts."""
+    if (
+        not isinstance(period, str)
+        or not _PERIOD.fullmatch(period)
+        or not isinstance(provider, str)
+        or not provider
+        or provider != _canon(provider)
+    ):
+        raise ProviderAccountingUnavailable
+    _, validated = _validate_receipts(float(total), receipts)
+    for request_id, row in sorted(validated.items()):
+        if row.get("work_item_sha256") == work_item_sha256:
+            snapshots.append(_snapshot(provider, period, request_id, row))
+            if len(snapshots) > limit:
+                raise ProviderAccountingUnavailable
+
+
 def reservation_catalogue_for_work_item(
     work_item_id: str,
     *,
@@ -1964,20 +1982,7 @@ def reservation_catalogue_for_work_item(
     snapshots: list[ReservationSnapshot] = []
 
     def collect(period, provider, total, receipts):
-        if (
-            not isinstance(period, str)
-            or not _PERIOD.fullmatch(period)
-            or not isinstance(provider, str)
-            or not provider
-            or provider != _canon(provider)
-        ):
-            raise ProviderAccountingUnavailable
-        _, validated = _validate_receipts(float(total), receipts)
-        for request_id, row in sorted(validated.items()):
-            if row.get("work_item_sha256") == work_item_sha256:
-                snapshots.append(_snapshot(provider, period, request_id, row))
-                if len(snapshots) > limit:
-                    raise ProviderAccountingUnavailable
+        _collect_receipts(snapshots, work_item_sha256, limit, period, provider, total, receipts)
 
     try:
         if shared is not None:
@@ -2025,6 +2030,83 @@ def reservation_catalogue_for_work_item(
         raise
     except Exception as exc:
         raise ProviderAccountingUnavailable from exc
+
+
+def reservation_catalogues_for_work_items(
+    work_item_ids,
+    *,
+    limit: int = _MAX_CATALOGUE_RECEIPTS,
+    path: Path | None = None,
+) -> dict:
+    """:func:`reservation_catalogue_for_work_item` for several work items.
+
+    Maps each id, in order, to its catalogue or to the
+    :class:`ProviderAccountingUnavailable` its own read would have raised. The
+    indexed local ledger verifies its integrity seal once for the whole set
+    and reads every item from one snapshot; other ledgers read item by item.
+    """
+    if (
+        isinstance(limit, bool)
+        or not isinstance(limit, int)
+        or not 1 <= limit <= _MAX_CATALOGUE_RECEIPTS
+    ):
+        raise ProviderAccountingUnavailable
+    items = list(dict.fromkeys(work_item_ids))
+    result: dict = {}
+
+    def one_by_one(pending):
+        for item in pending:
+            try:
+                result[item] = reservation_catalogue_for_work_item(item, limit=limit, path=path)
+            except ProviderAccountingUnavailable as exc:
+                result[item] = exc
+        return result
+
+    shared = _shared_world() if path is None else None
+    ledger = None if shared is not None else (path or _ledger_path()).absolute()
+    try:
+        indexed = ledger is not None and _use_indexed_ledger(ledger)
+    except Exception:
+        indexed = False
+    if not indexed:
+        return one_by_one(items)
+    hashes = {}
+    for item in items:
+        try:
+            hashes[item] = _work_item_hash(item)
+        except Exception as exc:
+            error = ProviderAccountingUnavailable()
+            error.__cause__ = exc
+            result[item] = error
+    from . import provider_spend_sqlite
+    try:
+        pages = provider_spend_sqlite.find_receipts_many(
+            ledger, list(hashes.values()), limit=limit + 1, cap=sys.modules[__name__])
+    except Exception as exc:
+        error = exc if isinstance(exc, ProviderAccountingUnavailable) else ProviderAccountingUnavailable()
+        if error is not exc:
+            error.__cause__ = exc
+        for item in hashes:
+            result[item] = error
+        return {item: result[item] for item in items}
+    for item, work_item_sha256 in hashes.items():
+        try:
+            page = pages[work_item_sha256]
+            if isinstance(page, Exception):
+                raise page
+            snapshots: list[ReservationSnapshot] = []
+            for period, provider, request_id, total, row in page:
+                _collect_receipts(snapshots, work_item_sha256, limit, period, provider, total, {request_id: row})
+            snapshots.sort(key=lambda row: (row.period, row.provider, row.request_id))
+            result[item] = ReservationCatalogue(
+                receipts=tuple(snapshots), version=_catalogue_version(work_item_sha256, snapshots))
+        except ProviderAccountingUnavailable as exc:
+            result[item] = exc
+        except Exception as exc:
+            error = ProviderAccountingUnavailable()
+            error.__cause__ = exc
+            result[item] = error
+    return {item: result[item] for item in items}
 
 
 def claim_reservation(

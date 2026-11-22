@@ -5294,8 +5294,9 @@ def spend_page(request: Request) -> HTMLResponse:
     value_view = value_scope(request)
     w = _world()
     episodes = w.list_episodes(limit=50, owner=owner)
-    from maverick.cost_provenance import for_goal, runtime_basis
-    episode_provenance = {e.id: {"runtime_basis": runtime_basis(e.cost_dollars), **for_goal(e.goal_id)} for e in episodes}
+    from maverick.cost_provenance import for_goals, runtime_basis
+    provenance = for_goals([e.goal_id for e in episodes])  # one ledger read for the page
+    episode_provenance = {e.id: {"runtime_basis": runtime_basis(e.cost_dollars), **provenance[e.goal_id]} for e in episodes}
     # Task titles for the table (the episodes are already scoped to the caller).
     goal_titles: dict[int, str] = {}
     try:
@@ -7455,7 +7456,7 @@ def billing_page(request: Request, format: str = "", period: str = "", receipt_o
             import csv
             import io
 
-            from maverick.cost_provenance import EXPORT_HEADERS, export_fields
+            from maverick.cost_provenance import EXPORT_HEADERS, export_fields, with_sources
 
             from .audit_actions_api import csv_safe
             buf = io.StringIO()
@@ -7463,7 +7464,8 @@ def billing_page(request: Request, format: str = "", period: str = "", receipt_o
             writer.writerow(["Run", "Task", "Started", "Finished", "Result", "Cost (USD)",
                              "Input tokens", "Output tokens", "Tool uses", *EXPORT_HEADERS])
             yield buf.getvalue()
-            for episode in iter_episodes(w, owner=owner, since=start.timestamp(), until=end.timestamp(), finished_only=True):
+            for episode, source in with_sources(iter_episodes(w, owner=owner, since=start.timestamp(),
+                                                              until=end.timestamp(), finished_only=True)):
                 buf.seek(0)
                 buf.truncate(0)
                 writer.writerow([episode.id, episode.goal_id,
@@ -7472,7 +7474,7 @@ def billing_page(request: Request, format: str = "", period: str = "", receipt_o
                                  csv_safe(episode.outcome or ""),
                                  "unknown" if episode.cost_dollars is None else f"{episode.cost_dollars:.6f}",
                                  episode.input_tokens, episode.output_tokens, episode.tool_calls,
-                                 *export_fields(episode)])
+                                 *export_fields(episode, source)])
                 yield buf.getvalue()
             # Practice runs cost real provider money: one labelled row, apart from the real runs.
             from maverick import practice_costs
@@ -14407,7 +14409,7 @@ def cost_csv(request: Request, month: str | None = None) -> StreamingResponse:
     def generate():
         buf = _io.StringIO()
         writer = csv.writer(buf)
-        from maverick.cost_provenance import EXPORT_HEADERS, export_fields
+        from maverick.cost_provenance import EXPORT_HEADERS, export_fields, with_sources
         writer.writerow(
             [
                 "episode_id",
@@ -14420,6 +14422,10 @@ def cost_csv(request: Request, month: str | None = None) -> StreamingResponse:
                 "output_tokens",
                 "tool_calls",
                 *EXPORT_HEADERS,
+                # Readable copies of started_at/ended_at, added last so no
+                # existing column moves.
+                "started_at_utc",
+                "ended_at_utc",
             ]
         )
         yield buf.getvalue()
@@ -14430,11 +14436,16 @@ def cost_csv(request: Request, month: str | None = None) -> StreamingResponse:
 
         from .audit_actions_api import csv_safe
 
-        for episode in iter_episodes(w, owner=owner, since=start_ts, until=end_ts, finished_only=True):
+        def utc(ts):
+            return "" if ts is None else _dt.datetime.fromtimestamp(ts, _dt.timezone.utc).isoformat()
+
+        episodes = iter_episodes(w, owner=owner, since=start_ts, until=end_ts, finished_only=True)
+        for episode, source in with_sources(episodes):
             writer.writerow([episode.id, episode.goal_id, episode.started_at, episode.ended_at,
                              csv_safe(episode.outcome or ""),
                              "unknown" if episode.cost_dollars is None else f"{episode.cost_dollars:.6f}",
-                             episode.input_tokens, episode.output_tokens, episode.tool_calls, *export_fields(episode)])
+                             episode.input_tokens, episode.output_tokens, episode.tool_calls,
+                             *export_fields(episode, source), utc(episode.started_at), utc(episode.ended_at)])
             yield buf.getvalue()
             buf.seek(0)
             buf.truncate(0)
@@ -14442,7 +14453,7 @@ def cost_csv(request: Request, month: str | None = None) -> StreamingResponse:
         from maverick import practice_costs
 
         extra = practice_costs.export_row(practice_costs.summary(owner, since=start_ts, until=end_ts),
-                                          9 + len(EXPORT_HEADERS))
+                                          11 + len(EXPORT_HEADERS))
         if extra:
             writer.writerow(extra)
             yield buf.getvalue()
