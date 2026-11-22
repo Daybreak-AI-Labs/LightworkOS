@@ -90,25 +90,34 @@ def _builtin_word(args: dict, sandbox) -> str | None:
     writer = args.get("to") or _EXTENSIONS.get(Path(dst).suffix.lower())
     if writer != "docx" or reader not in _MARKDOWN_READERS | {"plain"}:
         return None
-    output_parts = dst.replace("\\", "/").split("/")
-    try:
-        src_path = Path(_safe_path(sandbox, src))
-        dst_path = Path(_safe_path(sandbox, dst))
-    except ValueError as e:
-        return f"ERROR: {e}"
-    if any(part.rstrip(" .").casefold() == ".git" for part in (*output_parts, *dst_path.parts)):
-        return "ERROR: refusing to write under .git/"
-    if not src_path.is_file():
-        return f"ERROR: {src!r} is not a file in the workspace"
-    if src_path.stat().st_size > _BUILTIN_SOURCE_LIMIT:
-        return "ERROR: the document is larger than 2 MB; split it into smaller files"
     from ..markdown_word import UnwritableText, word_answer
+    from ..sandbox.workspace_transfer import WorkspaceTransferError, _read, _write
+    from .document_processing import workspace_path
 
     try:
-        document = word_answer(src_path.read_text(encoding="utf-8", errors="replace"), "")
+        root, source = workspace_path(sandbox, src)
+        _root, target = workspace_path(sandbox, dst)
+    except (ValueError, WorkspaceTransferError) as e:
+        return f"ERROR: {e}"
+    if any(part.rstrip(" .").casefold() == ".git" for part in target.split("/")):
+        return "ERROR: refusing to write under .git/"
+    try:
+        raw = _read(root, source)
+    except FileNotFoundError:
+        return f"ERROR: {src!r} is not a file in the workspace"
+    except (OSError, WorkspaceTransferError) as e:
+        return f"ERROR: {e}"
+    if len(raw) > _BUILTIN_SOURCE_LIMIT:
+        return "ERROR: the document is larger than 2 MB; split it into smaller files"
+    try:
+        document = word_answer(raw.decode("utf-8", errors="replace"), "")
     except UnwritableText as e:
         return f"ERROR: {e}"
-    dst_path.write_bytes(document)
+    try:
+        _write(root, target, document, 0o600)
+    except (OSError, WorkspaceTransferError) as e:
+        return f"ERROR: could not write {dst!r}: {e}"
+    dst_path = root / target
     return f"wrote {dst_path} (built-in Word writer; pandoc is not installed)"
 
 
