@@ -159,3 +159,25 @@ class TestConfig:
         monkeypatch.setenv("MAVERICK_VALUE_HOURLY_RATE", "250")
         reset_config_cache()
         assert get_value()["hourly_rate"] == 250.0
+
+
+def test_savings_never_walks_the_audit_chain(monkeypatch):
+    # Savings shows only tasks and costs. Verifying every signed audit line
+    # on each view grew the page with the life of the install.
+    def refuse(*_args, **_kwargs):
+        raise AssertionError("Savings must not verify the audit chain")
+
+    monkeypatch.setattr(workforce_value, "_governance_summary", refuse)
+    world = _World([_ep(1, cost=1.0, outcome="success")], goal_domains={1: "legal_privacy"})
+    report = savings.compute(world, window_days=365, cfg=CFG, now=2000.0)
+    assert report.available and report.deliverables == 1
+
+
+def test_the_workforce_report_still_checks_the_audit_chain(monkeypatch):
+    from maverick.audit import signing
+
+    calls = []
+    monkeypatch.setattr(workforce_value, "_governance_summary", lambda: calls.append(1) or {"chain_verifiable": True})
+    workforce_value.compute(_World([], {}), window_days=30, now=2000.0)
+    assert calls == [1]
+    assert callable(signing.verify_chain)
