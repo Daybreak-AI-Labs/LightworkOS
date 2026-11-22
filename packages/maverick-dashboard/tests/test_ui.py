@@ -111,6 +111,8 @@ def test_cost_csv_headers_and_rows(client, world_with_tree):
     assert lines[0].startswith("episode_id,goal_id")
     # At least the 2 episodes we seeded.
     assert len(lines) >= 3
+    # The saved file carries the product name, like every other download.
+    assert resp.headers["content-disposition"] == 'attachment; filename="lightwork-cost-all.csv"'
 
 
 def test_cost_csv_month_filter_rejects_bad_format(client):
@@ -123,6 +125,7 @@ def test_cost_csv_month_filter_accepts_valid_format(client):
     assert resp.status_code == 200
     # Header always present even when no rows match.
     assert "episode_id" in resp.text
+    assert resp.headers["content-disposition"] == 'attachment; filename="lightwork-cost-2026-04.csv"'
 
 
 def test_goals_page_includes_plan_and_replay_links(client, world_with_tree):

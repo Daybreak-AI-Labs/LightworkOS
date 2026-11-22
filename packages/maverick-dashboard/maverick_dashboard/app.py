@@ -14447,7 +14447,7 @@ def cost_csv(request: Request, month: str | None = None) -> StreamingResponse:
             writer.writerow(extra)
             yield buf.getvalue()
 
-    fname = f"maverick-cost-{month}.csv" if month else "maverick-cost-all.csv"
+    fname = f"lightwork-cost-{month}.csv" if month else "lightwork-cost-all.csv"
     return StreamingResponse(
         generate(),
         media_type="text/csv",
