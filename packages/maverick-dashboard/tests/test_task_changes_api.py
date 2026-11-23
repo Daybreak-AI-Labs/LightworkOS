@@ -254,10 +254,9 @@ def test_the_kernel_knows_the_first_workspace_id():
     # Conversation folders of "My workspace" need no workspace segment
     # (maverick.task_workspace); the two ids must stay the same.
     from maverick import task_workspace
-
     from maverick_dashboard.tenant_select_page import FIRST_WORKSPACE
 
-    assert task_workspace.FIRST_WORKSPACE_ID == FIRST_WORKSPACE["id"]
+    assert FIRST_WORKSPACE["id"] == task_workspace.FIRST_WORKSPACE_ID
 
 
 def test_a_chat_task_shows_changes_in_its_conversation_folder(env):
