@@ -432,10 +432,34 @@ def read_file(sandbox) -> Tool:
     )
 
 
+# Binary document formats: text written into one is a file no app can open.
+# Agents asked for an Excel file wrote "placeholder" into a .xlsx and were
+# then confused by it, so write_file refuses and names the tool that makes it.
+_SPREADSHEET_HINT = ("Make Excel files with the `spreadsheet` tool (op write, with rows); if it is "
+                     "not in your tools yet, call find_tools with 'spreadsheet'.")
+_WORD_HINT = ("Make a Word file by writing Markdown and converting it with the `pandoc` tool, "
+              "or write the document as your answer: the answer page offers Download Word document.")
+_TEXT_HINT = "Write the content in a text format (.md, .csv or .txt) instead."
+_BINARY_DOCUMENTS = {".xlsx": _SPREADSHEET_HINT, ".xlsm": _SPREADSHEET_HINT, ".xls": _SPREADSHEET_HINT,
+                     ".docx": _WORD_HINT, ".doc": _WORD_HINT, ".pptx": _TEXT_HINT, ".ppt": _TEXT_HINT,
+                     ".pdf": _TEXT_HINT, ".zip": _TEXT_HINT}
+
+
+def _binary_document_refusal(path: str) -> str | None:
+    hint = _BINARY_DOCUMENTS.get(os.path.splitext(str(path or ""))[1].lower())
+    if hint is None:
+        return None
+    return (f"ERROR: write_file writes text, so {path!r} would not open as a document; "
+            f"nothing was written. {hint}")
+
+
 def write_file(sandbox, goal_id: str | int | None = "default", world=None) -> Tool:
     quota_goal_id = "default" if goal_id is None else goal_id
 
     def fn(args: dict) -> str:
+        refusal = _binary_document_refusal(args.get("path", ""))
+        if refusal:
+            return refusal
         try:
             target = _safe_resolve(sandbox, args["path"])
         except ValueError as e:
