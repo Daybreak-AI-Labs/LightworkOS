@@ -934,7 +934,7 @@ def test_the_rules_leave_choices_about_the_deliverable_to_the_agent():
     assert decision_requests.AREAS["user_facing"] == "What people see in Lightwork, including the Copilot"
     text = decision_requests.rules_text()
     assert "What people see in Lightwork, including the Copilot" in text
-    assert "format, length, structure or wording of the work you deliver are yours" in text
+    assert "format, length, structure or wording of the work you deliver, and about which tool or method to use, are yours" in text
 
 
 def test_a_resume_after_a_decision_keeps_the_limits_the_person_set(tmp_path, monkeypatch):
