@@ -81,3 +81,9 @@ def test_poppler_reads_the_text_back(tmp_path):
                           check=True).stdout
     assert "Keep it posted by the sink. Costs (about $40) are shared." in text
     assert "1. Descale the espresso machine" in text and "café “quotes”" in text
+
+
+def test_a_column_sized_to_its_widest_word_keeps_that_word_whole():
+    # Live: an invoice's "Hours" header broke into "Hour" and "s".
+    text = _streams(pdf_from_markdown("| Description | Hours | Rate |\n|---|---|---|\n| Design work | 10 | $120 |\n"))
+    assert "(Hours)" in text and "(Hour)" not in text

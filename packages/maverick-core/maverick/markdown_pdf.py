@@ -131,9 +131,11 @@ def _wrap(words: list[tuple[str, bool]], size: float, width: float) -> list[list
             continue
         word = word.lstrip(_GLUE)
         w = _width(word, size, bold)
-        while w > width and len(word) > 1:  # a word wider than the line breaks by characters
+        # A column sized to its widest word must still fit it ("Hours" broke as
+        # "Hour/s" by a float rounding hair): compare with a small tolerance.
+        while w > width + 0.01 and len(word) > 1:  # a word wider than the line breaks by characters
             cut = len(word)
-            while cut > 1 and _width(word[:cut], size, bold) > width:
+            while cut > 1 and _width(word[:cut], size, bold) > width + 0.01:
                 cut -= 1
             if line:
                 lines.append(line)
@@ -141,7 +143,7 @@ def _wrap(words: list[tuple[str, bool]], size: float, width: float) -> list[list
             lines.append([(word[:cut], bold)])
             word = word[cut:]
             w = _width(word, size, bold)
-        if line and used + space + w > width:
+        if line and used + space + w > width + 0.01:
             lines.append(line)
             line, used = [], 0.0
         used += (space if line else 0) + w
