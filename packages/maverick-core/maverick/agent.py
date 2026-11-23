@@ -68,7 +68,9 @@ Rules:
 3. When done, respond in plain text starting with `FINAL:` followed by your answer. No tool call.
 4. Be precise. Cite exact paths, commands, results, and findings from your children.
 5. Budget is enforced globally; spend wisely. Stop spawning if results so far are sufficient — reaching a synthesized answer matters more than breadth of research.
-6. Compute figures from data (totals, pay, interest, per-row results) with one tool call over the whole data set, such as `read_attachment` with `sql` for an attached CSV, and report the numbers it returns. Do not type per-row arithmetic yourself: one wrong row makes the whole answer wrong."""
+6. Compute figures from data (totals, pay, interest, per-row results) with one tool call over the whole data set, such as `read_attachment` with `sql` for an attached CSV, and report the numbers it returns. Do not type per-row arithmetic yourself: one wrong row makes the whole answer wrong.
+7. A sandbox command (shell) waits for a person to approve it, and the task stalls until they answer. Use one only when the task needs a command run. Read pages, files and data with the tools made for them (`http_fetch`, `read_file`, `spreadsheet_read`, `read_attachment`), and check a file you wrote by reading it back with `read_file`, not with a command.
+8. Give the person every file they asked for with `deliver_file`, which puts it on the task's page as a download (files saved with `write_file` are offered automatically). Files already in the workspace may be left from earlier tasks: check that one matches this request before you deliver it, and never say you created a file you did not. Make a file with the tool for its type, not a script: `spreadsheet` writes CSV and Excel, `pandoc` writes Word from Markdown, and `find_tools` finds the others."""
 
 
 ORCHESTRATOR_SYSTEM_TEMPLATE = """You are the orchestrator of a Lightwork swarm.
@@ -84,7 +86,9 @@ Standard playbook:
 6. A step that needs a person's approval (a sandbox command, a change, a message) goes to ONE child only: each run asks the person again, so never give the same step to two children to cross-check; check its output instead. A step a person rejected stays undone: do not try it again yourself or through a child.
 7. End with `FINAL:` followed by your synthesized answer.
 8. Figures from data (totals, pay, interest, per-row results) come from one tool call over the whole data set, such as `read_attachment` with `sql` for an attached CSV, never from per-row arithmetic typed by hand. Tell children the same when you delegate a calculation.
-9. When the person asks for a document (a Word file, a printable checklist, a letter, a report), write the finished document itself as your FINAL answer, with headings, lists and tables. The answer page offers "Download Word document" and printing, so do not write a script or a file to produce it unless they ask for another file type, such as a spreadsheet.
+9. A sandbox command (shell) waits for a person to approve it, and the task stalls until they answer. Use one only when the task needs a command run; read pages, files and data with their own tools (`http_fetch`, `read_file`, `spreadsheet_read`, `read_attachment`) and check a written file with `read_file`.
+10. Give the person every file they asked for with `deliver_file`, which puts it on the task's page as a download (files saved with `write_file` are offered automatically). Files already in the workspace may be left from earlier tasks: check that one matches this request before it is delivered, and never say a file was created when it was not. Make a file with the tool for its type, not a script: `spreadsheet` writes CSV and Excel, `pandoc` writes Word from Markdown, and `find_tools` finds the others.
+11. When the person asks for a document (a Word file, a printable checklist, a letter, a report), write the finished document itself as your FINAL answer, with headings, lists and tables. The answer page offers "Download Word document" and printing, so do not write a script or a file to produce it unless they ask for another file type, such as a spreadsheet.
 
 Consult your `memory` (durable cross-session notes) when planning a long-horizon goal, and record lasting learnings there as the run progresses.
 
@@ -116,6 +120,43 @@ def _clean_for_screening(output, state):
     if cleaned is output:
         return output
     return ToolResultText(cleaned, state) if state is not None else cleaned
+
+
+#: Files an answer can name as something the person receives.
+_DELIVERABLE_SUFFIXES = (".xlsx", ".xlsm", ".xls", ".csv", ".docx", ".pptx", ".pdf", ".md",
+                         ".txt", ".png", ".jpg", ".jpeg", ".svg", ".zip", ".json", ".html")
+_NAMED_FILE = re.compile(r"[\w./-]+\.(?:" + "|".join(x[1:] for x in _DELIVERABLE_SUFFIXES) + r")\b",
+                         re.IGNORECASE)
+
+
+def _undelivered_named_files(final: str, sandbox, world, goal_id) -> list[str]:
+    """Workspace files the answer names that are not on the task's page."""
+    from pathlib import Path as _Path
+
+    workdir = getattr(sandbox, "workdir", None)
+    if not final or workdir is None or world is None:
+        return []
+    try:
+        from .task_files import files_for
+        delivered = {item.path for item in files_for(world, goal_id)}
+        root = _Path(workdir).resolve()
+    except Exception:  # noqa: BLE001 -- the hand-over check never blocks an answer
+        return []
+    named: list[str] = []
+    for match in _NAMED_FILE.finditer(final[:20_000]):
+        relative = match.group(0).strip("./") if not match.group(0).startswith("../") else ""
+        if not relative or relative in named or relative in delivered or relative.startswith("."):
+            continue
+        try:
+            path = (root / relative).resolve()
+            path.relative_to(root)
+        except (OSError, ValueError):
+            continue
+        if path.is_file() and not path.is_symlink():
+            named.append(relative)
+        if len(named) >= 10:
+            break
+    return named
 
 
 def select_base_template(
@@ -5660,6 +5701,9 @@ class Agent:
         must revise."""
         self._begin_final()
         coding_cfg = self._coding_config()
+        coding = coding_cfg is not None and coding_cfg.enabled
+        if not coding and self._request_named_file_delivery(st, final):
+            return _NEXT_TURN
         if await self._validate_final_patch(st, final, coding_cfg) is _NEXT_TURN:
             return _NEXT_TURN
         verification = _FinalVerification()
@@ -5672,6 +5716,33 @@ class Agent:
                 return judged
             verification = judged
         return await self._finish_final(st, step, final, coding_cfg, verification)
+
+    def _request_named_file_delivery(self, st: _RunState, final: str) -> bool:
+        """Once per run, send the goal root back when its answer names a
+        document in the workspace that is not on the task's page.
+
+        Asked for a spreadsheet, agents answered "the file is ready for
+        download" about a file they never handed over (one left by an earlier
+        task), so the person had nothing to download. The agent still hands a
+        file over itself with ``deliver_file``: nothing is offered on its
+        behalf. Returns True when the request was appended."""
+        if (getattr(self, "_file_delivery_requested", False) or self.depth != 0
+                or not (self.role == "orchestrator" or getattr(self, "_is_goal_root", False))
+                or self.ctx.goal_id is None
+                or "deliver_file" not in {tool.name for tool in self.tools.all()}):
+            return False
+        names = _undelivered_named_files(final, self.ctx.sandbox, self.ctx.world, self.ctx.goal_id)
+        if not names:
+            return False
+        self._file_delivery_requested = True
+        listed = ", ".join(names)
+        st.bb.post(self.name, "verify", f"answer names files not yet handed over: {listed}")
+        st.messages.append({"role": "user", "content": (
+            f"Your answer names {listed}, which the person cannot download yet: only files on the "
+            "task's page are offered to them. Call deliver_file with the path of each file they "
+            "should receive, after checking it matches this request, then give your final answer "
+            "again. If a file is not one they asked for, or you did not make it, say so instead.")})
+        return True
 
     def _begin_final(self) -> None:
         """Forget the previous FINAL attempt's patch and verdict so a revised

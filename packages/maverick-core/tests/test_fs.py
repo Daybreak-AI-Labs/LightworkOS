@@ -187,3 +187,21 @@ def test_read_file_reads_only_up_to_the_cap(tmp_path, monkeypatch):
     out = fs.read_file(_Sandbox()).fn({"path": "big.txt"})
     assert seen["max_chars"] == fs.MAX_READ_BYTES + 1
     assert "truncated at 8000 characters, file is 20000 bytes" in out
+
+
+@pytest.mark.parametrize("name,hint", [
+    ("rent.xlsx", "`spreadsheet`"), ("report.docx", "`pandoc`"), ("deck.pptx", "text format"),
+    ("summary.pdf", "text format"), ("Rent.XLSX", "`spreadsheet`"),
+])
+def test_write_file_refuses_text_in_a_binary_document(tmp_path, name, hint):
+    # Live: asked for an Excel file, agents wrote "placeholder" into
+    # rent_payments.xlsx with write_file, a file no app can open, then got
+    # confused by it. The refusal names the tool that makes the format.
+    from maverick.sandbox import LocalBackend
+    from maverick.tools.fs import write_file
+
+    tool = write_file(LocalBackend(workdir=tmp_path))
+    out = tool.fn({"path": name, "content": "placeholder"})
+    assert out.startswith("ERROR") and hint in out and "nothing was written" in out
+    assert not (tmp_path / name).exists()
+    assert tool.fn({"path": "rent.csv", "content": "a,b\n1,2\n"}).startswith("wrote")

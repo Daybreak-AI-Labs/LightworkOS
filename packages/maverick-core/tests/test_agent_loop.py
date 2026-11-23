@@ -2241,3 +2241,47 @@ async def test_parallel_path_cancellation_stops_the_run_only_when_the_goal_was_c
     result = await agent.run()
     assert result.stop_kind != "cancelled" and result.final == "done"
     _assert_no_orphan_tool_use(llm.last_messages)
+
+
+class TestFilesNamedInTheAnswer:
+    ACCEPT = '{"confidence":0.95,"accepts":true,"critique":"ok","issues":[]}'
+
+    @pytest.mark.asyncio
+    async def test_a_named_workspace_file_is_handed_over_before_the_answer(
+        self, ctx, fake_llm, make_llm_response,
+    ):
+        # Live: asked for an Excel file, the agent found one an earlier task
+        # left and answered "the spreadsheet is ready for download" without
+        # handing it over, so the person had nothing to download.
+        from maverick import task_files
+
+        (Path(ctx.sandbox.workdir) / "rent.xlsx").write_bytes(b"PK\x03\x04 workbook bytes")
+        fake_llm.scripted = [
+            make_llm_response(text="FINAL: Your spreadsheet rent.xlsx is ready for download."),
+            make_llm_response(tool_calls=[ToolCall(id="d1", name="deliver_file", input={"path": "rent.xlsx"})]),
+            make_llm_response(text="FINAL: Your spreadsheet rent.xlsx is ready for download."),
+            make_llm_response(text=self.ACCEPT),
+        ]
+        result = await Agent(ctx=ctx, role="orchestrator", brief="make the rent spreadsheet").run()
+        assert result.error is None and "rent.xlsx" in result.final
+        nudge = [m for m in fake_llm.calls[1]["messages"] if m.get("role") == "user"][-1]["content"]
+        assert "deliver_file" in str(nudge) and "rent.xlsx" in str(nudge)
+        assert [f.name for f in task_files.files_for(ctx.world, ctx.goal_id)] == ["rent.xlsx"]
+
+    @pytest.mark.asyncio
+    async def test_an_answer_naming_no_undelivered_workspace_file_is_not_sent_back(
+        self, ctx, fake_llm, make_llm_response,
+    ):
+        fake_llm.scripted = [make_llm_response(text="FINAL: See payroll.csv (your attachment) and notes.md."),
+                             make_llm_response(text=self.ACCEPT)]
+        result = await Agent(ctx=ctx, role="orchestrator", brief="summarize").run()
+        assert result.error is None and len(fake_llm.calls) == 2
+
+
+def test_deliver_file_is_shown_to_every_role_up_front():
+    # The instructions and the answer check tell the agent to call
+    # deliver_file; deferred loading hid it until find_tools unlocked it.
+    from maverick.tools import core_tool_names
+
+    for role in ("orchestrator", "analyst", "writer", "coder", "worker"):
+        assert "deliver_file" in core_tool_names(role), role

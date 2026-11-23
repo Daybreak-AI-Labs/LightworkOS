@@ -257,3 +257,40 @@ def test_read_attachment_shows_a_per_row_calculation():
 
     description = read_attachment_tool(None, None).description
     assert "MIN(" in description and "GROUP BY" in description
+
+
+def test_agents_know_a_command_waits_for_a_person():
+    # Live: four real tasks stalled on an approval for a shell command they
+    # did not need: parsing a fetched page, building a .docx, re-checking a
+    # CSV the agent had just written. The work was done or doable without it.
+    from maverick.agent import select_base_template
+
+    for role in ("orchestrator", "analyst"):
+        text = select_base_template(role=role, depth=0 if role == "orchestrator" else 1,
+                                    max_depth=3, coding_enabled=False)
+        assert "waits for a person" in text and "read_file" in text, role
+
+
+def test_agents_write_a_requested_file_in_this_task():
+    # Live: asked to create a spreadsheet, an agent found rent_payments.csv
+    # left by an earlier task, checked it and said "I created" it; nothing was
+    # written in this task, so the person was offered no download. deliver_file
+    # offers any workspace file, whoever wrote it.
+    from maverick.agent import select_base_template
+
+    for role in ("orchestrator", "analyst"):
+        text = select_base_template(role=role, depth=0 if role == "orchestrator" else 1,
+                                    max_depth=3, coding_enabled=False)
+        assert "earlier tasks" in text and "`deliver_file`" in text, role
+
+
+def test_agents_make_files_with_the_tool_for_that_type():
+    # Live: asked for a spreadsheet, an agent wrote a placeholder .xlsx with
+    # write_file, then a script to build one and asked to run it in the shell,
+    # though the spreadsheet tool writes CSV and Excel directly.
+    from maverick.agent import select_base_template
+
+    for role in ("orchestrator", "analyst"):
+        text = select_base_template(role=role, depth=0 if role == "orchestrator" else 1,
+                                    max_depth=3, coding_enabled=False)
+        assert "`spreadsheet`" in text and "`find_tools`" in text, role
