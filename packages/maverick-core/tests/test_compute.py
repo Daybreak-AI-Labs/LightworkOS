@@ -145,3 +145,32 @@ def test_the_exponent_bound_still_holds_for_caret_and_negative_powers():
     tool = compute()
     for expr in ("2**(-1000)", "9^9^9", "2^1000000", "2**x"):
         assert tool.fn({"op": "evaluate", "expr": expr}).startswith("ERROR"), expr
+
+
+def test_a_list_of_figures_evaluates_each_one(monkeypatch):
+    # Live: pricing eight reorders in one call failed with "'Tuple' object has
+    # no attribute 'evalf'", and the agent worked the figures out by hand.
+    from maverick.tools.compute import compute
+
+    expr = "(20-4)*23.21, (20-3)*4.17, 50*38.39"
+    if _HAS_SYMPY:
+        out = compute().fn({"op": "evaluate", "expr": expr})
+        assert [round(float(x), 2) for x in out.split(",")] == [371.36, 70.89, 1919.5], out
+    import sys as _sys
+
+    monkeypatch.setitem(_sys.modules, "sympy", None)
+    out = compute().fn({"op": "evaluate", "expr": expr})
+    assert [round(float(x), 2) for x in out.split(",")] == [371.36, 70.89, 1919.5], out
+    # A tuple anywhere but the top could be multiplied into gigabytes.
+    for unsafe in ("(1, 2)*10**8", "max((1,)*10**9)", "1, (2, 3)"):
+        assert "ERROR" in compute().fn({"op": "evaluate", "expr": unsafe}), unsafe
+
+
+@pytest.mark.skipif(not _HAS_SYMPY, reason="sympy not installed")
+def test_decimals_are_exact_and_unpadded():
+    # 16*23.21 came back as 371.360000000000013642420526594.
+    from maverick.tools.compute import compute
+
+    assert compute().fn({"op": "evaluate", "expr": "16*23.21"}) == "371.36"
+    assert compute().fn({"op": "evaluate", "expr": "0.1+0.2"}) == "0.3"
+    assert compute().fn({"op": "evaluate", "expr": "1/3"}).startswith("0.33333333333333333")
