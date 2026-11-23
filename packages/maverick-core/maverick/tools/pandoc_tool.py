@@ -125,17 +125,31 @@ def _builtin_word(args: dict, sandbox) -> str | None:
     return f"wrote {dst_path} (built-in Word writer; pandoc is not installed)"
 
 
+_NO_PANDOC_FOR_SLIDES = ("ERROR: pandoc is not installed where this task runs, so a PowerPoint file "
+                         "cannot be made here; nothing was written. Give the person the slides as a Word "
+                         "document instead (write the Markdown to a .docx path with write_file) and tell "
+                         "them PowerPoint was not available.")
+
+
 def _op_convert(args: dict, sandbox) -> str:
     err = _need_pandoc()
     if err:
-        return _builtin_word(args, sandbox) or err
+        return _builtin_word(args, sandbox) or _without_pandoc(args, err)
     result = _convert_with_pandoc(args, sandbox)
     # pandoc on the host PATH does not mean it is inside the task's sandbox
     # (a container image): there it exits 127, and the agent stopped to ask
     # the person what to do. Markdown or text to Word still works built in.
     if result.startswith("ERROR: pandoc (127)"):
-        return _builtin_word(args, sandbox) or result
+        return _builtin_word(args, sandbox) or _without_pandoc(args, result)
     return result
+
+
+def _without_pandoc(args: dict, error: str) -> str:
+    """What to do instead when pandoc is missing: a PowerPoint request gets
+    a way forward rather than a bare exit code (an agent asked the person)."""
+    dst = str(args.get("output_path") or "")
+    wants_slides = args.get("to") == "pptx" or Path(dst).suffix.lower() == ".pptx"
+    return _NO_PANDOC_FOR_SLIDES if wants_slides else error
 
 
 def _convert_with_pandoc(args: dict, sandbox) -> str:

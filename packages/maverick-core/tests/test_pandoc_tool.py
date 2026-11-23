@@ -102,3 +102,20 @@ def test_markdown_becomes_a_powerpoint_deck_and_keeps_the_image_rules(tmp_path):
         assert len(slides) == 2 and b"From $12 a head" in b"".join(deck.read(name) for name in slides)
     assert tool.fn({"op": "convert", "input_path": "leak.md", "output_path": "leak.pptx"}).startswith("ERROR:")
     assert not (work / "leak.pptx").exists()
+
+
+def test_without_pandoc_a_powerpoint_request_gets_a_way_forward(monkeypatch, tmp_path):
+    # Live: in a Podman sandbox without pandoc the deck conversion exited 127
+    # and the agent stopped to ask the person what to do.
+    from types import SimpleNamespace
+
+    import maverick.tools as tools_pkg
+    from maverick.tools.pandoc_tool import pandoc_tool
+
+    monkeypatch.setattr("shutil.which", lambda b: "/usr/bin/pandoc")
+    monkeypatch.setattr(tools_pkg, "sandbox_run", lambda *a, **k: (127, "", "sh: 1: pandoc: not found"))
+    (tmp_path / "deck.md").write_text("# Catering\n\n- Fresh daily\n", encoding="utf-8")
+    out = pandoc_tool(SimpleNamespace(workdir=str(tmp_path))).fn(
+        {"op": "convert", "input_path": "deck.md", "output_path": "deck.pptx"})
+    assert out.startswith("ERROR") and "nothing was written" in out and ".docx" in out
+    assert not (tmp_path / "deck.pptx").exists()
