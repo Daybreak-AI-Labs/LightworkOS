@@ -6108,14 +6108,18 @@ class Agent:
         # Totals that do not add up go back for a revision before any model
         # judges the answer, and never pass as checked: a payroll's typed
         # grand total was a dollar off and the model judge let it through.
-        from .figure_totals import answer_issues
-        if issues := answer_issues(final):
+        # A figure typed with its cents garbled (the tools returned 1,647.38,
+        # the answer said 1,647.56) goes back the same way.
+        from .figure_totals import answer_issues, drift_issues
+        if issues := answer_issues(final) + drift_issues(final, _verifier_evidence(st.messages)):
             from .verifier import VerifierVerdict
             verification.attempted = True
             verification.verdict = VerifierVerdict(
                 confidence=0.0, accepts=False, issues=issues,
-                critique="The totals do not add up. " + " ".join(issues)
-                + " Recompute them with one tool call over the data and correct every place they appear.")
+                critique="The totals do not add up or the figures do not match the tools. "
+                + " ".join(issues)
+                + " Recompute them with one tool call over the data and copy the results exactly "
+                "into every place they appear.")
             return self._verifier_rejection(st, final, verification.verdict, coding_cfg)
         if (
             _risk_proportional_verify_enabled()

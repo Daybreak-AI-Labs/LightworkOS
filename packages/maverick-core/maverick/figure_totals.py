@@ -202,3 +202,33 @@ def rows_issues(rows: list[list[Any]]) -> list[str]:
     if len(rows) < 3 or not all(isinstance(cell, str) for cell in rows[0]):
         return []
     return _table_issues([str(cell) for cell in rows[0]], [list(row) for row in rows[1:]])[:MAX_ISSUES]
+
+
+_CENTS = re.compile(r"(?<![\w.,])[$€£]?\s?(\d{1,3}(?:,\d{3})+\.\d{2}|\d{2,}\.\d{2})(?![\d%])(?!\.\d)")
+
+
+def _cents_figures(text: str) -> set[Decimal]:
+    return {Decimal(raw.replace(",", "")) for raw in _CENTS.findall(text or "")}
+
+
+def drift_issues(answer: str, evidence: str) -> list[str]:
+    """Figures in ``answer`` that look like a tool's result with the cents
+    garbled: absent from everything the tools returned, while a tool returned
+    the same whole amount with different cents.
+
+    A follow-up's compute calls returned $1,647.38 and $20,203.24; its answer
+    gave $1,647.56 and $20,203.42, typed by hand. Only that shape is flagged:
+    a figure with a different whole amount is about something else."""
+    found = _cents_figures(evidence)
+    if not found:
+        return []
+    by_whole: dict[int, set[Decimal]] = {}
+    for value in found:
+        by_whole.setdefault(int(value), set()).add(value)
+    issues = []
+    for value in sorted(_cents_figures(answer)):
+        near = by_whole.get(int(value), set()) - {value}
+        if value not in found and near:
+            tool = min(near, key=lambda other: abs(other - value))
+            issues.append(f"The answer gives {_money(value, 2)}, but the tools returned {_money(tool, 2)}.")
+    return issues[:MAX_ISSUES]

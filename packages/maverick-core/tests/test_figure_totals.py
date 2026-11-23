@@ -106,3 +106,42 @@ async def test_a_final_answer_whose_total_is_off_is_revised_before_any_model_jud
     assert "The person sees only the new FINAL" in revision_brief
     goal = world.get_goal(gid)
     assert goal.status == "done" and "$7,401.94" in goal.result and "$7,402.94" not in goal.result
+
+
+def test_a_figure_typed_with_its_cents_garbled_is_named():
+    from maverick.figure_totals import drift_issues
+
+    evidence = "tool=compute -> 1647.38\ntool=compute -> 20203.24\nrate 33.62, previous total 20,254.96"
+    answer = ("Correct week 2 gross pay: $1,647.56. New total: $20,203.42. Rate $33.62. "
+              "Overtime 6 hours. The old total was $20,254.96; tax 8.25%.")
+    assert drift_issues(answer, evidence) == [
+        "The answer gives 1,647.56, but the tools returned 1,647.38.",
+        "The answer gives 20,203.42, but the tools returned 20,203.24."]
+    assert drift_issues("Week 2 pay is $1,647.38 and the total $20,203.24.", evidence) == []
+    # A different whole amount, a figure the tools never came near, or no
+    # tool figures at all: nothing to compare.
+    assert drift_issues("A fee of $1,650.00 and a deposit of $512.75.", evidence) == []
+    assert drift_issues("Total $1,647.56", "") == []
+
+
+@pytest.mark.asyncio
+async def test_a_final_figure_that_garbles_a_computed_one_is_revised(tmp_path, fake_llm, make_llm_response):
+    from maverick.llm import ToolCall
+
+    fake_llm.scripted = [
+        make_llm_response(text="Recomputing week 2.", tool_calls=[
+            ToolCall(id="c1", name="compute", input={"op": "evaluate", "expr": "33.62*40 + 33.62*1.5*6"})]),
+        make_llm_response(text="FINAL: Ben's corrected week 2 pay is $1,647.56."),
+        make_llm_response(text="FINAL: Ben's corrected week 2 pay is $1,647.38."),
+        make_llm_response(text='{"confidence": 0.95, "accepts": true, "critique": "ok", "issues": []}'),
+        make_llm_response(text="FINAL: (no skill)")]
+    world = WorldModel(path=tmp_path / "world.db")
+    gid = world.create_goal("recheck Ben's pay", "", owner="alice")
+
+    await run_goal(llm=fake_llm, world=world, budget=Budget(max_dollars=1.0), goal_id=gid,
+                   sandbox=LocalBackend(workdir=tmp_path), max_depth=1)
+
+    brief = str(fake_llm.calls[2].get("messages", ""))
+    assert "The answer gives 1,647.56, but the tools returned 1,647.38." in brief
+    goal = world.get_goal(gid)
+    assert goal.status == "done" and "$1,647.38" in goal.result and "1,647.56" not in goal.result
