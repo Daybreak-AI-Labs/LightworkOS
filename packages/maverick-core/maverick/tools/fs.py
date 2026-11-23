@@ -443,12 +443,12 @@ _SPREADSHEET_HINT = ("Make Excel files with the `spreadsheet` tool (op write, wi
 _WORD_HINT = ("Write the document as Markdown to a .docx path instead: write_file makes a Word "
               "document from it.")
 _TEXT_HINT = "Write the content in a text format (.md, .csv or .txt) instead."
-_SLIDES_HINT = ("Write the slides as Markdown (each `#` heading starts a slide) and convert them to a .pptx "
-                "path with the `pandoc` tool; if it is not in your tools yet, call find_tools with 'pandoc'.")
+_SLIDES_HINT = ("Write the slides as Markdown to a .pptx path instead (each `#` heading starts a slide): "
+                "write_file makes a PowerPoint deck from it.")
 _IMAGE_HINT = ("For a chart or diagram, write it as SVG to a .svg path instead: SVG is text, opens in any "
                "browser and can be inserted into Word or PowerPoint.")
 _BINARY_DOCUMENTS = {".xlsx": _SPREADSHEET_HINT, ".xlsm": _SPREADSHEET_HINT, ".xls": _SPREADSHEET_HINT,
-                     ".doc": _WORD_HINT, ".pptx": _SLIDES_HINT, ".ppt": _SLIDES_HINT,
+                     ".doc": _WORD_HINT, ".ppt": _SLIDES_HINT,
                      ".pdf": _TEXT_HINT, ".zip": _TEXT_HINT, ".png": _IMAGE_HINT, ".jpg": _IMAGE_HINT,
                      ".jpeg": _IMAGE_HINT, ".gif": _IMAGE_HINT, ".webp": _IMAGE_HINT, ".bmp": _IMAGE_HINT}
 
@@ -461,11 +461,14 @@ def _binary_document_refusal(path: str) -> str | None:
             f"nothing was written. {hint}")
 
 
-def _write_word(sandbox, target: Path, content: str) -> str:
-    """Markdown or plain text written to a .docx path, as a real Word document.
+def _write_office(sandbox, target: Path, content: str) -> str:
+    """Markdown or plain text written to a .docx or .pptx path, as a real Word
+    document or PowerPoint deck.
 
     Asked for a Word file, agents wrote Markdown under a .docx.md name and
-    delivered that: the pandoc tool is loaded only on request."""
+    delivered that: the pandoc tool is loaded only on request. Asked for a
+    PowerPoint deck, they had no way to make one without pandoc."""
+    from ..markdown_slides import UnwritableSlides, slides_from_markdown
     from ..markdown_word import UnwritableText, word_answer
     from ..sandbox.workspace_transfer import WorkspaceTransferError, _write
 
@@ -473,12 +476,14 @@ def _write_word(sandbox, target: Path, content: str) -> str:
     relative = target.relative_to(root).as_posix()
     if any(part.rstrip(" .").casefold() == ".git" for part in relative.split("/")):
         return "ERROR: refusing to write under .git/"
+    deck = target.suffix.lower() == ".pptx"
     try:
-        document = word_answer(content, "")
+        document = slides_from_markdown(content) if deck else word_answer(content, "")
         _write(root, relative, document, 0o644)
-    except (UnwritableText, OSError, WorkspaceTransferError) as e:
+    except (UnwritableText, UnwritableSlides, OSError, WorkspaceTransferError) as e:
         return f"ERROR: {e}"
-    return f"wrote a Word document ({len(document)} bytes) to {target} from your Markdown"
+    kind = "a PowerPoint deck" if deck else "a Word document"
+    return f"wrote {kind} ({len(document)} bytes) to {target} from your Markdown"
 
 
 def write_file(sandbox, goal_id: str | int | None = "default", world=None) -> Tool:
@@ -499,8 +504,8 @@ def write_file(sandbox, goal_id: str | int | None = "default", world=None) -> To
         if not ok:
             return f"ERROR: {msg}"
         content = args["content"]
-        if target.suffix.lower() == ".docx":
-            result = _write_word(sandbox, target, content)
+        if target.suffix.lower() in (".docx", ".pptx"):
+            result = _write_office(sandbox, target, content)
         else:
             # TOCTOU-safe write: a symlink swapped in after the path check can
             # never truncate or write content to a file outside the workspace.
@@ -528,7 +533,8 @@ def write_file(sandbox, goal_id: str | int | None = "default", world=None) -> To
             "LOCALIZE) or for files small enough that a full rewrite "
             "is appropriate. Avoid using write_file on existing "
             "production code — it's easy to drop content accidentally. "
-            "A `.docx` path gets a Word document made from Markdown content."
+            "A `.docx` path gets a Word document and a `.pptx` path a PowerPoint deck "
+            "(a slide per `#` heading) made from Markdown content."
         ),
         input_schema={
             "type": "object",

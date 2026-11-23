@@ -82,9 +82,10 @@ _BUILTIN_SOURCE_LIMIT = 2 * 1024 * 1024
 
 
 def _builtin_word(args: dict, sandbox) -> str | None:
-    """Markdown or plain text to .docx with the built-in Word writer, used when
-    the pandoc program is not installed. ``None`` when the request is not a
-    Markdown-to-Word conversion, so the caller reports pandoc missing."""
+    """Markdown or plain text to .docx or .pptx with the built-in writers, used
+    when the pandoc program is not installed. ``None`` when the request is not
+    such a conversion, so the caller reports pandoc missing. (PowerPoint: in a
+    container sandbox without pandoc an agent stopped to ask the person.)"""
     src = (args.get("input_path") or "").strip()
     dst = (args.get("output_path") or "").strip()
     if not src or not dst or sandbox is None:
@@ -92,8 +93,9 @@ def _builtin_word(args: dict, sandbox) -> str | None:
     source_suffix = Path(src).suffix.lower()
     reader = args.get("from_") or ("markdown" if source_suffix == ".txt" else _EXTENSIONS.get(source_suffix))
     writer = args.get("to") or _EXTENSIONS.get(Path(dst).suffix.lower())
-    if writer != "docx" or reader not in _MARKDOWN_READERS | {"plain"}:
+    if writer not in ("docx", "pptx") or reader not in _MARKDOWN_READERS | {"plain"}:
         return None
+    from ..markdown_slides import UnwritableSlides, slides_from_markdown
     from ..markdown_word import UnwritableText, word_answer
     from ..sandbox.workspace_transfer import WorkspaceTransferError, _read, _write
     from .document_processing import workspace_path
@@ -113,43 +115,32 @@ def _builtin_word(args: dict, sandbox) -> str | None:
         return f"ERROR: {e}"
     if len(raw) > _BUILTIN_SOURCE_LIMIT:
         return "ERROR: the document is larger than 2 MB; split it into smaller files"
+    text = raw.decode("utf-8", errors="replace")
     try:
-        document = word_answer(raw.decode("utf-8", errors="replace"), "")
-    except UnwritableText as e:
+        document = slides_from_markdown(text) if writer == "pptx" else word_answer(text, "")
+    except (UnwritableText, UnwritableSlides) as e:
         return f"ERROR: {e}"
     try:
         _write(root, target, document, 0o600)
     except (OSError, WorkspaceTransferError) as e:
         return f"ERROR: could not write {dst!r}: {e}"
     dst_path = root / target
-    return f"wrote {dst_path} (built-in Word writer; pandoc is not installed)"
-
-
-_NO_PANDOC_FOR_SLIDES = ("ERROR: pandoc is not installed where this task runs, so a PowerPoint file "
-                         "cannot be made here; nothing was written. Give the person the slides as a Word "
-                         "document instead (write the Markdown to a .docx path with write_file) and tell "
-                         "them PowerPoint was not available.")
+    kind = "PowerPoint" if writer == "pptx" else "Word"
+    return f"wrote {dst_path} (built-in {kind} writer; pandoc is not installed)"
 
 
 def _op_convert(args: dict, sandbox) -> str:
     err = _need_pandoc()
     if err:
-        return _builtin_word(args, sandbox) or _without_pandoc(args, err)
+        return _builtin_word(args, sandbox) or err
     result = _convert_with_pandoc(args, sandbox)
     # pandoc on the host PATH does not mean it is inside the task's sandbox
     # (a container image): there it exits 127, and the agent stopped to ask
-    # the person what to do. Markdown or text to Word still works built in.
+    # the person what to do. Markdown or text to Word and PowerPoint still
+    # work built in.
     if result.startswith("ERROR: pandoc (127)"):
-        return _builtin_word(args, sandbox) or _without_pandoc(args, result)
+        return _builtin_word(args, sandbox) or result
     return result
-
-
-def _without_pandoc(args: dict, error: str) -> str:
-    """What to do instead when pandoc is missing: a PowerPoint request gets
-    a way forward rather than a bare exit code (an agent asked the person)."""
-    dst = str(args.get("output_path") or "")
-    wants_slides = args.get("to") == "pptx" or Path(dst).suffix.lower() == ".pptx"
-    return _NO_PANDOC_FOR_SLIDES if wants_slides else error
 
 
 def _convert_with_pandoc(args: dict, sandbox) -> str:
@@ -327,8 +318,8 @@ def pandoc_tool(sandbox=None) -> Tool:
             "(string), html_to_markdown (string). File conversion accepts "
             "supported built-in formats and basic options; PDF requires an "
             "isolated document worker. Markdown or text to Word (.docx) works "
-            "without pandoc; everything else requires pandoc on PATH. Markdown "
-            "to PowerPoint (.pptx) makes a slide for each `#` heading."
+            "without pandoc, and so does Markdown to PowerPoint (.pptx), a slide "
+            "for each `#` heading; everything else requires pandoc on PATH."
         ),
         input_schema=_PANDOC_SCHEMA,
         fn=lambda args: _run(args, sandbox),

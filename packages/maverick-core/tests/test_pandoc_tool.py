@@ -104,9 +104,10 @@ def test_markdown_becomes_a_powerpoint_deck_and_keeps_the_image_rules(tmp_path):
     assert not (work / "leak.pptx").exists()
 
 
-def test_without_pandoc_a_powerpoint_request_gets_a_way_forward(monkeypatch, tmp_path):
+def test_without_pandoc_a_powerpoint_is_made_built_in(monkeypatch, tmp_path):
     # Live: in a Podman sandbox without pandoc the deck conversion exited 127
     # and the agent stopped to ask the person what to do.
+    import zipfile
     from types import SimpleNamespace
 
     import maverick.tools as tools_pkg
@@ -114,8 +115,9 @@ def test_without_pandoc_a_powerpoint_request_gets_a_way_forward(monkeypatch, tmp
 
     monkeypatch.setattr("shutil.which", lambda b: "/usr/bin/pandoc")
     monkeypatch.setattr(tools_pkg, "sandbox_run", lambda *a, **k: (127, "", "sh: 1: pandoc: not found"))
-    (tmp_path / "deck.md").write_text("# Catering\n\n- Fresh daily\n", encoding="utf-8")
+    (tmp_path / "deck.md").write_text("# Catering\n\n- Fresh daily\n\n# Pricing\n\n- $12 a head\n", encoding="utf-8")
     out = pandoc_tool(SimpleNamespace(workdir=str(tmp_path))).fn(
         {"op": "convert", "input_path": "deck.md", "output_path": "deck.pptx"})
-    assert out.startswith("ERROR") and "nothing was written" in out and ".docx" in out
-    assert not (tmp_path / "deck.pptx").exists()
+    assert out.startswith("wrote ") and "built-in PowerPoint writer" in out, out
+    with zipfile.ZipFile(tmp_path / "deck.pptx") as deck:
+        assert {"ppt/slides/slide1.xml", "ppt/slides/slide2.xml"} <= set(deck.namelist())
