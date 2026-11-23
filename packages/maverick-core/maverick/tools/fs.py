@@ -443,9 +443,14 @@ _SPREADSHEET_HINT = ("Make Excel files with the `spreadsheet` tool (op write, wi
 _WORD_HINT = ("Write the document as Markdown to a .docx path instead: write_file makes a Word "
               "document from it.")
 _TEXT_HINT = "Write the content in a text format (.md, .csv or .txt) instead."
+_SLIDES_HINT = ("Write the slides as Markdown (each `#` heading starts a slide) and convert them to a .pptx "
+                "path with the `pandoc` tool; if it is not in your tools yet, call find_tools with 'pandoc'.")
+_IMAGE_HINT = ("For a chart or diagram, write it as SVG to a .svg path instead: SVG is text, opens in any "
+               "browser and can be inserted into Word or PowerPoint.")
 _BINARY_DOCUMENTS = {".xlsx": _SPREADSHEET_HINT, ".xlsm": _SPREADSHEET_HINT, ".xls": _SPREADSHEET_HINT,
-                     ".doc": _WORD_HINT, ".pptx": _TEXT_HINT, ".ppt": _TEXT_HINT,
-                     ".pdf": _TEXT_HINT, ".zip": _TEXT_HINT}
+                     ".doc": _WORD_HINT, ".pptx": _SLIDES_HINT, ".ppt": _SLIDES_HINT,
+                     ".pdf": _TEXT_HINT, ".zip": _TEXT_HINT, ".png": _IMAGE_HINT, ".jpg": _IMAGE_HINT,
+                     ".jpeg": _IMAGE_HINT, ".gif": _IMAGE_HINT, ".webp": _IMAGE_HINT, ".bmp": _IMAGE_HINT}
 
 
 def _binary_document_refusal(path: str) -> str | None:

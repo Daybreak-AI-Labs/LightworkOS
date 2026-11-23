@@ -190,7 +190,8 @@ def test_read_file_reads_only_up_to_the_cap(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("name,hint", [
-    ("rent.xlsx", "`spreadsheet`"), ("report.doc", ".docx"), ("deck.pptx", "text format"),
+    ("rent.xlsx", "`spreadsheet`"), ("report.doc", ".docx"), ("deck.pptx", "`pandoc`"),
+    ("revenue_by_month.png", "SVG"), ("logo.JPG", "SVG"),
     ("summary.pdf", "text format"), ("Rent.XLSX", "`spreadsheet`"),
 ])
 def test_write_file_refuses_text_in_a_binary_document(tmp_path, name, hint):
