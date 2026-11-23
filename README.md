@@ -143,11 +143,12 @@ contract.
      maverick.domain_edit.workflow_readiness() is "needs_setup" on a fresh install. -->
 
 A catalog's size is not its capability. Lightwork ships 2,031 specialist packs
-in 54 business suites, but a pack starts only when every tool its
-workflow names is available. On a fresh install that blocks 965 of them: 686
-need only web search (`[capabilities] web_search = true`), and the rest need
-a connection for a named tool. Starter teams avoid that gap by running their
-specialists over the evidence you approved instead of fetching it.
+in 54 business suites, but a pack starts only when the tools its workflow
+names are available. On a fresh install 279 of them need a connection for a
+named tool first. Web search is on by default (off on an enterprise install)
+and never blocks a pack: without it, the pack starts and says where a live
+search would have helped. Starter teams avoid the connection gap by running
+their specialists over the evidence you approved instead of fetching it.
 
 ## Why it is built this way
 

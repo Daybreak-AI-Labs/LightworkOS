@@ -284,8 +284,9 @@ TENANT_RULES: dict[str, dict[str, tuple]] = {
         "goal_risk_require_human": ("rank", "never", ("medium", "high", ("never", "")), "high"),
     },
     "capabilities": {
-        **dict.fromkeys(("computer_use", "browser", "web_search", "mobile_tools", "ros", "code_exec"),
+        **dict.fromkeys(("computer_use", "browser", "mobile_tools", "ros", "code_exec"),
                         ("permission", False, (), None)),
+        "web_search": ("permission", True, (), None),
         "enforce": ("protection", False, (), None),
         "per_call_tokens": ("protection", False, (), None),
         "per_call_token_ttl": _consumer("capabilities.per_call_token_ttl", 30),

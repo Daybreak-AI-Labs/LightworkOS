@@ -1975,3 +1975,27 @@ def test_doctor_names_each_ignored_workspace_value_and_counts_it(tmp_path, monke
     assert "sandbox.workdir can only be set by your organisation" in out
     assert health._ATTENTION == ["workspace policy"]
     assert health._FAILURES == []
+
+
+def test_web_search_is_on_by_default_except_on_enterprise(tmp_path, monkeypatch):
+    from maverick import config
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("", encoding="utf-8")
+    monkeypatch.setenv("MAVERICK_CONFIG", str(cfg))
+    monkeypatch.delenv("MAVERICK_ENTERPRISE", raising=False)
+    config.reset_config_cache()
+    try:
+        assert config.get_capabilities()["web_search"] is True
+        monkeypatch.setenv("MAVERICK_ENTERPRISE", "1")
+        config.reset_config_cache()
+        assert config.get_capabilities()["web_search"] is False
+        cfg.write_text("[capabilities]\nweb_search = true\n", encoding="utf-8")
+        config.reset_config_cache()
+        assert config.get_capabilities()["web_search"] is True
+        monkeypatch.delenv("MAVERICK_ENTERPRISE")
+        cfg.write_text("[capabilities]\nweb_search = false\n", encoding="utf-8")
+        config.reset_config_cache()
+        assert config.get_capabilities()["web_search"] is False
+    finally:
+        config.reset_config_cache()

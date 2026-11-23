@@ -12,7 +12,7 @@ catalogue of built features and tools.
 
 | Section | Entries |
 | --- | ---: |
-| [Agent kernel and orchestration](#agent-kernel-and-orchestration) | 222 |
+| [Agent kernel and orchestration](#agent-kernel-and-orchestration) | 223 |
 | [Tools](#tools) | 10 |
 | [Channels](#channels) | prose |
 | [Sandboxes](#sandboxes) | prose |
@@ -33,7 +33,7 @@ catalogue of built features and tools.
 | [Customer workflow completion and readiness](#customer-workflow-completion-and-readiness) | 22 in 24 subsections |
 | [In-house legal workspace](#in-house-legal-workspace) | prose |
 
-463 entries in 20 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
+464 entries in 20 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
 <!-- toc:end -->
 
 ## Agent kernel and orchestration
@@ -281,6 +281,14 @@ Settings and the installation wizard.
   percent columns and formula columns are left alone. A figure that garbles
   the cents of one a tool returned (the tool said 1,647.38, the answer
   1,647.56) goes back the same way.
+- **Web search on by default** (`config.get_capabilities`,
+  `[capabilities] web_search`, off on an enterprise install) — agents can
+  search for current facts without setup. With no search key Lightwork uses
+  the free DuckDuckGo fallback; when that returns nothing (it often refuses
+  automated searches) the agent is told to open the official page directly
+  and to mention that a Tavily, Brave or SerpAPI key in Settings >
+  Integrations makes search reliable. A workspace settings file may turn it
+  off, never on.
 - **Follow-ups keep their chat's files and the last answer**
   (`tools/attachments.py`, `context_scaling.LAST_ANSWER_CHARS`) — a reply in
   a dashboard chat can read the files attached to earlier messages in that

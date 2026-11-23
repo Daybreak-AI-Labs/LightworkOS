@@ -40,9 +40,9 @@ def test_toggle_overlay_reflected(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     from maverick import config
     from maverick_dashboard import settings_store
+    assert config.get_capabilities()["web_search"] is True  # on by default
+    settings_store.set_toggle("capabilities", "web_search", False)
     assert config.get_capabilities()["web_search"] is False
-    settings_store.set_toggle("capabilities", "web_search", True)
-    assert config.get_capabilities()["web_search"] is True
     settings_store.set_toggle("features", "skills", False)
     assert config.get_features()["skills"] is False
 

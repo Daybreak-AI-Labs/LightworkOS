@@ -1772,17 +1772,30 @@ def get_deferred_tools(*, config: dict | None = None, default: bool = True) -> b
     return bool(default)
 
 
+def _web_search_default() -> bool:
+    """Web search is on unless this is an enterprise install, where a query
+    leaving the boundary stays off until an administrator turns it on.
+    Research tasks without it guessed page addresses and could not answer
+    questions about current facts."""
+    try:
+        from .enterprise import enterprise_enabled
+
+        return not enterprise_enabled()
+    except Exception:  # noqa: BLE001 -- an unreadable posture keeps it off
+        return False
+
+
 def get_capabilities() -> dict:
     """Return the [capabilities] section (computer_use / browser / web_search /
     mobile_tools / ros / code_exec / deferred_tools). These gate the optional
     high-impact tools in ``tools.base_registry``; all default off except
-    ``deferred_tools``, which defaults on."""
+    ``deferred_tools`` and ``web_search`` (off on an enterprise install)."""
     current = load_config()
     cfg = current.get("capabilities", {}) or {}
     return {
         "computer_use": coerce_bool(cfg.get("computer_use"), False),
         "browser": coerce_bool(cfg.get("browser"), False),
-        "web_search": coerce_bool(cfg.get("web_search"), False),
+        "web_search": coerce_bool(cfg.get("web_search"), _web_search_default()),
         "mobile_tools": coerce_bool(cfg.get("mobile_tools"), False),
         "ros": coerce_bool(cfg.get("ros"), False),
         # Programmatic tool calling: a sandboxed Python script that orchestrates

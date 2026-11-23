@@ -86,7 +86,8 @@ CASES = {
     "safety.goal_risk_floor": dict(os="medium", s="high", l="low", us="medium"),
     "safety.goal_risk_require_human": dict(os="high", s="medium", l="never", us="high"),
     **{f"capabilities.{name}": _perm(False) for name in (
-        "computer_use", "browser", "web_search", "mobile_tools", "ros", "code_exec")},
+        "computer_use", "browser", "mobile_tools", "ros", "code_exec")},
+    "capabilities.web_search": _perm(True),
     "capabilities.enforce": _prot(False),
     "capabilities.per_call_tokens": _prot(False),
     "capabilities.per_call_token_ttl": dict(os=30, s=10, l=60, us=10, ul=86400),

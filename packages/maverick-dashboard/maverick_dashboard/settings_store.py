@@ -122,7 +122,7 @@ _PROVIDER_NAMES = {p["name"] for p in PROVIDERS}
 
 # Mirror maverick.config.get_capabilities/get_features keys + defaults.
 CAPABILITY_DEFAULTS = {
-    "computer_use": False, "browser": False, "web_search": False,
+    "computer_use": False, "browser": False, "web_search": True,
     "mobile_tools": False, "ros": False, "code_exec": False,
 }
 
