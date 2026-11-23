@@ -134,7 +134,8 @@
   // Navigation actions only: open a page, focus a control, or filter a list.
   // The server names the destination from a closed registry; nothing changes.
   var LINK_HREF = /^\/[a-z0-9/-]{0,159}(\?[a-z_]{1,20}=[a-z0-9_-]{1,40})?$/;
-  var FOCUS_ID = /^[a-z][a-z0-9-]{0,63}$/;
+  // Settings rows are named like sa-sandbox-task_folders-label.
+  var FOCUS_ID = /^[a-z][a-z0-9_-]{0,79}$/;
   var FOCUSABLE = 'input:not([type=hidden]):not([readonly]):not([disabled]), select:not([disabled]), ' +
     'textarea:not([readonly]):not([disabled]), button:not([disabled]), summary, a[href], [tabindex]:not([tabindex="-1"])';
   function focusControl(id) {
@@ -194,7 +195,7 @@
   }
   // Arriving from a Copilot link: focus the control it named, then tidy the address.
   (function focusFromAddress() {
-    var match = /^#lw-focus=([a-z][a-z0-9-]{0,63})$/.exec(window.location.hash || '');
+    var match = /^#lw-focus=([a-z][a-z0-9_-]{0,79})$/.exec(window.location.hash || '');
     if (!match) return;
     var run = function () {
       focusControl(match[1]);
