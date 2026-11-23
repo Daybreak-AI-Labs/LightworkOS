@@ -598,7 +598,7 @@ def spreadsheet_read(sandbox=None) -> Tool:
                   if key in {"op", "path", "sheet", "limit"}}
     properties["op"] = {"type": "string", "enum": ["info", "read", "query"]}
     properties["paths"] = {"type": "array", "items": {"type": "string"}, "maxItems": _MAX_QUERY_FILES,
-                           "description": "For query: workspace CSV files; each is a table named after its file."}
+                           "description": "For query: workspace CSV or Excel (.xlsx, first sheet) files; each is a table named after its file."}
     properties["sql"] = {"type": "string", "description": "For query: one read-only SELECT."}
 
     def run(args):
@@ -611,8 +611,9 @@ def spreadsheet_read(sandbox=None) -> Tool:
     return Tool(
         name="spreadsheet_read",
         description=("Read existing workspace CSV/XLSX/XLSM metadata or rows, or compare CSV "
-                     "files exactly with op=query: one read-only SELECT over `paths`, each "
-                     "file a table named after it (invoices.csv -> invoices). Use query for "
+                     "or Excel files exactly with op=query: one read-only SELECT over `paths`, "
+                     "each file a table named after it (invoices.csv -> invoices; an Excel "
+                     "file's first sheet). Use query for "
                      "totals, duplicates and cross-file checks instead of comparing by eye. "
                      "Cannot write, edit or recalculate. Formula cells include cached values "
                      "and freshness status. Draft proposed changes in the response for a "
@@ -625,10 +626,11 @@ def spreadsheet_read(sandbox=None) -> Tool:
 
 _MAX_QUERY_FILES = 10
 _MAX_QUERY_BYTES = 2_000_000
+_XLSX_QUERY_ROWS = 20_000
 
 
 def _query(args: dict[str, Any], sandbox) -> str:
-    """op=query: one read-only SELECT over workspace CSV files (tools.csv_query)."""
+    """op=query: one read-only SELECT over workspace CSV or Excel files (tools.csv_query)."""
     import re
 
     from .csv_query import query_tables
@@ -645,8 +647,8 @@ def _query(args: dict[str, Any], sandbox) -> str:
             _workspace_gate(sandbox, str(raw), path, "read")
         except ValueError as e:
             return f"ERROR: {e}"
-        if path.suffix.lower() != ".csv":
-            return f"ERROR: {raw} is not a CSV file"
+        if path.suffix.lower() != ".csv" and not _is_xlsx(path):
+            return f"ERROR: {raw} is not a CSV or Excel (.xlsx) file"
         if not path.is_file():
             return f"ERROR: no such file {raw}"
         if path.stat().st_size > _MAX_QUERY_BYTES:
@@ -654,5 +656,22 @@ def _query(args: dict[str, Any], sandbox) -> str:
         name = re.sub(r"[^a-z0-9_]", "_", path.stem.lower()) or "data"
         if name in tables:
             return f"ERROR: two files would both be the table {name}"
-        tables[name] = (str(raw), path.read_text(encoding="utf-8", errors="replace"))
+        text = _xlsx_as_csv(path) if _is_xlsx(path) else path.read_text(encoding="utf-8", errors="replace")
+        tables[name] = (str(raw), text)
     return query_tables(tables, sql)
+
+
+def _xlsx_as_csv(path: Path) -> str:
+    """The first sheet of a workbook as CSV text, read through the same isolated
+    parser as op=read; a formula cell contributes its cached value. Without it,
+    an agent that wrote a workbook fell back to a shell command to total it."""
+    import csv
+    import json
+
+    rows = json.loads(_xlsx_isolated(path, "spreadsheet_read", sheet=None, limit=_XLSX_QUERY_ROWS))
+    out = io.StringIO()
+    writer = csv.writer(out, lineterminator="\n")
+    for row in rows:
+        writer.writerow(["" if cell is None else cell.get("cached_value", "") if isinstance(cell, dict) else cell
+                         for cell in row])
+    return out.getvalue()

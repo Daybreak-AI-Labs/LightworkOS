@@ -40,3 +40,19 @@ def test_the_query_stays_read_only_and_inside_the_workspace(tmp_path):
     assert tool.fn({"op": "query", "paths": ["../outside.csv"], "sql": "SELECT 1"}).startswith("ERROR")
     assert tool.fn({"op": "query", "paths": [], "sql": "SELECT 1"}).startswith("ERROR")
     assert tool.fn({"op": "write", "path": "x.csv", "rows": [["a"]]}).startswith("ERROR")
+
+
+def test_a_query_reads_an_excel_workbook(tmp_path):
+    # Live: to total a workbook it had written, an agent tried query, got
+    # "is not a CSV file", and fell back to a shell command waiting for approval.
+    import pytest
+    pytest.importorskip("openpyxl")
+    from maverick.tools.spreadsheet import spreadsheet
+
+    sandbox = _workspace(tmp_path)
+    rows = [["Due Date", "Payment"]] + [[f"2026-{m:02d}-01", 3200] for m in range(3, 13)]
+    assert spreadsheet(sandbox).fn({"op": "write", "path": "rent.xlsx", "rows": rows}).startswith("wrote")
+    tool = spreadsheet_read(sandbox)
+    out = tool.fn({"op": "query", "paths": ["rent.xlsx"],
+                   "sql": "SELECT COUNT(*) AS n, SUM(Payment) AS total FROM rent"})
+    assert out == "n,total\n10,32000.0" or out == "n,total\n10,32000", out
