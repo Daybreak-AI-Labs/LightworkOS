@@ -122,3 +122,26 @@ def test_compute_symbolic_op_is_stopped_at_its_time_limit(monkeypatch):
                                "expr": "exp(sin(x))*sin(x)**3/(1+cos(x)**7)"})
     assert out.startswith("ERROR") and "did not finish" in out
     assert time.monotonic() - started < 20
+
+
+@pytest.mark.parametrize("expr", [
+    "85000*(0.075/12)/(1-(1+0.075/12)^(-60))",
+    "85000*(0.075/12)/(1-(1+0.075/12)**(-60))",
+    "85000*(0.075/12)/(1-(1+0.075/12)**-60)",
+])
+def test_a_loan_payment_formula_evaluates(expr):
+    # Live: the standard loan formula failed six ways ("^" is XOR, and a
+    # negative exponent was "not a constant"), so the agent worked the
+    # payment out by hand and reported $1,700.56 instead of $1,703.23.
+    from maverick.tools.compute import compute
+
+    out = compute().fn({"op": "evaluate", "expr": expr})
+    assert out.startswith("1703.2"), out
+
+
+def test_the_exponent_bound_still_holds_for_caret_and_negative_powers():
+    from maverick.tools.compute import compute
+
+    tool = compute()
+    for expr in ("2**(-1000)", "9^9^9", "2^1000000", "2**x"):
+        assert tool.fn({"op": "evaluate", "expr": expr}).startswith("ERROR"), expr
