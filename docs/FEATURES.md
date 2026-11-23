@@ -12,7 +12,7 @@ catalogue of built features and tools.
 
 | Section | Entries |
 | --- | ---: |
-| [Agent kernel and orchestration](#agent-kernel-and-orchestration) | 221 |
+| [Agent kernel and orchestration](#agent-kernel-and-orchestration) | 222 |
 | [Tools](#tools) | 10 |
 | [Channels](#channels) | prose |
 | [Sandboxes](#sandboxes) | prose |
@@ -33,7 +33,7 @@ catalogue of built features and tools.
 | [Customer workflow completion and readiness](#customer-workflow-completion-and-readiness) | 22 in 24 subsections |
 | [In-house legal workspace](#in-house-legal-workspace) | prose |
 
-462 entries in 20 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
+463 entries in 20 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
 <!-- toc:end -->
 
 ## Agent kernel and orchestration
@@ -278,7 +278,16 @@ Settings and the installation wizard.
   still wrong it is marked unverified. A sheet written with `spreadsheet`
   whose total row does not add up comes back with a note to fix it. Subtotal,
   tax and total chains, group totals, discounts and averages are understood;
-  percent columns and formula columns are left alone.
+  percent columns and formula columns are left alone. A figure that garbles
+  the cents of one a tool returned (the tool said 1,647.38, the answer
+  1,647.56) goes back the same way.
+- **Follow-ups keep their chat's files and the last answer**
+  (`tools/attachments.py`, `context_scaling.LAST_ANSWER_CHARS`) — a reply in
+  a dashboard chat can read the files attached to earlier messages in that
+  chat by the same person (channel conversations do not share), and its brief
+  carries the whole previous answer up to 8,000 characters, so "update the
+  payroll" or "put those emails in a Word document" works on what came
+  before.
 - **Commands in a closed container run without asking**
   (`sandbox/contained_commands.py`, `[sandbox]
   contained_commands_without_approval`, default on, off on enterprise
