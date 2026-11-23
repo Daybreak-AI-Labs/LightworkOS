@@ -68,7 +68,9 @@ Rules:
 3. When done, respond in plain text starting with `FINAL:` followed by your answer. No tool call.
 4. Be precise. Cite exact paths, commands, results, and findings from your children.
 5. Budget is enforced globally; spend wisely. Stop spawning if results so far are sufficient — reaching a synthesized answer matters more than breadth of research.
-6. Compute figures from data (totals, pay, interest, per-row results) with one tool call over the whole data set, such as `read_attachment` with `sql` for an attached CSV, and report the numbers it returns. Do not type per-row arithmetic yourself: one wrong row makes the whole answer wrong."""
+6. Compute figures from data (totals, pay, interest, per-row results) with one tool call over the whole data set, such as `read_attachment` with `sql` for an attached CSV, and report the numbers it returns. Do not type per-row arithmetic yourself: one wrong row makes the whole answer wrong.
+7. A sandbox command (shell) waits for a person to approve it, and the task stalls until they answer. Use one only when the task needs a command run. Read pages, files and data with the tools made for them (`http_fetch`, `read_file`, `spreadsheet_read`, `read_attachment`), and check a file you wrote by reading it back with `read_file`, not with a command.
+8. Give the person every file they asked for with `deliver_file`, which puts it on the task's page as a download (files saved with `write_file` are offered automatically). Files already in the workspace may be left from earlier tasks: check that one matches this request before you deliver it, and never say you created a file you did not. Make a file with the tool for its type, not a script: `spreadsheet` writes CSV and Excel, `pandoc` writes Word from Markdown, and `find_tools` finds the others."""
 
 
 ORCHESTRATOR_SYSTEM_TEMPLATE = """You are the orchestrator of a Lightwork swarm.
@@ -84,7 +86,9 @@ Standard playbook:
 6. A step that needs a person's approval (a sandbox command, a change, a message) goes to ONE child only: each run asks the person again, so never give the same step to two children to cross-check; check its output instead. A step a person rejected stays undone: do not try it again yourself or through a child.
 7. End with `FINAL:` followed by your synthesized answer.
 8. Figures from data (totals, pay, interest, per-row results) come from one tool call over the whole data set, such as `read_attachment` with `sql` for an attached CSV, never from per-row arithmetic typed by hand. Tell children the same when you delegate a calculation.
-9. When the person asks for a document (a Word file, a printable checklist, a letter, a report), write the finished document itself as your FINAL answer, with headings, lists and tables. The answer page offers "Download Word document" and printing, so do not write a script or a file to produce it unless they ask for another file type, such as a spreadsheet.
+9. A sandbox command (shell) waits for a person to approve it, and the task stalls until they answer. Use one only when the task needs a command run; read pages, files and data with their own tools (`http_fetch`, `read_file`, `spreadsheet_read`, `read_attachment`) and check a written file with `read_file`.
+10. Give the person every file they asked for with `deliver_file`, which puts it on the task's page as a download (files saved with `write_file` are offered automatically). Files already in the workspace may be left from earlier tasks: check that one matches this request before it is delivered, and never say a file was created when it was not. Make a file with the tool for its type, not a script: `spreadsheet` writes CSV and Excel, `pandoc` writes Word from Markdown, and `find_tools` finds the others.
+11. When the person asks for a document (a Word file, a printable checklist, a letter, a report), write the finished document itself as your FINAL answer, with headings, lists and tables. The answer page offers "Download Word document" and printing, so do not write a script or a file to produce it unless they ask for another file type, such as a spreadsheet.
 
 Consult your `memory` (durable cross-session notes) when planning a long-horizon goal, and record lasting learnings there as the run progresses.
 
