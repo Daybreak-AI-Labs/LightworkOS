@@ -674,3 +674,19 @@ def test_the_run_passes_only_the_images_of_its_first_message():
     assert _verifier_images([{"role": "user", "content": [_IMAGE, text]}, {"role": "assistant", "content": "x"}]) == [_IMAGE]
     assert _verifier_images([{"role": "user", "content": "plain brief"}]) == []
     assert _verifier_images([]) == []
+
+
+@pytest.mark.asyncio
+async def test_an_attached_image_is_named_as_already_in_the_first_message(tmp_path, fake_llm, make_llm_response,
+                                                                         monkeypatch):
+    # Shown the image, an agent called view_image('attached_image') and then
+    # asked the person to upload it again.
+    world = WorldModel(tmp_path / "w.db")
+    gid = world.create_goal("Describe the image", "")
+    ctx = SwarmContext(llm=fake_llm, world=world, budget=Budget(max_dollars=1.0), blackboard=Blackboard(),
+                       sandbox=LocalBackend(workdir=tmp_path), goal_id=gid, max_depth=1, use_skills=False)
+    monkeypatch.setattr(Agent, "_goal_attachment_blocks", lambda self: [_IMAGE])
+    fake_llm.scripted = [make_llm_response(text="FINAL: A slide.")]
+    await Agent(ctx=ctx, role="worker", brief="Describe the image", depth=0).run()
+    first = fake_llm.calls[0]["messages"][0]["content"]
+    assert first[0] == _IMAGE and "you can see it directly" in first[-1]["text"]

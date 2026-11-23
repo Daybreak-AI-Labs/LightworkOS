@@ -343,8 +343,9 @@ def rules_text(chosen: list[str] | None = None) -> str:
         "recommend and why. Lightwork cannot spot every such choice for you, so "
         "ask whenever a choice touches one of these areas. Never act on an "
         "option before a person has chosen it. Choices about the format, length, "
-        "structure or wording of the work you deliver, and about which tool or "
-        "method to use, are yours: make a sensible one and say what you chose."
+        "structure or wording of the work you deliver, about which tool or "
+        "method to use and about whether to use files already in the workspace, "
+        "are yours: make a sensible one and say what you chose."
     )
 
 

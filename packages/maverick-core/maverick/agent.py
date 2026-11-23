@@ -5412,6 +5412,11 @@ class Agent:
         self._bb_cursor = bb.cursor()
         first_content: list[dict] | str
         if image_blocks:
+            if any(block.get("type") == "image" for block in image_blocks):
+                # Shown the image, an agent called view_image('attached_image')
+                # and then asked the person to upload it again.
+                brief_text += ("\n\nThe attached image is in this message: you can see it directly, "
+                               "and no tool is needed to view it.")
             first_content = image_blocks + [{"type": "text", "text": brief_text}]
         else:
             first_content = brief_text
