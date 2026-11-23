@@ -12,7 +12,7 @@ catalogue of built features and tools.
 
 | Section | Entries |
 | --- | ---: |
-| [Agent kernel and orchestration](#agent-kernel-and-orchestration) | 216 |
+| [Agent kernel and orchestration](#agent-kernel-and-orchestration) | 217 |
 | [Tools](#tools) | 10 |
 | [Channels](#channels) | prose |
 | [Sandboxes](#sandboxes) | prose |
@@ -33,7 +33,7 @@ catalogue of built features and tools.
 | [Customer workflow completion and readiness](#customer-workflow-completion-and-readiness) | 22 in 24 subsections |
 | [In-house legal workspace](#in-house-legal-workspace) | prose |
 
-457 entries in 20 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
+458 entries in 20 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
 <!-- toc:end -->
 
 ## Agent kernel and orchestration
