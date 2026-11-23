@@ -14,7 +14,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 from maverick import shoring
-from maverick.file_lock import cross_process_lock
+from maverick.file_lock import cross_process_lock, workspace_file_lock
 from maverick.tools import _rest_connector, _ssrf, pdf_reader, spreadsheet
 
 
@@ -120,7 +120,8 @@ def test_spreadsheet_failed_write_preserves_original(tmp_path, monkeypatch):
     result = spreadsheet._run({"op": "write", "path": str(path), "rows": [[750]]})
     assert result.startswith("ERROR:")
     assert path.read_bytes() == original
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["orders.csv", "orders.csv.lock"]
+    # The write lock lives in Lightwork's private lock folder, not beside the file.
+    assert sorted(p.name for p in tmp_path.iterdir() if p.name != ".maverick") == ["orders.csv"]
 
 
 def test_spreadsheet_macro_enabled_edits_are_refused_before_loading(tmp_path, monkeypatch):
@@ -270,7 +271,7 @@ def test_xlsx_replace_failure_preserves_original_and_cleans_temporary(tmp_path, 
     monkeypatch.setattr(spreadsheet.os, "replace", fail)
     result = spreadsheet._run({"op": "set_cell", "path": str(path), "cell": "B2", "value": 900})
     assert result.startswith("ERROR:") and path.read_bytes() == original
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["orders.xlsx", "orders.xlsx.lock"]
+    assert sorted(p.name for p in tmp_path.iterdir() if p.name != ".maverick") == ["orders.xlsx"]
 
 
 def test_pdf_local_size_limit_is_enforced_before_parser(tmp_path, monkeypatch):
@@ -445,7 +446,7 @@ def test_spreadsheet_mutations_wait_for_shared_file_lock(tmp_path, filename, op)
         return tool.fn({"op": op, "path": filename, "rows": [["updated"]], "cell": "A1", "value": "updated"})
 
     with ThreadPoolExecutor(max_workers=1) as pool:
-        with cross_process_lock(path, strict=True):
+        with workspace_file_lock(path, strict=True):
             future = pool.submit(mutate)
             assert started.wait(2)
             with pytest.raises(FutureTimeoutError):

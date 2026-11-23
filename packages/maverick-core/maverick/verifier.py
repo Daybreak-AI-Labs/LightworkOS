@@ -608,19 +608,22 @@ async def verify_final(
     verifier. Same signature + return type either way, so the call site is
     verifier-agnostic.
     """
+    # Images only when there are some, so callers and stubs written before
+    # the verifier took them keep working.
+    seen = {"images": images} if images else {}
     if force_ensemble or _ensemble_enabled():
         return await verify_proposal_ensemble(
             brief, proposal, llm, budget, proposer_model=proposer_model,
-            evidence=evidence, images=images,
+            evidence=evidence, **seen,
         )
     if _structured_verify_enabled():
         return await verify_proposal_structured(
             brief, proposal, llm, budget, proposer_model=proposer_model,
-            evidence=evidence, images=images,
+            evidence=evidence, **seen,
         )
     return await verify_proposal(
         brief, proposal, llm, budget, proposer_model=proposer_model,
-        evidence=evidence, images=images,
+        evidence=evidence, **seen,
     )
 
 
