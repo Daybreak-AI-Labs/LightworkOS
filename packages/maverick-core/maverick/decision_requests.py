@@ -312,6 +312,31 @@ def areas() -> list[str]:
     return _known(section.get("decision_areas"), DEFAULT_AREAS, "decision_areas")
 
 
+def ask_outside_areas() -> bool:
+    """``[approval] ask_outside_areas``: whether a choice outside :func:`areas`
+    still stops the run for a person. Off by default: such a choice is the
+    agent's to make (it asked people to pick an invoice style, an extra file,
+    a conversion tool). Unreadable settings keep asking."""
+    from ._envparse import coerce_bool
+
+    section, broken = _section()
+    return True if broken else coerce_bool(section.get("ask_outside_areas"), False)
+
+
+def needs_person(area: str) -> bool:
+    """Whether a decision in ``area`` waits for a person."""
+    return area in areas() or ask_outside_areas()
+
+
+def yours_to_decide(values: dict[str, Any]) -> str:
+    """The tool's reply for a choice this workspace leaves to the agent."""
+    option = values["options"][values["recommended"] - 1]
+    return ("This choice is not one this workspace asks a person about, so it is yours to make: "
+            f"go with your recommended option, \"{option['label']}\" ({option['effect']}), unless the "
+            "request says otherwise, carry on, and say in your answer what you chose. Nothing was "
+            "sent to a person and the run does not wait.")
+
+
 def admin_areas() -> list[str]:
     """Areas whose decisions need a workspace administrator. With unreadable
     settings every area does."""

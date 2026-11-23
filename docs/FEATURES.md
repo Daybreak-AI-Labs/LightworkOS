@@ -12,7 +12,7 @@ catalogue of built features and tools.
 
 | Section | Entries |
 | --- | ---: |
-| [Agent kernel and orchestration](#agent-kernel-and-orchestration) | 219 |
+| [Agent kernel and orchestration](#agent-kernel-and-orchestration) | 220 |
 | [Tools](#tools) | 10 |
 | [Channels](#channels) | prose |
 | [Sandboxes](#sandboxes) | prose |
@@ -33,7 +33,7 @@ catalogue of built features and tools.
 | [Customer workflow completion and readiness](#customer-workflow-completion-and-readiness) | 22 in 24 subsections |
 | [In-house legal workspace](#in-house-legal-workspace) | prose |
 
-460 entries in 20 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
+461 entries in 20 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
 <!-- toc:end -->
 
 ## Agent kernel and orchestration
@@ -264,6 +264,13 @@ Settings and the installation wizard.
   page numbers; standard fonts, Windows-1252 text) with no external program. Text into `.png`, `.jpg` and other
   binary images is refused with a pointer to SVG for charts. Decks are checked
   with python-pptx and LibreOffice, not Microsoft PowerPoint.
+- **Agents make their own choices outside the decision areas**
+  (`decision_requests.needs_person`, `[approval] ask_outside_areas`, default
+  off) — `request_decision` waits for a person only in the areas the
+  workspace chose (`decision_areas`). A choice outside them (a document's
+  style, an extra file, a conversion tool) gets "go with your recommendation
+  and say what you chose", and the run continues. The setup wizard asks, and
+  Settings > Safety > Approvals has the switch.
 - **Commands in a closed container run without asking**
   (`sandbox/contained_commands.py`, `[sandbox]
   contained_commands_without_approval`, default on, off on enterprise

@@ -984,3 +984,35 @@ def test_an_option_label_does_not_repeat_the_recommended_marker():
         "options": [{"label": "Academic-style report (Recommended)", "effect": "Headings and endnotes."},
                     {"label": "Magazine-style narrative", "effect": "A flowing feature."}]})
     assert [o["label"] for o in checked["options"]] == ["Academic-style report", "Magazine-style narrative"]
+
+
+def test_a_choice_outside_the_chosen_areas_is_the_agents_own(tmp_path):
+    # Live: runs stopped to ask people to pick an invoice style ("Minimal",
+    # "Standard", "Detailed"), whether to add a table file, and which tool to
+    # convert with, each filed as area "other".
+    from maverick.tools.request_decision import request_decision
+
+    world = _world(tmp_path)
+    gid = world.create_goal("make an invoice", "", owner="alice")
+    style = {**_REQUEST, "question": "Which invoice style?", "area": "other",
+             "options": [{"label": "Minimal", "effect": "Just the essentials."},
+                         {"label": "Standard", "effect": "Adds payment terms."}], "recommended": 2}
+    out = request_decision(world, gid).fn(style)
+    assert "yours to make" in out and '"Standard" (Adds payment terms.)' in out and "does not wait" in out
+    assert dr.for_goal(world, gid) == [] and dr.run_state(world, gid) is None
+    # A chosen area still waits for a person.
+    assert request_decision(world, gid).fn(_REQUEST).startswith("WAITING for decision")
+
+
+def test_an_operator_can_make_runs_ask_about_every_choice(tmp_path, monkeypatch):
+    from maverick import config
+    from maverick.tools.request_decision import request_decision
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("[approval]\nask_outside_areas = true\n", encoding="utf-8")
+    monkeypatch.setenv("MAVERICK_CONFIG", str(cfg))
+    config.reset_config_cache()
+    world = _world(tmp_path)
+    gid = world.create_goal("make an invoice", "", owner="alice")
+    out = request_decision(world, gid).fn({**_REQUEST, "area": "other"})
+    assert out.startswith("WAITING for decision") and len(dr.for_goal(world, gid)) == 1

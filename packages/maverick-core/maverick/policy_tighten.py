@@ -319,6 +319,8 @@ TENANT_RULES: dict[str, dict[str, tuple]] = {
     "approval": {
         "decision_areas": ("deny_list", list(_DECISION_AREAS), (), None),
         "decision_admin_areas": ("deny_list", list(_DECISION_ADMIN_AREAS), (), None),
+        # A workspace may make its runs ask about every choice, never fewer.
+        "ask_outside_areas": ("protection", False, (), None),
         "decision_expiry_hours": ("limit", _DECISION_EXPIRY.default, (), None),
         "record_checks": _consumer("approval.record_checks", True),
         "require_acknowledgement": _consumer("approval.require_acknowledgement", True),
