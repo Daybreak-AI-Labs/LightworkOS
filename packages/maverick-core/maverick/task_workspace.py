@@ -35,6 +35,13 @@ SHARED_NOTE = ("Files in the shared workspace, kept by the person. Use one only 
                "is not changed):")
 
 
+def shared_count_note(count: int) -> str:
+    """What a folder listing says about the shared workspace unless asked."""
+    things = "file or folder" if count == 1 else "files and folders"
+    return (f"The person also keeps {count} {things} in the shared workspace. Use them only when the request "
+            "refers to one: list them with list_dir and shared=true, then open one by name.")
+
+
 def enabled() -> bool:
     """``[sandbox] task_folders``: on unless an administrator turned it off."""
     from ._envparse import coerce_bool
@@ -223,5 +230,5 @@ def shared_listing(sandbox, target: Path) -> list[str]:
     return shown
 
 
-__all__ = ["SHARED_NOTE", "TASKS_DIRNAME", "bring_in", "enabled", "folder_for", "shared_listing",
+__all__ = ["SHARED_NOTE", "TASKS_DIRNAME", "bring_in", "enabled", "folder_for", "shared_count_note", "shared_listing",
            "shared_root", "use"]

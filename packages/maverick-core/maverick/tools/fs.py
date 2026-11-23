@@ -446,7 +446,9 @@ _TEXT_HINT = "Write the content in a text format (.md, .csv or .txt) instead."
 _SLIDES_HINT = ("Write the slides as Markdown to a .pptx path instead (each `#` heading starts a slide): "
                 "write_file makes a PowerPoint deck from it.")
 _IMAGE_HINT = ("For a chart or diagram, write it as SVG to a .svg path instead: SVG is text, opens in any "
-               "browser and can be inserted into Word or PowerPoint.")
+               "browser and can be inserted into Word or PowerPoint. If the person asked for a PNG or JPG, "
+               "deliver the SVG and tell them a PNG could not be made here; do not put the chart in another "
+               "kind of file.")
 _BINARY_DOCUMENTS = {".xlsx": _SPREADSHEET_HINT, ".xlsm": _SPREADSHEET_HINT, ".xls": _SPREADSHEET_HINT,
                      ".doc": _WORD_HINT, ".ppt": _SLIDES_HINT,
                      ".pdf": _TEXT_HINT, ".zip": _TEXT_HINT, ".png": _IMAGE_HINT, ".jpg": _IMAGE_HINT,
@@ -605,7 +607,7 @@ def list_dir(sandbox) -> Tool:
             target = _safe_resolve(sandbox, args.get("path", "."))
         except ValueError as e:
             return f"ERROR: {e}"
-        from ..task_workspace import SHARED_NOTE, shared_listing
+        from ..task_workspace import SHARED_NOTE, shared_count_note, shared_listing
         shared = shared_listing(sandbox, target)
         if not target.exists():
             return "\n".join([SHARED_NOTE, *shared]) if shared else f"ERROR: {target} not found"
@@ -632,8 +634,12 @@ def list_dir(sandbox) -> Tool:
                     for entry in sorted(it, key=lambda e: e.name)
                 ]
             result = "\n".join(entries) if entries else "(empty)"
-            if shared:
+            if shared and args.get("shared"):
                 result += "\n\n" + "\n".join([SHARED_NOTE, *shared])
+            elif shared:
+                # Names only on request: shown the person's files, agents asked
+                # whether to build on them instead of doing the task.
+                result += "\n\n" + shared_count_note(len(shared))
         except (PermissionError, OSError) as e:
             result = f"ERROR: {e}"
         finally:
@@ -648,7 +654,10 @@ def list_dir(sandbox) -> Tool:
         description="List files in a directory.",
         input_schema={
             "type": "object",
-            "properties": {"path": {"type": "string", "default": "."}},
+            "properties": {"path": {"type": "string", "default": "."},
+                           "shared": {"type": "boolean",
+                                      "description": ("Also name the files the person keeps in the shared "
+                                                      "workspace. Only when the request refers to their files.")}},
         },
         fn=fn,
         parallel_safe=True,
