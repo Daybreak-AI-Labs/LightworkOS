@@ -74,3 +74,50 @@ def test_word_falls_back_when_pandoc_is_missing_inside_the_sandbox(monkeypatch, 
     out = pandoc_tool(SimpleNamespace(workdir=str(tmp_path))).fn(
         {"op": "convert", "input_path": "jd.md", "output_path": "jd.docx"})
     assert out.startswith("wrote ") and (tmp_path / "jd.docx").exists(), out
+
+
+def test_markdown_becomes_a_powerpoint_deck_and_keeps_the_image_rules(tmp_path):
+    # Live: asked for a 5-slide PowerPoint, the agent's only route was a
+    # python-pptx script waiting on a person's shell approval.
+    import shutil
+    import zipfile
+
+    import pytest
+    from maverick.sandbox import LocalBackend
+    from maverick.tools.pandoc_tool import pandoc_tool
+
+    if shutil.which("pandoc") is None:
+        pytest.skip("pandoc is unavailable")
+    outside = tmp_path / "outside.png"
+    outside.write_bytes(b"\x89PNG\r\n\x1a\n")
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "deck.md").write_text("# Office catering\n\n- Fresh daily\n\n# Pricing\n\n- From $12 a head\n",
+                                  encoding="utf-8")
+    (work / "leak.md").write_text(f"# Slide\n\n![x]({outside})\n", encoding="utf-8")
+    tool = pandoc_tool(LocalBackend(workdir=work))
+    assert tool.fn({"op": "convert", "input_path": "deck.md", "output_path": "deck.pptx"}).startswith("wrote ")
+    with zipfile.ZipFile(work / "deck.pptx") as deck:
+        slides = [name for name in deck.namelist() if name.startswith("ppt/slides/slide")]
+        assert len(slides) == 2 and b"From $12 a head" in b"".join(deck.read(name) for name in slides)
+    assert tool.fn({"op": "convert", "input_path": "leak.md", "output_path": "leak.pptx"}).startswith("ERROR:")
+    assert not (work / "leak.pptx").exists()
+
+
+def test_without_pandoc_a_powerpoint_is_made_built_in(monkeypatch, tmp_path):
+    # Live: in a Podman sandbox without pandoc the deck conversion exited 127
+    # and the agent stopped to ask the person what to do.
+    import zipfile
+    from types import SimpleNamespace
+
+    import maverick.tools as tools_pkg
+    from maverick.tools.pandoc_tool import pandoc_tool
+
+    monkeypatch.setattr("shutil.which", lambda b: "/usr/bin/pandoc")
+    monkeypatch.setattr(tools_pkg, "sandbox_run", lambda *a, **k: (127, "", "sh: 1: pandoc: not found"))
+    (tmp_path / "deck.md").write_text("# Catering\n\n- Fresh daily\n\n# Pricing\n\n- $12 a head\n", encoding="utf-8")
+    out = pandoc_tool(SimpleNamespace(workdir=str(tmp_path))).fn(
+        {"op": "convert", "input_path": "deck.md", "output_path": "deck.pptx"})
+    assert out.startswith("wrote ") and "built-in PowerPoint writer" in out, out
+    with zipfile.ZipFile(tmp_path / "deck.pptx") as deck:
+        assert {"ppt/slides/slide1.xml", "ppt/slides/slide2.xml"} <= set(deck.namelist())

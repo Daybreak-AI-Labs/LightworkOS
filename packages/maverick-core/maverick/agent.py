@@ -69,8 +69,8 @@ Rules:
 4. Be precise. Cite exact paths, commands, results, and findings from your children.
 5. Budget is enforced globally; spend wisely. Stop spawning if results so far are sufficient — reaching a synthesized answer matters more than breadth of research.
 6. Compute figures from data (totals, pay, interest, per-row results) with one tool call over the whole data set, such as `read_attachment` with `sql` for an attached CSV, and report the numbers it returns. Do not type per-row arithmetic yourself: one wrong row makes the whole answer wrong.
-7. A sandbox command (shell) waits for a person to approve it, and the task stalls until they answer. Use one only when the task needs a command run. Read pages, files and data with the tools made for them (`http_fetch`, `read_file`, `spreadsheet_read`, `read_attachment`), and check a file you wrote by reading it back with `read_file`, not with a command.
-8. Give the person every file they asked for with `deliver_file`, which puts it on the task's page as a download (files saved with `write_file` are offered automatically). Files already in the workspace may be left from earlier tasks: check that one matches this request before you deliver it, and never say you created a file you did not. Make a file with the tool for its type, not a script: `spreadsheet` writes CSV and Excel, `write_file` to a `.docx` path writes Word from Markdown, and `find_tools` finds the others."""
+7. A sandbox command (shell) may wait for a person to approve it, and then the task stalls until they answer. Use one only when the task needs a command run. Read pages, files and data with the tools made for them (`http_fetch`, `read_file`, `spreadsheet_read`, `read_attachment`), and check a file you wrote by reading it back with `read_file`, not with a command.
+8. Give the person every file they asked for with `deliver_file`, which puts it on the task's page as a download (files saved with `write_file` are offered automatically). Files already in the workspace may be left from earlier tasks: check that one matches this request before you deliver it, and never say you created a file you did not. Make a file with the tool for its type, not a script: `spreadsheet` writes CSV and Excel, `write_file` to a `.docx` or `.pptx` path writes Word or PowerPoint (a slide per `#` heading) from Markdown, a chart is an SVG file, and `find_tools` finds the others."""
 
 
 ORCHESTRATOR_SYSTEM_TEMPLATE = """You are the orchestrator of a Lightwork swarm.
@@ -82,12 +82,12 @@ Standard playbook:
 2. Spawn: use `spawn_swarm` to fan out independent sub-tasks in parallel. Use `spawn_subagent` for sequential dependencies.
 3. Synthesize: aggregate findings from your children into a coherent answer.
 4. Verify: before finalizing, check that the answer satisfies the original goal.
-5. If you are blocked on info only the user can give, use `ask_user` (batched). For a judgment call a person must make, use `request_decision`.
+5. If you are blocked on info only the user can give, use `ask_user` (batched). For a judgment call a person must make, use `request_decision`. Never ask a person to confirm a choice you can make yourself (which files to use, what extras to add, how to style the result): make it and say what you chose.
 6. A step that needs a person's approval (a sandbox command, a change, a message) goes to ONE child only: each run asks the person again, so never give the same step to two children to cross-check; check its output instead. A step a person rejected stays undone: do not try it again yourself or through a child.
 7. End with `FINAL:` followed by your synthesized answer.
 8. Figures from data (totals, pay, interest, per-row results) come from one tool call over the whole data set, such as `read_attachment` with `sql` for an attached CSV, never from per-row arithmetic typed by hand. Tell children the same when you delegate a calculation.
-9. A sandbox command (shell) waits for a person to approve it, and the task stalls until they answer. Use one only when the task needs a command run; read pages, files and data with their own tools (`http_fetch`, `read_file`, `spreadsheet_read`, `read_attachment`) and check a written file with `read_file`.
-10. Give the person every file they asked for with `deliver_file`, which puts it on the task's page as a download (files saved with `write_file` are offered automatically). Files already in the workspace may be left from earlier tasks: check that one matches this request before it is delivered, and never say a file was created when it was not. Make a file with the tool for its type, not a script: `spreadsheet` writes CSV and Excel, `write_file` to a `.docx` path writes Word from Markdown, and `find_tools` finds the others.
+9. A sandbox command (shell) may wait for a person to approve it, and then the task stalls until they answer. Use one only when the task needs a command run; read pages, files and data with their own tools (`http_fetch`, `read_file`, `spreadsheet_read`, `read_attachment`) and check a written file with `read_file`.
+10. Give the person every file they asked for with `deliver_file`, which puts it on the task's page as a download (files saved with `write_file` are offered automatically). Files already in the workspace may be left from earlier tasks: check that one matches this request before it is delivered, and never say a file was created when it was not. Make a file with the tool for its type, not a script: `spreadsheet` writes CSV and Excel, `write_file` to a `.docx` or `.pptx` path writes Word or PowerPoint (a slide per `#` heading) from Markdown, a chart is an SVG file, and `find_tools` finds the others.
 11. When the person asks for a document (a Word file, a printable checklist, a letter, a report), write the finished document itself as your FINAL answer, with headings, lists and tables. The answer page offers "Download Word document" and printing, so do not write a script or a file to produce it unless they ask for another file type, such as a spreadsheet.
 
 Consult your `memory` (durable cross-session notes) when planning a long-horizon goal, and record lasting learnings there as the run progresses.
@@ -1506,6 +1506,15 @@ def _is_refusal(framed: str) -> bool:
     "this did not happen" answer, unlike an ordinary failure."""
     head = unframe_tool_output(framed)[:300].casefold()
     return head.startswith("error") and any(word in head for word in _REFUSALS)
+
+
+def _verifier_images(messages: list[dict]) -> list[dict]:
+    """The attached images the run was shown in its first message, for the
+    verifier to judge an answer about them against."""
+    first = messages[0].get("content") if messages and isinstance(messages[0], dict) else None
+    if not isinstance(first, list):
+        return []
+    return [block for block in first if isinstance(block, dict) and block.get("type") == "image"]
 
 
 def _verifier_evidence(messages: list[dict], limit: int = _VERIFIER_EVIDENCE_CHARS) -> str:
@@ -5403,6 +5412,11 @@ class Agent:
         self._bb_cursor = bb.cursor()
         first_content: list[dict] | str
         if image_blocks:
+            if any(block.get("type") == "image" for block in image_blocks):
+                # Shown the image, an agent called view_image('attached_image')
+                # and then asked the person to upload it again.
+                brief_text += ("\n\nThe attached image is in this message: you can see it directly, "
+                               "and no tool is needed to view it.")
             first_content = image_blocks + [{"type": "text", "text": brief_text}]
         else:
             first_content = brief_text
@@ -6132,6 +6146,7 @@ class Agent:
                     getattr(self.ctx, "escalate_verification", False)
                 ),
                 evidence=_verifier_evidence(st.messages),
+                images=_verifier_images(st.messages),
             )
             # Stamp the verdict so the autonomy servo can tighten the leash
             # on low-confidence runs.

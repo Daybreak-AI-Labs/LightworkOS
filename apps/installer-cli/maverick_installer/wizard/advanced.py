@@ -2174,6 +2174,22 @@ def _ask_task_folders(cfg: dict[str, Any]) -> dict[str, Any]:
     return cfg
 
 
+def _ask_contained_commands(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Commands in a closed container run without asking each time
+    (``[sandbox] contained_commands_without_approval``, maverick.sandbox.
+    contained_commands). On by default, so only "no" is written."""
+    if cfg.get("backend") in ("docker", "gvisor", "podman") and not _q_confirm(
+            "  Let agents run commands in the container without asking each time? "
+            "(Its network stays off, and every command is in the audit log.)", default=True):
+        cfg["contained_commands_without_approval"] = False
+    return cfg
+
+
+def _ask_work_area(cfg: dict[str, Any]) -> dict[str, Any]:
+    """The sandbox step's folder and command questions."""
+    return _ask_contained_commands(_ask_task_folders(cfg))
+
+
 def _ask_workspace_servers(cfg: dict[str, Any]) -> dict[str, Any]:
     """The sandbox step's last question, for clusters and remote computers.
 

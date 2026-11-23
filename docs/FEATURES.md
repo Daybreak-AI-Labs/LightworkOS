@@ -12,7 +12,7 @@ catalogue of built features and tools.
 
 | Section | Entries |
 | --- | ---: |
-| [Agent kernel and orchestration](#agent-kernel-and-orchestration) | 217 |
+| [Agent kernel and orchestration](#agent-kernel-and-orchestration) | 219 |
 | [Tools](#tools) | 10 |
 | [Channels](#channels) | prose |
 | [Sandboxes](#sandboxes) | prose |
@@ -33,7 +33,7 @@ catalogue of built features and tools.
 | [Customer workflow completion and readiness](#customer-workflow-completion-and-readiness) | 22 in 24 subsections |
 | [In-house legal workspace](#in-house-legal-workspace) | prose |
 
-458 entries in 20 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
+460 entries in 20 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
 <!-- toc:end -->
 
 ## Agent kernel and orchestration
@@ -255,6 +255,23 @@ Settings and the installation wizard.
   process leases, path protection, per-file drift checks and retained requests
   guard review and interrupted retry. No shell or external-action rollback is
   claimed. See [task-file recovery](task-file-recovery.md) for limits.
+- **Word and PowerPoint from Markdown, built in** (`markdown_word.py`,
+  `markdown_slides.py`) — `write_file` to a `.docx` or `.pptx` path, and the
+  `pandoc` tool when pandoc is not installed where the task runs, make a Word
+  document or a 16:9 PowerPoint deck (a slide per `#` heading, bullets with
+  levels, bold) with no external program. Text into `.png`, `.jpg` and other
+  binary images is refused with a pointer to SVG for charts. Decks are checked
+  with python-pptx and LibreOffice, not Microsoft PowerPoint.
+- **Commands in a closed container run without asking**
+  (`sandbox/contained_commands.py`, `[sandbox]
+  contained_commands_without_approval`, default on, off on enterprise
+  installs) — a shell command in a Docker, Podman or gVisor container with
+  its network off runs at once and is recorded in the audit log
+  (`shell_contained_run`), so a task that needs a short script no longer
+  stalls on the Approvals page. Host commands always ask; an explicit asking
+  consent mode, director mode and a workspace file turning it off keep the
+  approval. The setup wizard asks, and Settings > Protected work area has the
+  switch.
 - **A folder per conversation** (`task_workspace.py`, `[sandbox]
   task_folders`, default on) — an ordinary chat conversation works in
   `<workspace>/tasks/conversation-<id>`, so files left by other tasks are not

@@ -12182,12 +12182,18 @@ async def chat_reply(
     root_id = _thread_root_id(parent)
     root = parent if root_id == parent.id else (w.get_goal(root_id) or parent)
     assert_goal_access(request, root)
+    from . import chat_decision_reply
+
+    if not files and await run_in_threadpool(chat_decision_reply.answer, request, bg, w, parent.id, message):
+        return RedirectResponse(f"/chat/goal/{parent.id}", status_code=303)
+    waiting = await run_in_threadpool(chat_decision_reply.context, request, w, parent.id)
     title = message.splitlines()[0].strip()[:GOAL_TITLE_MAX_LENGTH] or message[:GOAL_TITLE_MAX_LENGTH]
     from .attachment_submission import submit
 
     receipt = await submit(
         w, files, token=request.headers.get("Idempotency-Key") or submission_key or secrets.token_urlsafe(24),
-        title=title, description=message, parent_id=root_id,
+        title=title, parent_id=root_id,
+        description=f"{message}\n\n{waiting}"[:GOAL_DESCRIPTION_MAX_LENGTH] if waiting else message,
         owner=root.owner or "",
         domain=root.domain or "",
         project_id=root.project_id,

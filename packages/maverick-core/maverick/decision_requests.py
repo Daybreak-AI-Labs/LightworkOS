@@ -343,8 +343,9 @@ def rules_text(chosen: list[str] | None = None) -> str:
         "recommend and why. Lightwork cannot spot every such choice for you, so "
         "ask whenever a choice touches one of these areas. Never act on an "
         "option before a person has chosen it. Choices about the format, length, "
-        "structure or wording of the work you deliver, and about which tool or "
-        "method to use, are yours: make a sensible one and say what you chose."
+        "structure or wording of the work you deliver, about which tool or "
+        "method to use and about whether to use files already in the workspace, "
+        "are yours: make a sensible one and say what you chose."
     )
 
 
@@ -774,6 +775,29 @@ def restart_repeats_note() -> str:
 
 
 ENDED = ("cancelled", "done", "completed", "failed", "error")
+
+
+_OPTION_REPLY = re.compile(r"(?:option|choice|number|no\.?|#)?\s*(\d{1,2})\s*[.)]?", re.IGNORECASE)
+
+
+def option_from_reply(decision: Decision, text: str) -> int | None:
+    """The option a chat reply picks when it is nothing but an option's number
+    ("2", "option 2", "#2") or its label, or ``None``."""
+    reply = " ".join(str(text or "").split()).strip(" .!")
+    match = _OPTION_REPLY.fullmatch(reply)
+    if match:
+        number = int(match.group(1))
+        return number if decision.option(number) is not None else None
+    labels = [" ".join(o["label"].split()).casefold() for o in decision.options]
+    return labels.index(reply.casefold()) + 1 if reply.casefold() in labels else None
+
+
+def reply_context(decision: Decision) -> str:
+    """What the next message needs to know when it replies to a waiting
+    question instead of choosing an option: the question and its options."""
+    options = "; ".join(f"{n}. {o['label']}: {o['effect']}" for n, o in enumerate(decision.options, 1))
+    return (f"This message replies to the question you asked before it: {decision.question} "
+            f"The options were: {options}.")
 
 
 def close_for_next_message(world, goal_id: int, *, actor: str, now: float | None = None) -> list[int]:

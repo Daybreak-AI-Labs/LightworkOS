@@ -268,7 +268,7 @@ def test_agents_know_a_command_waits_for_a_person():
     for role in ("orchestrator", "analyst"):
         text = select_base_template(role=role, depth=0 if role == "orchestrator" else 1,
                                     max_depth=3, coding_enabled=False)
-        assert "waits for a person" in text and "read_file" in text, role
+        assert "may wait for a person" in text and "read_file" in text, role
 
 
 def test_agents_write_a_requested_file_in_this_task():

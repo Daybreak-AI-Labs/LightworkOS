@@ -196,3 +196,41 @@ def test_attachment_list_and_workspace_tools_point_to_reading_by_id(tmp_path, mo
     stored = next(a.path for a in world.list_attachments(gid) if a.id == aid)
     out = ss._run({"op": "info", "path": stored}, SimpleNamespace(workdir=str(tmp_path / "work")))
     assert "read_attachment" in out and "sql" in out
+
+
+def _inventory(tmp_path, monkeypatch, sealed):
+    import io
+
+    import openpyxl
+
+    if sealed:
+        monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
+    book = openpyxl.Workbook()
+    sheet = book.active
+    sheet.title = "Inventory"
+    for row in (["SKU", "Item", "On hand", "Reorder level", "Reorder qty", "Unit cost"],
+                ["SKU-100", "Flour", 20, 10, 30, 39.75], ["SKU-101", "Sugar", 4, 20, 20, 23.21],
+                ["SKU-108", "Boxes", 18, 15, 20, 33.36], ["SKU-111", "Lids", 12, 15, 20, 33.77]):
+        sheet.append(row)
+    raw = io.BytesIO()
+    book.save(raw)
+    world = WorldModel(tmp_path / "w.db")
+    gid = world.create_goal("g", "")
+    rec = att.store(gid, "inventory.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    raw.getvalue(), root=tmp_path / "a")
+    aid = world.add_attachment(gid, rec.filename, rec.mime, rec.size_bytes, rec.sha256, str(rec.path))
+    return world, gid, aid
+
+
+def test_an_excel_attachment_reads_as_a_table_and_answers_an_exact_select(tmp_path, monkeypatch):
+    # Live: an attached inventory workbook could be read only through its
+    # cell-by-cell text companion, and the agent listed Boxes (18 on hand,
+    # level 15) as below its reorder level and invented the quantities.
+    for sealed in (False, True):
+        world, gid, aid = _inventory(tmp_path / str(sealed), monkeypatch, sealed)
+        tool = read_attachment_tool(world, gid)
+        table = tool.fn({"id": aid})
+        assert "first sheet as CSV" in table and "SKU-108,Boxes,18,15,20,33.36" in table
+        out = tool.fn({"id": aid, "sql": 'SELECT SKU, "Reorder qty" * "Unit cost" AS cost FROM data '
+                                        'WHERE "On hand" <= "Reorder level"'})
+        assert out == "SKU,cost\nSKU-101,464.2\nSKU-111,675.4", out

@@ -109,6 +109,10 @@ def test_a_shared_file_is_copied_in_on_first_read_and_the_original_is_kept(setup
     sandbox, folder = _task_sandbox(world, shared)
 
     listing = list_dir(sandbox).fn({"path": "."})
+    # Names only on request: shown the person's files, agents asked whether to
+    # build on them instead of doing the task.
+    assert "keeps 2 files and folders in the shared workspace" in listing and "prices.csv" not in listing
+    listing = list_dir(sandbox).fn({"path": ".", "shared": True})
     assert "Files in the shared workspace" in listing
     assert "- prices.csv" in listing and "tasks" not in listing.split("\n")
 

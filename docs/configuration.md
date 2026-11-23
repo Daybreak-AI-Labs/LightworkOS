@@ -239,6 +239,13 @@ timeout = 60
 # contained runs, tasks started outside a conversation and backends whose
 # folder is not on this computer keep using workdir directly.
 task_folders = true
+# Commands an agent runs in a Docker, Podman or gVisor container with its
+# network off run without a person's approval and are recorded in the audit
+# log (default true; false on an enterprise install). Commands on the host
+# (local backend) always ask. An explicit consent_mode of ask, auto-deny or
+# dashboard, a task's own consent mode (director mode) and a workspace file
+# setting this to false all keep asking.
+contained_commands_without_approval = true
 # A workspace file (tenants/<name>/config.toml) may set only policy keys that
 # have a stricter direction, and only make them stricter (a [budget] cap only
 # lower); every other key in [budget], [governance], [safety], [capabilities],

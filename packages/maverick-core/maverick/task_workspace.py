@@ -30,8 +30,16 @@ _SHARED_ORIGINS = ("codebase_feature", "flow_run", "schedule", "trigger")
 #: The dashboard's first workspace ("My workspace"), the one every
 #: single-workspace installation runs in (tenant_select_page.FIRST_WORKSPACE).
 FIRST_WORKSPACE_ID = "local"
-SHARED_NOTE = ("Files in the shared workspace (open one by name and a copy comes into this "
-               "task's folder; the original is not changed):")
+SHARED_NOTE = ("Files in the shared workspace, kept by the person. Use one only when the request "
+               "refers to it; open it by name and a copy comes into this task's folder (the original "
+               "is not changed):")
+
+
+def shared_count_note(count: int) -> str:
+    """What a folder listing says about the shared workspace unless asked."""
+    things = "file or folder" if count == 1 else "files and folders"
+    return (f"The person also keeps {count} {things} in the shared workspace. Use them only when the request "
+            "refers to one: list them with list_dir and shared=true, then open one by name.")
 
 
 def enabled() -> bool:
@@ -222,5 +230,5 @@ def shared_listing(sandbox, target: Path) -> list[str]:
     return shown
 
 
-__all__ = ["SHARED_NOTE", "TASKS_DIRNAME", "bring_in", "enabled", "folder_for", "shared_listing",
+__all__ = ["SHARED_NOTE", "TASKS_DIRNAME", "bring_in", "enabled", "folder_for", "shared_count_note", "shared_listing",
            "shared_root", "use"]

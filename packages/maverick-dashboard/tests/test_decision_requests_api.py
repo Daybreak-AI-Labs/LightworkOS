@@ -205,6 +205,60 @@ def test_replying_in_chat_closes_the_waiting_decision(env, monkeypatch):
     assert dr.get(world, decision.id).status == "closed"
 
 
+def _chat(env, monkeypatch):
+    client, world, goal, decision, who, started = env
+    monkeypatch.setattr(dashboard, "_world", lambda: world)
+    monkeypatch.setattr(dashboard, "require_permission", lambda *a, **k: None)
+    monkeypatch.setattr(dashboard, "assert_goal_access", lambda *a, **k: None)
+    monkeypatch.setattr(dashboard, "require_provider_or_400", lambda: None)
+    monkeypatch.setattr(dashboard, "check_goal_rate_limit", lambda request: None)
+    monkeypatch.setattr(dashboard, "caller_principal", lambda request: who["principal"], raising=False)
+    monkeypatch.setattr(dashboard, "_dispatch_goal", lambda *a, **k: None)
+    monkeypatch.setattr(dashboard, "_submission_conversation", lambda *a, **k: None)
+    sent = []
+
+    async def submit(w, files, **kwargs):
+        sent.append(kwargs["description"])
+        return {"goal_id": w.create_goal(kwargs["title"], kwargs["description"], owner="user:alice")}
+
+    monkeypatch.setattr("maverick_dashboard.attachment_submission.submit", submit)
+    return lambda message: client.post(f"/chat/goal/{goal}/reply", data={"message": message},
+                                       follow_redirects=False), sent
+
+
+@pytest.mark.parametrize("reply", ["2", "option 2", " #2. ", "Send it", "send it!"])
+def test_a_chat_reply_naming_an_option_answers_the_decision_in_place(env, monkeypatch, reply):
+    # Live: the task page asked for the choice on Approvals, the person typed
+    # "1" in the chat box, and that started a new task that saw only "1".
+    _client, world, goal, decision, _who, started = env
+    post, sent = _chat(env, monkeypatch)
+    response = post(reply)
+    assert response.status_code == 303 and response.headers["location"] == f"/chat/goal/{goal}"
+    answered = dr.get(world, decision.id)
+    assert answered.status == "answered" and answered.chosen == 2 and answered.decided_by == "user:alice"
+    assert started == [goal] and sent == []
+
+
+def test_a_person_who_may_not_answer_is_told_and_nothing_starts(env, monkeypatch):
+    _client, world, _goal, decision, who, started = env
+    who["principal"] = "user:bob"
+    post, sent = _chat(env, monkeypatch)
+    response = post("1")
+    assert response.status_code == 403
+    assert "Only the person who started this run" in response.text and "still waiting" in response.text
+    assert dr.get(world, decision.id).status == "open" and started == [] and sent == []
+
+
+def test_any_other_reply_starts_the_next_message_with_the_question(env, monkeypatch):
+    _client, world, _goal, decision, _who, started = env
+    post, sent = _chat(env, monkeypatch)
+    assert post("Send it, but only to our three biggest customers").status_code == 303
+    assert dr.get(world, decision.id).status == "closed" and started == []
+    [description] = sent
+    assert description.startswith("Send it, but only to our three biggest customers")
+    assert _REQUEST["question"] in description and "2. Send it: Customers get the summary today." in description
+
+
 def test_the_task_page_carries_its_own_decision_card():
     from pathlib import Path
 

@@ -26,7 +26,8 @@ def list_attachments_tool(world, goal_id: int | None) -> Tool:
         # The paths are storage locations outside the workspace: file tools
         # such as spreadsheet_read refuse them, and an agent that got that
         # refusal computed a payroll table by hand and got a row wrong.
-        lines.append("Read text, PDF and CSV files with read_attachment and the id. For a CSV, "
+        lines.append("Read text, PDF, CSV and Excel files with read_attachment and the id. For a CSV "
+                     "or Excel file, "
                      "pass `sql` (one SELECT over the table `data`) to compute totals or "
                      "per-row values exactly. Only view_image and read_pdf accept these paths.")
         return "\n".join(lines)
@@ -91,6 +92,8 @@ def read_attachment_tool(world, goal_id: int | None, sandbox=None) -> Tool:
         if match.mime == "application/pdf":
             text = _pdf_attachment_text(match, args.get("pages"), sandbox)
             return text if text.startswith("ERROR:") else _window(text, args)
+        if _is_workbook(match):
+            return _workbook(match, args)
         if not match.mime.startswith(READABLE_TEXT_MIMES):
             return (f"ERROR: {match.filename} is {match.mime}; pass an image's path to "
                     "view_image, and read a document through its .extracted.txt "
@@ -110,7 +113,8 @@ def read_attachment_tool(world, goal_id: int | None, sandbox=None) -> Tool:
                      "pass `pages` (for example '1-3,7') to read part of a long one. "
                      "A long file returns its first 100,000 characters: pass `search` "
                      "to get every line containing a phrase, or `offset` to read on. "
-                     "For a CSV file, pass `sql`: "
+                     "An Excel file returns its first sheet as CSV. "
+                     "For a CSV or Excel file, pass `sql`: "
                      "one read-only SELECT over the table `data` (its columns are the "
                      "header row). Use it for totals, counts, averages and per-row "
                      "calculations instead of working numbers out yourself, for example "
@@ -121,7 +125,7 @@ def read_attachment_tool(world, goal_id: int | None, sandbox=None) -> Tool:
         input_schema={"type": "object",
                       "properties": {"id": {"type": "integer"},
                                      "sql": {"type": "string",
-                                             "description": "Optional. One SELECT over `data` for a CSV."},
+                                             "description": "Optional. One SELECT over `data` for a CSV or Excel file."},
                                      "pages": {"type": "string",
                                                "description": "Optional. PDF page ranges, for example '1-3,7'."},
                                      "search": {"type": "string",
@@ -131,6 +135,32 @@ def read_attachment_tool(world, goal_id: int | None, sandbox=None) -> Tool:
                       "required": ["id"]},
         fn=fn,
     )
+
+
+_WORKBOOK_MIMES = ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                   "application/vnd.ms-excel.sheet.macroenabled.12")
+
+
+def _is_workbook(match) -> bool:
+    return (match.mime or "").lower() in _WORKBOOK_MIMES or match.filename.lower().endswith((".xlsx", ".xlsm"))
+
+
+def _workbook(match, args: dict) -> str:
+    """An Excel attachment's first sheet as a CSV table, so it can be read and
+    queried like a CSV. Its cell-by-cell text companion led an agent to list
+    items above their reorder level as below it."""
+    from ..attachments import read_bytes
+    from .csv_query import query_tables
+    from .spreadsheet import xlsx_bytes_as_csv
+
+    try:
+        text = xlsx_bytes_as_csv(read_bytes(match.path))
+    except Exception as exc:  # noqa: BLE001 -- surfaced to the agent as data
+        return f"ERROR: {match.filename} could not be read as a workbook: {exc}"
+    if args.get("sql"):
+        return query_tables({"data": (match.filename, text)}, str(args["sql"]))
+    return (f"{match.filename}, first sheet as CSV (cached values of formulas). "
+            "Pass `sql` to compute from it exactly.\n" + _window(text, args))
 
 
 def _pdf_attachment_text(match, pages, sandbox=None) -> str:

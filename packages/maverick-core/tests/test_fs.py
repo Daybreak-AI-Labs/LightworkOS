@@ -190,7 +190,8 @@ def test_read_file_reads_only_up_to_the_cap(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("name,hint", [
-    ("rent.xlsx", "`spreadsheet`"), ("report.doc", ".docx"), ("deck.pptx", "text format"),
+    ("rent.xlsx", "`spreadsheet`"), ("report.doc", ".docx"), ("deck.ppt", ".pptx"),
+    ("revenue_by_month.png", "SVG"), ("logo.JPG", "SVG"),
     ("summary.pdf", "text format"), ("Rent.XLSX", "`spreadsheet`"),
 ])
 def test_write_file_refuses_text_in_a_binary_document(tmp_path, name, hint):
@@ -232,3 +233,18 @@ def test_write_file_to_a_docx_path_makes_a_word_document_from_markdown(tmp_path)
     assert "Bookkeeper" in body and "Run payroll" in body and "# Bookkeeper" not in body
     assert [item.path for item in files_for(world, goal)] == ["docs/job.docx"]
     assert tool.fn({"path": "../job.docx", "content": "x"}).startswith("ERROR")
+
+
+def test_write_file_to_a_pptx_path_makes_a_deck_from_markdown(tmp_path):
+    # Live: asked for a 5-slide PowerPoint, an agent's only route was a
+    # python-pptx script waiting on a person's shell approval.
+    import zipfile
+
+    from maverick.sandbox import LocalBackend
+    from maverick.tools.fs import write_file
+
+    tool = write_file(LocalBackend(workdir=tmp_path))
+    out = tool.fn({"path": "pitch.pptx", "content": "# Catering\n- Fresh daily\n# Pricing\n- $12 a head\n"})
+    assert out.startswith("wrote a PowerPoint deck"), out
+    with zipfile.ZipFile(tmp_path / "pitch.pptx") as deck:
+        assert b"$12 a head" in deck.read("ppt/slides/slide2.xml")

@@ -301,6 +301,8 @@ TENANT_RULES: dict[str, dict[str, tuple]] = {
         "allow_root": ("permission", False, (), None),
         "reuse_container": ("permission", False, (), None),
         "cross_run_pool": ("permission", False, (), None),
+        # A workspace may make its container commands ask again, never stop asking.
+        "contained_commands_without_approval": ("permission", True, (), None),
         "run_as_user": _consumer("sandbox.run_as_user", 1000),
         "pids_limit": _consumer("sandbox.pids_limit", 512),
         "memory": _consumer("sandbox.memory", "4g"),

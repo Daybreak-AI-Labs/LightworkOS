@@ -76,6 +76,7 @@ from ._common import _valid_config_name as _valid_config_name
 from .advanced import _FEATURE_LOCKS as _FEATURE_LOCKS
 from .advanced import _LOCAL_FIRST_PROVIDERS as _LOCAL_FIRST_PROVIDERS
 from .advanced import _ask_chat_and_resource_followups as _ask_chat_and_resource_followups
+from .advanced import _ask_contained_commands as _ask_contained_commands
 from .advanced import _ask_dashboard_followups as _ask_dashboard_followups
 from .advanced import _ask_ed25519_keys as _ask_ed25519_keys
 from .advanced import _ask_external_agent_followups as _ask_external_agent_followups
@@ -88,6 +89,7 @@ from .advanced import _ask_regulated_deployment as _ask_regulated_deployment
 from .advanced import _ask_self_harness_evaluation_boundary as _ask_self_harness_evaluation_boundary
 from .advanced import _ask_self_harness_followups as _ask_self_harness_followups
 from .advanced import _ask_task_folders as _ask_task_folders
+from .advanced import _ask_work_area as _ask_work_area
 from .advanced import _ask_workspace_servers as _ask_workspace_servers
 from .advanced import _bad_network as _bad_network
 from .advanced import _cfg_advanced as _cfg_advanced
@@ -2802,7 +2804,7 @@ def pick_sandbox() -> dict[str, Any]:
             )
             console.print(kubernetes_deny_all_manifest(cfg["namespace"]), highlight=False)
             console.print("\n  kubectl apply -f - <<'EOF' ... EOF   (paste the manifest above)\n")
-    return _ask_workspace_servers(_ask_task_folders(cfg))
+    return _ask_workspace_servers(_ask_work_area(cfg))
 
 
 def pick_research_execution() -> dict[str, Any]:

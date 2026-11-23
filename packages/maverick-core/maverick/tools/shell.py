@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 import re
-from inspect import Signature, signature
+from inspect import signature
 
 from . import Tool
 
@@ -261,6 +261,40 @@ def _refusal_text(denied) -> str:
             "for this task, so no command was run")
 
 
+def _exec(sandbox, cmd: str, timeout_override: float | None):
+    if timeout_override is None:
+        return sandbox.exec(cmd)
+    # Determine support before dispatch. Retrying after a TypeError could
+    # duplicate a command whose backend raised after beginning the effect.
+    try:
+        signature(sandbox.exec).bind(cmd, timeout=timeout_override)
+    except (TypeError, ValueError):
+        return sandbox.exec(cmd)
+    return sandbox.exec(cmd, timeout=timeout_override)
+
+
+def _result_text(result) -> str:
+    out = result.stdout
+    if result.stderr:
+        out += f"\n[stderr]\n{result.stderr}"
+    return out + f"\n[exit {result.exit_code}]"
+
+
+def _run_contained(sandbox, cmd: str, timeout_override: float | None) -> str:
+    """A command in a closed container, run without a person's approval
+    (maverick.sandbox.contained_commands) and recorded in the audit log."""
+    from ..audit import audit_event
+    from ..authority_effects import authority_effect_fence
+
+    backend = type(sandbox)
+    audit_event("shell_contained_run", agent="shell", command=cmd[:2000],
+                backend=f"{backend.__module__}.{backend.__qualname__}",
+                workdir=str(getattr(sandbox, "workdir", ".")))
+    with authority_effect_fence():
+        result = _exec(sandbox, cmd, timeout_override)
+    return _result_text(result)
+
+
 def shell(sandbox) -> Tool:
     def _sandbox_target() -> dict[str, str]:
         backend = type(sandbox)
@@ -368,6 +402,9 @@ def shell(sandbox) -> Tool:
             except ValueError:
                 timeout_override = 600.0
         parameters = {"command": cmd, "timeout_seconds": timeout_override}
+        from ..sandbox.contained_commands import runs_without_asking
+        if runs_without_asking(sandbox):
+            return _run_contained(sandbox, cmd, timeout_override)
         try:
             permit = require_operation_consent(
                 "shell",
@@ -417,29 +454,13 @@ def shell(sandbox) -> Tool:
         # backends don't accept the kwarg.
         try:
             with consume_operation_consent(permit):
-                if timeout_override is None:
-                    result = sandbox.exec(cmd)
-                else:
-                    # Determine support before dispatch. Retrying after a
-                    # TypeError could duplicate a command whose backend raised
-                    # after beginning the external effect.
-                    try:
-                        exec_signature: Signature = signature(sandbox.exec)
-                        exec_signature.bind(cmd, timeout=timeout_override)
-                    except (TypeError, ValueError):
-                        result = sandbox.exec(cmd)
-                    else:
-                        result = sandbox.exec(cmd, timeout=timeout_override)
+                result = _exec(sandbox, cmd, timeout_override)
         except ApprovalCardError:
             return (
                 "ERROR: shell target, command, or approval authority changed; "
                 "review it again"
             )
-        out = result.stdout
-        if result.stderr:
-            out += f"\n[stderr]\n{result.stderr}"
-        out += f"\n[exit {result.exit_code}]"
-        return out
+        return _result_text(result)
 
     return Tool(
         name="shell",

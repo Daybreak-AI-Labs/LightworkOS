@@ -66,9 +66,20 @@ def _have_sympy() -> bool:
 
 def _evaluate_with_sympy(expr: str) -> str:
     import sympy
-    parsed = _safe_parse_expr(expr, evaluate=True)
-    val = sympy.N(parsed, 30)
-    return f"{val}"
+    parsed = _safe_parse_expr(expr, evaluate=True, exact=True)
+    if isinstance(parsed, (tuple, sympy.Tuple)):
+        # "a, b, c" is several figures at once: an agent pricing eight reorders
+        # in one call got "'Tuple' object has no attribute 'evalf'".
+        return ", ".join(_figure(sympy.N(item, 30)) for item in parsed)
+    return _figure(sympy.N(parsed, 30))
+
+
+def _figure(value) -> str:
+    """A result without the zeros that pad an exact decimal to 30 digits."""
+    text = f"{value}"
+    if "." in text and "e" not in text.lower():
+        text = text.rstrip("0").rstrip(".")
+    return text
 
 
 def _reject_unsafe_pow(node: ast.AST) -> None:
@@ -124,7 +135,10 @@ def _evaluate_fallback(expr: str) -> str:
         raise ValueError(f"expression longer than {_FALLBACK_MAX_LEN} characters")
     # Walk the AST to ensure only safe nodes.
     tree = ast.parse(expr, mode="eval")
+    listed = tree.body if isinstance(tree.body, ast.Tuple) and len(tree.body.elts) <= 50 else None
     for node in ast.walk(tree):
+        if node is listed:
+            continue  # "a, b, c" at the top only: a tuple inside could be multiplied
         if not isinstance(node, _FALLBACK_NODES):
             raise ValueError(f"not allowed in an expression: {type(node).__name__}")
         if isinstance(node, ast.Constant) and (
@@ -138,9 +152,10 @@ def _evaluate_fallback(expr: str) -> str:
         ):
             raise ValueError("only plain calls to the math functions are allowed")
         _reject_unsafe_pow(node)
-    code = compile(tree, "<expr>", "eval")
-    result = eval(code, {"__builtins__": {}}, safe_globals)
-    return repr(result)
+    parts = tree.body.elts if isinstance(tree.body, ast.Tuple) else [tree.body]
+    results = [eval(compile(ast.Expression(part), "<expr>", "eval"), {"__builtins__": {}}, safe_globals)
+               for part in parts]
+    return ", ".join(repr(result) for result in results)
 
 
 
@@ -174,9 +189,11 @@ def _validate_expr_safety(expr: str) -> None:
         _reject_unsafe_pow(node)
 
 
-def _safe_parse_expr(expr: str, *, evaluate: bool):
+def _safe_parse_expr(expr: str, *, evaluate: bool, exact: bool = False):
+    """``exact`` reads decimals as the exact fractions they write (23.21 is
+    2321/100): as binary floats, 16*23.21 came back as 371.360000000000013642."""
     import sympy
-    from sympy.parsing.sympy_parser import parse_expr
+    from sympy.parsing.sympy_parser import parse_expr, rationalize, standard_transformations
 
     _validate_expr_safety(expr)
     local_dict = {name: sympy.Symbol(name) for name in ("x", "y", "z", "t", "u", "v")}
@@ -196,7 +213,8 @@ def _safe_parse_expr(expr: str, *, evaluate: bool):
     # tool was dead on any machine with the [math] extra installed. Safety
     # is provided by _validate_expr_safety() above (a strict AST allowlist
     # run BEFORE this call), not by neutering sympy's namespace.
-    return parse_expr(expr, local_dict=local_dict, evaluate=evaluate)
+    transformations = (*standard_transformations, rationalize) if exact else standard_transformations
+    return parse_expr(expr, local_dict=local_dict, evaluate=evaluate, transformations=transformations)
 
 
 _VALID_OPS = {"evaluate", "simplify", "solve", "diff", "integrate"}

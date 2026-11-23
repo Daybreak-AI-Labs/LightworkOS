@@ -20,9 +20,10 @@ from . import Tool
 log = logging.getLogger(__name__)
 
 _READERS = frozenset({"markdown", "markdown_strict", "commonmark", "commonmark_x", "gfm", "html", "docx", "rst", "latex"})
-_WRITERS = frozenset({"markdown", "commonmark", "commonmark_x", "gfm", "html", "html5", "plain", "docx", "rst", "latex"})
+_WRITERS = frozenset({"markdown", "commonmark", "commonmark_x", "gfm", "html", "html5", "plain", "docx", "pptx", "rst",
+                      "latex"})
 _EXTENSIONS = {".md": "markdown", ".markdown": "markdown", ".html": "html", ".htm": "html",
-               ".docx": "docx", ".rst": "rst", ".tex": "latex", ".txt": "plain"}
+               ".docx": "docx", ".pptx": "pptx", ".rst": "rst", ".tex": "latex", ".txt": "plain"}
 _SAFE_ARGS = frozenset({"--standalone", "--toc", "--number-sections", "--wrap=none", "--wrap=auto", "--wrap=preserve"})
 
 
@@ -81,9 +82,10 @@ _BUILTIN_SOURCE_LIMIT = 2 * 1024 * 1024
 
 
 def _builtin_word(args: dict, sandbox) -> str | None:
-    """Markdown or plain text to .docx with the built-in Word writer, used when
-    the pandoc program is not installed. ``None`` when the request is not a
-    Markdown-to-Word conversion, so the caller reports pandoc missing."""
+    """Markdown or plain text to .docx or .pptx with the built-in writers, used
+    when the pandoc program is not installed. ``None`` when the request is not
+    such a conversion, so the caller reports pandoc missing. (PowerPoint: in a
+    container sandbox without pandoc an agent stopped to ask the person.)"""
     src = (args.get("input_path") or "").strip()
     dst = (args.get("output_path") or "").strip()
     if not src or not dst or sandbox is None:
@@ -91,8 +93,9 @@ def _builtin_word(args: dict, sandbox) -> str | None:
     source_suffix = Path(src).suffix.lower()
     reader = args.get("from_") or ("markdown" if source_suffix == ".txt" else _EXTENSIONS.get(source_suffix))
     writer = args.get("to") or _EXTENSIONS.get(Path(dst).suffix.lower())
-    if writer != "docx" or reader not in _MARKDOWN_READERS | {"plain"}:
+    if writer not in ("docx", "pptx") or reader not in _MARKDOWN_READERS | {"plain"}:
         return None
+    from ..markdown_slides import UnwritableSlides, slides_from_markdown
     from ..markdown_word import UnwritableText, word_answer
     from ..sandbox.workspace_transfer import WorkspaceTransferError, _read, _write
     from .document_processing import workspace_path
@@ -112,16 +115,18 @@ def _builtin_word(args: dict, sandbox) -> str | None:
         return f"ERROR: {e}"
     if len(raw) > _BUILTIN_SOURCE_LIMIT:
         return "ERROR: the document is larger than 2 MB; split it into smaller files"
+    text = raw.decode("utf-8", errors="replace")
     try:
-        document = word_answer(raw.decode("utf-8", errors="replace"), "")
-    except UnwritableText as e:
+        document = slides_from_markdown(text) if writer == "pptx" else word_answer(text, "")
+    except (UnwritableText, UnwritableSlides) as e:
         return f"ERROR: {e}"
     try:
         _write(root, target, document, 0o600)
     except (OSError, WorkspaceTransferError) as e:
         return f"ERROR: could not write {dst!r}: {e}"
     dst_path = root / target
-    return f"wrote {dst_path} (built-in Word writer; pandoc is not installed)"
+    kind = "PowerPoint" if writer == "pptx" else "Word"
+    return f"wrote {dst_path} (built-in {kind} writer; pandoc is not installed)"
 
 
 def _op_convert(args: dict, sandbox) -> str:
@@ -131,7 +136,8 @@ def _op_convert(args: dict, sandbox) -> str:
     result = _convert_with_pandoc(args, sandbox)
     # pandoc on the host PATH does not mean it is inside the task's sandbox
     # (a container image): there it exits 127, and the agent stopped to ask
-    # the person what to do. Markdown or text to Word still works built in.
+    # the person what to do. Markdown or text to Word and PowerPoint still
+    # work built in.
     if result.startswith("ERROR: pandoc (127)"):
         return _builtin_word(args, sandbox) or result
     return result
@@ -168,8 +174,8 @@ def _convert_with_pandoc(args: dict, sandbox) -> str:
     if (not isinstance(extra, list) or len(extra) > 16
             or any(not isinstance(item, str) or item not in _SAFE_ARGS for item in extra)):
         return "ERROR: unsupported Pandoc options"
-    if writer == "docx":
-        return _convert_to_docx(sandbox, src, dst, reader, extra)
+    if writer in ("docx", "pptx"):
+        return _convert_to_office(sandbox, src, dst, reader, extra, writer)
     from . import sandbox_run
     # --sandbox stops readers from pulling in other files (rst ``include``,
     # LaTeX ``\input``) and writers from fetching remote resources.
@@ -213,11 +219,13 @@ def _unsafe_image_target(node: Any, bases: tuple[Path, ...], workdir: Path) -> s
     return None
 
 
-def _convert_to_docx(sandbox, src: str, dst: str, reader: str, extra: list) -> str:
-    """Convert to docx without letting the document read or fetch other resources.
+def _convert_to_office(sandbox, src: str, dst: str, reader: str, extra: list, writer: str) -> str:
+    """Convert to docx or pptx without letting the document read or fetch other
+    resources. (pptx: asked for a PowerPoint deck, agents had no way to make
+    one but a script waiting on a person's approval.)
 
-    Distribution builds of pandoc read the docx template from data files,
-    which ``--sandbox`` forbids, so the docx writer cannot run sandboxed. The
+    Distribution builds of pandoc read the docx and pptx templates from data
+    files, which ``--sandbox`` forbids, so those writers cannot run sandboxed. The
     document is parsed under ``--sandbox`` into pandoc's JSON AST instead;
     images that are not relative workspace paths are refused, and only then
     is the AST written out as docx.
@@ -247,8 +255,8 @@ def _convert_to_docx(sandbox, src: str, dst: str, reader: str, extra: list) -> s
             return f"ERROR: pandoc produced no readable document: {type(e).__name__}"
         bad = _unsafe_image_target(ast, (workdir, Path(src).parent), workdir)
         if bad is not None:
-            return f"ERROR: docx output only embeds images by relative workspace path; refused {bad[:200]!r}"
-        cmd = ["pandoc", staging, "-o", dst, "-f", "json", "-t", "docx", *extra]
+            return f"ERROR: {writer} output only embeds images by relative workspace path; refused {bad[:200]!r}"
+        cmd = ["pandoc", staging, "-o", dst, "-f", "json", "-t", writer, *extra]
         code, _out, stderr = sandbox_run(sandbox, cmd, timeout=120)
         if code != 0:
             return _pandoc_error(code, stderr)
@@ -310,7 +318,8 @@ def pandoc_tool(sandbox=None) -> Tool:
             "(string), html_to_markdown (string). File conversion accepts "
             "supported built-in formats and basic options; PDF requires an "
             "isolated document worker. Markdown or text to Word (.docx) works "
-            "without pandoc; everything else requires pandoc on PATH."
+            "without pandoc, and so does Markdown to PowerPoint (.pptx), a slide "
+            "for each `#` heading; everything else requires pandoc on PATH."
         ),
         input_schema=_PANDOC_SCHEMA,
         fn=lambda args: _run(args, sandbox),
