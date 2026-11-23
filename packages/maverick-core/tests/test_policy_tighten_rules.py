@@ -108,6 +108,7 @@ CASES = {
     "sandbox.long_command_timeout": dict(os=600, s=300, l=1200, us=300, ul=86400),
     "sandbox.timeout": dict(os=60, s=30, l=120, us=30, ul=120),
     "sandbox.warm": _perm(False),
+    "sandbox.contained_commands_without_approval": _perm(True),
     # A workspace may add hosts a tool must not reach and narrow the hosts it
     # may reach; a tool rule that is not a table is ignored.
     "sandbox.tool": dict(os={"http_fetch": {"allow_egress": ["a.example", "b.example"]}},

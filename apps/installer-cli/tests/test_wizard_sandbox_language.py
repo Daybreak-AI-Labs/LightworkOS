@@ -170,3 +170,21 @@ def test_task_folders_are_on_unless_the_operator_says_no(monkeypatch):
     lines: list[str] = []
     wizard._emit_kv(lines, "task_folders", cfg["task_folders"])
     assert lines == ["task_folders = false"]
+
+
+def test_container_commands_run_without_asking_unless_the_operator_says_no(monkeypatch):
+    # Only "no" is written: the kernel default is on (off on enterprise installs).
+    wizard = _answers(monkeypatch, "docker - Throwaway Docker container (recommended)", "python     - python:3.12-slim (default)")
+    assert "contained_commands_without_approval" not in wizard.pick_sandbox()
+    asked: list[str] = []
+    picks = iter(["podman - Throwaway Podman container (rootless)", "python     - python:3.12-slim (default)"])
+    monkeypatch.setattr(wizard, "_q_select", lambda *a, **k: next(picks))
+    monkeypatch.setattr(wizard, "_q_confirm",
+                        lambda message, default=True: asked.append(message) or "without asking" not in message)
+    cfg = wizard.pick_sandbox()
+    assert cfg["contained_commands_without_approval"] is False and "task_folders" not in cfg
+    assert any("without asking each time" in message for message in asked)
+    monkeypatch.setattr(wizard, "_q_select", lambda *a, **k: "local  - Subprocess on this machine (fastest, least isolated)")
+    asked.clear()
+    assert "contained_commands_without_approval" not in wizard.pick_sandbox()
+    assert not any("without asking" in message for message in asked)

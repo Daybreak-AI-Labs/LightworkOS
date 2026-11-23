@@ -250,6 +250,18 @@ def task_consent_mode(mode: str | None) -> Iterator[None]:
         _TASK_MODE.reset(token)
 
 
+def person_must_decide() -> bool:
+    """Whether an operator or this task explicitly chose to have a person
+    decide (or to refuse): an ``ask``, ``auto-deny`` or ``dashboard`` consent
+    mode set in the environment or ``[safety] consent_mode``, or any consent
+    mode a task set for itself (director mode). Policies that relax an action
+    by default (contained shell commands) give way to it."""
+    chosen = (os.environ.get("MAVERICK_CONSENT_MODE") or "").strip().lower() or _configured_mode()
+    if chosen and chosen != "auto-approve":
+        return True
+    return bool(_TASK_MODE.get())
+
+
 def _resolve_mode(risk: str | None = None) -> str:
     """The consent mode for an action: the installation's, or the task's own
     when that is stricter (see :func:`task_consent_mode`)."""

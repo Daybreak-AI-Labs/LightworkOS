@@ -442,6 +442,12 @@ def _work_area(S, C) -> tuple:
           env=("MAVERICK_REQUIRE_CONTAINER_BACKEND",), weaker=False,
           warning="Agent commands may run directly on the server when no container is "
                   "available."),
+        S("sandbox", "contained_commands_without_approval", "Run commands in a closed container without asking",
+          "Commands an agent runs in a Docker, Podman or gVisor container with its network off run "
+          "at once and are recorded in the audit log. Commands on this computer itself always ask "
+          "first. Off unless turned on for an enterprise install.", "toggle", group, True, "maverick.sandbox.contained_commands",
+          subgroup="Work area", weaker=True,
+          warning="Agents will run commands in a closed container without asking anyone first."),
         S("sandbox", "reuse_container", "Keep one container for a whole task",
           "Start the work area once per task instead of once per command, which is faster.",
           "toggle", group, False, "maverick.sandbox", subgroup="Work area"),
