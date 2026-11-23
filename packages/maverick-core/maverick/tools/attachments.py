@@ -11,17 +11,60 @@ from __future__ import annotations
 
 from . import Tool
 
+_EARLIER = "  (from an earlier message in this conversation)"
+_MAX_EARLIER_GOALS = 50
+
+
+def _earlier_in_chat(world, goal_id: int) -> list[int]:
+    """Earlier goals of this goal's dashboard chat, from the same person,
+    newest first.
+
+    A follow-up ("Ben's hours were 46, not 50") is a new goal; with only its
+    own uploads it could not see the timesheet attached to the first message
+    and guessed. A dashboard chat is one conversation per thread; a channel
+    conversation (Slack and the like) spans everything a person ever sent
+    there, so it does not share."""
+    try:
+        rows = world.tenant_query(
+            "SELECT DISTINCT t2.goal_id FROM turns t "
+            "JOIN conversations c ON c.id=t.conversation_id "
+            "JOIN turns t2 ON t2.conversation_id=c.id "
+            "JOIN goals g ON g.id=t.goal_id JOIN goals g2 ON g2.id=t2.goal_id "
+            "WHERE t.goal_id=? AND t.role='user' AND c.channel='web' "
+            "AND t2.goal_id IS NOT NULL AND t2.goal_id<? "
+            "AND {tenant_exact:g.tenant_id} AND {tenant_exact:g2.tenant_id} "
+            "ORDER BY t2.goal_id DESC", (int(goal_id), int(goal_id)))
+        own = world.get_goal(goal_id)
+    except Exception:  # noqa: BLE001 -- no chat record: the goal's own files only
+        return []
+    owner = getattr(own, "owner", None)
+    earlier = []
+    for (other,) in rows[:_MAX_EARLIER_GOALS]:
+        goal = world.get_goal(int(other))
+        if goal is not None and getattr(goal, "owner", None) == owner:
+            earlier.append(int(other))
+    return earlier
+
+
+def visible_attachments(world, goal_id: int) -> list[tuple[object, bool]]:
+    """``(attachment, earlier)`` for this goal's uploads, then those of earlier
+    messages in its chat (``earlier`` True)."""
+    seen = [(a, False) for a in world.list_attachments(goal_id)]
+    for other in _earlier_in_chat(world, goal_id):
+        seen += [(a, True) for a in world.list_attachments(other)]
+    return seen
+
 
 def list_attachments_tool(world, goal_id: int | None) -> Tool:
     def fn(_args: dict) -> str:
         if goal_id is None:
             return "(no goal context; no attachments)"
-        atts = world.list_attachments(goal_id)
+        atts = visible_attachments(world, goal_id)
         if not atts:
             return "(no attachments)"
         lines = [
-            f"{a.id}  {a.filename}  {a.mime}  {a.size_bytes}B  {a.path}"
-            for a in atts
+            f"{a.id}  {a.filename}  {a.mime}  {a.size_bytes}B  {a.path}" + (_EARLIER if earlier else "")
+            for a, earlier in atts
         ]
         # The paths are storage locations outside the workspace: file tools
         # such as spreadsheet_read refuse them, and an agent that got that
@@ -35,7 +78,8 @@ def list_attachments_tool(world, goal_id: int | None) -> Tool:
     return Tool(
         name="list_attachments",
         description=(
-            "List files the user uploaded with this goal. Returns one line per "
+            "List files the user uploaded with this goal and with earlier messages in "
+            "this conversation. Returns one line per "
             "attachment: id, filename, mime, size, path. Use `read_attachment` "
             "with the id to read text, PDF or CSV content; pass an image's path "
             "to `view_image` to look at it."
@@ -66,7 +110,7 @@ def goal_attachment_bytes(world, goal_id: int | None, source: str):
 
     wanted = source.strip()
     try:
-        match = next((a for a in world.list_attachments(goal_id) if a.path == wanted), None)
+        match = next((a for a, _ in visible_attachments(world, goal_id) if a.path == wanted), None)
     except Exception:  # noqa: BLE001 -- no attachment store: nothing to match
         return None
     if match is None:
@@ -85,7 +129,7 @@ def read_attachment_tool(world, goal_id: int | None, sandbox=None) -> Tool:
             wanted = int(args["id"])
         except (KeyError, TypeError, ValueError):
             return "ERROR: 'id' must be an attachment id from list_attachments"
-        match = next((a for a in world.list_attachments(goal_id) if a.id == wanted), None)
+        match = next((a for a, _ in visible_attachments(world, goal_id) if a.id == wanted), None)
         if match is None:
             return f"ERROR: no attachment {wanted} on this goal"
         from ..attachments import READABLE_TEXT_MIMES, read_bytes

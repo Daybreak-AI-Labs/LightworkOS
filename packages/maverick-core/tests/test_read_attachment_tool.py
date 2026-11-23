@@ -234,3 +234,42 @@ def test_an_excel_attachment_reads_as_a_table_and_answers_an_exact_select(tmp_pa
         out = tool.fn({"id": aid, "sql": 'SELECT SKU, "Reorder qty" * "Unit cost" AS cost FROM data '
                                         'WHERE "On hand" <= "Reorder level"'})
         assert out == "SKU,cost\nSKU-101,464.2\nSKU-111,675.4", out
+
+
+def _thread(world, conversation, title, **kw):
+    goal_id = world.create_goal(title, "", **kw)
+    world.append_turn(conversation, "user", title, goal_id=goal_id)
+    return goal_id
+
+
+def test_a_follow_up_reads_the_files_attached_earlier_in_its_chat(tmp_path):
+    # Live: "Ben's week 2 hours were 46, not 50. Update the payroll" had no
+    # attachments, so the agent guessed a $150 change; the correct one was
+    # $201.72 from the timesheet attached to the first message.
+    from maverick.tools.attachments import goal_attachment_bytes, list_attachments_tool
+
+    world = WorldModel(tmp_path / "w.db")
+    chat = world.get_or_create_conversation("web", "alice/1").id
+    first = _thread(world, chat, "run payroll", owner="alice")
+    rec = att.store(first, "payroll.csv", "text/csv", b"employee,rate\nBen,33.62\n", root=tmp_path / "a")
+    aid = world.add_attachment(first, rec.filename, rec.mime, rec.size_bytes, rec.sha256, str(rec.path))
+    follow_up = _thread(world, chat, "Ben worked 46 hours", owner="alice")
+
+    listing = list_attachments_tool(world, follow_up).fn({})
+    assert f"{aid}  payroll.csv" in listing and "earlier message in this conversation" in listing
+    assert read_attachment_tool(world, follow_up).fn({"id": aid, "sql": "SELECT rate FROM data"}) == "rate\n33.62"
+    assert goal_attachment_bytes(world, follow_up, str(rec.path))[0].startswith(b"employee")
+
+    # Another person's message in the thread, another chat, and a channel
+    # conversation (one per person, across all their messages) do not share.
+    bob = _thread(world, chat, "bob asks", owner="bob")
+    other_chat = _thread(world, world.get_or_create_conversation("web", "alice/9").id, "new chat", owner="alice")
+    slack = world.get_or_create_conversation("slack", "alice")
+    slack_first = _thread(world, slack.id, "first", owner="alice")
+    old = att.store(slack_first, "old.csv", "text/csv", b"a\n1\n", root=tmp_path / "a")
+    old_id = world.add_attachment(slack_first, old.filename, old.mime, old.size_bytes, old.sha256, str(old.path))
+    slack_later = _thread(world, slack.id, "later", owner="alice")
+    for goal_id in (bob, other_chat, slack_later):
+        for wanted in (aid, old_id):
+            assert read_attachment_tool(world, goal_id).fn({"id": wanted}).startswith("ERROR: no attachment")
+        assert list_attachments_tool(world, goal_id).fn({}) == "(no attachments)"
