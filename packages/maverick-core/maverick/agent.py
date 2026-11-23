@@ -122,6 +122,43 @@ def _clean_for_screening(output, state):
     return ToolResultText(cleaned, state) if state is not None else cleaned
 
 
+#: Files an answer can name as something the person receives.
+_DELIVERABLE_SUFFIXES = (".xlsx", ".xlsm", ".xls", ".csv", ".docx", ".pptx", ".pdf", ".md",
+                         ".txt", ".png", ".jpg", ".jpeg", ".svg", ".zip", ".json", ".html")
+_NAMED_FILE = re.compile(r"[\w./-]+\.(?:" + "|".join(x[1:] for x in _DELIVERABLE_SUFFIXES) + r")\b",
+                         re.IGNORECASE)
+
+
+def _undelivered_named_files(final: str, sandbox, world, goal_id) -> list[str]:
+    """Workspace files the answer names that are not on the task's page."""
+    from pathlib import Path as _Path
+
+    workdir = getattr(sandbox, "workdir", None)
+    if not final or workdir is None or world is None:
+        return []
+    try:
+        from .task_files import files_for
+        delivered = {item.path for item in files_for(world, goal_id)}
+        root = _Path(workdir).resolve()
+    except Exception:  # noqa: BLE001 -- the hand-over check never blocks an answer
+        return []
+    named: list[str] = []
+    for match in _NAMED_FILE.finditer(final[:20_000]):
+        relative = match.group(0).strip("./") if not match.group(0).startswith("../") else ""
+        if not relative or relative in named or relative in delivered or relative.startswith("."):
+            continue
+        try:
+            path = (root / relative).resolve()
+            path.relative_to(root)
+        except (OSError, ValueError):
+            continue
+        if path.is_file() and not path.is_symlink():
+            named.append(relative)
+        if len(named) >= 10:
+            break
+    return named
+
+
 def select_base_template(
     *, role: str, depth: int, max_depth: int, coding_enabled: bool,
     is_root: bool = False,
@@ -5664,6 +5701,9 @@ class Agent:
         must revise."""
         self._begin_final()
         coding_cfg = self._coding_config()
+        coding = coding_cfg is not None and coding_cfg.enabled
+        if not coding and self._request_named_file_delivery(st, final):
+            return _NEXT_TURN
         if await self._validate_final_patch(st, final, coding_cfg) is _NEXT_TURN:
             return _NEXT_TURN
         verification = _FinalVerification()
@@ -5676,6 +5716,33 @@ class Agent:
                 return judged
             verification = judged
         return await self._finish_final(st, step, final, coding_cfg, verification)
+
+    def _request_named_file_delivery(self, st: _RunState, final: str) -> bool:
+        """Once per run, send the goal root back when its answer names a
+        document in the workspace that is not on the task's page.
+
+        Asked for a spreadsheet, agents answered "the file is ready for
+        download" about a file they never handed over (one left by an earlier
+        task), so the person had nothing to download. The agent still hands a
+        file over itself with ``deliver_file``: nothing is offered on its
+        behalf. Returns True when the request was appended."""
+        if (getattr(self, "_file_delivery_requested", False) or self.depth != 0
+                or not (self.role == "orchestrator" or getattr(self, "_is_goal_root", False))
+                or self.ctx.goal_id is None
+                or "deliver_file" not in {tool.name for tool in self.tools.all()}):
+            return False
+        names = _undelivered_named_files(final, self.ctx.sandbox, self.ctx.world, self.ctx.goal_id)
+        if not names:
+            return False
+        self._file_delivery_requested = True
+        listed = ", ".join(names)
+        st.bb.post(self.name, "verify", f"answer names files not yet handed over: {listed}")
+        st.messages.append({"role": "user", "content": (
+            f"Your answer names {listed}, which the person cannot download yet: only files on the "
+            "task's page are offered to them. Call deliver_file with the path of each file they "
+            "should receive, after checking it matches this request, then give your final answer "
+            "again. If a file is not one they asked for, or you did not make it, say so instead.")})
+        return True
 
     def _begin_final(self) -> None:
         """Forget the previous FINAL attempt's patch and verdict so a revised

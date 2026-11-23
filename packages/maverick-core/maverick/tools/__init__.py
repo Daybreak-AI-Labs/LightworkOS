@@ -829,8 +829,9 @@ class ToolRegistry:
 # Listing a name that isn't registered is harmless -- enable_deferred
 # intersects with the actual registry.
 CORE_TOOL_NAMES = frozenset({
-    # filesystem + execution
-    "read_file", "write_file", "list_dir", "shell", "read_tool_result",
+    # filesystem + execution; deliver_file is how a file reaches the person
+    # (the agent was told to use it and could not see it)
+    "read_file", "write_file", "list_dir", "deliver_file", "shell", "read_tool_result",
     # code editing
     "str_replace_editor", "apply_patch", "ast_edit", "preview_diff",
     # repo understanding
