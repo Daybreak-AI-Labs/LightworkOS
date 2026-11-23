@@ -268,3 +268,51 @@ def test_xlsx_bounds_noncanonical_parts_and_total_merged_area(tmp_path):
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr("unusual/sheet.bin", sheet.encode("utf-16"))
     assert "XML declarations" in ss._run({"op": "info", "path": str(path)})
+
+
+def test_xlsx_keeps_plain_calculations_as_formulas_and_neutralizes_the_rest(tmp_path):
+    # Live: a cash flow forecast's Profit column and Total row were written as
+    # '=B2-C2-D2 and '=SUM(B2:B13) text, so they never calculated in Excel.
+    import openpyxl
+
+    rows = [["Month", "Revenue", "Costs", "Profit"],
+            ["Jan", 40000, 26000, "=B2-C2"], ["Feb", 41200, 26420, "=ROUND(B3-C3, 2)"],
+            ["Total", "=SUM(B2:B3)", "=SUM($C$2:$C$3)", "=SUM(D2:D3)*1E0"],
+            ["Unsafe", '=HYPERLINK("http://x")', "=WEBSERVICE(A1)", "=cmd|'/c calc'!A1"],
+            ["More", "=Sheet2!A1", "=SUM([1]Book!A1)", "=INDIRECT(A1)"]]
+    path = tmp_path / "forecast.xlsx"
+    ss._xlsx_write(path, rows, None)
+    book = openpyxl.load_workbook(path)
+    sheet = book.active
+    assert [sheet["D2"].value, sheet["D3"].value] == ["=B2-C2", "=ROUND(B3-C3, 2)"]
+    assert [sheet["B4"].value, sheet["C4"].value, sheet["D4"].value] == [
+        "=SUM(B2:B3)", "=SUM($C$2:$C$3)", "=SUM(D2:D3)*1E0"]
+    assert all(cell.data_type == "f" for cell in (sheet["D2"], sheet["B4"]))
+    for cell in ("B5", "C5", "D5", "B6", "C6", "D6"):
+        assert sheet[cell].value.startswith("'="), cell
+    assert book.calculation.fullCalcOnLoad is True
+    ss._xlsx_set_cell(path, "E2", "=D2/B2", None)
+    ss._xlsx_set_cell(path, "E3", "=HYPERLINK(A1)", None)
+    sheet = openpyxl.load_workbook(path).active
+    assert sheet["E2"].value == "=D2/B2" and sheet["E3"].value == "'=HYPERLINK(A1)"
+
+
+def test_csv_still_neutralizes_every_formula(tmp_path):
+    path = tmp_path / "plain.csv"
+    ss._csv_write(path, [["=B2-C2", "=SUM(A1:A2)"]])
+    assert path.read_text(encoding="utf-8").splitlines()[0] == "'=B2-C2,'=SUM(A1:A2)"
+
+
+def test_writing_a_workbook_leaves_no_lock_file_in_the_workspace(tmp_path, monkeypatch):
+    # Live: every workbook a task wrote left budget.xlsx.lock beside it, in the
+    # person's folder and in the agent's file listings.
+    from maverick.sandbox import LocalBackend
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "private"))
+    work = tmp_path / "work"
+    work.mkdir()
+    tool = ss.spreadsheet(LocalBackend(workdir=work))
+    assert tool.fn({"op": "write", "path": "budget.xlsx", "rows": [["a", 1]]}).startswith("wrote")
+    assert tool.fn({"op": "set_cell", "path": "budget.xlsx", "cell": "B2", "value": 2}).startswith(("wrote", "set"))
+    assert sorted(p.name for p in work.iterdir()) == ["budget.xlsx"]
+    assert any((tmp_path / "private" / "locks" / "workspace-files").iterdir())

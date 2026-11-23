@@ -21,7 +21,7 @@ from importlib import resources
 from pathlib import Path
 
 from ..config import get_document_tools
-from ..file_lock import cross_process_lock, ensure_private_directory
+from ..file_lock import ensure_private_directory, workspace_file_lock
 from ..paths import data_dir
 from ..sandbox.docker import DockerBackend
 from ..sandbox.image_pull import local_image_missing
@@ -308,7 +308,7 @@ def run_document_job(request: dict, data: bytes, sandbox, *, destination: str | 
             return response.get("text", "") or "(empty OCR result)"
         output = _read(stage, job["output_name"])
         root, relative = target
-        with cross_process_lock(root / relative, strict=True):
+        with workspace_file_lock(root / relative, strict=True):
             if _existing_output(root, relative) != baseline:
                 raise RuntimeError("Document destination changed during processing; newer file retained")
             _write(root, relative, output, 0o600)

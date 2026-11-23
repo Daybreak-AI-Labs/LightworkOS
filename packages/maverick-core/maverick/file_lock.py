@@ -1453,6 +1453,21 @@ def open_private_append(
 
 
 @contextmanager
+def workspace_file_lock(target: str | Path, *, strict: bool = False):
+    """:func:`cross_process_lock` for a file in a person's workspace, with its
+    sidecar in Lightwork's private lock folder instead of next to the file: a
+    ``budget.xlsx.lock`` beside every workbook a task wrote showed up in the
+    person's folder and in agents' file listings."""
+    import hashlib
+
+    from .paths import maverick_home
+
+    key = hashlib.sha256(str(Path(target).resolve()).encode("utf-8", "surrogatepass")).hexdigest()
+    with cross_process_lock(maverick_home() / "locks" / "workspace-files" / key, strict=strict):
+        yield
+
+
+@contextmanager
 def cross_process_lock(target: str | Path, *, strict: bool = False):
     """Advisory exclusive lock serializing a read-modify-write of ``target``.
 

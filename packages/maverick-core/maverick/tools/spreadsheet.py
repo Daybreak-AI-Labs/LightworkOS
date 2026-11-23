@@ -36,7 +36,8 @@ _SPREADSHEET_SCHEMA = {
     "properties": {
         "op": {"type": "string", "enum": ["info", "read", "write", "set_cell", "recalculate"]},
         "path": {"type": "string", "description": "path to a .csv, .xlsx or .xlsm file"},
-        "rows": {"type": "array", "description": "rows (list of lists) for write",
+        "rows": {"type": "array", "description": ("rows (list of lists) for write; in an .xlsx a cell "
+                                                  "may be a calculation such as =B2-C2 or =SUM(B2:B13)"),
                  "items": {"type": "array"}},
         "sheet": {"type": "string", "description": "sheet name (xlsx; default: first/active)"},
         "cell": {"type": "string", "description": "A1-style cell for set_cell, e.g. 'B2'"},
@@ -121,6 +122,51 @@ def _neutralize_formula(value: Any) -> Any:
             # still let Excel/Sheets treat TAB/CR/LF as a control prefix.
             return "'" + value
     return value
+
+
+# Workbook formulas an agent may write: arithmetic over cells of this sheet
+# with these functions. No text, sheet or file references, links or DDE, so
+# nothing reaches outside the cell values. A cash flow forecast written as
+# '=B2-C2-D2 text never calculated in Excel.
+_PLAIN_FUNCTIONS = frozenset({
+    "ABS", "AND", "AVERAGE", "CEILING", "COUNT", "COUNTA", "FLOOR", "FV", "IF", "IFERROR", "INT",
+    "IPMT", "IRR", "MAX", "MEDIAN", "MIN", "MOD", "NOT", "NPER", "NPV", "OR", "PMT", "POWER", "PPMT",
+    "PRODUCT", "PV", "RATE", "ROUND", "ROUNDDOWN", "ROUNDUP", "SQRT", "SUM", "SUMPRODUCT",
+})
+_PLAIN_FORMULA_CHARS = re.compile(r"[A-Za-z0-9$.,:()+\-*/^%<>= ]+")
+_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*")
+_CELL = re.compile(r"[A-Za-z]{1,3}[0-9]{1,7}")
+
+
+def _plain_formula(value: Any) -> bool:
+    """Whether ``value`` is a workbook formula of the plain kind above."""
+    if not isinstance(value, str) or not value.startswith("=") or len(value) > 2000:
+        return False
+    body = value[1:].replace("$", "")
+    if not body.strip() or not _PLAIN_FORMULA_CHARS.fullmatch(body):
+        return False
+    for word in _NAME.finditer(body):
+        if body[word.end():].lstrip().startswith("("):
+            if word.group(0).upper() not in _PLAIN_FUNCTIONS:
+                return False
+        elif not _CELL.fullmatch(word.group(0)) and not re.fullmatch(r"[Ee][0-9]+", word.group(0)):
+            return False
+    return True
+
+
+def _xlsx_value(value: Any) -> Any:
+    """A workbook cell: a plain formula stays a formula, anything else that
+    could run as one is neutralized as in a CSV."""
+    return value if _plain_formula(value) else _neutralize_formula(value)
+
+
+def _recalculate_on_open(workbook) -> None:
+    """The file holds no computed values for new formulas; have the app work
+    them out when it opens the file."""
+    try:
+        workbook.calculation.fullCalcOnLoad = True
+    except AttributeError:  # pragma: no cover -- an openpyxl without calc properties
+        pass
 
 
 # ---- CSV --------------------------------------------------------------------
@@ -366,7 +412,8 @@ def _isolated_xlsx_set_cell(
             ws = wb[sheet] if sheet and sheet in wb.sheetnames else (
                 wb.create_sheet(sheet) if sheet else wb.active
             )
-            ws[cell] = _neutralize_formula(value)
+            ws[cell] = _xlsx_value(value)
+            _recalculate_on_open(wb)
             wb.save(output)
         finally:
             wb.close()
@@ -377,11 +424,15 @@ def _isolated_xlsx_set_cell(
 
 
 def _xlsx_isolated(path: Path, name: str, **kwargs) -> str:
+    return _xlsx_isolated_bytes(_xlsx_bytes(path), name, **kwargs)
+
+
+def _xlsx_isolated_bytes(data: bytes, name: str, **kwargs) -> str:
     from ..parser_isolation import parse_isolated
     if not _XLSX_PARSER_SLOTS.acquire(timeout=0.25):
         raise RuntimeError("spreadsheet parsing is busy; retry later")
     try:
-        result = parse_isolated(name, _xlsx_bytes(path), timeout=30.0, **kwargs)
+        result = parse_isolated(name, data, timeout=30.0, **kwargs)
     finally:
         _XLSX_PARSER_SLOTS.release()
     if not isinstance(result, str):
@@ -398,7 +449,8 @@ def _xlsx_write(path: Path, rows: list[list], sheet: str | None) -> None:
         if sheet:
             ws.title = sheet
         for row in rows:
-            ws.append([_neutralize_formula(c) for c in row])
+            ws.append([_xlsx_value(c) for c in row])
+        _recalculate_on_open(wb)
         with _atomic_destination(path) as temporary:
             wb.save(temporary)
     finally:
@@ -419,7 +471,8 @@ def _xlsx_set_cell(path: Path, cell: str, value: Any, sheet: str | None) -> None
             ws = wb.active
             if sheet:
                 ws.title = sheet
-        ws[cell] = _neutralize_formula(value)
+        ws[cell] = _xlsx_value(value)
+        _recalculate_on_open(wb)
         with _atomic_destination(path) as temporary:
             wb.save(temporary)
     finally:
@@ -438,9 +491,9 @@ def _special_operation(path, op, sandbox):
     if op == "recalculate":
         if not _is_xlsx(path) or not path.is_file():
             return "ERROR: recalculate requires an existing .xlsx or .xlsm workbook"
-        from ..file_lock import cross_process_lock
+        from ..file_lock import workspace_file_lock
         from .document_processing import recalculate
-        with cross_process_lock(path, strict=True):
+        with workspace_file_lock(path, strict=True):
             return recalculate(path, sandbox)
     return None
 
@@ -483,8 +536,8 @@ def _set_cell_operation(path, args, sheet, goal_id="default"):
     if not _is_single_cell(cell):
         return f"ERROR: set_cell needs a single A1 cell such as 'B2', not {cell[:40]!r}"
     _charge_quota([[cell, args.get("value")]], goal_id)
-    from ..file_lock import cross_process_lock
-    with cross_process_lock(path, strict=True):
+    from ..file_lock import workspace_file_lock
+    with workspace_file_lock(path, strict=True):
         if path.exists():
             import base64
             encoded = _xlsx_isolated(
@@ -563,8 +616,8 @@ def _run(args: dict[str, Any], sandbox=None, goal_id="default") -> str:
                 return "ERROR: write requires rows (list of lists)"
             norm = [list(r) for r in rows]
             _charge_quota(norm, goal_id)
-            from ..file_lock import cross_process_lock
-            with cross_process_lock(path, strict=True):
+            from ..file_lock import workspace_file_lock
+            with workspace_file_lock(path, strict=True):
                 if _is_xlsx(path):
                     _xlsx_write(path, norm, sheet)
                 else:
@@ -668,10 +721,15 @@ def _xlsx_as_csv(path: Path) -> str:
     """The first sheet of a workbook as CSV text, read through the same isolated
     parser as op=read; a formula cell contributes its cached value. Without it,
     an agent that wrote a workbook fell back to a shell command to total it."""
+    return xlsx_bytes_as_csv(_xlsx_bytes(path))
+
+
+def xlsx_bytes_as_csv(data: bytes) -> str:
+    """:func:`_xlsx_as_csv` for a workbook already in memory (an attachment)."""
     import csv
     import json
 
-    rows = json.loads(_xlsx_isolated(path, "spreadsheet_read", sheet=None, limit=_XLSX_QUERY_ROWS))
+    rows = json.loads(_xlsx_isolated_bytes(data, "spreadsheet_read", sheet=None, limit=_XLSX_QUERY_ROWS))
     out = io.StringIO()
     writer = csv.writer(out, lineterminator="\n")
     for row in rows:
