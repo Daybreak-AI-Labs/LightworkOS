@@ -48,6 +48,9 @@ LEGACY_TOOL_RESULT_BYTES = 32_000
 # unbounded prompt (budget caps still apply on top of all of this).
 _MAX_HISTORY_TURNS = 200
 _MAX_HISTORY_TURN_CHARS = 8_000
+#: The latest answer in a conversation is replayed up to this many characters
+#: whatever the model's window: a follow-up acts on it.
+LAST_ANSWER_CHARS = _MAX_HISTORY_TURN_CHARS
 _MAX_COMPACT_WINDOW_TURNS = 500
 _MAX_COMPACT_TARGET_TOKENS = 200_000
 _MAX_OUTPUT_TOKENS_CEILING = 32_000

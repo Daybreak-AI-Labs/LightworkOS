@@ -1270,15 +1270,22 @@ async def _build_orchestrator_brief(
         from . import context_compactor as _cc
         from . import context_scaling as _cs
         _turn_chars = _cs.history_turn_chars(_orch_model)
+
+        def _bounded(turns):
+            # The latest answer is what a follow-up acts on ("put those
+            # emails into a Word document"): it is replayed up to the full
+            # per-turn ceiling, older turns at the model-scaled bound.
+            last = max((i for i, t in enumerate(turns) if t.role == "assistant"), default=None)
+            return [(t.role, t.content[:max(_turn_chars, _cs.LAST_ANSWER_CHARS) if i == last
+                                       else _turn_chars])
+                    for i, t in enumerate(turns)]
+
         if _cc.enabled():
             _turns = world.recent_turns(
                 conversation_id,
                 limit=_cc.window(default=_cs.compact_window_turns(_orch_model)),
             )
-            _msgs = [
-                {"role": t.role, "content": t.content[:_turn_chars]}
-                for t in _turns
-            ]
+            _msgs = [{"role": role, "content": content} for role, content in _bounded(_turns)]
             _target = _cc.target_tokens(
                 default=_cs.compact_target_tokens(_orch_model))
             from . import async_compaction as _ac
@@ -1295,11 +1302,8 @@ async def _build_orchestrator_brief(
                 for m in _kept
             ]
         else:
-            pairs = [
-                (t.role, t.content[:_turn_chars])
-                for t in world.recent_turns(
-                    conversation_id, limit=_cs.history_turns(_orch_model))
-            ]
+            pairs = _bounded(world.recent_turns(
+                conversation_id, limit=_cs.history_turns(_orch_model)))
         history_lines: list[str] = []
         for role, content in pairs:
             if shield is not None:

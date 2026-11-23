@@ -224,3 +224,34 @@ async def test_compact_history_caps_each_persisted_turn(monkeypatch, tmp_path: P
     blob = _prompt_blob(fake_llm)
     assert "A" * 300 in blob
     assert "UNSAFE_AFTER_300" not in blob
+
+
+@pytest.mark.parametrize("compact", ["0", "1"])
+@pytest.mark.asyncio
+async def test_a_follow_up_sees_the_whole_previous_answer(monkeypatch, tmp_path: Path, fake_llm, compact):
+    # Live: "Put those reminder emails into one Word document" got the
+    # previous answer cut at 300 characters, before any email, and asked the
+    # person to paste the emails it had written itself.
+    monkeypatch.setenv("MAVERICK_COMPACT_HISTORY", compact)
+    monkeypatch.setenv("MAVERICK_MODEL_CONTEXT_WINDOW", "32000")  # 300-character turns
+    world = WorldModel(path=tmp_path / "world.db")
+    conv = world.get_or_create_conversation("web", "alice/1")
+    world.append_turn(conv.id, "user", "x" * 5_000)  # an older long message stays bounded
+    world.append_turn(conv.id, "assistant", "y" * 5_000)  # and so does an older answer
+    world.append_turn(conv.id, "user", "Draft a reminder email for each overdue client.")
+    emails = "Here are the overdue invoices.\n\n" + "\n\n".join(
+        f"Subject: Reminder {n}\nHi client {n}, invoice INV-{n} is overdue. " + "Thank you. " * 30
+        for n in range(4))
+    world.append_turn(conv.id, "assistant", emails)
+    world.append_turn(conv.id, "user", "Now put those emails into one Word document.")
+    gid = world.create_goal("Now put those emails into one Word document.", "")
+    fake_llm.scripted = [
+        LLMResponse(text="FINAL: done", thinking=None, stop_reason="end_turn", tool_calls=[]),
+    ]
+
+    await run_goal(llm=fake_llm, world=world, budget=Budget(max_dollars=1.0), goal_id=gid,
+                   sandbox=LocalBackend(workdir=tmp_path), max_depth=1, conversation_id=conv.id)
+
+    blob = _prompt_blob(fake_llm)
+    assert "Subject: Reminder 3" in blob, "the previous answer was cut before its last email"
+    assert "x" * 5_000 not in blob and "y" * 5_000 not in blob

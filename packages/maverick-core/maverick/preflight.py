@@ -18,6 +18,7 @@ path. Keep it dumb.
 from __future__ import annotations
 
 import logging
+import re
 
 log = logging.getLogger(__name__)
 
@@ -108,6 +109,17 @@ def _declared_windows() -> dict[str, int]:
         return {}
 
 
+_PROVIDER_PREFIX = re.compile(r"[a-z][a-z0-9_]*:(?=.)")
+
+
+def _without_provider(model: str) -> str:
+    """``model`` without a ``provider:`` routing prefix (``openai:gpt-5.4-mini``
+    -> ``gpt-5.4-mini``). Ids whose colon is part of the name, such as a
+    Bedrock ``...-v2:0``, are left alone."""
+    match = _PROVIDER_PREFIX.match(model)
+    return model[match.end():] if match else model
+
+
 def context_limit(model: str) -> int:
     """Return the (conservative) context limit for ``model``.
 
@@ -118,6 +130,10 @@ def context_limit(model: str) -> int:
     then 32k as the safe default when we have no clue.
     """
     declared = _declared_windows()
+    if model in declared:
+        return declared[model]
+    # A provider-routed id ("openai:gpt-5.4-mini") fell to the 32k default.
+    model = _without_provider(model)
     if model in declared:
         return declared[model]
     if model in _MODEL_CONTEXT_LIMITS:
