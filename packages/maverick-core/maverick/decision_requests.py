@@ -328,6 +328,18 @@ def needs_person(area: str) -> bool:
     return area in areas() or ask_outside_areas()
 
 
+def may_wait(args: Any) -> bool:
+    """Whether a ``request_decision`` call with ``args`` could file a decision
+    and pause the run. Only a well-formed area outside the chosen ones is known
+    not to; anything else is treated as waiting."""
+    area = args.get("area") if isinstance(args, dict) else None
+    return not (isinstance(area, str) and (area in AREAS or area == OTHER_AREA)) or needs_person(area)
+
+
+#: The start of the tool's result when a decision was filed and the run waits.
+FILED = "WAITING for decision #"
+
+
 def yours_to_decide(values: dict[str, Any]) -> str:
     """The tool's reply for a choice this workspace leaves to the agent."""
     option = values["options"][values["recommended"] - 1]

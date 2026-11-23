@@ -39,7 +39,7 @@ def request_decision(world, goal_id: int | None = None) -> Tool:
         except dr.DecisionRecordError as exc:
             return f"{dr.NOT_RECORDED}: {exc}."
         return (
-            f"WAITING for decision #{decision.id}. The run pauses now until a person "
+            f"{dr.FILED}{decision.id}. The run pauses now until a person "
             "chooses an option. Do not act on any option before the answer arrives."
         )
 

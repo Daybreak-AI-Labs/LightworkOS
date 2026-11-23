@@ -6525,8 +6525,10 @@ class Agent:
         messages = st.messages
         blocked = False
         # A decision pauses the whole turn: nothing else in it runs, before or
-        # after the request, so no step acts on a choice nobody has made.
-        deciding = any(tc.name == "request_decision" for tc in resp.tool_calls)
+        # after the request, so no step acts on a choice nobody has made. A
+        # choice the workspace leaves to the agent pauses nothing.
+        from .decision_requests import may_wait
+        deciding = any(tc.name == "request_decision" and may_wait(tc.input) for tc in resp.tool_calls)
         for tc in resp.tool_calls:
             if deciding and tc.name != "request_decision":
                 from .decision_requests import WAITING_RESULT
@@ -6639,6 +6641,7 @@ class Agent:
         recommendation for the person. A request that could not be saved stops
         the run here, before the model can act on its own choice."""
         from .decision_requests import (
+            FILED,
             FLOW_MESSAGE,
             FLOW_STOP,
             NOT_RECORDED,
@@ -6657,7 +6660,9 @@ class Agent:
             bb.post(self.name, "error", message)
             return AgentResult(error=message, role=self.role, name=self.name,
                                stop_kind=STOP_KIND, stop_detail=text), False
-        return None, not _tool_call_failed(output)
+        # Only a filed decision waits: "this choice is yours to make" and an
+        # invalid request carry on.
+        return None, FILED in text
 
     def _record_tool_lineage(self, tc, output) -> None:
         """Governed-action lineage (opt-in via [actions] enable /

@@ -441,6 +441,29 @@ async def test_nothing_else_in_the_turn_runs_once_a_decision_is_filed(
 
 
 @pytest.mark.asyncio
+async def test_a_choice_left_to_the_agent_neither_pauses_the_run_nor_skips_the_turn(
+        tmp_path, fake_llm, make_llm_response):
+    # Live: "which output format?" filed as area "other" got "yours to make",
+    # yet the run was marked blocked with nothing for a person to answer, and
+    # the page said "The run stopped before finishing. Try again."
+    target = tmp_path / "written.txt"
+    style = {**_REQUEST, "question": "PDF only, or PDF and Word?", "area": "other"}
+    fake_llm.scripted = [
+        make_llm_response(text="Writing and checking the format.", tool_calls=[
+            ToolCall(id="w1", name="write_file", input={"path": str(target), "content": "acted"}),
+            ToolCall(id="t1", name="request_decision", input=style)]),
+        *[make_llm_response(text=t) for t in _FINISH],
+    ]
+    world = _world(tmp_path)
+    gid = world.create_goal("make a printable checklist", "", owner="alice")
+
+    await _run(world, gid, fake_llm, tmp_path)
+
+    assert target.read_text() == "acted"
+    assert world.get_goal(gid).status == "done" and dr.for_goal(world, gid) == []
+
+
+@pytest.mark.asyncio
 async def test_a_parallel_batch_does_not_run_while_the_run_waits(tmp_path, fake_llm, make_llm_response,
                                                                  monkeypatch):
     from maverick.agent import Agent
