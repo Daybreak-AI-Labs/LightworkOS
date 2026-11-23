@@ -74,6 +74,7 @@ def test_pick_sandbox_defaults_docker_when_unavailable(monkeypatch):
         return default
     monkeypatch.setattr(wizard, "_q_select", fake_select)
     monkeypatch.setattr(wizard, "_q_text", lambda *a, **kw: "/tmp/ws")
+    monkeypatch.setattr(wizard, "_q_confirm", lambda message, default=True: default)
     wizard.pick_sandbox()
     # The backend prompt is first; its default stays docker even when the
     # daemon is down (security-first). A container backend then asks a second

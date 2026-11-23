@@ -473,8 +473,12 @@ RULES: list[Rule] = [
     Rule("secret_exfil_request", "critical",
          _compile(r"\b(api[\s_-]?(key|token)|access[\s_-]?token|secret|credential|password|private\s+key|\.env\b|config\.toml|/\.aws/|id_rsa)\b[^\n]{0,60}?\b(include|return|reply|print|show|reveal|paste|email|send|upload|post|exfil|leak|give\s+me)"),
          "Credential exfiltration request"),
+    # The verb and the credential must be in one clause (no comma, semicolon or
+    # table cell between them), and a password manager, reset or policy is not
+    # a credential: an onboarding plan listing "email, chat, ... password
+    # manager" was withheld as a credential theft request.
     Rule("secret_exfil_request_rev", "critical",
-         _compile(r"\b(read|fetch|get|dump|cat|summari[sz]e|print|reveal|leak|exfil\w*|send|email|forward|post|upload|transmit)\b[^\n]{0,40}?\b(environment\s+variable|env\s+var|api[\s_-]?(key|token)|secret|credential|password|private\s+key|\.env\b|config\.toml|/\.aws/|id_rsa)"),
+         _compile(r"\b(read|fetch|get|dump|cat|summari[sz]e|print|reveal|leak|exfil\w*|send|email|forward|post|upload|transmit)\b[^\n,;|]{0,40}?\b(environment\s+variable|env\s+var|api[\s_-]?(key|token)|secret|credential|password(?!\s+(?:manager|reset|policy|policies|rotation|requirements?|strength|hint)\b)|private\s+key|\.env\b|config\.toml|/\.aws/|id_rsa)"),
          "Credential read/exfiltration request"),
 
     # Indirect / tool-output injection — content addressing the agent.

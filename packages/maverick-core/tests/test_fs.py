@@ -190,7 +190,7 @@ def test_read_file_reads_only_up_to_the_cap(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("name,hint", [
-    ("rent.xlsx", "`spreadsheet`"), ("report.docx", "`pandoc`"), ("deck.pptx", "text format"),
+    ("rent.xlsx", "`spreadsheet`"), ("report.doc", ".docx"), ("deck.pptx", "text format"),
     ("summary.pdf", "text format"), ("Rent.XLSX", "`spreadsheet`"),
 ])
 def test_write_file_refuses_text_in_a_binary_document(tmp_path, name, hint):
@@ -205,3 +205,30 @@ def test_write_file_refuses_text_in_a_binary_document(tmp_path, name, hint):
     assert out.startswith("ERROR") and hint in out and "nothing was written" in out
     assert not (tmp_path / name).exists()
     assert tool.fn({"path": "rent.csv", "content": "a,b\n1,2\n"}).startswith("wrote")
+
+
+def test_write_file_to_a_docx_path_makes_a_word_document_from_markdown(tmp_path):
+    # Live: asked for a Word document, the agent wrote Markdown to
+    # "job.docx.md" and delivered that, because write_file refused .docx and
+    # the pandoc tool was not loaded. Markdown written to .docx is now a real
+    # Word document, offered as a download like any other saved file.
+    import io
+    import zipfile
+
+    from maverick.sandbox import LocalBackend
+    from maverick.task_files import files_for
+    from maverick.tools.fs import write_file
+    from maverick.world_model import WorldModel
+
+    world = WorldModel(path=tmp_path / "world.db")
+    goal = world.create_goal("Job description", "")
+    work = tmp_path / "work"
+    work.mkdir()
+    tool = write_file(LocalBackend(workdir=work), goal_id=goal, world=world)
+    out = tool.fn({"path": "docs/job.docx", "content": "# Bookkeeper\n\n- Reconcile accounts\n- Run payroll\n"})
+    assert out.startswith("wrote a Word document") and "job.docx" in out
+    with zipfile.ZipFile(io.BytesIO((work / "docs" / "job.docx").read_bytes())) as document:
+        body = document.read("word/document.xml").decode()
+    assert "Bookkeeper" in body and "Run payroll" in body and "# Bookkeeper" not in body
+    assert [item.path for item in files_for(world, goal)] == ["docs/job.docx"]
+    assert tool.fn({"path": "../job.docx", "content": "x"}).startswith("ERROR")

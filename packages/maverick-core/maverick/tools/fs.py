@@ -38,6 +38,9 @@ def _safe_resolve(sandbox, user_path: str) -> Path:
         raise ValueError(
             f"path {user_path!r} escapes the workspace"
         ) from e
+    if getattr(sandbox, "shared_workdir", None) is not None:
+        from ..task_workspace import bring_in
+        bring_in(sandbox, candidate)
     return candidate
 
 
@@ -437,11 +440,11 @@ def read_file(sandbox) -> Tool:
 # then confused by it, so write_file refuses and names the tool that makes it.
 _SPREADSHEET_HINT = ("Make Excel files with the `spreadsheet` tool (op write, with rows); if it is "
                      "not in your tools yet, call find_tools with 'spreadsheet'.")
-_WORD_HINT = ("Make a Word file by writing Markdown and converting it with the `pandoc` tool, "
-              "or write the document as your answer: the answer page offers Download Word document.")
+_WORD_HINT = ("Write the document as Markdown to a .docx path instead: write_file makes a Word "
+              "document from it.")
 _TEXT_HINT = "Write the content in a text format (.md, .csv or .txt) instead."
 _BINARY_DOCUMENTS = {".xlsx": _SPREADSHEET_HINT, ".xlsm": _SPREADSHEET_HINT, ".xls": _SPREADSHEET_HINT,
-                     ".docx": _WORD_HINT, ".doc": _WORD_HINT, ".pptx": _TEXT_HINT, ".ppt": _TEXT_HINT,
+                     ".doc": _WORD_HINT, ".pptx": _TEXT_HINT, ".ppt": _TEXT_HINT,
                      ".pdf": _TEXT_HINT, ".zip": _TEXT_HINT}
 
 
@@ -451,6 +454,26 @@ def _binary_document_refusal(path: str) -> str | None:
         return None
     return (f"ERROR: write_file writes text, so {path!r} would not open as a document; "
             f"nothing was written. {hint}")
+
+
+def _write_word(sandbox, target: Path, content: str) -> str:
+    """Markdown or plain text written to a .docx path, as a real Word document.
+
+    Asked for a Word file, agents wrote Markdown under a .docx.md name and
+    delivered that: the pandoc tool is loaded only on request."""
+    from ..markdown_word import UnwritableText, word_answer
+    from ..sandbox.workspace_transfer import WorkspaceTransferError, _write
+
+    root = Path(sandbox.workdir).resolve()
+    relative = target.relative_to(root).as_posix()
+    if any(part.rstrip(" .").casefold() == ".git" for part in relative.split("/")):
+        return "ERROR: refusing to write under .git/"
+    try:
+        document = word_answer(content, "")
+        _write(root, relative, document, 0o644)
+    except (UnwritableText, OSError, WorkspaceTransferError) as e:
+        return f"ERROR: {e}"
+    return f"wrote a Word document ({len(document)} bytes) to {target} from your Markdown"
 
 
 def write_file(sandbox, goal_id: str | int | None = "default", world=None) -> Tool:
@@ -471,17 +494,23 @@ def write_file(sandbox, goal_id: str | int | None = "default", world=None) -> To
         if not ok:
             return f"ERROR: {msg}"
         content = args["content"]
-        # TOCTOU-safe write: a symlink swapped in after the path check can never
-        # truncate or write content to a file outside the workspace.
-        try:
-            write_text_contained(sandbox, target, content)
-        except (ValueError, PermissionError, OSError) as e:
+        if target.suffix.lower() == ".docx":
+            result = _write_word(sandbox, target, content)
+        else:
+            # TOCTOU-safe write: a symlink swapped in after the path check can
+            # never truncate or write content to a file outside the workspace.
+            try:
+                write_text_contained(sandbox, target, content)
+                result = f"wrote {len(content)} bytes to {target}"
+            except (ValueError, PermissionError, OSError) as e:
+                result = f"ERROR: {e}"
+        if result.startswith("ERROR"):
             refund(charged, goal_id=quota_goal_id)  # the write did not complete
-            return f"ERROR: {e}"
+            return result
         if world is not None:
             from ..task_files import record
             record(world, goal_id, sandbox.workdir, target)
-        return f"wrote {len(content)} bytes to {target}"
+        return result
     return Tool(
         name="write_file",
         description=(
@@ -493,7 +522,8 @@ def write_file(sandbox, goal_id: str | int | None = "default", world=None) -> To
             "creating NEW files (e.g. a `reproduce.py` script during "
             "LOCALIZE) or for files small enough that a full rewrite "
             "is appropriate. Avoid using write_file on existing "
-            "production code — it's easy to drop content accidentally."
+            "production code — it's easy to drop content accidentally. "
+            "A `.docx` path gets a Word document made from Markdown content."
         ),
         input_schema={
             "type": "object",
@@ -564,8 +594,10 @@ def list_dir(sandbox) -> Tool:
             target = _safe_resolve(sandbox, args.get("path", "."))
         except ValueError as e:
             return f"ERROR: {e}"
+        from ..task_workspace import SHARED_NOTE, shared_listing
+        shared = shared_listing(sandbox, target)
         if not target.exists():
-            return f"ERROR: {target} not found"
+            return "\n".join([SHARED_NOTE, *shared]) if shared else f"ERROR: {target} not found"
         if not target.is_dir():
             return f"ERROR: {target} is not a directory"
         # Mirror read_file's opaque-mode gate: list_dir was the unguarded twin,
@@ -589,6 +621,8 @@ def list_dir(sandbox) -> Tool:
                     for entry in sorted(it, key=lambda e: e.name)
                 ]
             result = "\n".join(entries) if entries else "(empty)"
+            if shared:
+                result += "\n\n" + "\n".join([SHARED_NOTE, *shared])
         except (PermissionError, OSError) as e:
             result = f"ERROR: {e}"
         finally:

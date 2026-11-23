@@ -231,6 +231,14 @@ decision_expiry_hours   = 72
 backend = "local"                   # local | docker | ssh | podman | gvisor | devcontainer | firecracker | kubernetes | modal
 workdir = "~/maverick-workspace"
 timeout = 60
+# Each chat conversation (web chat or a messaging channel) works in its own
+# folder, <workdir>/tasks/conversation-<id>; its follow-ups share it. A file
+# kept in workdir itself can still be opened by name: the file tools copy it
+# into the task's folder on first use and never change the original.
+# Specialists, samples, flows, schedules, triggers, codebase work, coding mode,
+# contained runs, tasks started outside a conversation and backends whose
+# folder is not on this computer keep using workdir directly.
+task_folders = true
 # A workspace file (tenants/<name>/config.toml) may set only policy keys that
 # have a stricter direction, and only make them stricter (a [budget] cap only
 # lower); every other key in [budget], [governance], [safety], [capabilities],

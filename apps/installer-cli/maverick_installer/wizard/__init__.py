@@ -87,6 +87,7 @@ from .advanced import _ask_model_followups as _ask_model_followups
 from .advanced import _ask_regulated_deployment as _ask_regulated_deployment
 from .advanced import _ask_self_harness_evaluation_boundary as _ask_self_harness_evaluation_boundary
 from .advanced import _ask_self_harness_followups as _ask_self_harness_followups
+from .advanced import _ask_task_folders as _ask_task_folders
 from .advanced import _ask_workspace_servers as _ask_workspace_servers
 from .advanced import _bad_network as _bad_network
 from .advanced import _cfg_advanced as _cfg_advanced
@@ -157,6 +158,7 @@ from .advanced import _require_secure_url as _require_secure_url
 from .advanced import _secure_or_loopback_url as _secure_or_loopback_url
 from .advanced import _spending_alert_at as _spending_alert_at
 from .advanced import _split_csv as _split_csv
+from .advanced import _ssh_destination as _ssh_destination
 from .advanced import _typical_cost_min_runs as _typical_cost_min_runs
 from .advanced import pick_advanced as pick_advanced
 from .advanced import pick_department_access as pick_department_access
@@ -2724,16 +2726,6 @@ def _container_backend() -> str:
 _LANGUAGE_BACKENDS = {"docker", "gvisor", "podman", "kubernetes"}
 
 
-def _ssh_destination(value: Any) -> str:
-    """Validate a destination's structure without invoking SSH or resolving DNS."""
-    destination = value.strip() if isinstance(value, str) else ""
-    if any(ord(character) < 32 or ord(character) == 127 for character in destination) or not re.fullmatch(r"(?:[^\s@/:\\]+@)?[^\s@/\\]+", destination):
-        raise ValueError("SSH destination must be a host, user@host, or SSH config alias")
-    if destination.rsplit("@", 1)[-1].startswith("-") or destination.startswith("-"):
-        raise ValueError("SSH destination cannot start with an option prefix")
-    return destination
-
-
 def pick_sandbox() -> dict[str, Any]:
     # Security-first default: keep Docker selected by default regardless
     # of current daemon reachability to avoid silently falling back to
@@ -2810,7 +2802,7 @@ def pick_sandbox() -> dict[str, Any]:
             )
             console.print(kubernetes_deny_all_manifest(cfg["namespace"]), highlight=False)
             console.print("\n  kubectl apply -f - <<'EOF' ... EOF   (paste the manifest above)\n")
-    return _ask_workspace_servers(cfg)
+    return _ask_workspace_servers(_ask_task_folders(cfg))
 
 
 def pick_research_execution() -> dict[str, Any]:

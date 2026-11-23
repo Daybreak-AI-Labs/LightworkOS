@@ -70,6 +70,9 @@ def _safe_path(sandbox, user_path: str) -> str:
         candidate.relative_to(workdir)
     except ValueError as e:
         raise ValueError(f"path {user_path!r} escapes the workspace") from e
+    if getattr(sandbox, "shared_workdir", None) is not None:
+        from ..task_workspace import bring_in
+        bring_in(sandbox, candidate)
     return str(candidate)
 
 
@@ -125,6 +128,16 @@ def _op_convert(args: dict, sandbox) -> str:
     err = _need_pandoc()
     if err:
         return _builtin_word(args, sandbox) or err
+    result = _convert_with_pandoc(args, sandbox)
+    # pandoc on the host PATH does not mean it is inside the task's sandbox
+    # (a container image): there it exits 127, and the agent stopped to ask
+    # the person what to do. Markdown or text to Word still works built in.
+    if result.startswith("ERROR: pandoc (127)"):
+        return _builtin_word(args, sandbox) or result
+    return result
+
+
+def _convert_with_pandoc(args: dict, sandbox) -> str:
     src = (args.get("input_path") or "").strip()
     dst = (args.get("output_path") or "").strip()
     if not src or not dst:

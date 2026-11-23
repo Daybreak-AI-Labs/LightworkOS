@@ -63,6 +63,9 @@ def _safe_path(sandbox, user_path: str) -> Path:
     state = maverick_home().resolve()
     if candidate.is_relative_to(state) and not candidate.is_relative_to(state / "workspace"):
         raise ValueError("Lightwork's internal data directory cannot be queried")
+    if getattr(sandbox, "shared_workdir", None) is not None:
+        from ..task_workspace import bring_in
+        bring_in(sandbox, candidate)
     return candidate
 
 

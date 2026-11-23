@@ -281,6 +281,9 @@ def workspace_path(sandbox, path: str) -> tuple[Path, str]:
         relative = target.relative_to(root).as_posix()
     except ValueError as exc:
         raise ValueError("path escapes the sandbox workdir") from exc
+    if getattr(sandbox, "shared_workdir", None) is not None:
+        from ..task_workspace import bring_in
+        bring_in(sandbox, target)
     return root, _relative(relative)
 
 

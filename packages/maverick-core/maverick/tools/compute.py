@@ -41,7 +41,7 @@ _COMPUTE_SCHEMA: dict[str, Any] = {
         },
         "expr": {
             "type": "string",
-            "description": "The expression. Examples: 'sin(pi/4)', 'x**2 + 3*x'.",
+            "description": "The expression. Examples: 'sin(pi/4)', 'x**2 + 3*x', '1000*(1+0.05/12)^(-60)' (^ is power).",
         },
         "equation": {
             "type": "string",
@@ -81,12 +81,17 @@ def _reject_unsafe_pow(node: ast.AST) -> None:
     if not (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Pow)):
         return
     rt = node.right
+    # A signed constant (``**(-60)`` in a loan payment) parses as a unary
+    # minus around the constant; it is just as bounded.
+    if isinstance(rt, ast.UnaryOp) and isinstance(rt.op, (ast.USub, ast.UAdd)):
+        rt = rt.operand
     if not (
         isinstance(rt, ast.Constant)
         and isinstance(rt.value, (int, float))
+        and not isinstance(rt.value, bool)
         and abs(rt.value) <= 100
     ):
-        raise ValueError("exponent must be a constant <= 100")
+        raise ValueError("exponent must be a constant between -100 and 100")
     for operand in (node.left, node.right):
         if isinstance(operand, ast.BinOp) and isinstance(operand.op, ast.Pow):
             raise ValueError("nested exponentiation not allowed")
@@ -316,12 +321,21 @@ def _run_isolated(op: str, args: dict[str, Any]) -> str:
     return str(result)
 
 
+def _caret_as_power(args: dict[str, Any]) -> dict[str, Any]:
+    """``^`` means power to the people writing these expressions (spreadsheets,
+    finance formulas); Python and SymPy read it as XOR and failed with a type
+    error on every loan formula. The rewritten ``**`` meets the same bounds."""
+    return {key: value.replace("^", "**") if key in ("expr", "equation") and isinstance(value, str) else value
+            for key, value in args.items()}
+
+
 def _run(args: dict[str, Any]) -> str:
     op = args.get("op")
     if not op:
         return "ERROR: op is required"
     if not isinstance(op, str) or op not in _VALID_OPS:
         return f"ERROR: unknown op {op!r}"
+    args = _caret_as_power(args)
 
     if op == "evaluate" and not _have_sympy():
         return _run_evaluate(args)

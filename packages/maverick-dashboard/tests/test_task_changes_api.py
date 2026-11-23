@@ -248,3 +248,25 @@ def test_file_and_line_bounds(env, monkeypatch):
     monkeypatch.setattr(changes_api, "MAX_TEXT_LINES", 4)
     rows = {row["name"]: row for row in env.client.get(env.url).json()["files"]}
     assert rows["a.txt"]["change"] == "too_large" and rows["b.txt"]["change"] == "created"
+
+
+def test_the_kernel_knows_the_first_workspace_id():
+    # Conversation folders of "My workspace" need no workspace segment
+    # (maverick.task_workspace); the two ids must stay the same.
+    from maverick import task_workspace
+    from maverick_dashboard.tenant_select_page import FIRST_WORKSPACE
+
+    assert FIRST_WORKSPACE["id"] == task_workspace.FIRST_WORKSPACE_ID
+
+
+def test_a_chat_task_shows_changes_in_its_conversation_folder(env):
+    from maverick import task_workspace
+    from maverick_dashboard import app as dashboard
+
+    world = dashboard._world()
+    conversation = world.get_or_create_conversation("web", f"user:owner/{env.goal}")
+    world.append_turn(conversation.id, "user", "Synthetic task changes", goal_id=env.goal)
+    with tenant_scope(tenant=TENANT):
+        own = task_workspace.folder_for(world, world.get_goal(env.goal))
+        assert own is not None and own.parent.parent.parent == env.work
+        assert changes_api.work_folder(world, env.goal) == own.resolve()

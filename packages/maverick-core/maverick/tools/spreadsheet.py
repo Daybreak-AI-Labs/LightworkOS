@@ -90,6 +90,9 @@ def _safe_path(sandbox, user_path: str) -> Path:
         raise ValueError(
             f"path {user_path!r} escapes the workspace{hint}"
         ) from e
+    if getattr(sandbox, "shared_workdir", None) is not None:
+        from ..task_workspace import bring_in
+        bring_in(sandbox, candidate)
     return candidate
 
 

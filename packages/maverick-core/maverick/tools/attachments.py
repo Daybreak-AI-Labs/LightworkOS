@@ -115,7 +115,9 @@ def read_attachment_tool(world, goal_id: int | None, sandbox=None) -> Tool:
                      "header row). Use it for totals, counts, averages and per-row "
                      "calculations instead of working numbers out yourself, for example "
                      "`SELECT name, ROUND(rate*(MIN(hours,40)+MAX(hours-40,0)*1.5),2) AS pay "
-                     "FROM data` or `SELECT dept, SUM(amount) FROM data GROUP BY dept`."),
+                     "FROM data` or `SELECT dept, SUM(amount) FROM data GROUP BY dept`. "
+                     "Before filtering on a column, look at the values it actually holds "
+                     "(`SELECT DISTINCT receipt FROM data`): a missing receipt may be 'no', not blank."),
         input_schema={"type": "object",
                       "properties": {"id": {"type": "integer"},
                                      "sql": {"type": "string",
