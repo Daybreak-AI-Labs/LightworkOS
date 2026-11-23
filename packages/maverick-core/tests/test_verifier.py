@@ -622,3 +622,55 @@ class TestVerifyEnsemble:
         )
         assert len(fake_llm.calls) == 1
         assert fake_llm.calls[0].get("model") == "openai:gpt-5.4"
+
+
+_IMAGE = {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "iVBORw0KGgo="}}
+
+
+def test_the_verifier_sees_the_attached_images_the_agent_answered_from():
+    # Live: "a white slide headed 'Q3 warehouse target' ... 4,250 units by
+    # 2026-09-30" was right, but the verifier, shown no image, rejected it as
+    # ungrounded; the revision turned into a refusal.
+    import asyncio
+
+    from maverick.verifier import verify_final
+
+    seen = []
+
+    class _LLM:
+        async def complete_async(self, **kw):
+            seen.append(kw["messages"][0]["content"])
+            return type("R", (), {"text": '{"confidence": 0.9, "accepts": true, "critique": "ok", "issues": []}'})()
+
+    verdict = asyncio.run(verify_final("Describe the image", "A slide", _LLM(), Budget(), images=[_IMAGE]))
+    assert verdict.accepts is True
+    [content] = seen
+    assert content[0] == _IMAGE and "GOAL BRIEF" in content[-1]["text"]
+    seen.clear()
+    asyncio.run(verify_final("Brief", "Answer", _LLM(), Budget()))
+    assert isinstance(seen[0], str)
+
+
+def test_a_verifier_that_takes_no_images_still_judges_the_text():
+    import asyncio
+
+    calls = []
+
+    class _TextOnly:
+        async def complete_async(self, **kw):
+            calls.append(kw["messages"][0]["content"])
+            if not isinstance(calls[-1], str):
+                raise RuntimeError("this model does not accept images")
+            return type("R", (), {"text": '{"confidence": 0.8, "accepts": true, "critique": "ok", "issues": []}'})()
+
+    verdict = asyncio.run(verify_proposal("Brief", "Answer", _TextOnly(), Budget(), images=[_IMAGE]))
+    assert verdict.accepts is True and len(calls) == 2 and isinstance(calls[1], str)
+
+
+def test_the_run_passes_only_the_images_of_its_first_message():
+    from maverick.agent import _verifier_images
+
+    text = {"type": "text", "text": "Sub-goal: describe it"}
+    assert _verifier_images([{"role": "user", "content": [_IMAGE, text]}, {"role": "assistant", "content": "x"}]) == [_IMAGE]
+    assert _verifier_images([{"role": "user", "content": "plain brief"}]) == []
+    assert _verifier_images([]) == []

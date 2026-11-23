@@ -1508,6 +1508,15 @@ def _is_refusal(framed: str) -> bool:
     return head.startswith("error") and any(word in head for word in _REFUSALS)
 
 
+def _verifier_images(messages: list[dict]) -> list[dict]:
+    """The attached images the run was shown in its first message, for the
+    verifier to judge an answer about them against."""
+    first = messages[0].get("content") if messages and isinstance(messages[0], dict) else None
+    if not isinstance(first, list):
+        return []
+    return [block for block in first if isinstance(block, dict) and block.get("type") == "image"]
+
+
 def _verifier_evidence(messages: list[dict], limit: int = _VERIFIER_EVIDENCE_CHARS) -> str:
     """What this run read with its tools, for the verifier to check the answer
     against: the successful tool results, newest first when they exceed
@@ -6132,6 +6141,7 @@ class Agent:
                     getattr(self.ctx, "escalate_verification", False)
                 ),
                 evidence=_verifier_evidence(st.messages),
+                images=_verifier_images(st.messages),
             )
             # Stamp the verdict so the autonomy servo can tighten the leash
             # on low-confidence runs.

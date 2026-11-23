@@ -115,6 +115,37 @@ def _user_message(brief: str, proposal: str, evidence: str, ask: str) -> str:
     )
 
 
+#: Images the agent was shown that the verifier sees too, at most.
+MAX_VERIFIER_IMAGES = 5
+
+
+def _content(user_msg: str, images: list[dict] | None):
+    """The verifier's user turn, with the images the agent answered from. A
+    correct description of an attached image was rejected as "ungrounded in
+    the absence of the actual image", and the revision became a refusal."""
+    if not images:
+        return user_msg
+    return [*images[:MAX_VERIFIER_IMAGES],
+            {"type": "text", "text": "The images above are the files attached to the goal, as the agent "
+                                     "saw them.\n\n" + user_msg}]
+
+
+async def _complete(llm, system: str, user_msg: str, images: list[dict] | None, **kwargs):
+    """One verifier call. With images it falls back to the text alone when the
+    call fails (a verifier model that takes no images), so the images never
+    turn into a rejection on their own."""
+    if images:
+        try:
+            return await llm.complete_async(system=system, messages=[
+                {"role": "user", "content": _content(user_msg, images)}], tools=None, **kwargs)
+        except BudgetExceeded:
+            raise
+        except Exception:  # noqa: BLE001 -- retried without the images below
+            log.info("verifier call with images failed; retrying with the text only", exc_info=True)
+    return await llm.complete_async(system=system, messages=[{"role": "user", "content": user_msg}],
+                                    tools=None, **kwargs)
+
+
 @dataclass
 class VerifierVerdict:
     confidence: float
@@ -207,6 +238,7 @@ async def verify_proposal(
     max_tokens: int = 1024,
     proposer_model: str | None = None,
     evidence: str = "",
+    images: list[dict] | None = None,
 ) -> VerifierVerdict:
     """Ask the verifier role to judge a proposer's final answer.
 
@@ -244,10 +276,8 @@ async def verify_proposal(
 
     user_msg = _user_message(brief, proposal, evidence, "Return the verdict JSON.")
     try:
-        resp = await llm.complete_async(
-            system=VERIFIER_SYSTEM + EVIDENCE_CONTRACT,
-            messages=[{"role": "user", "content": user_msg}],
-            tools=None,
+        resp = await _complete(
+            llm, VERIFIER_SYSTEM + EVIDENCE_CONTRACT, user_msg, images,
             budget=budget,
             max_tokens=max_tokens,
             model=model,
@@ -328,6 +358,7 @@ async def verify_proposal_ensemble(
     panel: list[str] | None = None,
     weighted: bool = True,
     evidence: str = "",
+    images: list[dict] | None = None,
 ) -> VerifierVerdict:
     """Run N verifiers across distinct model families and combine.
 
@@ -387,10 +418,8 @@ async def verify_proposal_ensemble(
 
     async def _one(model: str) -> VerifierVerdict:
         try:
-            resp = await llm.complete_async(
-                system=VERIFIER_SYSTEM + EVIDENCE_CONTRACT,
-                messages=[{"role": "user", "content": user_msg}],
-                tools=None,
+            resp = await _complete(
+                llm, VERIFIER_SYSTEM + EVIDENCE_CONTRACT, user_msg, images,
                 budget=budget,
                 max_tokens=1024,
                 model=model,
@@ -492,6 +521,7 @@ async def verify_proposal_structured(
     max_tokens: int = 1024,
     proposer_model: str | None = None,
     evidence: str = "",
+    images: list[dict] | None = None,
 ) -> VerifierVerdict:
     """Verify with the structured rubric judge (Agent-RRM, reasoning_reward).
 
@@ -518,10 +548,8 @@ async def verify_proposal_structured(
 
     user_msg = _user_message(brief, proposal, evidence, "Return the rubric JSON.")
     try:
-        resp = await llm.complete_async(
-            system=reasoning_reward.REASONING_REWARD_SYSTEM + EVIDENCE_CONTRACT,
-            messages=[{"role": "user", "content": user_msg}],
-            tools=None,
+        resp = await _complete(
+            llm, reasoning_reward.REASONING_REWARD_SYSTEM + EVIDENCE_CONTRACT, user_msg, images,
             budget=budget,
             max_tokens=max_tokens,
             model=model,
@@ -569,6 +597,7 @@ async def verify_final(
     proposer_model: str | None = None,
     force_ensemble: bool = False,
     evidence: str = "",
+    images: list[dict] | None = None,
 ) -> VerifierVerdict:
     """Verify a FINAL answer using whichever verifier the operator chose.
 
@@ -582,16 +611,16 @@ async def verify_final(
     if force_ensemble or _ensemble_enabled():
         return await verify_proposal_ensemble(
             brief, proposal, llm, budget, proposer_model=proposer_model,
-            evidence=evidence,
+            evidence=evidence, images=images,
         )
     if _structured_verify_enabled():
         return await verify_proposal_structured(
             brief, proposal, llm, budget, proposer_model=proposer_model,
-            evidence=evidence,
+            evidence=evidence, images=images,
         )
     return await verify_proposal(
         brief, proposal, llm, budget, proposer_model=proposer_model,
-        evidence=evidence,
+        evidence=evidence, images=images,
     )
 
 
