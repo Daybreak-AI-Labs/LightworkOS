@@ -125,6 +125,16 @@ def _op_convert(args: dict, sandbox) -> str:
     err = _need_pandoc()
     if err:
         return _builtin_word(args, sandbox) or err
+    result = _convert_with_pandoc(args, sandbox)
+    # pandoc on the host PATH does not mean it is inside the task's sandbox
+    # (a container image): there it exits 127, and the agent stopped to ask
+    # the person what to do. Markdown or text to Word still works built in.
+    if result.startswith("ERROR: pandoc (127)"):
+        return _builtin_word(args, sandbox) or result
+    return result
+
+
+def _convert_with_pandoc(args: dict, sandbox) -> str:
     src = (args.get("input_path") or "").strip()
     dst = (args.get("output_path") or "").strip()
     if not src or not dst:

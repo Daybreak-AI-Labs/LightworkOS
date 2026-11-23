@@ -57,3 +57,20 @@ def test_markdown_to_word_works_without_the_pandoc_program(monkeypatch, tmp_path
     # Anything else still needs the program, and paths stay in the workspace.
     assert "PATH" in tool.fn({"op": "convert", "input_path": "checklist.md", "output_path": "c.rst"})
     assert "escapes" in tool.fn({"op": "convert", "input_path": "checklist.md", "output_path": "../c.docx"})
+
+
+def test_word_falls_back_when_pandoc_is_missing_inside_the_sandbox(monkeypatch, tmp_path):
+    # Live: pandoc was on the host PATH, so the tool tried it, but the task's
+    # Podman sandbox had no pandoc ("sh: 1: pandoc: not found", exit 127) and
+    # the agent stopped to ask the person what to do.
+    from types import SimpleNamespace
+
+    import maverick.tools as tools_pkg
+    from maverick.tools.pandoc_tool import pandoc_tool
+
+    monkeypatch.setattr("shutil.which", lambda b: "/usr/bin/pandoc")
+    monkeypatch.setattr(tools_pkg, "sandbox_run", lambda *a, **k: (127, "", "sh: 1: pandoc: not found"))
+    (tmp_path / "jd.md").write_text("# Bookkeeper\n\n- 20 hours a week\n", encoding="utf-8")
+    out = pandoc_tool(SimpleNamespace(workdir=str(tmp_path))).fn(
+        {"op": "convert", "input_path": "jd.md", "output_path": "jd.docx"})
+    assert out.startswith("wrote ") and (tmp_path / "jd.docx").exists(), out
