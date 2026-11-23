@@ -255,11 +255,13 @@ Settings and the installation wizard.
   process leases, path protection, per-file drift checks and retained requests
   guard review and interrupted retry. No shell or external-action rollback is
   claimed. See [task-file recovery](task-file-recovery.md) for limits.
-- **Word and PowerPoint from Markdown, built in** (`markdown_word.py`,
-  `markdown_slides.py`) — `write_file` to a `.docx` or `.pptx` path, and the
-  `pandoc` tool when pandoc is not installed where the task runs, make a Word
-  document or a 16:9 PowerPoint deck (a slide per `#` heading, bullets with
-  levels, bold) with no external program. Text into `.png`, `.jpg` and other
+- **Word, PowerPoint and PDF from Markdown, built in** (`markdown_word.py`,
+  `markdown_slides.py`, `markdown_pdf.py`) — `write_file` to a `.docx`,
+  `.pptx` or `.pdf` path, and the `pandoc` tool when pandoc is not installed
+  where the task runs (Word and PowerPoint), make a Word document, a 16:9
+  PowerPoint deck (a slide per `#` heading, bullets with levels, bold) or a
+  printable US Letter PDF (headings, wrapped text, checklist boxes, tables,
+  page numbers; standard fonts, Windows-1252 text) with no external program. Text into `.png`, `.jpg` and other
   binary images is refused with a pointer to SVG for charts. Decks are checked
   with python-pptx and LibreOffice, not Microsoft PowerPoint.
 - **Commands in a closed container run without asking**

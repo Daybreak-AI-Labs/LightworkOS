@@ -451,7 +451,7 @@ _IMAGE_HINT = ("For a chart or diagram, write it as SVG to a .svg path instead: 
                "kind of file.")
 _BINARY_DOCUMENTS = {".xlsx": _SPREADSHEET_HINT, ".xlsm": _SPREADSHEET_HINT, ".xls": _SPREADSHEET_HINT,
                      ".doc": _WORD_HINT, ".ppt": _SLIDES_HINT,
-                     ".pdf": _TEXT_HINT, ".zip": _TEXT_HINT, ".png": _IMAGE_HINT, ".jpg": _IMAGE_HINT,
+                     ".zip": _TEXT_HINT, ".png": _IMAGE_HINT, ".jpg": _IMAGE_HINT,
                      ".jpeg": _IMAGE_HINT, ".gif": _IMAGE_HINT, ".webp": _IMAGE_HINT, ".bmp": _IMAGE_HINT}
 
 
@@ -464,12 +464,13 @@ def _binary_document_refusal(path: str) -> str | None:
 
 
 def _write_office(sandbox, target: Path, content: str) -> str:
-    """Markdown or plain text written to a .docx or .pptx path, as a real Word
-    document or PowerPoint deck.
+    """Markdown or plain text written to a .docx, .pptx or .pdf path, as a real
+    Word document, PowerPoint deck or printable PDF.
 
     Asked for a Word file, agents wrote Markdown under a .docx.md name and
     delivered that: the pandoc tool is loaded only on request. Asked for a
     PowerPoint deck, they had no way to make one without pandoc."""
+    from ..markdown_pdf import UnwritablePdf, pdf_from_markdown
     from ..markdown_slides import UnwritableSlides, slides_from_markdown
     from ..markdown_word import UnwritableText, word_answer
     from ..sandbox.workspace_transfer import WorkspaceTransferError, _write
@@ -478,13 +479,15 @@ def _write_office(sandbox, target: Path, content: str) -> str:
     relative = target.relative_to(root).as_posix()
     if any(part.rstrip(" .").casefold() == ".git" for part in relative.split("/")):
         return "ERROR: refusing to write under .git/"
-    deck = target.suffix.lower() == ".pptx"
+    suffix = target.suffix.lower()
+    writers = {".pptx": ("a PowerPoint deck", slides_from_markdown), ".pdf": ("a PDF", pdf_from_markdown),
+               ".docx": ("a Word document", lambda text: word_answer(text, ""))}
+    kind, writer = writers[suffix]
     try:
-        document = slides_from_markdown(content) if deck else word_answer(content, "")
+        document = writer(content)
         _write(root, relative, document, 0o644)
-    except (UnwritableText, UnwritableSlides, OSError, WorkspaceTransferError) as e:
+    except (UnwritableText, UnwritableSlides, UnwritablePdf, OSError, WorkspaceTransferError) as e:
         return f"ERROR: {e}"
-    kind = "a PowerPoint deck" if deck else "a Word document"
     return f"wrote {kind} ({len(document)} bytes) to {target} from your Markdown"
 
 
@@ -506,7 +509,7 @@ def write_file(sandbox, goal_id: str | int | None = "default", world=None) -> To
         if not ok:
             return f"ERROR: {msg}"
         content = args["content"]
-        if target.suffix.lower() in (".docx", ".pptx"):
+        if target.suffix.lower() in (".docx", ".pptx", ".pdf"):
             result = _write_office(sandbox, target, content)
         else:
             # TOCTOU-safe write: a symlink swapped in after the path check can
@@ -535,8 +538,9 @@ def write_file(sandbox, goal_id: str | int | None = "default", world=None) -> To
             "LOCALIZE) or for files small enough that a full rewrite "
             "is appropriate. Avoid using write_file on existing "
             "production code — it's easy to drop content accidentally. "
-            "A `.docx` path gets a Word document and a `.pptx` path a PowerPoint deck "
-            "(a slide per `#` heading) made from Markdown content."
+            "A `.docx` path gets a Word document, a `.pptx` path a PowerPoint deck "
+            "(a slide per `#` heading) and a `.pdf` path a printable PDF, made from "
+            "Markdown content."
         ),
         input_schema={
             "type": "object",
