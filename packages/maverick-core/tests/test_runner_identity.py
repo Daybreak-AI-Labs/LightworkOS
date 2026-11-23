@@ -23,7 +23,7 @@ def test_run_goal_in_thread_propagates_execution_identity(monkeypatch, tmp_path)
     monkeypatch.setattr(world_model, "open_world", lambda *a, **k: world_model.WorldModel(db))
     world.close()
     monkeypatch.setattr(llm_mod, "LLM", lambda: object())
-    monkeypatch.setattr(sandbox_mod, "build_sandbox", lambda: object())
+    monkeypatch.setattr(sandbox_mod, "build_sandbox", lambda **_kw: object())
     monkeypatch.setattr(budget_mod, "budget_from_config", lambda **_kwargs: budget_mod.Budget())
     monkeypatch.setattr(orchestrator, "run_goal_sync", fake_run_goal_sync)
 
@@ -73,7 +73,7 @@ def test_run_goal_in_thread_can_schedule_by_caller_principal(monkeypatch, tmp_pa
     monkeypatch.setattr(world_model, "open_world", lambda *a, **k: world_model.WorldModel(db))
     world.close()
     monkeypatch.setattr(llm_mod, "LLM", lambda: object())
-    monkeypatch.setattr(sandbox_mod, "build_sandbox", lambda: object())
+    monkeypatch.setattr(sandbox_mod, "build_sandbox", lambda **_kw: object())
     monkeypatch.setattr(budget_mod, "budget_from_config", lambda **_kwargs: budget_mod.Budget())
     monkeypatch.setattr(orchestrator, "run_goal_sync", fake_run_goal_sync)
 

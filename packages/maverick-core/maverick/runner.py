@@ -790,7 +790,12 @@ def _run_goal_in_thread(
         # same scope is reinstated below for every normal team role on resume.
         with task_model_scope(world, goal_id):
             llm = LLM()
-        sandbox = build_sandbox()
+        # An ordinary chat conversation works in its own folder, so files
+        # from other tasks are not mistaken for this one's (task_workspace).
+        from . import task_workspace
+        folder = task_workspace.folder_for(world, goal, conversation_id)
+        sandbox = build_sandbox() if folder is None else build_sandbox(workdir=folder)
+        task_workspace.use(sandbox, folder)
         # Trace pinning: stamp the run with the workspace's git state so the
         # trace/replay ties to an exact commit. Best-effort, never blocks.
         from .trace_pin import pin_trace

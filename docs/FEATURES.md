@@ -255,11 +255,20 @@ Settings and the installation wizard.
   process leases, path protection, per-file drift checks and retained requests
   guard review and interrupted retry. No shell or external-action rollback is
   claimed. See [task-file recovery](task-file-recovery.md) for limits.
+- **A folder per conversation** (`task_workspace.py`, `[sandbox]
+  task_folders`, default on) — an ordinary chat conversation works in
+  `<workspace>/tasks/conversation-<id>`, so files left by other tasks are not
+  taken for its own; follow-ups share the folder. Files a person keeps in the
+  main workspace are listed by `list_dir` and copied in when a file tool opens
+  them by name, leaving the original unchanged. Specialists, samples, flows,
+  schedules, triggers, codebase work and tasks outside a conversation keep the
+  shared workspace. The setup wizard asks, and Settings > Protected work area
+  turns it off.
 - **Files from this task** (`task_files.py`, `task_files_view.py`, the
   `deliver_file` tool) — files a task saves with `write_file` or the editor, or
   hands over with `deliver_file`, are listed under its answer and download from
   `/chat/goal/{id}/task-files/{n}`, and an answer's `sandbox:` link to one becomes
-  its download link. The workspace is shared, so each download needs the task's
+  its download link. The workspace can be shared, so each download needs the task's
   own access, follows the answer's sign-off rule, reads through a descriptor
   confined to the workspace and is served only while its SHA-256 still matches
   what the task saved. Copilot answers "what files did this task make?".

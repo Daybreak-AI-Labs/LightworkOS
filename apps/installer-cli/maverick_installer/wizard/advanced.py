@@ -2154,6 +2154,26 @@ def _ask_chat_and_resource_followups(advanced: dict[str, Any]) -> None:
     _pick_swarm_scale(advanced)
 
 
+def _ssh_destination(value: Any) -> str:
+    """Validate a destination's structure without invoking SSH or resolving DNS."""
+    destination = value.strip() if isinstance(value, str) else ""
+    if any(ord(character) < 32 or ord(character) == 127 for character in destination) or not re.fullmatch(r"(?:[^\s@/:\\]+@)?[^\s@/\\]+", destination):
+        raise ValueError("SSH destination must be a host, user@host, or SSH config alias")
+    if destination.rsplit("@", 1)[-1].startswith("-") or destination.startswith("-"):
+        raise ValueError("SSH destination cannot start with an option prefix")
+    return destination
+
+
+def _ask_task_folders(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Each chat conversation gets its own folder in the workspace
+    (``[sandbox] task_folders``, maverick.task_workspace). On by default, so
+    only "no" is written and existing configurations stay as they were."""
+    if cfg.get("backend") in ("local", "docker", "gvisor", "podman") and not _q_confirm(
+            "  Give each chat conversation its own folder inside the workspace?", default=True):
+        cfg["task_folders"] = False
+    return cfg
+
+
 def _ask_workspace_servers(cfg: dict[str, Any]) -> dict[str, Any]:
     """The sandbox step's last question, for clusters and remote computers.
 

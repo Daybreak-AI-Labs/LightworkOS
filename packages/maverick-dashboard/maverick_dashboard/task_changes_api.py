@@ -100,6 +100,17 @@ def _read_no_follow(path: Path, info: os.stat_result, limit: int) -> bytes:
     return data
 
 
+def _own_folder(world, goal_id: int) -> Path | None:
+    """The chat conversation's own folder, when the task worked in one."""
+    from maverick import task_workspace
+
+    try:
+        folder = task_workspace.folder_for(world, world.get_goal(goal_id), create=False)
+    except Exception:  # an unreadable goal falls back to the configured folder
+        return None
+    return folder if folder is not None and folder.is_dir() else None
+
+
 def work_folder(world, goal_id: int) -> Path:
     """The task's own work folder, resolved; never taken from the journal."""
     from maverick import config, task_file_recovery, workspace_journal
@@ -112,6 +123,8 @@ def work_folder(world, goal_id: int) -> Path:
         record = None
     if isinstance(record, dict) and isinstance(record.get("workdir"), str):
         candidate = record["workdir"]
+    elif (own := _own_folder(world, goal_id)) is not None:
+        candidate = str(own)
     else:
         sandbox = config.get_sandbox()
         if str(sandbox.get("backend") or "local").strip().lower() not in _LOCAL_BACKENDS:

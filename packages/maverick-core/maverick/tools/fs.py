@@ -38,6 +38,9 @@ def _safe_resolve(sandbox, user_path: str) -> Path:
         raise ValueError(
             f"path {user_path!r} escapes the workspace"
         ) from e
+    if getattr(sandbox, "shared_workdir", None) is not None:
+        from ..task_workspace import bring_in
+        bring_in(sandbox, candidate)
     return candidate
 
 
@@ -564,8 +567,10 @@ def list_dir(sandbox) -> Tool:
             target = _safe_resolve(sandbox, args.get("path", "."))
         except ValueError as e:
             return f"ERROR: {e}"
+        from ..task_workspace import SHARED_NOTE, shared_listing
+        shared = shared_listing(sandbox, target)
         if not target.exists():
-            return f"ERROR: {target} not found"
+            return "\n".join([SHARED_NOTE, *shared]) if shared else f"ERROR: {target} not found"
         if not target.is_dir():
             return f"ERROR: {target} is not a directory"
         # Mirror read_file's opaque-mode gate: list_dir was the unguarded twin,
@@ -589,6 +594,8 @@ def list_dir(sandbox) -> Tool:
                     for entry in sorted(it, key=lambda e: e.name)
                 ]
             result = "\n".join(entries) if entries else "(empty)"
+            if shared:
+                result += "\n\n" + "\n".join([SHARED_NOTE, *shared])
         except (PermissionError, OSError) as e:
             result = f"ERROR: {e}"
         finally:

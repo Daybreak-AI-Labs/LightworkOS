@@ -431,6 +431,11 @@ def _work_area(S, C) -> tuple:
           "~/maverick-workspace", "maverick.sandbox", subgroup="Work area", pattern=_SERVER_PATH, max_length=500,
           weaker="change",
           warning="Agents will read and write files in a different folder on the server."),
+        S("sandbox", "task_folders", "Give each conversation its own folder",
+          "Each chat conversation works in its own folder inside the folder above, so files "
+          "from other tasks don't get mixed in. Files you keep in the main folder can still be "
+          "opened by name; the task works on a copy.", "toggle", group, True,
+          "maverick.task_workspace", subgroup="Work area"),
         S("sandbox", "require_container", "Never run commands directly on the server",
           "Refuse to run agent commands outside a container, even when no container program "
           "is chosen.", "toggle", group, False, "maverick.sandbox", subgroup="Work area",

@@ -24,6 +24,7 @@ def _answers(monkeypatch, backend_choice: str, language_choice: str | None):
     it = iter(picks)
     monkeypatch.setattr(wizard, "_q_select", lambda *a, **k: next(it))
     monkeypatch.setattr(wizard, "_q_text", lambda *a, **k: "/tmp/ws")
+    monkeypatch.setattr(wizard, "_q_confirm", lambda message, default=True: default)
     return wizard
 
 
@@ -154,3 +155,18 @@ def test_ssh_asks_which_remote_computers_workspaces_may_choose(monkeypatch):
     monkeypatch.setattr(wizard, "_q_text", lambda *a, **k: "*@build.example.com, -oProxyCommand=x, %r@h, u@[::1]")
     assert wizard._ask_workspace_servers({"backend": "ssh"}) == {
         "backend": "ssh", "workspace_infrastructure": True, "workspace_hosts": ["*@build.example.com", "u@[::1]"]}
+
+
+def test_task_folders_are_on_unless_the_operator_says_no(monkeypatch):
+    # Saying yes writes nothing (the kernel default is on); no writes false.
+    wizard = _answers(monkeypatch, "local  - Subprocess on this machine (fastest, least isolated)", None)
+    assert "task_folders" not in wizard.pick_sandbox()
+    asked: list[str] = []
+    monkeypatch.setattr(wizard, "_q_confirm", lambda message, default=True: asked.append(message) or False)
+    monkeypatch.setattr(wizard, "_q_select", lambda *a, **k: "local  - Subprocess on this machine (fastest, least isolated)")
+    cfg = wizard.pick_sandbox()
+    assert cfg["task_folders"] is False
+    assert any("its own folder" in message for message in asked)
+    lines: list[str] = []
+    wizard._emit_kv(lines, "task_folders", cfg["task_folders"])
+    assert lines == ["task_folders = false"]
