@@ -6108,6 +6108,18 @@ class Agent:
         verification = _FinalVerification()
         _coding_on = bool(coding_cfg and coding_cfg.enabled)
         _tool_calls = self.ctx.budget.tool_calls
+        # Totals that do not add up go back for a revision before any model
+        # judges the answer, and never pass as checked: a payroll's typed
+        # grand total was a dollar off and the model judge let it through.
+        from .figure_totals import answer_issues
+        if issues := answer_issues(final):
+            from .verifier import VerifierVerdict
+            verification.attempted = True
+            verification.verdict = VerifierVerdict(
+                confidence=0.0, accepts=False, issues=issues,
+                critique="The totals do not add up. " + " ".join(issues)
+                + " Recompute them with one tool call over the data and correct every place they appear.")
+            return self._verifier_rejection(st, final, verification.verdict, coding_cfg)
         if (
             _risk_proportional_verify_enabled()
             and _final_is_low_risk(
@@ -6242,7 +6254,11 @@ class Agent:
                 f"Specific issues:\n{issues_block}\n"
                 f"</verifier_notes {nonce}>\n\n"
                 "Address each issue that is within your goal and respond with a "
-                "new FINAL: <revised answer>."
+                "new FINAL: <revised answer>. The person sees only the new FINAL, "
+                "never the earlier one, so write the whole answer again with "
+                "everything it needs (every table, draft and file name), not only "
+                "the changes. Where the notes are wrong about something you checked "
+                "against the data, keep your answer on that point and say why."
             ),
         })
         return _NEXT_TURN

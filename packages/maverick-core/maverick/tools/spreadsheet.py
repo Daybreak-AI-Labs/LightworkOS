@@ -527,6 +527,19 @@ def _charge_quota(rows: list[list], goal_id) -> None:
         raise RuntimeError(msg)
 
 
+def _totals_note(rows: list[list], path: Path) -> str:
+    """A note when a total row in the written sheet does not add up (a typed
+    payroll total was a dollar off)."""
+    from ..figure_totals import rows_issues
+
+    issues = rows_issues(rows)
+    if not issues:
+        return ""
+    fix = ("write the correct figure, or a formula such as =SUM(B2:B9) so Excel adds the rows"
+           if _is_xlsx(path) else "write the correct figure")
+    return "\nThe totals do not add up: " + " ".join(issues) + f" Fix the file before you deliver it: {fix}."
+
+
 def _set_cell_operation(path, args, sheet, goal_id="default"):
     if not _is_xlsx(path):
         return "ERROR: set_cell is xlsx-only; use write for csv"
@@ -622,7 +635,7 @@ def _run(args: dict[str, Any], sandbox=None, goal_id="default") -> str:
                     _xlsx_write(path, norm, sheet)
                 else:
                     _csv_write(path, norm)
-            return f"wrote {len(rows)} row(s) to {path}"
+            return f"wrote {len(rows)} row(s) to {path}" + _totals_note(norm, path)
         if op == "set_cell":
             return _set_cell_operation(path, args, sheet, goal_id)
     except RuntimeError as e:

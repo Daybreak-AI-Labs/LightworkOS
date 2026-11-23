@@ -12,7 +12,7 @@ catalogue of built features and tools.
 
 | Section | Entries |
 | --- | ---: |
-| [Agent kernel and orchestration](#agent-kernel-and-orchestration) | 220 |
+| [Agent kernel and orchestration](#agent-kernel-and-orchestration) | 221 |
 | [Tools](#tools) | 10 |
 | [Channels](#channels) | prose |
 | [Sandboxes](#sandboxes) | prose |
@@ -33,7 +33,7 @@ catalogue of built features and tools.
 | [Customer workflow completion and readiness](#customer-workflow-completion-and-readiness) | 22 in 24 subsections |
 | [In-house legal workspace](#in-house-legal-workspace) | prose |
 
-461 entries in 20 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
+462 entries in 20 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
 <!-- toc:end -->
 
 ## Agent kernel and orchestration
@@ -271,6 +271,14 @@ Settings and the installation wizard.
   style, an extra file, a conversion tool) gets "go with your recommendation
   and say what you chose", and the run continues. The setup wizard asks, and
   Settings > Safety > Approvals has the switch.
+- **Totals are checked before an answer is accepted** (`figure_totals.py`) —
+  a "Total", "Subtotal" or "Grand total" row in an answer's table, or a total
+  line just below it, that does not equal the rows it covers sends the answer
+  back once with the exact difference, before any model judges it; if it is
+  still wrong it is marked unverified. A sheet written with `spreadsheet`
+  whose total row does not add up comes back with a note to fix it. Subtotal,
+  tax and total chains, group totals, discounts and averages are understood;
+  percent columns and formula columns are left alone.
 - **Commands in a closed container run without asking**
   (`sandbox/contained_commands.py`, `[sandbox]
   contained_commands_without_approval`, default on, off on enterprise
