@@ -65,7 +65,7 @@ Tools you can call include:
 Rules:
 1. Do the work YOURSELF by default. Only `spawn_swarm` when a sub-task is genuinely heavy AND independent AND needs its own context window — not merely because your task "has several aspects". Over-decomposing front-loads the whole budget on fan-out so nobody is left to synthesize the answer. The deeper you are, the more you should be a leaf: at depth ≥ 1, prefer doing the research yourself over spawning more children.
 2. If a sub-task needs its own context window or a different specialty, use `spawn_subagent`.
-3. When done, respond in plain text starting with `FINAL:` followed by your answer. No tool call.
+3. When done, respond in plain text starting with `FINAL:` followed by your whole answer (the person sees only what follows `FINAL:`). No tool call.
 4. Be precise. Cite exact paths, commands, results, and findings from your children.
 5. Budget is enforced globally; spend wisely. Stop spawning if results so far are sufficient — reaching a synthesized answer matters more than breadth of research.
 6. Compute figures from data (totals, pay, interest, per-row results) with one tool call over the whole data set, such as `read_attachment` with `sql` for an attached CSV, and report the numbers it returns. Do not type per-row arithmetic yourself: one wrong row makes the whole answer wrong.
@@ -84,7 +84,7 @@ Standard playbook:
 4. Verify: before finalizing, check that the answer satisfies the original goal.
 5. If you are blocked on info only the user can give, use `ask_user` (batched). For a judgment call a person must make, use `request_decision`. Never ask a person to confirm a choice you can make yourself (which files to use, what extras to add, how to style the result): make it and say what you chose.
 6. A step that needs a person's approval (a sandbox command, a change, a message) goes to ONE child only: each run asks the person again, so never give the same step to two children to cross-check; check its output instead. A step a person rejected stays undone: do not try it again yourself or through a child.
-7. End with `FINAL:` followed by your synthesized answer.
+7. End with `FINAL:` followed by your whole synthesized answer: the person sees only what follows `FINAL:`, so put every table and draft after it, not before it.
 8. Figures from data (totals, pay, interest, per-row results) come from one tool call over the whole data set, such as `read_attachment` with `sql` for an attached CSV, never from per-row arithmetic typed by hand. Tell children the same when you delegate a calculation.
 9. A sandbox command (shell) may wait for a person to approve it, and then the task stalls until they answer. Use one only when the task needs a command run; read pages, files and data with their own tools (`http_fetch`, `read_file`, `spreadsheet_read`, `read_attachment`) and check a written file with `read_file`.
 10. Give the person every file they asked for with `deliver_file`, which puts it on the task's page as a download (files saved with `write_file` are offered automatically). Files already in the workspace may be left from earlier tasks: check that one matches this request before it is delivered, and never say a file was created when it was not. Make a file with the tool for its type, not a script: `spreadsheet` writes CSV and Excel, `write_file` to a `.docx`, `.pptx` or `.pdf` path writes Word, PowerPoint (a slide per `#` heading) or a printable PDF from Markdown, a chart is an SVG file, and `find_tools` finds the others.
@@ -5701,11 +5701,8 @@ class Agent:
         st.messages.append({"role": "assistant", "content": assistant_content})
         if not resp.text:
             return None
-        from .coding_mode import find_final_marker_end as _final_end
-        _fe = _final_end(resp.text)
-        if _fe is None:
-            return None
-        return resp.text[_fe:].strip()
+        from .coding_mode import final_answer_text
+        return final_answer_text(resp.text)
 
     # ---- FINAL handling -----------------------------------------------------
 

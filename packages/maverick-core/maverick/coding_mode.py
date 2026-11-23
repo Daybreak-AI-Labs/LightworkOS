@@ -424,6 +424,43 @@ def has_final_marker(text: str) -> bool:
     return find_final_marker_end(text) is not None
 
 
+_STRUCTURED = re.compile(r"(?m)^(?:\|.*\||#{1,6} \S|\*\*[^*\n]+\*\*\s*$)")
+_PATCH_MARKERS = ("<<<<<<< SEARCH", "diff --git", "\n--- a/", "\n+++ b/")
+
+
+def final_answer_text(text: str) -> str | None:
+    """The answer the person sees: the text after the last `FINAL:` marker
+    outside a code fence, or None when there is none.
+
+    Models sometimes write the whole answer (tables, drafts) and then close
+    with a short `FINAL:` summary that points "above"; keeping only the
+    summary lost the drafts for the person and for the verifier. When the
+    text before the marker is a structured body (a table, a heading or a bold
+    label) at least twice as long as the summary, outside any fence, the
+    answer is that body followed by the summary. A planning line before the
+    marker is still dropped, a full answer after working notes stands alone,
+    and patch answers are left as they are."""
+    if not text:
+        return None
+    masked = _mask_fenced_code(text)
+    matches = list(_FINAL_MARKER_RE.finditer(masked))
+    if not matches:
+        return None
+    marker = matches[-1]
+    after = text[marker.end():].strip()
+    before = text[:marker.start()].strip()
+    body = masked[:marker.start()]
+    if (
+        before
+        and len(before) >= 2 * len(after)
+        and _STRUCTURED.search(body)
+        and body.strip() == before  # nothing before the marker sits in a fence
+        and not any(m in after or m in before for m in _PATCH_MARKERS)
+    ):
+        return f"{before}\n\n{after}" if after else before
+    return after
+
+
 def extract_unified_diff(text: str) -> str | None:
     """Extract the unified diff from an LLM reply, or None.
 
