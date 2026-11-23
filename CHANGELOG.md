@@ -1121,8 +1121,7 @@ remain licensed under it.
 
 ### Known limitations
 
-- Lightwork is alpha software; configuration and APIs can change between
-  versions.
+- Configuration and APIs can change between versions.
 - No package is published to PyPI and no container image to a registry yet;
   install from source.
 - With the default `local` sandbox backend, model-generated commands run
