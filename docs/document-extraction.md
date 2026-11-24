@@ -28,9 +28,11 @@ members, individual expanded parts, compression ratios, worksheets and cells;
 it refuses ambiguous paths, macros, external targets other than hyperlinks (a
 remote template, a linked image or object) and XML entity declarations. Word
 fields, tracked changes, text boxes and embedded content refuse a document's
-text; inside a table they also refuse its `sql` table reading, while ones outside
-every table leave the tables readable. A simple field (a caption number) refuses
-text only inside a table.
+text; inside a table, or a field whose result holds a table, they also refuse
+its `sql` table reading, while ones outside every table leave the tables
+readable. Embedded documents and objects refuse table reading wherever they
+sit, since they hide their own tables. A simple field (a caption number)
+refuses text only inside a table.
 Normalized text is capped at one million characters and 10,000 blocks. Reaching
 a text/block bound marks the result partial. Location metadata is bounded and
 includes its count and digest when the full list cannot be included.
