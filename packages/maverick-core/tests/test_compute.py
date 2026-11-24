@@ -539,3 +539,22 @@ def test_max_and_min_pick_only_among_dates_written_year_first(monkeypatch, sympy
     from maverick.tools.compute import compute
     out = compute().fn({"op": "evaluate", "expr": expr})
     assert out.startswith("ERROR") and "YYYY-MM-DD" in out, out
+
+
+@pytest.mark.parametrize("sympy_missing", [False, True])
+def test_pow_is_power_under_the_same_bounds(monkeypatch, sympy_missing):
+    # Live: a lease's rent escalation, round(4200*pow(1.03,2),2), was refused
+    # six times as "function not allowed".
+    import sys as _sys
+    if sympy_missing:
+        monkeypatch.setitem(_sys.modules, "sympy", None)
+    elif not _HAS_SYMPY:
+        pytest.skip("sympy not installed")
+    from maverick.tools.compute import compute
+    run = compute().fn
+    assert run({"op": "evaluate", "expr": "round(4200*pow(1.03,2),2)"}) == "4455.78"
+    assert [float(x) for x in run({"op": "evaluate", "expr": "round(4200*pow(1.03, 0), 2), POW(2, 10)"}).split(", ")] == [
+        4200, 1024]
+    # Nested powers stay refused, as with **.
+    assert "ERROR" in run({"op": "evaluate", "expr": "pow(pow(2, 3), 2)"})
+    assert "ERROR" in run({"op": "evaluate", "expr": "pow(9, pow(9, pow(9, 9)))"})

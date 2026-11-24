@@ -692,12 +692,34 @@ def _run_isolated(op: str, args: dict[str, Any]) -> str:
     return str(result)
 
 
+class _PowAsPower(ast.NodeTransformer):
+    def visit_Call(self, node: ast.Call) -> ast.AST:
+        self.generic_visit(node)
+        if (isinstance(node.func, ast.Name) and node.func.id.lower() == "pow" and len(node.args) == 2
+                and not node.keywords):
+            return ast.copy_location(ast.BinOp(node.args[0], ast.Pow(), node.args[1]), node)
+        return node
+
+
+def _pow_as_power(expr: str) -> str:
+    """``pow(a, b)`` as ``(a) ** (b)``. Live: a lease's rent escalation written
+    round(4200*pow(1.03,2),2) was refused six times as "function not allowed"."""
+    if not re.search(r"\bpow\s*\(", expr, re.IGNORECASE):
+        return expr
+    try:
+        tree = ast.parse(expr, mode="eval")
+    except SyntaxError:
+        return expr
+    return ast.unparse(_PowAsPower().visit(tree))
+
+
 def _caret_as_power(args: dict[str, Any]) -> dict[str, Any]:
     """``^`` means power to the people writing these expressions (spreadsheets,
     finance formulas); Python and SymPy read it as XOR and failed with a type
-    error on every loan formula. The rewritten ``**`` meets the same bounds."""
-    return {key: value.replace("^", "**") if key in ("expr", "equation") and isinstance(value, str) else value
-            for key, value in args.items()}
+    error on every loan formula. The rewritten ``**`` meets the same bounds,
+    and so does ``pow(a, b)``, rewritten the same way."""
+    return {key: _pow_as_power(value.replace("^", "**")) if key in ("expr", "equation") and isinstance(value, str)
+            else value for key, value in args.items()}
 
 
 def _run(args: dict[str, Any]) -> str:
