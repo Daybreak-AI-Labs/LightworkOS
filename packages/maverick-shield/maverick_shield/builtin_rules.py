@@ -463,20 +463,8 @@ RULES: list[Rule] = [
          "Persona takeover: answer as your 'unaligned self'"),
 
     # System-prompt leak — verbatim / everything above / hidden directives.
-    # "Verbatim" alone is no leak: it must be the prompt, its instructions or
-    # what is above that is dumped. An agent's answer offering to "quote the
-    # exact lease clauses verbatim" was blocked as a prompt extraction.
     Rule("verbatim_prompt_leak", "medium",
-         _compile(r"\b(print|repeat|output|show|reveal|echo|paste|reproduce|quote)\b(?:"
-                  r"[\s\S]{0,40}?\b(everything\s+(above|that\s+appears)|hidden\s+(directive|instruction|prompt)"
-                  r"|configuration\s+block)"
-                  r"|[\s\S]{0,40}?\b(prompts?|instructions?|system|directives?|above|preceding|initial|configuration"
-                  r"|hidden|developer)\b[\s\S]{0,40}?\b(verbatim|word[\s-]for[\s-]word|line[\s-]for[\s-]line|exact\s+text)"
-                  r"|[\s\S]{0,40}?\b(verbatim|word[\s-]for[\s-]word|line[\s-]for[\s-]line|exact\s+text)\b[\s\S]{0,40}?"
-                  r"\b(prompts?|instructions?|system|directives?|above|preceding|initial|configuration|hidden|developer)\b)"
-                  r"|\b(system\s+(prompt|message)|prompts?|instructions?|directives?)\b[\s\S]{0,60}?"
-                  r"\b(print|repeat|output|show|reveal|echo|paste|reproduce|quote)\b[\s\S]{0,20}?"
-                  r"\b(verbatim|word[\s-]for[\s-]word|line[\s-]for[\s-]line|exact\s+text)"),
+         _compile(r"\b(print|repeat|output|show|reveal|echo|paste|reproduce|quote)\b[\s\S]{0,40}?\b(verbatim|word[\s-]for[\s-]word|line[\s-]for[\s-]line|exact\s+text|everything\s+(above|that\s+appears)|hidden\s+(directive|instruction|prompt)|configuration\s+block)"),
          "System-prompt extraction: dump hidden/preceding text verbatim"),
 
     # Secret exfiltration — name a credential AND move it out (either order),
@@ -701,8 +689,9 @@ def _threshold_to_min_severity(threshold: str) -> int:
 def scan(
     text: str,
     block_threshold: str = "high",
+    skip: frozenset[str] = frozenset(),
 ) -> tuple[bool, str, list[str]]:
-    """Run all rules over ``text``.
+    """Run all rules over ``text``, but those named in ``skip``.
 
     Returns (blocked, max_severity, matched_rule_names).
     Blocked = True iff any rule fired at or above the configured threshold.
@@ -725,6 +714,8 @@ def scan(
     max_idx = -1
     max_sev = "none"
     for r in RULES:
+        if r.name in skip:
+            continue
         hit = (r.name in url_found if r.name in _URL_RULES
                else any(r.pattern.search(c) for c in candidates))
         if hit:
