@@ -338,3 +338,91 @@ def test_a_statement_pdf_answers_an_exact_select(tmp_path):
                      root=tmp_path / "a")
     nid = world.add_attachment(gid, note.filename, note.mime, note.size_bytes, note.sha256, str(note.path))
     assert tool.fn({"id": nid, "sql": "SELECT 1 FROM data"}).startswith("ERROR: no table")
+
+
+def _add(world, gid, tmp_path, name, mime, data):
+    rec = att.store(gid, name, mime, data, root=tmp_path / "a")
+    return world.add_attachment(gid, rec.filename, rec.mime, rec.size_bytes, rec.sha256, str(rec.path))
+
+
+_DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def test_a_query_joins_the_tasks_other_files_by_their_names(tmp_path):
+    # Live: an agent wrote FROM read_attachment_158 to join October's sales
+    # to a cost workbook, was told "no such table", matched SKUs to
+    # categories in its head and got every category's cost wrong.
+    import io
+
+    import openpyxl
+
+    book = openpyxl.Workbook()
+    book.active.title = "Read me"
+    book.active.append(["Unit costs are on the Costs sheet."])
+    costs = book.create_sheet("Costs")
+    for row in (["SKU", "Category", "Unit cost"], ["CB-01", "Coffee", 6.4], ["TE-01", "Tea", 3.2],
+                ["CB-02", "Coffee", 7.1]):
+        costs.append(row)
+    raw = io.BytesIO()
+    book.save(raw)
+    world = WorldModel(tmp_path / "w.db")
+    gid = world.create_goal("g", "")
+    sales = _add(world, gid, tmp_path, "october_sales.csv", "text/csv",
+                 b"sku,qty,unit_price,discount_pct\nCB-01,2,14.00,0\nTE-01,3,9.00,10\nCB-02,1,15.50,15\n")
+    _add(world, gid, tmp_path, "unit_costs.xlsx", _XLSX, raw.getvalue())
+    tool = read_attachment_tool(world, gid)
+    sql = ("SELECT c.Category, ROUND(SUM(s.qty * s.unit_price * (100 - s.discount_pct) / 100.0), 2) AS revenue, "
+           'ROUND(SUM(s.qty * c."Unit cost"), 2) AS cost FROM data s JOIN {} c ON c.SKU = s.sku '
+           "GROUP BY c.Category ORDER BY c.Category")
+    for table in ("unit_costs", "UNIT_COSTS", "unit_costs_costs"):
+        assert tool.fn({"id": sales, "sql": sql.format(table)}) == (
+            "Category,revenue,cost\nCoffee,41.18,19.9\nTea,24.3,9.6"), table
+    missed = tool.fn({"id": sales, "sql": "SELECT * FROM data JOIN read_attachment_158"})
+    assert missed.startswith("ERROR") and "no such table" in missed
+    assert "unit_costs (unit_costs.xlsx" in missed and "data (october_sales.csv)" in missed, missed
+    from maverick.tools.attachments import list_attachments_tool
+    assert "october_sales, unit_costs" in list_attachments_tool(world, gid).fn({})
+
+
+def _timesheet_docx() -> bytes:
+    from maverick.markdown_word import word_answer
+
+    return word_answer("Lunch is unpaid.\n\n| Employee | Rate | Mon | Tue |\n|---|---|---|---|\n"
+                       "| Dana | $22.50 | 7:00-15:30 |  |\n| Hank | $18.25 | off | 14:00-23:00 |\n\n"
+                       "Approvals:\n\n| Manager | Signed |\n|---|---|\n| Lee | yes |\n", "Timesheet")
+
+
+def test_a_word_documents_table_answers_an_exact_select(tmp_path):
+    # Live: a timesheet in a Word table was read one cell per line and
+    # added up by hand; two of four people's hours came out wrong.
+    world = WorldModel(tmp_path / "w.db")
+    gid = world.create_goal("g", "")
+    aid = _add(world, gid, tmp_path, "timesheet.docx", _DOCX, _timesheet_docx())
+    tool = read_attachment_tool(world, gid)
+    sql = ("SELECT Employee, SUM(h) AS hours, ROUND(SUM(h) * Rate, 2) AS pay FROM ("
+           "SELECT Employee, Rate, COALESCE(hours(Mon), 0) + COALESCE(hours(Tue), 0) AS h FROM data) "
+           "GROUP BY Employee ORDER BY Employee")
+    out = tool.fn({"id": aid, "sql": sql})
+    assert out.splitlines()[:3] == ["Employee,hours,pay", "Dana,8.5,191.25", "Hank,9.0,164.25"], out
+    assert "2 tables" in out and "`table`" in out
+    assert tool.fn({"id": aid, "table": 2, "sql": "SELECT Manager FROM data WHERE Signed = 'yes'"}) == "Manager\nLee"
+    assert tool.fn({"id": aid, "table": 3, "sql": "SELECT 1"}).startswith("ERROR: timesheet.docx has 2 tables")
+    plain = tool.fn({"id": aid})
+    assert plain.startswith("ERROR") and ".extracted.txt" in plain and "`sql`" in plain
+    assert "table" in tool.input_schema["properties"]
+    # Joined from another file's query, by its name.
+    rates = _add(world, gid, tmp_path, "bonus.csv", "text/csv", b"name,bonus\nDana,50\nHank,25\n")
+    joined = tool.fn({"id": rates, "sql": "SELECT b.name, b.bonus + t.Rate AS x FROM data b "
+                                          "JOIN timesheet t ON t.Employee = b.name ORDER BY b.name"})
+    assert joined == "name,x\nDana,72.5\nHank,43.25", joined
+
+
+def test_a_word_document_with_no_table_says_so(tmp_path):
+    from maverick.markdown_word import word_answer
+
+    world = WorldModel(tmp_path / "w.db")
+    gid = world.create_goal("g", "")
+    aid = _add(world, gid, tmp_path, "memo.docx", _DOCX, word_answer("Just a memo.", "Memo"))
+    out = read_attachment_tool(world, gid).fn({"id": aid, "sql": "SELECT 1"})
+    assert out.startswith("ERROR: memo.docx has no table")

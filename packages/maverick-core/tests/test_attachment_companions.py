@@ -85,7 +85,8 @@ class TestGenerateCompanions:
             text = att.read_bytes(companion.path).decode("utf-8")
             metadata = json.loads(text.splitlines()[1])
             assert metadata["source_sha256"] == original.sha256
-            assert metadata["locations"][2]["kind"] == "table_cell"
+            assert metadata["locations"][1]["kind"] == "table_row"
+            assert "| Revenue | 120000 |" in text
             assert "120000" in text and att.read_bytes(original.path) == buffer.getvalue()
             assert Path(original.path).read_bytes() == stored_original
             blocks = content_blocks_for_goal(wm, gid, model="claude-opus-4-8")

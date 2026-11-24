@@ -137,7 +137,7 @@ def is_image(path: str | Path) -> bool:
 
 _TEXT_EXTS = frozenset({".txt", ".md", ".markdown", ".rst", ".csv", ".tsv", ".log",
                         ".json", ".jsonl", ".yaml", ".yml", ".toml", ".xml", ".html", ".htm"})
-_EXTRACTOR_VERSION = "lightwork-normalized-extraction:1"
+_EXTRACTOR_VERSION = "lightwork-normalized-extraction:2"  # 2: Word table rows
 
 
 def extract_document(path: str | Path) -> DocumentExtraction:
@@ -208,6 +208,17 @@ def extract_document(path: str | Path) -> DocumentExtraction:
     except Exception as exc:
         return DocumentExtraction("failed", format, digest, _EXTRACTOR_VERSION,
                                   omitted_regions=("whole-source",), warnings=(f"Parser failed: {type(exc).__name__}",))
+
+
+def word_document_tables(data: bytes) -> list[list[list[str]]]:
+    """A Word document's top-level tables as rows of cell text, under the same
+    size bounds and package checks as :func:`extract_document`."""
+    cap = _int_env("MAVERICK_KNOWLEDGE_MAX_DOC_BYTES", DEFAULT_MAX_DOC_BYTES)
+    if cap > 0 and len(data) > cap:
+        raise ValueError("document too large")
+    from .office_extract import word_tables
+    return word_tables(data, _int_env("MAVERICK_KNOWLEDGE_MAX_DOCX_UNCOMPRESSED_BYTES",
+                                      DEFAULT_MAX_DOCX_UNCOMPRESSED_BYTES))
 
 
 def extract_text(path: str | Path) -> str:

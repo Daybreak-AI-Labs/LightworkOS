@@ -76,6 +76,37 @@ def _paragraph(node) -> str:
     return "".join(values)
 
 
+_MAX_SPAN = 64
+
+
+def _table_rows(table) -> list[list[str]]:
+    """A Word table's rows as cell text, a blank cell kept as "" and a cell
+    merged across columns followed by a blank for each column it covers, so
+    every value stays under its own heading."""
+    rows = []
+    for row in table.findall(W + "tr"):
+        cells = []
+        for cell in row.findall(W + "tc"):
+            texts = (_paragraph(p).replace("\n", " ").strip() for p in cell.findall(W + "p"))
+            cells.append(" ".join(t for t in texts if t))
+            span = cell.find("./" + W + "tcPr/" + W + "gridSpan")
+            value = span.get(W + "val", "1") if span is not None else "1"
+            cells.extend([""] * (min(int(value), _MAX_SPAN) - 1 if value.isdigit() and int(value) > 1 else 0))
+        rows.append(cells)
+    return rows
+
+
+def word_tables(data: bytes, max_expanded: int) -> list[list[list[str]]]:
+    """Every top-level table in a Word document's body, as rows of cell text,
+    read through the same bounded package checks as extraction."""
+    parts = _parts(data, max_expanded)
+    root = parts.get("word/document.xml")
+    body = root.find(W + "body") if root is not None and root.tag == W + "document" else None
+    if body is None:
+        raise ValueError("Word document body is missing")
+    return [_table_rows(node) for node in body if node.tag == W + "tbl"]
+
+
 def _word(parts, builder):
     root = parts.get("word/document.xml")
     if root is None or root.tag != W + "document":
@@ -90,12 +121,14 @@ def _word(parts, builder):
         if node.tag == W + "p":
             builder.append(_paragraph(node), f"word/body/paragraph[{i}]", "paragraph")
         elif node.tag == W + "tbl":
-            for row_index, row in enumerate(node.findall(W + "tr"), 1):
+            # One block per row, cells between pipes: read one cell per line,
+            # a blank cell vanished and the values after it moved under the
+            # wrong heading.
+            for row_index, (row, cells) in enumerate(zip(node.findall(W + "tr"), _table_rows(node), strict=True), 1):
+                if any(cells):
+                    builder.append("| " + " | ".join(c.replace("|", "\\|") for c in cells) + " |",
+                                   f"word/body/table[{i}]/row[{row_index}]", "table_row")
                 for cell_index, cell in enumerate(row.findall(W + "tc"), 1):
-                    for paragraph_index, paragraph in enumerate(cell.findall(W + "p"), 1):
-                        builder.append(_paragraph(paragraph),
-                                       f"word/body/table[{i}]/row[{row_index}]/cell[{cell_index}]/paragraph[{paragraph_index}]",
-                                       "table_cell")
                     if cell.find(W + "tbl") is not None:
                         builder.omit(f"word/body/table[{i}]/row[{row_index}]/cell[{cell_index}]/nested-table")
         elif node.tag != W + "sectPr":

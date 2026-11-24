@@ -66,10 +66,40 @@ def test_valid_native_written_docx_preserves_body_table_body_order(tmp_path):
     document.save(path)
     result = extract_document(path)
     assert result.status == "partial"
-    assert [b.text for b in result.blocks] == ["Before table", "Revenue", "120000", "After table"]
-    assert [b.kind for b in result.blocks] == ["paragraph", "table_cell", "table_cell", "paragraph"]
-    assert "row[1]/cell[2]" in result.blocks[2].location
+    assert [b.text for b in result.blocks] == ["Before table", "| Revenue | 120000 |", "After table"]
+    assert [b.kind for b in result.blocks] == ["paragraph", "table_row", "paragraph"]
+    assert result.blocks[1].location.endswith("/row[1]")
     assert any("header" in s for s in result.omitted_regions)
+
+
+def test_a_word_table_keeps_its_rows_and_blank_cells(tmp_path):
+    # A table read one cell per line lost its blanks: "Rent 3000 3000" could
+    # not say which quarter was empty, and an agent mis-added a timesheet.
+    docx = pytest.importorskip("docx")
+    from maverick_knowledge.office_extract import word_tables
+
+    path = tmp_path / "budget.docx"
+    document = docx.Document()
+    table = document.add_table(rows=4, cols=4)
+    for r, row in enumerate([["Item", "Q1", "Q2", "Q3"], ["Rent", "3000", "", "3000"],
+                             ["", "", "", ""], ["Ads | print", "", "500", "700"]]):
+        for c, value in enumerate(row):
+            table.cell(r, c).text = value
+    merged = document.add_table(rows=2, cols=3)
+    merged.cell(0, 0).merge(merged.cell(0, 1)).text = "Name"
+    merged.cell(0, 2).text = "Total"
+    merged.cell(1, 0).text, merged.cell(1, 1).text, merged.cell(1, 2).text = "A", "B", "9"
+    document.save(path)
+    result = extract_document(path)
+    rows = [b.text for b in result.blocks if b.kind == "table_row"]
+    assert rows[:3] == ["| Item | Q1 | Q2 | Q3 |", "| Rent | 3000 |  | 3000 |", "| Ads \\| print |  | 500 | 700 |"]
+    assert rows[3] == "| Name |  | Total |"
+    for block in result.blocks:
+        assert result.text[block.start:block.end] == block.text
+    tables = word_tables(path.read_bytes(), 10_000_000)
+    assert tables[0] == [["Item", "Q1", "Q2", "Q3"], ["Rent", "3000", "", "3000"],
+                         ["", "", "", ""], ["Ads | print", "", "500", "700"]]
+    assert tables[1] == [["Name", "", "Total"], ["A", "B", "9"]]
 
 
 def test_native_pdf_marks_image_page_without_guessing_ocr_confidence(tmp_path):
