@@ -438,19 +438,22 @@ _FROM_ENDS = frozenset({"where", "group", "order", "limit", "having", "window", 
 
 def _table_refs(sql: str) -> set[str]:
     """The names ``sql`` uses as tables, lowercased: right after FROM or JOIN,
-    or as an item of a comma-separated FROM list, so a column named receipt or
-    a call to hours() is not one. Comments are skipped, and a quoted name (or a
-    string where SQLite takes it as one) counts as its text."""
+    as an item of a comma-separated FROM list, or as ``x IN skus`` (SQLite's
+    table form of IN), so a column named receipt or a call to hours() is not
+    one. Comments are skipped, and a quoted name (or a string where SQLite
+    takes it as one) counts as its text, even when empty: '' read as no text
+    crashed WHERE paid = '' on every attachment."""
     tokens: list[tuple[str, str]] = []
     for m in _SQL_TOKEN.finditer(sql):
         quoted = next((g for g in (m["sq"], m["dq"], m["bq"], m["sb"]) if g is not None), None)
         if m["word"] or quoted is not None:
-            tokens.append(("name" if quoted is not None else "word", (quoted or m["word"]).lower()))
+            tokens.append(("name", quoted.lower()) if quoted is not None else ("word", m["word"].lower()))
         elif m["punct"]:
             tokens.append(("punct", m["punct"]))
     refs: set[str] = set()
     depth, clauses, item = 0, [], False  # clauses: the depth of each open FROM clause
     for i, (kind, value) in enumerate(tokens):
+        following = tokens[i + 1] if i + 1 < len(tokens) else None
         starts = False
         if kind == "punct":
             depth += {"(": 1, ")": -1}.get(value, 0)
@@ -461,10 +464,11 @@ def _table_refs(sql: str) -> set[str]:
             elif value == ",":
                 starts = bool(clauses) and clauses[-1] == depth
         elif item and not (kind == "word" and value in ("select", "values", "with")):
-            following = tokens[i + 1] if i + 1 < len(tokens) else None
             if following not in (("punct", "("), ("punct", ".")):  # json_each(...) is a function
                 refs.add(value)
             starts = following == ("punct", ".")
+        elif kind == "word" and value == "in":
+            starts = following != ("punct", "(")  # IN (1, 2) is a list, IN skus a table
         elif kind == "word" and value in ("from", "join"):
             starts = True
             if value == "from":

@@ -581,3 +581,34 @@ def test_the_queried_file_is_loaded_once_under_the_name_the_query_uses(tmp_path)
     out = tool.fn({"id": sales, "sql": "SELECT SUM(s.qty * c.cost) AS t FROM sales__q3 s JOIN costs c "
                                        "ON c.sku = s.sku"})
     assert out == "t\n9.0", out
+
+
+def test_an_empty_quoted_token_does_not_break_a_query(tmp_path):
+    # Reading the query's table names, an empty string such as '' raised
+    # AttributeError, so WHERE paid = '' never ran on any attachment.
+    from maverick.tools.attachments import query_table
+
+    world = WorldModel(tmp_path / "w.db")
+    gid = world.create_goal("g", "")
+    invoices = _add(world, gid, tmp_path, "invoices.csv", "text/csv", b"id,amount,paid\n1,100,yes\n2,50,\n3,70,no\n")
+    tool = read_attachment_tool(world, gid)
+    assert tool.fn({"id": invoices, "sql": "SELECT COUNT(*) AS n FROM data WHERE paid = ''"}) == "n\n1"
+    out = tool.fn({"id": invoices, "sql": "SELECT SUM(amount) AS t FROM data WHERE COALESCE(paid, '') <> 'yes'"})
+    assert out == "t\n120", out
+    assert tool.fn({"id": invoices, "sql": 'SELECT COUNT(*) AS n FROM data WHERE paid = ""'}) == "n\n1"
+    assert query_table("x.csv", "text/csv", "a,b\n1,\n", "SELECT COUNT(*) AS n FROM data WHERE b = ''") == "n\n1"
+
+
+def test_a_file_named_after_in_is_loaded_as_a_table(tmp_path):
+    # SQLite reads `sku IN skus` as the table skus, but only FROM and JOIN
+    # loaded another file, so the query failed with no such table: skus while
+    # the hint listed skus.csv among the tables it could read.
+    world = WorldModel(tmp_path / "w.db")
+    gid = world.create_goal("g", "")
+    orders = _add(world, gid, tmp_path, "orders.csv", "text/csv", b"sku,sales_total\nA,10\nB,25\n")
+    _add(world, gid, tmp_path, "skus.csv", "text/csv", b"sku\nA\n")
+    tool = read_attachment_tool(world, gid)
+    for where, total in (("sku IN skus", 10), ("sku IN main.skus", 10), ("sku NOT IN skus", 25),
+                         ("sku IN (SELECT sku FROM skus)", 10), ("sku IN ('A', 'B')", 35)):
+        out = tool.fn({"id": orders, "sql": f"SELECT SUM(sales_total) AS t FROM data WHERE {where}"})
+        assert out == f"t\n{total}", (where, out)
