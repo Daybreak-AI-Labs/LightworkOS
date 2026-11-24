@@ -12,7 +12,7 @@ catalogue of built features and tools.
 
 | Section | Entries |
 | --- | ---: |
-| [Agent kernel and orchestration](#agent-kernel-and-orchestration) | 224 |
+| [Agent kernel and orchestration](#agent-kernel-and-orchestration) | 225 |
 | [Tools](#tools) | 10 |
 | [Channels](#channels) | prose |
 | [Sandboxes](#sandboxes) | prose |
@@ -33,7 +33,7 @@ catalogue of built features and tools.
 | [Customer workflow completion and readiness](#customer-workflow-completion-and-readiness) | 22 in 24 subsections |
 | [In-house legal workspace](#in-house-legal-workspace) | prose |
 
-465 entries in 20 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
+466 entries in 20 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
 <!-- toc:end -->
 
 ## Agent kernel and orchestration
@@ -290,6 +290,14 @@ Settings and the installation wizard.
   under the same permission and review as any schedule. A run a schedule
   started cannot propose another, and with `[features] scheduling = false`
   the agent says an administrator can turn automations on.
+- **Plain workbook formulas are computed when a workbook is read**
+  (`sheet_formulas.py`) — workbooks Lightwork writes hold formulas Excel
+  calculates on open, so a read gave "=SUM(B2:B13)" with no value. A read
+  now works out the plain kind (cells and ranges of the same sheet,
+  arithmetic, %, SUM, AVERAGE, MIN, MAX, COUNT, PRODUCT, ROUND and ABS)
+  exactly and reports it as `computed_value` with `value_status`
+  "computed", apart from any stored cache; SQL over an Excel attachment sees
+  the same values. Other formulas stay "uncalculated".
 - **Web search on by default** (`config.get_capabilities`,
   `[capabilities] web_search`, off on an enterprise install) — agents can
   search for current facts without setup. With no search key Lightwork uses

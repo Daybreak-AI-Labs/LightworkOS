@@ -368,19 +368,61 @@ def _xlsx_read_content(content: bytes, sheet: str | None, limit: int) -> list[li
         cached = _openpyxl().load_workbook(io.BytesIO(content), read_only=True, data_only=True, keep_links=False)
         cleanup.callback(cached.close)
         values = cached[ws.title]
+        computed = _Computed(ws, values)
         rows = []
         for row, cached_row in zip(ws.iter_rows(max_row=height, max_col=width),
                                    values.iter_rows(max_row=height, max_col=width), strict=True):
             output = []
             for cell, value in zip(row, cached_row, strict=True):
                 if cell.data_type == "f":
-                    output.append({"formula": str(cell.value), "cached_value": value.value,
-                                   "value_status": "uncalculated" if value.value is None else "cached",
-                                   "cell": cell.coordinate})
+                    entry = {"formula": str(cell.value), "cached_value": value.value,
+                             "value_status": "cached", "cell": cell.coordinate}
+                    if value.value is None:
+                        # No result is stored; a plain formula is worked out
+                        # here and kept apart from the cache it is not.
+                        found = computed.value(str(cell.value))
+                        entry["value_status"] = "uncalculated" if found is None else "computed"
+                        if found is not None:
+                            entry["computed_value"] = found
+                    output.append(entry)
                 else:
                     output.append(cell.value)
             rows.append(output)
         return rows
+
+
+class _Computed:
+    """Values for formula cells a workbook holds no result for (Lightwork's
+    own workbooks: Excel calculates them on open). Plain formulas are worked
+    out from the sheet's cells; see maverick.sheet_formulas."""
+
+    _MAX_CELLS = 100_000
+
+    def __init__(self, formulas, cached):
+        self._sheets = (formulas, cached)
+        self._grid: dict[str, Any] | None = None
+
+    def _cells(self) -> dict[str, Any]:
+        if self._grid is None:
+            from openpyxl.utils import get_column_letter
+
+            formulas, cached = self._sheets
+            grid: dict[str, Any] = {}
+            for r, (row, cached_row) in enumerate(zip(formulas.iter_rows(), cached.iter_rows(), strict=False), 1):
+                for c, (cell, value) in enumerate(zip(row, cached_row, strict=False), 1):
+                    if len(grid) >= self._MAX_CELLS:
+                        break
+                    held = value.value if value.value is not None else cell.value
+                    if held is not None:
+                        grid[f"{get_column_letter(c)}{r}"] = held
+            self._grid = grid
+        return self._grid
+
+    def value(self, formula: str) -> int | float | None:
+        from ..sheet_formulas import evaluate, plain_number
+
+        result = evaluate(formula, self._cells().get)
+        return None if result is None else plain_number(result)
 
 
 def _isolated_xlsx_read(content: bytes, *, sheet: str | None, limit: int) -> str:
@@ -714,7 +756,8 @@ def spreadsheet(sandbox=None, goal_id: str | int | None = "default") -> Tool:
             "with several named sheets), set_cell (xlsx "
             "A1-cell), recalculate (offline LibreOffice engine when enabled). "
             "Formula cells include formula, cached_value and value_status; a cache is "
-            "not proof of fresh calculation. Enabled .xlsm cell edits preserve VBA without executing it."
+            "not proof of fresh calculation, and value_status 'computed' means Lightwork worked "
+            "out a plain formula (sums, arithmetic, rounding) from the sheet's cells. Enabled .xlsm cell edits preserve VBA without executing it."
         ),
         input_schema=_SPREADSHEET_SCHEMA,
         fn=lambda args: _run(args, sandbox, quota_goal_id),
@@ -797,6 +840,12 @@ def _xlsx_as_csv(path: Path) -> str:
     return xlsx_bytes_as_csv(_xlsx_bytes(path))
 
 
+def _cell_value(cell: dict) -> Any:
+    """A formula cell's stored result, or the value Lightwork computed."""
+    stored = cell.get("cached_value")
+    return stored if stored is not None else cell.get("computed_value", "")
+
+
 def xlsx_bytes_as_csv(data: bytes) -> str:
     """:func:`_xlsx_as_csv` for a workbook already in memory (an attachment)."""
     import csv
@@ -806,6 +855,6 @@ def xlsx_bytes_as_csv(data: bytes) -> str:
     out = io.StringIO()
     writer = csv.writer(out, lineterminator="\n")
     for row in rows:
-        writer.writerow(["" if cell is None else cell.get("cached_value", "") if isinstance(cell, dict) else cell
+        writer.writerow(["" if cell is None else _cell_value(cell) if isinstance(cell, dict) else cell
                          for cell in row])
     return out.getvalue()
