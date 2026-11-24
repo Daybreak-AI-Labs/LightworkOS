@@ -430,55 +430,6 @@ def _table_files(attachments) -> list[tuple[str, object]]:
     return list(found.items())
 
 
-_SQL_TOKEN = re.compile(r"--[^\n]*|/\*.*?(?:\*/|\Z)|'(?P<sq>(?:[^']|'')*)'?"
-                        r'|"(?P<dq>(?:[^"]|"")*)"?|`(?P<bq>(?:[^`]|``)*)`?|\[(?P<sb>[^\]]*)\]?'
-                        r"|(?P<word>\w+)|(?P<punct>[(),.;])", re.DOTALL)
-_FROM_ENDS = frozenset({"where", "group", "order", "limit", "having", "window", "union", "except", "intersect"})
-
-
-def _table_refs(sql: str) -> set[str]:
-    """The names ``sql`` uses as tables, lowercased: right after FROM or JOIN,
-    as an item of a comma-separated FROM list, or as ``x IN skus`` (SQLite's
-    table form of IN), so a column named receipt or a call to hours() is not
-    one. Comments are skipped, and a quoted name (or a string where SQLite
-    takes it as one) counts as its text, even when empty: '' read as no text
-    crashed WHERE paid = '' on every attachment."""
-    tokens: list[tuple[str, str]] = []
-    for m in _SQL_TOKEN.finditer(sql):
-        quoted = next((g for g in (m["sq"], m["dq"], m["bq"], m["sb"]) if g is not None), None)
-        if m["word"] or quoted is not None:
-            tokens.append(("name", quoted.lower()) if quoted is not None else ("word", m["word"].lower()))
-        elif m["punct"]:
-            tokens.append(("punct", m["punct"]))
-    refs: set[str] = set()
-    depth, clauses, item = 0, [], False  # clauses: the depth of each open FROM clause
-    for i, (kind, value) in enumerate(tokens):
-        following = tokens[i + 1] if i + 1 < len(tokens) else None
-        starts = False
-        if kind == "punct":
-            depth += {"(": 1, ")": -1}.get(value, 0)
-            while clauses and clauses[-1] > depth:
-                clauses.pop()
-            if value in ("(", "."):
-                starts = item  # FROM (a JOIN b) and FROM main.a: the table follows
-            elif value == ",":
-                starts = bool(clauses) and clauses[-1] == depth
-        elif item and not (kind == "word" and value in ("select", "values", "with")):
-            if following not in (("punct", "("), ("punct", ".")):  # json_each(...) is a function
-                refs.add(value)
-            starts = following == ("punct", ".")
-        elif kind == "word" and value == "in":
-            starts = following != ("punct", "(")  # IN (1, 2) is a list, IN skus a table
-        elif kind == "word" and value in ("from", "join"):
-            starts = True
-            if value == "from":
-                clauses.append(depth)
-        elif kind == "word" and value in _FROM_ENDS and clauses and clauses[-1] == depth:
-            clauses.pop()
-        item = starts
-    return refs
-
-
 class _OtherFiles:
     """The task's other attached files as tables of one query, named after
     each file and loaded only when the query uses them as tables. Live: an
@@ -491,33 +442,31 @@ class _OtherFiles:
                       if a.id != current.id and name != "data"]
         self.problems: dict[str, str] = {}
 
-    def tables(self, refs: set[str]) -> dict[str, tuple[str, str]]:
-        """``{table: (filename, csv text)}`` for the files ``refs`` names as
-        tables. A file that cannot be loaded is left out and its problem kept
-        for :meth:`hint`: a column or function sharing a file's name (receipt
-        next to receipt.docx, hours() next to Hours.docx) once loaded that
-        file, and a file with no table failed a query that never read it."""
-        tables: dict[str, tuple[str, str]] = {}
-        self.problems = {}
-        for name, a in self.files:
-            if not any(ref == name or (_is_workbook(a) and ref.startswith(name + "_")) for ref in refs):
+    def table(self, wanted: str) -> dict[str, tuple[str, str]]:
+        """``{wanted: (filename, csv text)}`` when ``wanted`` names an attached
+        file, or a workbook's sheet as ``<name>_<sheet>``; empty when none does
+        or the file cannot be loaded, its problem then kept for :meth:`hint`.
+        The longest name is tried first, so sales_q1.csv answers sales_q1
+        before a sheet q1 of sales.xlsx does."""
+        for name, a in sorted(self.files, key=lambda file: -len(file[0])):
+            if wanted != name and not (_is_workbook(a) and wanted.startswith(name + "_")):
                 continue
-            loaded = self._workbook(name, a, refs) if _is_workbook(a) else self._load(name, a)
+            loaded = self._workbook(name, a, wanted) if _is_workbook(a) else self._load(name, a)
             if isinstance(loaded, str):
                 self.problems[name] = loaded.removeprefix("ERROR: ")
-            else:
-                tables.update(loaded)
-        return tables
+                return {}
+            if wanted in loaded:
+                return loaded
+        return {}
 
     @staticmethod
-    def _workbook(name: str, a, refs: set[str]):
-        """The workbook's sheets ``refs`` names, as ``<name>_<sheet>`` and, for
-        ``name``, its first sheet holding a table. Each sheet is parsed in its
-        own subprocess, so only those are: every sheet was once parsed for a
+    def _workbook(name: str, a, wanted: str):
+        """The workbook's sheet ``wanted`` names: ``<name>_<sheet>``, or for
+        ``name`` its first sheet holding a table. Each sheet is parsed in its
+        own subprocess, so only that one is: every sheet was once parsed for a
         column such as sales_total next to sales.xlsx, on every query."""
         from ..attachments import read_bytes
         from .spreadsheet import xlsx_bytes_as_csv, xlsx_bytes_sheet_names
-        tables = {}
         parsed: dict[str, str] = {}
         try:
             data = read_bytes(a.path)
@@ -530,17 +479,16 @@ class _OtherFiles:
             sheets = xlsx_bytes_sheet_names(data)
             if not sheets:
                 return f"ERROR: {a.filename} has no sheet to query"
-            for sheet in sheets:
-                table = f"{name}_{re.sub(r'[^a-z0-9_]', '_', sheet.lower())}"
-                if table in refs:
-                    tables[table] = (f"{a.filename}, sheet {sheet!r}", sheet_csv(sheet))
-            if name in refs:
+            if wanted == name:
                 # The first sheet holding a table, past a "Read me" note.
                 sheet = next((s for s in sheets if len(sheet_csv(s).strip().splitlines()) > 1), sheets[0])
-                tables[name] = (f"{a.filename}, sheet {sheet!r}", sheet_csv(sheet))
+                return {name: (f"{a.filename}, sheet {sheet!r}", sheet_csv(sheet))}
+            for sheet in sheets:
+                if f"{name}_{re.sub(r'[^a-z0-9_]', '_', sheet.lower())}" == wanted:
+                    return {wanted: (f"{a.filename}, sheet {sheet!r}", sheet_csv(sheet))}
         except Exception as exc:  # noqa: BLE001 -- surfaced to the agent as data
             return f"ERROR: {a.filename} could not be read as a workbook: {exc}"
-        return tables
+        return {}
 
     def _load(self, name: str, a):
         from ..attachments import AttachmentRejected, read_bytes
@@ -573,25 +521,40 @@ class _OtherFiles:
             f"; {problem}" for problem in self.problems.values())
 
 
+_MISSING_TABLE = re.compile(r"no such table: (?:main\.)?(\S+)")
+
+
 def _query(filename: str, text: str, sql: str, others=None) -> str:
     """``sql`` over the file ``filename`` (``text``, as CSV) as the table
-    ``data``, with the task's other files it uses as tables of their own."""
+    ``data``, with the task's other files it uses as tables of their own.
+    SQLite says which tables a query reads: each one it reports missing that
+    names an attached file is loaded and the query run again. Reading the
+    names from the query's text loaded a file for a column named receipt or
+    for IS DISTINCT FROM amount, and missed FROM (data, costs)."""
     from .csv_query import query_tables
 
-    refs = _table_refs(sql)
-    tables = {"data": (filename, text)}
-    if others is not None:
-        tables.update(others.tables(refs))
     # The file being read is also a table under its own name: a join over
     # october_sales.csv written FROM october_sales was refused. It is loaded
-    # under the names the query uses, so once: loaded as data as well, its
-    # blank cells were counted twice in the query's notes.
+    # only under the names the query uses: loaded as data as well, its blank
+    # cells were counted twice in the query's notes.
     own = _table_name(filename)
-    if own not in tables and own in refs:
-        if "data" not in refs:
-            del tables["data"]
-        tables[own] = (filename, text)
-    result = query_tables(tables, sql)
+    tables = {"data": (filename, text)}
+    asked: set[str] = set()
+    while True:
+        result = query_tables(tables, sql)
+        missing = _MISSING_TABLE.search(result) if result.startswith("ERROR") else None
+        wanted = missing.group(1).strip("\"'`[];,").lower() if missing else ""
+        if not wanted or wanted in asked:
+            break
+        asked.add(wanted)
+        if wanted in (own, "data"):
+            tables[wanted] = (filename, text)
+            if wanted == own and "data" not in asked:
+                tables.pop("data", None)
+        elif others is not None and (found := others.table(wanted)):
+            tables.update(found)
+        else:
+            break
     if others is not None and result.startswith("ERROR") and "no such table" in result:
         result += others.hint(filename)
     return result

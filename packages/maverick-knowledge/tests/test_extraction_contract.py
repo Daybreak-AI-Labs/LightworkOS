@@ -206,7 +206,8 @@ def test_word_field_results_are_refused_instead_of_silently_skipped(tmp_path):
     assert any("fields" in warning for warning in result.warnings)
 
 
-@pytest.mark.parametrize("tag", ["ins", "del", "instrText", "txbxContent", "altChunk", "object"])
+@pytest.mark.parametrize("tag", ["ins", "del", "instrText", "txbxContent", "altChunk", "object",
+                                 "moveFrom", "moveTo", "fldSimple", "cellIns", "cellDel"])
 def test_word_tables_refuse_what_extraction_refuses(tmp_path, tag):
     # A table cell with a pending tracked change (or a field, text box or
     # embedded content) was refused by extraction but read by the table path

@@ -110,7 +110,10 @@ def _word_body(parts):
     root = parts.get("word/document.xml")
     if root is None or root.tag != W + "document":
         raise ValueError("Word document body is missing")
-    if any(node.tag in {W + name for name in ("altChunk", "object", "instrText", "ins", "del", "txbxContent")}
+    # Tracked moves, simple fields and cell revisions are the same pending
+    # changes and cached results: a tracked move of 40 to 45 read as 4045.
+    if any(node.tag in {W + name for name in ("altChunk", "object", "instrText", "fldSimple", "ins", "del",
+                                               "moveFrom", "moveTo", "cellIns", "cellDel", "txbxContent")}
            for node in root.iter()):
         raise ValueError("Word fields, embedded content and tracked changes need a reviewed text copy")
     body = root.find(W + "body")

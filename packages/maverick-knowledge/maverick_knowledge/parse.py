@@ -137,7 +137,7 @@ def is_image(path: str | Path) -> bool:
 
 _TEXT_EXTS = frozenset({".txt", ".md", ".markdown", ".rst", ".csv", ".tsv", ".log",
                         ".json", ".jsonl", ".yaml", ".yml", ".toml", ".xml", ".html", ".htm"})
-_EXTRACTOR_VERSION = "lightwork-normalized-extraction:2"  # 2: Word table rows
+_EXTRACTOR_VERSION = "lightwork-normalized-extraction:3"  # 2: Word table rows; 3: moves, fldSimple
 
 
 def extract_document(path: str | Path) -> DocumentExtraction:

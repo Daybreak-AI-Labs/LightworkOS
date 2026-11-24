@@ -612,3 +612,34 @@ def test_a_file_named_after_in_is_loaded_as_a_table(tmp_path):
                          ("sku IN (SELECT sku FROM skus)", 10), ("sku IN ('A', 'B')", 35)):
         out = tool.fn({"id": orders, "sql": f"SELECT SUM(sales_total) AS t FROM data WHERE {where}"})
         assert out == f"t\n{total}", (where, out)
+
+
+def test_tables_are_loaded_where_sqlite_reads_them_and_nowhere_else(tmp_path):
+    # Review: reading table names from the query's text missed the second
+    # table of FROM (data, costs), which then failed with no such table while
+    # the hint listed costs; and it took `IS DISTINCT FROM amount` or a CTE
+    # named amount for a table, loading amount.csv, whose bad header failed a
+    # query that never read it.
+    world = WorldModel(tmp_path / "w.db")
+    gid = world.create_goal("g", "")
+    orders = _add(world, gid, tmp_path, "orders.csv", "text/csv",
+                  b"sku,qty,amount,receipt\nA,2,10,yes\nB,1,12,no\n")
+    _add(world, gid, tmp_path, "costs.csv", "text/csv", b"sku,cost\nA,3\nB,4\n")
+    _add(world, gid, tmp_path, "cats.csv", "text/csv", b"sku,cat\nA,x\nB,y\n")
+    _add(world, gid, tmp_path, "amount.csv", "text/csv", b",\n1,2\n")  # no header
+    _add(world, gid, tmp_path, "receipt.csv", "text/csv", b"id,id\n1,2\n")  # repeats a column
+    tool = read_attachment_tool(world, gid)
+    for sql, expected in (
+            ("SELECT COUNT(*) AS n FROM (data, costs) WHERE data.sku = costs.sku", "n\n2"),
+            ("SELECT COUNT(*) AS n FROM (data JOIN costs USING (sku), cats)", "n\n4"),
+            ("SELECT COUNT(*) AS n FROM data JOIN (costs, cats) ON data.sku = costs.sku AND costs.sku = cats.sku",
+             "n\n2"),
+            ("SELECT sku, qty IS NOT DISTINCT FROM amount AS same, receipt FROM data ORDER BY sku",
+             "sku,same,receipt\nA,0,yes\nB,0,no"),
+            ("WITH amount AS (SELECT 1 AS x) SELECT x FROM amount", "x\n1"),
+            ("SELECT SUM(qty * cost) AS c FROM orders JOIN costs USING (sku)", "c\n10")):
+        out = tool.fn({"id": orders, "sql": sql})
+        assert out == expected, (sql, out)
+    # Read as a table, a file that cannot be loaded still says why.
+    out = tool.fn({"id": orders, "sql": "SELECT * FROM amount"})
+    assert out.startswith("ERROR") and "amount.csv" in out, out
