@@ -446,3 +446,17 @@ def test_a_read_back_shows_a_workbook_as_the_file_holds_it(tmp_path):
     out = ss._run({"op": "write", "path": str(tmp_path / "v.xlsx"), "rows": rows})
     held = out.split("What the file now holds (formulas worked out):\n", 1)[1]
     assert held.splitlines() == ['"\'=VLOOKUP(A2,Codes!A:B,2,FALSE)"', "'=Detail!C2", "-300", "-600"], held
+
+
+def test_each_sheet_of_a_write_has_its_own_readback_budget():
+    # Review: the read-back's work cap was shared by every sheet, so a
+    # workbook of four region sheets showed the last ones' totals as formulas.
+    from maverick.tools.spreadsheet import _readback
+
+    sheets = {}
+    for region in ("North", "South", "East", "West"):
+        rows = [["Region total", "=SUM(D5:D8004)"], ["", ""], ["", ""], ["Order", "Qty", "Price", "Line"]]
+        rows += [[f"SO-{i}", 1, 2, f"=B{i + 5}*C{i + 5}"] for i in range(8000)]
+        sheets[region] = rows
+    totals = [line for line in _readback(sheets).splitlines() if line.startswith("Region total")]
+    assert totals == ["Region total,16000"] * 4, totals

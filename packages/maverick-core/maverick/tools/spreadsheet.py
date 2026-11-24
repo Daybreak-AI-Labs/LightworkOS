@@ -660,12 +660,16 @@ def _readback(sheets: dict, formulas: bool = True) -> str:
     # '-300 and a lookup is text too, which the read-back once showed as a
     # number and a live formula while Excel's total of the file was 0.
     stored = _xlsx_value if formulas else _neutralize_formula
-    parts, room, steps = [], _READBACK_CHARS, _READBACK_STEPS
+    # Each sheet has its own budget of work, under a total of five sheets':
+    # shared, a workbook of large region sheets left the last one's totals
+    # as formula text.
+    parts, room, steps = [], _READBACK_CHARS, _READBACK_STEPS * 5
     for name, rows in sheets.items():
         grid = {f"{get_column_letter(c)}{r}": stored(value)
                 for r, row in enumerate(rows[:10_000], 1) for c, value in enumerate(row[:200], 1)
                 if value is not None and value != ""}
-        memo = Memo(steps)
+        memo = Memo(min(steps, _READBACK_STEPS))
+        budget = memo.steps
 
         def shown(value, grid=grid, memo=memo):
             value = stored(value)
@@ -677,7 +681,7 @@ def _readback(sheets: dict, formulas: bool = True) -> str:
         out = io.StringIO()
         csv.writer(out, lineterminator="\n").writerows(
             [["" if v is None else shown(v) for v in row] for row in rows[:_READBACK_ROWS]])
-        steps = memo.steps
+        steps -= budget - max(memo.steps, 0)
         block = (f"Sheet {name!r}:\n" if len(sheets) > 1 else "") + out.getvalue()
         if len(rows) > _READBACK_ROWS:
             block += f"... {len(rows) - _READBACK_ROWS} more rows\n"
