@@ -572,7 +572,7 @@ def test_the_queried_file_is_loaded_once_under_the_name_the_query_uses(tmp_path)
     tool = read_attachment_tool(world, gid)
     for table in ("data", "invoices"):
         out = tool.fn({"id": invoices, "sql": f"SELECT SUM(amount - paid) AS owed FROM {table}"})
-        assert out.startswith("owed\n0\nNote: paid is blank in 2 rows,"), (table, out)
+        assert out.startswith(f"owed\n0\nNote: {table}.paid is blank in 2 rows,"), (table, out)
     both = tool.fn({"id": invoices, "sql": "SELECT COUNT(*) AS n FROM data d JOIN invoices i ON i.id = d.id"})
     assert both == "n\n4", both
     sales = _add(world, gid, tmp_path, "Sales, Q3.csv", "text/csv", b"sku,qty\nA,2\nB,3\n")

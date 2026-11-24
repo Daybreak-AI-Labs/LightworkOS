@@ -30422,7 +30422,7 @@
       "observed_mechanism_markers": {},
       "source_sites": [
         {
-          "line": 278,
+          "line": 470,
           "function": "query_tables",
           "kind": "connect",
           "expression": "sqlite3.connect(':memory:')"
