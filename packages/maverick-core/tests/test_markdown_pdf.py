@@ -109,3 +109,11 @@ def test_escaped_punctuation_is_written_without_its_backslash():
                                          "| Item | Cost |\n|---|---|\n| A | \\$5.00 |\n"))
     assert "$8,400" in streams and "7.5%" in streams and "*not" in streams and "$5.00" in streams
     assert "\\\\$" not in streams and "\\\\%" not in streams
+
+
+@pytest.mark.parametrize("marker", ["\\newpage", "---PAGE BREAK---"])
+def test_a_page_break_line_starts_a_new_page(marker):
+    # Live: "one letter per page" came out as a "---PAGE BREAK---" line.
+    pdf = pdf_from_markdown(f"Dear Rosa,\n\nPay soon.\n\n{marker}\n\nDear Ken,\n\nPay soon.\n")
+    assert pdf.count(b"/Type /Page ") == 2
+    assert "BREAK" not in _streams(pdf) and "newpage" not in _streams(pdf)

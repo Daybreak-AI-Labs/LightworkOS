@@ -54,6 +54,10 @@ _ESCAPED = re.compile(r"\\([!-/:-@\[-`{-~])")
 _HEADING = re.compile(r"^(#{1,6}) ([^#].*)$")
 _BULLET = re.compile(r"^[-+*] (\S.*)$")
 _FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})([^`~]*)$")
+# A line that asks for a new page: "\\newpage" (documented), or the forms models
+# write unprompted ("---PAGE BREAK---", "[Page break]", "<!-- pagebreak -->").
+_PAGE_BREAK = re.compile(r"\s*(?:\\newpage|\\pagebreak|<!--\s*page\s*-?break\s*-->"
+                         r"|[-=_*\[(<]*\s*page\s*-?break\s*[-=_*\])>]*)\s*", re.IGNORECASE)
 _CELL_RULE = re.compile(r":?-{3,}:?")
 
 
@@ -87,7 +91,9 @@ def _blocks(text, title):
             blocks.append(("code", [(line, False)]))
             continue
         heading, bullet = _HEADING.fullmatch(line), _BULLET.fullmatch(line)
-        if heading:
+        if _PAGE_BREAK.fullmatch(line):
+            blocks.append(("pagebreak", []))
+        elif heading:
             blocks.append(("heading", _runs(heading[2])))
         elif bullet:
             blocks.append(("bullet", _runs(bullet[1])))
@@ -235,6 +241,9 @@ def word_answer(text: str, title: str) -> bytes:
     for paragraph, block in zip(paragraphs, blocks, strict=True):
         if block[0] == "table":
             tables[paragraph] = _word_table(block[2], block[3])
+            continue
+        if block[0] == "pagebreak":
+            ET.SubElement(ET.SubElement(paragraph, f"{{{_W}}}r"), f"{{{_W}}}br", {f"{{{_W}}}type": "page"})
             continue
         if block[0] == "code":
             ppr = ET.Element(f"{{{_W}}}pPr")

@@ -60,6 +60,10 @@ _HEADING_SIZES = {1: 20.0, 2: 15.0, 3: 12.5}
 _HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
 _ITEM = re.compile(r"^(\s*)([-*+]|\d{1,3}[.)])\s+(\[[ xX]\]\s+)?(.*)$")
 _RULE = re.compile(r"^\s*([-*_])(\s*\1){2,}\s*$")
+# A line that asks for a new page: "\\newpage" (documented), or the forms models
+# write unprompted ("---PAGE BREAK---", "[Page break]", "<!-- pagebreak -->").
+_PAGE_BREAK = re.compile(r"\s*(?:\\newpage|\\pagebreak|<!--\s*page\s*-?break\s*-->"
+                         r"|[-=_*\[(<]*\s*page\s*-?break\s*[-=_*\])>]*)\s*", re.IGNORECASE)
 _TABLE_RULE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$")
 _BOLD = re.compile(r"\*\*(.+?)\*\*")
 # A backslash before ASCII punctuation is a Markdown escape ("\\$8,400"):
@@ -300,6 +304,10 @@ def _blocks(markdown: str, pages: _Pages) -> None:
             pages.gap(size * 0.4)
             _paragraph(pages, heading.group(2).replace("**", ""), size=size, bold=True)
             pages.gap(size * 0.3)
+        elif _PAGE_BREAK.fullmatch(line):
+            flush()
+            if pages.pages[-1]:
+                pages._new()
         elif _RULE.match(line):
             flush()
             pages.need(12)

@@ -261,7 +261,9 @@ Settings and the installation wizard.
   where the task runs (Word and PowerPoint), make a Word document, a 16:9
   PowerPoint deck (a slide per `#` heading, bullets with levels, bold) or a
   printable US Letter PDF (headings, wrapped text, checklist boxes, tables,
-  page numbers; standard fonts, Windows-1252 text) with no external program. Text into `.png`, `.jpg` and other
+  page numbers; standard fonts, Windows-1252 text) with no external program. A
+  line `\newpage` starts a new page in Word and PDF, and an escaped character
+  such as `\$` is written without its backslash. Text into `.png`, `.jpg` and other
   binary images is refused with a pointer to SVG for charts. Decks are checked
   with python-pptx and LibreOffice, not Microsoft PowerPoint.
 - **Agents make their own choices outside the decision areas**

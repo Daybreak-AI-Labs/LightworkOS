@@ -52,3 +52,13 @@ def test_escaped_punctuation_is_written_without_its_backslash():
                                   "| A \\| B | \\$5.00 |\n\n`C:\\temp\\$x`", "Quote"))["word/document.xml"]
     assert "$8,400 at 7.5% *not bold*" in document and "$5.00" in document and "A | B" in document
     assert "\\$" not in document.replace("C:\\temp\\$x", "")
+
+
+@pytest.mark.parametrize("marker", ["\\newpage", "\\pagebreak", "---PAGE BREAK---", "[Page break]", "<!-- pagebreak -->"])
+def test_a_page_break_line_starts_a_new_page(marker):
+    # Live: asked for "one letter per page", the agent wrote "---PAGE BREAK---"
+    # between letters, and the Word file showed it as text on one long page.
+    document = _parts(word_answer(f"Dear Rosa,\n\nPay soon.\n{marker}\nDear Ken,\n\nPay soon.", "Letters"))[
+        "word/document.xml"]
+    assert document.count('w:type="page"') == 1 and "PAGE" not in document.upper().replace("W:TYPE=\"PAGE\"", "")
+    assert "newpage" not in document and "pagebreak" not in document.lower()

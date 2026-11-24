@@ -560,7 +560,7 @@ def write_file(sandbox, goal_id: str | int | None = "default", world=None) -> To
             "production code — it's easy to drop content accidentally. "
             "A `.docx` path gets a Word document, a `.pptx` path a PowerPoint deck "
             "(a slide per `#` heading) and a `.pdf` path a printable PDF, made from "
-            "Markdown content."
+            "Markdown content; in Word and PDF a line `\\newpage` starts a new page."
         ),
         input_schema={
             "type": "object",
