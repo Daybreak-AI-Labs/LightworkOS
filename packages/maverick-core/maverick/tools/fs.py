@@ -545,7 +545,7 @@ def write_file(sandbox, goal_id: str | int | None = "default", world=None) -> To
         if world is not None:
             from ..task_files import record
             record(world, goal_id, sandbox.workdir, target)
-        return result
+        return result + _totals_note(target, content)
     return Tool(
         name="write_file",
         description=(
@@ -585,6 +585,21 @@ def write_file(sandbox, goal_id: str | int | None = "default", world=None) -> To
         },
         fn=fn,
     )
+
+
+def _totals_note(target, content: str) -> str:
+    """A note when a document's tables hold a total its rows do not add
+    to. A quote PDF's grand total missed its own lines; the chat answer and
+    sheets were checked, a document never was. The file is still written."""
+    if target.suffix.lower() not in (".docx", ".pptx", ".pdf", ".md", ".markdown"):
+        return ""
+    from ..figure_totals import answer_issues
+
+    issues = answer_issues(content)
+    if not issues:
+        return ""
+    return ("\nThe totals do not add up: " + " ".join(issues)
+            + " Fix the figures and write the file again before you deliver it.")
 
 
 def deliver_file(sandbox, goal_id: int | None, world) -> Tool:

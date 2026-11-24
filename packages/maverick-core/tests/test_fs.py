@@ -276,3 +276,21 @@ def test_write_file_refuses_an_svg_that_is_not_svg(tmp_path):
            'height="10"><rect width="5" height="5"/></svg>\n')
     assert tool.fn({"path": "chart.svg", "content": svg}).startswith("wrote")
     assert (tmp_path / "chart.svg").read_text() == svg
+
+
+@pytest.mark.parametrize("name", ["quote.pdf", "quote.docx", "quote.md"])
+def test_write_file_says_when_a_documents_totals_do_not_add_up(tmp_path, name):
+    # Live: a quote PDF's summary gave a grand total its lines did not add
+    # to; only the chat answer and sheets were checked, never a document.
+    from maverick.sandbox import LocalBackend
+    from maverick.tools.fs import write_file
+
+    tool = write_file(LocalBackend(workdir=tmp_path))
+    quote = ("# Quote\n\n| Item | Amount |\n|---|---:|\n| Consulting | $1,740.00 |\n"
+             "| Laptops | $3,269.97 |\n| Discount | -$327.00 |\n| Setup | $250.00 |\n"
+             "| Sales tax | $220.72 |\n| Grand total | {total} |\n")
+    out = tool.fn({"path": name, "content": quote.format(total="$5,253.69")})
+    assert "do not add up" in out and "5,153.69" in out, out
+    assert (tmp_path / name).exists()  # the file is written; the note asks for a fix
+    out = tool.fn({"path": name, "content": quote.format(total="$5,153.69")})
+    assert "do not add up" not in out, out
