@@ -614,7 +614,8 @@ def deliver_file(sandbox, goal_id: int | None, world) -> Tool:
             "offered automatically; use this for a file a command or script created "
             "(for example a chart, a spreadsheet or a zip). The page serves the file "
             "exactly as it is now. A Markdown or text draft of a Word, PowerPoint or "
-            "PDF file you made under the same name is not offered unless you deliver it."
+            "PDF file you made under the same name, or a script you wrote beside such a "
+            "file, is not offered unless you deliver it."
         ),
         input_schema={
             "type": "object",

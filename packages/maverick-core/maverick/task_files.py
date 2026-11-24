@@ -105,6 +105,7 @@ def record(world, goal_id, workdir, target, *, delivered: bool = False) -> TaskF
 _DRAFTS = (".md", ".markdown", ".txt")
 _DOCUMENTS = (".docx", ".pptx", ".pdf", ".xlsx", ".xlsm")
 _SPREADSHEETS = (".xlsx", ".xlsm")
+_SCRIPTS = (".py", ".sh", ".bash", ".js", ".mjs", ".ps1", ".rb", ".r")
 
 
 def _drafts(keys: list[tuple[str, str]], delivered: set[tuple[str, str]]) -> set[tuple[str, str]]:
@@ -112,7 +113,11 @@ def _drafts(keys: list[tuple[str, str]], delivered: set[tuple[str, str]]) -> set
     or Excel file named like it (the same name, or the name plus "_notes" or
     "-plan"): the draft or plan the document was made from. Asked for an NDA
     as a Word file, the page offered the Markdown draft first; asked for a
-    workbook, it offered "region_sales_workbook_instructions.md" first."""
+    workbook, it offered "region_sales_workbook_instructions.md" first.
+    Scripts beside any such document are the helpers that made or changed
+    it: asked to edit a roofing bid workbook, the page offered
+    "edit_roofing_workbook.py" first, and it could not be downloaded once
+    the agent had changed it."""
     def stems(suffixes: tuple[str, ...]) -> set[tuple[str, str]]:
         return {(workdir, str(Path(path).with_suffix(""))) for workdir, path in keys
                 if Path(path).suffix.lower() in suffixes}
@@ -124,8 +129,12 @@ def _drafts(keys: list[tuple[str, str]], delivered: set[tuple[str, str]]) -> set
         return any(w == workdir and (stem == doc or stem.startswith(doc + "_") or stem.startswith(doc + "-"))
                    for w, doc in among)
 
+    with_documents = {workdir for workdir, _doc in documents}
+
     def draft(workdir: str, path: str) -> bool:
         suffix = Path(path).suffix.lower()
+        if suffix in _SCRIPTS:
+            return workdir in with_documents
         # A CSV beside a workbook of its name is the workbook's working copy
         # (a content calendar came as .csv and .xlsx); a CSV is kept otherwise.
         return (suffix in _DRAFTS and named_like(workdir, path, documents)
@@ -137,7 +146,8 @@ def _drafts(keys: list[tuple[str, str]], delivered: set[tuple[str, str]]) -> set
 def files_for(world, goal_id: int) -> list[TaskFile]:
     """The files this goal saved, the newest record of each path, in the order
     they were first saved. A Markdown draft or plan of a document it also
-    saved is left out unless it was handed over with ``deliver_file``."""
+    saved, or a helper script beside one, is left out unless it was handed
+    over with ``deliver_file``."""
     latest: dict[tuple[str, str], TaskFile] = {}
     order: list[tuple[str, str]] = []
     delivered: set[tuple[str, str]] = set()

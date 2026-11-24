@@ -339,7 +339,9 @@ Settings and the installation wizard.
   its download link. The workspace can be shared, so each download needs the task's
   own access, follows the answer's sign-off rule, reads through a descriptor
   confined to the workspace and is served only while its SHA-256 still matches
-  what the task saved. Copilot answers "what files did this task make?".
+  what the task saved. A document's Markdown draft or plan, a same-named CSV
+  working copy and a helper script beside a document are left off unless
+  delivered. Copilot answers "what files did this task make?".
 - **Loop-guard suppression tier** — the long-standing repeated-identical-call
   nudge (`MAVERICK_LOOP_GUARD_THRESHOLD`) also covers byte-identical
   *successes* (a poll loop whose output never changes is burning budget on

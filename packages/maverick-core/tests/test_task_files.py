@@ -137,3 +137,25 @@ def test_a_markdown_draft_of_a_document_is_not_offered_unless_delivered(task):
     deliver_file(sandbox, gid, world).fn({"path": "nda.md"})
     assert [f.path for f in task_files.files_for(world, gid)] == ["nda.md", "nda.docx", "notes/nda.md", "summary.md",
                                                                   "ndaxyz.md", "calendar.xlsx", "nda.csv"]
+
+
+def test_a_helper_script_beside_a_document_is_not_offered_unless_delivered(task):
+    # Live: asked to make a roofing bid's overhead and profit editable, the
+    # agent wrote edit_roofing_workbook.py, ran it, then changed it; the page
+    # offered the script before the workbook, and its download failed because
+    # the script no longer matched what was saved.
+    world, gid, other, sandbox, workspace = task
+    write = write_file(sandbox, goal_id=gid, world=world)
+    assert write.fn({"path": "edit_roofing_workbook.py", "content": "print('x')\n"}).startswith("wrote")
+    assert write.fn({"path": "tools/helper.sh", "content": "echo x\n"}).startswith("wrote")
+    (workspace / "roofing_bid.xlsx").write_bytes(b"PK fake workbook")
+    deliver_file(sandbox, gid, world).fn({"path": "roofing_bid.xlsx"})
+    assert [f.path for f in task_files.files_for(world, gid)] == ["roofing_bid.xlsx"]
+    # Handed over on purpose, a script is offered.
+    deliver_file(sandbox, gid, world).fn({"path": "edit_roofing_workbook.py"})
+    assert [f.path for f in task_files.files_for(world, gid)] == ["edit_roofing_workbook.py", "roofing_bid.xlsx"]
+    # A script with no document beside it is the work itself.
+    other_write = write_file(sandbox, goal_id=other, world=world)
+    assert other_write.fn({"path": "convert.py", "content": "print('y')\n"}).startswith("wrote")
+    assert other_write.fn({"path": "out.csv", "content": "a\n1\n"}).startswith("wrote")
+    assert [f.path for f in task_files.files_for(world, other)] == ["convert.py", "out.csv"]
