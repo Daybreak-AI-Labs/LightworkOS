@@ -558,3 +558,21 @@ def test_pow_is_power_under_the_same_bounds(monkeypatch, sympy_missing):
     # Nested powers stay refused, as with **.
     assert "ERROR" in run({"op": "evaluate", "expr": "pow(pow(2, 3), 2)"})
     assert "ERROR" in run({"op": "evaluate", "expr": "pow(9, pow(9, pow(9, 9)))"})
+
+
+@pytest.mark.parametrize("sympy_missing", [False, True])
+def test_a_sum_of_items_holding_calls_adds_them(monkeypatch, sympy_missing):
+    # Live: a lease's total, round(sum([4200 * 12, round(4200 * 1.03 ** 1, 2)
+    # * 12, ...]), 2), was refused as "disallowed characters".
+    import sys as _sys
+    if sympy_missing:
+        monkeypatch.setitem(_sys.modules, "sympy", None)
+    elif not _HAS_SYMPY:
+        pytest.skip("sympy not installed")
+    from maverick.tools.compute import compute
+    run = compute().fn
+    expr = ("round(sum([4200 * 12, round(4200 * 1.03, 2) * 12, round(4326 * 1.03, 2) * 12, "
+            "round(4455.78 * 1.03, 2) * 12, round(4589.45 * 1.03, 2) * 12]), 2)")
+    assert float(run({"op": "evaluate", "expr": expr})) == 267580.32
+    assert float(run({"op": "evaluate", "expr": "sum([round(1.005, 2), 2]) * 3"})) == 9.03
+    assert float(run({"op": "evaluate", "expr": "sum((1, 2)) + sum([])"})) == 3

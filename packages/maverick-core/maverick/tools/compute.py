@@ -299,7 +299,31 @@ _VALID_OPS = {"evaluate", "simplify", "solve", "diff", "integrate"}
 _SUM_CALL = re.compile(r"\bsum\(\s*(?:\[([^\[\]()]*)\]|([^\[\]()]*))\s*\)")
 
 
+class _SumAsAddition(ast.NodeTransformer):
+    def visit_Call(self, node: ast.Call) -> ast.AST:
+        self.generic_visit(node)
+        if not (isinstance(node.func, ast.Name) and node.func.id == "sum" and node.args and not node.keywords):
+            return node
+        only = node.args[0] if len(node.args) == 1 else None
+        items = only.elts if isinstance(only, ast.List | ast.Tuple) else node.args
+        if not items:
+            return ast.copy_location(ast.Constant(0), node)
+        total = items[0]
+        for item in items[1:]:
+            total = ast.BinOp(total, ast.Add(), item)
+        return ast.copy_location(total, node)
+
+
 def _sums_as_additions(expr: str) -> str:
+    """``sum([a, b, c])`` as ``a + b + c``. Read with a pattern, a sum whose
+    items held a call (a lease's round(4200 * 1.03 ** 2, 2) * 12) kept its
+    brackets and was refused as "disallowed characters"."""
+    if "sum" in expr:
+        try:
+            return ast.unparse(_SumAsAddition().visit(ast.parse(expr, mode="eval")))
+        except SyntaxError:
+            pass  # SymPy's own grammar: the pattern below
+
     def added(match: re.Match) -> str:
         items = [item.strip() for item in (match.group(1) if match.group(1) is not None
                                            else match.group(2)).split(",")]
