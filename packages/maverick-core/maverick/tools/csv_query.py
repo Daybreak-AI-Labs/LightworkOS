@@ -465,6 +465,27 @@ def _date_notes(db, ambiguous: list[tuple[str, str, str]], converted: list[tuple
     return notes
 
 
+_CLOCK_SHOWN = re.compile(r"\d{1,2}:\d{2}|\d\s*[ap]\.?m\b", re.IGNORECASE)
+
+
+def _clock_notes(columns: list[str], rows: list, sql: str) -> list[str]:
+    """A note when the result shows shifts as clock ranges and the query did
+    not work them out. Live: SELECT * on a Word timesheet showed 11:00-19:30,
+    and the agent counted it 7.5 paid hours by hand where it is 8."""
+    if re.search(r"\b(?:hours|overlap)\s*\(", sql, re.IGNORECASE):
+        return []
+    for row in rows:
+        for column, value in zip(columns, row, strict=False):
+            if isinstance(value, str) and _CLOCK_SHOWN.search(value) and (hours := _shift_hours(value)) is not None:
+                name = column if re.fullmatch(r"[A-Za-z_]\w*", column) else '"' + column.replace('"', '""') + '"'
+                figure = int(hours) if float(hours).is_integer() else round(hours, 4)
+                return [f"Note: {column} holds clock times such as {value}. Work hours out in the query, not "
+                        f"by hand: hours({name}) gives {figure} for that shift and counts on past midnight, and "
+                        f"a lunch rule is a CASE, as in hours({name}) - CASE WHEN hours({name}) > 6 THEN 0.5 "
+                        "ELSE 0 END."]
+    return []
+
+
 def query_tables(tables: dict[str, tuple[str, str]], sql: str) -> str:
     """Run one SELECT over ``tables`` ({table: (filename, csv text)}) as CSV text."""
     db = sqlite3.connect(":memory:")
@@ -529,7 +550,7 @@ def query_tables(tables: dict[str, tuple[str, str]], sql: str) -> str:
         # costs no scan of its text.
         db.set_authorizer(None)
         notes = (_percent_notes(db, headers, reads, sql) + _blank_notes(blanks, reads, sql)
-                 + _date_notes(db, ambiguous, converted, reads, sql, found))
+                 + _date_notes(db, ambiguous, converted, reads, sql, found) + _clock_notes(columns, found, sql))
     finally:
         db.close()
     out = io.StringIO()

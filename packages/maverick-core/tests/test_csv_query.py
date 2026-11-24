@@ -371,3 +371,16 @@ def test_date_notes_take_milliseconds_on_a_long_query_over_many_tables():
     started = time.monotonic()
     assert not query_tables(tables, sql).startswith("ERROR")
     assert time.monotonic() - started < 2
+
+
+def test_a_result_showing_shifts_as_clock_ranges_points_at_hours():
+    # Live: SELECT * on a Word timesheet showed 11:00-19:30, and the agent
+    # counted it 7.5 paid hours by hand where it is 8 (8.5 less lunch).
+    text = "Employee,Mon,Tue\nFemi,11:00-19:30,off\nAna,22:00-06:00,9:00 AM - 5:30 PM\n"
+    out = _query(text, "SELECT * FROM data")
+    assert out[-1] == ("Note: Mon holds clock times such as 11:00-19:30. Work hours out in the query, not by "
+                       "hand: hours(Mon) gives 8.5 for that shift and counts on past midnight, and a lunch rule "
+                       "is a CASE, as in hours(Mon) - CASE WHEN hours(Mon) > 6 THEN 0.5 ELSE 0 END."), out
+    # A query that already works the hours out, and dates or codes, get no note.
+    assert not any("clock times" in line for line in _query(text, "SELECT Employee, hours(Mon) AS h FROM data"))
+    assert not any("clock times" in line for line in _query("id,d\nSO-5001,2026-10-01\n", "SELECT * FROM data"))
