@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import errno
 import os
+import re
 import stat
 from contextlib import contextmanager
 from pathlib import Path
@@ -455,6 +456,24 @@ _BINARY_DOCUMENTS = {".xlsx": _SPREADSHEET_HINT, ".xlsm": _SPREADSHEET_HINT, ".x
                      ".jpeg": _IMAGE_HINT, ".gif": _IMAGE_HINT, ".webp": _IMAGE_HINT, ".bmp": _IMAGE_HINT}
 
 
+_SVG_START = re.compile(r"\A\s*(?:<\?xml[^>]*\?>\s*)?(?:(?:<!--.*?-->|<!DOCTYPE[^>]*>)\s*)*<svg[\s>]",
+                        re.IGNORECASE | re.DOTALL)
+
+
+def _svg_refusal(path: str, content: str) -> str | None:
+    """An .svg that is not SVG markup. Asked for a bar chart, an agent wrote
+    Markdown with a Mermaid block to a .svg name and delivered it."""
+    if os.path.splitext(str(path or ""))[1].lower() != ".svg":
+        return None
+    if _SVG_START.match(content or "") and "</svg>" in content.lower():
+        return None
+    return (f"ERROR: an .svg file must be SVG markup, starting with <svg ...> and ending with </svg>; "
+            f"nothing was written to {path!r}. Draw the chart with SVG elements, for example "
+            '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360"> with a <rect> for each bar, '
+            "<text> for labels, values and the title, and <line> for the axes. Markdown and Mermaid "
+            "are not SVG.")
+
+
 def _binary_document_refusal(path: str) -> str | None:
     hint = _BINARY_DOCUMENTS.get(os.path.splitext(str(path or ""))[1].lower())
     if hint is None:
@@ -495,7 +514,8 @@ def write_file(sandbox, goal_id: str | int | None = "default", world=None) -> To
     quota_goal_id = "default" if goal_id is None else goal_id
 
     def fn(args: dict) -> str:
-        refusal = _binary_document_refusal(args.get("path", ""))
+        refusal = (_binary_document_refusal(args.get("path", ""))
+                   or _svg_refusal(args.get("path", ""), str(args.get("content") or "")))
         if refusal:
             return refusal
         try:

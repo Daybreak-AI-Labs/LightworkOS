@@ -260,3 +260,19 @@ def test_write_file_to_a_pdf_path_makes_a_printable_pdf(tmp_path):
         {"path": "checklist.pdf", "content": "# Cleaning\n- [ ] Wipe counters\n"})
     assert out.startswith("wrote a PDF"), out
     assert (tmp_path / "checklist.pdf").read_bytes().startswith(b"%PDF-1.4")
+
+
+def test_write_file_refuses_an_svg_that_is_not_svg(tmp_path):
+    # Live: asked for a bar chart, the agent wrote Markdown with a Mermaid
+    # block to monthly_revenue_chart.svg and delivered it; it opens as nothing.
+    from maverick.sandbox import LocalBackend
+    from maverick.tools.fs import write_file
+
+    tool = write_file(LocalBackend(workdir=tmp_path))
+    mermaid = "# Total Revenue by Month\n\n```mermaid\nxychart-beta\n    bar [1, 2]\n```\n"
+    out = tool.fn({"path": "chart.svg", "content": mermaid})
+    assert out.startswith("ERROR") and "<svg" in out and not (tmp_path / "chart.svg").exists()
+    svg = ('<?xml version="1.0"?>\n<!-- revenue -->\n<svg xmlns="http://www.w3.org/2000/svg" width="10" '
+           'height="10"><rect width="5" height="5"/></svg>\n')
+    assert tool.fn({"path": "chart.svg", "content": svg}).startswith("wrote")
+    assert (tmp_path / "chart.svg").read_text() == svg
