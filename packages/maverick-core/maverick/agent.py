@@ -1614,9 +1614,10 @@ def _delivered_file_evidence(world, goal_id) -> str:
             if Path(item.path).suffix.lower() == ".csv":
                 text = " {}:\n{}".format(*_first_rows(data.decode("utf-8", errors="replace")))
             else:
+                from .tools.spreadsheet import _XLSX_QUERY_ROWS as read
                 from .tools.spreadsheet import xlsx_bytes_as_csv, xlsx_bytes_sheet_names
                 text = ":\n" + "\n".join(
-                    "Sheet {!r}, {}:\n{}".format(sheet, *_first_rows(xlsx_bytes_as_csv(data, sheet)))
+                    "Sheet {!r}, {}:\n{}".format(sheet, *_first_rows(xlsx_bytes_as_csv(data, sheet), read))
                     for sheet in xlsx_bytes_sheet_names(data))
         except Exception:  # noqa: BLE001 -- an unreadable file adds nothing
             continue
@@ -1629,31 +1630,76 @@ def _delivered_file_evidence(world, goal_id) -> str:
     return "\n\n".join(blocks)
 
 
-def _first_rows(text: str) -> tuple[str, str]:
+def _first_rows(text: str, read: int | None = None) -> tuple[str, str]:
     """How many rows a CSV or a sheet has, and its first rows. A cleaned
     120-row file shown as its header and 24 rows under "holds:" looked to a
-    verifier told to account for every row as if it had lost the other 96."""
-    lines = text.splitlines()
-    count = f"{len(lines)} row" + ("" if len(lines) == 1 else "s")
-    if len(lines) > _DELIVERED_EVIDENCE_ROWS:
-        count += (f"; these are the first {_DELIVERED_EVIDENCE_ROWS} "
-                  f"(the other {len(lines) - _DELIVERED_EVIDENCE_ROWS} are in the file, not shown here)")
-    return count, "\n".join(lines[:_DELIVERED_EVIDENCE_ROWS])
+    verifier told to account for every row as if it had lost the other 96.
+    A row is a record that holds something: an address quoted over three
+    lines is one row and a blank line is none, where counting lines made 31
+    customers 91 rows. ``read`` is how many rows of a workbook's sheet were
+    read; a sheet that fills it may hold more, and once read as exactly
+    20,000 rows a sheet of 25,001 said it had 20,000."""
+    import csv
+    import io
+
+    lines = io.StringIO(text, newline="").readlines()
+    ends, records, reader = [], 0, csv.reader(lines)
+    try:
+        for record in reader:
+            records += 1
+            if any(record):
+                ends.append(reader.line_num)  # the line the row ends on
+    except csv.Error:  # a stray quote ran one cell past the reader's limit: count lines instead
+        ends = [number for number, line in enumerate(lines, 1) if line.strip()]
+    shown = min(len(ends), _DELIVERED_EVIDENCE_ROWS)
+    first = "\n".join(line.rstrip("\r\n") for line in lines[:ends[shown - 1] if shown else 0])
+    if read is not None and records >= read:
+        return (f"at least {len(ends)} rows; these are the first {shown} "
+                "(the others are in the file, not shown here)"), first
+    count = f"{len(ends)} row" + ("" if len(ends) == 1 else "s")
+    if len(ends) > shown:
+        count += f"; these are the first {shown} (the other {len(ends) - shown} are in the file, not shown here)"
+    return count, first
 
 
 # A spreadsheet write's read-back of the file ("What the file now holds ...")
 # up to the end of its frame.
 _READBACK = re.compile(r"(<tool_output tool='spreadsheet' id=([0-9a-f]+)>\n(?:(?!\n</tool_output \2>).)*?)"
-                       r"\nWhat the file now holds.*?(\n</tool_output \2>)", re.DOTALL)
+                       r"(\nWhat the file now holds.*?)(\n</tool_output \2>)", re.DOTALL)
 
 
-def _without_readback(evidence: str) -> str:
-    """``evidence`` without the read-backs of spreadsheet writes. A read-back
-    repeats what the agent typed into the file, so for the figure checks a
-    typed figure (Ben's pay as 1,647.56 when compute gave 1,647.38) read as
-    one a tool returned, and a formula's unrounded 833.3333333333 sent back a
-    correct $833.33."""
-    return _READBACK.sub(r"\1\3", evidence)
+def _figure_evidence(messages: list[dict]) -> str:
+    """The run's tool results for the figure checks, each spreadsheet write's
+    read-back cut to the figures the file's formulas worked out, in cents. A
+    read-back repeats what the agent typed into the file, so a typed figure
+    (Ben's pay as 1,647.56 when compute gave 1,647.38) read as one a tool
+    returned. A formula's result is the tool's own work: left out, a correct
+    $100,079.96 that a =SUM gave went back as copied from a past task, and
+    unrounded, 833.3333333333 sent back a correct $833.33."""
+    from decimal import ROUND_HALF_UP, Decimal
+
+    from .figure_totals import _returned_figures
+
+    typed, stack = [], [block.get("input") for message in messages if message.get("role") == "assistant"
+                        and isinstance(message.get("content"), list) for block in message["content"]
+                        if isinstance(block, dict) and block.get("type") == "tool_use"
+                        and block.get("name") == "spreadsheet"]
+    while stack:  # every value the agent passed to the tool
+        value = stack.pop()
+        if isinstance(value, dict):
+            stack += [*value, *value.values()]
+        elif isinstance(value, list):
+            stack += value
+        else:
+            typed.append(str(value))
+    by_agent = _returned_figures("\n".join(typed))
+
+    def worked_out(match: re.Match) -> str:
+        figures = sorted(_returned_figures(match.group(3)) - by_agent)
+        held = " ".join(str(value.quantize(Decimal("0.01"), ROUND_HALF_UP)) for value in figures)
+        return match.group(1) + (f"\nThe file's formulas worked out: {held}" if held else "") + match.group(4)
+
+    return _READBACK.sub(worked_out, _verifier_evidence(messages))
 
 
 def _tool_result_limit(model: str | None = None) -> int:
@@ -6290,8 +6336,9 @@ class Agent:
         # the answer said 1,647.56) goes back the same way.
         from .figure_totals import answer_issues, drift_issues, percent_issues, recalled_issues
         # What a write put in a file is the agent's own typing, not a tool's
-        # result; the model verifier below still sees it.
-        evidence = _without_readback(_verifier_evidence(st.messages))
+        # result, but what the file's formulas worked out is; the model
+        # verifier below still sees the whole read-back.
+        evidence = _figure_evidence(st.messages)
         recalled = "\n".join(match.group(0) for match in _RECALLED.finditer(evidence))
         if issues := (answer_issues(final) + drift_issues(final, evidence) + percent_issues(final)
                       + recalled_issues(final, recalled, _RECALLED.sub("", evidence))):

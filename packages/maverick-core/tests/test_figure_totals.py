@@ -305,3 +305,37 @@ async def test_a_workbook_formula_result_rounded_to_cents_is_not_sent_back(tmp_p
         judge.get("system", ""))
     assert "100000,0.1,833.3333333333" in str(judge.get("messages", ""))  # the model verifier sees the file
     assert "$833.33" in world.get_goal(gid).result
+
+
+@pytest.mark.asyncio
+async def test_a_total_a_workbook_formula_worked_out_counts_as_a_tools_result(tmp_path, fake_llm, make_llm_response,
+                                                                             monkeypatch):
+    # Review: leaving a write's whole read-back out of the figure checks left
+    # out what the file's formulas worked out too, so a correct March total of
+    # $100,079.96, a =SUM of this task's rows, went back as copied from a past
+    # task that had the same total.
+    from types import SimpleNamespace
+
+    from maverick.llm import ToolCall
+    from maverick.tools import recall
+
+    past = SimpleNamespace(id=380, status="done", title="March statement", result="Total: $100,079.96.")
+    monkeypatch.setattr(recall, "recall_past_goals", lambda *a, **k: [(0.38, past)])
+    rows = [["Account", "Amount"], ["Ops", 50000.0], ["Payroll", 50079.96], ["Total", "=SUM(B2:B3)"]]
+    fake_llm.scripted = [
+        make_llm_response(text="Checking.", tool_calls=[
+            ToolCall(id="r1", name="recall_past_goals", input={"query": "march total"})]),
+        make_llm_response(text="Saving it.", tool_calls=[
+            ToolCall(id="s1", name="spreadsheet", input={"op": "write", "path": "stmt.xlsx", "rows": rows})]),
+        make_llm_response(text="FINAL: The March total is $100,079.96, also saved in the workbook."),
+        make_llm_response(text='{"confidence": 0.95, "accepts": true, "critique": "ok", "issues": []}'),
+        make_llm_response(text="FINAL: (no skill)")]
+    world = WorldModel(path=tmp_path / "world.db")
+    gid = world.create_goal("total the March statement", "", owner="alice")
+
+    await run_goal(llm=fake_llm, world=world, budget=Budget(max_dollars=1.0), goal_id=gid,
+                   sandbox=LocalBackend(workdir=tmp_path), max_depth=1)
+
+    assert "Total,100079.96" in str(fake_llm.calls[2].get("messages", ""))  # the read-back the agent saw
+    assert "comes from a past task's result" not in str(fake_llm.calls)
+    assert "$100,079.96" in world.get_goal(gid).result
