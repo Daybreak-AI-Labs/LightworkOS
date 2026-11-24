@@ -848,12 +848,22 @@ def _cell_value(cell: dict) -> Any:
     return stored if stored is not None else cell.get("computed_value", "")
 
 
-def xlsx_bytes_as_csv(data: bytes) -> str:
-    """:func:`_xlsx_as_csv` for a workbook already in memory (an attachment)."""
+def xlsx_bytes_sheet_names(data: bytes) -> list[str]:
+    """The sheet names of a workbook already in memory, in order."""
+    import ast
+
+    info = _xlsx_isolated_bytes(data, "spreadsheet_info")  # "xlsx sheets {'Summary': (3, 2), ...}"
+    dims = ast.literal_eval(info.split(" ", 2)[2]) if info.startswith("xlsx sheets ") else {}
+    return [str(name) for name in dims] if isinstance(dims, dict) else []
+
+
+def xlsx_bytes_as_csv(data: bytes, sheet: str | None = None) -> str:
+    """:func:`_xlsx_as_csv` for a workbook already in memory (an attachment);
+    ``sheet`` names one, the first by default."""
     import csv
     import json
 
-    rows = json.loads(_xlsx_isolated_bytes(data, "spreadsheet_read", sheet=None, limit=_XLSX_QUERY_ROWS))
+    rows = json.loads(_xlsx_isolated_bytes(data, "spreadsheet_read", sheet=sheet, limit=_XLSX_QUERY_ROWS))
     out = io.StringIO()
     writer = csv.writer(out, lineterminator="\n")
     for row in rows:

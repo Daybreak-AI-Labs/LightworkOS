@@ -230,10 +230,45 @@ def test_an_excel_attachment_reads_as_a_table_and_answers_an_exact_select(tmp_pa
         world, gid, aid = _inventory(tmp_path / str(sealed), monkeypatch, sealed)
         tool = read_attachment_tool(world, gid)
         table = tool.fn({"id": aid})
-        assert "first sheet as CSV" in table and "SKU-108,Boxes,18,15,20,33.36" in table
+        assert "sheet 'Inventory' as CSV" in table and "SKU-108,Boxes,18,15,20,33.36" in table
         out = tool.fn({"id": aid, "sql": 'SELECT SKU, "Reorder qty" * "Unit cost" AS cost FROM data '
                                         'WHERE "On hand" <= "Reorder level"'})
         assert out == "SKU,cost\nSKU-101,464.2\nSKU-111,675.4", out
+
+
+def test_a_workbook_names_its_sheets_and_reads_or_queries_any_of_them(tmp_path):
+    # Live: a vendor-spend workbook kept its 80 transactions on a second
+    # sheet, after a one-page summary; only the first sheet could be read or
+    # queried, and the agent could not total the spend.
+    import io
+
+    import openpyxl
+
+    book = openpyxl.Workbook()
+    book.active.title = "Summary"
+    book.active.append(["Report", "Q3 vendor spend"])
+    sheet = book.create_sheet("Transactions")
+    for row in (["vendor", "amount"], ["Sysco", 120.5], ["PG&E", 80.25], ["Sysco", 30]):
+        sheet.append(row)
+    raw = io.BytesIO()
+    book.save(raw)
+    world = WorldModel(tmp_path / "w.db")
+    gid = world.create_goal("g", "")
+    rec = att.store(gid, "spend.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    raw.getvalue(), root=tmp_path / "a")
+    aid = world.add_attachment(gid, rec.filename, rec.mime, rec.size_bytes, rec.sha256, str(rec.path))
+    tool = read_attachment_tool(world, gid)
+    first = tool.fn({"id": aid})
+    assert "Summary, Transactions" in first and "Report,Q3 vendor spend" in first, first
+    assert "vendor,amount" in tool.fn({"id": aid, "sheet": "Transactions"})
+    out = tool.fn({"id": aid, "sheet": "Transactions",
+                   "sql": "SELECT vendor, SUM(amount) AS total FROM data GROUP BY vendor ORDER BY vendor"})
+    assert out == "vendor,total\nPG&E,80.25\nSysco,150.5", out
+    # A query that misses on the first sheet points to the others.
+    missed = tool.fn({"id": aid, "sql": "SELECT SUM(amount) FROM data"})
+    assert missed.startswith("ERROR") and "Transactions" in missed and "sheet" in missed, missed
+    assert tool.fn({"id": aid, "sheet": "Nope"}).startswith("ERROR: spend.xlsx has no sheet 'Nope'")
+    assert "sheet" in tool.input_schema["properties"]
 
 
 def _thread(world, conversation, title, **kw):

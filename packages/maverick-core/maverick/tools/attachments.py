@@ -161,7 +161,8 @@ def read_attachment_tool(world, goal_id: int | None, sandbox=None) -> Tool:
                      "pass `pages` (for example '1-3,7') to read part of a long one. "
                      "A long file returns its first 100,000 characters: pass `search` "
                      "to get every line containing a phrase, or `offset` to read on. "
-                     "An Excel file returns its first sheet as CSV. "
+                     "An Excel file returns one sheet as CSV, the first unless `sheet` names another, "
+                     "and lists its sheets. "
                      "For a CSV or Excel file, or a PDF with a table of figures (a bank "
                      "statement, an invoice), pass `sql`: "
                      "one read-only SELECT over the table `data` (its columns are the "
@@ -181,6 +182,8 @@ def read_attachment_tool(world, goal_id: int | None, sandbox=None) -> Tool:
                       "properties": {"id": {"type": "integer"},
                                      "sql": {"type": "string",
                                              "description": "Optional. One SELECT over `data` for a CSV or Excel file."},
+                                     "sheet": {"type": "string",
+                                               "description": "Optional. For an Excel file, the sheet to read or query (default: the first)."},
                                      "pages": {"type": "string",
                                                "description": "Optional. PDF page ranges, for example '1-3,7'."},
                                      "search": {"type": "string",
@@ -201,20 +204,38 @@ def _is_workbook(match) -> bool:
 
 
 def _workbook(match, args: dict) -> str:
-    """An Excel attachment's first sheet as a CSV table, so it can be read and
-    queried like a CSV. Its cell-by-cell text companion led an agent to list
-    items above their reorder level as below it."""
+    """An Excel attachment's sheet as a CSV table, so it can be read and
+    queried like a CSV: the first sheet, or the one ``sheet`` names. Its
+    cell-by-cell text companion led an agent to list items above their
+    reorder level as below it; a workbook with its transactions on a second
+    sheet could not be totalled at all."""
     from ..attachments import read_bytes
     from .csv_query import query_tables
-    from .spreadsheet import xlsx_bytes_as_csv
+    from .spreadsheet import xlsx_bytes_as_csv, xlsx_bytes_sheet_names
 
+    wanted = str(args.get("sheet") or "").strip() or None
     try:
-        text = xlsx_bytes_as_csv(read_bytes(match.path))
+        data = read_bytes(match.path)
+        names = xlsx_bytes_sheet_names(data)
+        if wanted is not None:
+            found = next((name for name in names if name == wanted), None) or next(
+                (name for name in names if name.casefold() == wanted.casefold()), None)
+            if found is None:
+                return f"ERROR: {match.filename} has no sheet {wanted!r}; its sheets are {', '.join(names)}"
+            wanted = found
+        text = xlsx_bytes_as_csv(data, wanted)
     except Exception as exc:  # noqa: BLE001 -- surfaced to the agent as data
         return f"ERROR: {match.filename} could not be read as a workbook: {exc}"
+    shown = wanted or (names[0] if names else "first sheet")
+    others = [name for name in names if name != shown]
     if args.get("sql"):
-        return query_tables({"data": (match.filename, text)}, str(args["sql"]))
-    return (f"{match.filename}, first sheet as CSV (cached values of formulas). "
+        result = query_tables({"data": (match.filename, text)}, str(args["sql"]))
+        if result.startswith("ERROR") and others:
+            result += f". This queried the sheet {shown!r}; pass `sheet` to query {', '.join(others)}"
+        return result
+    sheets = (f" Its sheets are {', '.join(names)}; this is {shown!r}, and `sheet` reads or queries another."
+              if others else "")
+    return (f"{match.filename}, sheet {shown!r} as CSV (cached values of formulas).{sheets} "
             "Pass `sql` to compute from it exactly.\n" + _window(text, args))
 
 

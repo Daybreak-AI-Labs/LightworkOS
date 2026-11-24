@@ -303,7 +303,10 @@ Settings and the installation wizard.
   arithmetic, %, SUM, AVERAGE, MIN, MAX, COUNT, PRODUCT, ROUND and ABS)
   exactly and reports it as `computed_value` with `value_status`
   "computed", apart from any stored cache; SQL over an Excel attachment sees
-  the same values. Other formulas stay "uncalculated".
+  the same values. Other formulas stay "uncalculated". `read_attachment`
+  names a workbook's sheets and reads or queries any of them with `sheet`
+  (the first by default): a workbook with its transactions on a second sheet
+  could not be totalled.
 - **PDF statements keep their columns** (`tools/pdf_reader.py`) — a page
   where several lines hold two or more amounts (a bank statement, an
   invoice) is read with pypdf's layout mode, so each figure stays under its
