@@ -206,6 +206,28 @@ def test_word_field_results_are_refused_instead_of_silently_skipped(tmp_path):
     assert any("fields" in warning for warning in result.warnings)
 
 
+@pytest.mark.parametrize("tag", ["ins", "del", "instrText", "txbxContent", "altChunk", "object"])
+def test_word_tables_refuse_what_extraction_refuses(tmp_path, tag):
+    # A table cell with a pending tracked change (or a field, text box or
+    # embedded content) was refused by extraction but read by the table path
+    # behind `sql`: an unaccepted insertion counted as accepted.
+    docx = pytest.importorskip("docx")
+    from docx.oxml import OxmlElement
+    from maverick_knowledge.parse import word_document_tables
+
+    path = tmp_path / "timesheet.docx"
+    document = docx.Document()
+    table = document.add_table(rows=2, cols=2)
+    table.cell(0, 0).text, table.cell(0, 1).text = "Name", "Hours"
+    table.cell(1, 0).text, table.cell(1, 1).text = "Ann", "40"
+    table.cell(1, 1).paragraphs[0]._p.append(OxmlElement(f"w:{tag}"))
+    document.save(path)
+    result = extract_document(path)
+    assert result.status == "rejected" and result.text == ""
+    with pytest.raises(ValueError, match="reviewed text copy"):
+        word_document_tables(path.read_bytes())
+
+
 def test_ingestion_retains_extraction_metadata_and_exact_reconstruction(tmp_path):
     path = tmp_path / "notes.txt"
     path.write_text("Revenue 120000. Customer count 12.\n" * 3)

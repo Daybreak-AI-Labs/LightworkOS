@@ -98,16 +98,15 @@ def _table_rows(table) -> list[list[str]]:
 
 def word_tables(data: bytes, max_expanded: int) -> list[list[list[str]]]:
     """Every top-level table in a Word document's body, as rows of cell text,
-    read through the same bounded package checks as extraction."""
-    parts = _parts(data, max_expanded)
-    root = parts.get("word/document.xml")
-    body = root.find(W + "body") if root is not None and root.tag == W + "document" else None
-    if body is None:
-        raise ValueError("Word document body is missing")
+    read through the same bounded package checks and refusals as extraction."""
+    body = _word_body(_parts(data, max_expanded))
     return [_table_rows(node) for node in body if node.tag == W + "tbl"]
 
 
-def _word(parts, builder):
+def _word_body(parts):
+    """A Word document's body, refusing what a plain reading gets wrong. The
+    table reader once skipped this: a pending tracked change was summed as if
+    accepted, and a field's cached result was read as data."""
     root = parts.get("word/document.xml")
     if root is None or root.tag != W + "document":
         raise ValueError("Word document body is missing")
@@ -117,6 +116,12 @@ def _word(parts, builder):
     body = root.find(W + "body")
     if body is None:
         raise ValueError("Word document body is missing")
+    return body
+
+
+def _word(parts, builder):
+    body = _word_body(parts)
+    root = parts["word/document.xml"]
     for i, node in enumerate(body, 1):
         if node.tag == W + "p":
             builder.append(_paragraph(node), f"word/body/paragraph[{i}]", "paragraph")

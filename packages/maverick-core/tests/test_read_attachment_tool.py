@@ -460,3 +460,124 @@ def test_sql_on_a_documents_text_companion_queries_the_document(tmp_path):
     assert "| Dana | $22.50 | 7:00-15:30 |  |" in tool.fn({"id": companion})
     plain = next(a.id for a in world.list_attachments(gid) if a.filename == "notes.txt")
     assert tool.fn({"id": plain, "sql": "SELECT 1"}).startswith("ERROR: notes.txt is not a CSV file")
+
+
+def test_another_file_is_loaded_only_where_the_query_uses_it_as_a_table(tmp_path):
+    # A column or function sharing another file's name (receipt next to
+    # receipt.docx, hours() next to Hours.docx) loaded that file, and a file
+    # with no table then failed a query that never read it.
+    from maverick.markdown_word import word_answer
+
+    world = WorldModel(tmp_path / "w.db")
+    gid = world.create_goal("g", "")
+    expenses = _add(world, gid, tmp_path, "expenses.csv", "text/csv",
+                    b"item,amount,receipt\nTaxi,12,yes\nLunch,30,no\n")
+    shifts = _add(world, gid, tmp_path, "timesheet.csv", "text/csv", b"name,clock_in,clock_out\nDana,7:00,15:30\n")
+    _add(world, gid, tmp_path, "receipt.docx", _DOCX, word_answer("Paid in cash.", "Receipt"))
+    _add(world, gid, tmp_path, "Hours.docx", _DOCX, word_answer("Overtime starts after 40 hours.", "Hours"))
+    tool = read_attachment_tool(world, gid)
+    assert tool.fn({"id": expenses, "sql": "SELECT DISTINCT receipt FROM data ORDER BY receipt"}) == "receipt\nno\nyes"
+    out = tool.fn({"id": shifts, "sql": "SELECT name, hours(clock_in, clock_out) AS h FROM data"})
+    assert out == "name,h\nDana,8.5", out
+    # Used as a table, a file that cannot be loaded says why.
+    out = tool.fn({"id": expenses, "sql": "SELECT d.item FROM data d, receipt r"})
+    assert out.startswith("ERROR") and "no such table: receipt" in out, out
+    assert "receipt.docx has no table to query" in out and "receipt (receipt.docx" not in out, out
+
+
+def test_another_workbook_parses_only_the_sheets_the_query_uses(tmp_path, monkeypatch):
+    # Each sheet is parsed in its own subprocess. A column such as
+    # sales_total, which only starts with the name of sales.xlsx, parsed every
+    # sheet of the workbook on every query.
+    import io
+
+    import openpyxl
+    from maverick import parser_isolation
+
+    book = openpyxl.Workbook()
+    book.active.title = "Read me"
+    book.active.append(["Regional sales follow."])
+    for title, amounts in (("North", (10, 20)), ("South", (5,)), ("West", (7,))):
+        sheet = book.create_sheet(title)
+        for row in (["amount"], *([a] for a in amounts)):
+            sheet.append(row)
+    raw = io.BytesIO()
+    book.save(raw)
+    world = WorldModel(tmp_path / "w.db")
+    gid = world.create_goal("g", "")
+    orders = _add(world, gid, tmp_path, "orders.csv", "text/csv", b"id,sales_total\n1,20\n2,15\n")
+    _add(world, gid, tmp_path, "sales.xlsx", _XLSX, raw.getvalue())
+    parsed = []
+    real = parser_isolation.parse_isolated
+
+    def counting(name, data, **kwargs):
+        parsed.append((name, kwargs.get("sheet")))
+        return real(name, data, **kwargs)
+
+    monkeypatch.setattr(parser_isolation, "parse_isolated", counting)
+    tool = read_attachment_tool(world, gid)
+    assert tool.fn({"id": orders, "sql": "SELECT SUM(sales_total) AS t FROM data"}) == "t\n35"
+    assert parsed == []
+    assert tool.fn({"id": orders, "sql": "SELECT SUM(amount) AS t FROM sales_south"}) == "t\n5"
+    assert parsed == [("spreadsheet_info", None), ("spreadsheet_read", "South")]
+    parsed.clear()
+    # The bare name is the first sheet holding a table; no sheet after it is parsed.
+    assert tool.fn({"id": orders, "sql": "SELECT SUM(amount) AS t FROM sales"}) == "t\n30"
+    assert parsed == [("spreadsheet_info", None), ("spreadsheet_read", "Read me"), ("spreadsheet_read", "North")]
+
+
+def _tracked_change(docx: bytes, old: str, new: str) -> bytes:
+    """``docx`` with the cell text ``old`` replaced by ``new`` as a pending
+    tracked change: ``old`` deleted, ``new`` inserted, neither accepted."""
+    import io
+    import zipfile
+
+    run = f'<w:r><w:t xml:space="preserve">{old}</w:t></w:r>'.encode()
+    change = (f'<w:del w:id="1" w:author="A"><w:r><w:delText>{old}</w:delText></w:r></w:del>'
+              f'<w:ins w:id="2" w:author="A"><w:r><w:t>{new}</w:t></w:r></w:ins>').encode()
+    source, out = zipfile.ZipFile(io.BytesIO(docx)), io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as target:
+        for item in source.infolist():
+            raw = source.read(item)
+            if item.filename == "word/document.xml":
+                assert run in raw
+                raw = raw.replace(run, change)
+            target.writestr(item, raw)
+    return out.getvalue()
+
+
+def test_a_word_table_with_tracked_changes_is_refused_like_its_text(tmp_path):
+    # Text extraction refuses a document with pending tracked changes, but
+    # `sql` read its table anyway: Ann's unaccepted 40 -> 45 counted as 45.
+    from maverick.markdown_word import word_answer
+
+    world = WorldModel(tmp_path / "w.db")
+    gid = world.create_goal("g", "")
+    table = "| Name | Hours |\n|---|---|\n| Ann | 40 |\n| Bob | 20 |\n"
+    aid = _add(world, gid, tmp_path, "timesheet.docx", _DOCX, _tracked_change(word_answer(table, "Hours"), "40", "45"))
+    out = read_attachment_tool(world, gid).fn({"id": aid, "sql": "SELECT SUM(Hours) AS total FROM data"})
+    assert out.startswith("ERROR: timesheet.docx could not be read") and "tracked changes" in out, out
+
+
+def test_the_queried_file_is_loaded_once_under_the_name_the_query_uses(tmp_path):
+    # Loaded as `data` and again under its own name, a file's blank cells were
+    # counted twice in the note; and a filename with a comma (Sales, Q3.csv)
+    # got the alias sales instead of the sales__q3 the listing showed.
+    from maverick.tools.attachments import list_attachments_tool
+
+    world = WorldModel(tmp_path / "w.db")
+    gid = world.create_goal("g", "")
+    invoices = _add(world, gid, tmp_path, "invoices.csv", "text/csv",
+                    b"id,amount,paid\n1,100,100\n2,50,\n3,70,\n4,20,20\n")
+    tool = read_attachment_tool(world, gid)
+    for table in ("data", "invoices"):
+        out = tool.fn({"id": invoices, "sql": f"SELECT SUM(amount - paid) AS owed FROM {table}"})
+        assert out.startswith("owed\n0\nNote: paid is blank in 2 rows,"), (table, out)
+    both = tool.fn({"id": invoices, "sql": "SELECT COUNT(*) AS n FROM data d JOIN invoices i ON i.id = d.id"})
+    assert both == "n\n4", both
+    sales = _add(world, gid, tmp_path, "Sales, Q3.csv", "text/csv", b"sku,qty\nA,2\nB,3\n")
+    _add(world, gid, tmp_path, "costs.csv", "text/csv", b"sku,cost\nA,1.5\nB,2\n")
+    assert "invoices, sales__q3, costs." in list_attachments_tool(world, gid).fn({})
+    out = tool.fn({"id": sales, "sql": "SELECT SUM(s.qty * c.cost) AS t FROM sales__q3 s JOIN costs c "
+                                       "ON c.sku = s.sku"})
+    assert out == "t\n9.0", out

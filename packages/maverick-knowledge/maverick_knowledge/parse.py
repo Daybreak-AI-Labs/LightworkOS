@@ -212,7 +212,8 @@ def extract_document(path: str | Path) -> DocumentExtraction:
 
 def word_document_tables(data: bytes) -> list[list[list[str]]]:
     """A Word document's top-level tables as rows of cell text, under the same
-    size bounds and package checks as :func:`extract_document`."""
+    size bounds, package checks and refusals (tracked changes, fields, text
+    boxes, embedded content) as :func:`extract_document`."""
     cap = _int_env("MAVERICK_KNOWLEDGE_MAX_DOC_BYTES", DEFAULT_MAX_DOC_BYTES)
     if cap > 0 and len(data) > cap:
         raise ValueError("document too large")
