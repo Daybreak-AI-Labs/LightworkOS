@@ -130,3 +130,55 @@ def test_copilot_names_a_tasks_files(monkeypatch):
     denied = client.post("/api/v1/copilot", json={"message": "Which files did task 35 create?",
                                                   "page": "/chat"}).json()
     assert "can't access that task" in denied["reply"]
+
+
+def test_a_proposed_schedule_opens_the_automations_form_filled_in(env):
+    from urllib.parse import parse_qs, urlparse
+
+    from maverick.tools.propose_schedule import propose_schedule
+
+    client, world, gid, _workspace = env
+    propose_schedule(world, gid).fn({"text": "Review overdue invoices & send reminders.", "cron": "0 9 * * 1",
+                                     "zone": "America/Chicago", "title": "Monday invoices"})
+    page = client.get(f"/chat/goal/{gid}").text
+    assert 'id="schedule-proposals"' in page and "every Monday at 09:00 (America/Chicago)" in page
+    href = page.split('id="schedule-proposals"')[1].split('href="')[1].split('"')[0].replace("&amp;", "&")
+    url = urlparse(href)
+    assert url.path == "/automations" and url.fragment == "auto-new-sched"
+    assert parse_qs(url.query) == {"what": ["task"], "text": ["Review overdue invoices & send reminders."],
+                                   "title": ["Monday invoices"], "cron": ["0 9 * * 1"],
+                                   "zone": ["America/Chicago"]}
+
+
+def test_copilot_says_which_schedule_a_task_proposed(monkeypatch):
+    from maverick_dashboard import api
+    from maverick_dashboard import app as dashboard_app
+    from maverick_dashboard import copilot_live_state as live
+
+    monkeypatch.setenv("MAVERICK_TENANT", "copilot-api-test")
+    monkeypatch.setattr(api, "require_permission", lambda _request, _permission: None)
+    monkeypatch.setattr(dashboard_app, "check_goal_rate_limit", lambda *_a, **_k: None)
+    goal = SimpleNamespace(id=34, owner="alice", title="Every Monday", status="done", result="", updated_at=9, domain="")
+    private = SimpleNamespace(id=35, owner="bob", title="Private", status="done", result="", updated_at=9, domain="")
+    proposal = {"text": "Review overdue invoices.", "cron": "0 9 * * 1", "title": "Monday invoices", "zone": ""}
+
+    class World:
+        def get_goal(self, identifier):
+            return {34: goal, 35: private}.get(identifier)
+
+    monkeypatch.setattr(dashboard_app, "_world", lambda: World())
+    monkeypatch.setattr("maverick.schedule_proposals.for_goal", lambda _w, gid: [proposal] if gid == 34 else [])
+    monkeypatch.setattr(live.auth, "require_permission", lambda _request, _permission: None)
+    monkeypatch.setattr(live.auth, "assert_goal_access", lambda _request, row: None if row.owner == "alice"
+                        else (_ for _ in ()).throw(HTTPException(404, "no such goal")))
+    monkeypatch.setattr(api, "_copilot_model_route_status", lambda: pytest.fail("went to the model"))
+    client = TestClient(dashboard_app.app, base_url="http://127.0.0.1", headers={"Origin": "http://127.0.0.1"})
+    answer = client.post("/api/v1/copilot", json={"message": "What schedule did this task propose?",
+                                                  "page": "/chat/goal/34"}).json()
+    assert answer["mode"] == "live"
+    assert "Monday invoices" in answer["reply"] and "every Monday at 09:00 (UTC)" in answer["reply"]
+    assert "Nothing runs until you create it" in answer["reply"]
+    assert answer["action_link"]["href"] == "/chat/goal/34#schedule-proposals"
+    denied = client.post("/api/v1/copilot", json={"message": "Which schedules did task 35 propose?",
+                                                  "page": "/chat"}).json()
+    assert "can't access that task" in denied["reply"]

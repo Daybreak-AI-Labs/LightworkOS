@@ -77,8 +77,9 @@ def _digest_contained(workdir: Path, target: Path, limit: int) -> tuple[str, int
     return digest.hexdigest(), size
 
 
-def record(world, goal_id, workdir, target) -> TaskFile | None:
-    """Record the file ``target`` as this goal's current version of it."""
+def record(world, goal_id, workdir, target, *, delivered: bool = False) -> TaskFile | None:
+    """Record the file ``target`` as this goal's current version of it;
+    ``delivered`` when the agent handed it over with ``deliver_file``."""
     if world is None or not isinstance(goal_id, int) or isinstance(goal_id, bool):
         return None
     try:
@@ -91,6 +92,8 @@ def record(world, goal_id, workdir, target) -> TaskFile | None:
     import time
 
     entry = {"workdir": str(root), "path": relative, "sha256": digest, "size": size}
+    if delivered:
+        entry["delivered"] = True
     try:
         world.append_event(goal_id, EVENT_AGENT, EVENT_KIND, json.dumps(entry, sort_keys=True))
     except Exception:  # noqa: BLE001 -- the write itself already succeeded
@@ -99,11 +102,55 @@ def record(world, goal_id, workdir, target) -> TaskFile | None:
     return TaskFile(0, Path(relative).name, relative, str(root), digest, size, time.time())
 
 
+_DRAFTS = (".md", ".markdown", ".txt")
+_DOCUMENTS = (".docx", ".pptx", ".pdf", ".xlsx", ".xlsm")
+_SPREADSHEETS = (".xlsx", ".xlsm")
+_SCRIPTS = (".py", ".sh", ".bash", ".js", ".mjs", ".ps1", ".rb", ".r")
+
+
+def _drafts(keys: list[tuple[str, str]], delivered: set[tuple[str, str]]) -> set[tuple[str, str]]:
+    """Markdown or text files this goal wrote beside a Word, PowerPoint, PDF
+    or Excel file named like it (the same name, or the name plus "_notes" or
+    "-plan"): the draft or plan the document was made from. Asked for an NDA
+    as a Word file, the page offered the Markdown draft first; asked for a
+    workbook, it offered "region_sales_workbook_instructions.md" first.
+    Scripts beside any such document are the helpers that made or changed
+    it: asked to edit a roofing bid workbook, the page offered
+    "edit_roofing_workbook.py" first, and it could not be downloaded once
+    the agent had changed it."""
+    def stems(suffixes: tuple[str, ...]) -> set[tuple[str, str]]:
+        return {(workdir, str(Path(path).with_suffix(""))) for workdir, path in keys
+                if Path(path).suffix.lower() in suffixes}
+
+    documents, spreadsheets = stems(_DOCUMENTS), stems(_SPREADSHEETS)
+
+    def named_like(workdir: str, path: str, among: set[tuple[str, str]]) -> bool:
+        stem = str(Path(path).with_suffix(""))
+        return any(w == workdir and (stem == doc or stem.startswith(doc + "_") or stem.startswith(doc + "-"))
+                   for w, doc in among)
+
+    with_documents = {workdir for workdir, _doc in documents}
+
+    def draft(workdir: str, path: str) -> bool:
+        suffix = Path(path).suffix.lower()
+        if suffix in _SCRIPTS:
+            return workdir in with_documents
+        # A CSV beside a workbook of its name is the workbook's working copy
+        # (a content calendar came as .csv and .xlsx); a CSV is kept otherwise.
+        return (suffix in _DRAFTS and named_like(workdir, path, documents)
+                or suffix == ".csv" and named_like(workdir, path, spreadsheets))
+
+    return {(workdir, path) for workdir, path in keys if (workdir, path) not in delivered and draft(workdir, path)}
+
+
 def files_for(world, goal_id: int) -> list[TaskFile]:
     """The files this goal saved, the newest record of each path, in the order
-    they were first saved."""
+    they were first saved. A Markdown draft or plan of a document it also
+    saved, or a helper script beside one, is left out unless it was handed
+    over with ``deliver_file``."""
     latest: dict[tuple[str, str], TaskFile] = {}
     order: list[tuple[str, str]] = []
+    delivered: set[tuple[str, str]] = set()
     for event in iter_goal_events(world, goal_id):
         if event.kind != EVENT_KIND or event.agent != EVENT_AGENT:
             continue
@@ -119,7 +166,11 @@ def files_for(world, goal_id: int) -> list[TaskFile]:
                 continue
             order.append(key)
         latest[key] = item
-    return [TaskFile(n, *_fields(latest[key])) for n, key in enumerate(order, 1)]
+        if entry.get("delivered") is True:
+            delivered.add(key)
+    drafts = _drafts(order, delivered)
+    kept = [key for key in order if key not in drafts]
+    return [TaskFile(n, *_fields(latest[key])) for n, key in enumerate(kept, 1)]
 
 
 def _fields(item: TaskFile) -> tuple:

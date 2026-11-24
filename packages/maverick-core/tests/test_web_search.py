@@ -120,3 +120,14 @@ def test_web_search_caps_num_results():
     # Schema doesn't enforce cap, but runner does (cap is internal logic).
     # Just ensure schema lists the field.
     assert "num_results" in _SEARCH_INPUT_SCHEMA["properties"]
+
+
+def test_a_refused_free_search_says_what_to_do_instead(monkeypatch):
+    # Live: the free fallback answered a datacenter with a challenge page, the
+    # agent was told only "no results" and guessed IRS page addresses.
+    import maverick.tools.web_search as ws
+    for key in ("TAVILY_API_KEY", "BRAVE_API_KEY", "SERPAPI_API_KEY", "MAVERICK_SEARCH_BACKEND"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(ws, "_try_duckduckgo", lambda *a, **k: [])
+    out = ws.web_search(budget=Budget()).fn({"query": "IRS mileage rate 2026"})
+    assert out.startswith("ERROR") and "http_fetch" in out and "Settings > Integrations" in out

@@ -110,3 +110,18 @@ def test_recall_includes_running_when_asked(world_with_history):
     )
     ids = [g.id for _, g in matches]
     assert 5 in ids
+
+
+def test_recalled_results_say_their_figures_are_not_this_tasks(world_with_history, monkeypatch):
+    # Live: an answer copied a past statement task's totals instead of the
+    # ones its own calculations returned for a different file.
+    from types import SimpleNamespace
+
+    from maverick.tools import recall as recall_module
+
+    past = SimpleNamespace(id=380, status="done", title="Statement totals", result="Total deposits: $100,079.96")
+    monkeypatch.setattr(recall_module, "recall_past_goals", lambda *a, **k: [(0.38, past)])
+    tool = recall_module.recall()
+    assert "never" in tool.description and "figure" in tool.description
+    out = tool.fn({"query": "statement totals"})
+    assert "#380" in out and out.rstrip().endswith(recall_module.PAST_FIGURES_NOTE)

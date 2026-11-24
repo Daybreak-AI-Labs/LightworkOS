@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import errno
 import os
+import re
 import stat
 from contextlib import contextmanager
 from pathlib import Path
@@ -451,8 +452,26 @@ _IMAGE_HINT = ("For a chart or diagram, write it as SVG to a .svg path instead: 
                "kind of file.")
 _BINARY_DOCUMENTS = {".xlsx": _SPREADSHEET_HINT, ".xlsm": _SPREADSHEET_HINT, ".xls": _SPREADSHEET_HINT,
                      ".doc": _WORD_HINT, ".ppt": _SLIDES_HINT,
-                     ".pdf": _TEXT_HINT, ".zip": _TEXT_HINT, ".png": _IMAGE_HINT, ".jpg": _IMAGE_HINT,
+                     ".zip": _TEXT_HINT, ".png": _IMAGE_HINT, ".jpg": _IMAGE_HINT,
                      ".jpeg": _IMAGE_HINT, ".gif": _IMAGE_HINT, ".webp": _IMAGE_HINT, ".bmp": _IMAGE_HINT}
+
+
+_SVG_START = re.compile(r"\A\s*(?:<\?xml[^>]*\?>\s*)?(?:(?:<!--.*?-->|<!DOCTYPE[^>]*>)\s*)*<svg[\s>]",
+                        re.IGNORECASE | re.DOTALL)
+
+
+def _svg_refusal(path: str, content: str) -> str | None:
+    """An .svg that is not SVG markup. Asked for a bar chart, an agent wrote
+    Markdown with a Mermaid block to a .svg name and delivered it."""
+    if os.path.splitext(str(path or ""))[1].lower() != ".svg":
+        return None
+    if _SVG_START.match(content or "") and "</svg>" in content.lower():
+        return None
+    return (f"ERROR: an .svg file must be SVG markup, starting with <svg ...> and ending with </svg>; "
+            f"nothing was written to {path!r}. Draw the chart with SVG elements, for example "
+            '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360"> with a <rect> for each bar, '
+            "<text> for labels, values and the title, and <line> for the axes. Markdown and Mermaid "
+            "are not SVG.")
 
 
 def _binary_document_refusal(path: str) -> str | None:
@@ -464,12 +483,13 @@ def _binary_document_refusal(path: str) -> str | None:
 
 
 def _write_office(sandbox, target: Path, content: str) -> str:
-    """Markdown or plain text written to a .docx or .pptx path, as a real Word
-    document or PowerPoint deck.
+    """Markdown or plain text written to a .docx, .pptx or .pdf path, as a real
+    Word document, PowerPoint deck or printable PDF.
 
     Asked for a Word file, agents wrote Markdown under a .docx.md name and
     delivered that: the pandoc tool is loaded only on request. Asked for a
     PowerPoint deck, they had no way to make one without pandoc."""
+    from ..markdown_pdf import UnwritablePdf, pdf_from_markdown
     from ..markdown_slides import UnwritableSlides, slides_from_markdown
     from ..markdown_word import UnwritableText, word_answer
     from ..sandbox.workspace_transfer import WorkspaceTransferError, _write
@@ -478,13 +498,15 @@ def _write_office(sandbox, target: Path, content: str) -> str:
     relative = target.relative_to(root).as_posix()
     if any(part.rstrip(" .").casefold() == ".git" for part in relative.split("/")):
         return "ERROR: refusing to write under .git/"
-    deck = target.suffix.lower() == ".pptx"
+    suffix = target.suffix.lower()
+    writers = {".pptx": ("a PowerPoint deck", slides_from_markdown), ".pdf": ("a PDF", pdf_from_markdown),
+               ".docx": ("a Word document", lambda text: word_answer(text, ""))}
+    kind, writer = writers[suffix]
     try:
-        document = slides_from_markdown(content) if deck else word_answer(content, "")
+        document = writer(content)
         _write(root, relative, document, 0o644)
-    except (UnwritableText, UnwritableSlides, OSError, WorkspaceTransferError) as e:
+    except (UnwritableText, UnwritableSlides, UnwritablePdf, OSError, WorkspaceTransferError) as e:
         return f"ERROR: {e}"
-    kind = "a PowerPoint deck" if deck else "a Word document"
     return f"wrote {kind} ({len(document)} bytes) to {target} from your Markdown"
 
 
@@ -492,7 +514,8 @@ def write_file(sandbox, goal_id: str | int | None = "default", world=None) -> To
     quota_goal_id = "default" if goal_id is None else goal_id
 
     def fn(args: dict) -> str:
-        refusal = _binary_document_refusal(args.get("path", ""))
+        refusal = (_binary_document_refusal(args.get("path", ""))
+                   or _svg_refusal(args.get("path", ""), str(args.get("content") or "")))
         if refusal:
             return refusal
         try:
@@ -506,7 +529,7 @@ def write_file(sandbox, goal_id: str | int | None = "default", world=None) -> To
         if not ok:
             return f"ERROR: {msg}"
         content = args["content"]
-        if target.suffix.lower() in (".docx", ".pptx"):
+        if target.suffix.lower() in (".docx", ".pptx", ".pdf"):
             result = _write_office(sandbox, target, content)
         else:
             # TOCTOU-safe write: a symlink swapped in after the path check can
@@ -522,7 +545,7 @@ def write_file(sandbox, goal_id: str | int | None = "default", world=None) -> To
         if world is not None:
             from ..task_files import record
             record(world, goal_id, sandbox.workdir, target)
-        return result
+        return result + _totals_note(target, content)
     return Tool(
         name="write_file",
         description=(
@@ -535,8 +558,9 @@ def write_file(sandbox, goal_id: str | int | None = "default", world=None) -> To
             "LOCALIZE) or for files small enough that a full rewrite "
             "is appropriate. Avoid using write_file on existing "
             "production code — it's easy to drop content accidentally. "
-            "A `.docx` path gets a Word document and a `.pptx` path a PowerPoint deck "
-            "(a slide per `#` heading) made from Markdown content."
+            "A `.docx` path gets a Word document, a `.pptx` path a PowerPoint deck "
+            "(a slide per `#` heading) and a `.pdf` path a printable PDF, made from "
+            "Markdown content; in Word and PDF a line `\\newpage` starts a new page."
         ),
         input_schema={
             "type": "object",
@@ -563,6 +587,21 @@ def write_file(sandbox, goal_id: str | int | None = "default", world=None) -> To
     )
 
 
+def _totals_note(target, content: str) -> str:
+    """A note when a document's tables hold a total its rows do not add
+    to. A quote PDF's grand total missed its own lines; the chat answer and
+    sheets were checked, a document never was. The file is still written."""
+    if target.suffix.lower() not in (".docx", ".pptx", ".pdf", ".md", ".markdown"):
+        return ""
+    from ..figure_totals import answer_issues
+
+    issues = answer_issues(content)
+    if not issues:
+        return ""
+    return ("\nThe totals do not add up: " + " ".join(issues)
+            + " Fix the figures and write the file again before you deliver it.")
+
+
 def deliver_file(sandbox, goal_id: int | None, world) -> Tool:
     """Hand a workspace file to the person as a download on the task's page."""
     def fn(args: dict) -> str:
@@ -575,7 +614,7 @@ def deliver_file(sandbox, goal_id: int | None, world) -> Tool:
         if not target.is_file():
             return f"ERROR: {args['path']} is not a file in the workspace"
         from ..task_files import MAX_DOWNLOAD_BYTES, record
-        saved = record(world, goal_id, sandbox.workdir, target)
+        saved = record(world, goal_id, sandbox.workdir, target, delivered=True)
         if saved is None:
             return (f"ERROR: {args['path']} could not be offered (it must be a regular file "
                     f"inside the workspace, at most {MAX_DOWNLOAD_BYTES // (1024 * 1024)} MB)")
@@ -589,7 +628,9 @@ def deliver_file(sandbox, goal_id: int | None, world) -> Tool:
             "task's page. Files you save with write_file or str_replace_editor are "
             "offered automatically; use this for a file a command or script created "
             "(for example a chart, a spreadsheet or a zip). The page serves the file "
-            "exactly as it is now."
+            "exactly as it is now. A Markdown or text draft of a Word, PowerPoint or "
+            "PDF file you made under the same name, or a script you wrote beside such a "
+            "file, is not offered unless you deliver it."
         ),
         input_schema={
             "type": "object",

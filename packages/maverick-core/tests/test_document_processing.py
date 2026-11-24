@@ -61,8 +61,10 @@ def _parts(path):
 def test_formula_read_distinguishes_uncalculated_from_empty_and_zero(tmp_path):
     path = _workbook(tmp_path / "book.xlsx")
     rows = json.loads(spreadsheet._run({"op": "read", "path": str(path)}))
-    assert rows[1][2] == {"formula": "=A2*B2", "cached_value": None,
-                          "value_status": "uncalculated", "cell": "C2"}
+    # No result is stored, so the cache stays empty; the plain formula's value
+    # is reported apart from it as computed.
+    assert rows[1][2] == {"formula": "=A2*B2", "cached_value": None, "value_status": "computed",
+                          "computed_value": 250, "cell": "C2"}
     package = WorkbookPackage(path)
     raw = package.parts["xl/worksheets/sheet1.xml"]
     package.parts["xl/worksheets/sheet1.xml"] = raw.replace(b"<v></v>", b"<v>0</v>")

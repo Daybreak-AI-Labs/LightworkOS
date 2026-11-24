@@ -68,7 +68,8 @@
     while (i < n) {
       var ch = text[i];
       rest = text.slice(i);
-      if (ch === '\\' && i + 1 < n && /[\\`*_{}\[\]()#+\-.!~|>]/.test(text[i + 1])) {
+      // Any ASCII punctuation may be escaped (CommonMark): models write "\$8,400".
+      if (ch === '\\' && i + 1 < n && /[!-\/:-@\[-`{-~]/.test(text[i + 1])) {
         buf += text[i + 1]; i += 2; continue;
       }
       if (ch === '`') {

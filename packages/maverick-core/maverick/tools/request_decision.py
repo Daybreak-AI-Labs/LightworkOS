@@ -25,6 +25,10 @@ def request_decision(world, goal_id: int | None = None) -> Tool:
             values = dr.validate(args)
         except ValueError as exc:
             return f"ERROR: {exc}. Fix the request and call request_decision again."
+        if not dr.needs_person(values["area"]):
+            # Needless stops for style and approach questions: a choice outside
+            # the areas this workspace chose is the agent's own.
+            return dr.yours_to_decide(values)
         held = dr.IN_FLOW_STEP.get()
         if held is not None:
             held.append(values["question"])
@@ -35,7 +39,7 @@ def request_decision(world, goal_id: int | None = None) -> Tool:
         except dr.DecisionRecordError as exc:
             return f"{dr.NOT_RECORDED}: {exc}."
         return (
-            f"WAITING for decision #{decision.id}. The run pauses now until a person "
+            f"{dr.FILED}{decision.id}. The run pauses now until a person "
             "chooses an option. Do not act on any option before the answer arrives."
         )
 
@@ -46,8 +50,9 @@ def request_decision(world, goal_id: int | None = None) -> Tool:
             "Ask a person to choose between options before you act, then pause. "
             "Use it for a judgment call you should not make alone. "
             + dr.rules_text(chosen)
-            + " The person's choice comes back to you as a structured record when "
-            "the run continues. If nobody answers in time the run stops."
+            + " A choice outside these areas is yours: this tool will tell you to go "
+            "with your recommendation. The person's choice comes back to you as a "
+            "structured record when the run continues. If nobody answers in time the run stops."
         ),
         input_schema={
             "type": "object",

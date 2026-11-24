@@ -441,6 +441,29 @@ async def test_nothing_else_in_the_turn_runs_once_a_decision_is_filed(
 
 
 @pytest.mark.asyncio
+async def test_a_choice_left_to_the_agent_neither_pauses_the_run_nor_skips_the_turn(
+        tmp_path, fake_llm, make_llm_response):
+    # Live: "which output format?" filed as area "other" got "yours to make",
+    # yet the run was marked blocked with nothing for a person to answer, and
+    # the page said "The run stopped before finishing. Try again."
+    target = tmp_path / "written.txt"
+    style = {**_REQUEST, "question": "PDF only, or PDF and Word?", "area": "other"}
+    fake_llm.scripted = [
+        make_llm_response(text="Writing and checking the format.", tool_calls=[
+            ToolCall(id="w1", name="write_file", input={"path": str(target), "content": "acted"}),
+            ToolCall(id="t1", name="request_decision", input=style)]),
+        *[make_llm_response(text=t) for t in _FINISH],
+    ]
+    world = _world(tmp_path)
+    gid = world.create_goal("make a printable checklist", "", owner="alice")
+
+    await _run(world, gid, fake_llm, tmp_path)
+
+    assert target.read_text() == "acted"
+    assert world.get_goal(gid).status == "done" and dr.for_goal(world, gid) == []
+
+
+@pytest.mark.asyncio
 async def test_a_parallel_batch_does_not_run_while_the_run_waits(tmp_path, fake_llm, make_llm_response,
                                                                  monkeypatch):
     from maverick.agent import Agent
@@ -984,3 +1007,43 @@ def test_an_option_label_does_not_repeat_the_recommended_marker():
         "options": [{"label": "Academic-style report (Recommended)", "effect": "Headings and endnotes."},
                     {"label": "Magazine-style narrative", "effect": "A flowing feature."}]})
     assert [o["label"] for o in checked["options"]] == ["Academic-style report", "Magazine-style narrative"]
+
+
+def test_a_choice_outside_the_chosen_areas_is_the_agents_own(tmp_path):
+    # Live: runs stopped to ask people to pick an invoice style ("Minimal",
+    # "Standard", "Detailed"), whether to add a table file, and which tool to
+    # convert with, each filed as area "other".
+    from maverick.tools.request_decision import request_decision
+
+    world = _world(tmp_path)
+    gid = world.create_goal("make an invoice", "", owner="alice")
+    style = {**_REQUEST, "question": "Which invoice style?", "area": "other",
+             "options": [{"label": "Minimal", "effect": "Just the essentials."},
+                         {"label": "Standard", "effect": "Adds payment terms."}], "recommended": 2}
+    out = request_decision(world, gid).fn(style)
+    assert "yours to make" in out and '"Standard" (Adds payment terms.)' in out and "does not wait" in out
+    assert dr.for_goal(world, gid) == [] and dr.run_state(world, gid) is None
+    # A chosen area still waits for a person.
+    assert request_decision(world, gid).fn(_REQUEST).startswith("WAITING for decision")
+
+
+def test_an_operator_can_make_runs_ask_about_every_choice(tmp_path, monkeypatch):
+    from maverick import config
+    from maverick.tools.request_decision import request_decision
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("[approval]\nask_outside_areas = true\n", encoding="utf-8")
+    monkeypatch.setenv("MAVERICK_CONFIG", str(cfg))
+    config.reset_config_cache()
+    world = _world(tmp_path)
+    gid = world.create_goal("make an invoice", "", owner="alice")
+    out = request_decision(world, gid).fn({**_REQUEST, "area": "other"})
+    assert out.startswith("WAITING for decision") and len(dr.for_goal(world, gid)) == 1
+
+
+def test_the_rules_keep_a_plans_assumptions_with_the_agent():
+    # Live: a business-plan task filed "which sales ramp should the budget
+    # use?" under "Spending and budgets" and waited for a person.
+    text = dr.rules_text()
+    assert "Spending money or changing spending limits" in text
+    assert "not the content of the work you deliver" in text and "budget, plan, forecast" in text

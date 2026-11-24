@@ -1125,3 +1125,55 @@ def test_live_task_cost_answers_for_the_task_asked_about(client, monkeypatch):
     denied = client.post("/api/v1/copilot", json={"message": "How much did task 35 cost?", "page": "/chat"}).json()
     assert "can't access that task" in denied["reply"] and "3.00" not in denied["reply"]
     assert live.intent("How much did my business work cost us last month?") is None
+
+
+def test_the_guide_is_told_which_settings_match_and_links_the_one_it_names(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Live: asked how to make every command ask for approval again, the guide
+    # pointed to "the Features section"; the switch is in Protected work area.
+    from maverick import llm
+    from maverick_dashboard import api, copilot_settings
+
+    captured: dict[str, object] = {}
+    found = [{"title": "Run commands in a closed container without asking", "group": "Protected work area",
+              "href": ("/settings/all?group=protected-work-area&id=sandbox.contained_commands_without_approval"
+                       "#sa-sandbox-contained_commands_without_approval-label")},
+             {"title": "Never give commands internet", "group": "Protected work area", "href": "/settings/all?x"}]
+
+    class FakeLlm:
+        def __init__(self, _model: str) -> None:
+            pass
+
+        def complete(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(text=("Turn off Settings > Protected work area > Run commands in a closed "
+                                         "container without asking."))
+
+    monkeypatch.setattr(copilot_settings, "hints", lambda _request, _question: found)
+    monkeypatch.setattr(api, "_any_provider_key_set", lambda: True)
+    monkeypatch.setattr(api, "require_provider_or_400", lambda **_kwargs: None)
+    monkeypatch.setattr(llm, "LLM", FakeLlm)
+    monkeypatch.setattr(llm, "model_for_role", lambda _role: llm.MODEL_SONNET)
+    response = client.post("/api/v1/copilot", json={
+        "message": "How do I make every command ask for approval again?", "page": "/settings", "history": []})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["mode"] == "model"
+    assert "Run commands in a closed container without asking (Settings > Protected work area)" in captured["system"]
+    # In the shape the panel opens: the group page, focused on the setting's row.
+    assert payload["action_link"] == {"href": "/settings/all?group=protected-work-area",
+                                      "focus": "sa-sandbox-contained_commands_without_approval-label",
+                                      "label": "Open the setting: Run commands in a closed container without asking"}
+
+
+def test_settings_hints_carry_names_and_places_only():
+    from maverick_dashboard import copilot_settings
+
+    line = copilot_settings.context_line([{"title": "Folder for agent files", "group": "Protected work area",
+                                           "href": "/settings/all?id=sandbox.workdir"}])
+    assert "Folder for agent files (Settings > Protected work area)" in line and "now" not in line
+    assert copilot_settings.context_line([]) == ""
+    assert copilot_settings.link([{"title": "Folder for agent files", "group": "G", "href": "/x"}],
+                                 "Open the Settings page.") is None

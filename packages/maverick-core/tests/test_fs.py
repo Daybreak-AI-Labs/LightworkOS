@@ -192,7 +192,7 @@ def test_read_file_reads_only_up_to_the_cap(tmp_path, monkeypatch):
 @pytest.mark.parametrize("name,hint", [
     ("rent.xlsx", "`spreadsheet`"), ("report.doc", ".docx"), ("deck.ppt", ".pptx"),
     ("revenue_by_month.png", "SVG"), ("logo.JPG", "SVG"),
-    ("summary.pdf", "text format"), ("Rent.XLSX", "`spreadsheet`"),
+    ("bundle.zip", "text format"), ("Rent.XLSX", "`spreadsheet`"),
 ])
 def test_write_file_refuses_text_in_a_binary_document(tmp_path, name, hint):
     # Live: asked for an Excel file, agents wrote "placeholder" into
@@ -248,3 +248,49 @@ def test_write_file_to_a_pptx_path_makes_a_deck_from_markdown(tmp_path):
     assert out.startswith("wrote a PowerPoint deck"), out
     with zipfile.ZipFile(tmp_path / "pitch.pptx") as deck:
         assert b"$12 a head" in deck.read("ppt/slides/slide2.xml")
+
+
+def test_write_file_to_a_pdf_path_makes_a_printable_pdf(tmp_path):
+    # Live: asked for "a printable PDF I can download", the agent was refused,
+    # delivered a Word file instead and then stopped to ask the person.
+    from maverick.sandbox import LocalBackend
+    from maverick.tools.fs import write_file
+
+    out = write_file(LocalBackend(workdir=tmp_path)).fn(
+        {"path": "checklist.pdf", "content": "# Cleaning\n- [ ] Wipe counters\n"})
+    assert out.startswith("wrote a PDF"), out
+    assert (tmp_path / "checklist.pdf").read_bytes().startswith(b"%PDF-1.4")
+
+
+def test_write_file_refuses_an_svg_that_is_not_svg(tmp_path):
+    # Live: asked for a bar chart, the agent wrote Markdown with a Mermaid
+    # block to monthly_revenue_chart.svg and delivered it; it opens as nothing.
+    from maverick.sandbox import LocalBackend
+    from maverick.tools.fs import write_file
+
+    tool = write_file(LocalBackend(workdir=tmp_path))
+    mermaid = "# Total Revenue by Month\n\n```mermaid\nxychart-beta\n    bar [1, 2]\n```\n"
+    out = tool.fn({"path": "chart.svg", "content": mermaid})
+    assert out.startswith("ERROR") and "<svg" in out and not (tmp_path / "chart.svg").exists()
+    svg = ('<?xml version="1.0"?>\n<!-- revenue -->\n<svg xmlns="http://www.w3.org/2000/svg" width="10" '
+           'height="10"><rect width="5" height="5"/></svg>\n')
+    assert tool.fn({"path": "chart.svg", "content": svg}).startswith("wrote")
+    assert (tmp_path / "chart.svg").read_text() == svg
+
+
+@pytest.mark.parametrize("name", ["quote.pdf", "quote.docx", "quote.md"])
+def test_write_file_says_when_a_documents_totals_do_not_add_up(tmp_path, name):
+    # Live: a quote PDF's summary gave a grand total its lines did not add
+    # to; only the chat answer and sheets were checked, never a document.
+    from maverick.sandbox import LocalBackend
+    from maverick.tools.fs import write_file
+
+    tool = write_file(LocalBackend(workdir=tmp_path))
+    quote = ("# Quote\n\n| Item | Amount |\n|---|---:|\n| Consulting | $1,740.00 |\n"
+             "| Laptops | $3,269.97 |\n| Discount | -$327.00 |\n| Setup | $250.00 |\n"
+             "| Sales tax | $220.72 |\n| Grand total | {total} |\n")
+    out = tool.fn({"path": name, "content": quote.format(total="$5,253.69")})
+    assert "do not add up" in out and "5,153.69" in out, out
+    assert (tmp_path / name).exists()  # the file is written; the note asks for a fix
+    out = tool.fn({"path": name, "content": quote.format(total="$5,153.69")})
+    assert "do not add up" not in out, out

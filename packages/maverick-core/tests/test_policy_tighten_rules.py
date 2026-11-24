@@ -86,7 +86,8 @@ CASES = {
     "safety.goal_risk_floor": dict(os="medium", s="high", l="low", us="medium"),
     "safety.goal_risk_require_human": dict(os="high", s="medium", l="never", us="high"),
     **{f"capabilities.{name}": _perm(False) for name in (
-        "computer_use", "browser", "web_search", "mobile_tools", "ros", "code_exec")},
+        "computer_use", "browser", "mobile_tools", "ros", "code_exec")},
+    "capabilities.web_search": _perm(True),
     "capabilities.enforce": _prot(False),
     "capabilities.per_call_tokens": _prot(False),
     "capabilities.per_call_token_ttl": dict(os=30, s=10, l=60, us=10, ul=86400),
@@ -109,6 +110,7 @@ CASES = {
     "sandbox.timeout": dict(os=60, s=30, l=120, us=30, ul=120),
     "sandbox.warm": _perm(False),
     "sandbox.contained_commands_without_approval": _perm(True),
+    "approval.ask_outside_areas": _prot(False),
     # A workspace may add hosts a tool must not reach and narrow the hosts it
     # may reach; a tool rule that is not a table is ignored.
     "sandbox.tool": dict(os={"http_fetch": {"allow_egress": ["a.example", "b.example"]}},

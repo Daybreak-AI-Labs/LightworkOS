@@ -921,8 +921,9 @@ def _tools(S, C) -> tuple:
         S("capabilities", "web_search", "Let agents and specialists search the web",
           "Allow agents and specialists whose work calls for current web information to use Web search. "
           "Lightwork uses a connected search service when available, with a public-search "
-          "fallback; whether a search succeeds is checked when it runs.",
-          "toggle", "Integrations", False, "maverick.agent",
+          "fallback; whether a search succeeds is checked when it runs. On unless this is an "
+          "enterprise install.",
+          "toggle", "Integrations", True, "maverick.agent",
           subgroup="Web research", restart=True, weaker=True,
           warning="Agents and specialists will be allowed to send search terms to the web search service."),
         S("limits", "file_write_quota_mb", "Most a task may write to files",

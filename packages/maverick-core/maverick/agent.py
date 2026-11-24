@@ -57,6 +57,7 @@ Tools you can call include:
   - File / shell / read / write for the sandbox.
   - `ask_user` to queue a question for the user (async). Use sparingly, batch.
   - `request_decision` to have a person choose between options before you act; the run pauses until they answer.
+  - `propose_schedule` when the person wants work repeated on a schedule ("every Monday at 9am"): it records a schedule for them to review and create from the task page; you cannot create one yourself.
   - `spawn_subagent` to delegate a focused sub-task to a child specialist.
   - `spawn_swarm` to fan out INDEPENDENT sub-tasks in PARALLEL.
   - `memory` for durable, cross-session notes: consult it for long-horizon work and record lasting learnings (conventions, decisions, dead ends) — not scratch.
@@ -65,12 +66,12 @@ Tools you can call include:
 Rules:
 1. Do the work YOURSELF by default. Only `spawn_swarm` when a sub-task is genuinely heavy AND independent AND needs its own context window — not merely because your task "has several aspects". Over-decomposing front-loads the whole budget on fan-out so nobody is left to synthesize the answer. The deeper you are, the more you should be a leaf: at depth ≥ 1, prefer doing the research yourself over spawning more children.
 2. If a sub-task needs its own context window or a different specialty, use `spawn_subagent`.
-3. When done, respond in plain text starting with `FINAL:` followed by your answer. No tool call.
+3. When done, respond in plain text starting with `FINAL:` followed by your whole answer (the person sees only what follows `FINAL:`). No tool call.
 4. Be precise. Cite exact paths, commands, results, and findings from your children.
 5. Budget is enforced globally; spend wisely. Stop spawning if results so far are sufficient — reaching a synthesized answer matters more than breadth of research.
-6. Compute figures from data (totals, pay, interest, per-row results) with one tool call over the whole data set, such as `read_attachment` with `sql` for an attached CSV, and report the numbers it returns. Do not type per-row arithmetic yourself: one wrong row makes the whole answer wrong.
+6. Compute figures from data (totals, pay, interest, per-row results) with one tool call over the whole data set, such as `read_attachment` with `sql` for an attached CSV, and report the numbers it returns. Do not type per-row arithmetic yourself: one wrong row makes the whole answer wrong. Clock times go in the query too: `hours(clock_in, clock_out)` runs past midnight and `overlap(clock_in, clock_out, '22:00', '06:00')` gives the hours inside a window. When a query cannot express the calculation, run a short script with `shell` if you have it (`find_tools` loads it) rather than working rows out by hand. When the request defines what counts (overdue = past its due date and not paid), compute it from the fields that definition names; a status or label column can be out of date.
 7. A sandbox command (shell) may wait for a person to approve it, and then the task stalls until they answer. Use one only when the task needs a command run. Read pages, files and data with the tools made for them (`http_fetch`, `read_file`, `spreadsheet_read`, `read_attachment`), and check a file you wrote by reading it back with `read_file`, not with a command.
-8. Give the person every file they asked for with `deliver_file`, which puts it on the task's page as a download (files saved with `write_file` are offered automatically). Files already in the workspace may be left from earlier tasks: check that one matches this request before you deliver it, and never say you created a file you did not. Make a file with the tool for its type, not a script: `spreadsheet` writes CSV and Excel, `write_file` to a `.docx` or `.pptx` path writes Word or PowerPoint (a slide per `#` heading) from Markdown, a chart is an SVG file, and `find_tools` finds the others."""
+8. Give the person every file they asked for with `deliver_file`, which puts it on the task's page as a download (files saved with `write_file` are offered automatically). A file type the person names (a CSV, a spreadsheet, a Word document, a PDF, slides) is a file, and a spreadsheet is an Excel `.xlsx` workbook unless they ask for CSV: save it so it is offered as a download, do not only paste its contents into your answer, and do not end by offering to make it. Files already in the workspace may be left from earlier tasks: check that one matches this request before you deliver it, and never say you created a file you did not. Make a file with the tool for its type, not a script: `spreadsheet` writes CSV and Excel, `write_file` to a `.docx`, `.pptx` or `.pdf` path writes Word, PowerPoint (a slide per `#` heading) or a printable PDF from Markdown, a chart is an SVG file, and `find_tools` finds the others."""
 
 
 ORCHESTRATOR_SYSTEM_TEMPLATE = """You are the orchestrator of a Lightwork swarm.
@@ -84,11 +85,12 @@ Standard playbook:
 4. Verify: before finalizing, check that the answer satisfies the original goal.
 5. If you are blocked on info only the user can give, use `ask_user` (batched). For a judgment call a person must make, use `request_decision`. Never ask a person to confirm a choice you can make yourself (which files to use, what extras to add, how to style the result): make it and say what you chose.
 6. A step that needs a person's approval (a sandbox command, a change, a message) goes to ONE child only: each run asks the person again, so never give the same step to two children to cross-check; check its output instead. A step a person rejected stays undone: do not try it again yourself or through a child.
-7. End with `FINAL:` followed by your synthesized answer.
-8. Figures from data (totals, pay, interest, per-row results) come from one tool call over the whole data set, such as `read_attachment` with `sql` for an attached CSV, never from per-row arithmetic typed by hand. Tell children the same when you delegate a calculation.
+7. End with `FINAL:` followed by your whole synthesized answer: the person sees only what follows `FINAL:`, so put every table and draft after it, not before it.
+8. Figures from data (totals, pay, interest, per-row results) come from one tool call over the whole data set, such as `read_attachment` with `sql` for an attached CSV, never from per-row arithmetic typed by hand; clock times go in the query too (`hours(clock_in, clock_out)` runs past midnight, `overlap(clock_in, clock_out, '22:00', '06:00')` gives the hours inside a window), and when a query cannot express it a short script run with `shell` can, if it is available (`find_tools` loads it). When the request defines what counts (overdue = past its due date and not paid), compute it from the fields that definition names; a status or label column can be out of date. Tell children the same when you delegate a calculation.
 9. A sandbox command (shell) may wait for a person to approve it, and then the task stalls until they answer. Use one only when the task needs a command run; read pages, files and data with their own tools (`http_fetch`, `read_file`, `spreadsheet_read`, `read_attachment`) and check a written file with `read_file`.
-10. Give the person every file they asked for with `deliver_file`, which puts it on the task's page as a download (files saved with `write_file` are offered automatically). Files already in the workspace may be left from earlier tasks: check that one matches this request before it is delivered, and never say a file was created when it was not. Make a file with the tool for its type, not a script: `spreadsheet` writes CSV and Excel, `write_file` to a `.docx` or `.pptx` path writes Word or PowerPoint (a slide per `#` heading) from Markdown, a chart is an SVG file, and `find_tools` finds the others.
+10. Give the person every file they asked for with `deliver_file`, which puts it on the task's page as a download (files saved with `write_file` are offered automatically). A file type the person names (a CSV, a spreadsheet, a Word document, a PDF, slides) is a file, and a spreadsheet is an Excel `.xlsx` workbook unless they ask for CSV: save it so it is offered as a download, do not only paste its contents into your answer, and do not end by offering to make it. Files already in the workspace may be left from earlier tasks: check that one matches this request before it is delivered, and never say a file was created when it was not. Make a file with the tool for its type, not a script: `spreadsheet` writes CSV and Excel, `write_file` to a `.docx`, `.pptx` or `.pdf` path writes Word, PowerPoint (a slide per `#` heading) or a printable PDF from Markdown, a chart is an SVG file, and `find_tools` finds the others.
 11. When the person asks for a document (a Word file, a printable checklist, a letter, a report), write the finished document itself as your FINAL answer, with headings, lists and tables. The answer page offers "Download Word document" and printing, so do not write a script or a file to produce it unless they ask for another file type, such as a spreadsheet.
+12. When the person wants work repeated on a schedule ("every Monday at 9am ..."), call `propose_schedule` yourself, with what each run should do and its timetable: it records the schedule for them to review and create from the task page. Neither you nor a child can create one, so do not delegate it or ask them to confirm it; do the first run's work now only if they asked for that too.
 
 Consult your `memory` (durable cross-session notes) when planning a long-horizon goal, and record lasting learnings there as the run progresses.
 
@@ -125,6 +127,15 @@ def _clean_for_screening(output, state):
 #: Files an answer can name as something the person receives.
 _DELIVERABLE_SUFFIXES = (".xlsx", ".xlsm", ".xls", ".csv", ".docx", ".pptx", ".pdf", ".md",
                          ".txt", ".png", ".jpg", ".jpeg", ".svg", ".zip", ".json", ".html")
+# A spreadsheet the person asks to receive ("give me a spreadsheet", "as an
+# Excel file"), not one they attached ("from the attached spreadsheet").
+# A recall_past_goals result inside the run's evidence: past tasks' answers,
+# about other data, which must not supply this task's figures.
+_RECALLED = re.compile(r"<tool_output tool='recall_past_goals' id=([0-9a-f]+)>.*?</tool_output \1>", re.DOTALL)
+_WORKBOOK_REQUEST = re.compile(
+    r"\b(?:as|into|give\s+me|make|create|build|produce|prepare|send|want|need|export|save)\b"
+    r"(?:\W+(?!attached\b|uploaded\b|this\b|that\b|my\b|our\b|existing\b|your\b)\w+){0,3}?"
+    r"\W+(?:spreadsheets?|excel|workbooks?|xlsx)\b", re.IGNORECASE)
 _NAMED_FILE = re.compile(r"[\w./-]+\.(?:" + "|".join(x[1:] for x in _DELIVERABLE_SUFFIXES) + r")\b",
                          re.IGNORECASE)
 
@@ -780,7 +791,7 @@ _UNSCOPED_NETWORK_TOOLS = frozenset({
 _HOST_SCOPED_LOCAL_TOOLS = frozenset({
     "read_file", "write_file", "list_dir", "str_replace_editor", "deliver_file",
     "spreadsheet", "spreadsheet_read", "pandas_query", "sql_query", "sql_query_read",
-    "capability_query", "ask_user", "request_decision", "compute", "ast_edit",
+    "capability_query", "ask_user", "request_decision", "propose_schedule", "compute", "ast_edit",
 })
 
 _UNSCOPED_WORKSPACE_TOOLS = frozenset({
@@ -793,7 +804,8 @@ _UNSCOPED_WORKSPACE_TOOLS = frozenset({
 })
 
 _PATH_SCOPED_NONFILE_TOOLS = frozenset({
-    "ask_user", "request_decision", "compute", "capability_query", "http_fetch", "websocket", "oidc",
+    "ask_user", "request_decision", "propose_schedule", "compute", "capability_query", "http_fetch",
+    "websocket", "oidc",
 })
 
 
@@ -1852,6 +1864,14 @@ def _accepts_keyword(fn: Any, name: str) -> bool:
     return name in params or any(
         p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
     )
+
+
+def _ask_user_queued(output) -> bool:
+    """Whether an ``ask_user`` result filed a question (a question with the
+    agent's own answer is not sent and does not pause the run)."""
+    from .tools.ask_user import QUEUED
+
+    return not _tool_call_failed(output) and QUEUED in str(output)
 
 
 def _strip_final_marker(text: str) -> str:
@@ -5701,11 +5721,8 @@ class Agent:
         st.messages.append({"role": "assistant", "content": assistant_content})
         if not resp.text:
             return None
-        from .coding_mode import find_final_marker_end as _final_end
-        _fe = _final_end(resp.text)
-        if _fe is None:
-            return None
-        return resp.text[_fe:].strip()
+        from .coding_mode import final_answer_text
+        return final_answer_text(resp.text)
 
     # ---- FINAL handling -----------------------------------------------------
 
@@ -5716,7 +5733,7 @@ class Agent:
         self._begin_final()
         coding_cfg = self._coding_config()
         coding = coding_cfg is not None and coding_cfg.enabled
-        if not coding and self._request_named_file_delivery(st, final):
+        if not coding and (self._request_named_file_delivery(st, final) or self._request_workbook(st)):
             return _NEXT_TURN
         if await self._validate_final_patch(st, final, coding_cfg) is _NEXT_TURN:
             return _NEXT_TURN
@@ -5756,6 +5773,34 @@ class Agent:
             "task's page are offered to them. Call deliver_file with the path of each file they "
             "should receive, after checking it matches this request, then give your final answer "
             "again. If a file is not one they asked for, or you did not make it, say so instead.")})
+        return True
+
+    def _request_workbook(self, st: _RunState) -> bool:
+        """Once per run, send the goal root back when the person asked for a
+        spreadsheet (or Excel, a workbook) and the task's page holds a CSV
+        but no workbook. Live, twice: "Give me a spreadsheet" got a CSV and
+        "If you want, I can also reformat it into an .xlsx file". A request
+        that names CSV keeps its CSV."""
+        if (getattr(self, "_workbook_requested", False) or self.depth != 0
+                or self.ctx.goal_id is None or self.ctx.world is None):
+            return False
+        request = self._skill_query()
+        if not _WORKBOOK_REQUEST.search(request) or re.search(r"\bcsv\b", request, re.IGNORECASE):
+            return False
+        try:
+            from .task_files import files_for
+            suffixes = {Path(item.path).suffix.lower() for item in files_for(self.ctx.world, self.ctx.goal_id)}
+        except Exception:  # noqa: BLE001 -- the format check never blocks an answer
+            return False
+        if ".csv" not in suffixes or suffixes & {".xlsx", ".xlsm"}:
+            return False
+        self._workbook_requested = True
+        st.bb.post(self.name, "verify", "the person asked for a spreadsheet and only a CSV was saved")
+        st.messages.append({"role": "user", "content": (
+            "The person asked for a spreadsheet, and the task's page holds only a CSV, a plain-text "
+            "table. Write the same rows as an Excel workbook with the `spreadsheet` tool (op write, a "
+            "path ending in .xlsx), hand it over with deliver_file, then give your final answer again "
+            "naming the .xlsx file.")})
         return True
 
     def _begin_final(self) -> None:
@@ -6108,6 +6153,25 @@ class Agent:
         verification = _FinalVerification()
         _coding_on = bool(coding_cfg and coding_cfg.enabled)
         _tool_calls = self.ctx.budget.tool_calls
+        # Totals that do not add up go back for a revision before any model
+        # judges the answer, and never pass as checked: a payroll's typed
+        # grand total was a dollar off and the model judge let it through.
+        # A figure typed with its cents garbled (the tools returned 1,647.38,
+        # the answer said 1,647.56) goes back the same way.
+        from .figure_totals import answer_issues, drift_issues, percent_issues, recalled_issues
+        evidence = _verifier_evidence(st.messages)
+        recalled = "\n".join(match.group(0) for match in _RECALLED.finditer(evidence))
+        if issues := (answer_issues(final) + drift_issues(final, evidence) + percent_issues(final)
+                      + recalled_issues(final, recalled, _RECALLED.sub("", evidence))):
+            from .verifier import VerifierVerdict
+            verification.attempted = True
+            verification.verdict = VerifierVerdict(
+                confidence=0.0, accepts=False, issues=issues,
+                critique="The totals do not add up or the figures do not match the tools. "
+                + " ".join(issues)
+                + " Recompute them with one tool call over this task's data and copy the results "
+                "exactly into every place they appear.")
+            return self._verifier_rejection(st, final, verification.verdict, coding_cfg)
         if (
             _risk_proportional_verify_enabled()
             and _final_is_low_risk(
@@ -6242,7 +6306,11 @@ class Agent:
                 f"Specific issues:\n{issues_block}\n"
                 f"</verifier_notes {nonce}>\n\n"
                 "Address each issue that is within your goal and respond with a "
-                "new FINAL: <revised answer>."
+                "new FINAL: <revised answer>. The person sees only the new FINAL, "
+                "never the earlier one, so write the whole answer again with "
+                "everything it needs (every table, draft and file name), not only "
+                "the changes. Where the notes are wrong about something you checked "
+                "against the data, keep your answer on that point and say why."
             ),
         })
         return _NEXT_TURN
@@ -6525,8 +6593,10 @@ class Agent:
         messages = st.messages
         blocked = False
         # A decision pauses the whole turn: nothing else in it runs, before or
-        # after the request, so no step acts on a choice nobody has made.
-        deciding = any(tc.name == "request_decision" for tc in resp.tool_calls)
+        # after the request, so no step acts on a choice nobody has made. A
+        # choice the workspace leaves to the agent pauses nothing.
+        from .decision_requests import may_wait
+        deciding = any(tc.name == "request_decision" and may_wait(tc.input) for tc in resp.tool_calls)
         for tc in resp.tool_calls:
             if deciding and tc.name != "request_decision":
                 from .decision_requests import WAITING_RESULT
@@ -6583,7 +6653,7 @@ class Agent:
                     return stopped, blocked
                 blocked = blocked or waiting
             if (tc.name == "ask_user" and not isinstance(output, _NotExecutedToolResult)
-                    and not _tool_call_failed(output)):  # only a filed question pauses the run
+                    and _ask_user_queued(output)):  # only a filed question pauses the run
                 from .autonomy import assume_when_headless
                 if assume_when_headless():
                     # No human is available (headless / autonomous run, off by
@@ -6639,6 +6709,7 @@ class Agent:
         recommendation for the person. A request that could not be saved stops
         the run here, before the model can act on its own choice."""
         from .decision_requests import (
+            FILED,
             FLOW_MESSAGE,
             FLOW_STOP,
             NOT_RECORDED,
@@ -6657,7 +6728,9 @@ class Agent:
             bb.post(self.name, "error", message)
             return AgentResult(error=message, role=self.role, name=self.name,
                                stop_kind=STOP_KIND, stop_detail=text), False
-        return None, not _tool_call_failed(output)
+        # Only a filed decision waits: "this choice is yours to make" and an
+        # invalid request carry on.
+        return None, FILED in text
 
     def _record_tool_lineage(self, tc, output) -> None:
         """Governed-action lineage (opt-in via [actions] enable /

@@ -12,7 +12,7 @@ catalogue of built features and tools.
 
 | Section | Entries |
 | --- | ---: |
-| [Agent kernel and orchestration](#agent-kernel-and-orchestration) | 219 |
+| [Agent kernel and orchestration](#agent-kernel-and-orchestration) | 227 |
 | [Tools](#tools) | 10 |
 | [Channels](#channels) | prose |
 | [Sandboxes](#sandboxes) | prose |
@@ -33,7 +33,7 @@ catalogue of built features and tools.
 | [Customer workflow completion and readiness](#customer-workflow-completion-and-readiness) | 22 in 24 subsections |
 | [In-house legal workspace](#in-house-legal-workspace) | prose |
 
-460 entries in 20 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
+468 entries in 20 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
 <!-- toc:end -->
 
 ## Agent kernel and orchestration
@@ -255,13 +255,93 @@ Settings and the installation wizard.
   process leases, path protection, per-file drift checks and retained requests
   guard review and interrupted retry. No shell or external-action rollback is
   claimed. See [task-file recovery](task-file-recovery.md) for limits.
-- **Word and PowerPoint from Markdown, built in** (`markdown_word.py`,
-  `markdown_slides.py`) — `write_file` to a `.docx` or `.pptx` path, and the
-  `pandoc` tool when pandoc is not installed where the task runs, make a Word
-  document or a 16:9 PowerPoint deck (a slide per `#` heading, bullets with
-  levels, bold) with no external program. Text into `.png`, `.jpg` and other
+- **Word, PowerPoint and PDF from Markdown, built in** (`markdown_word.py`,
+  `markdown_slides.py`, `markdown_pdf.py`) — `write_file` to a `.docx`,
+  `.pptx` or `.pdf` path, and the `pandoc` tool when pandoc is not installed
+  where the task runs (Word and PowerPoint), make a Word document, a 16:9
+  PowerPoint deck (a slide per `#` heading, bullets with levels, bold) or a
+  printable US Letter PDF (headings, wrapped text, checklist boxes, tables,
+  page numbers; standard fonts, Windows-1252 text) with no external program. A
+  line `\newpage` starts a new page in Word and PDF, and an escaped character
+  such as `\$` is written without its backslash. A PDF's words in one font
+  are written as one string with real spaces, so copied or extracted text
+  keeps them. Text into `.png`, `.jpg` and other
   binary images is refused with a pointer to SVG for charts. Decks are checked
   with python-pptx and LibreOffice, not Microsoft PowerPoint.
+- **Agents make their own choices outside the decision areas**
+  (`decision_requests.needs_person`, `[approval] ask_outside_areas`, default
+  off) — `request_decision` waits for a person only in the areas the
+  workspace chose (`decision_areas`). A choice outside them (a document's
+  style, an extra file, a conversion tool) gets "go with your recommendation
+  and say what you chose", and the run continues. The setup wizard asks, and
+  Settings > Safety > Approvals has the switch.
+- **Totals are checked before an answer is accepted** (`figure_totals.py`) —
+  a "Total", "Subtotal" or "Grand total" row in an answer's table, or a total
+  line just below it, that does not equal the rows it covers sends the answer
+  back once with the exact difference, before any model judges it; if it is
+  still wrong it is marked unverified. A sheet written with `spreadsheet`
+  whose total row does not add up comes back with a note to fix it. Subtotal,
+  tax and total chains, group totals, discounts and averages are understood;
+  percent columns and formula columns are left alone. A figure that garbles
+  the cents of one a tool returned (the tool said 1,647.38, the answer
+  1,647.56) goes back the same way, and so does a figure found only in a past
+  task's result from `recall_past_goals`, which now says past figures came
+  from other data.
+- **Agents propose schedules; a person creates them** (`schedule_proposals.py`,
+  `tools/propose_schedule.py`) — asked for recurring work ("every Monday at
+  9am ..."), an agent records a proposal: the work each run does, a checked
+  five-part timetable and an optional time zone. The task page shows it in
+  plain words with "Review and create this schedule", which opens the
+  Automations form filled in; nothing runs until the person creates it there,
+  under the same permission and review as any schedule. A run a schedule
+  started cannot propose another, and with `[features] scheduling = false`
+  the agent says an administrator can turn automations on.
+- **Plain workbook formulas are computed when a workbook is read**
+  (`sheet_formulas.py`) — workbooks Lightwork writes hold formulas Excel
+  calculates on open, so a read gave "=SUM(B2:B13)" with no value. A read
+  now works out the plain kind (cells and ranges of the same sheet,
+  arithmetic, %, SUM, AVERAGE, MIN, MAX, COUNT, PRODUCT, ROUND and ABS)
+  exactly and reports it as `computed_value` with `value_status`
+  "computed", apart from any stored cache; SQL over an Excel attachment sees
+  the same values. Other formulas stay "uncalculated". `read_attachment`
+  names a workbook's sheets and reads or queries any of them with `sheet`
+  (the first by default): a workbook with its transactions on a second sheet
+  could not be totalled.
+- **PDF statements keep their columns** (`tools/pdf_reader.py`) — a page
+  where several lines hold two or more amounts (a bank statement, an
+  invoice) is read with pypdf's layout mode, so each figure stays under its
+  heading; plain extraction gave "10/03 Card-Costco 3,753.21 8,727.34" and
+  an agent could not tell withdrawals from deposits. Prose pages read as
+  before. `read_attachment` with `sql` queries such a PDF's table like a CSV
+  (`pdf_reader.table_csv`: the headings name the columns and each figure goes
+  to the column it sits under), so a statement's totals come from one query.
+- **SQL over CSV reads amounts and clock times** (`tools/csv_query.py`) —
+  the `read_attachment` and `spreadsheet_read` queries load "4,850.00",
+  "$1,089.99" and "($312.18)" as numbers (as text they summed as 4) and keep
+  "02134" as written. A blank in a column of numbers is NULL (it had
+  outranked every number in MAX and counted as 0 in AVG); a blank in a text
+  column stays ''. `hours(start, end)` gives the hours between two HH:MM
+  times, past midnight when the end is not after the start, and
+  `overlap(start, end, from, to)` the hours inside a daily window such as a
+  22:00-06:00 night premium. `compute` also adds `sum([a, b, c])`, rounds
+  with `round(x, digits)` (half away from zero, as money is rounded),
+  `floor()` and `ceil()`, and
+  `write_file` reports a document table whose total its rows do not add to.
+- **Web search on by default** (`config.get_capabilities`,
+  `[capabilities] web_search`, off on an enterprise install) — agents can
+  search for current facts without setup. With no search key Lightwork uses
+  the free DuckDuckGo fallback; when that returns nothing (it often refuses
+  automated searches) the agent is told to open the official page directly
+  and to mention that a Tavily, Brave or SerpAPI key in Settings >
+  Integrations makes search reliable. A workspace settings file may turn it
+  off, never on.
+- **Follow-ups keep their chat's files and the last answer**
+  (`tools/attachments.py`, `context_scaling.LAST_ANSWER_CHARS`) — a reply in
+  a dashboard chat can read the files attached to earlier messages in that
+  chat by the same person (channel conversations do not share), and its brief
+  carries the whole previous answer up to 8,000 characters, so "update the
+  payroll" or "put those emails in a Word document" works on what came
+  before.
 - **Commands in a closed container run without asking**
   (`sandbox/contained_commands.py`, `[sandbox]
   contained_commands_without_approval`, default on, off on enterprise
@@ -288,7 +368,9 @@ Settings and the installation wizard.
   its download link. The workspace can be shared, so each download needs the task's
   own access, follows the answer's sign-off rule, reads through a descriptor
   confined to the workspace and is served only while its SHA-256 still matches
-  what the task saved. Copilot answers "what files did this task make?".
+  what the task saved. A document's Markdown draft or plan, a same-named CSV
+  working copy and a helper script beside a document are left off unless
+  delivered. Copilot answers "what files did this task make?".
 - **Loop-guard suppression tier** — the long-standing repeated-identical-call
   nudge (`MAVERICK_LOOP_GUARD_THRESHOLD`) also covers byte-identical
   *successes* (a poll loop whose output never changes is burning budget on

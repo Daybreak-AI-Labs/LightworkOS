@@ -50,8 +50,10 @@ def test_agent_enables_web_search_when_capability_set(tmp_path: Path, fake_llm):
     assert "web_search" in _agent_tool_names(tmp_path, fake_llm)
 
 
-def test_agent_omits_web_search_by_default(tmp_path: Path, fake_llm):
-    _write_caps(tmp_path, "")  # no [capabilities]
+def test_agent_has_web_search_by_default_and_omits_it_when_off(tmp_path: Path, fake_llm):
+    _write_caps(tmp_path, "")  # no [capabilities]: on except on an enterprise install
+    assert "web_search" in _agent_tool_names(tmp_path, fake_llm)
+    _write_caps(tmp_path, "[capabilities]\nweb_search = false\n")
     assert "web_search" not in _agent_tool_names(tmp_path, fake_llm)
 
 

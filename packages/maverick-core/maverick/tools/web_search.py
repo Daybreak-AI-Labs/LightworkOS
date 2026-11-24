@@ -429,6 +429,14 @@ def _run_search(args: dict[str, Any], budget=None) -> str:
             continue
         log.info("web_search backend=%s query=%r num=%d", name, query, len(results))
         return f"[backend: {name}]\n\n" + _format_results(results)
+    if last_err == "ddg: returned no results":
+        # The free fallback often refuses automated searches (an HTTP 202
+        # challenge page), and an agent told only "no results" guessed page
+        # addresses one 404 at a time.
+        return ("ERROR: the free web search (DuckDuckGo) returned nothing; it often refuses "
+                "automated searches. Open the official page you need directly with http_fetch "
+                "if you know its address, and tell the person that a search key (Tavily, Brave "
+                "or SerpAPI) in Settings > Integrations makes web search reliable.")
     return f"ERROR: no search backend succeeded. last_err={last_err}"
 
 

@@ -12,7 +12,7 @@ from typing import Any
 from maverick.config_contracts import INTEGER_SETTINGS
 
 from ._common import _safe_int
-from ._seams import _q_checkbox, _q_text, console
+from ._seams import _q_checkbox, _q_confirm, _q_text, console
 
 
 def _pick_decision_requests() -> dict[str, Any]:
@@ -39,11 +39,17 @@ def _pick_decision_requests() -> dict[str, Any]:
         _q_text("  Hours a decision waits before the run stops", default=str(contract.default)),
         default=contract.default,
     )
-    return {
+    answers: dict[str, Any] = {
         "decision_areas": [titles[t] for t in picked if t in titles],
         "decision_admin_areas": [titles[t] for t in admin if t in titles],
         "decision_expiry_hours": max(contract.minimum, min(hours, contract.maximum)),
     }
+    # Off by default, so only "yes" is written: outside the areas above, a run
+    # makes the choice itself and says what it chose.
+    if _q_confirm("  Should runs also stop and ask about choices outside these areas "
+                  "(document style, format, extras)?", default=False):
+        answers["ask_outside_areas"] = True
+    return answers
 
 
 def _parse_tool_prices(raw: str) -> dict[str, dict[str, Any]]:

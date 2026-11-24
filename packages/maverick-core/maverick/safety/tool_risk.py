@@ -295,6 +295,8 @@ _DEFAULT_RISK: dict[str, str] = {
     # Files a decision request for a person and pauses the run: it writes a
     # record and posts a card, but spends nothing and acts on nothing.
     "request_decision": "medium",
+    # Records a proposal on the task; a person creates the schedule.
+    "propose_schedule": "low",
     # Rated on purpose so no built-in tool rides the unrated high floor
     # (test_every_built_in_tool_has_an_explicit_rating). high: writes, sends,
     # spends or runs a program.

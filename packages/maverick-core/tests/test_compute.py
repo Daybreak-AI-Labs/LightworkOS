@@ -174,3 +174,46 @@ def test_decimals_are_exact_and_unpadded():
     assert compute().fn({"op": "evaluate", "expr": "16*23.21"}) == "371.36"
     assert compute().fn({"op": "evaluate", "expr": "0.1+0.2"}) == "0.3"
     assert compute().fn({"op": "evaluate", "expr": "1/3"}).startswith("0.33333333333333333")
+
+
+def test_a_sum_of_a_list_adds_its_figures(monkeypatch):
+    # Live: a bank reconciliation's "sum([4850.00,-1245.60, ...])" failed with
+    # "expression contains disallowed characters"; the agent retyped the sum,
+    # left two entries out and reported the wrong balance.
+    from maverick.tools.compute import compute
+
+    cases = {"sum([4850.00,-1245.60,2317.45])": 5921.85, "sum(1.5, 2.5, -1)": 3.0,
+             "2*sum([1, 2]) + sum([])": 6.0, "sum([ 0.1 , 0.2 ])": 0.3}
+    import sys as _sys
+
+    for use_sympy in ((True, False) if _HAS_SYMPY else (False,)):
+        if not use_sympy:
+            monkeypatch.setitem(_sys.modules, "sympy", None)
+        for expr, expected in cases.items():
+            out = compute().fn({"op": "evaluate", "expr": expr})
+            assert round(float(out), 9) == expected, (expr, out)
+    # Only a flat list of figures: anything else is still refused.
+    for unsafe in ("sum([[1]*10**9])", "sum([1]*10**9)", "sum([x for x in (1,)])"):
+        assert "ERROR" in compute().fn({"op": "evaluate", "expr": unsafe}), unsafe
+
+
+def test_rounding_floor_and_ceiling_work_out_money(monkeypatch):
+    # Live: raising a price list 6% "rounded to the nearest $0.25", the agent's
+    # "round((18.50*1.06)/0.25)*0.25" and "floor(...)" were refused as
+    # "function not allowed"; it rounded by hand and got 3 of 5 prices wrong.
+    from maverick.tools.compute import compute
+
+    cases = {"round((18.50*1.06)/0.25)*0.25": 19.5, "round(64*1.06/0.25)*0.25": 67.75,
+             "round(2.5)": 3.0, "round(-2.5)": -3.0, "round(17.755, 2)": 17.76, "round(1234.5678, -2)": 1200.0,
+             "floor(19.61)": 19.0, "ceil(19.61)": 20.0, "ceiling(-1.5)": -1.0}
+    import sys as _sys
+
+    for use_sympy in ((True, False) if _HAS_SYMPY else (False,)):
+        if not use_sympy:
+            monkeypatch.setitem(_sys.modules, "sympy", None)
+        for expr, expected in cases.items():
+            out = compute().fn({"op": "evaluate", "expr": expr})
+            assert round(float(out), 9) == expected, (use_sympy, expr, out)
+        # The digits are bounded, so a rounding cannot build a huge number.
+        assert "ERROR" in compute().fn({"op": "evaluate", "expr": "round(2.5, 10**6)"})
+        assert "ERROR" in compute().fn({"op": "evaluate", "expr": "round(2.5, 100)"})

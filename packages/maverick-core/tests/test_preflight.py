@@ -135,3 +135,18 @@ def test_preflight_tools_count_toward_estimate():
         tools=None, max_tokens=2048, strict=False,
     )
     assert with_tools > without_tools
+
+
+def test_a_provider_prefixed_model_id_has_its_models_window():
+    # Live: "openai:gpt-5.4-mini" fell to the 32k default, so prior answers
+    # replayed into a follow-up were cut at 300 characters.
+    from maverick.preflight import context_limit
+
+    assert context_limit("openai:gpt-5.4-mini") == context_limit("gpt-5.4-mini") > 32_000
+    assert context_limit("anthropic:claude-sonnet-4-5") == context_limit("claude-sonnet-4-5")
+    from maverick.preflight import _without_provider
+
+    assert _without_provider("openai:gpt-5.4-mini") == "gpt-5.4-mini"
+    assert _without_provider("ollama:llama3:8b") == "llama3:8b"
+    for unchanged in ("us.anthropic.claude-3-5-sonnet-20241022-v2:0", "gpt-5.4-mini", ":x", "openai:"):
+        assert _without_provider(unchanged) == unchanged

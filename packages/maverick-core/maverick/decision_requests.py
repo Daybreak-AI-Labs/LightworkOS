@@ -61,7 +61,7 @@ AREAS: dict[str, str] = {
     "security": "Security",
     "workspace_boundaries": "Workspace boundaries",
     "data_erasure_retention": "Data erasure and retention",
-    "spending": "Spending and budgets",
+    "spending": "Spending money or changing spending limits",
     "user_facing": "What people see in Lightwork, including the Copilot",
     "governance": "Lightwork's own governance controls",
     "legal": "Legal and contract terms",
@@ -312,6 +312,43 @@ def areas() -> list[str]:
     return _known(section.get("decision_areas"), DEFAULT_AREAS, "decision_areas")
 
 
+def ask_outside_areas() -> bool:
+    """``[approval] ask_outside_areas``: whether a choice outside :func:`areas`
+    still stops the run for a person. Off by default: such a choice is the
+    agent's to make (it asked people to pick an invoice style, an extra file,
+    a conversion tool). Unreadable settings keep asking."""
+    from ._envparse import coerce_bool
+
+    section, broken = _section()
+    return True if broken else coerce_bool(section.get("ask_outside_areas"), False)
+
+
+def needs_person(area: str) -> bool:
+    """Whether a decision in ``area`` waits for a person."""
+    return area in areas() or ask_outside_areas()
+
+
+def may_wait(args: Any) -> bool:
+    """Whether a ``request_decision`` call with ``args`` could file a decision
+    and pause the run. Only a well-formed area outside the chosen ones is known
+    not to; anything else is treated as waiting."""
+    area = args.get("area") if isinstance(args, dict) else None
+    return not (isinstance(area, str) and (area in AREAS or area == OTHER_AREA)) or needs_person(area)
+
+
+#: The start of the tool's result when a decision was filed and the run waits.
+FILED = "WAITING for decision #"
+
+
+def yours_to_decide(values: dict[str, Any]) -> str:
+    """The tool's reply for a choice this workspace leaves to the agent."""
+    option = values["options"][values["recommended"] - 1]
+    return ("This choice is not one this workspace asks a person about, so it is yours to make: "
+            f"go with your recommended option, \"{option['label']}\" ({option['effect']}), unless the "
+            "request says otherwise, carry on, and say in your answer what you chose. Nothing was "
+            "sent to a person and the run does not wait.")
+
+
 def admin_areas() -> list[str]:
     """Areas whose decisions need a workspace administrator. With unreadable
     settings every area does."""
@@ -342,7 +379,11 @@ def rules_text(chosen: list[str] | None = None) -> str:
         "Give two to five options, say what each one does, and say which you "
         "recommend and why. Lightwork cannot spot every such choice for you, so "
         "ask whenever a choice touches one of these areas. Never act on an "
-        "option before a person has chosen it. Choices about the format, length, "
+        "option before a person has chosen it. These areas are about actions and "
+        "settings (spending money, changing a limit, deleting data, sending something "
+        "out), not the content of the work you deliver: the assumptions, figures and "
+        "scenarios in a budget, plan, forecast or draft are yours to choose and state. "
+        "Choices about the format, length, "
         "structure or wording of the work you deliver, about which tool or "
         "method to use and about whether to use files already in the workspace, "
         "are yours: make a sensible one and say what you chose."

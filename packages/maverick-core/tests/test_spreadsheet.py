@@ -316,3 +316,24 @@ def test_writing_a_workbook_leaves_no_lock_file_in_the_workspace(tmp_path, monke
     assert tool.fn({"op": "set_cell", "path": "budget.xlsx", "cell": "B2", "value": 2}).startswith(("wrote", "set"))
     assert sorted(p.name for p in work.iterdir()) == ["budget.xlsx"]
     assert any((tmp_path / "private" / "locks" / "workspace-files").iterdir())
+
+
+def test_xlsx_write_makes_several_named_sheets_in_one_workbook(tmp_path):
+    # Live: asked for one sheet per region plus a Summary sheet, the agent
+    # could write only one sheet; each write replaced the workbook.
+    pytest.importorskip("openpyxl")
+    p = tmp_path / "regions.xlsx"
+    sheets = {"North": [["month", "revenue"], ["2026-01", 6267.82]],
+              "South": [["month", "revenue"], ["2026-01", 6544.51]],
+              "Summary": [["region", "total"], ["North", 6267.82], ["South", 6544.51],
+                          ["Total", "=SUM(B2:B3)"]]}
+    out = ss._run({"op": "write", "path": str(p), "sheets": sheets})
+    assert out.startswith("wrote 3 sheet(s)") and "North, South, Summary" in out
+    assert "xlsx sheets {'North': (2, 2), 'South': (2, 2), 'Summary': (4, 2)}" in ss._run({"op": "info", "path": str(p)})
+    assert json.loads(ss._run({"op": "read", "path": str(p), "sheet": "South"}))[1] == ["2026-01", 6544.51]
+    # A wrong total on any sheet is named; CSV and bad names are refused.
+    bad = {"Summary": [["region", "total"], ["North", 10], ["South", 20], ["Total", 33]]}
+    assert "do not add up" in ss._run({"op": "write", "path": str(p), "sheets": bad})
+    assert ss._run({"op": "write", "path": str(tmp_path / "x.csv"), "sheets": sheets}).startswith("ERROR")
+    assert ss._run({"op": "write", "path": str(p), "sheets": {"a/b": [["x"]]}}).startswith("ERROR")
+    assert ss._run({"op": "write", "path": str(p), "sheets": {}}).startswith("ERROR")

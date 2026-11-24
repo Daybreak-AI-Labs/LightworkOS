@@ -32,6 +32,9 @@ _WIDTH, _HEIGHT = 12192000, 6858000  # 16:9, in EMU
 _HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
 _ITEM = re.compile(r"^(\s*)(?:[-*+]|\d{1,3}[.)])\s+(.*)$")
 _BOLD = re.compile(r"\*\*(.+?)\*\*")
+# A backslash before ASCII punctuation is a Markdown escape ("\\$8,400"):
+# the reader sees the character alone.
+_ESCAPED = re.compile(r"\\([!-/:-@\[-`{-~])")
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f￾￿]")
 
 
@@ -88,7 +91,8 @@ def _runs(text: str, size: int | None = None) -> str:
         if not part:
             continue
         attrs = ' lang="en-US"' + (f' sz="{size}"' if size else "") + (' b="1"' if index % 2 else "")
-        out.append(f'<a:r><a:rPr{attrs} dirty="0"/><a:t>{escape(part)}</a:t></a:r>')
+        shown = escape(_ESCAPED.sub(r"\1", part))
+        out.append(f'<a:r><a:rPr{attrs} dirty="0"/><a:t>{shown}</a:t></a:r>')
     return "".join(out) or '<a:endParaRPr lang="en-US" dirty="0"/>'
 
 

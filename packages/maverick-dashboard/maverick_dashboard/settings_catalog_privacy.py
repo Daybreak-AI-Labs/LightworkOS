@@ -1105,6 +1105,13 @@ def _other_rows(S) -> tuple:
           subgroup="Approvals", choices=_DECISION_AREA_CHOICES, weaker="shrink",
           aliases="decision request ask a person policy question recommendation options",
           warning="Runs will decide these choices on their own instead of asking a person."),
+        S("approval", "ask_outside_areas", "Ask a person about other choices too",
+          "Off: a choice outside the areas above (how to style a document, which format to "
+          "deliver, whether to add an extra file) is the run's to make, and it says what it "
+          "chose. On: a run may stop and ask about any choice.", "toggle", "Safety", False,
+          "maverick.decision_requests", subgroup="Approvals", weaker=False,
+          aliases="decision request ask a person other judgment call style format",
+          warning="Runs will make choices outside the areas above themselves instead of asking."),
         S("approval", "decision_admin_areas", "Choices only an administrator can decide",
           "Decisions in these areas need a workspace administrator. As with a risky approval, "
           "someone other than the person who started the run answers whenever another "

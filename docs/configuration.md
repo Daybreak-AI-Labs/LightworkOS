@@ -226,6 +226,12 @@ decision_admin_areas    = ["governance"]
 # signed pre-delete erasure receipt (schema v3); v2 receipts already on disk
 # keep verifying against the stores they listed.
 decision_expiry_hours   = 72
+# A choice outside decision_areas (how to style a document, which format to
+# deliver, whether to add an extra file) is the run's own: request_decision
+# tells it to go with its recommendation and say what it chose, and nothing
+# waits. true makes runs stop and ask about any choice. A workspace file may
+# turn this on, never off.
+ask_outside_areas       = false
 
 [sandbox]
 backend = "local"                   # local | docker | ssh | podman | gvisor | devcontainer | firecracker | kubernetes | modal

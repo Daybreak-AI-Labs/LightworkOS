@@ -40,6 +40,10 @@ _SPREADSHEET_SCHEMA = {
                                                   "may be a calculation such as =B2-C2 or =SUM(B2:B13)"),
                  "items": {"type": "array"}},
         "sheet": {"type": "string", "description": "sheet name (xlsx; default: first/active)"},
+        "sheets": {"type": "object", "description": (
+            "xlsx write only, instead of rows and sheet: several sheets in one workbook, "
+            "sheet name -> rows (list of lists), in this order, e.g. "
+            "{\"North\": [[...]], \"South\": [[...]], \"Summary\": [[...]]}")},
         "cell": {"type": "string", "description": "A1-style cell for set_cell, e.g. 'B2'"},
         "value": {"description": "value for set_cell"},
         "limit": {"type": "integer", "default": 50, "minimum": 1, "maximum": 10000},
@@ -364,19 +368,61 @@ def _xlsx_read_content(content: bytes, sheet: str | None, limit: int) -> list[li
         cached = _openpyxl().load_workbook(io.BytesIO(content), read_only=True, data_only=True, keep_links=False)
         cleanup.callback(cached.close)
         values = cached[ws.title]
+        computed = _Computed(ws, values)
         rows = []
         for row, cached_row in zip(ws.iter_rows(max_row=height, max_col=width),
                                    values.iter_rows(max_row=height, max_col=width), strict=True):
             output = []
             for cell, value in zip(row, cached_row, strict=True):
                 if cell.data_type == "f":
-                    output.append({"formula": str(cell.value), "cached_value": value.value,
-                                   "value_status": "uncalculated" if value.value is None else "cached",
-                                   "cell": cell.coordinate})
+                    entry = {"formula": str(cell.value), "cached_value": value.value,
+                             "value_status": "cached", "cell": cell.coordinate}
+                    if value.value is None:
+                        # No result is stored; a plain formula is worked out
+                        # here and kept apart from the cache it is not.
+                        found = computed.value(str(cell.value))
+                        entry["value_status"] = "uncalculated" if found is None else "computed"
+                        if found is not None:
+                            entry["computed_value"] = found
+                    output.append(entry)
                 else:
                     output.append(cell.value)
             rows.append(output)
         return rows
+
+
+class _Computed:
+    """Values for formula cells a workbook holds no result for (Lightwork's
+    own workbooks: Excel calculates them on open). Plain formulas are worked
+    out from the sheet's cells; see maverick.sheet_formulas."""
+
+    _MAX_CELLS = 100_000
+
+    def __init__(self, formulas, cached):
+        self._sheets = (formulas, cached)
+        self._grid: dict[str, Any] | None = None
+
+    def _cells(self) -> dict[str, Any]:
+        if self._grid is None:
+            from openpyxl.utils import get_column_letter
+
+            formulas, cached = self._sheets
+            grid: dict[str, Any] = {}
+            for r, (row, cached_row) in enumerate(zip(formulas.iter_rows(), cached.iter_rows(), strict=False), 1):
+                for c, (cell, value) in enumerate(zip(row, cached_row, strict=False), 1):
+                    if len(grid) >= self._MAX_CELLS:
+                        break
+                    held = value.value if value.value is not None else cell.value
+                    if held is not None:
+                        grid[f"{get_column_letter(c)}{r}"] = held
+            self._grid = grid
+        return self._grid
+
+    def value(self, formula: str) -> int | float | None:
+        from ..sheet_formulas import evaluate, plain_number
+
+        result = evaluate(formula, self._cells().get)
+        return None if result is None else plain_number(result)
 
 
 def _isolated_xlsx_read(content: bytes, *, sheet: str | None, limit: int) -> str:
@@ -457,6 +503,42 @@ def _xlsx_write(path: Path, rows: list[list], sheet: str | None) -> None:
         wb.close()
 
 
+_BAD_SHEET_NAME = re.compile(r"[\[\]:*?/\\]")
+
+
+def _sheets_arg(value: Any) -> dict[str, list[list]]:
+    """The ``sheets`` argument checked: 1 to 50 sheets, each a valid Excel
+    sheet name (at most 31 characters, none of []:*?/\\) with rows."""
+    if not isinstance(value, dict) or not 1 <= len(value) <= 50:
+        raise RuntimeError("sheets must map 1 to 50 sheet names to rows")
+    checked: dict[str, list[list]] = {}
+    for name, rows in value.items():
+        if not isinstance(name, str) or not name.strip() or len(name) > 31 or _BAD_SHEET_NAME.search(name):
+            raise RuntimeError(f"sheet name {name!r} is not allowed in Excel "
+                               "(1-31 characters, none of [ ] : * ? / \\)")
+        if not isinstance(rows, list) or any(not isinstance(row, list) for row in rows):
+            raise RuntimeError(f"sheet {name!r} needs rows (list of lists)")
+        checked[name] = [list(row) for row in rows]
+    return checked
+
+
+def _xlsx_write_sheets(path: Path, sheets: dict[str, list[list]]) -> None:
+    op = _openpyxl()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    wb = op.Workbook()
+    try:
+        for index, (name, rows) in enumerate(sheets.items()):
+            ws = wb.active if index == 0 else wb.create_sheet()
+            ws.title = name
+            for row in rows:
+                ws.append([_xlsx_value(c) for c in row])
+        _recalculate_on_open(wb)
+        with _atomic_destination(path) as temporary:
+            wb.save(temporary)
+    finally:
+        wb.close()
+
+
 def _xlsx_set_cell(path: Path, cell: str, value: Any, sheet: str | None) -> None:
     op = _openpyxl()
     existing = path.exists()
@@ -525,6 +607,36 @@ def _charge_quota(rows: list[list], goal_id) -> None:
     ok, msg = check_and_add(size, goal_id=goal_id)
     if not ok:
         raise RuntimeError(msg)
+
+
+def _write_sheets(path: Path, value: Any, goal_id) -> str:
+    """``write`` with ``sheets``: several named sheets in one new workbook.
+    Asked for one sheet per region and a Summary, an agent could write only
+    one sheet: every write replaced the workbook."""
+    if not _is_xlsx(path):
+        return "ERROR: sheets is for an .xlsx file; a CSV file holds one table"
+    sheets = _sheets_arg(value)
+    for rows in sheets.values():
+        _charge_quota(rows, goal_id)
+    from ..file_lock import workspace_file_lock
+    with workspace_file_lock(path, strict=True):
+        _xlsx_write_sheets(path, sheets)
+    notes = "".join(_totals_note(rows, path).replace("The totals", f"On sheet {name!r} the totals", 1)
+                    for name, rows in sheets.items())
+    return f"wrote {len(sheets)} sheet(s) ({', '.join(sheets)}) to {path}" + notes
+
+
+def _totals_note(rows: list[list], path: Path) -> str:
+    """A note when a total row in the written sheet does not add up (a typed
+    payroll total was a dollar off)."""
+    from ..figure_totals import rows_issues
+
+    issues = rows_issues(rows)
+    if not issues:
+        return ""
+    fix = ("write the correct figure, or a formula such as =SUM(B2:B9) so Excel adds the rows"
+           if _is_xlsx(path) else "write the correct figure")
+    return "\nThe totals do not add up: " + " ".join(issues) + f" Fix the file before you deliver it: {fix}."
 
 
 def _set_cell_operation(path, args, sheet, goal_id="default"):
@@ -610,6 +722,8 @@ def _run(args: dict[str, Any], sandbox=None, goal_id="default") -> str:
             rows = _csv_read(path, limit)
             import json
             return json.dumps(rows, default=str)
+        if op == "write" and args.get("sheets") is not None:
+            return _write_sheets(path, args["sheets"], goal_id)
         if op == "write":
             rows = args.get("rows")
             if not isinstance(rows, list) or any(not isinstance(row, list) for row in rows):
@@ -622,7 +736,7 @@ def _run(args: dict[str, Any], sandbox=None, goal_id="default") -> str:
                     _xlsx_write(path, norm, sheet)
                 else:
                     _csv_write(path, norm)
-            return f"wrote {len(rows)} row(s) to {path}"
+            return f"wrote {len(rows)} row(s) to {path}" + _totals_note(norm, path)
         if op == "set_cell":
             return _set_cell_operation(path, args, sheet, goal_id)
     except RuntimeError as e:
@@ -638,10 +752,13 @@ def spreadsheet(sandbox=None, goal_id: str | int | None = "default") -> Tool:
         name="spreadsheet",
         description=(
             "Read / write / edit CSV + XLSX spreadsheets. ops: info (sheets + "
-            "dims), read (rows as JSON), write (rows -> file), set_cell (xlsx "
+            "dims), read (rows as JSON), write (rows -> file, or sheets -> one .xlsx "
+            "with several named sheets; to change a workbook, read it, change the rows, "
+            "formulas included, and write them back), set_cell (xlsx "
             "A1-cell), recalculate (offline LibreOffice engine when enabled). "
             "Formula cells include formula, cached_value and value_status; a cache is "
-            "not proof of fresh calculation. Enabled .xlsm cell edits preserve VBA without executing it."
+            "not proof of fresh calculation, and value_status 'computed' means Lightwork worked "
+            "out a plain formula (sums, arithmetic, rounding) from the sheet's cells. Enabled .xlsm cell edits preserve VBA without executing it."
         ),
         input_schema=_SPREADSHEET_SCHEMA,
         fn=lambda args: _run(args, sandbox, quota_goal_id),
@@ -670,7 +787,8 @@ def spreadsheet_read(sandbox=None) -> Tool:
                      "or Excel files exactly with op=query: one read-only SELECT over `paths`, "
                      "each file a table named after it (invoices.csv -> invoices; an Excel "
                      "file's first sheet). Use query for "
-                     "totals, duplicates and cross-file checks instead of comparing by eye. "
+                     "totals, duplicates and cross-file checks instead of comparing by eye; "
+                     "hours(start, end) and overlap(start, end, from, to) work out clock times. "
                      "Cannot write, edit or recalculate. Formula cells include cached values "
                      "and freshness status. Draft proposed changes in the response for a "
                      "human to apply."),
@@ -724,15 +842,31 @@ def _xlsx_as_csv(path: Path) -> str:
     return xlsx_bytes_as_csv(_xlsx_bytes(path))
 
 
-def xlsx_bytes_as_csv(data: bytes) -> str:
-    """:func:`_xlsx_as_csv` for a workbook already in memory (an attachment)."""
+def _cell_value(cell: dict) -> Any:
+    """A formula cell's stored result, or the value Lightwork computed."""
+    stored = cell.get("cached_value")
+    return stored if stored is not None else cell.get("computed_value", "")
+
+
+def xlsx_bytes_sheet_names(data: bytes) -> list[str]:
+    """The sheet names of a workbook already in memory, in order."""
+    import ast
+
+    info = _xlsx_isolated_bytes(data, "spreadsheet_info")  # "xlsx sheets {'Summary': (3, 2), ...}"
+    dims = ast.literal_eval(info.split(" ", 2)[2]) if info.startswith("xlsx sheets ") else {}
+    return [str(name) for name in dims] if isinstance(dims, dict) else []
+
+
+def xlsx_bytes_as_csv(data: bytes, sheet: str | None = None) -> str:
+    """:func:`_xlsx_as_csv` for a workbook already in memory (an attachment);
+    ``sheet`` names one, the first by default."""
     import csv
     import json
 
-    rows = json.loads(_xlsx_isolated_bytes(data, "spreadsheet_read", sheet=None, limit=_XLSX_QUERY_ROWS))
+    rows = json.loads(_xlsx_isolated_bytes(data, "spreadsheet_read", sheet=sheet, limit=_XLSX_QUERY_ROWS))
     out = io.StringIO()
     writer = csv.writer(out, lineterminator="\n")
     for row in rows:
-        writer.writerow(["" if cell is None else cell.get("cached_value", "") if isinstance(cell, dict) else cell
+        writer.writerow(["" if cell is None else _cell_value(cell) if isinstance(cell, dict) else cell
                          for cell in row])
     return out.getvalue()

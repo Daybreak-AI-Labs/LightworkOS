@@ -87,3 +87,17 @@ test("links outside the closed shape are not rendered", async () => {
   assert.equal(h.d.querySelector(".mv-copilot__goto"), null);
   h.close();
 });
+
+test("a setting row named with underscores can be the focus target", async () => {
+  // All settings rows are named like sa-sandbox-task_folders-label; the guide
+  // links one when its answer names that setting.
+  const h = harness("http://localhost/settings/all?group=protected-work-area", {reply: "Turn it off there.", mode: "model",
+    action_link: {href: "/settings/all?group=protected-work-area", focus: "sa-sandbox-task_folders-label",
+                  label: "Open the setting: Give each conversation its own folder"}});
+  await h.open();
+  h.get("mv-copilot-input").value = "Where is it?";
+  h.get("mv-copilot-form").dispatchEvent(new h.w.Event("submit", {cancelable: true})); await tick();
+  assert.equal(h.d.querySelector(".mv-copilot__goto").getAttribute("href"),
+               "/settings/all?group=protected-work-area#lw-focus=sa-sandbox-task_folders-label");
+  h.close();
+});

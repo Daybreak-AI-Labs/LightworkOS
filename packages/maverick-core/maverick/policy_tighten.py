@@ -284,8 +284,9 @@ TENANT_RULES: dict[str, dict[str, tuple]] = {
         "goal_risk_require_human": ("rank", "never", ("medium", "high", ("never", "")), "high"),
     },
     "capabilities": {
-        **dict.fromkeys(("computer_use", "browser", "web_search", "mobile_tools", "ros", "code_exec"),
+        **dict.fromkeys(("computer_use", "browser", "mobile_tools", "ros", "code_exec"),
                         ("permission", False, (), None)),
+        "web_search": ("permission", True, (), None),
         "enforce": ("protection", False, (), None),
         "per_call_tokens": ("protection", False, (), None),
         "per_call_token_ttl": _consumer("capabilities.per_call_token_ttl", 30),
@@ -319,6 +320,8 @@ TENANT_RULES: dict[str, dict[str, tuple]] = {
     "approval": {
         "decision_areas": ("deny_list", list(_DECISION_AREAS), (), None),
         "decision_admin_areas": ("deny_list", list(_DECISION_ADMIN_AREAS), (), None),
+        # A workspace may make its runs ask about every choice, never fewer.
+        "ask_outside_areas": ("protection", False, (), None),
         "decision_expiry_hours": ("limit", _DECISION_EXPIRY.default, (), None),
         "record_checks": _consumer("approval.record_checks", True),
         "require_acknowledgement": _consumer("approval.require_acknowledgement", True),

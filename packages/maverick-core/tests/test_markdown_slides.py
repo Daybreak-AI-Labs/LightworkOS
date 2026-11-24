@@ -114,3 +114,11 @@ def test_libreoffice_renders_every_slide(tmp_path):
         text = subprocess.run(["pdftotext", str(tmp_path / "deck.pdf"), "-"], capture_output=True, text=True,
                               check=True).stdout
         assert "From $12 a head" in text and "Gluten-free on request" in text
+
+
+def test_escaped_punctuation_is_written_without_its_backslash():
+    # Live: an answer wrote "\$8,400"; Markdown shows "$8,400", and the slide
+    # showed the backslash.
+    parts = _parts(slides_from_markdown("# Pricing \\#1\n\n- Total: \\$8,400 at 7.5\\% \\*not bold\\*\n"))
+    texts = " ".join(_texts(parts["ppt/slides/slide1.xml"]))
+    assert "Pricing #1" in texts and "$8,400 at 7.5% *not bold*" in texts and "\\" not in texts

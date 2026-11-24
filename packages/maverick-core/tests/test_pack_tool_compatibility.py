@@ -223,11 +223,13 @@ def test_export_fallback_discloses_missing_live_connector():
         assert not domain.tool_compatibility_errors(profile, risk_overrides={})
 
 
-def test_a_specialist_that_uses_web_search_starts_without_it_and_says_so(context):
-    # Half the roster names web_search in its workflow, and Web search is off
-    # unless an administrator sets up a search backend. Those specialists were
+def test_a_specialist_that_uses_web_search_starts_without_it_and_says_so(context, monkeypatch):
+    # Half the roster names web_search in its workflow, and an administrator
+    # (or an enterprise install) may turn Web search off. Those specialists were
     # refused outright. They now start, work from pages they can fetch, the
     # person's files and what they know, and say that live search was off.
+    from maverick import config
+    monkeypatch.setattr(config, "get_capabilities", lambda: {"web_search": False})
     profile = domain.DomainProfile(name='researcher-pack', allow_tools=['web_search', 'read_file'], max_risk='medium',
                                    workflow=[domain.WorkflowStep('Search', tools=['web_search'])])
     agent = domain.agent_from_profile(profile, context, 'Find the current release')

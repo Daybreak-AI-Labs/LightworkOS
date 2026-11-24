@@ -11,23 +11,66 @@ from __future__ import annotations
 
 from . import Tool
 
+_EARLIER = "  (from an earlier message in this conversation)"
+_MAX_EARLIER_GOALS = 50
+
+
+def _earlier_in_chat(world, goal_id: int) -> list[int]:
+    """Earlier goals of this goal's dashboard chat, from the same person,
+    newest first.
+
+    A follow-up ("Ben's hours were 46, not 50") is a new goal; with only its
+    own uploads it could not see the timesheet attached to the first message
+    and guessed. A dashboard chat is one conversation per thread; a channel
+    conversation (Slack and the like) spans everything a person ever sent
+    there, so it does not share."""
+    try:
+        rows = world.tenant_query(
+            "SELECT DISTINCT t2.goal_id FROM turns t "
+            "JOIN conversations c ON c.id=t.conversation_id "
+            "JOIN turns t2 ON t2.conversation_id=c.id "
+            "JOIN goals g ON g.id=t.goal_id JOIN goals g2 ON g2.id=t2.goal_id "
+            "WHERE t.goal_id=? AND t.role='user' AND c.channel='web' "
+            "AND t2.goal_id IS NOT NULL AND t2.goal_id<? "
+            "AND {tenant_exact:g.tenant_id} AND {tenant_exact:g2.tenant_id} "
+            "ORDER BY t2.goal_id DESC", (int(goal_id), int(goal_id)))
+        own = world.get_goal(goal_id)
+    except Exception:  # noqa: BLE001 -- no chat record: the goal's own files only
+        return []
+    owner = getattr(own, "owner", None)
+    earlier = []
+    for (other,) in rows[:_MAX_EARLIER_GOALS]:
+        goal = world.get_goal(int(other))
+        if goal is not None and getattr(goal, "owner", None) == owner:
+            earlier.append(int(other))
+    return earlier
+
+
+def visible_attachments(world, goal_id: int) -> list[tuple[object, bool]]:
+    """``(attachment, earlier)`` for this goal's uploads, then those of earlier
+    messages in its chat (``earlier`` True)."""
+    seen = [(a, False) for a in world.list_attachments(goal_id)]
+    for other in _earlier_in_chat(world, goal_id):
+        seen += [(a, True) for a in world.list_attachments(other)]
+    return seen
+
 
 def list_attachments_tool(world, goal_id: int | None) -> Tool:
     def fn(_args: dict) -> str:
         if goal_id is None:
             return "(no goal context; no attachments)"
-        atts = world.list_attachments(goal_id)
+        atts = visible_attachments(world, goal_id)
         if not atts:
             return "(no attachments)"
         lines = [
-            f"{a.id}  {a.filename}  {a.mime}  {a.size_bytes}B  {a.path}"
-            for a in atts
+            f"{a.id}  {a.filename}  {a.mime}  {a.size_bytes}B  {a.path}" + (_EARLIER if earlier else "")
+            for a, earlier in atts
         ]
         # The paths are storage locations outside the workspace: file tools
         # such as spreadsheet_read refuse them, and an agent that got that
         # refusal computed a payroll table by hand and got a row wrong.
         lines.append("Read text, PDF, CSV and Excel files with read_attachment and the id. For a CSV "
-                     "or Excel file, "
+                     "or Excel file, or a PDF statement or invoice, "
                      "pass `sql` (one SELECT over the table `data`) to compute totals or "
                      "per-row values exactly. Only view_image and read_pdf accept these paths.")
         return "\n".join(lines)
@@ -35,7 +78,8 @@ def list_attachments_tool(world, goal_id: int | None) -> Tool:
     return Tool(
         name="list_attachments",
         description=(
-            "List files the user uploaded with this goal. Returns one line per "
+            "List files the user uploaded with this goal and with earlier messages in "
+            "this conversation. Returns one line per "
             "attachment: id, filename, mime, size, path. Use `read_attachment` "
             "with the id to read text, PDF or CSV content; pass an image's path "
             "to `view_image` to look at it."
@@ -66,7 +110,7 @@ def goal_attachment_bytes(world, goal_id: int | None, source: str):
 
     wanted = source.strip()
     try:
-        match = next((a for a in world.list_attachments(goal_id) if a.path == wanted), None)
+        match = next((a for a, _ in visible_attachments(world, goal_id) if a.path == wanted), None)
     except Exception:  # noqa: BLE001 -- no attachment store: nothing to match
         return None
     if match is None:
@@ -85,13 +129,17 @@ def read_attachment_tool(world, goal_id: int | None, sandbox=None) -> Tool:
             wanted = int(args["id"])
         except (KeyError, TypeError, ValueError):
             return "ERROR: 'id' must be an attachment id from list_attachments"
-        match = next((a for a in world.list_attachments(goal_id) if a.id == wanted), None)
+        match = next((a for a, _ in visible_attachments(world, goal_id) if a.id == wanted), None)
         if match is None:
             return f"ERROR: no attachment {wanted} on this goal"
         from ..attachments import READABLE_TEXT_MIMES, read_bytes
         if match.mime == "application/pdf":
             text = _pdf_attachment_text(match, args.get("pages"), sandbox)
-            return text if text.startswith("ERROR:") else _window(text, args)
+            if text.startswith("ERROR:"):
+                return text
+            if args.get("sql"):
+                return _pdf_table_query(match.filename, text, str(args["sql"]))
+            return _window(text, args)
         if _is_workbook(match):
             return _workbook(match, args)
         if not match.mime.startswith(READABLE_TEXT_MIMES):
@@ -113,19 +161,29 @@ def read_attachment_tool(world, goal_id: int | None, sandbox=None) -> Tool:
                      "pass `pages` (for example '1-3,7') to read part of a long one. "
                      "A long file returns its first 100,000 characters: pass `search` "
                      "to get every line containing a phrase, or `offset` to read on. "
-                     "An Excel file returns its first sheet as CSV. "
-                     "For a CSV or Excel file, pass `sql`: "
+                     "An Excel file returns one sheet as CSV, the first unless `sheet` names another, "
+                     "and lists its sheets. "
+                     "For a CSV or Excel file, or a PDF with a table of figures (a bank "
+                     "statement, an invoice), pass `sql`: "
                      "one read-only SELECT over the table `data` (its columns are the "
-                     "header row). Use it for totals, counts, averages and per-row "
+                     "header row; in a PDF, the table's headings). Use it for totals, counts, averages and per-row "
                      "calculations instead of working numbers out yourself, for example "
                      "`SELECT name, ROUND(rate*(MIN(hours,40)+MAX(hours-40,0)*1.5),2) AS pay "
                      "FROM data` or `SELECT dept, SUM(amount) FROM data GROUP BY dept`. "
-                     "Before filtering on a column, look at the values it actually holds "
-                     "(`SELECT DISTINCT receipt FROM data`): a missing receipt may be 'no', not blank."),
+                     "For clock times (HH:MM) use `hours(clock_in, clock_out)`, which runs past "
+                     "midnight when the end is not after the start, and `overlap(clock_in, "
+                     "clock_out, '22:00', '06:00')` for the hours inside a window such as a night "
+                     "premium's. Before filtering on a column, look at the values it actually holds "
+                     "(`SELECT DISTINCT receipt FROM data`): a missing receipt may be 'no', not blank. "
+                     "When the request defines a condition (overdue = past its due date and not "
+                     "paid), filter on the fields it names, not on a status or label column, "
+                     "which can be out of date."),
         input_schema={"type": "object",
                       "properties": {"id": {"type": "integer"},
                                      "sql": {"type": "string",
                                              "description": "Optional. One SELECT over `data` for a CSV or Excel file."},
+                                     "sheet": {"type": "string",
+                                               "description": "Optional. For an Excel file, the sheet to read or query (default: the first)."},
                                      "pages": {"type": "string",
                                                "description": "Optional. PDF page ranges, for example '1-3,7'."},
                                      "search": {"type": "string",
@@ -146,20 +204,38 @@ def _is_workbook(match) -> bool:
 
 
 def _workbook(match, args: dict) -> str:
-    """An Excel attachment's first sheet as a CSV table, so it can be read and
-    queried like a CSV. Its cell-by-cell text companion led an agent to list
-    items above their reorder level as below it."""
+    """An Excel attachment's sheet as a CSV table, so it can be read and
+    queried like a CSV: the first sheet, or the one ``sheet`` names. Its
+    cell-by-cell text companion led an agent to list items above their
+    reorder level as below it; a workbook with its transactions on a second
+    sheet could not be totalled at all."""
     from ..attachments import read_bytes
     from .csv_query import query_tables
-    from .spreadsheet import xlsx_bytes_as_csv
+    from .spreadsheet import xlsx_bytes_as_csv, xlsx_bytes_sheet_names
 
+    wanted = str(args.get("sheet") or "").strip() or None
     try:
-        text = xlsx_bytes_as_csv(read_bytes(match.path))
+        data = read_bytes(match.path)
+        names = xlsx_bytes_sheet_names(data)
+        if wanted is not None:
+            found = next((name for name in names if name == wanted), None) or next(
+                (name for name in names if name.casefold() == wanted.casefold()), None)
+            if found is None:
+                return f"ERROR: {match.filename} has no sheet {wanted!r}; its sheets are {', '.join(names)}"
+            wanted = found
+        text = xlsx_bytes_as_csv(data, wanted)
     except Exception as exc:  # noqa: BLE001 -- surfaced to the agent as data
         return f"ERROR: {match.filename} could not be read as a workbook: {exc}"
+    shown = wanted or (names[0] if names else "first sheet")
+    others = [name for name in names if name != shown]
     if args.get("sql"):
-        return query_tables({"data": (match.filename, text)}, str(args["sql"]))
-    return (f"{match.filename}, first sheet as CSV (cached values of formulas). "
+        result = query_tables({"data": (match.filename, text)}, str(args["sql"]))
+        if result.startswith("ERROR") and others:
+            result += f". This queried the sheet {shown!r}; pass `sheet` to query {', '.join(others)}"
+        return result
+    sheets = (f" Its sheets are {', '.join(names)}; this is {shown!r}, and `sheet` reads or queries another."
+              if others else "")
+    return (f"{match.filename}, sheet {shown!r} as CSV (cached values of formulas).{sheets} "
             "Pass `sql` to compute from it exactly.\n" + _window(text, args))
 
 
@@ -209,6 +285,24 @@ def _matching_lines(text: str, phrase: str) -> str:
     more = f" (showing the first {_MAX_MATCHES})" if len(hits) > _MAX_MATCHES else ""
     noun = "line matches" if len(hits) == 1 else "lines match"
     return f"{len(hits)} {noun} {phrase!r}{more}:\n" + "\n".join(shown)
+
+
+def _pdf_table_query(filename: str, text: str, sql: str) -> str:
+    """One read-only SELECT over a statement or invoice PDF's table."""
+    from .csv_query import query_tables
+    from .pdf_reader import figures_outside_table, table_csv
+
+    table = table_csv(text)
+    if table is None:
+        return (f"ERROR: no table of figures was found in {filename}; read its text instead "
+                "and add any figures with compute")
+    result = query_tables({"data": (filename, table)}, sql)
+    outside = figures_outside_table(text)
+    if result.startswith("ERROR") or not outside:
+        return result
+    # Live: with only the table in view, an agent took the first row's balance
+    # as the statement's opening balance and said it did not reconcile.
+    return result + "\n\nFigures in the PDF outside the table:\n" + "\n".join(outside)
 
 
 _TABLE_MIMES = ("text/csv", "application/csv", "text/comma-separated-values")

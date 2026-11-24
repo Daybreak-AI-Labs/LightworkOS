@@ -64,3 +64,115 @@ def test_pdf_parse_pages_ranges():
     assert _parse_pages("5", 10) == [4]
     assert _parse_pages("1,3,5", 10) == [0, 2, 4]
     assert _parse_pages("8-", 10) == [7, 8, 9]
+
+
+def test_all_means_every_page():
+    # Live: read_attachment(pages="all") answered "PDF parse failed
+    # (ValueError); check the document", and the agent decided the receipt
+    # could not be read and tried OCR, images and a shell command.
+    for spec in ("all", "ALL", "*", "all pages"):
+        assert _parse_pages(spec, total=3) == [0, 1, 2]
+
+
+def test_a_page_selection_problem_is_said_plainly():
+    from maverick.markdown_pdf import pdf_from_markdown
+    from maverick.tools.pdf_reader import pdf_text
+
+    data = pdf_from_markdown("# Receipt\n\nTOTAL 315.16\n")
+    if pdf_text(data, max_chars=10_000).startswith("ERROR"):
+        pytest.skip("no PDF parser installed")
+    assert "TOTAL 315.16" in pdf_text(data, pages="all", max_chars=10_000)
+    out = pdf_text(data, pages="99", max_chars=10_000)
+    assert out.startswith("ERROR: this PDF has") and "leave pages out" in out
+    bad = pdf_text(data, pages="a-b", max_chars=10_000)
+    assert bad.startswith("ERROR: invalid PDF page selection")
+
+
+def test_a_statement_table_keeps_its_columns():
+    # Live: a bank statement read as "10/03 Card-Costco 3,753.21 8,727.34" and
+    # "10/05 Cashdeposit 3,459.47 12,186.81": with the columns gone, the agent
+    # could not tell withdrawals from deposits and got both totals wrong.
+    from maverick.markdown_pdf import pdf_from_markdown
+    from maverick.tools.pdf_reader import extract_text_from_bytes
+
+    statement = ("# Business Checking\n\nOpening balance: $12,480.55\n\n"
+                 "| Date | Description | Withdrawals | Deposits | Balance |\n|---|---|---:|---:|---:|\n"
+                 "| 10/03 | Card - Costco | 3,753.21 | | 8,727.34 |\n| 10/05 | Cash deposit | | 3,459.47 | 12,186.81 |\n"
+                 "| 10/07 | ACH - PG&E | 4,249.27 | | 7,937.54 |\n| 10/09 | Card settlement | | 2,422.72 | 10,360.26 |\n"
+                 "| 10/10 | Check | 718.81 | | 9,641.45 |\n")
+    text = extract_text_from_bytes(pdf_from_markdown(statement))
+    lines = {line.split()[0]: line for line in text.splitlines() if line[:3] in ("10/", "Dat")}
+    withdrawal, deposit = lines["10/03"].index("3,753.21"), lines["10/05"].index("3,459.47")
+    assert deposit > withdrawal + 4, text
+    assert lines["Date"].index("Deposits") > lines["Date"].index("Withdrawals"), text
+    assert "Cash deposit" in lines["10/05"], text
+    # A page of prose reads as before.
+    prose = extract_text_from_bytes(pdf_from_markdown("# Note\n\nKeep it posted by the sink. Costs are shared.\n"))
+    assert "Keep it posted by the sink. Costs are shared." in prose, prose
+
+
+_STATEMENT = ("# Business Checking\n\nOpening balance: $12,480.55\n\n"
+              "| Date | Description | Withdrawals | Deposits | Balance |\n|---|---|---:|---:|---:|\n"
+              "| 10/03 | Card - Costco | 3,753.21 | | 8,727.34 |\n| 10/05 | Cash deposit | | 3,459.47 | 12,186.81 |\n"
+              "| 10/07 | ACH - PG&E | 4,249.27 | | 7,937.54 |\n| 10/09 | Card settlement | | 2,422.72 | 10,360.26 |\n"
+              "| 10/10 | Check | 718.81 | | 9,641.45 |\n\nClosing balance: $9,641.45\n")
+
+
+def test_a_statement_pdf_becomes_a_table_sql_can_total():
+    # Live, 4 of 5 runs: an agent typed a statement's 28 amounts into its own
+    # sums and dropped some; a CSV gets one exact query, a PDF got nothing.
+    from maverick.markdown_pdf import pdf_from_markdown
+    from maverick.tools.csv_query import query_tables
+    from maverick.tools.pdf_reader import extract_text_from_bytes, table_csv
+
+    csv_text = table_csv(extract_text_from_bytes(pdf_from_markdown(_STATEMENT)))
+    assert csv_text.splitlines()[0] == "Date,Description,Withdrawals,Deposits,Balance"
+    assert csv_text.splitlines()[2] == '10/05,Cash deposit,,"3,459.47","12,186.81"'
+    out = query_tables({"data": ("statement.pdf", csv_text)},
+                       "SELECT ROUND(SUM(Withdrawals), 2) AS w, ROUND(SUM(Deposits), 2) AS d, COUNT(*) AS n, "
+                       "MAX(Withdrawals) AS largest FROM data")
+    assert out.splitlines() == ["w,d,n,largest", "8721.29,5882.19,5,4249.27"]
+
+
+def test_a_pdf_without_a_table_has_no_table_to_query():
+    from maverick.markdown_pdf import pdf_from_markdown
+    from maverick.tools.pdf_reader import extract_text_from_bytes, table_csv
+
+    note = extract_text_from_bytes(pdf_from_markdown("# Note\n\nKeep it posted by the sink. Costs are shared.\n"))
+    assert table_csv(note) is None
+
+
+def test_an_invoice_pdf_groups_by_its_columns_and_keeps_totals_out_of_the_rows():
+    # Live: an invoice's "Espresso beans 5lb" split as "Espresso beans" and
+    # "5lb Coffee" across two columns, and its Subtotal, Sales tax and Total
+    # due lines became rows of the table.
+    from maverick.markdown_pdf import pdf_from_markdown
+    from maverick.tools.csv_query import query_tables
+    from maverick.tools.pdf_reader import extract_text_from_bytes, figures_outside_table, table_csv
+
+    invoice = ("# INVOICE 20417\n\n| Item | Category | Qty | Unit price | Amount |\n|---|---|---:|---:|---:|\n"
+               "| Espresso beans 5lb | Coffee | 12 | 64.50 | 774.00 |\n| Oat milk case | Dairy | 20 | 31.75 | 635.00 |\n"
+               "| 12oz paper cups (1000) | Packaging | 6 | 88.20 | 529.20 |\n| Lids 12oz (1000) | Packaging | 6 | 41.10 | 246.60 |\n"
+               "| Whole milk 1gal | Dairy | 40 | 4.69 | 187.60 |\n\nSubtotal: $2,372.40\n\nSales tax (8.25%): $195.72\n\n"
+               "Total due: $2,568.12\n")
+    text = extract_text_from_bytes(pdf_from_markdown(invoice))
+    table = table_csv(text)
+    out = query_tables({"data": ("invoice.pdf", table)},
+                       "SELECT Category, ROUND(SUM(Amount), 2) AS total FROM data GROUP BY Category ORDER BY Category")
+    assert out.splitlines() == ["Category,total", "Coffee,774.0", "Dairy,822.6", "Packaging,775.8"], table
+    assert "Espresso beans 5lb" in table and "Subtotal" not in table, table
+    assert figures_outside_table(text) == ["Subtotal: $2,372.40", "Sales tax (8.25%): $195.72", "Total due: $2,568.12"]
+
+
+def test_a_wrapped_description_joins_its_row_and_a_page_footer_does_not():
+    from maverick.markdown_pdf import pdf_from_markdown
+    from maverick.tools.pdf_reader import extract_text_from_bytes, table_csv
+
+    long = "ACH DEBIT SYSCO FOOD SERVICES OF NORTHERN CALIFORNIA INC REF 0048812 BATCH 77 SETTLEMENT"
+    statement = ("| Date | Description | Withdrawals | Deposits | Balance |\n|---|---|---:|---:|---:|\n"
+                 f"| 10/03 | {long} | 3,753.21 | | 8,727.34 |\n| 10/05 | Cash deposit | | 3,459.47 | 12,186.81 |\n"
+                 "| 10/07 | ACH - PG&E | 4,249.27 | | 7,937.54 |\n| 10/09 | Card settlement | | 2,422.72 | 10,360.26 |\n"
+                 "| 10/10 | Check | 718.81 | | 9,641.45 |\n")
+    table = table_csv(extract_text_from_bytes(pdf_from_markdown(statement)))
+    assert f'10/03,{long},"3,753.21",,"8,727.34"' in table.splitlines(), table
+    assert table.splitlines()[-1] == '10/10,Check,718.81,,"9,641.45"', table

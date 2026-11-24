@@ -109,3 +109,53 @@ def test_without_a_world_nothing_is_recorded(task):
     world, gid, _other, sandbox, workspace = task
     assert write_file(sandbox, goal_id=gid).fn({"path": "a.txt", "content": "a"}).startswith("wrote")
     assert task_files.files_for(world, gid) == []
+
+
+def test_a_markdown_draft_of_a_document_is_not_offered_unless_delivered(task):
+    # Live: asked for an updated NDA as a Word file, the agent wrote its
+    # Markdown draft and then the .docx; both were offered, the draft first.
+    world, gid, _other, sandbox, workspace = task
+    write = write_file(sandbox, goal_id=gid, world=world)
+    assert write.fn({"path": "nda.md", "content": "# NDA\n\nTerm: 3 years.\n"}).startswith("wrote")
+    assert write.fn({"path": "nda.docx", "content": "# NDA\n\nTerm: 3 years.\n"}).startswith("wrote a Word")
+    assert write.fn({"path": "notes/nda.md", "content": "other folder\n"}).startswith("wrote")
+    assert write.fn({"path": "summary.md", "content": "no document of this name\n"}).startswith("wrote")
+    # Live: a workbook's plan, "region_sales_workbook_instructions.md".
+    assert write.fn({"path": "nda_instructions.md", "content": "plan\n"}).startswith("wrote")
+    assert write.fn({"path": "ndaxyz.md", "content": "a different name\n"}).startswith("wrote")
+    # A CSV beside a workbook of its name is its working copy; beside a Word
+    # file it is a file of its own.
+    assert write.fn({"path": "calendar.csv", "content": "a,b\n1,2\n"}).startswith("wrote")
+    (workspace / "calendar.xlsx").write_bytes(b"PK fake workbook")
+    deliver_file(sandbox, gid, world).fn({"path": "calendar.xlsx"})
+    assert write.fn({"path": "nda.csv", "content": "a,b\n"}).startswith("wrote")
+    listed = task_files.files_for(world, gid)
+    assert [(f.number, f.path) for f in listed] == [(1, "nda.docx"), (2, "notes/nda.md"), (3, "summary.md"),
+                                                   (4, "ndaxyz.md"), (5, "calendar.xlsx"), (6, "nda.csv")]
+    assert task_files.read_for_download(world, gid, 1)[0].name == "nda.docx"
+    # Handed over on purpose, the draft is offered too.
+    deliver_file(sandbox, gid, world).fn({"path": "nda.md"})
+    assert [f.path for f in task_files.files_for(world, gid)] == ["nda.md", "nda.docx", "notes/nda.md", "summary.md",
+                                                                  "ndaxyz.md", "calendar.xlsx", "nda.csv"]
+
+
+def test_a_helper_script_beside_a_document_is_not_offered_unless_delivered(task):
+    # Live: asked to make a roofing bid's overhead and profit editable, the
+    # agent wrote edit_roofing_workbook.py, ran it, then changed it; the page
+    # offered the script before the workbook, and its download failed because
+    # the script no longer matched what was saved.
+    world, gid, other, sandbox, workspace = task
+    write = write_file(sandbox, goal_id=gid, world=world)
+    assert write.fn({"path": "edit_roofing_workbook.py", "content": "print('x')\n"}).startswith("wrote")
+    assert write.fn({"path": "tools/helper.sh", "content": "echo x\n"}).startswith("wrote")
+    (workspace / "roofing_bid.xlsx").write_bytes(b"PK fake workbook")
+    deliver_file(sandbox, gid, world).fn({"path": "roofing_bid.xlsx"})
+    assert [f.path for f in task_files.files_for(world, gid)] == ["roofing_bid.xlsx"]
+    # Handed over on purpose, a script is offered.
+    deliver_file(sandbox, gid, world).fn({"path": "edit_roofing_workbook.py"})
+    assert [f.path for f in task_files.files_for(world, gid)] == ["edit_roofing_workbook.py", "roofing_bid.xlsx"]
+    # A script with no document beside it is the work itself.
+    other_write = write_file(sandbox, goal_id=other, world=world)
+    assert other_write.fn({"path": "convert.py", "content": "print('y')\n"}).startswith("wrote")
+    assert other_write.fn({"path": "out.csv", "content": "a\n1\n"}).startswith("wrote")
+    assert [f.path for f in task_files.files_for(world, other)] == ["convert.py", "out.csv"]

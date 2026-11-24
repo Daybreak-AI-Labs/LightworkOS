@@ -11,6 +11,8 @@ from __future__ import annotations
 import io
 import logging
 import os
+import re
+import textwrap
 from pathlib import Path
 from typing import Any
 
@@ -50,10 +52,18 @@ _PDF_INPUT_SCHEMA: dict[str, Any] = {
 }
 
 
+class PageSelectionError(ValueError):
+    """A page selection that names no page this PDF has; said as it is."""
+
+
+_ALL_PAGES = frozenset({"all", "*", "all pages"})
+
+
 def _parse_pages(spec: str, total: int) -> list[int]:
-    """Parse '1-5', '3', '10-' into a list of 0-indexed page indices."""
+    """Parse '1-5', '3', '10-' into a list of 0-indexed page indices; empty,
+    "all" or "*" mean every page."""
     spec = (spec or "").strip()
-    if not spec:
+    if not spec or spec.casefold() in _ALL_PAGES:
         return list(range(total))
     out: set[int] = set()
     try:
@@ -75,8 +85,18 @@ def _parse_pages(spec: str, total: int) -> list[int]:
                     out.add(n - 1)
     except ValueError as exc:
         # Never silently expand an invalid selection to the whole document.
-        raise ValueError("invalid PDF page selection; use ranges such as 1-5,8,10-") from exc
+        raise PageSelectionError("invalid PDF page selection; use ranges such as 1-5,8,10-, "
+                                 "or leave pages out for all of them") from exc
     return sorted(out)
+
+
+def _pages_or_say(spec: str | None, total: int) -> list[int]:
+    """The selected pages, or a plain error when a selection names none."""
+    indices = _parse_pages(spec or "", total)
+    if not indices and (spec or "").strip():
+        raise PageSelectionError(f"this PDF has {total} page{'' if total == 1 else 's'}; choose pages from "
+                                 f"1 to {total}, or leave pages out for all of them")
+    return indices
 
 
 def _load_bytes(source: str, workdir: Path | None = None) -> bytes | None:
@@ -131,6 +151,152 @@ def _load_bytes(source: str, workdir: Path | None = None) -> bytes | None:
     return data if len(data) <= _MAX_PDF_BYTES else None
 
 
+_AMOUNT = re.compile(r"(?<![\w.])-?\$?\d{1,3}(?:,\d{3})*\.\d{2}(?!\d)")
+_TABULAR_LINES = 4
+
+
+def _tabular(text: str) -> bool:
+    """A page of figures in columns (a statement, an invoice): several lines
+    each holding two or more amounts."""
+    return sum(len(_AMOUNT.findall(line)) >= 2 for line in text.splitlines()) >= _TABULAR_LINES
+
+
+class _Layout:
+    """A tabular page's text with its columns kept. Plain extraction reads a
+    statement row as "10/03 Card-Costco 3,753.21 8,727.34": with the column
+    gone, an agent could not tell a withdrawal from a deposit and got both
+    totals wrong. pypdf's layout mode keeps each figure under its heading."""
+
+    def __init__(self, data: bytes) -> None:
+        self._data, self._reader = data, None
+
+    def page(self, index: int, text: str) -> str:
+        if not _tabular(text):
+            return text
+        try:
+            if self._reader is None:
+                import pypdf  # type: ignore
+
+                self._reader = pypdf.PdfReader(io.BytesIO(self._data))
+            layout = self._reader.pages[index].extract_text(extraction_mode="layout") or ""
+        except Exception:  # noqa: BLE001 -- no layout: the plain text stands
+            return text
+        lines = [line.rstrip() for line in layout.splitlines() if line.strip()]
+        return textwrap.dedent("\n".join(lines)) if lines else text
+
+
+def _word_layout(page, density: float = 4.0) -> str:
+    """A tabular page drawn from pdfplumber's word positions: words close
+    together share a cell, separated by one space, and each cell starts at
+    its place on the page, two or more spaces from the last. pypdf's layout
+    text split "Espresso beans 5lb" across two columns and joined "Lids12oz";
+    a word gap under 1.5 points (a PDF that draws each word on its own, with
+    no space character) still counts as a gap."""
+    words = page.extract_words(x_tolerance=1.5)
+    lines: list[tuple[float, list[dict]]] = []
+    for word in sorted(words, key=lambda w: (round(w["top"]), w["x0"])):
+        if lines and abs(lines[-1][0] - word["top"]) < 3:
+            lines[-1][1].append(word)
+        else:
+            lines.append((word["top"], [word]))
+    out: list[str] = []
+    for _top, row in lines:
+        text, previous = "", None
+        for word in sorted(row, key=lambda w: w["x0"]):
+            size = word["bottom"] - word["top"]
+            if previous is not None and word["x0"] - previous["x1"] < max(4.0, 0.45 * size):
+                text += " " + word["text"]
+            else:
+                text += " " * max(int(word["x0"] / density) - len(text), 2 if text else 0) + word["text"]
+            previous = word
+        out.append(text.rstrip())
+    return textwrap.dedent("\n".join(line for line in out if line.strip()))
+
+
+_GROUP = re.compile(r"\S+(?: \S+)*")  # words one space apart; two or more spaces part columns
+
+
+def _groups(line: str) -> list[tuple[int, int, str]]:
+    return [(m.start(), m.end(), m.group()) for m in _GROUP.finditer(line)]
+
+
+def _column(start: int, end: int, columns: list[tuple[int, int, str]]) -> int:
+    """The header a cell sits under: the most overlap, else the nearest."""
+    def score(column: tuple[int, int, str]) -> tuple[int, float]:
+        overlap = min(end, column[1]) - max(start, column[0])
+        return (max(overlap, 0), -abs((start + end) / 2 - (column[0] + column[1]) / 2))
+
+    return max(range(len(columns)), key=lambda index: score(columns[index]))
+
+
+def figures_outside_table(text: str | None, limit: int = 12) -> list[str]:
+    """Lines holding an amount that are not rows of the table, such as a
+    statement's opening and closing balances."""
+    if not text or table_csv(text) is None:
+        return []
+    return [" ".join(line.split()) for line in text.splitlines()
+            if _AMOUNT.search(line) and (len(_groups(line.rstrip())) < 2
+                                         or _groups(line.rstrip())[0][2].endswith(":"))][:limit]
+
+
+def table_csv(text: str | None) -> str | None:
+    """The table of a statement or invoice PDF as CSV text, from the page
+    text ``extract_text_from_bytes`` gives (tabular pages keep their
+    columns): the header row's words name the columns and each later row's
+    figures go to the column they sit under. A repeated header on a later
+    page is skipped. None when no page has such a table.
+
+    Asked for a statement's totals, an agent typed its 28 amounts into its
+    own sums and dropped some; a CSV gets one exact query, so a PDF table
+    now does too."""
+    import csv
+
+    if not text:
+        return None
+    header: list[tuple[int, int, str]] | None = None
+    rows: list[list[str]] = []
+    starts: dict[int, int] = {}  # where the last row's cells start, by column
+    lines = [line.rstrip() for line in text.splitlines()]
+    for index, line in enumerate(lines):
+        groups = _groups(line)
+        if header is not None and rows and groups and not _AMOUNT.search(line) and all(
+                starts.get(_column(start, end, header)) in range(start - 1, start + 2)
+                for start, end, _value in groups):
+            # A description that wrapped onto the next line, starting where its
+            # cell starts; a page footer elsewhere on the line is not one.
+            for start, end, value in groups:
+                where = _column(start, end, header)
+                rows[-1][where] = f"{rows[-1][where]} {value}".strip()
+            continue
+        if len(_AMOUNT.findall(line)) == 0 or len(groups) < 2:
+            continue
+        if header is None:
+            above = next((_groups(lines[back]) for back in range(index - 1, max(index - 4, -1), -1)
+                          if len(_groups(lines[back])) >= 3 and not _AMOUNT.search(lines[back])), None)
+            if above is None:
+                continue
+            header = above
+        if groups[0][2].endswith(":"):
+            continue  # "Sales tax (8.25%):  $195.72": a summary line, not a row
+        cells = [""] * len(header)
+        starts = {}
+        for start, end, value in groups:
+            where = _column(start, end, header)
+            cells[where] = f"{cells[where]} {value}".strip()
+            starts.setdefault(where, start)
+        rows.append(cells)
+    if header is None or len(rows) < 2:
+        return None
+    names: list[str] = []
+    for _start, _end, name in header:
+        names.append(name if name not in names else f"{name}_{len(names) + 1}")
+    out = io.StringIO()
+    writer = csv.writer(out, lineterminator="\n")
+    writer.writerow(names)
+    writer.writerows(row for row in rows if [c.strip() for c in row] != [n for _s, _e, n in header])
+    return out.getvalue()
+
+
 def _extract_with_pdfplumber(data: bytes, pages: str | None, include_tables: bool) -> str | None:
     try:
         import pdfplumber  # type: ignore
@@ -138,12 +304,18 @@ def _extract_with_pdfplumber(data: bytes, pages: str | None, include_tables: boo
         return None
     out: list[str] = []
     has_content = False
+    layout = _Layout(data)
     with pdfplumber.open(io.BytesIO(data)) as pdf:
         total = len(pdf.pages)
-        page_indices = _parse_pages(pages or "", total)
+        page_indices = _pages_or_say(pages, total)
         for idx in page_indices:
             page = pdf.pages[idx]
             text = (page.extract_text() or "").strip()
+            if _tabular(text):
+                try:
+                    text = _word_layout(page) or layout.page(idx, text)
+                except Exception:  # noqa: BLE001 -- no word positions: pypdf's layout
+                    text = layout.page(idx, text)
             has_content = has_content or bool(text)
             block = f"=== Page {idx + 1} of {total} ===\n{text}"
             if include_tables:
@@ -170,11 +342,12 @@ def _extract_with_pypdf(data: bytes, pages: str | None) -> str | None:
             return None
     reader = pypdf.PdfReader(io.BytesIO(data))
     total = len(reader.pages)
-    page_indices = _parse_pages(pages or "", total)
+    page_indices = _pages_or_say(pages, total)
     out: list[str] = []
     has_content = False
+    layout = _Layout(data)
     for idx in page_indices:
-        text = (reader.pages[idx].extract_text() or "").strip()
+        text = layout.page(idx, (reader.pages[idx].extract_text() or "").strip())
         has_content = has_content or bool(text)
         out.append(f"=== Page {idx + 1} of {total} ===\n{text}")
     return "\n\n".join(out) if has_content else ""
@@ -226,6 +399,10 @@ def _selected_text(data, pages, include_tables):
             return f"ERROR: isolated PDF parse failed: {exc}"
     try:
         return extract_text_from_bytes(data, pages=pages, include_tables=include_tables)
+    except PageSelectionError as exc:
+        # Live: pages="all" was reported as "PDF parse failed", and the agent
+        # gave up on a readable receipt.
+        return f"ERROR: {exc}"
     except Exception as exc:
         return f"ERROR: PDF parse failed ({type(exc).__name__}); check the document and page selection"
 

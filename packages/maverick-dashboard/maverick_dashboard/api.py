@@ -11139,7 +11139,8 @@ async def copilot_endpoint(request: Request, payload: CopilotIn, response: Respo
 
     # A task's cost is a live read even on its own page; the page guide
     # describes the task but holds no spending record.
-    if is_detail_page and live_intent(msg) not in {"task_cost", "task_files"} and (detail_reply := _copilot_detail_reply(
+    live_reads = {"task_cost", "task_files", "task_schedules"}
+    if is_detail_page and live_intent(msg) not in live_reads and (detail_reply := _copilot_detail_reply(
         request, msg, permissions, context, record_context,
     )) is not None:
         return detail_reply
@@ -11184,10 +11185,15 @@ async def copilot_endpoint(request: Request, payload: CopilotIn, response: Respo
             result["model_route_reason"] = reason
         return guide_result(result)
 
+    from . import copilot_settings
+
+    setting_hints: list[dict] = []
+
     def _turn() -> str:
         from maverick.budget import Budget
         from maverick.llm import LLM, model_for_role
 
+        setting_hints.extend(copilot_settings.hints(request, msg))
         llm = LLM(model_for_role("orchestrator"))
         budget = Budget(max_dollars=0.25, max_output_tokens=1500, max_tool_calls=0)
         context_lines = "\n".join(
@@ -11198,8 +11204,9 @@ async def copilot_endpoint(request: Request, payload: CopilotIn, response: Respo
                 "Boundaries: " + " | ".join(context.boundaries),
                 "Next steps: " + " | ".join(context.next_steps),
                 "Caller authorized permissions: " + " | ".join(sorted(permissions)),
+                copilot_settings.context_line(setting_hints),
             )
-        )
+        ).rstrip()
         system = (
             "You are the Lightwork copilot -- a concise in-app guide for a "
             "governed AI-workforce and assurance platform. The following page "
@@ -11263,7 +11270,7 @@ async def copilot_endpoint(request: Request, payload: CopilotIn, response: Respo
     qualified_reply = sanitize_model_reply(
         f"I haven't changed anything in Lightwork. Here's my answer: {safe_reply}"
     )
-    return guide_result({
+    return guide_result(copilot_settings.with_link({
         "reply": qualified_reply,
         "mode": "model",
         "model_output_verified": False,
@@ -11272,7 +11279,7 @@ async def copilot_endpoint(request: Request, payload: CopilotIn, response: Respo
             "check the page before you act on it."
         ),
         "page_context": public_context(context, permissions),
-    })
+    }, setting_hints, safe_reply))
 
 
 def _agent_action_errors(name: str, payload: AgentOverrideIn) -> list[str]:

@@ -182,11 +182,11 @@ def kv_memory(world, goal_id: int | None, *, shield=None) -> Tool:
     return Tool(
         name="kv_memory",
         description=(
-            "Persist facts across turns for the current goal. ops: "
+            "Scratch facts for THIS task only: they are gone when the task ends. ops: "
             "set (create or replace a previously read revision), get (read), delete, list (recent keys), "
-            "search (substring across keys+values). Goal-scoped -- "
-            "memory doesn't leak across runs. Use recall_past_goals "
-            "for cross-goal context."
+            "search (substring across keys+values). When a person asks you to remember "
+            "something for later tasks, save it with the `memory` tool instead. Use "
+            "recall_past_goals for cross-goal context."
         ),
         input_schema=_KV_SCHEMA,
         fn=_run_factory(world, goal_id, shield=shield),
