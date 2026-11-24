@@ -280,9 +280,10 @@ def test_only_the_dates_a_query_reads_decide_their_day_month_order():
         out = query_tables(tables, "SELECT txn, julianday(booked) AS j FROM eu_bank").splitlines()
         assert out[:3] == ["txn,j", "T1,", "T2,"]
         assert "eu_bank.booked (such as '05/10/2026')" in out[3] and "Ask which it is" in out[3]
-    # The same within one file: order_date shows month first, but the query reads only ship_ref.
+    # Within one file the order is the file's, whatever the query reads:
+    # order_date shows month first, so ship_ref is May 6 in every query.
     out = _query("order_date,ship_ref\n10/29/2026,05/06/2026\n", "SELECT julianday(ship_ref) AS j FROM data")
-    assert out[:2] == ["j", '""'] and "data.ship_ref (such as '05/06/2026')" in out[2]
+    assert out[:2] == ["j", "2461166.5"] and "this query reads them month first, as data.order_date does" in out[2]
 
 
 def test_a_date_note_is_only_for_the_column_a_date_function_reads_as_a_date():
@@ -384,3 +385,36 @@ def test_a_result_showing_shifts_as_clock_ranges_points_at_hours():
     # A query that already works the hours out, and dates or codes, get no note.
     assert not any("clock times" in line for line in _query(text, "SELECT Employee, hours(Mon) AS h FROM data"))
     assert not any("clock times" in line for line in _query("id,d\nSO-5001,2026-10-01\n", "SELECT * FROM data"))
+
+
+def test_a_columns_form_is_the_same_in_every_query():
+    # Review: SELECT * showed paid_date as 2026-11-05 (borrowed from
+    # invoice_date, which that query read too); a follow-up reading paid_date
+    # alone got 11/05/2026 back, and its filter on the form just shown
+    # silently summed nothing.
+    text = ("invoice,customer,invoice_date,paid_date,amount\n1001,Acme,10/14/2026,11/05/2026,1200.00\n"
+            "1002,Beta,10/20/2026,11/09/2026,850.50\n1003,Acme,10/29/2026,12/01/2026,400.00\n")
+    assert _query(text, "SELECT paid_date FROM data")[1] == "2026-11-05"
+    out = _query(text, "SELECT SUM(amount) AS paid_in_november FROM data "
+                       "WHERE paid_date >= '2026-11-01' AND paid_date < '2026-12-01'")
+    assert out[:2] == ["paid_in_november", "2050.5"], out
+    assert "this query reads them month first, as data.invoice_date does" in out[2]
+
+
+def test_more_date_forms_still_explain_an_empty_result():
+    # Review: dates stored as numbers (20261029), 29-Oct-2026 renamed in a CTE
+    # and weekday-first dates in trim() lost the note that says why a date
+    # function gave nothing; and a query that names the placeholder it leaves
+    # out (WHERE due <> 'TBD') was still told about it.
+    out = _query("order_date,region,amount\n20261029,East,120.50\n20261015,West,80.00\n",
+                 "SELECT SUM(amount) AS october FROM data WHERE strftime('%Y-%m', order_date) = '2026-10'")
+    assert out[:2] == ["october", '""'] and "data.order_date holds values such as '20261029'" in out[2], out
+    out = _query("Posting Date,Amount\n29-Oct-2026,-12.50\n02-Nov-2026,500.00\n",
+                 'WITH t AS (SELECT "Posting Date" AS d, Amount FROM data) '
+                 "SELECT strftime('%Y-%m', d) AS month, SUM(Amount) AS s FROM t GROUP BY month")
+    assert "data.Posting Date holds values such as '29-Oct-2026'" in out[-1], out
+    out = _query('date,amount\n"Thursday, October 29, 2026",5\n', "SELECT date(trim(date)) AS d FROM data")
+    assert "holds values such as 'Thursday, October 29, 2026'" in out[-1], out
+    text = "invoice,due\nA1,2026-10-01\nA2,2026-11-15\nA3,TBD\n"
+    assert _query(text, "SELECT invoice, julianday('2026-11-24') - julianday(due) AS age FROM data "
+                        "WHERE due <> 'TBD' ORDER BY julianday(due)") == ["invoice,age", "A1,54.0", "A2,9.0"]

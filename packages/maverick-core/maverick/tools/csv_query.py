@@ -226,9 +226,9 @@ def _convert(body: list[list], column: int, dates: list[str]) -> None:
 
 def _load(db, tables: dict[str, tuple[str, str]],
           blanks: dict[tuple[str, str], int]) -> tuple[dict[str, tuple[list[str], list[list]]], list] | str:
-    """Parse each CSV text and create its table, still empty: which date
-    columns become YYYY-MM-DD depends on the columns the query reads. The
-    parsed tables and their date columns, or an error."""
+    """Parse each CSV text and create its table, still empty: its date
+    columns are settled across the whole file before rows go in. The parsed
+    tables and their date columns, or an error."""
     parsed: dict[str, tuple[list[str], list[list]]] = {}
     dates = []
     for name, (filename, text) in tables.items():
@@ -246,17 +246,19 @@ def _load(db, tables: dict[str, tuple[str, str]],
     return parsed, dates
 
 
-def _settle_dates(columns: list, reads: set[tuple[str, str]]) -> tuple[list, list]:
+def _settle_dates(columns: list) -> tuple[list, list]:
     """Store date columns as YYYY-MM-DD where the day/month order is known:
     the converted (table, column, as written, as read, borrowed order) and
     the ambiguous (table, column, as written). A column whose values show
     the order (10/29/2026 is month first) is converted on its own. One whose
     values cannot show it (10/05/2026, 12/01/2026) takes the order the other
-    date columns of its own file that this query reads agree on: due was
-    converted and paid_on was not, and WHERE paid_on > due compared
-    2026-11-15 with 12/01/2026. Another file's order is never taken: two
-    files can come from two systems, and a US invoice file's order read a
-    European bank file's 05/10/2026 as May 10 in a reconciliation."""
+    date columns of its own file agree on: due was converted and paid_on was
+    not, and WHERE paid_on > due compared 2026-11-15 with 12/01/2026. Whether
+    the query reads them does not matter, so a column reads the same in every
+    query: SELECT * showed paid_date as 2026-11-05, and a follow-up filter on
+    that form, reading paid_date alone, matched nothing. Another file's order
+    is never taken: two files can come from two systems, and a US invoice
+    file's order read a European bank file's 05/10/2026 as May 10."""
     converted, ambiguous, undecided = [], [], []
     shown_by: dict[str, dict[str, str]] = {}
     for table, column_name, body, column, values, parts in columns:
@@ -270,7 +272,7 @@ def _settle_dates(columns: list, reads: set[tuple[str, str]]) -> tuple[list, lis
         elif isinstance(dates, list):
             _convert(body, column, dates)
             converted.append((table, column_name, values[0], dates[0], None))
-            if order and (table, column_name) in reads:
+            if order:
                 shows = next(value for value, (kind, a, b, _y) in zip(values, parts, strict=True)
                              if kind == "xy" and (a if order == "day" else b) > 12)
                 shown_by.setdefault(table, {}).setdefault(
@@ -278,7 +280,7 @@ def _settle_dates(columns: list, reads: set[tuple[str, str]]) -> tuple[list, lis
     for table, column_name, body, column, values, parts in undecided:
         orders = shown_by.get(table, {})
         order = next(iter(orders)) if len(orders) == 1 else None
-        dates = _iso_dates(parts, order) if order and (table, column_name) in reads else None
+        dates = _iso_dates(parts, order) if order else None
         if order and isinstance(dates, list):
             _convert(body, column, dates)
             converted.append((table, column_name, values[0], dates[0], orders[order]))
@@ -405,8 +407,14 @@ def _percent_notes(db, headers: dict[str, list[str]], reads: set[tuple[str, str]
 
 
 # Text that reads as a date to a person: 10/29/2026 10:00, Oct 29 2026, 29 Oct 2026.
-_LOOSE_DATE = re.compile(r"\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}|[A-Za-z]{3,9}\.? +\d{1,2}(?:st|nd|rd|th)?,? +\d{4}"
-                         r"|\d{1,2} +[A-Za-z]{3,9}\.?,? +\d{4}")
+# Text that reads as a date to a person: 10/29/2026 10:00, Oct 29 2026,
+# 29 Oct 2026, 29-Oct-2026, Thursday, October 29, 2026, and 20261029 as a
+# bank or ERP export writes it.
+_LOOSE_DATE = re.compile(
+    r"\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}|[A-Za-z]{3,9}\.? +\d{1,2}(?:st|nd|rd|th)?,? +\d{4}"
+    r"|\d{1,2}[ /-]+[A-Za-z]{3,9}\.?,?[ /-]+\d{2,4}"
+    r"|(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*\.?,? +[A-Za-z]{3,9}\.? +\d{1,2}"
+    r"|(?:19|20)\d\d(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])$", re.IGNORECASE)
 
 
 def _date_notes(db, ambiguous: list[tuple[str, str, str]], converted: list[tuple[str, str, str, str, str | None]],
@@ -446,10 +454,13 @@ def _date_notes(db, ambiguous: list[tuple[str, str, str]], converted: list[tuple
         direct = _dated_columns(sql, reads) if nulls or filters else set()
         for table, column in sorted((direct | (reads if empty else set())) - undecided):
             quoted = '"' + column.replace('"', '""') + '"'
+            # A value the query names itself (WHERE due <> 'TBD') is one it
+            # has already dealt with.
             unread = [value for (value,) in db.execute(
-                f'SELECT {quoted} FROM "{table}" WHERE typeof({quoted}) = \'text\' '
+                f'SELECT {quoted} FROM "{table}" WHERE typeof({quoted}) IN (\'text\', \'integer\') '
                 f"AND trim({quoted}) <> '' AND julianday({quoted}) IS NULL LIMIT 20")
-                if (table, column) in direct or _LOOSE_DATE.match(value.strip())]
+                if ((table, column) in direct or _LOOSE_DATE.match(str(value).strip()))
+                and f"'{value}'" not in sql]
             if unread:
                 notes.append(f"Note: {table}.{column} holds values such as '{unread[0]}', which SQLite's date "
                              "functions cannot read: they read dates written YYYY-MM-DD and give nothing for "
@@ -519,16 +530,9 @@ def query_tables(tables: dict[str, tuple[str, str]], sql: str) -> str:
                 reads.add((arg1, arg2))
             return sqlite3.SQLITE_OK
 
-        # The columns the query reads, from compiling it over the empty
-        # tables: dates and notes follow them, not every file loaded. A
-        # query SQLite refuses is reported when it runs below.
-        db.set_authorizer(authorize)
-        try:
-            db.execute(f"EXPLAIN {sql}")
-        except (sqlite3.Error, sqlite3.Warning):
-            pass
-        db.set_authorizer(None)
-        converted, ambiguous = _settle_dates(dates, reads)
+        # The authorizer records the columns the query reads as SQLite
+        # prepares it; the notes follow them, not every file loaded.
+        converted, ambiguous = _settle_dates(dates)
         for name, (header, body) in parsed.items():
             db.executemany(f'INSERT INTO "{name}" VALUES ({", ".join("?" * len(header))})', body)
         db.set_authorizer(authorize)
