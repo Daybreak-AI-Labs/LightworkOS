@@ -404,8 +404,9 @@ def test_money_figures_no_tool_returned_are_named():
               "Total: $266,935.68")
     assert unsupported_issues(answer, evidence) == [
         "The answer gives 4,326.00, 4,455.78, 4,589.45, 4,727.13 and others, which no tool returned and "
-        "neither the task's files nor the request hold. Work each one out with compute or a query and copy "
-        "the results exactly."]
+        "neither the task's files nor the request hold. Work each one out with compute or a query, by the rule "
+        "the task's files state (a step the files round is rounded before the next), and copy the results "
+        "exactly."]
     # Figures a tool returned (whole, unrounded or as written), or the request gave, stand.
     worked = evidence + "\n4326, 4455.78, 4589.4534, 4727.13\n267580.32"
     assert unsupported_issues(answer.replace("266,935.68", "267,580.32"), worked) == []

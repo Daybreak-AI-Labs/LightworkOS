@@ -320,8 +320,11 @@ def unsupported_issues(answer: str, evidence: str, given: str = "") -> list[str]
     if len(missing) < 2:
         return []
     shown = ", ".join(_money(value, 2) for value in missing[:4]) + (" and others" if len(missing) > 4 else "")
+    # Told only to compute them, a revision swapped a lease's correctly
+    # compounded rent (each year rounded, as the lease says) for 4,200 x 1.03^4.
     return [f"The answer gives {shown}, which no tool returned and neither the task's files nor the request "
-            "hold. Work each one out with compute or a query and copy the results exactly."]
+            "hold. Work each one out with compute or a query, by the rule the task's files state (a step the "
+            "files round is rounded before the next), and copy the results exactly."]
 
 
 _MONTH_NAMES = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
