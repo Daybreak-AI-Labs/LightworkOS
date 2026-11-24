@@ -40,6 +40,10 @@ _SPREADSHEET_SCHEMA = {
                                                   "may be a calculation such as =B2-C2 or =SUM(B2:B13)"),
                  "items": {"type": "array"}},
         "sheet": {"type": "string", "description": "sheet name (xlsx; default: first/active)"},
+        "sheets": {"type": "object", "description": (
+            "xlsx write only, instead of rows and sheet: several sheets in one workbook, "
+            "sheet name -> rows (list of lists), in this order, e.g. "
+            "{\"North\": [[...]], \"South\": [[...]], \"Summary\": [[...]]}")},
         "cell": {"type": "string", "description": "A1-style cell for set_cell, e.g. 'B2'"},
         "value": {"description": "value for set_cell"},
         "limit": {"type": "integer", "default": 50, "minimum": 1, "maximum": 10000},
@@ -457,6 +461,42 @@ def _xlsx_write(path: Path, rows: list[list], sheet: str | None) -> None:
         wb.close()
 
 
+_BAD_SHEET_NAME = re.compile(r"[\[\]:*?/\\]")
+
+
+def _sheets_arg(value: Any) -> dict[str, list[list]]:
+    """The ``sheets`` argument checked: 1 to 50 sheets, each a valid Excel
+    sheet name (at most 31 characters, none of []:*?/\\) with rows."""
+    if not isinstance(value, dict) or not 1 <= len(value) <= 50:
+        raise RuntimeError("sheets must map 1 to 50 sheet names to rows")
+    checked: dict[str, list[list]] = {}
+    for name, rows in value.items():
+        if not isinstance(name, str) or not name.strip() or len(name) > 31 or _BAD_SHEET_NAME.search(name):
+            raise RuntimeError(f"sheet name {name!r} is not allowed in Excel "
+                               "(1-31 characters, none of [ ] : * ? / \\)")
+        if not isinstance(rows, list) or any(not isinstance(row, list) for row in rows):
+            raise RuntimeError(f"sheet {name!r} needs rows (list of lists)")
+        checked[name] = [list(row) for row in rows]
+    return checked
+
+
+def _xlsx_write_sheets(path: Path, sheets: dict[str, list[list]]) -> None:
+    op = _openpyxl()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    wb = op.Workbook()
+    try:
+        for index, (name, rows) in enumerate(sheets.items()):
+            ws = wb.active if index == 0 else wb.create_sheet()
+            ws.title = name
+            for row in rows:
+                ws.append([_xlsx_value(c) for c in row])
+        _recalculate_on_open(wb)
+        with _atomic_destination(path) as temporary:
+            wb.save(temporary)
+    finally:
+        wb.close()
+
+
 def _xlsx_set_cell(path: Path, cell: str, value: Any, sheet: str | None) -> None:
     op = _openpyxl()
     existing = path.exists()
@@ -525,6 +565,23 @@ def _charge_quota(rows: list[list], goal_id) -> None:
     ok, msg = check_and_add(size, goal_id=goal_id)
     if not ok:
         raise RuntimeError(msg)
+
+
+def _write_sheets(path: Path, value: Any, goal_id) -> str:
+    """``write`` with ``sheets``: several named sheets in one new workbook.
+    Asked for one sheet per region and a Summary, an agent could write only
+    one sheet: every write replaced the workbook."""
+    if not _is_xlsx(path):
+        return "ERROR: sheets is for an .xlsx file; a CSV file holds one table"
+    sheets = _sheets_arg(value)
+    for rows in sheets.values():
+        _charge_quota(rows, goal_id)
+    from ..file_lock import workspace_file_lock
+    with workspace_file_lock(path, strict=True):
+        _xlsx_write_sheets(path, sheets)
+    notes = "".join(_totals_note(rows, path).replace("The totals", f"On sheet {name!r} the totals", 1)
+                    for name, rows in sheets.items())
+    return f"wrote {len(sheets)} sheet(s) ({', '.join(sheets)}) to {path}" + notes
 
 
 def _totals_note(rows: list[list], path: Path) -> str:
@@ -623,6 +680,8 @@ def _run(args: dict[str, Any], sandbox=None, goal_id="default") -> str:
             rows = _csv_read(path, limit)
             import json
             return json.dumps(rows, default=str)
+        if op == "write" and args.get("sheets") is not None:
+            return _write_sheets(path, args["sheets"], goal_id)
         if op == "write":
             rows = args.get("rows")
             if not isinstance(rows, list) or any(not isinstance(row, list) for row in rows):
@@ -651,7 +710,8 @@ def spreadsheet(sandbox=None, goal_id: str | int | None = "default") -> Tool:
         name="spreadsheet",
         description=(
             "Read / write / edit CSV + XLSX spreadsheets. ops: info (sheets + "
-            "dims), read (rows as JSON), write (rows -> file), set_cell (xlsx "
+            "dims), read (rows as JSON), write (rows -> file, or sheets -> one .xlsx "
+            "with several named sheets), set_cell (xlsx "
             "A1-cell), recalculate (offline LibreOffice engine when enabled). "
             "Formula cells include formula, cached_value and value_status; a cache is "
             "not proof of fresh calculation. Enabled .xlsm cell edits preserve VBA without executing it."
