@@ -217,3 +217,54 @@ def test_rounding_floor_and_ceiling_work_out_money(monkeypatch):
         # The digits are bounded, so a rounding cannot build a huge number.
         assert "ERROR" in compute().fn({"op": "evaluate", "expr": "round(2.5, 10**6)"})
         assert "ERROR" in compute().fn({"op": "evaluate", "expr": "round(2.5, 100)"})
+
+
+@pytest.mark.parametrize("sympy_missing", [False, True])
+def test_dates_work_out_with_sqlite_date_functions(monkeypatch, sympy_missing):
+    # Live: a lease's renewal-notice deadline (180 days before March 31,
+    # 2030) was refused as "disallowed characters", worked out by hand as
+    # October 3, and accepted; October 2 is the last day.
+    import sys as _sys
+    if sympy_missing:
+        monkeypatch.setitem(_sys.modules, "sympy", None)
+    from maverick.tools.compute import compute
+    run = compute().fn
+    assert run({"op": "evaluate", "expr": "date('2030-03-31', '-180 days')"}) == "2029-10-02"
+    assert run({"op": "evaluate", "expr": "julianday('2030-03-31') - julianday('2029-10-02')"}) == "180"
+    assert run({"op": "evaluate", "expr": "date('2025-04-01', '+60 months', '-1 day')"}) == "2030-03-31"
+    assert run({"op": "evaluate", "expr": "strftime('%w', '2029-10-02')"}) == "2"
+
+
+def test_a_date_expression_that_cannot_run_says_how_to_write_one():
+    from maverick.tools.compute import compute
+    run = compute().fn
+    out = run({"op": "evaluate", "expr": "date('2030-03-31') - 180 days"})
+    assert out.startswith("ERROR") and "date('2030-03-31', '-180 days')" not in out
+    assert "'-180 days'" in out or "'-30 days'" in out
+    assert run({"op": "evaluate", "expr": "date('03/31/2030', '-1 day')"}).startswith("ERROR")
+
+
+@pytest.mark.parametrize("expr", [
+    "date('2026-01-01') FROM sqlite_master",
+    "(SELECT name FROM sqlite_master)",
+    "date('2026-01-01'); SELECT 1",
+    "load_extension('x') || date('2026-01-01')",
+    "(WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT max(x) FROM c) + julianday('2026-01-01')",
+])
+def test_a_date_expression_cannot_reach_beyond_its_functions(expr):
+    from maverick.tools.compute import compute
+    assert compute().fn({"op": "evaluate", "expr": expr}).startswith("ERROR")
+
+
+@pytest.mark.parametrize("expr", [
+    "date('2030-03-31') - 180 days",
+    "date('2030-03-31') - 180",
+    "180 + date('2030-03-31', '+1 day')",
+    "julianday('2030-03-31') AS days",
+])
+def test_a_date_expression_is_never_read_as_a_number_it_does_not_mean(expr):
+    # SQLite reads "date('2030-03-31') - 180 days" as 2030 - 180 named
+    # "days" and answers 1850.
+    from maverick.tools.compute import compute
+    out = compute().fn({"op": "evaluate", "expr": expr})
+    assert out.startswith("ERROR") and "1850" not in out, out

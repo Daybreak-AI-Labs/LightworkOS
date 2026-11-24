@@ -10,6 +10,11 @@ Operations:
   - diff(expr, var)      — derivative
   - integrate(expr, var) — antiderivative
 
+Dates: an ``evaluate`` expression that calls SQLite's date functions
+(``date('2026-01-31', '-30 days')``, ``julianday(b) - julianday(a)``) runs
+in a private in-memory SQLite database whose authorizer allows functions
+only: no table, no subquery, one statement, under a time limit.
+
 Safety: with SymPy, expressions go through its restricted-grammar parser
 (no Python `eval`). The no-SymPy fallback compiles the expression and
 runs `eval()` with `__builtins__` stripped and only a math allowlist in
@@ -23,7 +28,9 @@ import ast
 import json
 import logging
 import re
+import sqlite3
 import sys
+import time
 from typing import Any
 
 from . import Tool
@@ -43,7 +50,10 @@ _COMPUTE_SCHEMA: dict[str, Any] = {
             "type": "string",
             "description": ("The expression. Examples: 'sin(pi/4)', 'x**2 + 3*x', '1000*(1+0.05/12)^(-60)' (^ is power), "
                             "'sum([4850.00, -1245.60, 2317.45])' to add a list of figures, 'round(x, 2)' "
-                            "(half away from zero), 'round(x/0.25)*0.25' for the nearest quarter, floor() and ceil()."),
+                            "(half away from zero), 'round(x/0.25)*0.25' for the nearest quarter, floor() and ceil(). "
+                            "Dates use SQLite's date functions on YYYY-MM-DD dates: "
+                            "date('2026-01-31', '-30 days'), date('2026-01-31', '+3 months'), "
+                            "julianday('2026-03-01') - julianday('2026-01-31') for the days between."),
         },
         "equation": {
             "type": "string",
@@ -268,6 +278,72 @@ def _sums_as_additions(expr: str) -> str:
     return _SUM_CALL.sub(added, expr)
 
 
+_DATE_CALL = re.compile(r"\b(?:date|julianday|datetime|strftime|unixepoch|time)\s*\(", re.IGNORECASE)
+_SQL_KEYWORD = re.compile(r"\b(?:select|from|with|union|pragma|attach)\b", re.IGNORECASE)
+_DATE_HELP = ("For dates, use SQLite's date functions on dates written YYYY-MM-DD: "
+              "date('2026-01-31', '-30 days') moves a date, date('2026-01-31', '+3 months') adds months, "
+              "and julianday('2026-03-01') - julianday('2026-01-31') counts the days between.")
+_DATE_SECONDS = 1.0
+_QUOTED = re.compile(r"'(?:[^']|'')*'")
+_TEXT_DATE_CALL = re.compile(r"\b(?:date|datetime|time|strftime)\s*\(", re.IGNORECASE)
+
+
+def _date_shape_problem(expr: str) -> str | None:
+    """Why ``expr`` is not one expression of calls, figures and quoted text.
+    SQLite reads "date('2030-03-31') - 180 days" as the date's year minus 180,
+    named "days" (1850), so a bare word or arithmetic on date text is refused."""
+    bare = _QUOTED.sub("''", expr)
+    for word in re.finditer(r"[A-Za-z_][A-Za-z0-9_]*", bare):
+        if not re.match(r"\s*\(", bare[word.end():]):
+            return f"{word.group(0)!r} is neither a function nor a figure"
+    for call in _TEXT_DATE_CALL.finditer(bare):
+        depth, end = 0, len(bare)
+        for i in range(call.end() - 1, len(bare)):
+            depth += {"(": 1, ")": -1}.get(bare[i], 0)
+            if depth == 0:
+                end = i + 1
+                break
+        before, after = bare[:call.start()].rstrip(), bare[end:].lstrip()
+        if (before and before[-1] in "+-*/%") or (after and after[0] in "+-*/%"):
+            return "date text cannot be added to or subtracted from; give date() the change as a modifier"
+    return None
+
+
+def _evaluate_dates(expr: str) -> str:
+    """A date expression, worked out by SQLite. Live: a lease's renewal
+    deadline, refused here and counted by hand, came out a day late."""
+    if len(expr) > 1000 or ";" in expr or _SQL_KEYWORD.search(expr):
+        return f"ERROR: cannot evaluate {expr!r}: only one expression of functions and figures. {_DATE_HELP}"
+    problem = _date_shape_problem(expr)
+    if problem:
+        return f"ERROR: cannot evaluate {expr!r}: {problem}. {_DATE_HELP}"
+    db = sqlite3.connect(":memory:")
+    try:
+        def authorize(action, _arg1, arg2, _db, _trigger):
+            if action == sqlite3.SQLITE_SELECT or (
+                    action == sqlite3.SQLITE_FUNCTION
+                    and str(arg2).lower() not in {"load_extension", "readfile", "writefile"}):
+                return sqlite3.SQLITE_OK
+            return sqlite3.SQLITE_DENY
+
+        deadline = time.monotonic() + _DATE_SECONDS
+        db.set_authorizer(authorize)
+        db.set_progress_handler(lambda: int(time.monotonic() > deadline), 10_000)
+        try:
+            row = db.execute("SELECT " + expr).fetchone()
+        except (sqlite3.Error, sqlite3.Warning) as exc:
+            return f"ERROR: cannot evaluate {expr!r}: {exc}. {_DATE_HELP}"
+    finally:
+        db.close()
+    value = row[0] if row else None
+    if value is None:
+        return f"ERROR: {expr!r} gave no value; a date must be written YYYY-MM-DD. {_DATE_HELP}"
+    if isinstance(value, float):
+        value = round(value, 9)
+        return str(int(value)) if value.is_integer() else str(value)
+    return str(value)
+
+
 def _run_evaluate(args: dict[str, Any]) -> str:
     expr = str(args.get("expr") or "").strip()
     if not expr:
@@ -402,6 +478,8 @@ def _run(args: dict[str, Any]) -> str:
         return "ERROR: op is required"
     if not isinstance(op, str) or op not in _VALID_OPS:
         return f"ERROR: unknown op {op!r}"
+    if op == "evaluate" and _DATE_CALL.search(str(args.get("expr") or "")):
+        return _evaluate_dates(str(args.get("expr")).strip())
     args = _caret_as_power(args)
 
     if op == "evaluate" and not _have_sympy():
@@ -439,8 +517,9 @@ def compute() -> Tool:
             "simplify (symbolic), solve (single-var equation; '=' or "
             "implicit '=0'), diff (derivative), integrate "
             "(antiderivative). Replaces LLM mental math, which is "
-            "unreliable past trivial arithmetic. Symbolic ops require "
-            "the [math] extra (sympy)."
+            "unreliable past trivial arithmetic, including dates: evaluate "
+            "takes SQLite's date functions, such as date('2026-01-31', '-30 days'). "
+            "Symbolic ops require the [math] extra (sympy)."
         ),
         input_schema=_COMPUTE_SCHEMA,
         fn=_run,
