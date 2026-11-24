@@ -379,9 +379,9 @@ def test_a_result_showing_shifts_as_clock_ranges_points_at_hours():
     # counted it 7.5 paid hours by hand where it is 8 (8.5 less lunch).
     text = "Employee,Mon,Tue\nFemi,11:00-19:30,off\nAna,22:00-06:00,9:00 AM - 5:30 PM\n"
     out = _query(text, "SELECT * FROM data")
-    assert out[-1] == ("Note: Mon holds clock times such as 11:00-19:30. Work hours out in the query, not by "
-                       "hand: hours(Mon) gives 8.5 for that shift and counts on past midnight, and a lunch rule "
-                       "is a CASE, as in hours(Mon) - CASE WHEN hours(Mon) > 6 THEN 0.5 ELSE 0 END."), out
+    assert out[-1] == ("Note: Mon holds clock times such as 11:00-19:30: hours(Mon) gives 8.5 for that shift and "
+                       "counts on past midnight, and a lunch rule is a CASE, as in hours(Mon) - CASE WHEN "
+                       "hours(Mon) > 6 THEN 0.5 ELSE 0 END. Work hours out in the query, not by hand."), out
     # A query that already works the hours out, and dates or codes, get no note.
     assert not any("clock times" in line for line in _query(text, "SELECT Employee, hours(Mon) AS h FROM data"))
     assert not any("clock times" in line for line in _query("id,d\nSO-5001,2026-10-01\n", "SELECT * FROM data"))
@@ -418,3 +418,14 @@ def test_more_date_forms_still_explain_an_empty_result():
     text = "invoice,due\nA1,2026-10-01\nA2,2026-11-15\nA3,TBD\n"
     assert _query(text, "SELECT invoice, julianday('2026-11-24') - julianday(due) AS age FROM data "
                         "WHERE due <> 'TBD' ORDER BY julianday(due)") == ["invoice,age", "A1,54.0", "A2,9.0"]
+
+
+def test_epoch_seconds_and_product_names_are_not_called_unreadable_dates():
+    # Review: a column of Unix seconds read with 'unixepoch' was named as
+    # dates the date functions cannot read, and "Monitor Stand 27" read as a
+    # weekday-first date.
+    text = "id,ts\n1,1767225600\n2,1767312000\n"
+    out = _query(text, "SELECT id, date(ts, 'unixepoch') AS d FROM data WHERE julianday(ts, 'unixepoch') > 0")
+    assert out == ["id,d", "1,2026-01-01", "2,2026-01-02"], out
+    items = "item,shipped\nMonitor Stand 27,\nSun Shade 12 Pack,\n"
+    assert not any("holds values" in line for line in _query(items, "SELECT item, date(shipped) AS d FROM data"))

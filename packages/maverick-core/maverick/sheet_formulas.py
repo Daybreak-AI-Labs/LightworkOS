@@ -27,6 +27,14 @@ class _Uncomputable(Exception):
     pass
 
 
+class _ErrorCell(_Uncomputable):
+    """A cell holding an error such as #N/A: every function but COUNT,
+    which skips it as Excel does, is an error too."""
+
+
+_SKIPPED = object()  # an error cell inside a range
+
+
 class Memo:
     """What the formulas of one sheet share: each formula cell's result, so
     it is worked out once, and the work left (cells read plus formula tokens),
@@ -190,7 +198,10 @@ class _Parser:
         found = []
         for row in range(r1, r2 + 1):
             for column in range(c1, c2 + 1):
-                value = self.cell(f"{_letters(column)}{row}", self.depth, True)
+                try:
+                    value = self.cell(f"{_letters(column)}{row}", self.depth, True)
+                except _ErrorCell:
+                    value = _SKIPPED
                 if value is not None:
                     found.append(value)
         return found
@@ -198,6 +209,12 @@ class _Parser:
     def function(self, name: str) -> Decimal:
         args = self.arguments()
         flat = [value for group in args for value in group]
+        if name == "COUNT":
+            # Excel's COUNT skips an error cell; COUNT over a #N/A was left
+            # uncomputed once errors stopped every formula.
+            return Decimal(sum(1 for value in flat if value is not _SKIPPED))
+        if any(value is _SKIPPED for value in flat):
+            raise _Uncomputable("a range holds an error cell")
         if name == "SUM":
             return sum(flat, Decimal(0))
         if name == "PRODUCT":
@@ -205,8 +222,6 @@ class _Parser:
             for value in flat:
                 product *= value
             return product
-        if name == "COUNT":
-            return Decimal(len(flat))
         if name in ("AVERAGE", "MIN", "MAX"):
             if not flat:
                 raise _Uncomputable(f"{name} of nothing")
@@ -258,7 +273,7 @@ def evaluate(formula: Any, get: Callable[[str], Any], memo: Memo | None = None) 
             # An error cell makes every formula that reads it an error, in a
             # range too: SUM over a #N/A came back 2030.75 where Excel shows
             # #N/A, and the answer quoted the figure the file does not hold.
-            raise _Uncomputable(f"{key} holds the error {value.strip()}")
+            raise _ErrorCell(f"{key} holds the error {value.strip()}")
         if in_range and isinstance(value, str):
             # Excel leaves text in a range out of SUM, AVERAGE, MIN, MAX and
             # COUNT: "1200" typed as text added nothing to the file's total.

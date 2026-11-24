@@ -413,7 +413,8 @@ def _percent_notes(db, headers: dict[str, list[str]], reads: set[tuple[str, str]
 _LOOSE_DATE = re.compile(
     r"\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}|[A-Za-z]{3,9}\.? +\d{1,2}(?:st|nd|rd|th)?,? +\d{4}"
     r"|\d{1,2}[ /-]+[A-Za-z]{3,9}\.?,?[ /-]+\d{2,4}"
-    r"|(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*\.?,? +[A-Za-z]{3,9}\.? +\d{1,2}"
+    r"|(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tues?|wed|thur?s?|fri|sat|sun)\.?, +"
+    r"[A-Za-z]{3,9}\.? +\d{1,2}"
     r"|(?:19|20)\d\d(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])$", re.IGNORECASE)
 
 
@@ -457,7 +458,8 @@ def _date_notes(db, ambiguous: list[tuple[str, str, str]], converted: list[tuple
             # A value the query names itself (WHERE due <> 'TBD') is one it
             # has already dealt with.
             unread = [value for (value,) in db.execute(
-                f'SELECT {quoted} FROM "{table}" WHERE typeof({quoted}) IN (\'text\', \'integer\') '
+                f'SELECT {quoted} FROM "{table}" WHERE (typeof({quoted}) = \'text\' OR (typeof({quoted}) = '
+                f"'integer' AND {quoted} BETWEEN 19000101 AND 21001231)) "
                 f"AND trim({quoted}) <> '' AND julianday({quoted}) IS NULL LIMIT 20")
                 if ((table, column) in direct or _LOOSE_DATE.match(str(value).strip()))
                 and f"'{value}'" not in sql]
@@ -479,6 +481,29 @@ def _date_notes(db, ambiguous: list[tuple[str, str, str]], converted: list[tuple
 _CLOCK_SHOWN = re.compile(r"\d{1,2}:\d{2}|\d\s*[ap]\.?m\b", re.IGNORECASE)
 
 
+def shift_note(shift: str, where: str, column: str) -> str:
+    """What to know about a shift written as ``shift`` in ``column``: how
+    hours() reads it, or, when it has no AM or PM and ends before it starts
+    on a 12-hour clock (8:00-4:30), that hours() reads it as running past
+    midnight. Pushed to hours() with no word on this, a US timesheet's
+    8:00-4:30 day shift was offered as 20.5 hours."""
+    hours = _shift_hours(shift)
+    if hours is None:
+        return ""
+    figure = int(hours) if float(hours).is_integer() else round(hours, 4)
+    ends = _ends(shift)
+    twelve = re.search(r"[ap]\.?\s*m", shift, re.IGNORECASE) is None and all(
+        (minutes := _minutes(end)) is not None and minutes < 13 * 60 for end in ends)
+    if twelve and hours > 12:
+        return (f"{where} holds clock times such as {shift}, with no AM or PM: hours() reads that as running past "
+                f"midnight ({figure} hours). If they are day shifts, say so and work them out as such "
+                "(8:00 AM to 4:30 PM is 8.5 hours), or ask which they are.")
+    name = column if re.fullmatch(r"[A-Za-z_]\w*", column) else '"' + column.replace('"', '""') + '"'
+    return (f"{where} holds clock times such as {shift}: hours({name}) gives {figure} for that shift and counts "
+            f"on past midnight, and a lunch rule is a CASE, as in hours({name}) - CASE WHEN hours({name}) > 6 "
+            "THEN 0.5 ELSE 0 END.")
+
+
 def _clock_notes(columns: list[str], rows: list, sql: str) -> list[str]:
     """A note when the result shows shifts as clock ranges and the query did
     not work them out. Live: SELECT * on a Word timesheet showed 11:00-19:30,
@@ -487,13 +512,9 @@ def _clock_notes(columns: list[str], rows: list, sql: str) -> list[str]:
         return []
     for row in rows:
         for column, value in zip(columns, row, strict=False):
-            if isinstance(value, str) and _CLOCK_SHOWN.search(value) and (hours := _shift_hours(value)) is not None:
-                name = column if re.fullmatch(r"[A-Za-z_]\w*", column) else '"' + column.replace('"', '""') + '"'
-                figure = int(hours) if float(hours).is_integer() else round(hours, 4)
-                return [f"Note: {column} holds clock times such as {value}. Work hours out in the query, not "
-                        f"by hand: hours({name}) gives {figure} for that shift and counts on past midnight, and "
-                        f"a lunch rule is a CASE, as in hours({name}) - CASE WHEN hours({name}) > 6 THEN 0.5 "
-                        "ELSE 0 END."]
+            if isinstance(value, str) and _CLOCK_SHOWN.search(value) and (
+                    note := shift_note(value, column, column)):
+                return [f"Note: {note} Work hours out in the query, not by hand."]
     return []
 
 

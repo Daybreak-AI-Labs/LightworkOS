@@ -660,9 +660,24 @@ def test_a_table_of_clock_times_read_as_text_points_at_hours(tmp_path):
     companion = next(a.id for a in world.list_attachments(gid) if a.filename.endswith(".extracted.txt"))
     tool = read_attachment_tool(world, gid)
     for out in (tool.fn({"id": companion}), tool.fn({"id": companion, "search": "Dana"})):
-        assert "Note: this table holds clock times such as 7:00-15:30" in out, out
-        assert "hours('7:00-15:30') is 8.5" in out
-    assert "hours('22:00-06:00') is 8" in tool.fn({"id": shifts})
+        assert "Note: this table holds clock times such as 7:00-15:30: hours(shift) gives 8.5" in out, out
+        assert "Work hours out with `sql` on this file, not by hand." in out
+    assert "such as 22:00-06:00: hours(shift) gives 8 for that shift" in tool.fn({"id": shifts})
     # Plain text with no table to query gets no note, and neither does a query.
     assert "Note: this table" not in tool.fn({"id": notes})
     assert "Note: this table" not in tool.fn({"id": shifts, "sql": "SELECT hours(shift) AS h FROM data"})
+
+
+def test_a_clock_time_note_warns_of_twelve_hour_shifts_and_skips_prose(tmp_path):
+    # Review: hours() reads a US day shift written 8:00-4:30 as running past
+    # midnight, and the note offered that 20.5 hours as the figure to use; it
+    # also called a lease's "quiet hours are 10:00 PM - 7:00 AM" a table.
+    world = WorldModel(tmp_path / "w.db")
+    gid = world.create_goal("g", "")
+    sheet = _add(world, gid, tmp_path, "times.csv", "text/csv", b"Employee,Mon,Tue\nAna,8:00-4:30,9:00-5:30\n")
+    lease = _add(world, gid, tmp_path, "lease.txt", "text/plain", b"Quiet hours are 10:00 PM - 7:00 AM daily.")
+    tool = read_attachment_tool(world, gid)
+    out = tool.fn({"id": sheet})
+    assert "with no AM or PM: hours() reads that as running past midnight (20.5 hours)" in out, out
+    assert "8:00 AM to 4:30 PM is 8.5 hours" in out
+    assert "Note:" not in tool.fn({"id": lease})

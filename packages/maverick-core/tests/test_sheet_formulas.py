@@ -135,3 +135,14 @@ def test_an_error_cell_in_a_range_leaves_the_formula_uncomputed(tmp_path):
     out = spreadsheet._run({"op": "write", "path": str(tmp_path / "m.xlsx"),
                             "rows": [["Store", "Margin"], ["A", 0.21], ["B", "#DIV/0!"], ["Avg", "=AVERAGE(B2:B3)"]]})
     assert "Avg,0.21" not in out, out
+
+
+def test_count_skips_an_error_cell_as_excel_does():
+    # Review: once an error cell stopped every formula, COUNT over a #N/A was
+    # left uncomputed; Excel's COUNT skips it and counts the numbers.
+    from maverick.sheet_formulas import evaluate
+
+    cells = {"B2": 1200, "B3": "#N/A", "B4": 830.75, "B5": "N/A"}.get
+    assert evaluate("=COUNT(B2:B5)", cells) == 2
+    assert evaluate("=SUM(B2:B5)", cells) is None
+    assert evaluate("=AVERAGE(B2:B4)", cells) is None

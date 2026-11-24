@@ -373,20 +373,18 @@ _CLOCK_RANGE = re.compile(r"(?<![\d:])\d{1,2}:\d{2}(?:\s*[AaPp]\.?[Mm]\.?)?\s*[-
 
 
 def _clock_note(shown: str) -> str:
-    """A note pointing at `sql` and hours() when the text a read returns holds
-    shift times. Live: read as text, a Word timesheet's 7:00-15:30 shifts were
-    worked out by hand as 7.5 paid hours, then 45.25 for a 40.75-hour week,
-    and the payroll was $160 too high."""
-    from .csv_query import _shift_hours
-
+    """A note pointing at `sql` and hours() when a table the read returns
+    holds shift times. Live: read as text, a Word timesheet's 7:00-15:30
+    shifts were worked out by hand as 7.5 paid hours, then 45.25 for a
+    40.75-hour week, and the payroll was $160 too high. Only a table row
+    counts: a lease's "quiet hours are 10:00 PM - 7:00 AM" is no timesheet."""
     for found in _CLOCK_RANGE.finditer(shown):
-        hours = _shift_hours(found.group(0))
-        if hours is not None:
-            figure = int(hours) if float(hours).is_integer() else round(hours, 4)
-            return (f"\n\nNote: this table holds clock times such as {found.group(0)}. Work hours out "
-                    f"with `sql` on this file, not by hand: hours('{found.group(0)}') is {figure}, a shift "
-                    "past midnight counts on, and a lunch rule is a CASE, as in SELECT Employee, "
-                    "hours(Mon) - CASE WHEN hours(Mon) > 6 THEN 0.5 ELSE 0 END AS mon FROM data.")
+        line = shown[shown.rfind("\n", 0, found.start()) + 1:shown.find("\n", found.end()) % (len(shown) + 1)]
+        if line.count("|") >= 2 or line.count(",") >= 2 or line.count("\t") >= 2:
+            from .csv_query import shift_note
+            note = shift_note(found.group(0), "this table", "shift")
+            if note:
+                return f"\n\nNote: {note} Work hours out with `sql` on this file, not by hand."
     return ""
 
 
