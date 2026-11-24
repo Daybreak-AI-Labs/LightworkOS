@@ -30441,8 +30441,8 @@
       "observed_mechanism_markers": {},
       "source_sites": [
         {
-          "line": 320,
-          "function": "_evaluate_dates",
+          "line": 349,
+          "function": "_date_results",
           "kind": "connect",
           "expression": "sqlite3.connect(':memory:')"
         }

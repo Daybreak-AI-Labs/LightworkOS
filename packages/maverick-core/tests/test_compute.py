@@ -268,3 +268,109 @@ def test_a_date_expression_is_never_read_as_a_number_it_does_not_mean(expr):
     from maverick.tools.compute import compute
     out = compute().fn({"op": "evaluate", "expr": expr})
     assert out.startswith("ERROR") and "1850" not in out, out
+
+
+@pytest.mark.parametrize("sympy_missing", [False, True])
+def test_arithmetic_beside_a_date_call_keeps_true_division_and_money_rounding(monkeypatch, sympy_missing):
+    # Prorated rent written as the daily rate times the days came back 768
+    # instead of 774.19: SQLite ran the whole expression, divided 1500 by 31
+    # as whole numbers and rounded 2.675 down to 2.67.
+    import sys as _sys
+    if sympy_missing:
+        monkeypatch.setitem(_sys.modules, "sympy", None)
+    elif not _HAS_SYMPY:
+        pytest.skip("sympy not installed")
+    from maverick.tools.compute import compute
+    run = compute().fn
+    cases = {
+        "1500/31 * (julianday('2026-03-31') - julianday('2026-03-15'))": ("774.193548387096774193548387097", 1500 / 31 * 16),
+        "(unixepoch('2026-01-01 17:30') - unixepoch('2026-01-01 08:45')) / 3600": ("8.75", 8.75),
+        "7/2 + julianday('2026-01-02') - julianday('2026-01-01')": ("4.5", 4.5),
+        "round(2.675, 2) + 0*julianday('2026-01-01')": ("2.68", 2.68),
+        "round(1.005, 2) + 0*julianday('2026-01-01')": ("1.01", 1.01),
+        "round(41.175 * (julianday('2026-01-02') - julianday('2026-01-01')), 2)": ("41.18", 41.18),
+        "strftime('%m', '2026-03-01') * 10 + strftime('%w', '2029-10-02')": ("32", 32.0),
+    }
+    for expr, (exact, approx) in cases.items():
+        out = run({"op": "evaluate", "expr": expr})
+        if sympy_missing:
+            assert round(float(out), 9) == round(approx, 9), (expr, out)
+        else:
+            assert out == exact, (expr, out)
+
+
+@pytest.mark.parametrize("expr", [
+    "julianday(2026-03-01) - julianday(2026-01-31)",
+    "julianday(2030-03-31) - julianday(2029-10-02)",
+    "date(2030-03-31, '-180 days')",
+    "date(2030-03-31)",
+    "strftime('%w', 2029-10-02)",
+    "julianday(2460000.5)",
+    "julianday(date(2030-03-31))",
+])
+def test_an_unquoted_date_is_refused_not_read_as_arithmetic(expr):
+    # SQLite reads julianday(2026-03-01) as julianday(2022), a day in 4708 BC:
+    # the gap to an unquoted January 31 came back 28 days instead of 29.
+    from maverick.tools.compute import compute
+    out = compute().fn({"op": "evaluate", "expr": expr})
+    assert out.startswith("ERROR") and "in quotes" in out, out
+
+
+def test_a_quoted_date_inside_another_date_call_still_works():
+    from maverick.tools.compute import compute
+    run = compute().fn
+    assert run({"op": "evaluate", "expr": "julianday('2026-03-01') - julianday('2026-01-31')"}) == "29"
+    assert run({"op": "evaluate",
+                "expr": "julianday(date('2026-01-31', '+1 month')) - julianday('2026-01-31')"}) == "31"
+    assert run({"op": "evaluate", "expr": "DATE ( '2030-03-31' , '-180 days' )"}) == "2029-10-02"
+
+
+@pytest.mark.parametrize("expr", [
+    "length(randomblob(100000000)) + julianday('2026-01-01')",
+    "coalesce(zeroblob(10000000), date('2026-01-01'))",
+    "printf('%5000000d', julianday('2026-01-01'))",
+    "julianday(randomblob(10))",
+    "date(zeroblob(1000))",
+    "strftime('" + "%J" * 450 + "', '2026-01-01')",
+])
+def test_a_date_call_cannot_allocate_or_build_huge_text(expr):
+    # A short expression made SQLite allocate a gigabyte in the agent's own
+    # process (randomblob, zeroblob, printf): its time limit never fires
+    # inside a single function call.
+    from maverick.tools.compute import compute
+    out = compute().fn({"op": "evaluate", "expr": expr})
+    assert out.startswith("ERROR") and len(out) < 5000, out[:200]
+
+
+@pytest.mark.parametrize("expr", [
+    "(date('2030-03-31')) - 180",
+    "round(date('2030-03-31')) - 180",
+    "abs(date('2030-03-31')) - 180",
+    "max(date('2030-03-31')) - 180",
+    "date('2030-03-31') || '' - 180",
+    "/* ' */ date('2030-03-31') - 180 /* ' */",
+    "/*'*/ CAST(date('2030-03-31') AS INTEGER) - 180 /*'*/",
+    "date('2030-03-31') -- '\n - 180",
+    "julianday('2030-03-31') - '2029-10-02'",
+])
+def test_date_text_cannot_be_slipped_into_arithmetic(expr):
+    # Wrapping the date text, or hiding a quote in a comment, got past the
+    # check on the call's own neighbours, and SQLite answered 1850 again.
+    from maverick.tools.compute import compute
+    out = compute().fn({"op": "evaluate", "expr": expr})
+    assert out.startswith("ERROR") and "1850" not in out and "2460562.5" not in out, out
+
+
+@pytest.mark.skipif(not _HAS_SYMPY, reason="sympy not installed")
+@pytest.mark.parametrize(("expr", "expected"), [
+    ("(julianday('2026-01-01 17:30') - julianday('2026-01-01 08:45')) * 24", "8.75"),
+    ("(julianday('2026-01-01 17:30') - julianday('2026-01-01 08:45')) * 24 * 60", "525"),
+    ("(julianday('2026-01-01 10:00') - julianday('2026-01-01 08:00')) * 24 * 60", "120"),
+    ("(julianday('2026-01-01 10:00') - julianday('2026-01-01 08:00')) * 24", "2"),
+    ("(unixepoch('2026-01-01 17:30:00.250', 'subsec') - unixepoch('2026-01-01 17:30')) * 4", "1"),
+])
+def test_hours_between_two_times_come_out_exact(expr, expected):
+    # julianday() hands back a float of days off by about 5e-10, and hours
+    # worked came back 8.749999993 instead of 8.75.
+    from maverick.tools.compute import compute
+    assert compute().fn({"op": "evaluate", "expr": expr}) == expected

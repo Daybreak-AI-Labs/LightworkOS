@@ -10,10 +10,12 @@ Operations:
   - diff(expr, var)      — derivative
   - integrate(expr, var) — antiderivative
 
-Dates: an ``evaluate`` expression that calls SQLite's date functions
-(``date('2026-01-31', '-30 days')``, ``julianday(b) - julianday(a)``) runs
-in a private in-memory SQLite database whose authorizer allows functions
-only: no table, no subquery, one statement, under a time limit.
+Dates: an ``evaluate`` expression may call SQLite's date functions
+(``date('2026-01-31', '-30 days')``, ``julianday(b) - julianday(a)``). Each
+call holds only quoted dates and modifiers and is worked out alone in a
+private in-memory SQLite database whose authorizer allows the date functions
+only, with a cap on the text they build. Its exact value then goes into the
+arithmetic, which is evaluated as any other expression.
 
 Safety: with SymPy, expressions go through its restricted-grammar parser
 (no Python `eval`). The no-SymPy fallback compiles the expression and
@@ -30,7 +32,7 @@ import logging
 import re
 import sqlite3
 import sys
-import time
+from fractions import Fraction
 from typing import Any
 
 from . import Tool
@@ -278,70 +280,127 @@ def _sums_as_additions(expr: str) -> str:
     return _SUM_CALL.sub(added, expr)
 
 
-_DATE_CALL = re.compile(r"\b(?:date|julianday|datetime|strftime|unixepoch|time)\s*\(", re.IGNORECASE)
+_DATE_FUNCTIONS = frozenset({"date", "time", "datetime", "julianday", "unixepoch", "strftime", "timediff"})
+_DATE_CALL = re.compile(r"\b(?:date|julianday|datetime|strftime|unixepoch|timediff|time)\s*\(", re.IGNORECASE)
 _SQL_KEYWORD = re.compile(r"\b(?:select|from|with|union|pragma|attach)\b", re.IGNORECASE)
+_SQL_COMMENT = re.compile(r"--|/\*|\*/")
 _DATE_HELP = ("For dates, use SQLite's date functions on dates written YYYY-MM-DD: "
               "date('2026-01-31', '-30 days') moves a date, date('2026-01-31', '+3 months') adds months, "
               "and julianday('2026-03-01') - julianday('2026-01-31') counts the days between.")
-_DATE_SECONDS = 1.0
-_QUOTED = re.compile(r"'(?:[^']|'')*'")
-_TEXT_DATE_CALL = re.compile(r"\b(?:date|datetime|time|strftime)\s*\(", re.IGNORECASE)
+# The longest text a date function may build. Without it a strftime() format
+# repeated to fill the expression built a string many times its length.
+_DATE_TEXT_LIMIT = 1000
+_WORD = re.compile(r"\w+")
+_OPENING = re.compile(r"\s*\(")
+_DATE_ARGUMENT = re.compile(r"\s+|,|\)|'(?:[^']|'')*'|(\w+)\s*\(")
+_PLAIN_NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
 
 
-def _date_shape_problem(expr: str) -> str | None:
-    """Why ``expr`` is not one expression of calls, figures and quoted text.
-    SQLite reads "date('2030-03-31') - 180 days" as the date's year minus 180,
-    named "days" (1850), so a bare word or arithmetic on date text is refused."""
-    bare = _QUOTED.sub("''", expr)
-    for word in re.finditer(r"[A-Za-z_][A-Za-z0-9_]*", bare):
-        if not re.match(r"\s*\(", bare[word.end():]):
-            return f"{word.group(0)!r} is neither a function nor a figure"
-    for call in _TEXT_DATE_CALL.finditer(bare):
-        depth, end = 0, len(bare)
-        for i in range(call.end() - 1, len(bare)):
-            depth += {"(": 1, ")": -1}.get(bare[i], 0)
-            if depth == 0:
-                end = i + 1
-                break
-        before, after = bare[:call.start()].rstrip(), bare[end:].lstrip()
-        if (before and before[-1] in "+-*/%") or (after and after[0] in "+-*/%"):
-            return "date text cannot be added to or subtracted from; give date() the change as a modifier"
-    return None
+def _date_call_end(expr: str, i: int, name: str) -> int:
+    """Where the call whose arguments start at ``i`` ends. Only quoted text,
+    commas and further date calls may appear inside: SQLite read an unquoted
+    julianday(2026-03-01) as julianday(2022), a day in 4708 BC, and a
+    randomblob() there allocated a gigabyte in the agent's own process."""
+    depth = 1
+    while depth:
+        token = _DATE_ARGUMENT.match(expr, i)
+        if i == len(expr) or (expr[i] == "'" and token is None):
+            raise ValueError(f"a quote or parenthesis in {name}() is not closed")
+        if token is None or (token.group(1) and token.group(1).lower() not in _DATE_FUNCTIONS):
+            bare = re.match(r"[^,()']*", expr[i:]).group(0).strip() or expr[i]
+            raise ValueError(f"write the dates and modifiers in {name}() in quotes, "
+                             f"such as julianday('2026-03-01'): {bare} is not quoted")
+        depth += 1 if token.group(1) else -1 if token.group(0) == ")" else 0
+        i = token.end()
+    return i
+
+
+def _date_calls(expr: str) -> list[tuple[int, int, str]]:
+    """The start, end and function of each outermost date call in ``expr``."""
+    calls, i = [], 0
+    while i < len(expr):
+        if expr[i] == "'":
+            # Quoted text outside a date call is a date read as a number:
+            # julianday('2030-03-31') - '2029-10-02' came back 2460562.5.
+            raise ValueError("quoted text belongs inside a date function, such as julianday('2029-10-02')")
+        word = _WORD.match(expr, i)
+        opening = _OPENING.match(expr, word.end()) if word else None
+        if word is None:
+            i += 1
+        elif opening and word.group(0).lower() in _DATE_FUNCTIONS:
+            end = _date_call_end(expr, opening.end(), word.group(0))
+            calls.append((i, end, word.group(0).lower()))
+            i = end
+        else:
+            i = word.end()
+    return calls
+
+
+def _authorize_date_function(action, _arg1, arg2, _db, _trigger):
+    if action == sqlite3.SQLITE_SELECT or (
+            action == sqlite3.SQLITE_FUNCTION and str(arg2).lower() in _DATE_FUNCTIONS):
+        return sqlite3.SQLITE_OK
+    return sqlite3.SQLITE_DENY
+
+
+def _date_results(calls: list[str]) -> list[Any]:
+    """Each date call's value, worked out alone in a private in-memory SQLite
+    database with no tables and only the date functions."""
+    db = sqlite3.connect(":memory:")
+    try:
+        db.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, _DATE_TEXT_LIMIT)
+        db.set_authorizer(_authorize_date_function)
+        results = []
+        for call in calls:
+            try:
+                value = db.execute("SELECT " + call).fetchone()[0]
+            except (sqlite3.Error, sqlite3.Warning) as exc:
+                raise ValueError(f"{call}: {exc}") from exc
+            if value is None:
+                raise ValueError(f"{call} gave no value; a date must be written YYYY-MM-DD")
+            results.append(value)
+        return results
+    finally:
+        db.close()
+
+
+def _exact_figure(name: str, value: Any) -> Fraction:
+    """A date call's value as the exact figure it stands for."""
+    if isinstance(value, float):
+        # SQLite keeps time in whole milliseconds. julianday() hands them back
+        # as a float of days off by about 5e-10, which made 8.75 hours worked
+        # 8.749999993; the float is far closer than half a millisecond.
+        per_unit = 86_400_000 if name == "julianday" else 1000
+        return Fraction(round(value * per_unit), per_unit)
+    if isinstance(value, int) or _PLAIN_NUMBER.fullmatch(value):
+        return Fraction(value)
+    raise ValueError("date text cannot be added to or subtracted from; give date() the change as a modifier")
 
 
 def _evaluate_dates(expr: str) -> str:
-    """A date expression, worked out by SQLite. Live: a lease's renewal
-    deadline, refused here and counted by hand, came out a day late."""
-    if len(expr) > 1000 or ";" in expr or _SQL_KEYWORD.search(expr):
+    """A date expression. SQLite works out only the date calls; their exact
+    values go into the arithmetic, which is evaluated as any other expression.
+    Live: a lease's renewal deadline, refused here and counted by hand, came
+    out a day late. Running the whole expression in SQLite divided 1500 by 31
+    as whole numbers, and prorated rent came back 768 instead of 774.19."""
+    if len(expr) > 1000 or ";" in expr or _SQL_COMMENT.search(expr) or _SQL_KEYWORD.search(expr):
         return f"ERROR: cannot evaluate {expr!r}: only one expression of functions and figures. {_DATE_HELP}"
-    problem = _date_shape_problem(expr)
-    if problem:
-        return f"ERROR: cannot evaluate {expr!r}: {problem}. {_DATE_HELP}"
-    db = sqlite3.connect(":memory:")
     try:
-        def authorize(action, _arg1, arg2, _db, _trigger):
-            if action == sqlite3.SQLITE_SELECT or (
-                    action == sqlite3.SQLITE_FUNCTION
-                    and str(arg2).lower() not in {"load_extension", "readfile", "writefile"}):
-                return sqlite3.SQLITE_OK
-            return sqlite3.SQLITE_DENY
-
-        deadline = time.monotonic() + _DATE_SECONDS
-        db.set_authorizer(authorize)
-        db.set_progress_handler(lambda: int(time.monotonic() > deadline), 10_000)
-        try:
-            row = db.execute("SELECT " + expr).fetchone()
-        except (sqlite3.Error, sqlite3.Warning) as exc:
-            return f"ERROR: cannot evaluate {expr!r}: {exc}. {_DATE_HELP}"
-    finally:
-        db.close()
-    value = row[0] if row else None
-    if value is None:
-        return f"ERROR: {expr!r} gave no value; a date must be written YYYY-MM-DD. {_DATE_HELP}"
-    if isinstance(value, float):
-        value = round(value, 9)
-        return str(int(value)) if value.is_integer() else str(value)
-    return str(value)
+        calls = _date_calls(expr)
+        results = _date_results([expr[start:end] for start, end, _name in calls])
+        if len(calls) == 1 and calls[0][:2] == (0, len(expr)) and isinstance(results[0], str):
+            return results[0]
+        figures = expr
+        for (start, end, name), value in reversed(list(zip(calls, results, strict=True))):
+            figures = f"{figures[:start]}({_exact_figure(name, value)}){figures[end:]}"
+    except ValueError as exc:
+        return f"ERROR: cannot evaluate {expr!r}: {exc}. {_DATE_HELP}"
+    args = _caret_as_power({"expr": figures})
+    if _have_sympy():
+        return _run_isolated("evaluate", args)
+    out = _run_evaluate(args)
+    # The fallback works in floats and printed 180 days as "180.0".
+    return out if out.startswith("ERROR") else ", ".join(_figure(part) for part in out.split(", "))
 
 
 def _run_evaluate(args: dict[str, Any]) -> str:
