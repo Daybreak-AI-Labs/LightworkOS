@@ -205,10 +205,18 @@ def rows_issues(rows: list[list[Any]]) -> list[str]:
 
 
 _CENTS = re.compile(r"(?<![\w.,])[$€£]?\s?(\d{1,3}(?:,\d{3})+\.\d{2}|\d{2,}\.\d{2})(?![\d%])(?!\.\d)")
+# A whole number token, thousands groups included, so "1,234.56" is one
+# figure and a CSV field after a comma ("266.32,4284.61") is another.
+_NUMBER_TOKEN = re.compile(r"(?<![\w.])[$€£]?\s?(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(?![\d%])")
 
 
 def _cents_figures(text: str) -> set[Decimal]:
-    return {Decimal(raw.replace(",", "")) for raw in _CENTS.findall(text or "")}
+    """Two-decimal figures of ten or more: what typed money looks like."""
+    found = set()
+    for whole, decimals in _NUMBER_TOKEN.findall(text or ""):
+        if decimals and len(decimals) == 3 and len(whole.replace(",", "")) >= 2:
+            found.add(Decimal(whole.replace(",", "") + decimals))
+    return found
 
 
 def drift_issues(answer: str, evidence: str) -> list[str]:
@@ -243,8 +251,13 @@ def recalled_issues(answer: str, recalled: str, evidence: str) -> list[str]:
     different file, which recall_past_goals had shown as done."""
     past = _cents_figures(recalled) - _cents_figures(evidence)
     issues = [f"The answer gives {_money(value, 2)}, which comes from a past task's result, not from "
-              "this task's data." for value in sorted(_cents_figures(answer) & past)]
-    return issues[:MAX_ISSUES]
+              "this task's data." for value in sorted(_cents_figures(answer) & past)][:MAX_ISSUES]
+    if issues:
+        # Live: told only to recompute, an agent re-ran its table query for an
+        # opening balance printed above the table, and took a row's balance.
+        issues[-1] += (" Take each figure from this task's own files, reading a file's text where a "
+                       "query's table does not hold it.")
+    return issues
 
 
 _PERCENT = re.compile(r"(?<![\d.])(\d{1,2}(?:\.\d{1,4})?)\s?%")

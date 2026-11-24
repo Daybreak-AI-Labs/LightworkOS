@@ -122,6 +122,8 @@ def test_a_figure_typed_with_its_cents_garbled_is_named():
     # tool figures at all: nothing to compare.
     assert drift_issues("A fee of $1,650.00 and a deposit of $512.75.", evidence) == []
     assert drift_issues("Total $1,647.56", "") == []
+    # A figure after a comma in a query's CSV output counts as returned.
+    assert drift_issues("Week 2 pay is $1,647.38.", "week,pay\n2,1647.38") == []
 
 
 @pytest.mark.asyncio
@@ -190,10 +192,16 @@ def test_a_figure_taken_from_a_past_tasks_result_is_named():
     tools = "45638.36\n44976.1\nOpening balance: $12,480.55"
     answer = "Total deposits: $100,079.96\nTotal withdrawals: $44,976.10\nOpening balance: $12,480.55"
     assert recalled_issues(answer, recalled, tools) == [
-        "The answer gives 100,079.96, which comes from a past task's result, not from this task's data."]
+        "The answer gives 100,079.96, which comes from a past task's result, not from this task's data. "
+        "Take each figure from this task's own files, reading a file's text where a query's table does not "
+        "hold it."]
     # A figure this run's own tools also returned stands.
     assert recalled_issues("Opening balance: $12,480.55", recalled + " $12,480.55", tools) == []
     assert recalled_issues(answer, "", tools) == []
+    # Live: a query returned "45638.36,44976.1,266.32,4284.61"; a figure
+    # right after a comma in CSV output is still this run's own.
+    query = "total_deposits,total_withdrawals,min,max\n45638.36,44976.1,266.32,4284.61"
+    assert recalled_issues("Largest withdrawal: $4,284.61", recalled + " $4,284.61", query) == []
 
 
 @pytest.mark.asyncio
