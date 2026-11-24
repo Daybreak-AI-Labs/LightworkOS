@@ -11,20 +11,33 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 import sqlite3
 
 MAX_QUERY_ROWS = 200
 
+# An amount as people write it: an optional sign, currency sign and accounting
+# parentheses around digits grouped in thousands ("4,850.00", "-$1,245.60",
+# "($1,000.50)"). A leading zero ("02134", "007") is an identifier, kept as text.
+_AMOUNT = re.compile(r"(?P<open>\()?(?P<sign>[-+])?[$£€]?(?P<sign2>-)?"
+                     r"(?P<digits>(?:(?:0|[1-9][0-9]{0,2}(?:,[0-9]{3})+|[1-9][0-9]*)(?:\.[0-9]*)?|\.[0-9]+)"
+                     r"(?:[eE][-+]?[0-9]+)?)"
+                     r"(?P<close>\))?")
+
 
 def _cell(value: str):
-    """A CSV cell as a number when it is one, so SUM and ORDER BY work on it."""
+    """A CSV cell as a number when it is one, so SUM and ORDER BY work on it.
+    Amounts written with thousands separators or a currency sign count: as
+    text, "4,850.00" summed as 4 and a reconciliation came out wrong."""
     text = value.strip()
-    for kind in (int, float):
-        try:
-            return kind(text)
-        except ValueError:
-            continue
-    return value
+    match = _AMOUNT.fullmatch(text)
+    if match is None or bool(match.group("open")) != bool(match.group("close")) or (
+            match.group("sign") and match.group("sign2")):
+        return value
+    digits = match.group("digits").replace(",", "")
+    number = float(digits) if any(c in digits for c in ".eE") else int(digits)
+    negative = bool(match.group("open")) or "-" in (match.group("sign") or "") + (match.group("sign2") or "")
+    return -number if negative else number
 
 
 def _load(db, name: str, filename: str, text: str) -> str | None:
