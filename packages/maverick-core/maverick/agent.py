@@ -142,6 +142,18 @@ def _asked_to_receive(target: str) -> re.Pattern:
 
 
 _WORKBOOK_REQUEST = _asked_to_receive(r"spreadsheets?|excel|workbooks?|xlsx")
+# A sentence about what the person is sending ("Here's last week's timesheet
+# as a Word file") names a file they gave, not one they want back.
+_GIVEN = re.compile(r"\s*(?:here(?:'s|\u2019s|\s+is|\s+are)|attached|enclosed|below\s+is|this\s+is|these\s+are"
+                    r"|i(?:'ve|\u2019ve|\s+have)?\s+(?:attached|uploaded|included|sent|shared)"
+                    r"|i(?:'m|\u2019m|\s+am)\s+sending)\b", re.IGNORECASE)
+
+
+def _asks_to_receive(pattern: re.Pattern, request: str) -> bool:
+    """Whether a sentence of ``request`` asks to receive what ``pattern``
+    names, leaving out sentences about what the person is sending."""
+    return any(sentence.strip() and not _GIVEN.match(sentence) and pattern.search(sentence)
+               for sentence in re.split(r"[.;!?](?=\s|$)|\n", request))
 #: (request, suffixes that satisfy it, what it is, how to make it).
 _FILE_TYPE_REQUESTS = (
     (_asked_to_receive(r"csv"), (".csv",), "a CSV file",
@@ -1571,6 +1583,48 @@ def _verifier_evidence(messages: list[dict], limit: int = _VERIFIER_EVIDENCE_CHA
         kept.append(excerpt)
         room -= len(excerpt) + 2
     return "\n\n".join(reversed(kept))
+
+
+_DELIVERED_EVIDENCE_CHARS = 6000
+_DELIVERED_EVIDENCE_ROWS = 25
+_DELIVERED_TABLES = (".xlsx", ".xlsm", ".csv")
+
+
+def _delivered_file_evidence(world, goal_id) -> str:
+    """What the spreadsheets on the task's page hold, framed as tool output
+    for the verifier. Live: a child agent wrote an aging workbook whose
+    summary left out the largest customer; the root's verifier saw only the
+    answer naming the file and accepted it."""
+    if world is None or goal_id is None:
+        return ""
+    import secrets as _secrets
+
+    try:
+        from .task_files import files_for, read_for_download
+        items = [item for item in files_for(world, goal_id)
+                 if Path(item.path).suffix.lower() in _DELIVERED_TABLES]
+    except Exception:  # noqa: BLE001 -- evidence is best effort; the answer is still judged
+        return ""
+    blocks, room = [], _DELIVERED_EVIDENCE_CHARS
+    for item in items:
+        if room <= 0:
+            break
+        try:
+            _item, data = read_for_download(world, goal_id, item.number)
+            if Path(item.path).suffix.lower() == ".csv":
+                text = "\n".join(data.decode("utf-8", errors="replace").splitlines()[:_DELIVERED_EVIDENCE_ROWS])
+            else:
+                from .tools.spreadsheet import xlsx_bytes_as_csv, xlsx_bytes_sheet_names
+                text = "\n".join(
+                    f"Sheet {sheet!r}:\n" + "\n".join(xlsx_bytes_as_csv(data, sheet).splitlines()[:_DELIVERED_EVIDENCE_ROWS])
+                    for sheet in xlsx_bytes_sheet_names(data))
+        except Exception:  # noqa: BLE001 -- an unreadable file adds nothing
+            continue
+        nonce = _secrets.token_hex(8)
+        body = f"{item.name}, a file on the task's page, holds:\n{text}"[:room]
+        blocks.append(f"<tool_output tool='delivered_file' id={nonce}>\n{body}\n</tool_output {nonce}>")
+        room -= len(blocks[-1])
+    return "\n\n".join(blocks)
 
 
 def _tool_result_limit(model: str | None = None) -> int:
@@ -5802,7 +5856,7 @@ class Agent:
                 or self.ctx.goal_id is None or self.ctx.world is None):
             return False
         request = self._skill_query()
-        if not _WORKBOOK_REQUEST.search(request) or re.search(r"\bcsv\b", request, re.IGNORECASE):
+        if not _asks_to_receive(_WORKBOOK_REQUEST, request) or re.search(r"\bcsv\b", request, re.IGNORECASE):
             return False
         try:
             from .task_files import files_for
@@ -5836,7 +5890,7 @@ class Agent:
         except Exception:  # noqa: BLE001 -- the format check never blocks an answer
             return False
         missing = [(label, how) for pattern, wanted, label, how in _FILE_TYPE_REQUESTS
-                   if pattern.search(request) and not suffixes & set(wanted)]
+                   if _asks_to_receive(pattern, request) and not suffixes & set(wanted)]
         if not missing:
             return False
         self._file_types_requested = True
@@ -6256,7 +6310,9 @@ class Agent:
                 force_ensemble=bool(
                     getattr(self.ctx, "escalate_verification", False)
                 ),
-                evidence=_verifier_evidence(st.messages),
+                evidence="\n\n".join(part for part in (
+                    _verifier_evidence(st.messages),
+                    _delivered_file_evidence(self.ctx.world, self.ctx.goal_id)) if part),
                 images=_verifier_images(st.messages),
             )
             # Stamp the verdict so the autonomy servo can tighten the leash

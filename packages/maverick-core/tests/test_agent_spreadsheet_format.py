@@ -109,3 +109,45 @@ def test_only_a_file_to_receive_counts(request_text, wanted):
 
     found = [label for pattern, _suffixes, label, _how in _FILE_TYPE_REQUESTS if pattern.search(request_text)]
     assert found == ([wanted] if wanted else []), found
+
+
+@pytest.mark.parametrize(("request_text", "asks"), [
+    ("Here's last week's timesheet as a Word file. Work out each employee's pay. Give me a table.", False),
+    ("Attached is our price list as a PDF; give me a Word document with the new prices", True),
+    ("I've attached the sales as a CSV. What were total sales?", False),
+    ("Here is the data. Give me the result as a CSV.", True),
+])
+def test_a_file_the_person_sends_is_not_a_file_they_ask_for(request_text, asks):
+    # Live: "Here's last week's timesheet as a Word file" sent a correct
+    # payroll answer back to make a Word document nobody asked for.
+    from maverick.agent import _FILE_TYPE_REQUESTS, _asks_to_receive
+
+    assert any(_asks_to_receive(pattern, request_text) for pattern, *_rest in _FILE_TYPE_REQUESTS) is asks
+
+
+@pytest.mark.asyncio
+async def test_the_verifier_reads_the_files_on_the_task_page(tmp_path, fake_llm, make_llm_response):
+    # Live: a child agent wrote an aging workbook whose summary left out the
+    # largest customer; its write's read-back stayed in the child's context,
+    # and the root's verifier, seeing only the answer, accepted it at 0.92.
+    from maverick.tools import spreadsheet as ss
+
+    ss._run({"op": "write", "path": str(tmp_path / "aging.xlsx"),
+             "sheets": {"Summary": [["Customer", "Current", "Total"], ["Cedar Auto", 7887.79, "=B2"]]}})
+    deliver = ToolCall(id="c1", name="deliver_file", input={"path": "aging.xlsx"})
+    fake_llm.scripted = [
+        make_llm_response(text="Handing it over.", tool_calls=[deliver]),
+        make_llm_response(text="FINAL: I delivered aging.xlsx with the aging summary."),
+        make_llm_response(text='{"confidence": 0.95, "accepts": true, "critique": "ok", "issues": []}'),
+        make_llm_response(text="FINAL: (no skill)")]
+    world = WorldModel(path=tmp_path / "world.db")
+    gid = world.create_goal("Build the accounts receivable aging report.", "", owner="alice")
+    await run_goal(llm=fake_llm, world=world, budget=Budget(max_dollars=1.0), goal_id=gid,
+                   sandbox=LocalBackend(workdir=tmp_path), max_depth=1)
+    judge = next(c for c in fake_llm.calls if "judging another agent's answer" in str(c.get("system", ""))
+                 or "independent verifier" in str(c.get("system", "")))
+    assert "delivered_file" in str(judge.get("system", ""))
+    seen = str(judge.get("messages", ""))
+    assert "tool='delivered_file'" in seen and "aging.xlsx" in seen
+    assert "Cedar Auto,7887.79,7887.79" in seen, seen[-1500:]
+    assert world.get_goal(gid).status == "done"
