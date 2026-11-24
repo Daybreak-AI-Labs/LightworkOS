@@ -181,3 +181,49 @@ async def test_a_final_with_a_percentage_worked_out_wrong_is_revised(tmp_path, f
 
     assert "291.14 × 8.25% is 24.02, not 24.00." in str(fake_llm.calls[1].get("messages", ""))
     assert "tax is right" in world.get_goal(gid).result
+
+
+def test_a_figure_taken_from_a_past_tasks_result_is_named():
+    from maverick.figure_totals import recalled_issues
+
+    recalled = "#380 ✓ (0.38) Statement totals\n   result: Total deposits: $100,079.96 Total withdrawals: $99,417.70"
+    tools = "45638.36\n44976.1\nOpening balance: $12,480.55"
+    answer = "Total deposits: $100,079.96\nTotal withdrawals: $44,976.10\nOpening balance: $12,480.55"
+    assert recalled_issues(answer, recalled, tools) == [
+        "The answer gives 100,079.96, which comes from a past task's result, not from this task's data."]
+    # A figure this run's own tools also returned stands.
+    assert recalled_issues("Opening balance: $12,480.55", recalled + " $12,480.55", tools) == []
+    assert recalled_issues(answer, "", tools) == []
+
+
+@pytest.mark.asyncio
+async def test_a_final_that_copies_a_past_tasks_figures_is_revised(tmp_path, fake_llm, make_llm_response,
+                                                                   monkeypatch):
+    # Live: a statement's own compute calls returned 45,638.36 and 44,976.10,
+    # but the answer copied 100,079.96 and 99,417.70 from an earlier task on a
+    # different file that recall_past_goals showed as done.
+    from types import SimpleNamespace
+
+    from maverick.llm import ToolCall
+    from maverick.tools import recall
+
+    past = SimpleNamespace(id=380, status="done", title="Statement totals",
+                           result="Total deposits: $100,079.96. Total withdrawals: $99,417.70.")
+    monkeypatch.setattr(recall, "recall_past_goals", lambda *a, **k: [(0.38, past)])
+    fake_llm.scripted = [
+        make_llm_response(text="Checking.", tool_calls=[
+            ToolCall(id="r1", name="recall_past_goals", input={"query": "statement totals"}),
+            ToolCall(id="c1", name="compute", input={"op": "evaluate", "expr": "45000 + 638.36"})]),
+        make_llm_response(text="FINAL: Total deposits: $100,079.96."),
+        make_llm_response(text="FINAL: Total deposits: $45,638.36."),
+        make_llm_response(text='{"confidence": 0.95, "accepts": true, "critique": "ok", "issues": []}'),
+        make_llm_response(text="FINAL: (no skill)")]
+    world = WorldModel(path=tmp_path / "world.db")
+    gid = world.create_goal("total the statement's deposits", "", owner="alice")
+
+    await run_goal(llm=fake_llm, world=world, budget=Budget(max_dollars=1.0), goal_id=gid,
+                   sandbox=LocalBackend(workdir=tmp_path), max_depth=1)
+
+    brief = str(fake_llm.calls[2].get("messages", ""))
+    assert "100,079.96, which comes from a past task's result" in brief
+    assert "$45,638.36" in world.get_goal(gid).result

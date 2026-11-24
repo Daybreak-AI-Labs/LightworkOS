@@ -129,6 +129,9 @@ _DELIVERABLE_SUFFIXES = (".xlsx", ".xlsm", ".xls", ".csv", ".docx", ".pptx", ".p
                          ".txt", ".png", ".jpg", ".jpeg", ".svg", ".zip", ".json", ".html")
 # A spreadsheet the person asks to receive ("give me a spreadsheet", "as an
 # Excel file"), not one they attached ("from the attached spreadsheet").
+# A recall_past_goals result inside the run's evidence: past tasks' answers,
+# about other data, which must not supply this task's figures.
+_RECALLED = re.compile(r"<tool_output tool='recall_past_goals' id=([0-9a-f]+)>.*?</tool_output \1>", re.DOTALL)
 _WORKBOOK_REQUEST = re.compile(
     r"\b(?:as|into|give\s+me|make|create|build|produce|prepare|send|want|need|export|save)\b"
     r"(?:\W+(?!attached\b|uploaded\b|this\b|that\b|my\b|our\b|existing\b|your\b)\w+){0,3}?"
@@ -6155,17 +6158,19 @@ class Agent:
         # grand total was a dollar off and the model judge let it through.
         # A figure typed with its cents garbled (the tools returned 1,647.38,
         # the answer said 1,647.56) goes back the same way.
-        from .figure_totals import answer_issues, drift_issues, percent_issues
-        if issues := (answer_issues(final) + drift_issues(final, _verifier_evidence(st.messages))
-                      + percent_issues(final)):
+        from .figure_totals import answer_issues, drift_issues, percent_issues, recalled_issues
+        evidence = _verifier_evidence(st.messages)
+        recalled = "\n".join(match.group(0) for match in _RECALLED.finditer(evidence))
+        if issues := (answer_issues(final) + drift_issues(final, evidence) + percent_issues(final)
+                      + recalled_issues(final, recalled, _RECALLED.sub("", evidence))):
             from .verifier import VerifierVerdict
             verification.attempted = True
             verification.verdict = VerifierVerdict(
                 confidence=0.0, accepts=False, issues=issues,
                 critique="The totals do not add up or the figures do not match the tools. "
                 + " ".join(issues)
-                + " Recompute them with one tool call over the data and copy the results exactly "
-                "into every place they appear.")
+                + " Recompute them with one tool call over this task's data and copy the results "
+                "exactly into every place they appear.")
             return self._verifier_rejection(st, final, verification.verdict, coding_cfg)
         if (
             _risk_proportional_verify_enabled()

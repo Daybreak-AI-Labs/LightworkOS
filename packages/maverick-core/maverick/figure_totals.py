@@ -234,6 +234,19 @@ def drift_issues(answer: str, evidence: str) -> list[str]:
     return issues[:MAX_ISSUES]
 
 
+def recalled_issues(answer: str, recalled: str, evidence: str) -> list[str]:
+    """Figures in ``answer`` found in a past task's recalled result and in
+    nothing this run's other tools returned.
+
+    A statement's compute calls returned 45,638.36 and 44,976.10, but the
+    answer copied 100,079.96 and 99,417.70 from an earlier task on a
+    different file, which recall_past_goals had shown as done."""
+    past = _cents_figures(recalled) - _cents_figures(evidence)
+    issues = [f"The answer gives {_money(value, 2)}, which comes from a past task's result, not from "
+              "this task's data." for value in sorted(_cents_figures(answer) & past)]
+    return issues[:MAX_ISSUES]
+
+
 _PERCENT = re.compile(r"(?<![\d.])(\d{1,2}(?:\.\d{1,4})?)\s?%")
 
 

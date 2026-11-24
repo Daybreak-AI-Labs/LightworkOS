@@ -76,6 +76,12 @@ def _goal_text(g) -> str:
     return f"{g.title or ''}\n\n{g.description or ''}".strip()
 
 
+#: Said under every recall: an answer copied a past statement task's totals
+#: instead of the ones its own calculations returned for a different file.
+PAST_FIGURES_NOTE = ("Past results came from those tasks' own data and may be wrong for this one: "
+                     "reuse an approach, and work every figure out from this task's files.")
+
+
 def _format_match(g, score: float) -> str:
     # Markers keyed on the vocabulary the orchestrator actually writes
     # (active/pending/blocked/done/cancelled) -- the old map keyed on
@@ -190,7 +196,7 @@ def _run_recall(args: dict[str, Any]) -> str:
     )
     if not matches:
         return "no similar past goals found"
-    return "\n\n".join(_format_match(g, s) for s, g in matches)
+    return "\n\n".join(_format_match(g, s) for s, g in matches) + "\n\n" + PAST_FIGURES_NOTE
 
 
 def recall() -> Tool:
@@ -201,7 +207,9 @@ def recall() -> Tool:
             "Search past goals (in the local world_model) for ones similar "
             "to your current task. Returns up to num_results matches with "
             "status and result snippet. Use this BEFORE doing repeated "
-            "work the swarm has done before; reuse past plans where you can."
+            "work the swarm has done before; reuse past plans where you can, "
+            "but never a past figure: a past result was worked out from that "
+            "task's data, which may differ from this task's."
         ),
         input_schema=_RECALL_INPUT_SCHEMA,
         fn=_run_recall,

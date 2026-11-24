@@ -284,7 +284,9 @@ Settings and the installation wizard.
   tax and total chains, group totals, discounts and averages are understood;
   percent columns and formula columns are left alone. A figure that garbles
   the cents of one a tool returned (the tool said 1,647.38, the answer
-  1,647.56) goes back the same way.
+  1,647.56) goes back the same way, and so does a figure found only in a past
+  task's result from `recall_past_goals`, which now says past figures came
+  from other data.
 - **Agents propose schedules; a person creates them** (`schedule_proposals.py`,
   `tools/propose_schedule.py`) — asked for recurring work ("every Monday at
   9am ..."), an agent records a proposal: the work each run does, a checked
