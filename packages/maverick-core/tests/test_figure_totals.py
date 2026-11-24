@@ -219,6 +219,16 @@ def test_a_whole_amount_a_tool_returned_is_not_a_garbled_figure():
     assert drift_issues("Year 2 rent: $4,326.00", "4326\nDeposit: 4326.50") == []
     assert drift_issues("Year 2 rent: $4,326.10", "4326\nDeposit: 4326.50") == [
         "The answer gives 4,326.10, but the tools returned 4,326.50."]
+    # Live: compute gave 4589.4534 and 4727.137002 for a lease's rents; the
+    # answer's $4,589.45 and $4,727.14 are those figures rounded to cents.
+    assert drift_issues("Year 4: $4,589.45; Year 5: $4,727.14", "4589.4534\n4727.137002") == []
+    assert drift_issues("Year 4: $4,589.54", "4589.4534") == [
+        "The answer gives 4,589.54, but the tools returned 4,589.45."]
+    # A row of cells read as one figure too long to round leaves the check standing.
+    joined = "120,340,560,780,910,230,450,670,890,110,330,553,495.25"
+    assert drift_issues(f"Units: {joined[:-6]}495.27", joined) == [
+        "The answer gives 120,340,560,780,910,230,450,670,890,110,330,553,495.27, but the tools returned "
+        "120,340,560,780,910,230,450,670,890,110,330,553,495.25."]
 
 
 @pytest.mark.asyncio

@@ -17,7 +17,7 @@ holding other text and sheet columns with formulas are left alone.
 from __future__ import annotations
 
 import re
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 
 _TOTAL_LABEL = re.compile(r"(grand\s+|sub-?\s*)?totals?\b", re.IGNORECASE)
@@ -231,6 +231,15 @@ def _cents_figures(text: str) -> set[Decimal]:
     return found
 
 
+def _cents(value: Decimal) -> Decimal | None:
+    """``value`` rounded to cents, or None for a figure too long to round (a
+    row of cells read as one 39-digit number)."""
+    try:
+        return value.quantize(Decimal("0.01"), ROUND_HALF_UP)
+    except ArithmeticError:
+        return None
+
+
 def drift_issues(answer: str, evidence: str) -> list[str]:
     """Figures in ``answer`` that look like a tool's result with the cents
     garbled: absent from everything the tools returned, while a tool returned
@@ -249,7 +258,10 @@ def drift_issues(answer: str, evidence: str) -> list[str]:
     issues = []
     for value in sorted(_cents_figures(answer)):
         near = by_whole.get(int(value), set()) - {value}
-        if value not in found and value not in whole and near:
+        # A tool's 4589.4534 is the answer's 4,589.45 rounded to cents: it went
+        # back as "gives 4,589.45, but the tools returned 4,589.45".
+        rounded = any(_cents(other) == value for other in near)
+        if value not in found and value not in whole and near and not rounded:
             tool = min(near, key=lambda other: abs(other - value))
             issues.append(f"The answer gives {_money(value, 2)}, but the tools returned {_money(tool, 2)}.")
     return issues[:MAX_ISSUES]
