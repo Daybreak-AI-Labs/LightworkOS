@@ -147,6 +147,12 @@ def read_attachment_tool(world, goal_id: int | None, sandbox=None) -> Tool:
             if args.get("sql"):
                 return _pdf_table_query(match.filename, text, str(args["sql"]), others)
             return _window(text, args)
+        source = _companion_source(world, goal_id, match) if args.get("sql") else None
+        if source is not None:
+            # Live: `sql` on a timesheet's .extracted.txt was refused as "not a
+            # CSV file", and the agent worked the shifts out by hand, wrongly.
+            others = _OtherFiles(world, goal_id, source, sandbox)
+            return _word_query(source, args, others) if _is_word(source) else _workbook(source, args, others)
         if _is_workbook(match):
             return _workbook(match, args, others)
         if _is_word(match):
@@ -354,6 +360,16 @@ def _rows_csv(rows: list[list[str]]) -> str:
     out = io.StringIO()
     csv.writer(out, lineterminator="\n").writerows(rows)
     return out.getvalue()
+
+
+def _companion_source(world, goal_id, match):
+    """The Word document or workbook a text companion (``<file>.extracted.txt``)
+    was made from, when it is visible to this goal."""
+    if not match.filename.lower().endswith(".extracted.txt"):
+        return None
+    name = match.filename[:-len(".extracted.txt")]
+    return next((a for a, _e in visible_attachments(world, goal_id)
+                 if a.filename == name and (_is_word(a) or _is_workbook(a))), None)
 
 
 def _word_tables(match):

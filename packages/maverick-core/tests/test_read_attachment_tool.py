@@ -439,3 +439,24 @@ def test_the_queried_file_is_also_a_table_under_its_own_name(tmp_path):
     out = tool.fn({"id": sales, "sql": "SELECT SUM(s.qty * c.cost) AS t FROM october_sales s JOIN costs c "
                                        "ON c.sku = s.sku"})
     assert out == "t\n9.0", out
+
+
+def test_sql_on_a_documents_text_companion_queries_the_document(tmp_path):
+    # Live: an agent passed `sql` to timesheet.docx.extracted.txt, was told it
+    # is not a CSV file, read the rows one by one and got two people's lunch
+    # deductions wrong.
+    from maverick.attachments import generate_companions
+
+    world = WorldModel(tmp_path / "w.db")
+    gid = world.create_goal("g", "")
+    _add(world, gid, tmp_path, "timesheet.docx", _DOCX, _timesheet_docx())
+    _add(world, gid, tmp_path, "notes.txt", "text/plain", b"plain")
+    assert generate_companions(world, gid, root=tmp_path / "a") == 1
+    companion = next(a.id for a in world.list_attachments(gid) if a.filename.endswith(".extracted.txt"))
+    tool = read_attachment_tool(world, gid)
+    out = tool.fn({"id": companion, "sql": "SELECT Employee, COALESCE(hours(Mon), 0) AS h FROM data ORDER BY Employee"})
+    assert out.splitlines()[:3] == ["Employee,h", "Dana,8.5", "Hank,0"], out
+    # A companion's plain read is unchanged, and other text still refuses sql.
+    assert "| Dana | $22.50 | 7:00-15:30 |  |" in tool.fn({"id": companion})
+    plain = next(a.id for a in world.list_attachments(gid) if a.filename == "notes.txt")
+    assert tool.fn({"id": plain, "sql": "SELECT 1"}).startswith("ERROR: notes.txt is not a CSV file")
