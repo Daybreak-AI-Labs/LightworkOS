@@ -61,7 +61,7 @@ AREAS: dict[str, str] = {
     "security": "Security",
     "workspace_boundaries": "Workspace boundaries",
     "data_erasure_retention": "Data erasure and retention",
-    "spending": "Spending and budgets",
+    "spending": "Spending money or changing spending limits",
     "user_facing": "What people see in Lightwork, including the Copilot",
     "governance": "Lightwork's own governance controls",
     "legal": "Legal and contract terms",
