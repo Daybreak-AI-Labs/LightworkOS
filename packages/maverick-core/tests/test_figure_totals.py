@@ -211,6 +211,49 @@ def test_a_figure_taken_from_a_past_tasks_result_is_named():
     assert recalled_issues("Year 2: $4,326.00; Year 3: $4,455.78", recalled + " $4,326.00", lease) == []
 
 
+def test_a_date_taken_from_a_past_tasks_result_is_named():
+    # Live: one lease answer put the expiry a year early (March 31, 2029; the
+    # lease runs 60 months from April 1, 2025). The next run on the same lease
+    # recalled it, started its compute call from 2029-03-31, and gave the
+    # same wrong dates; the verifier accepted both at 1.00.
+    import datetime
+
+    from maverick.figure_totals import recalled_issues
+
+    recalled = ("#451 ✓ (0.29) Lease summary\n   result: Last day to give notice to renew: October 2, 2028 "
+                "The lease expires on March 31, 2029.")
+    tools = "begins on April 1, 2025 and continues for sixty (60) full calendar months\n2028-10-02"
+    answer = "Last day to give notice: October 2, 2028. The lease expires on March 31, 2029."
+    assert recalled_issues(answer, recalled, tools) == [
+        "The answer gives March 31, 2029, which comes from a past task's result, not from this task's files. "
+        "Work each date out with compute from the dates this task's files state."]
+    # A date this run's tools returned, in any form, stands: compute printed
+    # 2028-10-02, and a file wrote 3/31/2029 or 31/03/2029.
+    assert recalled_issues("Notice by Oct. 2, 2028.", recalled, tools) == []
+    assert recalled_issues(answer, recalled, tools + "\nExpires 3/31/2029") == []
+    assert recalled_issues(answer, recalled, tools + "\nExpires 31/03/2029") == []
+    assert recalled_issues("It expires 2029-03-31.", recalled, tools) == [
+        "The answer gives March 31, 2029, which comes from a past task's result, not from this task's files. "
+        "Work each date out with compute from the dates this task's files state."]
+    # Live: a correct answer named the past task's date only to rule it out.
+    assert recalled_issues("Give notice by October 2, 2029, not October 3, 2029.",
+                           "result: Last day: October 3, 2029", "2029-10-02") == []
+    # The person's own dates, and today's, are not copied by mistake.
+    assert recalled_issues(answer, recalled, tools, "The lease ends March 31, 2029.") == []
+    today = datetime.date.today()
+    dated = f"result: Aged as of {today:%B} {today.day}, {today.year}."
+    assert recalled_issues(f"Aged as of {today.isoformat()}.", dated, "") == []
+    assert recalled_issues(answer, "", tools) == []
+    # A money figure and a date copied together are both named.
+    both = recalled_issues("Total $100,079.96 due March 31, 2029.",
+                           recalled + " Total deposits: $100,079.96", tools)
+    assert both[0].startswith("The answer gives 100,079.96, which comes from a past task's result")
+    assert both[1].startswith("The answer gives March 31, 2029, which comes from a past task's result")
+    assert both[1].endswith("Take each figure from this task's own files, reading a file's text where a "
+                            "query's table does not hold it. Work each date out with compute from the dates "
+                            "this task's files state.")
+
+
 def test_a_whole_amount_a_tool_returned_is_not_a_garbled_figure():
     from maverick.figure_totals import drift_issues
 
@@ -262,6 +305,44 @@ async def test_a_final_that_copies_a_past_tasks_figures_is_revised(tmp_path, fak
     brief = str(fake_llm.calls[2].get("messages", ""))
     assert "100,079.96, which comes from a past task's result" in brief
     assert "$45,638.36" in world.get_goal(gid).result
+
+
+@pytest.mark.asyncio
+async def test_a_final_that_copies_a_past_tasks_date_is_revised(tmp_path, fake_llm, make_llm_response,
+                                                                monkeypatch):
+    # Live: a lease run recalled an earlier answer that put the expiry at
+    # March 31, 2029, counted its notice date back from that, and the
+    # verifier accepted it; the lease runs 60 months from April 1, 2025.
+    from types import SimpleNamespace
+
+    from maverick.llm import ToolCall
+    from maverick.tools import recall
+
+    past = SimpleNamespace(id=451, status="done", title="Lease summary",
+                           result="Last day to give notice: October 2, 2028. The lease expires on March 31, 2029.")
+    monkeypatch.setattr(recall, "recall_past_goals", lambda *a, **k: [(0.29, past)])
+    fake_llm.scripted = [
+        make_llm_response(text="Checking.", tool_calls=[
+            ToolCall(id="r1", name="recall_past_goals", input={"query": "lease notice"}),
+            ToolCall(id="c1", name="compute", input={"op": "evaluate", "expr": "date('2029-03-31', '-180 days')"})]),
+        make_llm_response(text="FINAL: The lease expires March 31, 2029; give notice by October 2, 2028."),
+        make_llm_response(text="Rechecking.", tool_calls=[
+            ToolCall(id="c2", name="compute", input={
+                "op": "evaluate", "expr": "date(date('2025-04-01', '+60 months', '-1 day'), '-180 days')"})]),
+        make_llm_response(text="FINAL: The lease expires March 31, 2030; give notice by 2029-10-02."),
+        make_llm_response(text='{"confidence": 0.95, "accepts": true, "critique": "ok", "issues": []}'),
+        make_llm_response(text="FINAL: (no skill)")]
+    world = WorldModel(path=tmp_path / "world.db")
+    gid = world.create_goal("when must we give the lease renewal notice?", "", owner="alice")
+
+    await run_goal(llm=fake_llm, world=world, budget=Budget(max_dollars=1.0), goal_id=gid,
+                   sandbox=LocalBackend(workdir=tmp_path), max_depth=1)
+
+    brief = str(fake_llm.calls[2].get("messages", ""))
+    assert "March 31, 2029, which comes from a past task's result" in brief
+    # compute returned 2028-10-02 from the copied expiry, so that date is its own.
+    assert "October 2, 2028, which comes from" not in brief
+    assert "2029-10-02" in world.get_goal(gid).result
 
 
 @pytest.mark.asyncio

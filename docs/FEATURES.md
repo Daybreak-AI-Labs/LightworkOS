@@ -286,12 +286,15 @@ Settings and the installation wizard.
   tax and total chains, group totals, discounts and averages are understood;
   percent columns and formula columns are left alone. A figure that garbles
   the cents of one a tool returned (the tool said 1,647.38, the answer
-  1,647.56) goes back the same way, and so does a figure found only in a past
-  task's result from `recall_past_goals`, which now says past figures came
-  from other data. Figures the person's request states, and a whole amount
-  a tool printed without cents (4326 for $4,326.00), count as theirs, and a
-  figure a tool returned with more decimals and the answer rounds to cents
-  is the tool's own.
+  1,647.56) goes back the same way, and so does a figure or a date found
+  only in a past task's result from `recall_past_goals`, which now says past
+  figures came from other data (a lease run recalled an answer that put the
+  expiry a year early and repeated it). Figures the person's request states,
+  and a whole amount a tool printed without cents (4326 for $4,326.00),
+  count as theirs, and a figure a tool returned with more decimals and the
+  answer rounds to cents is the tool's own; a date a tool returned in any
+  form, the request's dates, today's, and one the answer rules out ("not
+  October 3") are not copied.
 - **Agents propose schedules; a person creates them** (`schedule_proposals.py`,
   `tools/propose_schedule.py`) — asked for recurring work ("every Monday at
   9am ..."), an agent records a proposal: the work each run does, a checked

@@ -16,6 +16,7 @@ holding other text and sheet columns with formulas are left alone.
 """
 from __future__ import annotations
 
+import datetime
 import re
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
@@ -304,25 +305,90 @@ def drift_issues(answer: str, evidence: str, given: str = "") -> list[str]:
     return issues[:MAX_ISSUES]
 
 
+_MONTH_NAMES = ("january", "february", "march", "april", "may", "june", "july", "august", "september",
+                "october", "november", "december")
+_MONTH = (r"(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?"
+          r"|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?")
+_MONTH_FIRST = re.compile(rf"\b{_MONTH}\s+(\d{{1,2}})(?:st|nd|rd|th)?,?\s+(\d{{4}})\b", re.IGNORECASE)
+_DAY_FIRST = re.compile(rf"\b(\d{{1,2}})(?:st|nd|rd|th)?\s+(?:of\s+)?{_MONTH},?\s+(\d{{4}})\b", re.IGNORECASE)
+_ISO_DATE = re.compile(r"(?<![\d-])(\d{4})-(\d{2})-(\d{2})(?![\d-])")
+_SLASH_DATE = re.compile(r"(?<![\d/])(\d{1,2})/(\d{1,2})/(\d{4})(?![\d/])")
+
+
+_RULED_OUT = re.compile(r"\b(?:not|instead\s+of|rather\s+than)\s+(?:on\s+|by\s+)?$", re.IGNORECASE)
+
+
+def _dates(text: str, *, slashes: bool = False, claimed: bool = False) -> set[datetime.date]:
+    """The dates ``text`` writes as "March 31, 2029", "31 March 2029" or
+    2029-03-31; with ``slashes``, 3/31/2029 too, read both ways round, for
+    the text whose dates clear a date rather than name one. With ``claimed``,
+    a date the text rules out is left out: an answer that said "October 2,
+    2029, not October 3, 2029" went back as copying the past task's October 3."""
+    found: set[datetime.date] = set()
+    text = text or ""
+
+    def add(match: re.Match, year: str, month: int, day: str) -> None:
+        if claimed and _RULED_OUT.search(text[max(0, match.start() - 20):match.start()]):
+            return
+        try:
+            found.add(datetime.date(int(year), month, int(day)))
+        except ValueError:
+            pass
+
+    def month_number(name: str) -> int:
+        return next(index for index, full in enumerate(_MONTH_NAMES, 1) if full.startswith(name.lower()[:3]))
+
+    for match in _MONTH_FIRST.finditer(text):
+        add(match, match.group(3), month_number(match.group(1)), match.group(2))
+    for match in _DAY_FIRST.finditer(text):
+        add(match, match.group(3), month_number(match.group(2)), match.group(1))
+    for match in _ISO_DATE.finditer(text):
+        add(match, match.group(1), int(match.group(2)), match.group(3))
+    if slashes:
+        for match in _SLASH_DATE.finditer(text):
+            first, second, year = match.groups()
+            add(match, year, int(first), second)
+            add(match, year, int(second), first)
+    return found
+
+
+def _long_date(day: datetime.date) -> str:
+    return f"{_MONTH_NAMES[day.month - 1].capitalize()} {day.day}, {day.year}"
+
+
 def recalled_issues(answer: str, recalled: str, evidence: str, given: str = "") -> list[str]:
-    """Figures in ``answer`` found in a past task's recalled result and in
-    nothing this run's other tools returned.
+    """Figures and dates in ``answer`` found in a past task's recalled result
+    and in nothing this run's other tools returned.
 
     A statement's compute calls returned 45,638.36 and 44,976.10, but the
     answer copied 100,079.96 and 99,417.70 from an earlier task on a
-    different file, which recall_past_goals had shown as done."""
+    different file, which recall_past_goals had shown as done. A lease run
+    recalled an earlier answer that put the expiry a year early, started its
+    own date arithmetic from that expiry, and repeated it."""
     # A whole amount counts too: compute returned 4326 for a lease's second
     # year, and the answer's $4,326.00 went back as copied from a past task.
     # The person's own figures (a recurring budget's rent, stated in the
     # request) are not copied by mistake.
     past = _cents_figures(recalled) - _returned_figures(evidence) - _whole_figures(evidence) - _given_figures(given)
     issues = [f"The answer gives {_money(value, 2)}, which comes from a past task's result, not from "
-              "this task's data." for value in sorted(_cents_figures(answer) & past)][:MAX_ISSUES]
-    if issues:
+              "this task's data." for value in sorted(_cents_figures(answer) & past)]
+    # A date the tools returned in any form, the person's own, or today's
+    # (a recurring report "as of" today) is not copied.
+    today = datetime.date.today()
+    cleared = (_dates(evidence, slashes=True) | _dates(given, slashes=True)
+               | {today + datetime.timedelta(days=shift) for shift in (-1, 0, 1)})
+    copied = sorted(_dates(answer, claimed=True) & (_dates(recalled) - cleared))
+    issues += [f"The answer gives {_long_date(day)}, which comes from a past task's result, not from this "
+               "task's files." for day in copied]
+    issues = issues[:MAX_ISSUES]
+    figures, dates = (any(issue.endswith(end) for issue in issues) for end in ("task's data.", "task's files."))
+    if figures:
         # Live: told only to recompute, an agent re-ran its table query for an
         # opening balance printed above the table, and took a row's balance.
         issues[-1] += (" Take each figure from this task's own files, reading a file's text where a "
                        "query's table does not hold it.")
+    if dates:
+        issues[-1] += " Work each date out with compute from the dates this task's files state."
     return issues
 
 
