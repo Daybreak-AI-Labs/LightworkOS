@@ -210,6 +210,13 @@ _CENTS = re.compile(r"(?<![\w.,])[$€£]?\s?(\d{1,3}(?:,\d{3})+\.\d{2}|\d{2,}\.
 _NUMBER_TOKEN = re.compile(r"(?<![\w.])[$€£]?\s?(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(?![\d%])")
 
 
+def _returned_figures(text: str) -> set[Decimal]:
+    """Every decimal figure a tool returned, at any precision: a query gives
+    44976.1 for the 44,976.10 an answer writes."""
+    return {Decimal(whole.replace(",", "") + decimals)
+            for whole, decimals in _NUMBER_TOKEN.findall(text or "") if decimals}
+
+
 def _cents_figures(text: str) -> set[Decimal]:
     """Two-decimal figures of ten or more: what typed money looks like."""
     found = set()
@@ -227,7 +234,7 @@ def drift_issues(answer: str, evidence: str) -> list[str]:
     A follow-up's compute calls returned $1,647.38 and $20,203.24; its answer
     gave $1,647.56 and $20,203.42, typed by hand. Only that shape is flagged:
     a figure with a different whole amount is about something else."""
-    found = _cents_figures(evidence)
+    found = _cents_figures(evidence) | _returned_figures(evidence)
     if not found:
         return []
     by_whole: dict[int, set[Decimal]] = {}
@@ -249,7 +256,7 @@ def recalled_issues(answer: str, recalled: str, evidence: str) -> list[str]:
     A statement's compute calls returned 45,638.36 and 44,976.10, but the
     answer copied 100,079.96 and 99,417.70 from an earlier task on a
     different file, which recall_past_goals had shown as done."""
-    past = _cents_figures(recalled) - _cents_figures(evidence)
+    past = _cents_figures(recalled) - _returned_figures(evidence)
     issues = [f"The answer gives {_money(value, 2)}, which comes from a past task's result, not from "
               "this task's data." for value in sorted(_cents_figures(answer) & past)][:MAX_ISSUES]
     if issues:

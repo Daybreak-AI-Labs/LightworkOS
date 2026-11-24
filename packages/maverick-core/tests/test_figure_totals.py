@@ -202,6 +202,8 @@ def test_a_figure_taken_from_a_past_tasks_result_is_named():
     # right after a comma in CSV output is still this run's own.
     query = "total_deposits,total_withdrawals,min,max\n45638.36,44976.1,266.32,4284.61"
     assert recalled_issues("Largest withdrawal: $4,284.61", recalled + " $4,284.61", query) == []
+    # Live: the query gave 44976.1; the answer's $44,976.10 is the same figure.
+    assert recalled_issues("Withdrawals: $44,976.10", recalled + " $44,976.10", query) == []
 
 
 @pytest.mark.asyncio
