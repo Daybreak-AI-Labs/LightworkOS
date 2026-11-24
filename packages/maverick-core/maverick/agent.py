@@ -127,6 +127,12 @@ def _clean_for_screening(output, state):
 #: Files an answer can name as something the person receives.
 _DELIVERABLE_SUFFIXES = (".xlsx", ".xlsm", ".xls", ".csv", ".docx", ".pptx", ".pdf", ".md",
                          ".txt", ".png", ".jpg", ".jpeg", ".svg", ".zip", ".json", ".html")
+# A spreadsheet the person asks to receive ("give me a spreadsheet", "as an
+# Excel file"), not one they attached ("from the attached spreadsheet").
+_WORKBOOK_REQUEST = re.compile(
+    r"\b(?:as|into|give\s+me|make|create|build|produce|prepare|send|want|need|export|save)\b"
+    r"(?:\W+(?!attached\b|uploaded\b|this\b|that\b|my\b|our\b|existing\b|your\b)\w+){0,3}?"
+    r"\W+(?:spreadsheets?|excel|workbooks?|xlsx)\b", re.IGNORECASE)
 _NAMED_FILE = re.compile(r"[\w./-]+\.(?:" + "|".join(x[1:] for x in _DELIVERABLE_SUFFIXES) + r")\b",
                          re.IGNORECASE)
 
@@ -5724,7 +5730,7 @@ class Agent:
         self._begin_final()
         coding_cfg = self._coding_config()
         coding = coding_cfg is not None and coding_cfg.enabled
-        if not coding and self._request_named_file_delivery(st, final):
+        if not coding and (self._request_named_file_delivery(st, final) or self._request_workbook(st)):
             return _NEXT_TURN
         if await self._validate_final_patch(st, final, coding_cfg) is _NEXT_TURN:
             return _NEXT_TURN
@@ -5764,6 +5770,34 @@ class Agent:
             "task's page are offered to them. Call deliver_file with the path of each file they "
             "should receive, after checking it matches this request, then give your final answer "
             "again. If a file is not one they asked for, or you did not make it, say so instead.")})
+        return True
+
+    def _request_workbook(self, st: _RunState) -> bool:
+        """Once per run, send the goal root back when the person asked for a
+        spreadsheet (or Excel, a workbook) and the task's page holds a CSV
+        but no workbook. Live, twice: "Give me a spreadsheet" got a CSV and
+        "If you want, I can also reformat it into an .xlsx file". A request
+        that names CSV keeps its CSV."""
+        if (getattr(self, "_workbook_requested", False) or self.depth != 0
+                or self.ctx.goal_id is None or self.ctx.world is None):
+            return False
+        request = self._skill_query()
+        if not _WORKBOOK_REQUEST.search(request) or re.search(r"\bcsv\b", request, re.IGNORECASE):
+            return False
+        try:
+            from .task_files import files_for
+            suffixes = {Path(item.path).suffix.lower() for item in files_for(self.ctx.world, self.ctx.goal_id)}
+        except Exception:  # noqa: BLE001 -- the format check never blocks an answer
+            return False
+        if ".csv" not in suffixes or suffixes & {".xlsx", ".xlsm"}:
+            return False
+        self._workbook_requested = True
+        st.bb.post(self.name, "verify", "the person asked for a spreadsheet and only a CSV was saved")
+        st.messages.append({"role": "user", "content": (
+            "The person asked for a spreadsheet, and the task's page holds only a CSV, a plain-text "
+            "table. Write the same rows as an Excel workbook with the `spreadsheet` tool (op write, a "
+            "path ending in .xlsx), hand it over with deliver_file, then give your final answer again "
+            "naming the .xlsx file.")})
         return True
 
     def _begin_final(self) -> None:
