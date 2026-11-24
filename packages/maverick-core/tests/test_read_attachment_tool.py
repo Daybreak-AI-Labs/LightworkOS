@@ -380,7 +380,7 @@ def test_a_query_joins_the_tasks_other_files_by_their_names(tmp_path):
             "Category,revenue,cost\nCoffee,41.18,19.9\nTea,24.3,9.6"), table
     missed = tool.fn({"id": sales, "sql": "SELECT * FROM data JOIN read_attachment_158"})
     assert missed.startswith("ERROR") and "no such table" in missed
-    assert "unit_costs (unit_costs.xlsx" in missed and "data (october_sales.csv)" in missed, missed
+    assert "unit_costs (unit_costs.xlsx" in missed and "data (october_sales.csv, also october_sales)" in missed, missed
     from maverick.tools.attachments import list_attachments_tool
     assert "october_sales, unit_costs" in list_attachments_tool(world, gid).fn({})
 
@@ -426,3 +426,16 @@ def test_a_word_document_with_no_table_says_so(tmp_path):
     aid = _add(world, gid, tmp_path, "memo.docx", _DOCX, word_answer("Just a memo.", "Memo"))
     out = read_attachment_tool(world, gid).fn({"id": aid, "sql": "SELECT 1"})
     assert out.startswith("ERROR: memo.docx has no table")
+
+
+def test_the_queried_file_is_also_a_table_under_its_own_name(tmp_path):
+    # Live: a query over october_sales.csv wrote FROM october_sales and was
+    # told there is no such table: the file being read was only `data`.
+    world = WorldModel(tmp_path / "w.db")
+    gid = world.create_goal("g", "")
+    sales = _add(world, gid, tmp_path, "october_sales.csv", "text/csv", b"sku,qty\nA,2\nB,3\n")
+    _add(world, gid, tmp_path, "costs.csv", "text/csv", b"sku,cost\nA,1.5\nB,2\n")
+    tool = read_attachment_tool(world, gid)
+    out = tool.fn({"id": sales, "sql": "SELECT SUM(s.qty * c.cost) AS t FROM october_sales s JOIN costs c "
+                                       "ON c.sku = s.sku"})
+    assert out == "t\n9.0", out

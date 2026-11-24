@@ -486,7 +486,8 @@ class _OtherFiles:
         def kind(a) -> str:
             return (f"{a.filename}; its sheets are also {_table_name(a.filename)}_<sheet>" if _is_workbook(a)
                     else f"{a.filename}, its first table" if _is_word(a) else a.filename)
-        listed = [f"data ({filename})"] + [f"{name} ({kind(a)})" for name, a in self.files]
+        listed = [f"data ({filename}, also {_table_name(filename)})"] + [
+            f"{name} ({kind(a)})" for name, a in self.files]
         return f"; this query can read the tables {', '.join(listed)}"
 
 
@@ -501,6 +502,11 @@ def _query(primary: tuple[str, str], sql: str, others=None) -> str:
         if isinstance(extra, str):
             return extra
         tables.update(extra)
+    # The file being read is also a table under its own name: a join over
+    # october_sales.csv written FROM october_sales was refused.
+    own = _table_name(primary[0].split(",")[0])
+    if own not in tables and _mentions(sql, own):
+        tables[own] = primary
     result = query_tables(tables, sql)
     if others is not None and result.startswith("ERROR") and "no such table" in result:
         result += others.hint(primary[0])
