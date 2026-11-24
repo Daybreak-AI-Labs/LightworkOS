@@ -62,6 +62,9 @@ _ITEM = re.compile(r"^(\s*)([-*+]|\d{1,3}[.)])\s+(\[[ xX]\]\s+)?(.*)$")
 _RULE = re.compile(r"^\s*([-*_])(\s*\1){2,}\s*$")
 _TABLE_RULE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$")
 _BOLD = re.compile(r"\*\*(.+?)\*\*")
+# A backslash before ASCII punctuation is a Markdown escape ("\\$8,400"):
+# the reader sees the character alone.
+_ESCAPED = re.compile(r"\\([!-/:-@\[-`{-~])")
 _READABLE = str.maketrans({"✓": "x", "✔": "x", "☐": "[ ]", "☑": "[x]", " ": " ",
                            " ": " ", " ": " ", " ": " ", "−": "-"})
 
@@ -109,6 +112,7 @@ def _words(text: str) -> list[tuple[str, bool]]:
     out: list[tuple[str, bool]] = []
     spaced = True
     for index, part in enumerate(_BOLD.split(text.replace(_GLUE, ""))):
+        part = _ESCAPED.sub(r"\1", part)
         tokens = part.split()
         if not tokens:
             spaced = spaced or bool(part)

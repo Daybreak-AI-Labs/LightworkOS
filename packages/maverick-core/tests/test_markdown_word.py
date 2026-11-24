@@ -43,3 +43,12 @@ def test_libreoffice_opens_the_document(tmp_path):
                    capture_output=True, timeout=180, check=False)
     text = (tmp_path / "sop.txt").read_text(encoding="utf-8", errors="replace")
     assert "Opening procedure" in text and "Start the espresso machine" in text and "Shift lead" in text
+
+
+def test_escaped_punctuation_is_written_without_its_backslash():
+    # Live: a break-even answer wrote "\$8,400"; Markdown shows "$8,400", and
+    # the Word file showed the backslash.
+    document = _parts(word_answer("Total: \\$8,400 at 7.5\\% \\*not bold\\*\n\n| Item | Cost |\n|---|---|\n"
+                                  "| A \\| B | \\$5.00 |\n\n`C:\\temp\\$x`", "Quote"))["word/document.xml"]
+    assert "$8,400 at 7.5% *not bold*" in document and "$5.00" in document and "A | B" in document
+    assert "\\$" not in document.replace("C:\\temp\\$x", "")

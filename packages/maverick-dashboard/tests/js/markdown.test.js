@@ -84,3 +84,13 @@ test("plain text without markdown survives with its line structure", t => {
   assert.equal(html(window, ""), "");
   assert.equal(html(window, null), "");
 });
+
+test("any escaped ASCII punctuation renders as itself, as CommonMark allows", t => {
+  // Live: a break-even answer wrote "\$8,400 ÷ (\$28.00 − \$11.50)", and the
+  // page showed every backslash because "$" was not an escapable character.
+  const window = fixture(); t.after(() => window.close());
+  assert.equal(html(window, "\\$8,400 ÷ (\\$28.00 − \\$11.50) at 100\\% \\& \\\"done\\\" \\@ 5\\:00 \\= ok"),
+    "<p>$8,400 ÷ ($28.00 − $11.50) at 100% &amp; \"done\" @ 5:00 = ok</p>");
+  // A backslash before a letter or a digit stays a backslash.
+  assert.equal(html(window, "C:\\Users\\a1 \\5"), "<p>C:\\Users\\a1 \\5</p>");
+});

@@ -48,6 +48,9 @@ def _content_types(types) -> bytes:
     return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
             f'<Types xmlns="{_TYPES}">' + "".join(entries) + "</Types>").encode("utf-8")
 _BOLD = re.compile(r"\*\*([^*\n]+)\*\*")
+# A backslash before ASCII punctuation is a Markdown escape ("\\$8,400"):
+# the reader sees the character alone.
+_ESCAPED = re.compile(r"\\([!-/:-@\[-`{-~])")
 _HEADING = re.compile(r"^(#{1,6}) ([^#].*)$")
 _BULLET = re.compile(r"^[-+*] (\S.*)$")
 _FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})([^`~]*)$")
@@ -60,9 +63,10 @@ def _runs(text):
         return [(text, False)]
     runs, start = [], 0
     for match in _BOLD.finditer(text):
-        runs.extend([(text[start:match.start()], False), (match[1], {"bold": True})])
+        runs.extend([(_ESCAPED.sub(r"\1", text[start:match.start()]), False),
+                     (_ESCAPED.sub(r"\1", match[1]), {"bold": True})])
         start = match.end()
-    return runs + [(text[start:], False)]
+    return runs + [(_ESCAPED.sub(r"\1", text[start:]), False)]
 
 
 def _blocks(text, title):

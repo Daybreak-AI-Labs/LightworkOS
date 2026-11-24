@@ -100,3 +100,12 @@ def test_a_short_column_beside_long_ones_keeps_its_words_whole():
     for word in ("(System)", "(Square)", "(Clover)"):
         assert word in text, word
     assert "(Sys)" not in text and "(Squ)" not in text
+
+
+def test_escaped_punctuation_is_written_without_its_backslash():
+    # Live: an answer wrote "\$8,400"; Markdown shows "$8,400", and the PDF
+    # showed the backslash.
+    streams = _streams(pdf_from_markdown("# \\$ Quote\n\nTotal: \\$8,400 at 7.5\\% \\*not bold\\*\n\n"
+                                         "| Item | Cost |\n|---|---|\n| A | \\$5.00 |\n"))
+    assert "$8,400" in streams and "7.5%" in streams and "*not" in streams and "$5.00" in streams
+    assert "\\\\$" not in streams and "\\\\%" not in streams
