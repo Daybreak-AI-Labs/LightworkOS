@@ -132,38 +132,105 @@ _DELIVERABLE_SUFFIXES = (".xlsx", ".xlsm", ".xls", ".csv", ".docx", ".pptx", ".p
 _RECALLED = re.compile(r"<tool_output tool='recall_past_goals' id=([0-9a-f]+)>.*?</tool_output \1>", re.DOTALL)
 
 
+#: The file types a person can ask to receive, as the request checks name them.
+#: Slides are slides, a slide or pitch deck, PowerPoint or "a (board)
+#: presentation": "build a 12x16 deck", "prepare for the presentation
+#: tomorrow" and "the numbers on slide 3" asked for no .pptx.
+_FILE_TYPES = {
+    "csv": r"csv",
+    "word": r"word\s+(?:document|doc|file)|docx",
+    "pdf": r"pdf",
+    "slides": r"slides|slide\s+deck|pitch\s+deck|powerpoint|pptx|an?\s+(?:[\w-]+\s+){0,2}?presentation",
+    "workbook": r"spreadsheets?|excel|workbooks?|xlsx",
+}
+_RECEIVE_TRIGGERS = r"as|into|give\s+me|make|create|build|produce|prepare|send|want|need|export|save"
+
+
 def _asked_to_receive(target: str) -> re.Pattern:
     """A file the person asks to receive ("give me a spreadsheet", "as a
-    CSV"), not one they attached ("from the attached spreadsheet")."""
+    CSV"), not one they attached ("from the attached spreadsheet").
+
+    Group ``trigger`` is the asking word nearest the file (no other asking
+    word sits between them: in "the payroll export as a CSV" it is "as"),
+    and group ``type`` is the file."""
     return re.compile(
-        r"\b(?:as|into|give\s+me|make|create|build|produce|prepare|send|want|need|export|save)\b"
-        r"(?:\W+(?!attached\b|uploaded\b|this\b|that\b|my\b|our\b|existing\b|your\b)\w+){0,3}?"
-        rf"\W+(?:{target})\b", re.IGNORECASE)
+        rf"\b(?P<trigger>{_RECEIVE_TRIGGERS})\b"
+        r"(?:\W+(?!attached\b|uploaded\b|this\b|that\b|my\b|our\b|existing\b|your\b"
+        rf"|(?:{_RECEIVE_TRIGGERS})\b)\w+){{0,3}}?"
+        rf"\W+(?P<type>{target})\b", re.IGNORECASE)
 
 
-_WORKBOOK_REQUEST = _asked_to_receive(r"spreadsheets?|excel|workbooks?|xlsx")
-# A sentence about what the person is sending ("Here's last week's timesheet
-# as a Word file") names a file they gave, not one they want back.
-_GIVEN = re.compile(r"\s*(?:here(?:'s|\u2019s|\s+is|\s+are)|attached|enclosed|below\s+is|this\s+is|these\s+are"
-                    r"|i(?:'ve|\u2019ve|\s+have)?\s+(?:attached|uploaded|included|sent|shared)"
-                    r"|i(?:'m|\u2019m|\s+am)\s+sending)\b", re.IGNORECASE)
+_WORKBOOK_REQUEST = _asked_to_receive(_FILE_TYPES["workbook"])
+_CSV_REQUEST = _asked_to_receive(_FILE_TYPES["csv"])
+# Words that say the person is sending a file. "The invoice is attached as a
+# PDF. What is the total due?" names the PDF they gave, and its correct
+# answer was sent back to make a PDF nobody asked for.
+_GIVEN = re.compile(r"\b(?:here(?:'s|\u2019s|\s+is|\s+are)|attached|enclosed|uploaded|included|below\s+is"
+                    r"|please\s+find|sent|sending|shared|forwarded|this\s+is|these\s+are)\b", re.IGNORECASE)
+# "No need for a PDF", "Don't send me a PDF", "as xlsx not csv": a file refused.
+_REFUSED = re.compile(r"\b(?:no|not|never|without|don(?:'|\u2019)?t|instead\s+of)\b", re.IGNORECASE)
+_ANY_FILE_TYPE = re.compile("|".join(rf"\b(?P<{name}>{target})\b" for name, target in _FILE_TYPES.items()),
+                            re.IGNORECASE)
+# Between two file types of a choice: "as CSV or PDF", "a PDF or as a Word document".
+_OR_BETWEEN = re.compile(r"\W+(?:\w+\W+){0,2}?or\W+(?:\w+\W+){0,2}?", re.IGNORECASE)
+# What follows the file a conversion starts from: "Save the PDF [file] as a
+# Word document", "Export the spreadsheet to PDF". Only the file after
+# "as", "into" or "to" is one the person wants back.
+_CONVERTED_TO = re.compile(
+    r"(?:\W+\w+)?\W+(?:as|into|to)\W+(?:(?:an?|the)\W+)?(?:\w+\W+)?"
+    rf"(?:{'|'.join(_FILE_TYPES.values())})\b", re.IGNORECASE)
+
+
+def _offers_a_choice(clause: str) -> bool:
+    """Whether ``clause`` weighs two file types against each other ("Should I
+    export my bank statements as CSV or PDF?"): a question, not a request."""
+    return any(first.lastgroup != second.lastgroup and _OR_BETWEEN.fullmatch(clause, first.end(), second.start())
+               for first, second in itertools.pairwise(_ANY_FILE_TYPE.finditer(clause)))
+
+
+def _is_asked(found: re.Match, clause: str) -> bool:
+    """Whether the file ``found`` in ``clause`` is one the person asks for."""
+    if found.group("trigger").lower() in ("as", "into") and _GIVEN.search(clause, 0, found.start()):
+        return False
+    return not (_REFUSED.search(clause, 0, found.start("type")) or _CONVERTED_TO.match(clause, found.end()))
 
 
 def _asks_to_receive(pattern: re.Pattern, request: str) -> bool:
-    """Whether a sentence of ``request`` asks to receive what ``pattern``
-    names, leaving out sentences about what the person is sending."""
-    return any(sentence.strip() and not _GIVEN.match(sentence) and pattern.search(sentence)
-               for sentence in re.split(r"[.;!?](?=\s|$)|\n", request))
+    """Whether a clause of ``request`` asks to receive what ``pattern``
+    names. "as"/"into" after a giving word names a file sent ("Hi, here's
+    the payroll export as a CSV"); other asking words always ask ("Here are
+    the shift logs, make me a spreadsheet"). A refused file, a choice between
+    types and the file a conversion starts from are not asked for."""
+    return any(clause.strip() and not _offers_a_choice(clause)
+               and any(_is_asked(found, clause) for found in pattern.finditer(clause))
+               for clause in re.split(r"[.;!?,](?=\s|$)|\n", request))
+
+
+# decision_requests.reply_context, which a chat reply to a waiting question
+# carries after the person's message: the question and the options the
+# agent wrote. Read as the request, "1. As a PDF: ..." sent a reply saying
+# "no file please" back to make a PDF.
+_REPLY_CONTEXT = re.compile(r"\s*This message replies to the question you asked before it: .*\Z", re.DOTALL)
+
+
+def _persons_words(text: str) -> str:
+    """``text`` without the agent's own question and options."""
+    return _REPLY_CONTEXT.sub("", text)
+
+
 #: (request, suffixes that satisfy it, what it is, how to make it).
 _FILE_TYPE_REQUESTS = (
-    (_asked_to_receive(r"csv"), (".csv",), "a CSV file",
+    (_CSV_REQUEST, (".csv",), "a CSV file",
      "the `spreadsheet` tool, op write, with a path ending in .csv"),
-    (_asked_to_receive(r"word\s+(?:document|doc|file)|docx"), (".docx",), "a Word document",
+    (_asked_to_receive(_FILE_TYPES["word"]), (".docx",), "a Word document",
      "`write_file` to a path ending in .docx"),
-    (_asked_to_receive(r"pdf"), (".pdf",), "a PDF", "`write_file` to a path ending in .pdf"),
-    (_asked_to_receive(r"slides?|slide\s+deck|deck|powerpoint|pptx|presentation"), (".pptx",), "slides",
+    (_asked_to_receive(_FILE_TYPES["pdf"]), (".pdf",), "a PDF", "`write_file` to a path ending in .pdf"),
+    (_asked_to_receive(_FILE_TYPES["slides"]), (".pptx",), "slides",
      "`write_file` to a path ending in .pptx"),
 )
+#: The tool that writes each file a request check asks for.
+_FILE_WRITERS = {".csv": "spreadsheet", ".xlsx": "spreadsheet", ".docx": "write_file", ".pdf": "write_file",
+                 ".pptx": "write_file"}
 _NAMED_FILE = re.compile(r"[\w./-]+\.(?:" + "|".join(x[1:] for x in _DELIVERABLE_SUFFIXES) + r")\b",
                          re.IGNORECASE)
 
@@ -5902,6 +5969,23 @@ class Agent:
             verification = judged
         return await self._finish_final(st, step, final, coding_cfg, verification)
 
+    def _can_call(self, name: str) -> bool:
+        """Whether a call to the tool ``name`` would run: registered, allowed
+        by the registry's ACL, not hidden from this agent and granted by its
+        capability (the grant _capability_permits_denial checks, without the
+        denial it records: nothing is called here).
+
+        The request checks below ask only for files the agent can make and
+        hand over: a specialist pack granted neither write_file nor
+        deliver_file was told to save a PDF and spent its turns on refused
+        calls."""
+        tools = self.tools
+        if (name not in {tool.name for tool in tools.all()} or name in getattr(tools, "_hidden", ())
+                or not tools._acl_allows(name)):
+            return False
+        cap = self._effective_capability(name)
+        return cap is None or cap.permits(name)
+
     def _request_named_file_delivery(self, st: _RunState, final: str) -> bool:
         """Once per run, send the goal root back when its answer names a
         document in the workspace that is not on the task's page.
@@ -5913,8 +5997,7 @@ class Agent:
         behalf. Returns True when the request was appended."""
         if (getattr(self, "_file_delivery_requested", False) or self.depth != 0
                 or not (self.role == "orchestrator" or getattr(self, "_is_goal_root", False))
-                or self.ctx.goal_id is None
-                or "deliver_file" not in {tool.name for tool in self.tools.all()}):
+                or self.ctx.goal_id is None or not self._can_call("deliver_file")):
             return False
         names = _undelivered_named_files(final, self.ctx.sandbox, self.ctx.world, self.ctx.goal_id)
         if not names:
@@ -5934,12 +6017,14 @@ class Agent:
         spreadsheet (or Excel, a workbook) and the task's page holds a CSV
         but no workbook. Live, twice: "Give me a spreadsheet" got a CSV and
         "If you want, I can also reformat it into an .xlsx file". A request
-        that names CSV keeps its CSV."""
+        that asks for a CSV keeps its CSV; one that only names it ("Save the
+        CSV as a spreadsheet", "as xlsx, not csv") still wants the workbook."""
         if (getattr(self, "_workbook_requested", False) or self.depth != 0
-                or self.ctx.goal_id is None or self.ctx.world is None):
+                or self.ctx.goal_id is None or self.ctx.world is None
+                or not (self._can_call("deliver_file") and self._can_call(_FILE_WRITERS[".xlsx"]))):
             return False
-        request = self._skill_query()
-        if not _asks_to_receive(_WORKBOOK_REQUEST, request) or re.search(r"\bcsv\b", request, re.IGNORECASE):
+        request = _persons_words(self._skill_query())
+        if not _asks_to_receive(_WORKBOOK_REQUEST, request) or _asks_to_receive(_CSV_REQUEST, request):
             return False
         try:
             from .task_files import files_for
@@ -5963,17 +6048,17 @@ class Agent:
         holds no file of that type. Live: "Give me the cleaned CSV" got the
         CSV pasted into the answer and nothing to download."""
         if (getattr(self, "_file_types_requested", False) or self.depth != 0
-                or self.ctx.goal_id is None or self.ctx.world is None
-                or "deliver_file" not in {tool.name for tool in self.tools.all()}):
+                or self.ctx.goal_id is None or self.ctx.world is None or not self._can_call("deliver_file")):
             return False
-        request = self._skill_query()
+        request = _persons_words(self._skill_query())
         try:
             from .task_files import files_for
             suffixes = {Path(item.path).suffix.lower() for item in files_for(self.ctx.world, self.ctx.goal_id)}
         except Exception:  # noqa: BLE001 -- the format check never blocks an answer
             return False
         missing = [(label, how) for pattern, wanted, label, how in _FILE_TYPE_REQUESTS
-                   if _asks_to_receive(pattern, request) and not suffixes & set(wanted)]
+                   if _asks_to_receive(pattern, request) and not suffixes & set(wanted)
+                   and self._can_call(_FILE_WRITERS[wanted[0]])]
         if not missing:
             return False
         self._file_types_requested = True
