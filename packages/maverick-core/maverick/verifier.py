@@ -67,6 +67,8 @@ You have access to no tools. Your job is to read the brief + the proposed final 
 1. Does the answer actually satisfy the brief? Be strict.
 2. Are there factual errors, missing steps, or unsupported claims?
 3. Would a careful human accept this?
+4. A file the answer hands over is part of the answer. When the evidence shows what a file holds, check its figures against the brief and the data, and that its parts agree with each other (a summary with its detail, a schedule with its totals).
+5. A figure that cannot be right for the business (negative sales, a margin over 100%, more written off than an asset cost) is an error in the work unless the data shows it. An answer that blames the data for such a figure without showing the rows that prove it is not acceptable.
 
 Respond with a JSON object on a single line:
 

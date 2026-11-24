@@ -337,3 +337,27 @@ def test_xlsx_write_makes_several_named_sheets_in_one_workbook(tmp_path):
     assert ss._run({"op": "write", "path": str(tmp_path / "x.csv"), "sheets": sheets}).startswith("ERROR")
     assert ss._run({"op": "write", "path": str(p), "sheets": {"a/b": [["x"]]}}).startswith("ERROR")
     assert ss._run({"op": "write", "path": str(p), "sheets": {}}).startswith("ERROR")
+
+
+def test_a_write_reports_what_the_file_holds_with_its_formulas_worked_out(tmp_path):
+    # Live, twice: an aging report's summary sheet put every balance in 90+
+    # while its detail sheet had them right, and a depreciation schedule
+    # wrote off a van for $46,800 of its $36,000. Each write said only
+    # "wrote 2 sheet(s)", so neither the agent nor its verifier saw the file.
+    pytest.importorskip("openpyxl")
+    p = tmp_path / "aging.xlsx"
+    sheets = {"Summary": [["Customer", "Current", "90+", "Total"], ["Cedar Auto", 0, 7887.79, "=SUM(B2:C2)"],
+                          ["Grand Total", "=SUM(B2:B2)", "=SUM(C2:C2)", "=SUM(D2:D2)"]],
+              "Detail": [["Invoice", "Bucket", "Open"], ["INV-1020", "Current", 3487.47]]}
+    out = ss._run({"op": "write", "path": str(p), "sheets": sheets})
+    held = out.split("What the file now holds (formulas worked out):\n", 1)[1]
+    assert held.splitlines() == ["Sheet 'Summary':", "Customer,Current,90+,Total", "Cedar Auto,0,7887.79,7887.79",
+                                 "Grand Total,0,7887.79,7887.79", "Sheet 'Detail':", "Invoice,Bucket,Open",
+                                 "INV-1020,Current,3487.47"], held
+    # A formula this cannot work out is shown as written; long sheets are cut.
+    rows = [["n", "x"]] + [[i, i * 2] for i in range(60)] + [["odd", "=Other!A1"]]
+    out = ss._run({"op": "write", "path": str(tmp_path / "long.xlsx"), "rows": rows})
+    assert "58,116" not in out and "... 37 more rows" in out and out.count("\n") < 40
+    # A CSV holds no formulas: it shows what was stored.
+    csv_out = ss._run({"op": "write", "path": str(tmp_path / "t.csv"), "rows": [["a", "b"], [1, "=A2*2"]]})
+    assert csv_out.endswith("What the file now holds:\na,b\n1,'=A2*2"), csv_out
