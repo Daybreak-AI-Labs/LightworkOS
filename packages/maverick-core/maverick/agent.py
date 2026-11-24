@@ -6512,6 +6512,7 @@ class Agent:
         # the answer said 1,647.56) goes back the same way.
         from .figure_totals import (
             answer_issues,
+            date_issues,
             drift_issues,
             percent_issues,
             recalled_issues,
@@ -6519,13 +6520,15 @@ class Agent:
         )
         # What a write put in a file is the agent's own typing, not a tool's
         # result, but what the file's formulas worked out is; the model
-        # verifier below still sees the whole read-back. Money figures no
-        # tool returned go back too: a lease's typed total was $644.64 short.
+        # verifier below still sees the whole read-back. Money figures and
+        # dates no tool returned go back too: a lease's typed total was
+        # $644.64 short, and its typed notice deadline two days early.
         evidence = _figure_evidence(st.messages)
         recalled = "\n".join(match.group(0) for match in _RECALLED.finditer(evidence))
         if issues := (answer_issues(final) + drift_issues(final, evidence) + percent_issues(final)
                       + recalled_issues(final, recalled, _RECALLED.sub("", evidence))
-                      + unsupported_issues(final, evidence, self._skill_query())):
+                      + unsupported_issues(final, evidence, self._skill_query())
+                      + date_issues(final, evidence, self._skill_query())):
             from .verifier import VerifierVerdict
             verification.attempted = True
             verification.verdict = VerifierVerdict(

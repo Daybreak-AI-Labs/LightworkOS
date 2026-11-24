@@ -308,6 +308,64 @@ def unsupported_issues(answer: str, evidence: str, given: str = "") -> list[str]
             "hold. Work each one out with compute or a query and copy the results exactly."]
 
 
+_MONTH_NAMES = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
+_MONTH = (r"(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?"
+          r"|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?")
+_MONTH_FIRST = re.compile(rf"\b{_MONTH}\s+(\d{{1,2}})(?:st|nd|rd|th)?,?\s+(\d{{4}})\b", re.IGNORECASE)
+_DAY_FIRST = re.compile(rf"\b(\d{{1,2}})(?:st|nd|rd|th)?\s+(?:of\s+)?{_MONTH},?\s+(\d{{4}})\b", re.IGNORECASE)
+_ISO_DATE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
+_SLASHED = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b")
+
+
+def _dates(text: str, *, slashed: bool = True) -> set:
+    """Every calendar date ``text`` writes: March 31, 2030, 31 March 2030,
+    2030-03-31, and (when ``slashed``) 03/31/2030 read both ways."""
+    import datetime
+
+    found = set()
+
+    def add(year, month, day) -> None:
+        try:
+            found.add(datetime.date(int(year), int(month), int(day)))
+        except ValueError:
+            pass
+
+    for month, day, year in _MONTH_FIRST.findall(text or ""):
+        add(year, _MONTH_NAMES.index(month[:3].lower()) + 1, day)
+    for day, month, year in _DAY_FIRST.findall(text or ""):
+        add(year, _MONTH_NAMES.index(month[:3].lower()) + 1, day)
+    for year, month, day in _ISO_DATE.findall(text or ""):
+        add(year, month, day)
+    if slashed:
+        for first, second, year in _SLASHED.findall(text or ""):
+            add(year, first, second)
+            add(year, second, first)
+    return found
+
+
+def date_issues(answer: str, evidence: str, given: str = "") -> list[str]:
+    """Dates in ``answer`` that no tool returned, no file read holds and the
+    request does not state (today's date always stands).
+
+    Live: a lease's renewal notice deadline, 180 days before March 31, 2030,
+    was typed as September 30, 2029 (it is October 2) and the model judge
+    accepted it. Dates written 03/04/2026 are left out: their order is the
+    reader's guess."""
+    import datetime
+
+    if not evidence.strip():
+        return []
+    known = _dates(evidence) | _dates(given) | {datetime.date.today()}
+    missing = sorted(_dates(answer, slashed=False) - known)
+    if not missing:
+        return []
+    shown = ", ".join(f"{day:%B} {day.day}, {day.year}" for day in missing[:4]) + (
+        " and others" if len(missing) > 4 else "")
+    return [f"The answer gives {shown}, which no tool returned and neither the task's files nor the request "
+            "hold. Work each date out with compute, as in date('2030-03-31', '-180 days'), and copy the "
+            "result exactly."]
+
+
 _PERCENT = re.compile(r"(?<![\d.])(\d{1,2}(?:\.\d{1,4})?)\s?%")
 
 

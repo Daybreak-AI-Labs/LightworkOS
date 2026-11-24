@@ -414,3 +414,26 @@ def test_money_figures_no_tool_returned_are_named():
     # One stray figure, or an answer with no tool use at all, is left to the model judge.
     assert unsupported_issues("Total: $50,400.00", evidence) == []
     assert unsupported_issues(answer, "") == []
+
+
+def test_dates_no_tool_returned_are_named():
+    from maverick.figure_totals import date_issues
+
+    lease = ("<tool_output tool='read_attachment' id=1>\nThe term begins on April 1, 2025 and continues for "
+             "sixty (60) full calendar months\n</tool_output 1>")
+    # Live: the deadline 180 days before March 31, 2030 was typed as September 30, 2029.
+    typed = "Expires March 31, 2030. Last day to give notice: September 30, 2029. Starts April 1, 2025."
+    assert date_issues(typed, lease) == [
+        "The answer gives September 30, 2029, March 31, 2030, which no tool returned and neither the task's "
+        "files nor the request hold. Work each date out with compute, as in date('2030-03-31', '-180 days'), "
+        "and copy the result exactly."]
+    # Dates compute returned, in any written form, stand, as do the request's and today's.
+    worked = lease + "\n<tool_output tool='compute' id=2>\n2030-03-31\n</tool_output 2>\n2029-10-02"
+    assert date_issues("Expires 31 March 2030; notice by Oct. 2, 2029.", worked) == []
+    assert date_issues("As of November 24, 2026 nothing is due.", lease, given="As of November 24, 2026") == []
+    import datetime
+    today = datetime.date.today()
+    assert date_issues(f"Checked on {today:%B} {today.day}, {today.year}.", lease) == []
+    # A slashed date's order is a guess, and no tool use at all is left to the model judge.
+    assert date_issues("Due 03/04/2031.", lease) == []
+    assert date_issues(typed, "") == []
