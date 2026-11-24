@@ -140,3 +140,25 @@ def test_a_pdf_without_a_table_has_no_table_to_query():
 
     note = extract_text_from_bytes(pdf_from_markdown("# Note\n\nKeep it posted by the sink. Costs are shared.\n"))
     assert table_csv(note) is None
+
+
+def test_an_invoice_pdf_groups_by_its_columns_and_keeps_totals_out_of_the_rows():
+    # Live: an invoice's "Espresso beans 5lb" split as "Espresso beans" and
+    # "5lb Coffee" across two columns, and its Subtotal, Sales tax and Total
+    # due lines became rows of the table.
+    from maverick.markdown_pdf import pdf_from_markdown
+    from maverick.tools.csv_query import query_tables
+    from maverick.tools.pdf_reader import extract_text_from_bytes, figures_outside_table, table_csv
+
+    invoice = ("# INVOICE 20417\n\n| Item | Category | Qty | Unit price | Amount |\n|---|---|---:|---:|---:|\n"
+               "| Espresso beans 5lb | Coffee | 12 | 64.50 | 774.00 |\n| Oat milk case | Dairy | 20 | 31.75 | 635.00 |\n"
+               "| 12oz paper cups (1000) | Packaging | 6 | 88.20 | 529.20 |\n| Lids 12oz (1000) | Packaging | 6 | 41.10 | 246.60 |\n"
+               "| Whole milk 1gal | Dairy | 40 | 4.69 | 187.60 |\n\nSubtotal: $2,372.40\n\nSales tax (8.25%): $195.72\n\n"
+               "Total due: $2,568.12\n")
+    text = extract_text_from_bytes(pdf_from_markdown(invoice))
+    table = table_csv(text)
+    out = query_tables({"data": ("invoice.pdf", table)},
+                       "SELECT Category, ROUND(SUM(Amount), 2) AS total FROM data GROUP BY Category ORDER BY Category")
+    assert out.splitlines() == ["Category,total", "Coffee,774.0", "Dairy,822.6", "Packaging,775.8"], table
+    assert "Espresso beans 5lb" in table and "Subtotal" not in table, table
+    assert figures_outside_table(text) == ["Subtotal: $2,372.40", "Sales tax (8.25%): $195.72", "Total due: $2,568.12"]

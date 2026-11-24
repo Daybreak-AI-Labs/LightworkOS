@@ -185,6 +185,34 @@ class _Layout:
         return textwrap.dedent("\n".join(lines)) if lines else text
 
 
+def _word_layout(page, density: float = 4.0) -> str:
+    """A tabular page drawn from pdfplumber's word positions: words close
+    together share a cell, separated by one space, and each cell starts at
+    its place on the page, two or more spaces from the last. pypdf's layout
+    text split "Espresso beans 5lb" across two columns and joined "Lids12oz";
+    a word gap under 1.5 points (a PDF that draws each word on its own, with
+    no space character) still counts as a gap."""
+    words = page.extract_words(x_tolerance=1.5)
+    lines: list[tuple[float, list[dict]]] = []
+    for word in sorted(words, key=lambda w: (round(w["top"]), w["x0"])):
+        if lines and abs(lines[-1][0] - word["top"]) < 3:
+            lines[-1][1].append(word)
+        else:
+            lines.append((word["top"], [word]))
+    out: list[str] = []
+    for _top, row in lines:
+        text, previous = "", None
+        for word in sorted(row, key=lambda w: w["x0"]):
+            size = word["bottom"] - word["top"]
+            if previous is not None and word["x0"] - previous["x1"] < max(4.0, 0.45 * size):
+                text += " " + word["text"]
+            else:
+                text += " " * max(int(word["x0"] / density) - len(text), 2 if text else 0) + word["text"]
+            previous = word
+        out.append(text.rstrip())
+    return textwrap.dedent("\n".join(line for line in out if line.strip()))
+
+
 _GROUP = re.compile(r"\S+(?: \S+)*")  # words one space apart; two or more spaces part columns
 
 
@@ -206,8 +234,9 @@ def figures_outside_table(text: str | None, limit: int = 12) -> list[str]:
     statement's opening and closing balances."""
     if not text or table_csv(text) is None:
         return []
-    return [line.strip() for line in text.splitlines()
-            if _AMOUNT.search(line) and len(_groups(line.rstrip())) < 2][:limit]
+    return [" ".join(line.split()) for line in text.splitlines()
+            if _AMOUNT.search(line) and (len(_groups(line.rstrip())) < 2
+                                         or _groups(line.rstrip())[0][2].endswith(":"))][:limit]
 
 
 def table_csv(text: str | None) -> str | None:
@@ -237,6 +266,8 @@ def table_csv(text: str | None) -> str | None:
             if above is None:
                 continue
             header = above
+        if groups[0][2].endswith(":"):
+            continue  # "Sales tax (8.25%):  $195.72": a summary line, not a row
         cells = [""] * len(header)
         for start, end, value in groups:
             where = _column(start, end, header)
@@ -267,7 +298,12 @@ def _extract_with_pdfplumber(data: bytes, pages: str | None, include_tables: boo
         page_indices = _pages_or_say(pages, total)
         for idx in page_indices:
             page = pdf.pages[idx]
-            text = layout.page(idx, (page.extract_text() or "").strip())
+            text = (page.extract_text() or "").strip()
+            if _tabular(text):
+                try:
+                    text = _word_layout(page) or layout.page(idx, text)
+                except Exception:  # noqa: BLE001 -- no word positions: pypdf's layout
+                    text = layout.page(idx, text)
             has_content = has_content or bool(text)
             block = f"=== Page {idx + 1} of {total} ===\n{text}"
             if include_tables:
