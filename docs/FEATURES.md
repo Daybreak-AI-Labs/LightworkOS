@@ -330,40 +330,67 @@ Settings and the installation wizard.
 - **Dates, joins and Word tables in SQL** (`tools/csv_query.py`,
   `tools/attachments.py`, `maverick_knowledge/office_extract.py`) — a column
   of dates written 10/29/2026 or 29/10/2026 is stored as 2026-10-29 when its
-  values show which part is the day, so `julianday()` reads it (an aging
-  report's every balance had fallen into 90+); a column whose order the data
-  does not show is kept and named when a date function runs, and a date
-  function empty in every row says why. A percent column holding 15 for 15%
+  values, or another date column of the same file that the query reads, show
+  which part is the day, so `julianday()` reads it (an aging report's every
+  balance had fallen into 90+). Another file's order is never borrowed: a US
+  invoice file had read a European bank file's 05/10/2026 as May 10. A query
+  that reads a converted column is told so, since it no longer matches the
+  form the file shows; a column whose order is unknown is kept and named; and
+  a column the date functions cannot read is named when the result has an
+  empty value or a date filter drops rows, wrapped in `substr` or renamed in
+  a CTE too. Notes name the table and count only the columns the query reads
+  (SQLite's authorizer reports them). A percent column holding 15 for 15%
   that a query uses in arithmetic without dividing by 100 gets a note, as
   does a column of numbers with blanks used in arithmetic without COALESCE
   (a blank is NULL, so amount - paid left every unpaid invoice out), and
   `round` rounds half away from zero on the figure as written (SQLite's gave
-  41.17 for 41.175). `hours('7:00-15:30')` and 12-hour times work. In
-  `read_attachment`'s `sql`, the task's other attached files are tables named
-  after the file (a workbook's sheets also `<name>_<sheet>`), and the file
-  being read is `data` and its own name, so one query joins sales to a cost
-  workbook. A Word document's tables are queried with
-  `sql` (`table` picks one), and its text companion keeps each table row on
-  one line with blank cells in place (one cell per line had dropped them).
-- **Dates in `compute`** (`tools/compute.py`) — an expression that calls
+  41.17 for 41.175) and never fails a query. `hours('7:00-15:30')` and
+  12-hour times work. In `read_attachment`'s `sql`, the task's other attached
+  files are tables named after the file (a workbook's sheets also
+  `<name>_<sheet>`), and the file being read is `data` and its own name, so
+  one query joins sales to a cost workbook. A file is loaded only when SQLite
+  reports the query reads it as a table, so a column named like a file, `IS
+  DISTINCT FROM` or a CTE never loads one, and `FROM (a, b)` or `IN skus`
+  always does. A Word document's tables are queried with `sql` (`table` picks
+  one) under the same refusals as its text (tracked changes and moves,
+  fields, text boxes, embedded content), and its text companion keeps each
+  table row on one line with blank cells in place (one cell per line had
+  dropped them).
+- **Dates in `compute`** (`tools/compute.py`) — an expression may call
   SQLite's date functions (`date('2026-01-31', '-30 days')`,
-  `julianday(b) - julianday(a)`) is worked out in a private in-memory
-  database that allows functions only; a bare word or arithmetic on date
-  text is refused, since SQLite reads "date('2030-03-31') - 180 days" as
-  1850. A lease's renewal deadline had been counted by hand a day late.
+  `julianday(b) - julianday(a)`). Only the date calls run in a private
+  in-memory database that allows the date functions alone, with a cap on
+  the text they build; their exact values go into the arithmetic, which
+  keeps true division and money rounding with or without SymPy (prorated
+  rent had come back 768 instead of 774.19, and 8.75 hours as
+  8.749999993). Date text never becomes a figure: a bare word, arithmetic on
+  date text, an unquoted date, or a number SQLite would read as a Julian day
+  (julianday('2030') is 4713 BC) is refused, since SQLite reads
+  "date('2030-03-31') - 180 days" as 1850; `max()` and `min()` pick only
+  among dates written YYYY-MM-DD. A lease's renewal deadline had been
+  counted by hand a day late.
 - **A written spreadsheet reports what it holds** (`tools/spreadsheet.py`,
-  `verifier.py`) — a `spreadsheet` write ends with the file's rows (25 per
-  sheet, formulas worked out), so the agent sees the numbers it saved, and
-  the verifier reads every spreadsheet on the task's page, whichever agent
-  wrote it: it checks a delivered file's figures and that its parts agree,
-  and does not accept an impossible figure blamed on the data. An aging
-  summary and a depreciation schedule had been wrong while the answer named
-  only the file.
+  `sheet_formulas.py`, `verifier.py`) — a `spreadsheet` write ends with the
+  file's rows as stored (25 per sheet, each formula worked out once, under a
+  step cap), so the agent sees the numbers it saved, and the verifier reads
+  every spreadsheet on the task's page, whichever agent wrote it, told how
+  many rows each file holds when it sees only the first: it checks a
+  delivered file's figures and that its parts agree, and does not accept an
+  impossible figure blamed on the data. In the figure checks, what the agent
+  typed into a file still counts as its own typing, and what the file's
+  formulas worked out counts as a tool's result, in cents. An aging summary
+  and a depreciation schedule had been wrong while the answer named only the
+  file.
 - **A file type the person asks for is a file** (`agent.py`) — asked for a
   CSV, a Word document, a PDF or slides, an answer with no such file on the
   task's page goes back once to save and deliver it ("Give me the cleaned
-  CSV" had pasted it into the answer). A sentence about what the person
-  sends ("Here's the timesheet as a Word file") does not count.
+  CSV" had pasted it into the answer), and only when the agent can write and
+  deliver that file. A clause that opens with what the person sends ("Here's
+  the timesheet as a Word file"), a refused file ("Don't send it as a PDF"),
+  the file a conversion starts from ("Save the PDF as a Word document"), a
+  question weighing two types, and a deck that is a wooden one do not count;
+  of a choice ("a PDF or Word document") either file does. When the check
+  misreads a request, the agent gives its answer again unchanged.
 - **Web search on by default** (`config.get_capabilities`,
   `[capabilities] web_search`, off on an enterprise install) — agents can
   search for current facts without setup. With no search key Lightwork uses
