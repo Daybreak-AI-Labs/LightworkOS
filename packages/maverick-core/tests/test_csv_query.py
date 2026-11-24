@@ -140,3 +140,17 @@ def test_round_works_out_money_as_people_and_compute_do():
     assert _query("x\n1\n", "SELECT ROUND(41.175, 2) AS a, ROUND(-2.5) AS b, ROUND(0.125, 2) AS c, "
                             "ROUND(1.005, 2) AS d, ROUND(7) AS e, ROUND(NULL, 2) AS f, ROUND(2.5, -1) AS g "
                             "FROM data") == ["a,b,c,d,e,f,g", "41.18,-3.0,0.13,1.01,7.0,,3.0"]
+
+
+def test_a_blank_number_used_in_arithmetic_gets_a_note():
+    # A blank paid cell is NULL (so AVG and MAX are right), and so
+    # amount - paid is NULL for every unpaid invoice: an aging summary's SUM
+    # silently left them out and a customer owing $7,887.79 showed $0.00.
+    text = "customer,amount,paid\nA,100.00,\nA,50.00,20.00\nB,70.00,\n"
+    out = _query(text, "SELECT customer, SUM(amount - paid) AS open FROM data GROUP BY customer")
+    assert out[:3] == ["customer,open", "A,30.0", "B,"]
+    assert "paid is blank in 2 rows" in out[3] and "COALESCE(paid, 0)" in out[3]
+    fine = _query(text, "SELECT customer, SUM(amount - COALESCE(paid, 0)) AS open FROM data GROUP BY customer")
+    assert fine == ["customer,open", "A,130.0", "B,70.0"]
+    assert len(_query(text, "SELECT AVG(paid) AS a, MAX(paid) AS m FROM data")) == 2
+    assert len(_query(text, 'SELECT SUM(amount - IFNULL("paid", 0)) AS t FROM data')) == 2

@@ -167,7 +167,8 @@ def _iso_dates(values: list[str]) -> list[str] | str | None:
     return dates
 
 
-def _load(db, name: str, filename: str, text: str, ambiguous: list[str] | None = None) -> str | None:
+def _load(db, name: str, filename: str, text: str, ambiguous: list[str] | None = None,
+          blanks: dict[str, int] | None = None) -> str | None:
     rows = list(csv.reader(io.StringIO(text)))
     if not rows or not any(cell.strip() for cell in rows[0]):
         return f"ERROR: {filename} has no header row"
@@ -188,6 +189,8 @@ def _load(db, name: str, filename: str, text: str, ambiguous: list[str] | None =
             for row in body:
                 if isinstance(row[column], str):
                     row[column] = None
+            if blanks is not None and len(filled) < len(body):
+                blanks[header[column]] = blanks.get(header[column], 0) + len(body) - len(filled)
         elif filled and all(isinstance(value, str) for value in filled):
             dates = _iso_dates(filled)
             if dates == "ambiguous" and ambiguous is not None:
@@ -206,6 +209,31 @@ _PERCENT_NAME = re.compile(r"pct|percent|%", re.IGNORECASE)
 _PER_HUNDRED = re.compile(r"\b100(?:\.0*)?\b|\b0?\.01\b")
 
 
+def _in_arithmetic(column: str, sql: str) -> bool:
+    """Whether ``sql`` adds, subtracts, multiplies or divides with ``column``
+    (bare, quoted or qualified by a table alias)."""
+    name = re.escape(column)
+    ref = rf'(?:[A-Za-z_][A-Za-z0-9_]*\.)?(?:"{name}"|(?<![\w"]){name}(?![\w"]))'
+    return re.search(rf"[-+*/]\s*{ref}|{ref}\s*[-+*/]", sql) is not None
+
+
+def _blank_notes(blanks: dict[str, int], sql: str) -> list[str]:
+    """Columns of numbers with blanks that the query does arithmetic with:
+    a blank is NULL (so AVG and MAX are right), and NULL in arithmetic is
+    NULL. Live: amount - paid was NULL for every unpaid invoice, and an aging
+    summary's SUM left them out."""
+    notes = []
+    for column, count in blanks.items():
+        name = re.escape(column)
+        guarded = re.search(rf'(?:coalesce|ifnull)\s*\(\s*(?:[A-Za-z_][A-Za-z0-9_]*\.)?"?{name}"?\s*,',
+                            sql, re.IGNORECASE)
+        if _in_arithmetic(column, sql) and not guarded:
+            notes.append(f"Note: {column} is blank in {count} row{'s' if count != 1 else ''}, and a blank number "
+                         f"is NULL, so arithmetic with it gives NULL in those rows and SUM leaves them out. "
+                         f"Write COALESCE({column}, 0) to count a blank as 0.")
+    return notes
+
+
 def _percent_notes(db, headers: dict[str, list[str]], sql: str) -> list[str]:
     """Percent columns holding whole percents (15 for 15%) that the query
     uses in arithmetic without dividing by 100. Live: revenue as
@@ -218,9 +246,7 @@ def _percent_notes(db, headers: dict[str, list[str]], sql: str) -> list[str]:
         for column in columns:
             if not _PERCENT_NAME.search(column):
                 continue
-            name = re.escape(column)
-            used = re.search(rf'[-+*/]\s*"?{name}"?(?![\w])|(?<![\w"]){name}"?\s*[-+*/]', sql)
-            if not used:
+            if not _in_arithmetic(column, sql):
                 continue
             largest = db.execute(f'SELECT MAX("{column}") FROM "{table}" '
                                  f'WHERE typeof("{column}") IN (\'integer\', \'real\')').fetchone()[0]
@@ -259,14 +285,15 @@ def query_tables(tables: dict[str, tuple[str, str]], sql: str) -> str:
     db.create_function("round", 1, _round, deterministic=True)
     db.create_function("round", 2, _round, deterministic=True)
     ambiguous: list[str] = []
+    blanks: dict[str, int] = {}
     try:
         headers: dict[str, list[str]] = {}
         for name, (filename, text) in tables.items():
-            problem = _load(db, name, filename, text, ambiguous)
+            problem = _load(db, name, filename, text, ambiguous, blanks)
             if problem:
                 return problem
             headers[name] = [row[1] for row in db.execute(f'PRAGMA table_info("{name}")')]
-        notes = _percent_notes(db, headers, sql)
+        notes = _percent_notes(db, headers, sql) + _blank_notes(blanks, sql)
         allowed = {sqlite3.SQLITE_SELECT, sqlite3.SQLITE_READ, sqlite3.SQLITE_FUNCTION}
         names = set(tables)
 
