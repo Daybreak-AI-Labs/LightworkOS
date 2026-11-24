@@ -87,3 +87,16 @@ def test_a_column_sized_to_its_widest_word_keeps_that_word_whole():
     # Live: an invoice's "Hours" header broke into "Hour" and "s".
     text = _streams(pdf_from_markdown("| Description | Hours | Rate |\n|---|---|---|\n| Design work | 10 | $120 |\n"))
     assert "(Hours)" in text and "(Hour)" not in text
+
+
+def test_a_short_column_beside_long_ones_keeps_its_words_whole():
+    # Live: a POS comparison's first column was squeezed so thin that
+    # "System", "Square" and "Clover" broke as "Sys"/"tem" and "Squ"/"are".
+    long = "Square's pricing page says there are no monthly subscription costs on the free plan " * 2
+    table = ("| System | Monthly software cost | Upfront hardware | Takeaway |\n|---|---|---|---|\n"
+             f"| Square | $0/mo on Square Free, more on paid plans | About $49-$149 | {long} |\n"
+             f"| Clover | Quote-based, varies by reseller | About $799 | {long} |\n")
+    text = _streams(pdf_from_markdown(table))
+    for word in ("(System)", "(Square)", "(Clover)"):
+        assert word in text, word
+    assert "(Sys)" not in text and "(Squ)" not in text

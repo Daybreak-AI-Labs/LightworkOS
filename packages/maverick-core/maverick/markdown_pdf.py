@@ -223,14 +223,35 @@ def _cells(line: str) -> list[str]:
     return [cell.strip() for cell in stripped.split("|")]
 
 
+def _column_widths(rows: list[list[str]], natural: list[float], size: float, header: bool) -> list[float]:
+    """Column widths that fit the page. Each column first gets its widest
+    single word, so a short column beside long ones keeps "Square" whole (it
+    broke as "Squ"/"are"); the rest of the page is shared in proportion to
+    how much more text each column holds. If even the words cannot all fit,
+    every column shrinks in proportion."""
+    total = sum(natural) or 1.0
+    if total <= _WIDTH:
+        return natural
+    floors = []
+    for c, width in enumerate(natural):
+        words = [_width(w.replace("**", ""), size, bold=header and i == 0)
+                 for i, row in enumerate(rows) for w in row[c].split()]
+        floors.append(min(width, max(words, default=0.0) + 8))
+    spare = _WIDTH - sum(floors)
+    if spare <= 0:
+        return [_WIDTH * n / total for n in natural]
+    extra = [n - f for n, f in zip(natural, floors, strict=True)]
+    room = sum(extra) or 1.0
+    return [f + spare * e / room for f, e in zip(floors, extra, strict=True)]
+
+
 def _table(pages: _Pages, rows: list[list[str]], header: bool) -> None:
     columns = max(len(row) for row in rows)
     rows = [row + [""] * (columns - len(row)) for row in rows]
     size = _BODY - 1.5
     natural = [max(_width(cell.replace("**", ""), size, bold=header and i == 0) for i, row in enumerate(rows)
                    for cell in [row[c]]) + 8 for c in range(columns)]
-    total = sum(natural) or 1.0
-    widths = [_WIDTH * n / total for n in natural] if total > _WIDTH else natural
+    widths = _column_widths(rows, natural, size, header)
     for index, row in enumerate(rows):
         wrapped = [_wrap([(w, b or (header and index == 0)) for w, b in _words(cell)], size, max(widths[c] - 8, 20))
                    or [[]] for c, cell in enumerate(row)]
