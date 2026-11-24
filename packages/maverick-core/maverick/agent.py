@@ -1612,19 +1612,48 @@ def _delivered_file_evidence(world, goal_id) -> str:
         try:
             _item, data = read_for_download(world, goal_id, item.number)
             if Path(item.path).suffix.lower() == ".csv":
-                text = "\n".join(data.decode("utf-8", errors="replace").splitlines()[:_DELIVERED_EVIDENCE_ROWS])
+                text = " {}:\n{}".format(*_first_rows(data.decode("utf-8", errors="replace")))
             else:
                 from .tools.spreadsheet import xlsx_bytes_as_csv, xlsx_bytes_sheet_names
-                text = "\n".join(
-                    f"Sheet {sheet!r}:\n" + "\n".join(xlsx_bytes_as_csv(data, sheet).splitlines()[:_DELIVERED_EVIDENCE_ROWS])
+                text = ":\n" + "\n".join(
+                    "Sheet {!r}, {}:\n{}".format(sheet, *_first_rows(xlsx_bytes_as_csv(data, sheet)))
                     for sheet in xlsx_bytes_sheet_names(data))
         except Exception:  # noqa: BLE001 -- an unreadable file adds nothing
             continue
         nonce = _secrets.token_hex(8)
-        body = f"{item.name}, a file on the task's page, holds:\n{text}"[:room]
+        body = f"{item.name}, a file on the task's page, holds{text}"
+        if len(body) > room:
+            body = body[:room] + "\n... (the rest of the file is not shown here)"
         blocks.append(f"<tool_output tool='delivered_file' id={nonce}>\n{body}\n</tool_output {nonce}>")
         room -= len(blocks[-1])
     return "\n\n".join(blocks)
+
+
+def _first_rows(text: str) -> tuple[str, str]:
+    """How many rows a CSV or a sheet has, and its first rows. A cleaned
+    120-row file shown as its header and 24 rows under "holds:" looked to a
+    verifier told to account for every row as if it had lost the other 96."""
+    lines = text.splitlines()
+    count = f"{len(lines)} row" + ("" if len(lines) == 1 else "s")
+    if len(lines) > _DELIVERED_EVIDENCE_ROWS:
+        count += (f"; these are the first {_DELIVERED_EVIDENCE_ROWS} "
+                  f"(the other {len(lines) - _DELIVERED_EVIDENCE_ROWS} are in the file, not shown here)")
+    return count, "\n".join(lines[:_DELIVERED_EVIDENCE_ROWS])
+
+
+# A spreadsheet write's read-back of the file ("What the file now holds ...")
+# up to the end of its frame.
+_READBACK = re.compile(r"(<tool_output tool='spreadsheet' id=([0-9a-f]+)>\n(?:(?!\n</tool_output \2>).)*?)"
+                       r"\nWhat the file now holds.*?(\n</tool_output \2>)", re.DOTALL)
+
+
+def _without_readback(evidence: str) -> str:
+    """``evidence`` without the read-backs of spreadsheet writes. A read-back
+    repeats what the agent typed into the file, so for the figure checks a
+    typed figure (Ben's pay as 1,647.56 when compute gave 1,647.38) read as
+    one a tool returned, and a formula's unrounded 833.3333333333 sent back a
+    correct $833.33."""
+    return _READBACK.sub(r"\1\3", evidence)
 
 
 def _tool_result_limit(model: str | None = None) -> int:
@@ -6260,7 +6289,9 @@ class Agent:
         # A figure typed with its cents garbled (the tools returned 1,647.38,
         # the answer said 1,647.56) goes back the same way.
         from .figure_totals import answer_issues, drift_issues, percent_issues, recalled_issues
-        evidence = _verifier_evidence(st.messages)
+        # What a write put in a file is the agent's own typing, not a tool's
+        # result; the model verifier below still sees it.
+        evidence = _without_readback(_verifier_evidence(st.messages))
         recalled = "\n".join(match.group(0) for match in _RECALLED.finditer(evidence))
         if issues := (answer_issues(final) + drift_issues(final, evidence) + percent_issues(final)
                       + recalled_issues(final, recalled, _RECALLED.sub("", evidence))):

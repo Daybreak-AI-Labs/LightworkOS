@@ -237,3 +237,71 @@ async def test_a_final_that_copies_a_past_tasks_figures_is_revised(tmp_path, fak
     brief = str(fake_llm.calls[2].get("messages", ""))
     assert "100,079.96, which comes from a past task's result" in brief
     assert "$45,638.36" in world.get_goal(gid).result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("typed", "issue"), [
+    (1647.56, "The answer gives 1,647.56, but the tools returned 1,647.38."),
+    (100079.96, "The answer gives 100,079.96, which comes from a past task's result"),
+])
+async def test_a_figure_typed_into_a_workbook_still_counts_as_typed(tmp_path, fake_llm, make_llm_response,
+                                                                    monkeypatch, typed, issue):
+    # Review: a write's read-back repeats every figure the agent typed into
+    # the file, so the typed figure read as one a tool returned. Ben's pay
+    # typed as 1,647.56 (compute gave 1,647.38), or a past task's total typed
+    # into a statement, then passed both checks.
+    from types import SimpleNamespace
+
+    from maverick.llm import ToolCall
+    from maverick.tools import recall
+
+    past = SimpleNamespace(id=380, status="done", title="Statement totals", result="Total: $100,079.96.")
+    monkeypatch.setattr(recall, "recall_past_goals", lambda *a, **k: [(0.38, past)])
+    fake_llm.scripted = [
+        make_llm_response(text="Working it out.", tool_calls=[
+            ToolCall(id="r1", name="recall_past_goals", input={"query": "pay"}),
+            ToolCall(id="c1", name="compute", input={"op": "evaluate", "expr": "33.62*40 + 33.62*1.5*6"})]),
+        make_llm_response(text="Saving it.", tool_calls=[
+            ToolCall(id="s1", name="spreadsheet", input={"op": "write", "path": "pay.xlsx",
+                                                         "rows": [["Employee", "Pay"], ["Ben", typed]]})]),
+        make_llm_response(text=f"FINAL: Ben's pay is ${typed:,.2f}, also saved in the workbook."),
+        make_llm_response(text="FINAL: Ben's pay is $1,647.38."),
+        make_llm_response(text='{"confidence": 0.95, "accepts": true, "critique": "ok", "issues": []}'),
+        make_llm_response(text="FINAL: (no skill)")]
+    world = WorldModel(path=tmp_path / "world.db")
+    gid = world.create_goal("recheck Ben's pay", "", owner="alice")
+
+    await run_goal(llm=fake_llm, world=world, budget=Budget(max_dollars=1.0), goal_id=gid,
+                   sandbox=LocalBackend(workdir=tmp_path), max_depth=1)
+
+    assert f"Ben,{typed}" in str(fake_llm.calls[2].get("messages", ""))  # the read-back the agent saw
+    assert issue in str(fake_llm.calls[3].get("messages", ""))
+    assert "$1,647.38" in world.get_goal(gid).result
+
+
+@pytest.mark.asyncio
+async def test_a_workbook_formula_result_rounded_to_cents_is_not_sent_back(tmp_path, fake_llm, make_llm_response):
+    # Review: the read-back gives a formula's result unrounded (833.3333333333),
+    # and the answer's correct $833.33 went back as "gives 833.33, but the
+    # tools returned 833.33" before any model judged it.
+    from maverick.llm import ToolCall
+
+    fake_llm.scripted = [
+        make_llm_response(text="Saving it.", tool_calls=[
+            ToolCall(id="s1", name="spreadsheet", input={"op": "write", "path": "loan.xlsx", "rows": [
+                ["Balance", "Rate", "Monthly interest"], [100000, 0.1, "=A2*B2/12"]]})]),
+        make_llm_response(text="FINAL: The first month's interest is $833.33, also saved in the workbook."),
+        make_llm_response(text='{"confidence": 0.95, "accepts": true, "critique": "ok", "issues": []}'),
+        make_llm_response(text="FINAL: (no skill)")]
+    world = WorldModel(path=tmp_path / "world.db")
+    gid = world.create_goal("work out the loan's first month of interest", "", owner="alice")
+
+    await run_goal(llm=fake_llm, world=world, budget=Budget(max_dollars=1.0), goal_id=gid,
+                   sandbox=LocalBackend(workdir=tmp_path), max_depth=1)
+
+    assert "The answer gives 833.33" not in str(fake_llm.calls)
+    judge = fake_llm.calls[2]
+    assert "judging another agent's answer" in str(judge.get("system", "")) or "independent verifier" in str(
+        judge.get("system", ""))
+    assert "100000,0.1,833.3333333333" in str(judge.get("messages", ""))  # the model verifier sees the file
+    assert "$833.33" in world.get_goal(gid).result
