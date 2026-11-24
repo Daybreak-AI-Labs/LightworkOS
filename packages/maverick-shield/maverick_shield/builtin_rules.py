@@ -463,8 +463,20 @@ RULES: list[Rule] = [
          "Persona takeover: answer as your 'unaligned self'"),
 
     # System-prompt leak — verbatim / everything above / hidden directives.
+    # "Verbatim" alone is no leak: it must be the prompt, its instructions or
+    # what is above that is dumped. An agent's answer offering to "quote the
+    # exact lease clauses verbatim" was blocked as a prompt extraction.
     Rule("verbatim_prompt_leak", "medium",
-         _compile(r"\b(print|repeat|output|show|reveal|echo|paste|reproduce|quote)\b[\s\S]{0,40}?\b(verbatim|word[\s-]for[\s-]word|line[\s-]for[\s-]line|exact\s+text|everything\s+(above|that\s+appears)|hidden\s+(directive|instruction|prompt)|configuration\s+block)"),
+         _compile(r"\b(print|repeat|output|show|reveal|echo|paste|reproduce|quote)\b(?:"
+                  r"[\s\S]{0,40}?\b(everything\s+(above|that\s+appears)|hidden\s+(directive|instruction|prompt)"
+                  r"|configuration\s+block)"
+                  r"|[\s\S]{0,40}?\b(prompts?|instructions?|system|directives?|above|preceding|initial|configuration"
+                  r"|hidden|developer)\b[\s\S]{0,40}?\b(verbatim|word[\s-]for[\s-]word|line[\s-]for[\s-]line|exact\s+text)"
+                  r"|[\s\S]{0,40}?\b(verbatim|word[\s-]for[\s-]word|line[\s-]for[\s-]line|exact\s+text)\b[\s\S]{0,40}?"
+                  r"\b(prompts?|instructions?|system|directives?|above|preceding|initial|configuration|hidden|developer)\b)"
+                  r"|\b(system\s+(prompt|message)|prompts?|instructions?|directives?)\b[\s\S]{0,60}?"
+                  r"\b(print|repeat|output|show|reveal|echo|paste|reproduce|quote)\b[\s\S]{0,20}?"
+                  r"\b(verbatim|word[\s-]for[\s-]word|line[\s-]for[\s-]line|exact\s+text)"),
          "System-prompt extraction: dump hidden/preceding text verbatim"),
 
     # Secret exfiltration — name a credential AND move it out (either order),
