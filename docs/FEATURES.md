@@ -276,8 +276,10 @@ Settings and the installation wizard.
   and say what you chose", and the run continues. The setup wizard asks, and
   Settings > Safety > Approvals has the switch.
 - **Totals are checked before an answer is accepted** (`figure_totals.py`) —
-  a "Total", "Subtotal" or "Grand total" row in an answer's table, or a total
-  line just below it, that does not equal the rows it covers sends the answer
+  a "Total", "Subtotal" or "Grand total" row in an answer's table, a total
+  line just below it, or a total line under a list of amounts that nearly but
+  not exactly equals their sum (a lease's yearly rents added to $267,580.32
+  under a "Grand total" of $267,580.44), sends the answer
   back once with the exact difference, before any model judges it; if it is
   still wrong it is marked unverified. A sheet written with `spreadsheet`
   whose total row does not add up comes back with a note to fix it. Subtotal,
