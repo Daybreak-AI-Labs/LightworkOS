@@ -120,9 +120,14 @@ def test_a_markdown_draft_of_a_document_is_not_offered_unless_delivered(task):
     assert write.fn({"path": "nda.docx", "content": "# NDA\n\nTerm: 3 years.\n"}).startswith("wrote a Word")
     assert write.fn({"path": "notes/nda.md", "content": "other folder\n"}).startswith("wrote")
     assert write.fn({"path": "summary.md", "content": "no document of this name\n"}).startswith("wrote")
+    # Live: a workbook's plan, "region_sales_workbook_instructions.md".
+    assert write.fn({"path": "nda_instructions.md", "content": "plan\n"}).startswith("wrote")
+    assert write.fn({"path": "ndaxyz.md", "content": "a different name\n"}).startswith("wrote")
     listed = task_files.files_for(world, gid)
-    assert [(f.number, f.path) for f in listed] == [(1, "nda.docx"), (2, "notes/nda.md"), (3, "summary.md")]
+    assert [(f.number, f.path) for f in listed] == [(1, "nda.docx"), (2, "notes/nda.md"), (3, "summary.md"),
+                                                   (4, "ndaxyz.md")]
     assert task_files.read_for_download(world, gid, 1)[0].name == "nda.docx"
     # Handed over on purpose, the draft is offered too.
     deliver_file(sandbox, gid, world).fn({"path": "nda.md"})
-    assert [f.path for f in task_files.files_for(world, gid)] == ["nda.md", "nda.docx", "notes/nda.md", "summary.md"]
+    assert [f.path for f in task_files.files_for(world, gid)] == ["nda.md", "nda.docx", "notes/nda.md", "summary.md",
+                                                                  "ndaxyz.md"]

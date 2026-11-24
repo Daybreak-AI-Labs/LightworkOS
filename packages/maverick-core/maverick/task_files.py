@@ -103,24 +103,32 @@ def record(world, goal_id, workdir, target, *, delivered: bool = False) -> TaskF
 
 
 _DRAFTS = (".md", ".markdown", ".txt")
-_DOCUMENTS = (".docx", ".pptx", ".pdf")
+_DOCUMENTS = (".docx", ".pptx", ".pdf", ".xlsx", ".xlsm")
 
 
 def _drafts(keys: list[tuple[str, str]], delivered: set[tuple[str, str]]) -> set[tuple[str, str]]:
-    """Markdown or text files this goal wrote beside a Word, PowerPoint or PDF
-    file of the same name: the draft the document was made from. Asked for
-    an NDA as a Word file, the page offered the Markdown draft first."""
+    """Markdown or text files this goal wrote beside a Word, PowerPoint, PDF
+    or Excel file named like it (the same name, or the name plus "_notes" or
+    "-plan"): the draft or plan the document was made from. Asked for an NDA
+    as a Word file, the page offered the Markdown draft first; asked for a
+    workbook, it offered "region_sales_workbook_instructions.md" first."""
     documents = {(workdir, str(Path(path).with_suffix(""))) for workdir, path in keys
                  if Path(path).suffix.lower() in _DOCUMENTS}
+
+    def named_like(workdir: str, path: str) -> bool:
+        stem = str(Path(path).with_suffix(""))
+        return any(w == workdir and (stem == doc or stem.startswith(doc + "_") or stem.startswith(doc + "-"))
+                   for w, doc in documents)
+
     return {(workdir, path) for workdir, path in keys
             if Path(path).suffix.lower() in _DRAFTS and (workdir, path) not in delivered
-            and (workdir, str(Path(path).with_suffix(""))) in documents}
+            and named_like(workdir, path)}
 
 
 def files_for(world, goal_id: int) -> list[TaskFile]:
     """The files this goal saved, the newest record of each path, in the order
-    they were first saved. A Markdown draft of a document it also saved is
-    left out unless it was handed over with ``deliver_file``."""
+    they were first saved. A Markdown draft or plan of a document it also
+    saved is left out unless it was handed over with ``deliver_file``."""
     latest: dict[tuple[str, str], TaskFile] = {}
     order: list[tuple[str, str]] = []
     delivered: set[tuple[str, str]] = set()
