@@ -69,7 +69,7 @@ Rules:
 3. When done, respond in plain text starting with `FINAL:` followed by your whole answer (the person sees only what follows `FINAL:`). No tool call.
 4. Be precise. Cite exact paths, commands, results, and findings from your children.
 5. Budget is enforced globally; spend wisely. Stop spawning if results so far are sufficient — reaching a synthesized answer matters more than breadth of research.
-6. Compute figures from data (totals, pay, interest, per-row results) with one tool call over the whole data set, such as `read_attachment` with `sql` for an attached CSV, and report the numbers it returns. Do not type per-row arithmetic yourself: one wrong row makes the whole answer wrong. Clock times go in the query too: `hours(clock_in, clock_out)` runs past midnight and `overlap(clock_in, clock_out, '22:00', '06:00')` gives the hours inside a window. When a query cannot express the calculation, run a short script with `shell` if you have it (`find_tools` loads it) rather than working rows out by hand. When the request defines what counts (overdue = past its due date and not paid), compute it from the fields that definition names; a status or label column can be out of date.
+6. Compute figures from data (totals, pay, interest, per-row results) with one tool call over the whole data set, such as `read_attachment` with `sql` for an attached CSV, and report the numbers it returns. Do not type per-row arithmetic yourself: one wrong row makes the whole answer wrong. Clock times go in the query too: `hours(clock_in, clock_out)` runs past midnight and `overlap(clock_in, clock_out, '22:00', '06:00')` gives the hours inside a window, and one query can join the task's attached files by their names. Work dates out with `compute` (`date('2026-03-31', '-180 days')`, `julianday(b) - julianday(a)`), never by counting. When a query cannot express the calculation, run a short script with `shell` if you have it (`find_tools` loads it) rather than working rows out by hand. When the request defines what counts (overdue = past its due date and not paid), compute it from the fields that definition names; a status or label column can be out of date.
 7. A sandbox command (shell) may wait for a person to approve it, and then the task stalls until they answer. Use one only when the task needs a command run. Read pages, files and data with the tools made for them (`http_fetch`, `read_file`, `spreadsheet_read`, `read_attachment`), and check a file you wrote by reading it back with `read_file`, not with a command.
 8. Give the person every file they asked for with `deliver_file`, which puts it on the task's page as a download (files saved with `write_file` are offered automatically). A file type the person names (a CSV, a spreadsheet, a Word document, a PDF, slides) is a file, and a spreadsheet is an Excel `.xlsx` workbook unless they ask for CSV: save it so it is offered as a download, do not only paste its contents into your answer, and do not end by offering to make it. Files already in the workspace may be left from earlier tasks: check that one matches this request before you deliver it, and never say you created a file you did not. Make a file with the tool for its type, not a script: `spreadsheet` writes CSV and Excel, `write_file` to a `.docx`, `.pptx` or `.pdf` path writes Word, PowerPoint (a slide per `#` heading) or a printable PDF from Markdown, a chart is an SVG file, and `find_tools` finds the others."""
 
@@ -86,7 +86,7 @@ Standard playbook:
 5. If you are blocked on info only the user can give, use `ask_user` (batched). For a judgment call a person must make, use `request_decision`. Never ask a person to confirm a choice you can make yourself (which files to use, what extras to add, how to style the result): make it and say what you chose.
 6. A step that needs a person's approval (a sandbox command, a change, a message) goes to ONE child only: each run asks the person again, so never give the same step to two children to cross-check; check its output instead. A step a person rejected stays undone: do not try it again yourself or through a child.
 7. End with `FINAL:` followed by your whole synthesized answer: the person sees only what follows `FINAL:`, so put every table and draft after it, not before it.
-8. Figures from data (totals, pay, interest, per-row results) come from one tool call over the whole data set, such as `read_attachment` with `sql` for an attached CSV, never from per-row arithmetic typed by hand; clock times go in the query too (`hours(clock_in, clock_out)` runs past midnight, `overlap(clock_in, clock_out, '22:00', '06:00')` gives the hours inside a window), and when a query cannot express it a short script run with `shell` can, if it is available (`find_tools` loads it). When the request defines what counts (overdue = past its due date and not paid), compute it from the fields that definition names; a status or label column can be out of date. Tell children the same when you delegate a calculation.
+8. Figures from data (totals, pay, interest, per-row results) come from one tool call over the whole data set, such as `read_attachment` with `sql` for an attached CSV, never from per-row arithmetic typed by hand; clock times go in the query too (`hours(clock_in, clock_out)` runs past midnight, `overlap(clock_in, clock_out, '22:00', '06:00')` gives the hours inside a window, and one query can join the task's attached files by their names), dates are worked out with `compute` (`date('2026-03-31', '-180 days')`), never by counting, and when a query cannot express it a short script run with `shell` can, if it is available (`find_tools` loads it). When the request defines what counts (overdue = past its due date and not paid), compute it from the fields that definition names; a status or label column can be out of date. Tell children the same when you delegate a calculation.
 9. A sandbox command (shell) may wait for a person to approve it, and then the task stalls until they answer. Use one only when the task needs a command run; read pages, files and data with their own tools (`http_fetch`, `read_file`, `spreadsheet_read`, `read_attachment`) and check a written file with `read_file`.
 10. Give the person every file they asked for with `deliver_file`, which puts it on the task's page as a download (files saved with `write_file` are offered automatically). A file type the person names (a CSV, a spreadsheet, a Word document, a PDF, slides) is a file, and a spreadsheet is an Excel `.xlsx` workbook unless they ask for CSV: save it so it is offered as a download, do not only paste its contents into your answer, and do not end by offering to make it. Files already in the workspace may be left from earlier tasks: check that one matches this request before it is delivered, and never say a file was created when it was not. Make a file with the tool for its type, not a script: `spreadsheet` writes CSV and Excel, `write_file` to a `.docx`, `.pptx` or `.pdf` path writes Word, PowerPoint (a slide per `#` heading) or a printable PDF from Markdown, a chart is an SVG file, and `find_tools` finds the others.
 11. When the person asks for a document (a Word file, a printable checklist, a letter, a report), write the finished document itself as your FINAL answer, with headings, lists and tables. The answer page offers "Download Word document" and printing, so do not write a script or a file to produce it unless they ask for another file type, such as a spreadsheet.
@@ -127,15 +127,31 @@ def _clean_for_screening(output, state):
 #: Files an answer can name as something the person receives.
 _DELIVERABLE_SUFFIXES = (".xlsx", ".xlsm", ".xls", ".csv", ".docx", ".pptx", ".pdf", ".md",
                          ".txt", ".png", ".jpg", ".jpeg", ".svg", ".zip", ".json", ".html")
-# A spreadsheet the person asks to receive ("give me a spreadsheet", "as an
-# Excel file"), not one they attached ("from the attached spreadsheet").
 # A recall_past_goals result inside the run's evidence: past tasks' answers,
 # about other data, which must not supply this task's figures.
 _RECALLED = re.compile(r"<tool_output tool='recall_past_goals' id=([0-9a-f]+)>.*?</tool_output \1>", re.DOTALL)
-_WORKBOOK_REQUEST = re.compile(
-    r"\b(?:as|into|give\s+me|make|create|build|produce|prepare|send|want|need|export|save)\b"
-    r"(?:\W+(?!attached\b|uploaded\b|this\b|that\b|my\b|our\b|existing\b|your\b)\w+){0,3}?"
-    r"\W+(?:spreadsheets?|excel|workbooks?|xlsx)\b", re.IGNORECASE)
+
+
+def _asked_to_receive(target: str) -> re.Pattern:
+    """A file the person asks to receive ("give me a spreadsheet", "as a
+    CSV"), not one they attached ("from the attached spreadsheet")."""
+    return re.compile(
+        r"\b(?:as|into|give\s+me|make|create|build|produce|prepare|send|want|need|export|save)\b"
+        r"(?:\W+(?!attached\b|uploaded\b|this\b|that\b|my\b|our\b|existing\b|your\b)\w+){0,3}?"
+        rf"\W+(?:{target})\b", re.IGNORECASE)
+
+
+_WORKBOOK_REQUEST = _asked_to_receive(r"spreadsheets?|excel|workbooks?|xlsx")
+#: (request, suffixes that satisfy it, what it is, how to make it).
+_FILE_TYPE_REQUESTS = (
+    (_asked_to_receive(r"csv"), (".csv",), "a CSV file",
+     "the `spreadsheet` tool, op write, with a path ending in .csv"),
+    (_asked_to_receive(r"word\s+(?:document|doc|file)|docx"), (".docx",), "a Word document",
+     "`write_file` to a path ending in .docx"),
+    (_asked_to_receive(r"pdf"), (".pdf",), "a PDF", "`write_file` to a path ending in .pdf"),
+    (_asked_to_receive(r"slides?|slide\s+deck|deck|powerpoint|pptx|presentation"), (".pptx",), "slides",
+     "`write_file` to a path ending in .pptx"),
+)
 _NAMED_FILE = re.compile(r"[\w./-]+\.(?:" + "|".join(x[1:] for x in _DELIVERABLE_SUFFIXES) + r")\b",
                          re.IGNORECASE)
 
@@ -5733,7 +5749,8 @@ class Agent:
         self._begin_final()
         coding_cfg = self._coding_config()
         coding = coding_cfg is not None and coding_cfg.enabled
-        if not coding and (self._request_named_file_delivery(st, final) or self._request_workbook(st)):
+        if not coding and (self._request_named_file_delivery(st, final) or self._request_workbook(st)
+                           or self._request_file_types(st)):
             return _NEXT_TURN
         if await self._validate_final_patch(st, final, coding_cfg) is _NEXT_TURN:
             return _NEXT_TURN
@@ -5801,6 +5818,36 @@ class Agent:
             "table. Write the same rows as an Excel workbook with the `spreadsheet` tool (op write, a "
             "path ending in .xlsx), hand it over with deliver_file, then give your final answer again "
             "naming the .xlsx file.")})
+        return True
+
+    def _request_file_types(self, st: _RunState) -> bool:
+        """Once per run, send the goal root back when the person asked to
+        receive a CSV, a Word document, a PDF or slides and the task's page
+        holds no file of that type. Live: "Give me the cleaned CSV" got the
+        CSV pasted into the answer and nothing to download."""
+        if (getattr(self, "_file_types_requested", False) or self.depth != 0
+                or self.ctx.goal_id is None or self.ctx.world is None
+                or "deliver_file" not in {tool.name for tool in self.tools.all()}):
+            return False
+        request = self._skill_query()
+        try:
+            from .task_files import files_for
+            suffixes = {Path(item.path).suffix.lower() for item in files_for(self.ctx.world, self.ctx.goal_id)}
+        except Exception:  # noqa: BLE001 -- the format check never blocks an answer
+            return False
+        missing = [(label, how) for pattern, wanted, label, how in _FILE_TYPE_REQUESTS
+                   if pattern.search(request) and not suffixes & set(wanted)]
+        if not missing:
+            return False
+        self._file_types_requested = True
+        labels = " and ".join(label for label, _how in missing)
+        st.bb.post(self.name, "verify", f"the person asked for {labels} and none is on the task's page")
+        how = "; ".join(f"for {label}, {how}" for label, how in missing)
+        st.messages.append({"role": "user", "content": (
+            f"The person asked to receive {labels}, and the task's page holds none: contents pasted into "
+            f"the answer are not a file they can download. Save it ({how}), hand it over with "
+            "deliver_file, then give your final answer again naming the file. If the request did not "
+            "ask for that file, say so instead.")})
         return True
 
     def _begin_final(self) -> None:

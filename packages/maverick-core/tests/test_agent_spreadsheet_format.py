@@ -66,3 +66,46 @@ def test_only_a_spreadsheet_to_receive_counts(request_text, wants):
     from maverick.agent import _WORKBOOK_REQUEST
 
     assert bool(_WORKBOOK_REQUEST.search(request_text)) is wants
+
+
+@pytest.mark.asyncio
+async def test_a_named_file_type_pasted_into_the_answer_goes_back_to_be_saved(tmp_path, fake_llm, make_llm_response):
+    # Live: "Give me the cleaned CSV and tell me how many duplicate rows you
+    # removed" got the CSV pasted into the answer and nothing to download.
+    write = ToolCall(id="c1", name="spreadsheet", input={"op": "write", "path": "contacts_clean.csv",
+                                                         "rows": [["email"], ["a@example.com"]]})
+    deliver = ToolCall(id="c2", name="deliver_file", input={"path": "contacts_clean.csv"})
+    fake_llm.scripted = [
+        make_llm_response(text="FINAL: Here is the cleaned CSV:\n\nemail\na@example.com\n\n1 duplicate removed."),
+        make_llm_response(text="Saving it.", tool_calls=[write]),
+        make_llm_response(text="Handing it over.", tool_calls=[deliver]),
+        make_llm_response(text="FINAL: I saved contacts_clean.csv. 1 duplicate removed."),
+        make_llm_response(text='{"confidence": 0.95, "accepts": true, "critique": "ok", "issues": []}'),
+        make_llm_response(text="FINAL: (no skill)")]
+    world = WorldModel(path=tmp_path / "world.db")
+    gid = world.create_goal("Clean up this contact list. Give me the cleaned CSV and tell me how many "
+                            "duplicates you removed.", "", owner="alice")
+    await run_goal(llm=fake_llm, world=world, budget=Budget(max_dollars=1.0), goal_id=gid,
+                   sandbox=LocalBackend(workdir=tmp_path), max_depth=1)
+    brief = str(fake_llm.calls[1].get("messages", ""))
+    assert "a CSV file" in brief and "deliver_file" in brief
+    assert {f.name for f in files_for(world, gid)} >= {"contacts_clean.csv"}
+    assert world.get_goal(gid).status == "done"
+
+
+@pytest.mark.parametrize(("request_text", "wanted"), [
+    ("Give me the cleaned CSV", "a CSV file"),
+    ("Export the list as a CSV", "a CSV file"),
+    ("Turn these notes into a Word document", "a Word document"),
+    ("Send me a PDF of the invoice", "a PDF"),
+    ("Make a 5-slide deck for the board", "slides"),
+    ("Summarize the attached PDF", None),
+    ("From my CSV, give me the total", None),
+    ("Read the attached Word document and list the dates", None),
+    ("Give me a summary of the attached PDF", None),
+])
+def test_only_a_file_to_receive_counts(request_text, wanted):
+    from maverick.agent import _FILE_TYPE_REQUESTS
+
+    found = [label for pattern, _suffixes, label, _how in _FILE_TYPE_REQUESTS if pattern.search(request_text)]
+    assert found == ([wanted] if wanted else []), found
