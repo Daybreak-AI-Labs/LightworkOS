@@ -1039,3 +1039,11 @@ def test_an_operator_can_make_runs_ask_about_every_choice(tmp_path, monkeypatch)
     gid = world.create_goal("make an invoice", "", owner="alice")
     out = request_decision(world, gid).fn({**_REQUEST, "area": "other"})
     assert out.startswith("WAITING for decision") and len(dr.for_goal(world, gid)) == 1
+
+
+def test_the_rules_keep_a_plans_assumptions_with_the_agent():
+    # Live: a business-plan task filed "which sales ramp should the budget
+    # use?" under "Spending and budgets" and waited for a person.
+    text = dr.rules_text()
+    assert "Spending and budgets" in text
+    assert "not the content of the work you deliver" in text and "budget, plan, forecast" in text
