@@ -494,3 +494,58 @@ def test_the_briefs_prior_work_section_is_not_the_persons_words():
              "## Decision rules\nKeep it short.")
     kept = _PRIOR_WORK.sub("", brief)
     assert "100,079.96" not in kept and "total the March statement" in kept and "## Decision rules" in kept
+
+
+@pytest.mark.asyncio
+async def test_a_date_the_tasks_file_prints_is_not_sent_back(tmp_path, fake_llm, make_llm_response):
+    # Live: the answer named the week a timesheet printed ("week of November
+    # 16, 2026"); only another agent had read the file, so the date went back
+    # as typed, and told to recompute everything, the revision turned Hank's
+    # correct $750.53 into $781.10.
+    from maverick import attachments as att
+    from maverick.llm import ToolCall
+
+    world = WorldModel(path=tmp_path / "world.db")
+    gid = world.create_goal("work out the payroll", "", owner="alice")
+    rec = att.store(gid, "timesheet.txt", "text/plain",
+                    b"Timesheet - week of November 16, 2026\nHank 14:00-22:30\n", root=tmp_path / "a")
+    world.add_attachment(gid, rec.filename, rec.mime, rec.size_bytes, rec.sha256, str(rec.path))
+    fake_llm.scripted = [
+        make_llm_response(text="Working.", tool_calls=[
+            ToolCall(id="c1", name="compute", input={"op": "evaluate", "expr": "round(18.25*40.75, 2)"})]),
+        make_llm_response(text="FINAL: For the week of November 16, 2026, Hank's pay is $743.69."),
+        make_llm_response(text='{"confidence": 0.95, "accepts": true, "critique": "ok", "issues": []}'),
+        make_llm_response(text="FINAL: (no skill)")]
+
+    await run_goal(llm=fake_llm, world=world, budget=Budget(max_dollars=1.0), goal_id=gid,
+                   sandbox=LocalBackend(workdir=tmp_path), max_depth=1)
+
+    assert "no tool returned" not in str(fake_llm.calls)
+    assert "November 16, 2026" in world.get_goal(gid).result
+
+
+@pytest.mark.asyncio
+async def test_a_typed_date_goes_back_asking_only_for_that_date(tmp_path, fake_llm, make_llm_response):
+    # A date no tool returned and no file holds goes back, but the brief asks
+    # for that date alone: told to recompute every figure, a revision turned
+    # a correct $750.53 into $781.10.
+    from maverick.llm import ToolCall
+
+    fake_llm.scripted = [
+        make_llm_response(text="Working.", tool_calls=[
+            ToolCall(id="c1", name="compute", input={"op": "evaluate", "expr": "date('2030-03-31', '-180 days')"})]),
+        make_llm_response(text="FINAL: Give notice by September 30, 2029."),
+        make_llm_response(text="FINAL: Give notice by October 2, 2029."),
+        make_llm_response(text='{"confidence": 0.95, "accepts": true, "critique": "ok", "issues": []}'),
+        make_llm_response(text="FINAL: (no skill)")]
+    world = WorldModel(path=tmp_path / "world.db")
+    gid = world.create_goal("when must we give notice to renew the lease?", "", owner="alice")
+
+    await run_goal(llm=fake_llm, world=world, budget=Budget(max_dollars=1.0), goal_id=gid,
+                   sandbox=LocalBackend(workdir=tmp_path), max_depth=1)
+
+    brief = str(fake_llm.calls[2].get("messages", ""))
+    assert "The answer gives September 30, 2029, which no tool returned" in brief
+    assert "Change only the dates named and keep every other figure as it is." in brief
+    assert "Recompute them with one tool call" not in brief
+    assert "October 2, 2029" in world.get_goal(gid).result

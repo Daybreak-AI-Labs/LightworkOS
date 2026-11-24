@@ -6630,18 +6630,37 @@ class Agent:
         # past runs' results, is not theirs.
         request = self._skill_query()
         given = f"{request}\n{_PRIOR_WORK.sub('', self.brief or '')}"
-        if issues := (answer_issues(final) + drift_issues(final, evidence, given) + percent_issues(final)
-                      + recalled_issues(final, recalled, _RECALLED.sub("", evidence), given, request)
-                      + unsupported_issues(final, everything, given)
-                      + date_issues(final, _worked_out(everything, self.ctx.world, self.ctx.goal_id), given)):
+        worked = _worked_out(everything, self.ctx.world, self.ctx.goal_id)
+        typed = unsupported_issues(final, everything, given)
+        dates = date_issues(final, worked, given)
+        if typed or dates:
+            # Before calling a figure or a date typed, read the task's own
+            # files: another agent may have read them, and its results are
+            # kept only in part.
+            try:
+                from .tools.attachments import task_files_text
+                files = task_files_text(self.ctx.world, self.ctx.goal_id, self.ctx.sandbox)
+            except Exception:  # noqa: BLE001 -- the checks never block an answer
+                files = ""
+            given = f"{given}\n{files}"
+            typed = unsupported_issues(final, everything, given) if typed else []
+            dates = date_issues(final, worked, given) if dates else []
+        figures = (answer_issues(final) + drift_issues(final, evidence, given) + percent_issues(final)
+                   + recalled_issues(final, recalled, _RECALLED.sub("", evidence), given, request) + typed)
+        if figures or dates:
             from .verifier import VerifierVerdict
+            critique = []
+            if figures:
+                critique += ["The totals do not add up or the figures do not match the tools.", *figures,
+                             "Recompute them with one tool call over this task's data and copy the results "
+                             "exactly into every place they appear."]
+            if dates:
+                # A date alone asks for that date: told to recompute every
+                # figure, a revision turned a correct $750.53 into $781.10.
+                critique += [*dates, "Change only the dates named and keep every other figure as it is."]
             verification.attempted = True
             verification.verdict = VerifierVerdict(
-                confidence=0.0, accepts=False, issues=issues,
-                critique="The totals do not add up or the figures do not match the tools. "
-                + " ".join(issues)
-                + " Recompute them with one tool call over this task's data and copy the results "
-                "exactly into every place they appear.")
+                confidence=0.0, accepts=False, issues=figures + dates, critique=" ".join(critique))
             return self._verifier_rejection(st, final, verification.verdict, coding_cfg)
         if (
             _risk_proportional_verify_enabled()

@@ -271,6 +271,35 @@ def _workbook(match, args: dict, others=None) -> str:
             "Pass `sql` to compute from it exactly.\n" + _window(text, args))
 
 
+def task_files_text(world, goal_id, sandbox=None, limit: int = 2_000_000) -> str:
+    """The text of the task's attached files, for checking what an answer
+    quotes from them: text and CSV files, the text companions of Word files
+    and workbooks, and PDF page text, up to ``limit`` characters. Live: an
+    answer naming the week a timesheet printed ("week of November 16, 2026")
+    went back as a date no file held; another agent had read the file."""
+    from ..attachments import READABLE_TEXT_MIMES, AttachmentRejected, read_bytes
+
+    parts: list[str] = []
+    room = limit
+    for match, _earlier in visible_attachments(world, goal_id):
+        if room <= 0:
+            break
+        try:
+            if (match.mime or "").startswith(READABLE_TEXT_MIMES):
+                text = read_bytes(match.path).decode("utf-8", errors="replace")
+            elif (match.mime or "") == "application/pdf":
+                text = _pdf_attachment_text(match, None, sandbox)
+                if text.startswith("ERROR:"):
+                    continue
+            else:
+                continue
+        except (OSError, ValueError, AttachmentRejected):
+            continue
+        parts.append(text[:room])
+        room -= len(parts[-1])
+    return "\n".join(parts)
+
+
 def _pdf_attachment_text(match, pages, sandbox=None) -> str:
     """Page text of an uploaded PDF (sealed or not), through ``read_pdf``'s parser."""
     from ..attachments import AttachmentRejected, read_bytes
