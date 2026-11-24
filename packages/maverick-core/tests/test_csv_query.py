@@ -1,6 +1,8 @@
 """csv_query: SQL over CSV text reads the numbers the file holds."""
 from __future__ import annotations
 
+import time
+
 from maverick.tools.csv_query import query_tables
 
 
@@ -191,7 +193,10 @@ def test_one_columns_day_month_order_reads_the_columns_that_do_not_show_it():
     out = query_tables({"invoices": ("invoices.csv", invoices), "payments": ("payments.csv", payments)},
                        "SELECT i.invoice, i.amount, p.paid FROM invoices i JOIN payments p ON p.date = i.date")
     assert out.splitlines()[:2] == ["invoice,amount,paid", "A1,100,100"]
-    assert "payments.date holds dates written like 10/05/2026; queries read them as 2026-10-05" in out
+    # The borrowed order is a guess, so the note says whose order it is.
+    assert ("payments.date holds dates written like 10/05/2026, and none of them shows whether the day or "
+            "the month comes first; this query reads them month first, as invoices.date does (10/29/2026), "
+            "so 10/05/2026 is 2026-10-05 (YYYY-MM-DD). If they are written the other way, ask which it is.") in out
     # The same within one file: due shows the order, paid_on does not.
     one = "invoice,due,paid_on\nA1,10/29/2026,10/05/2026\nA2,11/15/2026,12/01/2026\n"
     assert _query(one, "SELECT invoice, paid_on FROM data WHERE paid_on > due")[:2] == [
@@ -236,10 +241,79 @@ def test_blank_counts_are_per_table():
     # The file read as data was also loaded under its own name, and the note
     # added the two tables' blanks together: "paid is blank in 4 rows" for 2.
     text = "invoice,amount,paid\nA1,100,\nA2,50,50\nA3,70,\n"
+    # Only the table the query reads gets a note: data.paid was named too,
+    # though the query read only ar_aging.
     out = query_tables({"data": ("ar_aging.csv", text), "ar_aging": ("ar_aging.csv", text)},
                        "SELECT invoice, amount - paid AS open FROM ar_aging")
-    assert "data.paid is blank in 2 rows" in out and "ar_aging.paid is blank in 2 rows" in out
-    assert "4 rows" not in out
-    out = query_tables({"invoices": ("i.csv", text), "payments": ("p.csv", "invoice,paid\nA1,\nA2,50\n")},
-                       "SELECT i.invoice, i.amount - p.paid AS open FROM invoices i JOIN payments p USING (invoice)")
+    assert out.count("is blank in") == 1 and "ar_aging.paid is blank in 2 rows" in out
+    orders = "item,qty,price,discount_pct\nA,2,10,15\nB,1,5,\n"
+    out = query_tables({"data": ("orders.csv", orders), "orders": ("orders.csv", orders)},
+                       "SELECT item, qty * price * (1 - discount_pct) AS net FROM orders")
+    assert out.count("holds percents") == 1 and out.count("orders.discount_pct is blank in 1 row,") == 1
+    assert "data." not in out
+    payments = "invoice,paid\nA1,\nA2,50\n"
+    out = query_tables({"invoices": ("i.csv", text), "payments": ("p.csv", payments)},
+                       "SELECT i.invoice, i.amount - i.paid - p.paid AS open FROM invoices i JOIN payments p "
+                       "USING (invoice)")
     assert "invoices.paid is blank in 2 rows" in out and "payments.paid is blank in 1 row," in out
+    out = query_tables({"invoices": ("i.csv", text), "payments": ("p.csv", payments)},
+                       "SELECT i.invoice, i.amount - p.paid AS open FROM invoices i JOIN payments p USING (invoice)")
+    assert "invoices.paid" not in out and "payments.paid is blank in 1 row," in out
+
+
+def test_only_the_dates_a_query_reads_decide_their_day_month_order():
+    # A US invoice file (10/29/2026) loaded beside a European bank file
+    # (05/10/2026 and 03/11/2026: 5 October and 3 November) rewrote the
+    # bank's dates month first in a query that read only the bank file.
+    # SELECT * showed 2026-05-10 with no note, julianday(booked) lost its
+    # "ask which it is", and the same query gave other dates when the
+    # invoices were not passed.
+    us = "invoice,date,amount\nA1,10/29/2026,100\n"
+    eu = "txn,booked,amount\nT1,05/10/2026,100\nT2,03/11/2026,50\n"
+    both = {"us_invoices": ("us_invoices.csv", us), "eu_bank": ("eu_bank.csv", eu)}
+    for tables in (both, {"eu_bank": ("eu_bank.csv", eu)}):
+        assert query_tables(tables, "SELECT * FROM eu_bank").splitlines() == [
+            "txn,booked,amount", "T1,05/10/2026,100", "T2,03/11/2026,50"]
+        out = query_tables(tables, "SELECT txn, julianday(booked) AS j FROM eu_bank").splitlines()
+        assert out[:3] == ["txn,j", "T1,", "T2,"]
+        assert "eu_bank.booked (such as '05/10/2026')" in out[3] and "Ask which it is" in out[3]
+    # The same within one file: order_date shows month first, but the query reads only ship_ref.
+    out = _query("order_date,ship_ref\n10/29/2026,05/06/2026\n", "SELECT julianday(ship_ref) AS j FROM data")
+    assert out[:2] == ["j", '""'] and "data.ship_ref (such as '05/06/2026')" in out[2]
+
+
+def test_a_date_note_is_only_for_the_column_a_date_function_reads_as_a_date():
+    # A CASE condition, a modifier built from a text column, a column the
+    # query itself turns into YYYY-MM-DD with substr, and a same-named column
+    # of a table the query never reads were each named as dates SQLite could
+    # not read, on queries whose dates were right.
+    text = "invoice,status,paid_date,due\nA1,paid,2026-10-05,2026-10-01\nA2,open,,2026-11-15\n"
+    assert _query(text, "SELECT invoice, date(CASE WHEN status = 'paid' THEN paid_date ELSE due END) AS settle "
+                        "FROM data") == ["invoice,settle", "A1,2026-10-05", "A2,2026-11-15"]
+    terms = "invoice,invoice_date,terms\nA1,2026-10-05,Net 30\nA2,2026-10-20,Net 45\n"
+    assert _query(terms, "SELECT invoice, date(invoice_date, '+' || substr(terms, 5) || ' days') AS due "
+                         "FROM data") == ["invoice,due", "A1,2026-11-04", "A2,2026-12-04"]
+    stamped = "d,amount\n10/29/2026 10:00,5\n11/02/2026 09:00,7\n"
+    assert _query(stamped, "SELECT date(substr(d,7,4)||'-'||substr(d,1,2)||'-'||substr(d,4,2)) AS day, amount "
+                           "FROM data") == ["day,amount", "2026-10-29,5", "2026-11-02,7"]
+    tables = {"ledger": ("ledger.csv", "entry,date\nE1,2026-10-29\n"),
+              "notes": ("notes.csv", "id,date\nN1,Oct 29 2026\n")}
+    assert query_tables(tables, "SELECT entry, julianday(l.date) AS j FROM ledger l") == "entry,j\nE1,2461342.5"
+    assert query_tables(tables, "SELECT l.entry, julianday(l.date) AS j, n.date FROM ledger l JOIN notes n") == (
+        "entry,j,date\nE1,2461342.5,Oct 29 2026")
+    # The column a date function is given as its date still gets the note,
+    # quoted or after a table alias.
+    out = query_tables(tables, "SELECT strftime('%Y', n.\"date\") AS y FROM ledger l JOIN notes AS n")
+    assert out.splitlines()[:2] == ["y", '""']
+    assert "notes.date holds values such as 'Oct 29 2026'" in out and "ledger.date" not in out
+
+
+def test_a_deeply_nested_query_is_refused_at_once():
+    # The date-note scan ran before SQLite parsed the query and rescanned to
+    # each call's closing parenthesis: 5,000 nested julianday( calls took 23
+    # seconds to be refused as a parser stack overflow.
+    sql = "SELECT " + "julianday(" * 5000 + "d" + ")" * 5000 + " FROM data"
+    started = time.monotonic()
+    out = _query("d\nOct 1 2026\n", sql)
+    assert out[0].startswith("ERROR") and "parser stack overflow" in out[0]
+    assert time.monotonic() - started < 3

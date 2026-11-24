@@ -7,10 +7,10 @@ authorizer allows reading the loaded tables and calling built-in functions
 only, so a statement cannot write, attach a file, change settings or load an
 extension; one statement runs per call. A blank in a column of numbers is
 NULL; a blank in a text column is ''. A column of dates written 10/29/2026
-or 29/10/2026 is stored as 2026-10-29 when its values, or another date
-column loaded for the same query, show which part is the day, so SQLite's
-date functions read it; a query that names such a column gets a note saying
-so. ``hours(start, end)`` and
+or 29/10/2026 is stored as 2026-10-29 when its values, or the other date
+columns the same query reads, show which part is the day, so SQLite's date
+functions read it; a query that reads such a column gets a note saying so.
+``hours(start, end)`` and
 ``overlap(start, end, from, to)`` work out clock times (HH:MM or 3:30 PM),
 counting past midnight when the end is not after the start; ``hours(shift)``
 and ``overlap(shift, from, to)`` take a shift written as one range
@@ -223,76 +223,122 @@ def _convert(body: list[list], column: int, dates: list[str]) -> None:
             row[column] = next(filled)
 
 
-def _load(db, tables: dict[str, tuple[str, str]], ambiguous: list[tuple[str, str, str]],
-          blanks: dict[tuple[str, str], int], converted: list[tuple[str, str, str, str]]) -> str | None:
-    """Create and fill a table for each CSV text. The day/month order of
-    dates is read across every table first: invoices.csv's 10/29/2026 showed
-    month first, payments.csv held only 10/05/2026 and 11/02/2026, and with
-    one read as 2026-10-05 and the other left as written a join on the date
-    matched nothing. Columns that disagree keep their own reading."""
+def _load(db, tables: dict[str, tuple[str, str]],
+          blanks: dict[tuple[str, str], int]) -> tuple[dict[str, tuple[list[str], list[list]]], list] | str:
+    """Parse each CSV text and create its table, still empty: which date
+    columns become YYYY-MM-DD depends on the columns the query reads. The
+    parsed tables and their date columns, or an error."""
     parsed: dict[str, tuple[list[str], list[list]]] = {}
-    undecided = []
-    orders: set[str] = set()
+    dates = []
     for name, (filename, text) in tables.items():
         table = _parse(filename, text)
         if isinstance(table, str):
             return table
-        parsed[name] = table
-        header, body = table
+        header, body = parsed[name] = table
         for column in _text_columns(name, header, body, blanks):
             values = [row[column].strip() for row in body if row[column].strip()]
             parts = _date_parts(values)
-            shown = _orders_shown(parts) if parts else set()
-            if not parts or len(shown) > 1:
-                continue
-            dates = _iso_dates(parts, next(iter(shown), None))
-            if dates == "ambiguous":
-                undecided.append((name, header[column], body, column, values[0], parts))
-            elif isinstance(dates, list):
-                orders |= shown
-                _convert(body, column, dates)
-                converted.append((name, header[column], values[0], dates[0]))
-    order = next(iter(orders)) if len(orders) == 1 else None
-    for name, column_name, body, column, example, parts in undecided:
-        dates = _iso_dates(parts, order)
-        if dates == "ambiguous":
-            ambiguous.append((name, column_name, example))
-        elif isinstance(dates, list):
-            _convert(body, column, dates)
-            converted.append((name, column_name, example, dates[0]))
-    for name, (header, body) in parsed.items():
+            if parts:
+                dates.append((name, header[column], body, column, values, parts))
         quoted = ", ".join('"' + column.replace('"', '""') + '"' for column in header)
         db.execute(f'CREATE TABLE "{name}" ({quoted})')
-        db.executemany(f'INSERT INTO "{name}" VALUES ({", ".join("?" * len(header))})', body)
-    return None
+    return parsed, dates
 
 
-_DATE_FUNCTION = re.compile(r"\b(?:julianday|date|datetime|strftime|unixepoch|timediff)\s*\(", re.IGNORECASE)
+def _settle_dates(columns: list, reads: set[tuple[str, str]]) -> tuple[list, list]:
+    """Store date columns as YYYY-MM-DD where the day/month order is known:
+    the converted (table, column, as written, as read, borrowed order) and
+    the ambiguous (table, column, as written). A column whose values show
+    the order (10/29/2026 is month first) is converted on its own. One whose
+    values cannot show it (10/05/2026, 11/02/2026) takes the order the other
+    date columns this query reads agree on: invoices.csv was converted and
+    payments.csv was not, and a join on the date matched nothing. Only the
+    columns the query reads count: taken from every file loaded, a US
+    invoice file's order rewrote a European bank file's dates in a query
+    that never read the invoices."""
+    converted, ambiguous, undecided = [], [], []
+    shown_by: dict[str, str] = {}
+    for table, column_name, body, column, values, parts in columns:
+        shown = _orders_shown(parts)
+        if len(shown) > 1:
+            continue
+        order = next(iter(shown), None)
+        dates = _iso_dates(parts, order)
+        if dates == "ambiguous":
+            undecided.append((table, column_name, body, column, values, parts))
+        elif isinstance(dates, list):
+            _convert(body, column, dates)
+            converted.append((table, column_name, values[0], dates[0], None))
+            if order and (table, column_name) in reads:
+                shows = next(value for value, (kind, a, b, _y) in zip(values, parts, strict=True)
+                             if kind == "xy" and (a if order == "day" else b) > 12)
+                shown_by.setdefault(order, f"{order} first, as {table}.{column_name} does ({shows})")
+    order = next(iter(shown_by)) if len(shown_by) == 1 else None
+    for table, column_name, body, column, values, parts in undecided:
+        dates = _iso_dates(parts, order) if order and (table, column_name) in reads else None
+        if order and isinstance(dates, list):
+            _convert(body, column, dates)
+            converted.append((table, column_name, values[0], dates[0], shown_by[order]))
+        else:
+            ambiguous.append((table, column_name, values[0]))
+    return converted, ambiguous
+
+
+_DATE_FUNCTION = re.compile(r"\b(julianday|date|datetime|strftime|unixepoch|timediff)\s*\(", re.IGNORECASE)
 _PERCENT_NAME = re.compile(r"pct|percent|%", re.IGNORECASE)
 _PER_HUNDRED = re.compile(r"\b100(?:\.0*)?\b|\b0?\.01\b")
 _LITERAL = re.compile(r"'(?:[^']|'')*'")
+_TOKEN = re.compile(r'"(?:[^"]|"")*"|[(),]')
+_NAME = r'[A-Za-z_][A-Za-z0-9_]*|"(?:[^"]|"")+"'
+_COLUMN = re.compile(rf"\s*(?:(?P<table>{_NAME})\s*\.\s*)?(?P<column>{_NAME})\s*")
 
 
-def _names(column: str, sql: str) -> bool:
-    """Whether ``sql`` names ``column`` outside its quoted text: bare, in
-    double quotes or after a table alias. A name followed by ( is a function
-    call, so date(due) does not name a column called date."""
-    name = re.escape(column)
-    return re.search(rf'"{name}"|(?<![\w"]){name}(?![\w"]|\s*\()', _LITERAL.sub("''", sql),
-                     re.IGNORECASE) is not None
+def _unquote(name: str | None) -> str | None:
+    return name[1:-1].replace('""', '"') if name and name.startswith('"') else name
 
 
-def _date_arguments(sql: str) -> list[str]:
-    """The text inside each date function's parentheses."""
+def _date_arguments(sql: str) -> list[tuple[str | None, str]]:
+    """(table or alias, column) for each date function given a column as
+    its date: the first argument, strftime's second, both of timediff's. A
+    column inside an expression there (CASE WHEN status ..., substr(d, 7, 4)
+    || ..., a modifier) is not one. One pass over the query: rescanning to
+    each call's closing parenthesis took seconds on deeply nested calls."""
     text = _LITERAL.sub("''", sql)
-    arguments = []
-    for match in _DATE_FUNCTION.finditer(text):
-        depth, end = 1, match.end()
-        while end < len(text) and depth:
-            depth += {"(": 1, ")": -1}.get(text[end], 0)
-            end += 1
-        arguments.append(text[match.end():end])
-    return arguments
+    calls = {match.end() - 1: match.group(1).lower() for match in _DATE_FUNCTION.finditer(text)}
+    stack: list[tuple[str | None, list[int]]] = []
+    found = []
+    for token in _TOKEN.finditer(text):
+        if token.group() == "(":
+            stack.append((calls.get(token.start()), [token.end()]))
+        elif token.group() == "," and stack:
+            stack[-1][1].append(token.end())
+        elif token.group() == ")" and stack:
+            function, starts = stack.pop()
+            spans = list(zip(starts, [start - 1 for start in starts[1:]] + [token.start()], strict=True))
+            dated = spans[1:2] if function == "strftime" else spans[:2] if function == "timediff" else spans[:1]
+            for start, end in dated if function else ():
+                column = _COLUMN.fullmatch(text, start, end)
+                if column:
+                    found.append((_unquote(column.group("table")), _unquote(column.group("column"))))
+    return found
+
+
+def _dated_columns(sql: str, reads: set[tuple[str, str]]) -> set[tuple[str, str]]:
+    """The (table, column) pairs the query's date functions read as dates,
+    each found among the columns the query reads: by name, a same-named
+    column of a table the query never read was named too."""
+    text = _LITERAL.sub("''", sql)
+    dated = set()
+    for qualifier, column in _date_arguments(sql):
+        named = {(table, name) for table, name in reads if name.lower() == column.lower()}
+        if qualifier:
+            alias = re.escape(qualifier)
+            qualified = {(table, name) for table, name in named if table.lower() == qualifier.lower()
+                         or re.search(rf'(?<![\w"])"?{re.escape(table)}"?\s+(?:AS\s+)?"?{alias}"?(?![\w"])',
+                                      text, re.IGNORECASE)}
+            named = qualified or named
+        dated |= named
+    return dated
 
 
 def _in_arithmetic(column: str, sql: str) -> bool:
@@ -303,14 +349,17 @@ def _in_arithmetic(column: str, sql: str) -> bool:
     return re.search(rf"[-+*/]\s*{ref}|{ref}\s*[-+*/]", sql) is not None
 
 
-def _blank_notes(blanks: dict[tuple[str, str], int], sql: str) -> list[str]:
+def _blank_notes(blanks: dict[tuple[str, str], int], reads: set[tuple[str, str]], sql: str) -> list[str]:
     """Columns of numbers with blanks that the query does arithmetic with:
     a blank is NULL (so AVG and MAX are right), and NULL in arithmetic is
     NULL. Live: amount - paid was NULL for every unpaid invoice, and an aging
-    summary's SUM left them out. Counted per table: summed by column name, a
-    file loaded as data and under its own name had twice its blanks."""
+    summary's SUM left them out. Counted per table the query reads: summed
+    by column name, a file loaded as data and under its own name had twice
+    its blanks, and named per loaded table, it got two notes."""
     notes = []
     for (table, column), count in blanks.items():
+        if (table, column) not in reads:
+            continue
         name = re.escape(column)
         guarded = re.search(rf'(?:coalesce|ifnull)\s*\(\s*(?:[A-Za-z_][A-Za-z0-9_]*\.)?"?{name}"?\s*,',
                             sql, re.IGNORECASE)
@@ -321,7 +370,7 @@ def _blank_notes(blanks: dict[tuple[str, str], int], sql: str) -> list[str]:
     return notes
 
 
-def _percent_notes(db, headers: dict[str, list[str]], sql: str) -> list[str]:
+def _percent_notes(db, headers: dict[str, list[str]], reads: set[tuple[str, str]], sql: str) -> list[str]:
     """Percent columns holding whole percents (15 for 15%) that the query
     uses in arithmetic without dividing by 100. Live: revenue as
     qty * price * (1 - discount_pct) came out negative and the answer blamed
@@ -331,7 +380,7 @@ def _percent_notes(db, headers: dict[str, list[str]], sql: str) -> list[str]:
     notes = []
     for table, columns in headers.items():
         for column in columns:
-            if not _PERCENT_NAME.search(column):
+            if not _PERCENT_NAME.search(column) or (table, column) not in reads:
                 continue
             if not _in_arithmetic(column, sql):
                 continue
@@ -339,39 +388,45 @@ def _percent_notes(db, headers: dict[str, list[str]], sql: str) -> list[str]:
                                  f'WHERE typeof("{column}") IN (\'integer\', \'real\')').fetchone()[0]
             if largest is not None and largest > 1:
                 shown = int(largest) if float(largest).is_integer() else largest
-                notes.append(f"Note: {column} holds percents (largest {shown}), so {shown} means {shown}%; "
+                notes.append(f"Note: {table}.{column} holds percents (largest {shown}), so {shown} means {shown}%; "
                              "this query uses it in arithmetic as it stands. To use it as a fraction, "
                              "divide it by 100.")
     return notes
 
 
-def _date_notes(db, headers: dict[str, list[str]], ambiguous: list[tuple[str, str, str]],
-                converted: list[tuple[str, str, str, str]], sql: str) -> list[str]:
-    """Notes on dates the query names. A converted column reads as
+def _date_notes(db, ambiguous: list[tuple[str, str, str]], converted: list[tuple[str, str, str, str, str | None]],
+                reads: set[tuple[str, str]], sql: str) -> list[str]:
+    """Notes on dates the query reads. A converted column reads as
     2026-10-29 while the file shows 10/29/2026: WHERE date = '10/29/2026'
     and GROUP BY substr(date, 1, 2) silently matched nothing or grouped on
     the year. The note that date functions cannot read a column is for a
-    column a date function reads, with one of its values: fired on any empty
-    result column, it sent the agent to fix dates that were fine."""
-    notes = [f"Note: {table}.{column} holds dates written like {written}; queries read them as {iso} "
-             "(YYYY-MM-DD), so compare, filter and group on that form."
-             for table, column, written, iso in converted if _names(column, sql)]
+    column a date function is given as its date, with one of its values:
+    fired on any empty result column, it sent the agent to fix dates that
+    were fine."""
+    notes = []
+    for table, column, written, iso, borrowed in converted:
+        if (table, column) not in reads:
+            continue
+        if borrowed is None:
+            notes.append(f"Note: {table}.{column} holds dates written like {written}; queries read them as {iso} "
+                         "(YYYY-MM-DD), so compare, filter and group on that form.")
+        else:
+            notes.append(f"Note: {table}.{column} holds dates written like {written}, and none of them shows "
+                         f"whether the day or the month comes first; this query reads them {borrowed}, so "
+                         f"{written} is {iso} (YYYY-MM-DD). If they are written the other way, ask which it is.")
     if not _DATE_FUNCTION.search(sql):
         return notes
     undecided = {(table, column) for table, column, _example in ambiguous}
-    arguments = _date_arguments(sql)
-    for table, columns in headers.items():
-        for column in columns:
-            if (table, column) in undecided or not any(_names(column, argument) for argument in arguments):
-                continue
-            quoted = '"' + column.replace('"', '""') + '"'
-            unread = db.execute(f'SELECT {quoted} FROM "{table}" WHERE typeof({quoted}) = \'text\' '
-                                f"AND trim({quoted}) <> '' AND julianday({quoted}) IS NULL LIMIT 1").fetchone()
-            if unread:
-                notes.append(f"Note: {table}.{column} holds values such as '{unread[0]}', which SQLite's date "
-                             "functions cannot read: they read dates written YYYY-MM-DD and give nothing for "
-                             "other forms.")
-    named = [f"{table}.{column} (such as '{example}')" for table, column, example in ambiguous if _names(column, sql)]
+    for table, column in sorted(_dated_columns(sql, reads) - undecided):
+        quoted = '"' + column.replace('"', '""') + '"'
+        unread = db.execute(f'SELECT {quoted} FROM "{table}" WHERE typeof({quoted}) = \'text\' '
+                            f"AND trim({quoted}) <> '' AND julianday({quoted}) IS NULL LIMIT 1").fetchone()
+        if unread:
+            notes.append(f"Note: {table}.{column} holds values such as '{unread[0]}', which SQLite's date "
+                         "functions cannot read: they read dates written YYYY-MM-DD and give nothing for "
+                         "other forms.")
+    named = [f"{table}.{column} (such as '{example}')" for table, column, example in ambiguous
+             if (table, column) in reads]
     if named:
         notes.append(f"Note: {'; '.join(named)} {'was' if len(named) == 1 else 'were'} left as written: "
                      "no value shows whether the day or the month comes first, so date functions cannot "
@@ -390,16 +445,14 @@ def query_tables(tables: dict[str, tuple[str, str]], sql: str) -> str:
     db.create_function("overlap", 3, _shift_overlap, deterministic=True)
     db.create_function("round", 1, _round, deterministic=True)
     db.create_function("round", 2, _round, deterministic=True)
-    ambiguous: list[tuple[str, str, str]] = []
     blanks: dict[tuple[str, str], int] = {}
-    converted: list[tuple[str, str, str, str]] = []
+    reads: set[tuple[str, str]] = set()
     try:
-        problem = _load(db, tables, ambiguous, blanks, converted)
-        if problem:
-            return problem
-        headers = {name: [row[1] for row in db.execute(f'PRAGMA table_info("{name}")')] for name in tables}
-        notes = (_percent_notes(db, headers, sql) + _blank_notes(blanks, sql)
-                 + _date_notes(db, headers, ambiguous, converted, sql))
+        loaded = _load(db, tables, blanks)
+        if isinstance(loaded, str):
+            return loaded
+        parsed, dates = loaded
+        headers = {name: header for name, (header, _body) in parsed.items()}
         allowed = {sqlite3.SQLITE_SELECT, sqlite3.SQLITE_READ, sqlite3.SQLITE_FUNCTION}
         names = set(tables)
 
@@ -410,8 +463,22 @@ def query_tables(tables: dict[str, tuple[str, str]], sql: str) -> str:
                 return sqlite3.SQLITE_DENY
             if action == sqlite3.SQLITE_FUNCTION and str(arg2).lower() in {"load_extension", "readfile", "writefile"}:
                 return sqlite3.SQLITE_DENY
+            if action == sqlite3.SQLITE_READ:
+                reads.add((arg1, arg2))
             return sqlite3.SQLITE_OK
 
+        # The columns the query reads, from compiling it over the empty
+        # tables: dates and notes follow them, not every file loaded. A
+        # query SQLite refuses is reported when it runs below.
+        db.set_authorizer(authorize)
+        try:
+            db.execute(f"EXPLAIN {sql}")
+        except (sqlite3.Error, sqlite3.Warning):
+            pass
+        db.set_authorizer(None)
+        converted, ambiguous = _settle_dates(dates, reads)
+        for name, (header, body) in parsed.items():
+            db.executemany(f'INSERT INTO "{name}" VALUES ({", ".join("?" * len(header))})', body)
         db.set_authorizer(authorize)
         try:
             cursor = db.execute(sql)
@@ -427,6 +494,11 @@ def query_tables(tables: dict[str, tuple[str, str]], sql: str) -> str:
                 known = "".join(f"; {table} has the columns {', '.join(columns)}"
                                 for table, columns in headers.items())
             return f"ERROR: the query was refused or invalid: {exc}{known}"
+        # Notes once SQLite has accepted the query, so a query it refuses
+        # costs no scan of its text.
+        db.set_authorizer(None)
+        notes = (_percent_notes(db, headers, reads, sql) + _blank_notes(blanks, reads, sql)
+                 + _date_notes(db, ambiguous, converted, reads, sql))
     finally:
         db.close()
     out = io.StringIO()
