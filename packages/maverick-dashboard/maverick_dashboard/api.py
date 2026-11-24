@@ -11139,7 +11139,8 @@ async def copilot_endpoint(request: Request, payload: CopilotIn, response: Respo
 
     # A task's cost is a live read even on its own page; the page guide
     # describes the task but holds no spending record.
-    if is_detail_page and live_intent(msg) not in {"task_cost", "task_files"} and (detail_reply := _copilot_detail_reply(
+    live_reads = {"task_cost", "task_files", "task_schedules"}
+    if is_detail_page and live_intent(msg) not in live_reads and (detail_reply := _copilot_detail_reply(
         request, msg, permissions, context, record_context,
     )) is not None:
         return detail_reply

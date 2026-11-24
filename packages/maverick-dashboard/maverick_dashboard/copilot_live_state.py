@@ -53,6 +53,14 @@ _TASK_FILES = re.compile(
     r"(?:show|list) (?:me )?(?:the )?files (?:from|for|of) (?:my |this |the )?(?:goal|task|run)(?: #?\d{1,18})?)"
     r"(?: please)?\Z"
 )
+_TASK_SCHEDULES = re.compile(
+    r"(?:(?:what|which) (?:schedule|schedules) (?:did|has|does) (?:my |this |the )?(?:goal|task|run)(?: #?\d{1,18})? "
+    r"(?:propose|proposed|suggest|suggested)|"
+    r"(?:show|list) (?:me )?(?:the )?(?:proposed )?schedules? (?:from|for|of) (?:my |this |the )?(?:goal|task|run)"
+    r"(?: #?\d{1,18})?|"
+    r"how (?:do|can) i (?:create|set up|start) (?:the |this |my )?(?:proposed )?schedule)"
+    r"(?: please)?\Z"
+)
 _EXPLICIT_TASK = re.compile(r"\b(?:goal|task|run)\s*#?(\d{1,18})\b")
 _PAGE_TASK = re.compile(r"^/(?:chat/goal|goals|tasks)/(\d{1,18})(?:/|$)")
 _DECISIONS = frozenset({"approval", "signoff", "assessment", "project_review", "vendor_reconciliation"})
@@ -79,6 +87,8 @@ def intent(message: str) -> str | None:
         return "task_cost"
     if _TASK_FILES.fullmatch(normalized):
         return "task_files"
+    if _TASK_SCHEDULES.fullmatch(normalized):
+        return "task_schedules"
     return None
 
 
@@ -334,6 +344,38 @@ def _task_files(request, message: str, page: str, selected_goal_id: int | None):
     return _answer(reply, href, "Open the task's files", "Task files")
 
 
+def _task_schedules(request, message: str, page: str, selected_goal_id: int | None):
+    """The schedules one task proposed, with the same access rule as its page."""
+    from maverick.schedule_proposals import describe, for_goal
+
+    from .app import _world
+
+    auth.require_permission(request, "view")
+    identifier = _task_id(message, page, selected_goal_id)
+    if identifier is None:
+        return _answer("Open the task you mean, then ask which schedule it proposed. Proposed schedules are "
+                       "listed under its answer.", "/goals", "Open Tasks", "Tasks")
+    world = _world()
+    goal = world.get_goal(identifier)
+    try:
+        if goal is None:
+            raise HTTPException(404, "no such goal")
+        auth.assert_goal_access(request, goal)
+    except HTTPException:
+        return _answer("I can't access that task in this account and workspace.", "/goals", "Open Tasks", "Tasks")
+    title = _bounded(goal.title)
+    proposals = for_goal(world, identifier)
+    if not proposals:
+        return _answer(f"Checked task ‘{title}’ {_checked_at()}. It has not proposed a schedule. Your schedules "
+                       "are on the Automations page.", "/automations", "Open Automations", "Proposed schedules")
+    listed = "; ".join(f"‘{_bounded(p['title'])}’, {describe(p['cron'], p['zone'])}" for p in proposals[:5])
+    reply = (f"Checked task ‘{title}’ {_checked_at()}. It proposed: {listed}. Nothing runs until you create it: "
+             "under the answer, choose Review and create this schedule, check the filled-in form on Automations, "
+             "then create it.")
+    return _answer(reply, f"/chat/goal/{identifier}#schedule-proposals", "Open the proposed schedule",
+                   "Proposed schedules")
+
+
 def _evidence_readiness(request):
     """Whether this workspace's AI evidence setup lets task answers through."""
     from maverick import ai_evidence_gateway as gateway
@@ -398,6 +440,8 @@ def answer(request, message: str, page: str, selected_goal_id: int | None) -> di
             value = _task_cost(request, message, page, selected_goal_id)
         elif selected == "task_files":
             value = _task_files(request, message, page, selected_goal_id)
+        elif selected == "task_schedules":
+            value = _task_schedules(request, message, page, selected_goal_id)
         else:
             value = _task_failure(request, message, page, selected_goal_id)
     except HTTPException:
