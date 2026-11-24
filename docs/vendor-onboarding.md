@@ -164,9 +164,9 @@ uploads read visible worksheet cells and cite sheet names and cell coordinates;
 unused shared strings and hidden sheets, rows and columns are excluded. Headers,
 footers, images, charts, comments, styling and rendered layout are outside this
 scope. Cached formula values are not recomputed; dates are not formatted. Macros,
-external links, embedded active content, Word fields/tracked changes and unsafe
-or oversized ZIP/XML packages are refused. The reader never launches Office or
-follows document links. Drive search still supports text, Google Docs and the
+external targets other than hyperlinks, embedded active content, Word
+fields/tracked changes and unsafe or oversized ZIP/XML packages are refused. The
+reader never launches Office or follows document links. Drive search still supports text, Google Docs and the
 existing PDF subset; download Office files and choose them locally for review.
 
 An unreadable image-only or unsupported PDF offers an in-app transcription field.

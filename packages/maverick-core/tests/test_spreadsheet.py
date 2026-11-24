@@ -337,3 +337,126 @@ def test_xlsx_write_makes_several_named_sheets_in_one_workbook(tmp_path):
     assert ss._run({"op": "write", "path": str(tmp_path / "x.csv"), "sheets": sheets}).startswith("ERROR")
     assert ss._run({"op": "write", "path": str(p), "sheets": {"a/b": [["x"]]}}).startswith("ERROR")
     assert ss._run({"op": "write", "path": str(p), "sheets": {}}).startswith("ERROR")
+
+
+def test_a_write_reports_what_the_file_holds_with_its_formulas_worked_out(tmp_path):
+    # Live, twice: an aging report's summary sheet put every balance in 90+
+    # while its detail sheet had them right, and a depreciation schedule
+    # wrote off a van for $46,800 of its $36,000. Each write said only
+    # "wrote 2 sheet(s)", so neither the agent nor its verifier saw the file.
+    pytest.importorskip("openpyxl")
+    p = tmp_path / "aging.xlsx"
+    sheets = {"Summary": [["Customer", "Current", "90+", "Total"], ["Cedar Auto", 0, 7887.79, "=SUM(B2:C2)"],
+                          ["Grand Total", "=SUM(B2:B2)", "=SUM(C2:C2)", "=SUM(D2:D2)"]],
+              "Detail": [["Invoice", "Bucket", "Open"], ["INV-1020", "Current", 3487.47]]}
+    out = ss._run({"op": "write", "path": str(p), "sheets": sheets})
+    held = out.split("What the file now holds (formulas worked out):\n", 1)[1]
+    assert held.splitlines() == ["Sheet 'Summary':", "Customer,Current,90+,Total", "Cedar Auto,0,7887.79,7887.79",
+                                 "Grand Total,0,7887.79,7887.79", "Sheet 'Detail':", "Invoice,Bucket,Open",
+                                 "INV-1020,Current,3487.47"], held
+    # A formula this cannot work out is shown as written; long sheets are cut.
+    rows = [["n", "x"]] + [[i, i * 2] for i in range(60)] + [["odd", "=Other!A1"]]
+    out = ss._run({"op": "write", "path": str(tmp_path / "long.xlsx"), "rows": rows})
+    assert "58,116" not in out and "... 37 more rows" in out and out.count("\n") < 40
+    # A CSV holds no formulas: it shows what was stored.
+    csv_out = ss._run({"op": "write", "path": str(tmp_path / "t.csv"), "rows": [["a", "b"], [1, "=A2*2"]]})
+    assert csv_out.endswith("What the file now holds:\na,b\n1,'=A2*2"), csv_out
+
+
+@pytest.mark.timeout(20)
+def test_a_long_schedules_read_back_is_quick_and_right():
+    # Review: each balance of an amortization schedule reads the balance
+    # above twice, so the read-back of a 360-month schedule's first rows
+    # worked the formulas out afresh, doubling with every row: about twelve
+    # minutes of the agent's own process after the file was already saved.
+    import time
+    from decimal import Decimal
+
+    from maverick.sheet_formulas import plain_number
+
+    rows = [["Month", "Payment", "Interest", "Principal", "Balance"], [0, "", "", "", 200000]]
+    rows += [[r - 2, 1199.10, f"=E{r - 1}*0.005", f"=B{r}-C{r}", f"=E{r - 1}-D{r}"] for r in range(3, 363)]
+    started = time.monotonic()
+    held = ss._readback({None: rows})
+    assert time.monotonic() - started < 1.0
+    balance = Decimal(200000)
+    for _month in range(23):
+        interest = balance * Decimal("0.005")
+        principal = Decimal("1199.1") - interest
+        balance -= principal
+    lines = held.splitlines()
+    assert lines[-2] == ",".join(str(v) for v in (23, 1199.1, *map(plain_number, (interest, principal, balance))))
+    assert lines[-1] == "... 337 more rows"
+
+
+@pytest.mark.timeout(20)
+def test_a_read_back_shows_formulas_as_written_once_its_work_runs_out():
+    # Each of these sums reads 100,000 cells; past the read-back's cap on work
+    # the rest are shown as written instead of holding up the tool.
+    import time
+
+    rows = [[1] + ["=SUM(A1:A100000)"] * 8 for _ in range(25)]
+    started = time.monotonic()
+    lines = ss._readback({None: rows}).splitlines()
+    assert time.monotonic() - started < 5.0
+    assert lines[2].startswith("1,25,") and lines[-1].endswith(",=SUM(A1:A100000)"), lines[2]
+
+
+@pytest.mark.timeout(30)
+def test_a_read_back_counts_reading_a_worked_out_formula_again_as_work():
+    # Review: a formula cell's result, once worked out, was read again for
+    # free, so sums over 50,000 worked-out cells never reached the cap: 25
+    # rows of 190 such sums held the agent's own process for 140 s after the
+    # file was saved.
+    import time
+
+    rows = [["=1"] * 5 + (["=SUM(A1:E10000)"] * 8 if r < 25 else []) for r in range(10_000)]
+    started = time.monotonic()
+    lines = ss._readback({None: rows}).splitlines()
+    assert time.monotonic() - started < 2.0
+    assert lines[2].startswith("1,1,1,1,1,50000,") and lines[2].endswith(",=SUM(A1:E10000)"), lines[2]
+
+
+@pytest.mark.timeout(60)
+def test_a_read_works_out_a_long_running_balance(tmp_path):
+    # Review: a read once shared a cap on work across all of a sheet's
+    # formulas, so a ledger's running balance (=SUM($B$2:B2101)) came back
+    # blank past about 2,000 rows and a query of the balance was wrong. The
+    # isolated reader, with its own time limit, works them all out.
+    pytest.importorskip("openpyxl")
+    p = tmp_path / "ledger.xlsx"
+    rows = [["Day", "Amount", "Balance"]] + [[r - 1, 10, f"=SUM($B$2:B{r})"] for r in range(2, 2102)]
+    ss._run({"op": "write", "path": str(p), "rows": rows})
+    out = ss._query({"paths": [str(p)], "sql": "SELECT Day, Balance FROM ledger WHERE Day IN (1000, 2100)"}, None)
+    assert "1000,10000" in out and "2100,21000" in out, out
+
+
+def test_a_read_back_shows_a_workbook_as_the_file_holds_it(tmp_path):
+    # Review: rows [North, "1200"], [South, "-300"], [Total, =SUM(B2:B3)] read
+    # back as "South,-300" and "Total,900", but the file holds both figures as
+    # text ("-300" neutralised to '-300) and Excel's total is 0. A lookup and
+    # another sheet's cell, neutralised to text, were shown as live formulas.
+    pytest.importorskip("openpyxl")
+    rows = [["Region", "Sales"], ["North", "1200"], ["South", "-300"], ["Total", "=SUM(B2:B3)"]]
+    out = ss._run({"op": "write", "path": str(tmp_path / "r.xlsx"), "rows": rows})
+    held = out.split("What the file now holds (formulas worked out):\n", 1)[1]
+    assert held.splitlines() == ["Region,Sales", "North,1200", "South,'-300", "Total,0"], held
+    assert held + "\n" == ss.xlsx_bytes_as_csv((tmp_path / "r.xlsx").read_bytes())
+    rows = [["=VLOOKUP(A2,Codes!A:B,2,FALSE)"], ["=Detail!C2"], [-300], ["=A3*2"]]
+    out = ss._run({"op": "write", "path": str(tmp_path / "v.xlsx"), "rows": rows})
+    held = out.split("What the file now holds (formulas worked out):\n", 1)[1]
+    assert held.splitlines() == ['"\'=VLOOKUP(A2,Codes!A:B,2,FALSE)"', "'=Detail!C2", "-300", "-600"], held
+
+
+def test_each_sheet_of_a_write_has_its_own_readback_budget():
+    # Review: the read-back's work cap was shared by every sheet, so a
+    # workbook of four region sheets showed the last ones' totals as formulas.
+    from maverick.tools.spreadsheet import _readback
+
+    sheets = {}
+    for region in ("North", "South", "East", "West"):
+        rows = [["Region total", "=SUM(D5:D8004)"], ["", ""], ["", ""], ["Order", "Qty", "Price", "Line"]]
+        rows += [[f"SO-{i}", 1, 2, f"=B{i + 5}*C{i + 5}"] for i in range(8000)]
+        sheets[region] = rows
+    totals = [line for line in _readback(sheets).splitlines() if line.startswith("Region total")]
+    assert totals == ["Region total,16000"] * 4, totals

@@ -689,8 +689,9 @@ def _threshold_to_min_severity(threshold: str) -> int:
 def scan(
     text: str,
     block_threshold: str = "high",
+    skip: frozenset[str] = frozenset(),
 ) -> tuple[bool, str, list[str]]:
-    """Run all rules over ``text``.
+    """Run all rules over ``text``, but those named in ``skip``.
 
     Returns (blocked, max_severity, matched_rule_names).
     Blocked = True iff any rule fired at or above the configured threshold.
@@ -713,6 +714,8 @@ def scan(
     max_idx = -1
     max_sev = "none"
     for r in RULES:
+        if r.name in skip:
+            continue
         hit = (r.name in url_found if r.name in _URL_RULES
                else any(r.pattern.search(c) for c in candidates))
         if hit:

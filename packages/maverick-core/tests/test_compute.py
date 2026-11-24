@@ -217,3 +217,392 @@ def test_rounding_floor_and_ceiling_work_out_money(monkeypatch):
         # The digits are bounded, so a rounding cannot build a huge number.
         assert "ERROR" in compute().fn({"op": "evaluate", "expr": "round(2.5, 10**6)"})
         assert "ERROR" in compute().fn({"op": "evaluate", "expr": "round(2.5, 100)"})
+
+
+@pytest.mark.parametrize("sympy_missing", [False, True])
+def test_dates_work_out_with_sqlite_date_functions(monkeypatch, sympy_missing):
+    # Live: a lease's renewal-notice deadline (180 days before March 31,
+    # 2030) was refused as "disallowed characters", worked out by hand as
+    # October 3, and accepted; October 2 is the last day.
+    import sys as _sys
+    if sympy_missing:
+        monkeypatch.setitem(_sys.modules, "sympy", None)
+    from maverick.tools.compute import compute
+    run = compute().fn
+    assert run({"op": "evaluate", "expr": "date('2030-03-31', '-180 days')"}) == "2029-10-02"
+    assert run({"op": "evaluate", "expr": "julianday('2030-03-31') - julianday('2029-10-02')"}) == "180"
+    assert run({"op": "evaluate", "expr": "date('2025-04-01', '+60 months', '-1 day')"}) == "2030-03-31"
+    assert run({"op": "evaluate", "expr": "strftime('%w', '2029-10-02')"}) == "2"
+
+
+def test_a_date_expression_that_cannot_run_says_how_to_write_one():
+    from maverick.tools.compute import compute
+    run = compute().fn
+    out = run({"op": "evaluate", "expr": "date('2030-03-31') - 180 days"})
+    assert out.startswith("ERROR") and "date('2030-03-31', '-180 days')" not in out
+    assert "'-180 days'" in out or "'-30 days'" in out
+    assert run({"op": "evaluate", "expr": "date('03/31/2030', '-1 day')"}).startswith("ERROR")
+
+
+@pytest.mark.parametrize("expr", [
+    "date('2026-01-01') FROM sqlite_master",
+    "(SELECT name FROM sqlite_master)",
+    "date('2026-01-01'); SELECT 1",
+    "load_extension('x') || date('2026-01-01')",
+    "(WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT max(x) FROM c) + julianday('2026-01-01')",
+])
+def test_a_date_expression_cannot_reach_beyond_its_functions(expr):
+    from maverick.tools.compute import compute
+    assert compute().fn({"op": "evaluate", "expr": expr}).startswith("ERROR")
+
+
+@pytest.mark.parametrize("expr", [
+    "date('2030-03-31') - 180 days",
+    "date('2030-03-31') - 180",
+    "180 + date('2030-03-31', '+1 day')",
+    "julianday('2030-03-31') AS days",
+])
+def test_a_date_expression_is_never_read_as_a_number_it_does_not_mean(expr):
+    # SQLite reads "date('2030-03-31') - 180 days" as 2030 - 180 named
+    # "days" and answers 1850.
+    from maverick.tools.compute import compute
+    out = compute().fn({"op": "evaluate", "expr": expr})
+    assert out.startswith("ERROR") and "1850" not in out, out
+
+
+@pytest.mark.parametrize("sympy_missing", [False, True])
+def test_arithmetic_beside_a_date_call_keeps_true_division_and_money_rounding(monkeypatch, sympy_missing):
+    # Prorated rent written as the daily rate times the days came back 768
+    # instead of 774.19: SQLite ran the whole expression, divided 1500 by 31
+    # as whole numbers and rounded 2.675 down to 2.67.
+    import sys as _sys
+    if sympy_missing:
+        monkeypatch.setitem(_sys.modules, "sympy", None)
+    elif not _HAS_SYMPY:
+        pytest.skip("sympy not installed")
+    from maverick.tools.compute import compute
+    run = compute().fn
+    cases = {
+        "1500/31 * (julianday('2026-03-31') - julianday('2026-03-15'))": ("774.193548387096774193548387097", 1500 / 31 * 16),
+        "(unixepoch('2026-01-01 17:30') - unixepoch('2026-01-01 08:45')) / 3600": ("8.75", 8.75),
+        "7/2 + julianday('2026-01-02') - julianday('2026-01-01')": ("4.5", 4.5),
+        "round(2.675, 2) + 0*julianday('2026-01-01')": ("2.68", 2.68),
+        "round(1.005, 2) + 0*julianday('2026-01-01')": ("1.01", 1.01),
+        "round(41.175 * (julianday('2026-01-02') - julianday('2026-01-01')), 2)": ("41.18", 41.18),
+    }
+    for expr, (exact, approx) in cases.items():
+        out = run({"op": "evaluate", "expr": expr})
+        if sympy_missing:
+            assert round(float(out), 9) == round(approx, 9), (expr, out)
+        else:
+            assert out == exact, (expr, out)
+
+
+@pytest.mark.parametrize("expr", [
+    "julianday(2026-03-01) - julianday(2026-01-31)",
+    "julianday(2030-03-31) - julianday(2029-10-02)",
+    "date(2030-03-31, '-180 days')",
+    "date(2030-03-31)",
+    "strftime('%w', 2029-10-02)",
+    "julianday(date(2030-03-31))",
+    "date(1767225600 + 86400, 'unixepoch')",
+])
+def test_an_unquoted_date_is_refused_not_read_as_arithmetic(expr):
+    # SQLite reads julianday(2026-03-01) as julianday(2022), a day in 4708 BC:
+    # the gap to an unquoted January 31 came back 28 days instead of 29.
+    from maverick.tools.compute import compute
+    out = compute().fn({"op": "evaluate", "expr": expr})
+    assert out.startswith("ERROR") and "in quotes" in out, out
+
+
+def test_a_quoted_date_inside_another_date_call_still_works():
+    from maverick.tools.compute import compute
+    run = compute().fn
+    assert run({"op": "evaluate", "expr": "julianday('2026-03-01') - julianday('2026-01-31')"}) == "29"
+    assert run({"op": "evaluate",
+                "expr": "julianday(date('2026-01-31', '+1 month')) - julianday('2026-01-31')"}) == "31"
+    assert run({"op": "evaluate", "expr": "DATE ( '2030-03-31' , '-180 days' )"}) == "2029-10-02"
+
+
+@pytest.mark.parametrize("expr", [
+    "length(randomblob(100000000)) + julianday('2026-01-01')",
+    "coalesce(zeroblob(10000000), date('2026-01-01'))",
+    "printf('%5000000d', julianday('2026-01-01'))",
+    "julianday(randomblob(10))",
+    "date(zeroblob(1000))",
+    "strftime('" + "%J" * 450 + "', '2026-01-01')",
+])
+def test_a_date_call_cannot_allocate_or_build_huge_text(expr):
+    # A short expression made SQLite allocate a gigabyte in the agent's own
+    # process (randomblob, zeroblob, printf): its time limit never fires
+    # inside a single function call.
+    from maverick.tools.compute import compute
+    out = compute().fn({"op": "evaluate", "expr": expr})
+    assert out.startswith("ERROR") and len(out) < 5000, out[:200]
+
+
+@pytest.mark.parametrize("expr", [
+    "(date('2030-03-31')) - 180",
+    "round(date('2030-03-31')) - 180",
+    "abs(date('2030-03-31')) - 180",
+    "max(date('2030-03-31')) - 180",
+    "date('2030-03-31') || '' - 180",
+    "/* ' */ date('2030-03-31') - 180 /* ' */",
+    "/*'*/ CAST(date('2030-03-31') AS INTEGER) - 180 /*'*/",
+    "date('2030-03-31') -- '\n - 180",
+    "julianday('2030-03-31') - '2029-10-02'",
+])
+def test_date_text_cannot_be_slipped_into_arithmetic(expr):
+    # Wrapping the date text, or hiding a quote in a comment, got past the
+    # check on the call's own neighbours, and SQLite answered 1850 again.
+    from maverick.tools.compute import compute
+    out = compute().fn({"op": "evaluate", "expr": expr})
+    assert out.startswith("ERROR") and "1850" not in out and "2460562.5" not in out, out
+
+
+@pytest.mark.parametrize("sympy_missing", [False, True])
+@pytest.mark.parametrize(("expr", "expected"), [
+    ("(julianday('2026-01-01 17:30') - julianday('2026-01-01 08:45')) * 24", "8.75"),
+    ("(julianday('2026-01-01 17:30') - julianday('2026-01-01 08:45')) * 24 * 60", "525"),
+    ("(julianday('2026-01-01 10:00') - julianday('2026-01-01 08:00')) * 24 * 60", "120"),
+    ("(julianday('2026-01-01 10:00') - julianday('2026-01-01 08:00')) * 24", "2"),
+    ("(unixepoch('2026-01-01 17:30:00.250', 'subsec') - unixepoch('2026-01-01 17:30')) * 4", "1"),
+    ("0.1 + julianday('2026-01-02') - julianday('2026-01-01')", "1.1"),
+    ("julianday('now') - julianday('now')", "0"),
+])
+def test_hours_between_two_times_come_out_exact(monkeypatch, sympy_missing, expr, expected):
+    # julianday() hands back a float of days off by about 5e-10, and hours
+    # worked came back 8.749999993 instead of 8.75. Without SymPy the exact
+    # figures went back into float arithmetic near 2.46e6 days and came out
+    # 8.74999999254942.
+    import sys as _sys
+    if sympy_missing:
+        monkeypatch.setitem(_sys.modules, "sympy", None)
+    elif not _HAS_SYMPY:
+        pytest.skip("sympy not installed")
+    from maverick.tools.compute import compute
+    assert compute().fn({"op": "evaluate", "expr": expr}) == expected
+
+
+@pytest.mark.parametrize("sympy_missing", [False, True])
+@pytest.mark.parametrize("expr", [
+    "strftime('%Y%m%d', '2026-03-01') - strftime('%Y%m%d', '2026-01-31')",
+    "strftime('%H.%M', '2026-01-01 17:30') - strftime('%H.%M', '2026-01-01 08:45')",
+    "strftime('%Y', '2030-03-31') - 180",
+    "(strftime('%J', '2026-01-01 17:30') - strftime('%J', '2026-01-01 08:45')) * 24",
+    "strftime('%w', '2029-10-02') + 0",
+])
+def test_strftime_text_is_never_read_as_a_figure(monkeypatch, sympy_missing, expr):
+    # strftime() text that looked like a number went into the arithmetic: a
+    # days-between attempt on '%Y%m%d' came back 170 (the gap is 29), hours
+    # from '%H.%M' came back 8.85 (it is 8.75), and '%Y' - 180 came back 1850.
+    import sys as _sys
+    if sympy_missing:
+        monkeypatch.setitem(_sys.modules, "sympy", None)
+    from maverick.tools.compute import compute
+    out = compute().fn({"op": "evaluate", "expr": expr})
+    assert out.startswith("ERROR") and "date text cannot be added to" in out, out
+    assert "julianday('2026-03-01') - julianday('2026-01-31')" in out, out
+
+
+@pytest.mark.parametrize("sympy_missing", [False, True])
+@pytest.mark.parametrize(("expr", "expected"), [
+    ("(date('2026-01-31', '+30 days'))", "2026-03-02"),
+    ("max(date('2026-02-15'), date('2026-03-01'))", "2026-03-01"),
+    ("min(date('2026-02-15'), date('2026-03-01'))", "2026-02-15"),
+    ("MAX(date('2026-02-15'), (date('2026-03-01')), date('2026-01-31', '+20 days'))", "2026-03-01"),
+    ("date('2026-01-31', '+30 days'), date('2026-01-31', '+60 days')", "2026-03-02, 2026-04-01"),
+    ("julianday('2026-03-01')\n - julianday('2026-01-31')", "29"),
+    ("julianday('2026-03-01') -\r julianday('2026-01-31')", "29"),
+    ("date(1767225600, 'unixepoch')", "2026-01-01"),
+    ("datetime(1767225600, 'unixepoch')", "2026-01-01 00:00:00"),
+    ("date(2461100.5)", "2026-03-01"),
+    ('date("2026-01-31")', "2026-01-31"),
+    ("date(('2026-01-31'))", "2026-01-31"),
+    ("julianday('2026-03-01') - julianday('2026-01-31'), julianday('2026-04-01') - julianday('2026-01-31')", "29, 60"),
+])
+def test_a_date_standing_alone_or_picked_still_works_out(monkeypatch, sympy_missing, expr, expected):
+    # The later of two dates, a date in parentheses, a list of dates, an
+    # expression over two lines and seconds since 1970 were all worked out
+    # before date calls were split from the arithmetic, then refused.
+    import sys as _sys
+    if sympy_missing:
+        monkeypatch.setitem(_sys.modules, "sympy", None)
+    elif not _HAS_SYMPY:
+        pytest.skip("sympy not installed")
+    from maverick.tools.compute import compute
+    assert compute().fn({"op": "evaluate", "expr": expr}) == expected
+
+
+@pytest.mark.parametrize("sympy_missing", [False, True])
+@pytest.mark.parametrize(("expr", "problem", "hidden"), [
+    ("julianday('2026-03-01') - julianday('2026-01-31') days", "'days' is neither a function nor a figure", "4922201"),
+    ("julianday('2026-03-01') - t", "'t' is neither a function nor a figure", "2461100.5"),
+    ("length(randomblob(999999999)) + julianday('2026-01-01')", "length(randomblob(999999999)) + julianday", "4922083"),
+    ("iif(julianday('2026-03-01') > julianday('2026-01-31'), 1, 0)", "compare dates by subtracting", "BooleanTrue"),
+    ("julianday('2026-03-01') - julianday('2026-01-31') == 29", "compare dates by subtracting", "BooleanTrue"),
+    ("max(date('2026-02-15'), julianday('2026-03-01'))", "date text cannot be added to", "2461100.5"),
+])
+def test_a_date_expression_that_cannot_run_quotes_what_the_agent_wrote(monkeypatch, sympy_missing, expr, problem, hidden):
+    # The refusal quoted the figures put in place of the date calls, as
+    # "cannot evaluate '(4922201/2) - (4922143/2) days': SyntaxError", and a
+    # stray symbol came back as the answer "2461100.5 - t".
+    import sys as _sys
+    if sympy_missing:
+        monkeypatch.setitem(_sys.modules, "sympy", None)
+    elif not _HAS_SYMPY:
+        pytest.skip("sympy not installed")
+    from maverick.tools.compute import compute
+    out = compute().fn({"op": "evaluate", "expr": expr})
+    assert out.startswith(f"ERROR: cannot evaluate {expr!r}") and problem in out, out
+    assert hidden not in out.split(f"{expr!r}", 1)[1] and "'-30 days'" in out, out
+
+
+@pytest.mark.parametrize("sympy_missing", [False, True])
+@pytest.mark.parametrize("expr", [
+    "julianday(strftime('%Y', '2030-03-31')) - 180",
+    "julianday(strftime('%H.%M', '2026-01-01 17:30')) - julianday(strftime('%H.%M', '2026-01-01 08:45'))",
+    "julianday('2030') - 180",
+    "julianday(2030) - 180",
+    "unixepoch(strftime('%Y', '2030-03-31')) / 86400",
+    "julianday('20300331') - julianday('20291002')",
+    "date('17.30')",
+])
+def test_a_number_a_date_function_would_read_as_a_day_number_is_refused(monkeypatch, sympy_missing, expr):
+    # Review: SQLite reads numeric text such as '2030' or '17.30' as a Julian
+    # day number, so date text wrapped in julianday() still came back 1850
+    # and 8.85 hours with no error.
+    import sys as _sys
+    if sympy_missing:
+        monkeypatch.setitem(_sys.modules, "sympy", None)
+    from maverick.tools.compute import compute
+    out = compute().fn({"op": "evaluate", "expr": expr})
+    assert out.startswith("ERROR") and "1850" not in out and "8.85" not in out, out
+    assert "YYYY-MM-DD" in out, out
+
+
+@pytest.mark.parametrize("sympy_missing", [False, True])
+@pytest.mark.parametrize(("expr", "expected"), [
+    ("ROUND((julianday('2026-01-01 17:30') - julianday('2026-01-01 08:45')) * 24, 2)", "8.75"),
+    ("ROUND(JULIANDAY('2026-03-01') - JULIANDAY('2026-01-31'))", "29"),
+    ("ABS(julianday('2026-01-31') - julianday('2026-03-01'))", "29"),
+    ("MAX(julianday('2026-01-31'), julianday('2026-03-01')) - julianday('2026-01-01')", "59"),
+    ("Round(julianday('2026-03-01') - julianday('2026-01-31'), 0)", "29"),
+    ("julianday(datetime('2026-03-01 08:00')) - julianday('2026-03-01')", "0.333333333333333"),
+])
+def test_wrappers_around_date_figures_read_in_any_case(monkeypatch, sympy_missing, expr, expected):
+    # Review: SQLite once ran the whole expression and read ROUND, ABS and
+    # MAX in any case; with only the date calls going to SQLite they were
+    # refused as "function not allowed".
+    import sys as _sys
+    if sympy_missing:
+        monkeypatch.setitem(_sys.modules, "sympy", None)
+    elif not _HAS_SYMPY:
+        pytest.skip("sympy not installed")
+    from maverick.tools.compute import compute
+    out = compute().fn({"op": "evaluate", "expr": expr})
+    assert out[:len(expected)] == expected or round(float(out), 9) == round(float(expected), 9), out
+
+
+@pytest.mark.parametrize("sympy_missing", [False, True])
+@pytest.mark.parametrize("expr", [
+    "max(℘℘℘℘℘7, date('2026-01-01'))",
+    "℮℮℮℮℮3, date('2026-01-01')",
+    "℘℘℘℘℘0, date('2026-01-01')",
+    "max(℘, date('2026-01-01'))",
+    "_date0, date('2026-01-01')",
+])
+def test_a_stray_name_beside_date_text_is_refused_not_read_as_the_date(monkeypatch, sympy_missing, expr):
+    # Review: a name made of characters Python allows in identifiers but the
+    # word scan skipped raised IndexError out of the tool, or was read as the
+    # date standing beside it.
+    import sys as _sys
+    if sympy_missing:
+        monkeypatch.setitem(_sys.modules, "sympy", None)
+    from maverick.tools.compute import compute
+    out = compute().fn({"op": "evaluate", "expr": expr})
+    assert out.startswith("ERROR") and "2026-01-01, 2026-01-01" not in out, out
+
+
+@pytest.mark.parametrize("sympy_missing", [False, True])
+@pytest.mark.parametrize("expr", [
+    "max(timediff('2026-03-01', '2026-01-31'), timediff('2026-01-31', '2026-03-01'))",
+    "max(strftime('%s', '2030-03-31'), strftime('%s', '1999-01-01'))",
+    "max(strftime('%m/%d/%Y', '2030-03-09'), strftime('%m/%d/%Y', '2029-12-10'))",
+])
+def test_max_and_min_pick_only_among_dates_written_year_first(monkeypatch, sympy_missing, expr):
+    # Review: max() and min() compare the text, which is date order only for
+    # YYYY-MM-DD; the later of 2030 and 1999 as seconds came back 1999's.
+    import sys as _sys
+    if sympy_missing:
+        monkeypatch.setitem(_sys.modules, "sympy", None)
+    from maverick.tools.compute import compute
+    out = compute().fn({"op": "evaluate", "expr": expr})
+    assert out.startswith("ERROR") and "YYYY-MM-DD" in out, out
+
+
+@pytest.mark.parametrize("sympy_missing", [False, True])
+def test_pow_is_power_under_the_same_bounds(monkeypatch, sympy_missing):
+    # Live: a lease's rent escalation, round(4200*pow(1.03,2),2), was refused
+    # six times as "function not allowed".
+    import sys as _sys
+    if sympy_missing:
+        monkeypatch.setitem(_sys.modules, "sympy", None)
+    elif not _HAS_SYMPY:
+        pytest.skip("sympy not installed")
+    from maverick.tools.compute import compute
+    run = compute().fn
+    assert run({"op": "evaluate", "expr": "round(4200*pow(1.03,2),2)"}) == "4455.78"
+    assert [float(x) for x in run({"op": "evaluate", "expr": "round(4200*pow(1.03, 0), 2), POW(2, 10)"}).split(", ")] == [
+        4200, 1024]
+    # Nested powers stay refused, as with **.
+    assert "ERROR" in run({"op": "evaluate", "expr": "pow(pow(2, 3), 2)"})
+    assert "ERROR" in run({"op": "evaluate", "expr": "pow(9, pow(9, pow(9, 9)))"})
+
+
+@pytest.mark.parametrize("sympy_missing", [False, True])
+def test_a_sum_of_items_holding_calls_adds_them(monkeypatch, sympy_missing):
+    # Live: a lease's total, round(sum([4200 * 12, round(4200 * 1.03 ** 1, 2)
+    # * 12, ...]), 2), was refused as "disallowed characters".
+    import sys as _sys
+    if sympy_missing:
+        monkeypatch.setitem(_sys.modules, "sympy", None)
+    elif not _HAS_SYMPY:
+        pytest.skip("sympy not installed")
+    from maverick.tools.compute import compute
+    run = compute().fn
+    expr = ("round(sum([4200 * 12, round(4200 * 1.03, 2) * 12, round(4326 * 1.03, 2) * 12, "
+            "round(4455.78 * 1.03, 2) * 12, round(4589.45 * 1.03, 2) * 12]), 2)")
+    assert float(run({"op": "evaluate", "expr": expr})) == 267580.32
+    assert float(run({"op": "evaluate", "expr": "sum([round(1.005, 2), 2]) * 3"})) == 9.03
+    assert float(run({"op": "evaluate", "expr": "sum((1, 2)) + sum([])"})) == 3
+
+
+@pytest.mark.parametrize("expr", ["100/0", "0/0", "log(0)", "100/(julianday('2026-01-01') - julianday('2026-01-01'))"])
+def test_a_division_by_zero_is_an_error_not_a_figure(expr):
+    # Review: with SymPy, a same-day per-diem (amount / days) came back "zoo"
+    # and 0/0 "nan", as if they were results.
+    if not _HAS_SYMPY:
+        pytest.skip("sympy not installed")
+    from maverick.tools.compute import compute
+    out = compute().fn({"op": "evaluate", "expr": expr})
+    assert out.startswith("ERROR") and "divides by zero" in out, out
+
+
+@pytest.mark.parametrize("sympy_missing", [False, True])
+def test_sum_and_pow_rewrites_keep_precedence_size_and_digits(monkeypatch, sympy_missing):
+    # Review: beside a date call, sum([1, 2])^2 came back 1 + 2 ** 2 (5, not
+    # 9); a sum of 330 or more items was too deep to print back; and a
+    # decimal of 16 or more digits came back as the float nearest it.
+    import sys as _sys
+    if sympy_missing:
+        monkeypatch.setitem(_sys.modules, "sympy", None)
+    elif not _HAS_SYMPY:
+        pytest.skip("sympy not installed")
+    from maverick.tools.compute import compute
+    run = compute().fn
+    assert float(run({"op": "evaluate", "expr": "sum([1,2])^2 + 0*julianday('2026-01-01')"})) == 9
+    assert float(run({"op": "evaluate", "expr": "sum([julianday('2026-03-01'), -julianday('2026-01-31')])^2"})) == 841
+    if not sympy_missing:  # the fallback reads 1,000 characters at most
+        assert float(run({"op": "evaluate", "expr": "sum([" + ", ".join(["1"] * 1000) + "])"})) == 1000
+        assert run({"op": "evaluate", "expr": "sum([0.12345678901234567890, 1])"}) == "1.1234567890123456789"

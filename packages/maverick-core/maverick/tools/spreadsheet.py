@@ -399,8 +399,13 @@ class _Computed:
     _MAX_CELLS = 100_000
 
     def __init__(self, formulas, cached):
+        from ..sheet_formulas import Memo
+
         self._sheets = (formulas, cached)
         self._grid: dict[str, Any] | None = None
+        # No cap on the work: this runs in the isolated reader, whose time
+        # limit bounds it.
+        self._memo = Memo()
 
     def _cells(self) -> dict[str, Any]:
         if self._grid is None:
@@ -421,7 +426,7 @@ class _Computed:
     def value(self, formula: str) -> int | float | None:
         from ..sheet_formulas import evaluate, plain_number
 
-        result = evaluate(formula, self._cells().get)
+        result = evaluate(formula, self._cells().get, self._memo)
         return None if result is None else plain_number(result)
 
 
@@ -623,7 +628,71 @@ def _write_sheets(path: Path, value: Any, goal_id) -> str:
         _xlsx_write_sheets(path, sheets)
     notes = "".join(_totals_note(rows, path).replace("The totals", f"On sheet {name!r} the totals", 1)
                     for name, rows in sheets.items())
-    return f"wrote {len(sheets)} sheet(s) ({', '.join(sheets)}) to {path}" + notes
+    return f"wrote {len(sheets)} sheet(s) ({', '.join(sheets)}) to {path}" + notes + _readback(sheets)
+
+
+_READBACK_ROWS = 25
+_READBACK_CHARS = 4000
+# The read-back's formulas run in the agent's own process, not the isolated
+# reader: past this much work (cells read plus formula tokens) the rest are
+# shown as written.
+_READBACK_STEPS = 200_000
+
+
+def _readback(sheets: dict, formulas: bool = True) -> str:
+    """What a write left in the file, its plain formulas worked out, so the
+    agent and its verifier can check it. Live: an aging report's summary sheet
+    put every balance in 90+ while its detail sheet had them right, and a
+    depreciation schedule wrote off a van for $46,800 of its $36,000; each
+    write said only "wrote 2 sheet(s)"."""
+    import csv
+
+    from ..sheet_formulas import Memo, evaluate, plain_number
+
+    def get_column_letter(number: int) -> str:
+        letters = ""
+        while number:
+            number, rest = divmod(number - 1, 26)
+            letters = chr(65 + rest) + letters
+        return letters
+
+    # Each cell as the writer stores it: in a workbook "-300" is the text
+    # '-300 and a lookup is text too, which the read-back once showed as a
+    # number and a live formula while Excel's total of the file was 0.
+    stored = _xlsx_value if formulas else _neutralize_formula
+    # Each sheet has its own budget of work, under a total of five sheets':
+    # shared, a workbook of large region sheets left the last one's totals
+    # as formula text.
+    parts, room, steps = [], _READBACK_CHARS, _READBACK_STEPS * 5
+    for name, rows in sheets.items():
+        grid = {f"{get_column_letter(c)}{r}": stored(value)
+                for r, row in enumerate(rows[:10_000], 1) for c, value in enumerate(row[:200], 1)
+                if value is not None and value != ""}
+        memo = Memo(min(steps, _READBACK_STEPS))
+        budget = memo.steps
+
+        def shown(value, grid=grid, memo=memo):
+            value = stored(value)
+            if formulas and isinstance(value, str) and value.startswith("="):
+                result = evaluate(value, grid.get, memo)
+                return value if result is None else plain_number(result)
+            return value
+
+        out = io.StringIO()
+        csv.writer(out, lineterminator="\n").writerows(
+            [["" if v is None else shown(v) for v in row] for row in rows[:_READBACK_ROWS]])
+        steps -= budget - max(memo.steps, 0)
+        block = (f"Sheet {name!r}:\n" if len(sheets) > 1 else "") + out.getvalue()
+        if len(rows) > _READBACK_ROWS:
+            block += f"... {len(rows) - _READBACK_ROWS} more rows\n"
+        if len(block) > room:
+            block = block[:max(room, 0)] + "...\n"
+        parts.append(block)
+        room -= len(block)
+        if room <= 0:
+            break
+    heading = "What the file now holds (formulas worked out):" if formulas else "What the file now holds:"
+    return f"\n{heading}\n" + "".join(parts).rstrip("\n")
 
 
 def _totals_note(rows: list[list], path: Path) -> str:
@@ -736,7 +805,7 @@ def _run(args: dict[str, Any], sandbox=None, goal_id="default") -> str:
                     _xlsx_write(path, norm, sheet)
                 else:
                     _csv_write(path, norm)
-            return f"wrote {len(rows)} row(s) to {path}" + _totals_note(norm, path)
+            return f"wrote {len(rows)} row(s) to {path}" + _totals_note(norm, path) + _readback({sheet: norm}, _is_xlsx(path))
         if op == "set_cell":
             return _set_cell_operation(path, args, sheet, goal_id)
     except RuntimeError as e:
@@ -789,6 +858,11 @@ def spreadsheet_read(sandbox=None) -> Tool:
                      "file's first sheet). Use query for "
                      "totals, duplicates and cross-file checks instead of comparing by eye; "
                      "hours(start, end) and overlap(start, end, from, to) work out clock times. "
+                     "A query reads dates written 10/29/2026 or 29/10/2026 as 2026-10-29 "
+                     "(YYYY-MM-DD) once its values, or another date column of the same file "
+                     "the query reads, show which part is the day, "
+                     "though op=read shows them as written; compare, filter and group on that "
+                     "form, and its notes say which columns it read that way. "
                      "Cannot write, edit or recalculate. Formula cells include cached values "
                      "and freshness status. Draft proposed changes in the response for a "
                      "human to apply."),

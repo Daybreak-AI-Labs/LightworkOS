@@ -6,6 +6,7 @@ so users can give the swarm a name and voice without patching the kernel.
 from __future__ import annotations
 
 import asyncio
+import bisect
 import contextlib
 import copy
 import hashlib
@@ -69,7 +70,7 @@ Rules:
 3. When done, respond in plain text starting with `FINAL:` followed by your whole answer (the person sees only what follows `FINAL:`). No tool call.
 4. Be precise. Cite exact paths, commands, results, and findings from your children.
 5. Budget is enforced globally; spend wisely. Stop spawning if results so far are sufficient — reaching a synthesized answer matters more than breadth of research.
-6. Compute figures from data (totals, pay, interest, per-row results) with one tool call over the whole data set, such as `read_attachment` with `sql` for an attached CSV, and report the numbers it returns. Do not type per-row arithmetic yourself: one wrong row makes the whole answer wrong. Clock times go in the query too: `hours(clock_in, clock_out)` runs past midnight and `overlap(clock_in, clock_out, '22:00', '06:00')` gives the hours inside a window. When a query cannot express the calculation, run a short script with `shell` if you have it (`find_tools` loads it) rather than working rows out by hand. When the request defines what counts (overdue = past its due date and not paid), compute it from the fields that definition names; a status or label column can be out of date.
+6. Compute figures from data (totals, pay, interest, per-row results) with one tool call over the whole data set, such as `read_attachment` with `sql` for an attached CSV, and report the numbers it returns. Do not type per-row arithmetic yourself: one wrong row makes the whole answer wrong. Clock times go in the query too: `hours(clock_in, clock_out)` runs past midnight and `overlap(clock_in, clock_out, '22:00', '06:00')` gives the hours inside a window, and one query can join the task's attached files by their names. Work dates out with `compute` from the dates the files state (`date('2026-03-31', '-180 days')`, `julianday(b) - julianday(a)`, a term's last day as `date('2025-04-01', '+60 months', '-1 day')`), never by counting or from a date you worked out yourself. When the files round each step (a rent raised 5% over the prior year's rent, rounded to the cent), round each step before the next: `round(round(1000*1.05, 2)*1.05, 2)`, not `round(1000*1.05**2, 2)`. When a query cannot express the calculation, run a short script with `shell` if you have it (`find_tools` loads it) rather than working rows out by hand. When the request defines what counts (overdue = past its due date and not paid), compute it from the fields that definition names; a status or label column can be out of date.
 7. A sandbox command (shell) may wait for a person to approve it, and then the task stalls until they answer. Use one only when the task needs a command run. Read pages, files and data with the tools made for them (`http_fetch`, `read_file`, `spreadsheet_read`, `read_attachment`), and check a file you wrote by reading it back with `read_file`, not with a command.
 8. Give the person every file they asked for with `deliver_file`, which puts it on the task's page as a download (files saved with `write_file` are offered automatically). A file type the person names (a CSV, a spreadsheet, a Word document, a PDF, slides) is a file, and a spreadsheet is an Excel `.xlsx` workbook unless they ask for CSV: save it so it is offered as a download, do not only paste its contents into your answer, and do not end by offering to make it. Files already in the workspace may be left from earlier tasks: check that one matches this request before you deliver it, and never say you created a file you did not. Make a file with the tool for its type, not a script: `spreadsheet` writes CSV and Excel, `write_file` to a `.docx`, `.pptx` or `.pdf` path writes Word, PowerPoint (a slide per `#` heading) or a printable PDF from Markdown, a chart is an SVG file, and `find_tools` finds the others."""
 
@@ -86,7 +87,7 @@ Standard playbook:
 5. If you are blocked on info only the user can give, use `ask_user` (batched). For a judgment call a person must make, use `request_decision`. Never ask a person to confirm a choice you can make yourself (which files to use, what extras to add, how to style the result): make it and say what you chose.
 6. A step that needs a person's approval (a sandbox command, a change, a message) goes to ONE child only: each run asks the person again, so never give the same step to two children to cross-check; check its output instead. A step a person rejected stays undone: do not try it again yourself or through a child.
 7. End with `FINAL:` followed by your whole synthesized answer: the person sees only what follows `FINAL:`, so put every table and draft after it, not before it.
-8. Figures from data (totals, pay, interest, per-row results) come from one tool call over the whole data set, such as `read_attachment` with `sql` for an attached CSV, never from per-row arithmetic typed by hand; clock times go in the query too (`hours(clock_in, clock_out)` runs past midnight, `overlap(clock_in, clock_out, '22:00', '06:00')` gives the hours inside a window), and when a query cannot express it a short script run with `shell` can, if it is available (`find_tools` loads it). When the request defines what counts (overdue = past its due date and not paid), compute it from the fields that definition names; a status or label column can be out of date. Tell children the same when you delegate a calculation.
+8. Figures from data (totals, pay, interest, per-row results) come from one tool call over the whole data set, such as `read_attachment` with `sql` for an attached CSV, never from per-row arithmetic typed by hand; clock times go in the query too (`hours(clock_in, clock_out)` runs past midnight, `overlap(clock_in, clock_out, '22:00', '06:00')` gives the hours inside a window, and one query can join the task's attached files by their names), dates are worked out with `compute` from the dates the files state (`date('2026-03-31', '-180 days')`, a term's last day as `date('2025-04-01', '+60 months', '-1 day')`), never by counting, a step the files round (each year's rent from the prior year's rounded rent) is rounded before the next, and when a query cannot express it a short script run with `shell` can, if it is available (`find_tools` loads it). When the request defines what counts (overdue = past its due date and not paid), compute it from the fields that definition names; a status or label column can be out of date. Tell children the same when you delegate a calculation.
 9. A sandbox command (shell) may wait for a person to approve it, and then the task stalls until they answer. Use one only when the task needs a command run; read pages, files and data with their own tools (`http_fetch`, `read_file`, `spreadsheet_read`, `read_attachment`) and check a written file with `read_file`.
 10. Give the person every file they asked for with `deliver_file`, which puts it on the task's page as a download (files saved with `write_file` are offered automatically). A file type the person names (a CSV, a spreadsheet, a Word document, a PDF, slides) is a file, and a spreadsheet is an Excel `.xlsx` workbook unless they ask for CSV: save it so it is offered as a download, do not only paste its contents into your answer, and do not end by offering to make it. Files already in the workspace may be left from earlier tasks: check that one matches this request before it is delivered, and never say a file was created when it was not. Make a file with the tool for its type, not a script: `spreadsheet` writes CSV and Excel, `write_file` to a `.docx`, `.pptx` or `.pdf` path writes Word, PowerPoint (a slide per `#` heading) or a printable PDF from Markdown, a chart is an SVG file, and `find_tools` finds the others.
 11. When the person asks for a document (a Word file, a printable checklist, a letter, a report), write the finished document itself as your FINAL answer, with headings, lists and tables. The answer page offers "Download Word document" and printing, so do not write a script or a file to produce it unless they ask for another file type, such as a spreadsheet.
@@ -127,15 +128,347 @@ def _clean_for_screening(output, state):
 #: Files an answer can name as something the person receives.
 _DELIVERABLE_SUFFIXES = (".xlsx", ".xlsm", ".xls", ".csv", ".docx", ".pptx", ".pdf", ".md",
                          ".txt", ".png", ".jpg", ".jpeg", ".svg", ".zip", ".json", ".html")
-# A spreadsheet the person asks to receive ("give me a spreadsheet", "as an
-# Excel file"), not one they attached ("from the attached spreadsheet").
 # A recall_past_goals result inside the run's evidence: past tasks' answers,
 # about other data, which must not supply this task's figures.
 _RECALLED = re.compile(r"<tool_output tool='recall_past_goals' id=([0-9a-f]+)>.*?</tool_output \1>", re.DOTALL)
-_WORKBOOK_REQUEST = re.compile(
-    r"\b(?:as|into|give\s+me|make|create|build|produce|prepare|send|want|need|export|save)\b"
-    r"(?:\W+(?!attached\b|uploaded\b|this\b|that\b|my\b|our\b|existing\b|your\b)\w+){0,3}?"
-    r"\W+(?:spreadsheets?|excel|workbooks?|xlsx)\b", re.IGNORECASE)
+
+
+#: The file types a person can ask to receive, as the request checks name them.
+#: Slides are slides, a slide or pitch deck, PowerPoint or a .pptx; a bare
+#: deck, slide or presentation is read by _is_asked: "prepare for the
+#: presentation tomorrow" and "the numbers on slide 3" asked for no .pptx.
+_FILE_TYPES = {
+    "csv": r"csv",
+    "word": r"word\s+(?:document|doc|file|memo|report|version|format|letter|copy|table|handout)|docx"
+            r"|word(?=\s*(?:[?.!,]|$|please\b|instead\b|too\b))",
+    "pdf": r"pdf",
+    "slides": r"slides|slide\s+(?:deck|show)|pitch\s+deck|powerpoint|pptx|presentation\s+(?:deck|file|template)"
+              r"|(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)[\s-]+slides?",
+    "workbook": r"spreadsheets?|excel|workbooks?|xlsx",
+}
+# A bare deck, slide or presentation (group ``loose``) is slides after an
+# asking verb and "a", "one" or "the", with at most two words describing it:
+# "Build a deck for the investor meeting", "Make a short investor deck",
+# "Make a presentation highlighting the Q3 risks". Missing one costs the
+# person their file, and a wrong one only an answer given again, so only a
+# word it plainly describes stops it ("a deck railing", "the presentation
+# schedule", "the slide numbers", "slide 3"), and a deck among words about
+# carpentry or cards is not slides ("lumber for a 12x16 deck").
+_BARE_SLIDES = r"(?P<loose>deck(?!-)|(?<!-)slide(?![\s-]+(?:deck|show|presentation|powerpoint|pptx)\b|-)|presentation(?!-))"
+_MAKING = re.compile(r"make|create|build|prepare|produce|give\s+me|send|need|want|into|as|draft|design"
+                     r"|put\s+together|generate|write|update|rebuild|revise|redo|turn|convert|just|only|in"
+                     r"|throw\s+together|whip\s+up|build\s+out|compile|assemble|add|do|get|like|provide",
+                     re.IGNORECASE)
+_ONE_MADE = re.compile(r"\W+(?:(?:out|up|together)\W+)?(?:(?:me|us)\W+)?(?:an?|one|the)\W+(?:[\w'-]+\W+){0,3}",
+                       re.IGNORECASE)
+_DESCRIBES_NEXT = re.compile(
+    r"[ \t]+(?:\d|(?:railings?|stain|boards?|joists?|posts?|screws|lumber|plans?|schedule|order|numbers?"
+    r"|dimensions|layout|skills|times?|slots?|dates?|rooms?|coach(?:ing)?|tips|anxiety|nerves|rehearsal"
+    r"|clicker|remote|projector|tips?|titles?|count|transitions|backgrounds?|colou?rs?|fonts?|stairs"
+    r"|outline|summary|script|talking\s+points|flashcards"
+    r"|outline\s+for\s+my\s+speech)\b)", re.IGNORECASE)
+_NOT_SLIDES = re.compile(
+    r"\b(?:lumber|wood(?:en)?|boards|joists?|railings?|stain|patio|porch|backyard|yard|footings?|composite"
+    r"|cedar|pressure[\s-]treated|screws|nails|permits?|contractor|square\s+feet|sq\s*ft|\d+\s*x\s*\d+"
+    r"|stairs|treads|steps|feet|foot|wide"
+    r"|cards?|flashcards|poker|tarot|ship|boat|cruise|rooftop|seating|outdoor|quotes?|restaurant)\b",
+    re.IGNORECASE)
+#: The suffixes of the files on the task's page that hold each type.
+_TYPE_SUFFIXES = {"csv": (".csv",), "word": (".docx",), "pdf": (".pdf",), "slides": (".pptx",),
+                  "workbook": (".xlsx", ".xlsm")}
+_ASKING_VERBS = (r"give\s+me|make(?!\s+(?:sure|certain))|create|build\s+out|build|produce|prepare|send|want|need"
+                 r"|(?<!the\s)export|save|draft|design|put\s+together|generate|write|rebuild|revise|redo|compile|assemble"
+                 r"|get|like|e-?mail|provide|deliver|attach|return|go\s+with|throw\s+together|whip\s+up"
+                 r"|build\s+out|asked\s+for|ask\s+for|rather\s+(?:have|get)|prefer|do(?=\s+(?:a|an|one)\b)")
+# "to" asks only after a conversion verb ("Convert the Word document to PDF"),
+# "in" only before a type with at most "a" and one word ("in Excel", "in a
+# Word doc"), "and"/"then"/"plus" only after a file already asked for ("a
+# CSV of the rows and a PDF summary"), and "just"/"only"/"instead" stand for
+# the request a refusal left ("I don't want slides, just a PDF").
+_RECEIVE_TRIGGERS = rf"as|into|to|in|and|then|plus|also|just|only|instead|add|update|{_ASKING_VERBS}"
+# The asking words a match may not pass over: it starts at the one nearest
+# the file ("the payroll export as a CSV" is "as"). The words above that ask
+# only in context do not stop one: "I want to have a PDF" still asks.
+_STOPS = rf"as|into|{_ASKING_VERBS}"
+
+
+_PLAINLY: dict[str, re.Pattern] = {}
+# Words saying a file would do: "a CSV would help", "a PDF is fine".
+_WOULD_DO = (r"is\s+(?:fine|better|enough|great|ideal|perfect|ok|okay|good|best)|would\s+(?:be\s+(?:great|ideal"
+             r"|better|fine|nice|good|perfect|helpful|best)|help|work)|works|will\s+do")
+
+
+def _asked_to_receive(target: str, triggers: str = _RECEIVE_TRIGGERS) -> re.Pattern:
+    """A file the person asks to receive ("give me a spreadsheet", "as a
+    CSV"), not one they attached ("from the attached spreadsheet") or get
+    ready for ("prepare for a presentation").
+
+    Group ``trigger`` is the asking word nearest the file (no other asking
+    word sits between them: in "the payroll export as a CSV" it is "as"),
+    and group ``type`` is the file."""
+    # A file asked for with no asking word: a clause that opens with it ("CSV
+    # of overdue invoices please", "Also a CSV", "The PDF."), one a person
+    # says would do ("a CSV would help", "Excel please"), and one missing
+    # ("You forgot the PDF").
+    bare = target.replace("(?P<loose>", "(?:")
+    plainly = re.compile(
+        r"^\W*(?:(?:also|and|plus|now|ok|okay|great|yes|then|so|but|just|only|instead|either)\W+)*"
+        rf"(?:(?:a|an|the)\s+(?:[\w'-]+\s+){{0,2}}?)?(?P<opens>{bare})\b(?=\W*$|\s*,?\s*(?:of|with|for|please"
+        rf"|memo|report|summary|version|copy|file|backup|too|or|instead|as\s+well|{_WOULD_DO})\b)"
+        rf"|\b(?P<would>{bare})\b(?:\s+[\w'-]+){{0,3}}?\s*,?\s+(?:please\b|{_WOULD_DO}\b)"
+        r"|\b(?:forgot|forget|missing|didn't\s+(?:get|see|receive)|haven't\s+(?:got|gotten|received|seen)"
+        r"|still\s+need)\W+(?:(?:the|a|an|my|our)\W+)?(?:[\w'-]+\W+){0,2}?"
+        rf"(?P<missing>{bare})\b|\bwhere(?:'s|\u2019s|\s+is|\s+are)\s+(?:the|my|our)\s+(?P<where>{bare})\s*\?"
+        rf"|\b(?:you|please|to)\s+(?P<verb>{bare})\s+(?:the|this|that|it|them|these|those)\b", re.IGNORECASE)
+    pattern = re.compile(
+        rf"\b(?P<trigger>{triggers})\b(?:\W+(?:me|us)\b)?"
+        r"(?:\W+(?!attached\b|uploaded\b|(?:this|that)\b(?!\W+(?:an?|into|as)\b)|my\b|our\b|existing\b|your\b"
+        r"|for\b|of\b|from\b|about\b|against\b|than\b|versus\b|vs\b|in\b"
+        rf"|to\b(?=\W+(?:the|this|that|our|my|your|their)\b)|(?:{_STOPS})\b)[\w'-]+){{0,4}}?"
+        rf"\W+(?P<type>{target})\b(?!['\u2019]s\b|[\s-]+(?:tool|app|application|program|software)\b)", re.IGNORECASE)
+    _PLAINLY[pattern.pattern] = plainly
+    return pattern
+
+
+_WORKBOOK_REQUEST = _asked_to_receive(_FILE_TYPES["workbook"])
+_CSV_REQUEST = _asked_to_receive(_FILE_TYPES["csv"])
+# Where a clause of a request ends. A comma ends one ("Here are the shift
+# logs, make me a spreadsheet"), but not one between the words describing a
+# file: "Give me a sortable, filterable spreadsheet" asks for a workbook.
+_CLAUSE_END = re.compile(
+    r"[.;!?](?=\s|$)|(?<!attached)(?<!enclosed):(?=\s)|\n|,(?=\s)(?!\s+(?!(?:an?|the|my|our|your|this|that|these|those|its?)\b)[\w-]+"
+    rf"(?:,\s+[\w-]+)?\s+(?:{'|'.join(_FILE_TYPES.values())})\b)", re.IGNORECASE)
+# A giving verb: the person says they are sending a file. "The invoice is
+# attached as a PDF. What is the total due?" names the PDF they gave, and its
+# correct answer was sent back to make a PDF nobody asked for. It counts
+# opening a clause ("Here's", "I've attached", "Please find attached") or as
+# "is attached as": anywhere else it describes a file to work on, as in
+# "List all invoices we sent to Acme as a CSV", "Turn the notes I uploaded
+# into a PDF" or "Convert the invoice that is attached into a PDF".
+_GIVEN = re.compile(
+    r"^\W*(?:(?:hi|hello|hey|thanks)\W+)?(?:attached|enclosed|attaching|enclosing|uploading|sharing|sending"
+    r"|forwarding|(?:this\s+is|these\s+are|here(?:'s|\u2019s|\s+is|\s+are)|below\s+is)"
+    r"(?!\s+(?:what\s+(?:i|we)(?:'d|\s+would)?\s+(?:need|want|like)|how|the\s+task|my\s+request|the\s+plan"
+    r"|a\s+task)\b)"
+    r"|please\s+find\s+(?:attached|enclosed|below)|(?:i|we)\s+attach"
+    r"|(?:i|we)(?:'ve|\u2019ve|'m|\u2019m|'re|\u2019re|\s+have|\s+am|\s+are)?(?:\s+just)?\s+(?:attached"
+    r"|attaching|enclosed|enclosing|uploaded|uploading|included|including|sent|sending|shared|sharing"
+    r"|forwarded|forwarding))\b"
+    r"|\b(?:is|are)\s+(?:attached|enclosed|uploaded|included|below)\s+(?=as\b)", re.IGNORECASE)
+# A giving verb holds only until the sentence goes on to something else:
+# "We sent out 40 invoices in March and I'd like the unpaid ones listed as a
+# CSV", "Sending this to our accountant - can you save the totals as a PDF?"
+# "and" goes on only to something other than another file given: "the
+# timesheets as a PDF and the pay rates as an Excel file" gives both.
+_GOES_ON = re.compile(r"\b(?:and(?=\s+(?:i|i'd|i'm|we|we'd|you|they|please|can|could|would|will|then|also|make|give"
+                      r"|send|put|list|turn|convert|create|export|save|let's|tell|show|e-?mail|provide|need|want|expect"
+                      r"|hope|require|ask)\b)|so|then|but"
+                      r"|because|can|could|would|will|please|i'd|i'm|we'd|let's|for\s+(?:you|us)\s+to)\b"
+                      r"|\s[-\u2013\u2014]\s", re.IGNORECASE)
+# A clause whose subject holds or sent the file names one given, not asked
+# for: "Our accountant sent the trial balance as a PDF", "I have the
+# timesheets as a PDF". A clause opening with a verb asks ("List all
+# invoices we sent to Acme as a CSV").
+_SUBJECT = re.compile(r"\W*(?:(?:hi|hey|hello|thanks|ok|okay)\W+)?(?:our|my|the|we|i|i've|we've|i'm|we're|they"
+                      r"|their|his|her|its|this|these|that|those|your|he|she|it)\b", re.IGNORECASE)
+_HELD = re.compile(r"\b(?:sent|emailed|e-mailed|mailed|received|got|have|has|had|keep|keeps|kept|shared|forwarded"
+                   r"|provided|exported|saved|stored|uploaded|attached|filed|submitted|gave|use|uses|maintain"
+                   r"|maintains)\b", re.IGNORECASE)
+# "No need for a PDF", "Don't send it as a PDF", "as xlsx not csv": a file
+# refused. A negation refuses it inside the request, or just before its
+# asking word, or on an asking verb a few words before it ("Do not save it
+# as a PDF", "I don't need it as a PDF"): "customers who have not paid as a
+# PDF", "I don't have Excel so give me a CSV" and "a no-frills PDF" still ask.
+# Inside the request a negation refuses only the file right after it ("no
+# PDF", "as xlsx, not csv", "without a PDF"): "a not-too-long PDF", "a no
+# frills PDF" and "a not overly detailed Word document" ask for one.
+_REFUSED = re.compile(r"\b(?:no|not|never|without|don(?:'|\u2019)?t|instead\s+of|rather\s+than|than)\W+"
+                      r"(?:(?:an?|the|any|as|in|into|to|another|separate)\W+){0,2}\Z", re.IGNORECASE)
+_REFUSED_BEFORE = re.compile(
+    rf"\b(?:no(?:\s+longer)?|not|never|don(?:'|\u2019)?t|can(?:'|\u2019)?t|cannot|won(?:'|\u2019)?t|instead\s+of)"
+    rf"(?:\W+think\W+(?:we|i))?(?:\W+(?:need|want|have))?(?:\W+to)?"
+    rf"(?:\W+(?:{_ASKING_VERBS}|turn|convert|change|put)(?:\W+[\w'-]+){{0,4}}?)?\W+\Z", re.IGNORECASE)
+_CONVERTING = re.compile(r"\b(?:convert|export|change|turn|save|switch|transform|output|write|move|copy|put"
+                         r"|reformat|format|print|dump)\w*\b", re.IGNORECASE)
+_IN_ASKING = re.compile(r"\b(?:give\s+me|make(?!\s+(?:sure|certain))|create|build|produce|prepare|send|want|need|export|save|have|get"
+                        r"|put|like|prefer|keep|deliver|provide|format|share|list|track|lay\s+out|write|store"
+                        r"|now|but|same|also|it|them)\b", re.IGNORECASE)
+_ANY_FILE_TYPE = re.compile("|".join(rf"\b(?P<{name}>{target})\b" for name, target in _FILE_TYPES.items()),
+                            re.IGNORECASE)
+# Between two file types of a choice: "as CSV or PDF", "a PDF or as a Word document".
+_OR_BETWEEN = re.compile(r"\W+(?:\w+\W+){0,2}?or\W+(?:\w+\W+){0,2}?", re.IGNORECASE)
+# A clause that offers two files wants one of them ("Send it as a PDF or
+# Word document", "I'd like the report as a PDF or Word document"), unless
+# it asks which is better ("Should I export my bank statements as CSV or PDF?").
+_WEIGHS = re.compile(r"\W*(?:should|shall|which|whether|is\s+it\s+better|would\s+it\s+be\s+better"
+                     r"|what(?:'s|\u2019s|\s+is)\s+(?:better|best)|do\s+you\s+recommend)\b", re.IGNORECASE)
+# A question about how to do something, or whether to, asks for no file:
+# "How do I save a spreadsheet as a CSV?", "Should I send the invoices as
+# PDF or Word?", "What's the best way to send a deck to investors?"
+_ASKS_HOW = re.compile(
+    r"\W*(?:(?:hi|hey|hello|quick\s+question)\W+)?(?:how\s+(?:do|can|should|would|could)\s+(?:i|we|you|one)"
+    r"|how\s+to|what(?:'s|\u2019s|\s+is)\s+the\s+(?:best|easiest|fastest|right)\s+way|is\s+there\s+a\s+way"
+    r"|should\s+(?:i|we)|shall\s+(?:i|we)|which\b|whether\b|is\s+it\s+better|would\s+it\s+be\s+better"
+    r"|do\s+you\s+recommend|what\s+would\s+it\s+cost|how\s+much\s+(?:would|does|will|is)"
+    r"|would\s+(?:we|it|that)|will\s+(?:we|it)|does\s+(?:it|that)|why\s+(?:did|does|is|was|do)|what\s+changed"
+    r"|is\s+it\s+(?:okay|ok|safe|possible|fine|allowed|legal)|what(?:\s+\w+)?\s+do\s+you\s+(?:suggest|recommend))\b",
+    re.IGNORECASE)
+# "Read the attached file as a CSV": how to read a file, not one to make.
+# Not "open", "import" or "view": open invoices and a payroll import are
+# what people ask files of.
+_READING = re.compile(r"\b(?:read|parse|load|treat|interpret|scan|process)\b", re.IGNORECASE)
+# What follows the file a conversion starts from: "Save the PDF [file] as a
+# Word document", "Export the spreadsheet to PDF", "the PDF in Word format".
+# Only the file after "as", "into", "to" or "in" is one the person wants back.
+_CONVERTED_TO = re.compile(
+    r"(?:\W+(?!and\b|or\b|plus\b)\w+)?\W+(?:(?:as|into|to)\W+(?:(?:an?|the)\W+)?(?:\w+\W+)?"
+    rf"(?:{'|'.join(_FILE_TYPES.values())})\b"
+    rf"|in\W+(?:an?\W+)?(?:(?:{'|'.join(_FILE_TYPES.values())})\s+(?:format|form|version)|word\s+(?:format|version))\b)",
+    re.IGNORECASE)
+_ANY_REQUEST_TRIGGERS = rf"as|into|{_ASKING_VERBS}"
+# A file asked for with a plain asking word, whatever its type: what a later
+# "and a PDF summary" follows, and the first of a choice.
+_FIRST_ASKED = _asked_to_receive("|".join(_FILE_TYPES.values()), rf"in|{_ANY_REQUEST_TRIGGERS}")
+
+
+def _is_asked(found: re.Match, clause: str, given: bool, before: str = "") -> bool:
+    """Whether the file ``found`` in ``clause`` is one the person asks for.
+    ``given``: a giving verb comes before it, with nothing after the verb
+    that goes on to a request. ``before``: the request before this clause."""
+    start, trigger = found.start(), found.group("trigger").lower()
+    # Context is read from the 200 characters before the match: reading the
+    # whole clause again for every match was quadratic on a long request.
+    near = max(0, start - 200)
+    if given and trigger in ("as", "into", "to", "in"):
+        return False
+    if trigger in ("as", "into") and (reading := list(_READING.finditer(clause, near, start))) and not re.search(
+            rf"\b(?:{_STOPS})\b", clause[reading[-1].end():start], re.IGNORECASE):
+        return False
+    if trigger == "to" and not (_CONVERTING.search(clause, near, start) and re.fullmatch(
+            r"\W+(?:an?\W+)?(?:(?!(?:the|this|that|these|those|your|my|our|its|their|his|her)\b)[\w-]+\W+)?",
+            clause[found.end("trigger"):found.start("type")], re.IGNORECASE)):
+        return False
+    if trigger in ("add", "update") and not found.groupdict().get("loose"):
+        return False
+    # "in the PDF" points at a file the person has; "in Excel" or "in a Word
+    # doc" asks for one.
+    if trigger == "in" and not (_IN_ASKING.search(clause, near, start) and re.fullmatch(
+            r"\W+(?:an?\W+)?(?:(?!(?:the|this|that|these|those|your|my|our|its|their|his|her)\b)[\w-]+\W+)?",
+            clause[found.end("trigger"):found.start("type")], re.IGNORECASE)):
+        return False
+    if trigger in ("and", "then", "plus", "also") and not _FIRST_ASKED.search((before + "\n" + clause[:start])[-400:]):
+        return False
+    if found.groupdict().get("loose") and not (
+            _MAKING.fullmatch(trigger) and _ONE_MADE.fullmatch(clause, found.end("trigger"), found.start("type"))
+            and not _DESCRIBES_NEXT.match(clause, found.end())
+            and (found.group("loose").lower() != "deck" or not _NOT_SLIDES.search(clause))):
+        return False
+    # The negation is looked for only in and just before the match, so a
+    # long clause is read once: rescanning it for every match took seconds.
+    return not (_REFUSED.search(clause, start, found.start("type"))
+                or _REFUSED_BEFORE.search(clause, max(0, start - 60), start)
+                or _CONVERTED_TO.match(clause, found.end()))
+
+
+def _clause_asks(pattern: re.Pattern, clause: str, have: frozenset[str] | set[str], before: str = "") -> bool:
+    """Whether ``clause`` asks to receive what ``pattern`` names (see _asks_to_receive)."""
+    choices = [(first, second) for first, second in itertools.pairwise(_ANY_FILE_TYPE.finditer(clause))
+               if first.lastgroup != second.lastgroup and _OR_BETWEEN.fullmatch(clause, first.end(), second.start())]
+    # A question is judged from the start of its sentence: "Which is better
+    # for the auditors, a PDF or an Excel file?" asks for neither.
+    sentence = re.split(r"[.!?\n]\s", before)[-1][-300:] if before else ""
+    if (_ASKS_HOW.match(clause) or _ASKS_HOW.match(sentence) or (choices and _WEIGHS.match(clause))
+            or (choices and _WEIGHS.match(sentence))):
+        return False
+    # Of a choice the first file is asked for and either meets it; when the
+    # first has no asking word ("the totals in Excel or as a CSV"), the second is.
+    asked_at = {found.start("type") for found in _FIRST_ASKED.finditer(clause)}
+    alternatives = {second.start() for first, second in choices if first.start() in asked_at}
+    either = {first.start(): set(_TYPE_SUFFIXES[str(second.lastgroup)]) for first, second in choices}
+    either.update({second.start(): set(_TYPE_SUFFIXES[str(first.lastgroup)]) for first, second in choices})
+    # A giving verb holds from its end until the sentence goes on.
+    gives = [found.end() for found in _GIVEN.finditer(clause)]
+    if _SUBJECT.match(clause):
+        gives += [found.end() for found in _HELD.finditer(clause)]
+    # ", and the ledger as a CSV" goes on giving what the clause before gave.
+    if before and re.match(r"\W*and\s+(?:the|a|an|our|my|their|its)\b", clause, re.IGNORECASE) and _GIVEN.search(
+            _CLAUSE_END.split(before[-400:])[-1]):
+        gives.append(0)
+    # Matches may overlap: one refused ("in Excel and a CSV" is not "in" a
+    # CSV) must not hide the next ("and a CSV").
+    gives.sort()
+
+    def given_before(at: int) -> bool:
+        # The nearest giving verb decides: if the sentence went on after it,
+        # it went on after every earlier one too.
+        index = bisect.bisect_right(gives, at) - 1
+        return index >= 0 and not _GOES_ON.search(clause, gives[index], at)
+
+    position = 0
+    while (found := pattern.search(clause, position)) is not None:
+        given = given_before(found.start())
+        at = found.start("type")
+        if (at not in alternatives and not have & either.get(at, set())
+                and _is_asked(found, clause, given, before)):
+            return True
+        position = found.end("trigger")
+    plainly = _PLAINLY.get(pattern.pattern)
+    for found in plainly.finditer(clause) if plainly else ():
+        at = next(found.start(name) for name in ("opens", "would", "missing", "where", "verb") if found.group(name))
+        if (not given_before(at) and at not in alternatives and not have & either.get(at, set())
+                and not _REFUSED.search(clause, max(0, at - 40), at)
+                and not _REFUSED_BEFORE.search(clause, max(0, at - 60), at)):
+            return True
+    return False
+
+
+def _asks_to_receive(pattern: re.Pattern, request: str, have: frozenset[str] | set[str] = frozenset()) -> bool:
+    """Whether a clause of ``request`` asks to receive what ``pattern``
+    names. "as"/"into" after a giving verb names a file sent ("Hi, here's
+    the payroll export as a CSV"); other asking words always ask ("Here are
+    the shift logs, make me a spreadsheet"). A refused file, the file a
+    conversion starts from and files weighed against each other are not
+    asked for. Of a choice the person asks for ("Send it as a PDF or Word
+    document") the first file is asked for, unless the task's page holds
+    another (``have``: the page's suffixes)."""
+    start = 0
+    for end in [*(found.start() for found in _CLAUSE_END.finditer(request)), len(request)]:
+        clause = request[start:end]
+        # The clause before reaches only 400 characters back: the whole of a
+        # pasted 5,000-row table, copied for every clause, took 22 seconds.
+        if clause.strip() and _clause_asks(pattern, clause, have, request[max(0, start - 400):start]):
+            return True
+        start = end + 1
+    return False
+
+
+# decision_requests.reply_context, which a chat reply to a waiting question
+# carries after the person's message: the question and the options the
+# agent wrote. Read as the request, "1. As a PDF: ..." sent a reply saying
+# "no file please" back to make a PDF.
+_REPLY_CONTEXT = "This message replies to the question you asked before it: "
+
+
+def _persons_words(text: str) -> str:
+    """``text`` without the agent's own question and options. Found as text:
+    a pattern with a leading \\s* took 47 seconds over a long run of spaces."""
+    at = text.find(_REPLY_CONTEXT)
+    return text if at < 0 else text[:at].rstrip()
+
+
+#: (request, suffixes that satisfy it, what it is, how to make it).
+_FILE_TYPE_REQUESTS = (
+    (_CSV_REQUEST, _TYPE_SUFFIXES["csv"], "a CSV file",
+     "the `spreadsheet` tool, op write, with a path ending in .csv"),
+    (_asked_to_receive(_FILE_TYPES["word"]), _TYPE_SUFFIXES["word"], "a Word document",
+     "`write_file` to a path ending in .docx"),
+    (_asked_to_receive(_FILE_TYPES["pdf"]), _TYPE_SUFFIXES["pdf"], "a PDF", "`write_file` to a path ending in .pdf"),
+    (_asked_to_receive(rf"{_FILE_TYPES['slides']}|{_BARE_SLIDES}"), _TYPE_SUFFIXES["slides"], "slides",
+     "`write_file` to a path ending in .pptx"),
+)
+#: The tool that writes each file a request check asks for.
+_FILE_WRITERS = {".csv": "spreadsheet", ".xlsx": "spreadsheet", ".docx": "write_file", ".pdf": "write_file",
+                 ".pptx": "write_file"}
 _NAMED_FILE = re.compile(r"[\w./-]+\.(?:" + "|".join(x[1:] for x in _DELIVERABLE_SUFFIXES) + r")\b",
                          re.IGNORECASE)
 
@@ -1508,6 +1841,42 @@ def _observation_post(output: str, limit: int = _OBSERVATION_POST_CHARS) -> str:
 
 
 _VERIFIER_EVIDENCE_CHARS = 12_000
+#: Tool output kept for the past-task check; past the bound the oldest goes
+#: first, never a recall, which the check cannot do without.
+_KEPT_OUTPUT_CHARS = 2_000_000
+#: A report from a child agent that shares this run: its answer, not a
+#: tool's result. The child's own tool outputs are kept beside it.
+_SPAWNED = re.compile(r"<tool_output tool='spawn_(?:subagent|swarm|specialist)' id=([0-9a-f]+)>.*?</tool_output \1>", re.DOTALL)
+
+
+def _keep_tool_output(ctx: Any, output: Any, name: str = "", args: Any = None) -> None:
+    """Keep ``output`` on the run's shared context. Compaction cuts the
+    message history: a lease read two turns back became a short preview, and
+    the past-task check called the answer's correct end date copied from a
+    past result that gave the same date."""
+    kept = getattr(ctx, "tool_outputs", None)
+    if not isinstance(kept, list) or not isinstance(output, str) or not output.strip():
+        return
+    if name == "spreadsheet" and isinstance(args, dict):
+        # The calling agent's typed values are known only here: a child's
+        # spreadsheet call is not in the root's message history.
+        output = _figure_evidence([{"role": "assistant", "content": [
+            {"type": "tool_use", "name": "spreadsheet", "input": args}]}], outputs=[str(output)])
+    kept.append(output)
+    ctx.tool_output_chars = getattr(ctx, "tool_output_chars", 0) + len(output)
+    while ctx.tool_output_chars > _KEPT_OUTPUT_CHARS:
+        oldest = next((index for index, text in enumerate(kept[:-1])
+                       if "tool='recall_past_goals'" not in text[:80]), None)
+        if oldest is None:
+            break
+        ctx.tool_output_chars -= len(kept.pop(oldest))
+
+
+def _history_results(messages: list[dict]) -> list[str]:
+    """The tool results in a run's message history, as written there."""
+    return [block["content"] for message in messages if isinstance(message, dict) and message.get("role") == "user"
+            and isinstance(message.get("content"), list) for block in message["content"]
+            if isinstance(block, dict) and block.get("type") == "tool_result" and isinstance(block.get("content"), str)]
 
 
 _REFUSALS = ("not approved", "is denied by the current tool acl")
@@ -1555,6 +1924,139 @@ def _verifier_evidence(messages: list[dict], limit: int = _VERIFIER_EVIDENCE_CHA
         kept.append(excerpt)
         room -= len(excerpt) + 2
     return "\n\n".join(reversed(kept))
+
+
+_DELIVERED_EVIDENCE_CHARS = 6000
+_DELIVERED_EVIDENCE_ROWS = 25
+_DELIVERED_TABLES = (".xlsx", ".xlsm", ".csv")
+
+
+def _delivered_file_evidence(world, goal_id) -> str:
+    """What the spreadsheets on the task's page hold, framed as tool output
+    for the verifier. Live: a child agent wrote an aging workbook whose
+    summary left out the largest customer; the root's verifier saw only the
+    answer naming the file and accepted it."""
+    if world is None or goal_id is None:
+        return ""
+    import secrets as _secrets
+
+    try:
+        from .task_files import files_for, read_for_download
+        items = [item for item in files_for(world, goal_id)
+                 if Path(item.path).suffix.lower() in _DELIVERED_TABLES]
+    except Exception:  # noqa: BLE001 -- evidence is best effort; the answer is still judged
+        return ""
+    blocks, room = [], _DELIVERED_EVIDENCE_CHARS
+    for item in items:
+        if room <= 0:
+            break
+        try:
+            _item, data = read_for_download(world, goal_id, item.number)
+            if Path(item.path).suffix.lower() == ".csv":
+                text = " {}:\n{}".format(*_first_rows(data.decode("utf-8", errors="replace")))
+            else:
+                from .tools.spreadsheet import _XLSX_QUERY_ROWS as read
+                from .tools.spreadsheet import xlsx_bytes_as_csv, xlsx_bytes_sheet_names
+                text = ":\n" + "\n".join(
+                    "Sheet {!r}, {}:\n{}".format(sheet, *_first_rows(xlsx_bytes_as_csv(data, sheet), read))
+                    for sheet in xlsx_bytes_sheet_names(data))
+        except Exception:  # noqa: BLE001 -- an unreadable file adds nothing
+            continue
+        nonce = _secrets.token_hex(8)
+        body = f"{item.name}, a file on the task's page, holds{text}"
+        if len(body) > room:
+            body = body[:room] + "\n... (the rest of the file is not shown here)"
+        blocks.append(f"<tool_output tool='delivered_file' id={nonce}>\n{body}\n</tool_output {nonce}>")
+        room -= len(blocks[-1])
+    return "\n\n".join(blocks)
+
+
+def _first_rows(text: str, read: int | None = None) -> tuple[str, str]:
+    """How many rows a CSV or a sheet has, and its first rows. A cleaned
+    120-row file shown as its header and 24 rows under "holds:" looked to a
+    verifier told to account for every row as if it had lost the other 96.
+    A row is a record that holds something: an address quoted over three
+    lines is one row and a blank line is none, where counting lines made 31
+    customers 91 rows. ``read`` is how many rows of a workbook's sheet were
+    read; a sheet that fills it may hold more, and once read as exactly
+    20,000 rows a sheet of 25,001 said it had 20,000."""
+    import csv
+    import io
+
+    lines = io.StringIO(text, newline="").readlines()
+    ends, records, reader = [], 0, csv.reader(lines)
+    try:
+        for record in reader:
+            records += 1
+            if any(record):
+                ends.append(reader.line_num)  # the line the row ends on
+    except csv.Error:  # a stray quote ran one cell past the reader's limit: count lines instead
+        ends = [number for number, line in enumerate(lines, 1) if line.strip()]
+    shown = min(len(ends), _DELIVERED_EVIDENCE_ROWS)
+    first = "\n".join(line.rstrip("\r\n") for line in lines[:ends[shown - 1] if shown else 0])
+    if read is not None and records >= read:
+        return (f"at least {len(ends)} rows; these are the first {shown} "
+                "(the others are in the file, not shown here)"), first
+    count = f"{len(ends)} row" + ("" if len(ends) == 1 else "s")
+    if len(ends) > shown:
+        count += f"; these are the first {shown} (the other {len(ends) - shown} are in the file, not shown here)"
+    return count, first
+
+
+# A spreadsheet write's read-back of the file ("What the file now holds ...")
+# up to the end of its frame.
+_READBACK = re.compile(r"(<tool_output tool='spreadsheet' id=([0-9a-f]+)>\n(?:(?!\n</tool_output \2>).)*?)"
+                       r"(\nWhat the file now holds.*?)(\n</tool_output \2>)", re.DOTALL)
+
+
+def _figure_evidence(messages: list[dict], limit: int = _VERIFIER_EVIDENCE_CHARS,
+                     outputs: list[str] | None = None) -> str:
+    """The run's tool results for the figure checks, each spreadsheet write's
+    read-back cut to the figures the file's formulas worked out, in cents. A
+    read-back repeats what the agent typed into the file, so a typed figure
+    (Ben's pay as 1,647.56 when compute gave 1,647.38) read as one a tool
+    returned. A formula's result is the tool's own work: left out, a correct
+    $100,079.96 that a =SUM gave went back as copied from a past task, and
+    unrounded, 833.3333333333 sent back a correct $833.33. ``limit`` bounds
+    the characters kept, newest results first; ``outputs`` (the run's kept
+    tool outputs) stands in for the message history's results."""
+    from decimal import ROUND_HALF_UP, Decimal
+
+    from .figure_totals import _returned_figures
+
+    typed, stack = [], [block.get("input") for message in messages if message.get("role") == "assistant"
+                        and isinstance(message.get("content"), list) for block in message["content"]
+                        if isinstance(block, dict) and block.get("type") == "tool_use"
+                        and block.get("name") == "spreadsheet"]
+    while stack:  # every value the agent passed to the tool
+        value = stack.pop()
+        if isinstance(value, dict):
+            stack += [*value, *value.values()]
+        elif isinstance(value, list):
+            stack += value
+        else:
+            typed.append(str(value))
+    by_agent = _returned_figures("\n".join(typed))
+
+    def cents(value: Decimal) -> str:
+        # A row of 3-digit cells read as one 39-digit figure is too long to
+        # round to cents; it is no figure anyone gave, so it is left out.
+        try:
+            return str(value.quantize(Decimal("0.01"), ROUND_HALF_UP))
+        except ArithmeticError:
+            return ""
+
+    def worked_out(match: re.Match) -> str:
+        figures = sorted(_returned_figures(match.group(3)) - by_agent)
+        held = " ".join(filter(None, map(cents, figures)))
+        return match.group(1) + (f"\nThe file's formulas worked out: {held}" if held else "") + match.group(4)
+
+    if outputs is None:
+        return _READBACK.sub(worked_out, _verifier_evidence(messages, limit))
+    # Each result on its own: one quoting a read-back frame it does not close
+    # cannot make the pattern scan the rest of the run.
+    return "\n\n".join(_READBACK.sub(worked_out, text) for text in outputs
+                        if not _tool_call_failed(text) or _is_refusal(text))
 
 
 def _tool_result_limit(model: str | None = None) -> int:
@@ -2581,6 +3083,21 @@ class Agent:
             hidden = {n for n in registered if not cap.permits(n)}
             core -= hidden
         return core, hidden
+
+    def _conversation_answers(self) -> str:
+        """This chat's earlier messages, the person's and the answers they
+        have seen. A follow-up's recall shows the chat's previous turn, and the
+        figures it repeats from that turn, or the rent the person gave two
+        messages back, are no copy from a past task."""
+        conversation_id = getattr(self.ctx, "conversation_id", None)
+        world = getattr(self.ctx, "world", None)
+        if conversation_id is None or world is None:
+            return ""
+        try:
+            return "\n" + "\n".join(turn.content for turn in world.recent_turns(conversation_id, limit=50)
+                                     if turn.role in ("user", "assistant") and turn.content)
+        except Exception:  # noqa: BLE001 -- a missing history only narrows what clears
+            return ""
 
     def _skill_query(self) -> str:
         """The text skills are matched against.
@@ -5733,7 +6250,8 @@ class Agent:
         self._begin_final()
         coding_cfg = self._coding_config()
         coding = coding_cfg is not None and coding_cfg.enabled
-        if not coding and (self._request_named_file_delivery(st, final) or self._request_workbook(st)):
+        if not coding and (self._request_named_file_delivery(st, final) or self._request_workbook(st)
+                           or self._request_file_types(st)):
             return _NEXT_TURN
         if await self._validate_final_patch(st, final, coding_cfg) is _NEXT_TURN:
             return _NEXT_TURN
@@ -5748,6 +6266,23 @@ class Agent:
             verification = judged
         return await self._finish_final(st, step, final, coding_cfg, verification)
 
+    def _can_call(self, name: str) -> bool:
+        """Whether a call to the tool ``name`` would run: registered, allowed
+        by the registry's ACL, not hidden from this agent and granted by its
+        capability (the grant _capability_permits_denial checks, without the
+        denial it records: nothing is called here).
+
+        The request checks below ask only for files the agent can make and
+        hand over: a specialist pack granted neither write_file nor
+        deliver_file was told to save a PDF and spent its turns on refused
+        calls."""
+        tools = self.tools
+        if (name not in {tool.name for tool in tools.all()} or name in getattr(tools, "_hidden", ())
+                or not tools._acl_allows(name)):
+            return False
+        cap = self._effective_capability(name)
+        return cap is None or cap.permits(name)
+
     def _request_named_file_delivery(self, st: _RunState, final: str) -> bool:
         """Once per run, send the goal root back when its answer names a
         document in the workspace that is not on the task's page.
@@ -5759,8 +6294,7 @@ class Agent:
         behalf. Returns True when the request was appended."""
         if (getattr(self, "_file_delivery_requested", False) or self.depth != 0
                 or not (self.role == "orchestrator" or getattr(self, "_is_goal_root", False))
-                or self.ctx.goal_id is None
-                or "deliver_file" not in {tool.name for tool in self.tools.all()}):
+                or self.ctx.goal_id is None or not self._can_call("deliver_file")):
             return False
         names = _undelivered_named_files(final, self.ctx.sandbox, self.ctx.world, self.ctx.goal_id)
         if not names:
@@ -5780,19 +6314,22 @@ class Agent:
         spreadsheet (or Excel, a workbook) and the task's page holds a CSV
         but no workbook. Live, twice: "Give me a spreadsheet" got a CSV and
         "If you want, I can also reformat it into an .xlsx file". A request
-        that names CSV keeps its CSV."""
+        that asks for a CSV keeps its CSV, and so does one that offers either
+        ("a spreadsheet or a CSV"); one that only names it ("Save the CSV as
+        a spreadsheet", "as xlsx, not csv") still wants the workbook."""
         if (getattr(self, "_workbook_requested", False) or self.depth != 0
-                or self.ctx.goal_id is None or self.ctx.world is None):
+                or self.ctx.goal_id is None or self.ctx.world is None
+                or not (self._can_call("deliver_file") and self._can_call(_FILE_WRITERS[".xlsx"]))):
             return False
-        request = self._skill_query()
-        if not _WORKBOOK_REQUEST.search(request) or re.search(r"\bcsv\b", request, re.IGNORECASE):
-            return False
+        request = _persons_words(self._skill_query())
         try:
             from .task_files import files_for
             suffixes = {Path(item.path).suffix.lower() for item in files_for(self.ctx.world, self.ctx.goal_id)}
         except Exception:  # noqa: BLE001 -- the format check never blocks an answer
             return False
-        if ".csv" not in suffixes or suffixes & {".xlsx", ".xlsm"}:
+        if (".csv" not in suffixes or suffixes & set(_TYPE_SUFFIXES["workbook"])
+                or not _asks_to_receive(_WORKBOOK_REQUEST, request, suffixes)
+                or _asks_to_receive(_CSV_REQUEST, request, suffixes)):
             return False
         self._workbook_requested = True
         st.bb.post(self.name, "verify", "the person asked for a spreadsheet and only a CSV was saved")
@@ -5800,7 +6337,38 @@ class Agent:
             "The person asked for a spreadsheet, and the task's page holds only a CSV, a plain-text "
             "table. Write the same rows as an Excel workbook with the `spreadsheet` tool (op write, a "
             "path ending in .xlsx), hand it over with deliver_file, then give your final answer again "
-            "naming the .xlsx file.")})
+            "naming the .xlsx file. If the person did not ask to receive a spreadsheet file, give your "
+            "final answer again unchanged.")})
+        return True
+
+    def _request_file_types(self, st: _RunState) -> bool:
+        """Once per run, send the goal root back when the person asked to
+        receive a CSV, a Word document, a PDF or slides and the task's page
+        holds no file of that type. Live: "Give me the cleaned CSV" got the
+        CSV pasted into the answer and nothing to download."""
+        if (getattr(self, "_file_types_requested", False) or self.depth != 0
+                or self.ctx.goal_id is None or self.ctx.world is None or not self._can_call("deliver_file")):
+            return False
+        request = _persons_words(self._skill_query())
+        try:
+            from .task_files import files_for
+            suffixes = {Path(item.path).suffix.lower() for item in files_for(self.ctx.world, self.ctx.goal_id)}
+        except Exception:  # noqa: BLE001 -- the format check never blocks an answer
+            return False
+        missing = [(label, how) for pattern, wanted, label, how in _FILE_TYPE_REQUESTS
+                   if _asks_to_receive(pattern, request, suffixes) and not suffixes & set(wanted)
+                   and self._can_call(_FILE_WRITERS[wanted[0]])]
+        if not missing:
+            return False
+        self._file_types_requested = True
+        labels = " and ".join(label for label, _how in missing)
+        st.bb.post(self.name, "verify", f"the person asked for {labels} and none is on the task's page")
+        how = "; ".join(f"for {label}, {how}" for label, how in missing)
+        st.messages.append({"role": "user", "content": (
+            f"The person asked to receive {labels}, and the task's page holds none: contents pasted into "
+            f"the answer are not a file they can download. Save it ({how}), hand it over with "
+            "deliver_file, then give your final answer again naming the file. If the person did not ask "
+            "to receive that file, give your final answer again unchanged.")})
         return True
 
     def _begin_final(self) -> None:
@@ -6159,10 +6727,32 @@ class Agent:
         # A figure typed with its cents garbled (the tools returned 1,647.38,
         # the answer said 1,647.56) goes back the same way.
         from .figure_totals import answer_issues, drift_issues, percent_issues, recalled_issues
-        evidence = _verifier_evidence(st.messages)
-        recalled = "\n".join(match.group(0) for match in _RECALLED.finditer(evidence))
-        if issues := (answer_issues(final) + drift_issues(final, evidence) + percent_issues(final)
-                      + recalled_issues(final, recalled, _RECALLED.sub("", evidence))):
+        # What a write put in a file is the agent's own typing, not a tool's
+        # result, but what the file's formulas worked out is; the model
+        # verifier below still sees the whole read-back.
+        evidence = _figure_evidence(st.messages)
+        # The past-task check reads every tool output of the run, kept apart
+        # from the history: in the history, compaction cut a lease read to a
+        # preview, so its correct end date read as copied from a past result,
+        # and the newest 12,000 characters had dropped an earlier recall. A
+        # child's recall counts, and a child's report is its answer, not a
+        # tool's result.
+        kept = getattr(self.ctx, "tool_outputs", None)
+        everything = evidence
+        if isinstance(kept, list):
+            # A run resumed from a checkpoint keeps outputs only from the
+            # resume on; its restored history holds the earlier results.
+            seen = set(kept)
+            everything = _figure_evidence(st.messages, outputs=[
+                *kept, *(text for text in _history_results(st.messages) if text not in seen)])
+        recalled = "\n".join(match.group(0) for match in _RECALLED.finditer(everything))
+        # Figures the person's request states are theirs to quote ("the report
+        # shows $1,647.56"); an earlier answer in the chat is not, so a wrong
+        # figure repeated from it is still caught.
+        request = self._skill_query()
+        if issues := (answer_issues(final) + drift_issues(final, evidence, request) + percent_issues(final)
+                      + recalled_issues(final, recalled, _SPAWNED.sub("", _RECALLED.sub("", everything))
+                                        + self._conversation_answers(), request)):
             from .verifier import VerifierVerdict
             verification.attempted = True
             verification.verdict = VerifierVerdict(
@@ -6209,7 +6799,9 @@ class Agent:
                 force_ensemble=bool(
                     getattr(self.ctx, "escalate_verification", False)
                 ),
-                evidence=_verifier_evidence(st.messages),
+                evidence="\n\n".join(part for part in (
+                    _verifier_evidence(st.messages),
+                    _delivered_file_evidence(self.ctx.world, self.ctx.goal_id)) if part),
                 images=_verifier_images(st.messages),
             )
             # Stamp the verdict so the autonomy servo can tighten the leash
@@ -6518,7 +7110,9 @@ class Agent:
 
         async def _run_capped(tc):
             async with _netcc.limit(tc.name, tc.input):
-                return await self._run_tool(tc.name, tc.input)
+                output = await self._run_tool(tc.name, tc.input)
+            _keep_tool_output(self.ctx, output, tc.name, tc.input)
+            return output
 
         # return_exceptions=True: tools.run swallows its own errors, but the
         # shield scan / PreToolUse hooks inside _run_tool can still raise, and
@@ -6638,6 +7232,7 @@ class Agent:
                 # Model-written arguments can decode to null, a list or a string.
                 output = (await self._run_tool(tc.name, tc.input) if isinstance(tc.input, dict)
                           else _NotExecutedToolResult("ERROR: tool input must be a JSON object"))
+                _keep_tool_output(self.ctx, output, tc.name, tc.input)
             except (AuditRefused, BudgetExceeded, UsageAccountingError, killswitch.Halted,
                     GoalCancelled) as exc:
                 _stop_reason = "audit refused" if isinstance(exc, AuditRefused) else type(exc).__name__

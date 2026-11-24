@@ -66,10 +66,40 @@ def test_valid_native_written_docx_preserves_body_table_body_order(tmp_path):
     document.save(path)
     result = extract_document(path)
     assert result.status == "partial"
-    assert [b.text for b in result.blocks] == ["Before table", "Revenue", "120000", "After table"]
-    assert [b.kind for b in result.blocks] == ["paragraph", "table_cell", "table_cell", "paragraph"]
-    assert "row[1]/cell[2]" in result.blocks[2].location
+    assert [b.text for b in result.blocks] == ["Before table", "| Revenue | 120000 |", "After table"]
+    assert [b.kind for b in result.blocks] == ["paragraph", "table_row", "paragraph"]
+    assert result.blocks[1].location.endswith("/row[1]")
     assert any("header" in s for s in result.omitted_regions)
+
+
+def test_a_word_table_keeps_its_rows_and_blank_cells(tmp_path):
+    # A table read one cell per line lost its blanks: "Rent 3000 3000" could
+    # not say which quarter was empty, and an agent mis-added a timesheet.
+    docx = pytest.importorskip("docx")
+    from maverick_knowledge.office_extract import word_tables
+
+    path = tmp_path / "budget.docx"
+    document = docx.Document()
+    table = document.add_table(rows=4, cols=4)
+    for r, row in enumerate([["Item", "Q1", "Q2", "Q3"], ["Rent", "3000", "", "3000"],
+                             ["", "", "", ""], ["Ads | print", "", "500", "700"]]):
+        for c, value in enumerate(row):
+            table.cell(r, c).text = value
+    merged = document.add_table(rows=2, cols=3)
+    merged.cell(0, 0).merge(merged.cell(0, 1)).text = "Name"
+    merged.cell(0, 2).text = "Total"
+    merged.cell(1, 0).text, merged.cell(1, 1).text, merged.cell(1, 2).text = "A", "B", "9"
+    document.save(path)
+    result = extract_document(path)
+    rows = [b.text for b in result.blocks if b.kind == "table_row"]
+    assert rows[:3] == ["| Item | Q1 | Q2 | Q3 |", "| Rent | 3000 |  | 3000 |", "| Ads \\| print |  | 500 | 700 |"]
+    assert rows[3] == "| Name |  | Total |"
+    for block in result.blocks:
+        assert result.text[block.start:block.end] == block.text
+    tables = word_tables(path.read_bytes(), 10_000_000)
+    assert tables[0] == [["Item", "Q1", "Q2", "Q3"], ["Rent", "3000", "", "3000"],
+                         ["", "", "", ""], ["Ads | print", "", "500", "700"]]
+    assert tables[1] == [["Name", "", "Total"], ["A", "B", "9"]]
 
 
 def test_native_pdf_marks_image_page_without_guessing_ocr_confidence(tmp_path):
@@ -176,6 +206,29 @@ def test_word_field_results_are_refused_instead_of_silently_skipped(tmp_path):
     assert any("fields" in warning for warning in result.warnings)
 
 
+@pytest.mark.parametrize("tag", ["ins", "del", "instrText", "txbxContent", "altChunk", "object",
+                                 "moveFrom", "moveTo", "fldSimple", "cellIns", "cellDel"])
+def test_word_tables_refuse_what_extraction_refuses(tmp_path, tag):
+    # A table cell with a pending tracked change (or a field, text box or
+    # embedded content) was refused by extraction but read by the table path
+    # behind `sql`: an unaccepted insertion counted as accepted.
+    docx = pytest.importorskip("docx")
+    from docx.oxml import OxmlElement
+    from maverick_knowledge.parse import word_document_tables
+
+    path = tmp_path / "timesheet.docx"
+    document = docx.Document()
+    table = document.add_table(rows=2, cols=2)
+    table.cell(0, 0).text, table.cell(0, 1).text = "Name", "Hours"
+    table.cell(1, 0).text, table.cell(1, 1).text = "Ann", "40"
+    table.cell(1, 1).paragraphs[0]._p.append(OxmlElement(f"w:{tag}"))
+    document.save(path)
+    result = extract_document(path)
+    assert result.status == "rejected" and result.text == ""
+    with pytest.raises(ValueError, match="reviewed text copy"):
+        word_document_tables(path.read_bytes())
+
+
 def test_ingestion_retains_extraction_metadata_and_exact_reconstruction(tmp_path):
     path = tmp_path / "notes.txt"
     path.write_text("Revenue 120000. Customer count 12.\n" * 3)
@@ -192,3 +245,117 @@ def test_ingestion_retains_extraction_metadata_and_exact_reconstruction(tmp_path
             kb.ingest_text("sales", extraction.text, source=str(path), extra_meta={"extraction": {"schema": "changed"}})
     finally:
         kb.close()
+
+
+@pytest.mark.parametrize("tag", ["instrText", "fldSimple", "ins", "txbxContent"])
+def test_a_field_or_change_outside_every_table_leaves_the_tables_readable(tmp_path, tag):
+    # Review: a table of contents, a "Printed <date>" field or a caption
+    # number above a rent schedule refused the schedule's table too, so `sql`
+    # could not reach it at all.
+    docx = pytest.importorskip("docx")
+    from docx.oxml import OxmlElement
+    from maverick_knowledge.parse import word_document_tables
+
+    path = tmp_path / "lease.docx"
+    document = docx.Document()
+    document.add_paragraph("Rent schedule")._p.append(OxmlElement(f"w:{tag}"))
+    table = document.add_table(rows=2, cols=2)
+    table.cell(0, 0).text, table.cell(0, 1).text = "Year", "Rent"
+    table.cell(1, 0).text, table.cell(1, 1).text = "1", "4200.00"
+    document.save(path)
+    assert word_document_tables(path.read_bytes()) == [[["Year", "Rent"], ["1", "4200.00"]]]
+    # Text extraction still refuses all but a simple field, which outside a
+    # table is a caption number or page reference.
+    assert extract_document(path).status == ("rejected" if tag != "fldSimple" else "complete")
+
+
+def test_a_hyperlink_is_read_and_other_outside_targets_are_refused(tmp_path):
+    # Review: any Word file with a link (a pandoc lease, an invoice with a
+    # mailto) was refused by text extraction and by `sql`. Opening a link is
+    # the reader's choice; a remote template is fetched when the file opens.
+    docx = pytest.importorskip("docx")
+    from docx.opc.constants import RELATIONSHIP_TYPE as RT
+    from maverick_knowledge.parse import word_document_tables
+
+    path = tmp_path / "invoice.docx"
+    document = docx.Document()
+    document.add_paragraph("Pay at our site")
+    document.part.relate_to("https://pay.example.com/inv/42", RT.HYPERLINK, is_external=True)
+    table = document.add_table(rows=2, cols=2)
+    table.cell(0, 0).text, table.cell(0, 1).text = "Item", "Amount"
+    table.cell(1, 0).text, table.cell(1, 1).text = "Rent", "4200.00"
+    document.save(path)
+    assert extract_document(path).status != "rejected"
+    assert word_document_tables(path.read_bytes()) == [[["Item", "Amount"], ["Rent", "4200.00"]]]
+
+    template = tmp_path / "template.docx"
+    document.part.relate_to("https://evil.example.com/t.dotm", "http://schemas.openxmlformats.org/officeDocument/"
+                            "2006/relationships/attachedTemplate", is_external=True)
+    document.save(template)
+    assert extract_document(template).status == "rejected"
+    with pytest.raises(ValueError, match="external links"):
+        word_document_tables(template.read_bytes())
+
+
+def test_a_table_inside_a_field_result_or_beside_embedded_content_is_refused(tmp_path):
+    # Review: an INCLUDETEXT field beginning in a paragraph and ending after
+    # a table made the table its cached result, yet the table reader read it;
+    # and an embedded document anywhere hides its own tables.
+    docx = pytest.importorskip("docx")
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    from maverick_knowledge.parse import word_document_tables
+
+    def field_char(kind):
+        run, char = OxmlElement("w:r"), OxmlElement("w:fldChar")
+        char.set(qn("w:fldCharType"), kind)
+        run.append(char)
+        return run
+
+    path = tmp_path / "included.docx"
+    document = docx.Document()
+    document.add_paragraph("Rent")._p.append(field_char("begin"))
+    table = document.add_table(rows=1, cols=2)
+    table.cell(0, 0).text, table.cell(0, 1).text = "Year 1", "4200.00"
+    document.add_paragraph("")._p.append(field_char("end"))
+    document.save(path)
+    with pytest.raises(ValueError, match="reviewed text copy"):
+        word_document_tables(path.read_bytes())
+
+    embedded = tmp_path / "embedded.docx"
+    document = docx.Document()
+    document.element.body.insert(0, OxmlElement("w:altChunk"))
+    document.add_table(rows=1, cols=1).cell(0, 0).text = "x"
+    document.save(embedded)
+    with pytest.raises(ValueError, match="reviewed text copy"):
+        word_document_tables(embedded.read_bytes())
+
+
+def test_only_the_hyperlink_relationship_type_is_allowed_outside(tmp_path):
+    # Review: any Type ending in /relationships/hyperlink was trusted.
+    docx = pytest.importorskip("docx")
+    path = tmp_path / "spoof.docx"
+    document = docx.Document()
+    document.part.relate_to("https://evil.example.com/t.dotm", "http://evil.example/relationships/hyperlink",
+                            is_external=True)
+    document.add_paragraph("x")
+    document.save(path)
+    assert extract_document(path).status == "rejected"
+
+
+def test_deeply_nested_tables_are_checked_in_linear_time(tmp_path):
+    # Review: each nested table re-walked everything below it.
+    import time
+
+    docx = pytest.importorskip("docx")
+    from maverick_knowledge.parse import word_document_tables
+
+    path = tmp_path / "nested.docx"
+    document = docx.Document()
+    cell = document.add_table(rows=1, cols=1).cell(0, 0)
+    for _depth in range(150):
+        cell = cell.add_table(rows=1, cols=1).cell(0, 0)
+    document.save(path)
+    started = time.monotonic()
+    word_document_tables(path.read_bytes())
+    assert time.monotonic() - started < 2

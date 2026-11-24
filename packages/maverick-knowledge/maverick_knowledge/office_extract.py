@@ -15,6 +15,13 @@ S = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 
 
+# The relationship type of a hyperlink, in transitional and strict Office XML.
+_HYPERLINK_TYPES = frozenset({
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+    "http://purl.oclc.org/ooxml/officeDocument/relationships/hyperlink",
+})
+
+
 def _parts(data: bytes, max_expanded: int) -> dict:
     parts = {}
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
@@ -44,9 +51,14 @@ def _parts(data: bytes, max_expanded: int) -> dict:
                 if "<!DOCTYPE" in text.upper() or "<!ENTITY" in text.upper() or "\x00" in text:
                     raise ValueError("Office XML entities/declarations are unsupported")
                 node = ET.fromstring(text)
+                # A hyperlink's address is only text the reader may click: any
+                # Word file with a link was refused. Every other outside
+                # target (a remote template, a linked image or object) is still
+                # refused, since opening the file would reach it.
                 if folded.endswith(".rels") and any(
-                    rel.get("TargetMode", "").lower() == "external"
-                    or re.match(r"(?:[A-Za-z][A-Za-z0-9+.-]*:|//|\\\\)", rel.get("Target", ""))
+                    (rel.get("TargetMode", "").lower() == "external"
+                     or re.match(r"(?:[A-Za-z][A-Za-z0-9+.-]*:|//|\\\\)", rel.get("Target", "")))
+                    and rel.get("Type", "") not in _HYPERLINK_TYPES
                     for rel in node
                 ):
                     raise ValueError("Office external links require a reviewed text copy")
@@ -76,26 +88,99 @@ def _paragraph(node) -> str:
     return "".join(values)
 
 
-def _word(parts, builder):
+_MAX_SPAN = 64
+
+
+def _table_rows(table) -> list[list[str]]:
+    """A Word table's rows as cell text, a blank cell kept as "" and a cell
+    merged across columns followed by a blank for each column it covers, so
+    every value stays under its own heading."""
+    rows = []
+    for row in table.findall(W + "tr"):
+        cells = []
+        for cell in row.findall(W + "tc"):
+            texts = (_paragraph(p).replace("\n", " ").strip() for p in cell.findall(W + "p"))
+            cells.append(" ".join(t for t in texts if t))
+            span = cell.find("./" + W + "tcPr/" + W + "gridSpan")
+            value = span.get(W + "val", "1") if span is not None else "1"
+            cells.extend([""] * (min(int(value), _MAX_SPAN) - 1 if value.isdigit() and int(value) > 1 else 0))
+        rows.append(cells)
+    return rows
+
+
+def word_tables(data: bytes, max_expanded: int) -> list[list[list[str]]]:
+    """Every top-level table in a Word document's body, as rows of cell text,
+    read through the same bounded package checks as extraction. A table
+    holding a field, a pending change or embedded content is refused, as
+    extraction refuses it; one elsewhere in the document is not: a table of
+    contents or a printed date above a rent schedule cannot change its cells,
+    and refusing them left the schedule unreadable."""
+    body = _word_body(_parts(data, max_expanded), everywhere=False)
+    return [_table_rows(node) for node in body if node.tag == W + "tbl"]
+
+
+# What a plain reading gets wrong: a pending tracked change (an insertion,
+# deletion or move, a cell revision) read as accepted, a field's cached
+# result read as data, and text boxes and embedded content read out of place.
+_REFUSED = frozenset(W + name for name in ("altChunk", "object", "instrText", "fldSimple", "ins", "del",
+                                           "moveFrom", "moveTo", "cellIns", "cellDel", "txbxContent"))
+# A simple field outside a table is a caption number or a page reference,
+# which a reading of the text can carry: pandoc and docx libraries write
+# "Table 1" captions this way.
+_REFUSED_IN_TABLES_ONLY = frozenset({W + "fldSimple"})
+# An embedded document or object hides its own tables from the reader, so it
+# refuses the table reader wherever it sits.
+_REFUSED_EVERYWHERE = frozenset({W + "altChunk", W + "object"})
+
+
+def _word_body(parts, everywhere: bool = True):
+    """A Word document's body, refusing what a plain reading gets wrong:
+    anywhere in it for its text (``everywhere``), inside its tables for the
+    table reader. The table reader once skipped this: a pending tracked
+    change was summed as if accepted, and a field's cached result was read
+    as data."""
     root = parts.get("word/document.xml")
     if root is None or root.tag != W + "document":
         raise ValueError("Word document body is missing")
-    if any(node.tag in {W + name for name in ("altChunk", "object", "instrText", "ins", "del", "txbxContent")}
-           for node in root.iter()):
-        raise ValueError("Word fields, embedded content and tracked changes need a reviewed text copy")
+    # Each node inside a table, in one pass: a nested table's nodes are in its
+    # parent's already, so walking every table again was quadratic in depth.
+    in_tables: set[int] = set()
+    for table in root.iter(W + "tbl"):
+        if id(table) not in in_tables:
+            in_tables.update(id(node) for node in table.iter())
+    # A complex field open around a table (INCLUDETEXT, DATABASE) makes the
+    # table its cached result, though the field starts outside it.
+    open_fields = 0
+    for node in root.iter():
+        if node.tag == W + "fldChar":
+            kind = node.get(W + "fldCharType")
+            open_fields = open_fields + 1 if kind == "begin" else max(0, open_fields - 1) if kind == "end" else open_fields
+        elif node.tag == W + "tbl" and open_fields:
+            raise ValueError("Word fields, embedded content and tracked changes need a reviewed text copy")
+        if node.tag in _REFUSED and (id(node) in in_tables or node.tag in _REFUSED_EVERYWHERE
+                                     or (everywhere and node.tag not in _REFUSED_IN_TABLES_ONLY)):
+            raise ValueError("Word fields, embedded content and tracked changes need a reviewed text copy")
     body = root.find(W + "body")
     if body is None:
         raise ValueError("Word document body is missing")
+    return body
+
+
+def _word(parts, builder):
+    body = _word_body(parts)
+    root = parts["word/document.xml"]
     for i, node in enumerate(body, 1):
         if node.tag == W + "p":
             builder.append(_paragraph(node), f"word/body/paragraph[{i}]", "paragraph")
         elif node.tag == W + "tbl":
-            for row_index, row in enumerate(node.findall(W + "tr"), 1):
+            # One block per row, cells between pipes: read one cell per line,
+            # a blank cell vanished and the values after it moved under the
+            # wrong heading.
+            for row_index, (row, cells) in enumerate(zip(node.findall(W + "tr"), _table_rows(node), strict=True), 1):
+                if any(cells):
+                    builder.append("| " + " | ".join(c.replace("|", "\\|") for c in cells) + " |",
+                                   f"word/body/table[{i}]/row[{row_index}]", "table_row")
                 for cell_index, cell in enumerate(row.findall(W + "tc"), 1):
-                    for paragraph_index, paragraph in enumerate(cell.findall(W + "p"), 1):
-                        builder.append(_paragraph(paragraph),
-                                       f"word/body/table[{i}]/row[{row_index}]/cell[{cell_index}]/paragraph[{paragraph_index}]",
-                                       "table_cell")
                     if cell.find(W + "tbl") is not None:
                         builder.omit(f"word/body/table[{i}]/row[{row_index}]/cell[{cell_index}]/nested-table")
         elif node.tag != W + "sectPr":

@@ -184,7 +184,7 @@
     "configuration": 72,
     "read_projection": 27,
     "audit": 24,
-    "transient": 27,
+    "transient": 28,
     "business_records": 21,
     "execution": 46,
     "recovery": 12,
@@ -30422,8 +30422,27 @@
       "observed_mechanism_markers": {},
       "source_sites": [
         {
-          "line": 47,
+          "line": 470,
           "function": "query_tables",
+          "kind": "connect",
+          "expression": "sqlite3.connect(':memory:')"
+        }
+      ]
+    },
+    {
+      "path": "packages/maverick-core/maverick/tools/compute.py",
+      "contract": "transient",
+      "owner": "packages/maverick-core/maverick/tools/compute.py",
+      "purpose": "Date functions in a compute expression are worked out in a private in-memory SQLite database that is discarded after the call; nothing is written to disk.",
+      "referenced_store_owners": [],
+      "review": "module purpose and persistence seam read; in-memory only",
+      "governed_namespaces": [],
+      "literal_path_hints": [],
+      "observed_mechanism_markers": {},
+      "source_sites": [
+        {
+          "line": 480,
+          "function": "_date_results",
           "kind": "connect",
           "expression": "sqlite3.connect(':memory:')"
         }

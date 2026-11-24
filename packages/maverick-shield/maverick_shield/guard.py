@@ -262,7 +262,7 @@ class Shield:
     def _disabled_verdict(self, sink: str) -> ShieldVerdict:
         return self._scan_failure(sink) if self.fail_closed else ShieldVerdict.allow()
 
-    def _scan_via_backend(self, text: str) -> ShieldVerdict:
+    def _scan_via_backend(self, text: str, skip: frozenset[str] = frozenset()) -> ShieldVerdict:
         # Coerce non-str input to text BEFORE scanning. A bytes / dict / None
         # payload would make the builtin regex `re.search` raise TypeError,
         # which the except-clauses below would swallow into a fail-OPEN allow
@@ -294,13 +294,13 @@ class Shield:
                 return verdict
             # An SDK allow (or optional SDK outage) cannot weaken the local
             # floor: literal attacks get this check, not only decoded variants.
-            floor = self._scan_builtin_floor(text)
+            floor = self._scan_builtin_floor(text, skip)
             floor.scan_error = floor.scan_error or verdict.scan_error
             floor.reasons = verdict.reasons + floor.reasons
             return floor
         # builtin
         try:
-            blocked, severity, names = builtin_scan(text, block_threshold=self.block_threshold)
+            blocked, severity, names = builtin_scan(text, block_threshold=self.block_threshold, skip=skip)
             if blocked:
                 return ShieldVerdict.block(
                     severity=severity, reason="; ".join(names) or "builtin-rule",
@@ -329,7 +329,7 @@ class Shield:
                 return decoded
         return verdict
 
-    def _scan_builtin_floor(self, text: str) -> ShieldVerdict:
+    def _scan_builtin_floor(self, text: str, skip: frozenset[str] = frozenset()) -> ShieldVerdict:
         """Scan ``text`` through the LOCAL builtin regex floor, regardless of the
         active backend. The decode pre-pass uses this so de-obfuscated variants
         are checked even under an SDK backend -- catching an encoded payload the
@@ -342,7 +342,7 @@ class Shield:
                     if isinstance(text, (bytes, bytearray)) else str(text))
         try:
             blocked, severity, names = builtin_scan(
-                text, block_threshold=self.block_threshold)
+                text, block_threshold=self.block_threshold, skip=skip)
             if blocked:
                 return ShieldVerdict.block(
                     severity=severity, reason="; ".join(names) or "builtin-rule")
@@ -350,7 +350,7 @@ class Shield:
         except Exception as e:
             return self._scan_failure("builtin floor", e)
 
-    def _scan_decoded_variants(self, text: str) -> ShieldVerdict | None:
+    def _scan_decoded_variants(self, text: str, skip: frozenset[str] = frozenset()) -> ShieldVerdict | None:
         """Re-scan de-obfuscated variants of an allowed input through the local
         builtin floor; return a BLOCK if any decoded layer trips a rule (the
         payload the literal surface form hid), else ``None``. A pre-pass error
@@ -362,7 +362,7 @@ class Shield:
         try:
             from .deobfuscate import decoded_variants
             for variant in decoded_variants(text):
-                v = self._apply_constitution(variant, self._scan_builtin_floor(variant))
+                v = self._apply_constitution(variant, self._scan_builtin_floor(variant, skip))
                 if not v.allowed:
                     return ShieldVerdict(
                         allowed=False,
@@ -445,7 +445,7 @@ class Shield:
     def scan_output(self, text: str, known_prompt: str | None = None) -> ShieldVerdict:
         if not self._scan_output_enabled:
             return self._disabled_verdict("output")
-        verdict = self._scan_via_backend(text)
+        verdict = self._scan_via_backend(text, _OUTPUT_SKIPS)
         # Output-side detectors the input rule pack can't see: verbatim
         # system-prompt regurgitation and refusal-then-leak.
         if self.backend == self.BACKEND_NONE:
@@ -505,11 +505,18 @@ class Shield:
         # local-builtin-floor mechanism as scan_input; runs under any
         # active backend.
         if final.allowed and self.backend != self.BACKEND_NONE:
-            decoded = self._scan_decoded_variants(text)
+            decoded = self._scan_decoded_variants(text, _OUTPUT_SKIPS)
             if decoded is not None:
                 decoded.scan_error = decoded.scan_error or final.scan_error
                 return decoded
         return final
+
+
+# Input rules that describe a request, not content: an agent's answer
+# offering to "quote the exact lease clauses verbatim" is no prompt leak, and
+# the output policy's regurgitation check catches an answer that dumps the
+# prompt itself.
+_OUTPUT_SKIPS = frozenset({"verbatim_prompt_leak"})
 
 
 def _max_severity(a: str, b: str) -> str:

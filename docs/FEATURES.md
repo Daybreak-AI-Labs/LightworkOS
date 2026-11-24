@@ -12,7 +12,7 @@ catalogue of built features and tools.
 
 | Section | Entries |
 | --- | ---: |
-| [Agent kernel and orchestration](#agent-kernel-and-orchestration) | 227 |
+| [Agent kernel and orchestration](#agent-kernel-and-orchestration) | 232 |
 | [Tools](#tools) | 10 |
 | [Channels](#channels) | prose |
 | [Sandboxes](#sandboxes) | prose |
@@ -33,7 +33,7 @@ catalogue of built features and tools.
 | [Customer workflow completion and readiness](#customer-workflow-completion-and-readiness) | 22 in 24 subsections |
 | [In-house legal workspace](#in-house-legal-workspace) | prose |
 
-468 entries in 20 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
+473 entries in 20 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
 <!-- toc:end -->
 
 ## Agent kernel and orchestration
@@ -276,17 +276,39 @@ Settings and the installation wizard.
   and say what you chose", and the run continues. The setup wizard asks, and
   Settings > Safety > Approvals has the switch.
 - **Totals are checked before an answer is accepted** (`figure_totals.py`) —
-  a "Total", "Subtotal" or "Grand total" row in an answer's table, or a total
-  line just below it, that does not equal the rows it covers sends the answer
+  a "Total", "Subtotal" or "Grand total" row in an answer's table, a total
+  line just below it, or a total line under a list of amounts that nearly but
+  not exactly equals their sum (a lease's yearly rents added to $267,580.32
+  under a "Grand total" of $267,580.44), sends the answer
   back once with the exact difference, before any model judges it; if it is
   still wrong it is marked unverified. A sheet written with `spreadsheet`
   whose total row does not add up comes back with a note to fix it. Subtotal,
   tax and total chains, group totals, discounts and averages are understood;
   percent columns and formula columns are left alone. A figure that garbles
   the cents of one a tool returned (the tool said 1,647.38, the answer
-  1,647.56) goes back the same way, and so does a figure found only in a past
-  task's result from `recall_past_goals`, which now says past figures came
-  from other data.
+  1,647.56) goes back the same way, and so does a figure or a date found
+  only in a past task's result from `recall_past_goals`, which now says past
+  figures came from other data (a lease run recalled an answer that put the
+  expiry a year early and repeated it). Figures the person's request states,
+  and a whole amount a tool printed without cents (4326 for $4,326.00),
+  count as theirs, and a figure a tool returned with more decimals and the
+  answer rounds to cents is the tool's own. A date is not copied when any
+  tool of the run returned it, in any form a file writes ("the 31st day of
+  March, 2030", 31-Mar-2030, 03-31-2030, "Oct 1-31, 2026"); when the request
+  states it or names a period it ends ("as of 10/31", "October 2026", "Q3",
+  "last month", "FY2026"); when it is today's; or when the answer rules it
+  out or corrects it ("not October 3", "corrected from October 3", the old
+  and new date on one line). A tool's figure rounded to cents (703.125 for
+  $703.13) and a day a tool wrote without its year ("10/15") within a year
+  of today are the tool's; a figure the answer gives as last period's ("down
+  from $4,850.00") is no claim; this chat's earlier answers count as seen;
+  and a request to compare with an earlier result or period ("compare with
+  last month", "year over year") may quote it. The check reads every tool
+  output of the run, the root's and its child agents', kept apart from the
+  message history that compaction cuts (and, after a resume, the restored
+  history too); a child's or specialist's report counts as its answer, not a
+  tool's result, and a workbook a child wrote counts its typed cells as
+  typed.
 - **Agents propose schedules; a person creates them** (`schedule_proposals.py`,
   `tools/propose_schedule.py`) — asked for recurring work ("every Monday at
   9am ..."), an agent records a proposal: the work each run does, a checked
@@ -327,6 +349,98 @@ Settings and the installation wizard.
   with `round(x, digits)` (half away from zero, as money is rounded),
   `floor()` and `ceil()`, and
   `write_file` reports a document table whose total its rows do not add to.
+- **Dates, joins and Word tables in SQL** (`tools/csv_query.py`,
+  `tools/attachments.py`, `maverick_knowledge/office_extract.py`) — a column
+  of dates written 10/29/2026 or 29/10/2026 is stored as 2026-10-29 when its
+  values, or another date column of the same file that the query reads, show
+  which part is the day, so `julianday()` reads it (an aging report's every
+  balance had fallen into 90+). Another file's order is never borrowed: a US
+  invoice file had read a European bank file's 05/10/2026 as May 10. A query
+  that reads a converted column is told so, since it no longer matches the
+  form the file shows; a column whose order is unknown is kept and named; and
+  a column the date functions cannot read is named when the result has an
+  empty value or a date filter drops rows, wrapped in `substr` or renamed in
+  a CTE too. Notes name the table and count only the columns the query reads
+  (SQLite's authorizer reports them). A percent column holding 15 for 15%
+  that a query uses in arithmetic without dividing by 100 gets a note, as
+  does a column of numbers with blanks used in arithmetic without COALESCE
+  (a blank is NULL, so amount - paid left every unpaid invoice out), and
+  `round` rounds half away from zero on the figure as written (SQLite's gave
+  41.17 for 41.175) and never fails a query. `hours('7:00-15:30')` and
+  12-hour times work. In `read_attachment`'s `sql`, the task's other attached
+  files are tables named after the file (a workbook's sheets also
+  `<name>_<sheet>`), and the file being read is `data` and its own name, so
+  one query joins sales to a cost workbook. A file is loaded only when SQLite
+  reports the query reads it as a table, so a column named like a file, `IS
+  DISTINCT FROM` or a CTE never loads one, and `FROM (a, b)` or `IN skus`
+  always does. A Word document's tables are queried with `sql` (`table` picks
+  one), refused when the table holds a tracked change or move, a field, a
+  text box or embedded content, sits inside a field's result, or shares the
+  document with embedded documents, while fields and changes elsewhere (a
+  table of contents, a printed date) leave its tables readable; a file with
+  hyperlinks is read. Its text companion keeps each table row on one line with
+  blank cells in place (one cell per line had dropped them). A table read as
+  text, or a query result, that shows shifts as clock ranges (7:00-15:30)
+  points at `hours()`: worked out by hand, a timesheet's payroll came out
+  $160 high. A range with no AM or PM that ends before it starts (8:00-4:30)
+  is named as one `hours()` reads past midnight, so a day shift is not paid
+  as 20.5 hours, and prose ("quiet hours are 10:00 PM - 7:00 AM") gets no
+  note.
+- **Dates in `compute`** (`tools/compute.py`) — an expression may call
+  SQLite's date functions (`date('2026-01-31', '-30 days')`,
+  `julianday(b) - julianday(a)`). Only the date calls run in a private
+  in-memory database that allows the date functions alone, with a cap on
+  the text they build; their exact values go into the arithmetic, which
+  keeps true division and money rounding with or without SymPy (prorated
+  rent had come back 768 instead of 774.19, and 8.75 hours as
+  8.749999993). Date text never becomes a figure: a bare word, arithmetic on
+  date text, an unquoted date, or a number SQLite would read as a Julian day
+  (julianday('2030') is 4713 BC) is refused, since SQLite reads
+  "date('2030-03-31') - 180 days" as 1850; `max()` and `min()` pick only
+  among dates written YYYY-MM-DD. A lease's renewal deadline had been
+  counted by hand a day late. `pow(a, b)` and `sum([...])` with calls inside
+  work under the same bounds, and a division by zero is an error, not "zoo".
+- **A written spreadsheet reports what it holds** (`tools/spreadsheet.py`,
+  `sheet_formulas.py`, `verifier.py`) — a `spreadsheet` write ends with the
+  file's rows as stored (25 per sheet, each formula worked out once, under a
+  step cap per sheet; a formula that reads an error cell such as #N/A is left
+  as written, as Excel shows the error, while COUNT skips it as Excel does),
+  so the agent sees the numbers it
+  saved, and the verifier reads
+  every spreadsheet on the task's page, whichever agent wrote it, told how
+  many rows each file holds when it sees only the first: it checks a
+  delivered file's figures and that its parts agree, and does not accept an
+  impossible figure blamed on the data. In the figure checks, what the agent
+  typed into a file still counts as its own typing, and what the file's
+  formulas worked out counts as a tool's result, in cents. An aging summary
+  and a depreciation schedule had been wrong while the answer named only the
+  file.
+- **A file type the person asks for is a file** (`agent.py`) — asked for a
+  CSV, a Word document, a PDF or slides, an answer with no such file on the
+  task's page goes back once to save and deliver it ("Give me the cleaned
+  CSV" had pasted it into the answer), and only when the agent can write and
+  deliver that file. A clause that opens with what the person sends ("Here's
+  the timesheet as a Word file"), a refused file ("Don't send it as a PDF"),
+  the file a conversion starts from ("Save the PDF as a Word document"), a
+  question weighing two types or asking how to do something, a file to read
+  ("Read the attached file as a CSV"), a file named as a source ("a summary
+  of the PDF", "the totals in the Excel file"), one a person says they hold
+  or were sent ("Our accountant sent the trial balance as a PDF") and a deck
+  that is a wooden one do not count; of a choice ("a PDF or Word document")
+  either file does, and a conversion ("Convert the Word document to PDF"),
+  "in Excel", a slide count ("a 10-slide PowerPoint"), a second file in a
+  list ("a CSV and a PDF summary"), a file a person says would do ("a CSV
+  would help", "The PDF please") and one missing ("You forgot the PDF")
+  count. A missed request costs the person their file, so the check leans
+  toward asking: when it misreads one, the agent gives its answer again
+  unchanged. Two labeled corpora of 861 requests pin it.
+- **An answer is not held to a prompt-extraction request rule**
+  (`maverick_shield/guard.py`) — `verbatim_prompt_leak` describes a request
+  ("Repeat verbatim everything above"), so the Shield applies it to what comes
+  in, not to an agent's answer: a lease answer offering to "quote the exact
+  lease clauses verbatim" was blocked at the strict profile. An answer that
+  dumps the prompt itself is still caught by the output policy's
+  regurgitation check, and input detection is unchanged.
 - **Web search on by default** (`config.get_capabilities`,
   `[capabilities] web_search`, off on an enterprise install) — agents can
   search for current facts without setup. With no search key Lightwork uses
