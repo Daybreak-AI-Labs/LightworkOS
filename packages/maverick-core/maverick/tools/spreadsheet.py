@@ -399,8 +399,11 @@ class _Computed:
     _MAX_CELLS = 100_000
 
     def __init__(self, formulas, cached):
+        from ..sheet_formulas import Memo
+
         self._sheets = (formulas, cached)
         self._grid: dict[str, Any] | None = None
+        self._memo = Memo()
 
     def _cells(self) -> dict[str, Any]:
         if self._grid is None:
@@ -421,7 +424,7 @@ class _Computed:
     def value(self, formula: str) -> int | float | None:
         from ..sheet_formulas import evaluate, plain_number
 
-        result = evaluate(formula, self._cells().get)
+        result = evaluate(formula, self._cells().get, self._memo)
         return None if result is None else plain_number(result)
 
 
@@ -628,6 +631,10 @@ def _write_sheets(path: Path, value: Any, goal_id) -> str:
 
 _READBACK_ROWS = 25
 _READBACK_CHARS = 4000
+# The read-back's formulas run in the agent's own process, not the isolated
+# reader: past this much work (cells read plus formula tokens) the rest are
+# shown as written.
+_READBACK_STEPS = 200_000
 
 
 def _readback(sheets: dict, formulas: bool = True) -> str:
@@ -638,7 +645,7 @@ def _readback(sheets: dict, formulas: bool = True) -> str:
     write said only "wrote 2 sheet(s)"."""
     import csv
 
-    from ..sheet_formulas import evaluate, plain_number
+    from ..sheet_formulas import Memo, evaluate, plain_number
 
     def get_column_letter(number: int) -> str:
         letters = ""
@@ -647,23 +654,28 @@ def _readback(sheets: dict, formulas: bool = True) -> str:
             letters = chr(65 + rest) + letters
         return letters
 
-    parts, room = [], _READBACK_CHARS
+    # Each cell as the writer stores it: in a workbook "-300" is the text
+    # '-300 and a lookup is text too, which the read-back once showed as a
+    # number and a live formula while Excel's total of the file was 0.
+    stored = _xlsx_value if formulas else _neutralize_formula
+    parts, room, steps = [], _READBACK_CHARS, _READBACK_STEPS
     for name, rows in sheets.items():
-        grid = {f"{get_column_letter(c)}{r}": value
+        grid = {f"{get_column_letter(c)}{r}": stored(value)
                 for r, row in enumerate(rows[:10_000], 1) for c, value in enumerate(row[:200], 1)
                 if value is not None and value != ""}
+        memo = Memo(steps)
 
-        def shown(value, grid=grid):
-            if not formulas:
-                return _neutralize_formula(value)
-            if isinstance(value, str) and value.startswith("="):
-                result = evaluate(value, grid.get)
+        def shown(value, grid=grid, memo=memo):
+            value = stored(value)
+            if formulas and isinstance(value, str) and value.startswith("="):
+                result = evaluate(value, grid.get, memo)
                 return value if result is None else plain_number(result)
             return value
 
         out = io.StringIO()
         csv.writer(out, lineterminator="\n").writerows(
             [["" if v is None else shown(v) for v in row] for row in rows[:_READBACK_ROWS]])
+        steps = memo.steps
         block = (f"Sheet {name!r}:\n" if len(sheets) > 1 else "") + out.getvalue()
         if len(rows) > _READBACK_ROWS:
             block += f"... {len(rows) - _READBACK_ROWS} more rows\n"

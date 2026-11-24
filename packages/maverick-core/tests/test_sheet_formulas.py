@@ -60,3 +60,65 @@ def test_reading_a_written_workbook_gives_computed_totals(tmp_path):
     assert total == {"formula": "=SUM(B2:B13)", "cached_value": None, "value_status": "computed",
                      "computed_value": 819000, "cell": "B14"}
     assert "Total,819000" in ss.xlsx_bytes_as_csv(p.read_bytes())
+
+
+def _schedule(rows: int) -> dict:
+    """An amortization schedule: each balance reads the balance above twice,
+    once through the month's interest and once through its principal."""
+    grid = {"B1": 1199.10, "E2": 200000}
+    for r in range(3, rows + 3):
+        grid.update({f"C{r}": f"=E{r - 1}*0.005", f"D{r}": f"=B1-C{r}", f"E{r}": f"=E{r - 1}-D{r}"})
+    return grid
+
+
+def test_each_formula_cell_is_worked_out_once():
+    # Review: a schedule whose balance reads the balance above twice doubled
+    # the work with every row, because each reference was worked out afresh;
+    # a write's read-back of 23 such rows ran for minutes in the agent's process.
+    grid = _schedule(25)
+    looked_up = []
+
+    def get(ref):
+        looked_up.append(ref)
+        assert len(looked_up) < 5_000, "a formula cell was worked out more than once"
+        return grid.get(ref)
+
+    balance = Decimal(200000)
+    for _ in range(25):
+        balance -= Decimal("1199.1") - balance * Decimal("0.005")
+    assert evaluate(grid["E27"], get) == balance
+    # A memo carries the results across the formulas of one sheet.
+    from maverick.sheet_formulas import Memo
+
+    looked_up.clear()
+    memo = Memo()
+    for r in range(3, 28):
+        evaluate(grid[f"E{r}"], get, memo)
+    assert len(looked_up) < 200, len(looked_up)
+
+
+def test_the_work_on_one_sheet_is_capped():
+    # Past the cap, the sheet's remaining formulas are left uncomputed.
+    from maverick.sheet_formulas import Memo
+
+    grid = {f"A{r}": r for r in range(1, 1001)}
+    memo = Memo(steps=5_000)
+    results = [evaluate("=SUM(A1:A1000)", grid.get, memo) for _ in range(10)]
+    assert results[0] == Decimal(500500) and results[-1] is None, results
+    assert all(result is None for result in results[results.index(None):])
+
+
+def test_a_range_leaves_out_text_as_excel_does():
+    # Review: "1200" written as text was added into =SUM(B2:B3), but Excel
+    # and LibreOffice leave text in a range out of SUM, AVERAGE, MIN, MAX and
+    # COUNT, so the file's total was 0 while the read-back said 900.
+    grid = {"B2": "1200", "B3": "'-300", "B4": 500, "B5": "=B4*2", "B6": None}
+    assert evaluate("=SUM(B2:B3)", grid.get) == 0
+    assert evaluate("=SUM(B2:B6)", grid.get) == Decimal(1500)
+    assert evaluate("=AVERAGE(B2:B6)", grid.get) == Decimal(750)
+    assert evaluate("=MIN(B2:B6)", grid.get) == Decimal(500)
+    assert evaluate("=MAX(B2:B6)", grid.get) == Decimal(1000)
+    assert evaluate("=COUNT(B2:B6)", grid.get) == Decimal(2)
+    # A cell named on its own is still read as a number, as Excel does.
+    assert evaluate("=B2*2", grid.get) == Decimal(2400)
+    assert evaluate("=B3*2", grid.get) is None

@@ -8,6 +8,7 @@ formula agents write (cells and ranges of the same sheet, + - * / ^ and %,
 SUM, AVERAGE, MIN, MAX, COUNT, PRODUCT, ROUND, ROUNDUP, ROUNDDOWN, ABS),
 exactly, in decimals. Anything else (another sheet, text in arithmetic, an
 error, a cycle, a function outside that set) is left uncomputed: ``None``.
+Text in a range is left out of it, as Excel does.
 """
 from __future__ import annotations
 
@@ -20,10 +21,29 @@ _TOKEN = re.compile(r"\s*(?:(\$?[A-Za-z]{1,3}\$?[0-9]{1,7})|([A-Za-z][A-Za-z0-9.
                     r"([0-9]+(?:\.[0-9]*)?(?:[Ee][+-]?[0-9]+)?|\.[0-9]+)|(.))")
 _MAX_DEPTH = 200
 _MAX_RANGE = 100_000
+_MAX_STEPS = 2_000_000
 
 
 class _Uncomputable(Exception):
     pass
+
+
+class Memo:
+    """What the formulas of one sheet share: each formula cell's result, so
+    it is worked out once, and the work left (cells read plus formula tokens),
+    after which the sheet's remaining formulas are left uncomputed. An
+    amortization schedule reads the balance above twice a row; working each
+    reference out afresh doubled the work with every row, and 23 rows ran for
+    minutes."""
+
+    def __init__(self, steps: int = _MAX_STEPS):
+        self.values: dict[str, Decimal] = {}
+        self.steps = steps
+
+    def spend(self, steps: int) -> None:
+        self.steps -= steps
+        if self.steps < 0:
+            raise _Uncomputable("too much work for one sheet")
 
 
 def _column(letters: str) -> int:
@@ -66,7 +86,7 @@ def _number(value: Any) -> Decimal | None:
 
 
 class _Parser:
-    def __init__(self, formula: str, cell: Callable[[str, int], Decimal | None], depth: int):
+    def __init__(self, formula: str, cell: Callable[[str, int, bool], Decimal | None], depth: int):
         self.tokens = [(m.group(1), m.group(2), m.group(3), m.group(4)) for m in _TOKEN.finditer(formula)]
         self.at, self.cell, self.depth = 0, cell, depth
 
@@ -131,7 +151,7 @@ class _Parser:
         if ref:
             if self.peek(":"):
                 raise _Uncomputable("a range outside a function")
-            return self.cell(ref, self.depth) or Decimal(0)
+            return self.cell(ref, self.depth, False) or Decimal(0)
         if name:
             return self.function(name.upper())
         if symbol == "(":
@@ -167,7 +187,7 @@ class _Parser:
         found = []
         for row in range(r1, r2 + 1):
             for column in range(c1, c2 + 1):
-                value = self.cell(f"{_letters(column)}{row}", self.depth)
+                value = self.cell(f"{_letters(column)}{row}", self.depth, True)
                 if value is not None:
                     found.append(value)
         return found
@@ -200,29 +220,40 @@ class _Parser:
         raise _Uncomputable(f"{name} is not computed here")
 
 
-def evaluate(formula: Any, get: Callable[[str], Any]) -> Decimal | None:
+def evaluate(formula: Any, get: Callable[[str], Any], memo: Memo | None = None) -> Decimal | None:
     """The value of ``formula`` ("=..."), reading other cells through
     ``get(ref)`` (a value or another formula), or None when it is not a
-    plain formula this module computes."""
+    plain formula this module computes. Pass one ``memo`` for all the
+    formulas of a sheet."""
     if not isinstance(formula, str) or not formula.startswith("=") or "!" in formula or len(formula) > 2000:
         return None
+    memo = Memo() if memo is None else memo
     visiting: set[str] = set()
 
-    def cell(ref: str, depth: int) -> Decimal | None:
+    def cell(ref: str, depth: int, in_range: bool) -> Decimal | None:
         key = ref.replace("$", "").upper()
+        if key in memo.values:
+            return memo.values[key]
         if key in visiting or depth > _MAX_DEPTH:
             raise _Uncomputable("a circular reference")
+        memo.spend(1)
         value = get(key)
         if isinstance(value, str) and value.startswith("="):
             visiting.add(key)
             try:
-                return run(value, depth + 1)
+                memo.values[key] = run(value, depth + 1)
             finally:
                 visiting.discard(key)
+            return memo.values[key]
+        if in_range and isinstance(value, str):
+            # Excel leaves text in a range out of SUM, AVERAGE, MIN, MAX and
+            # COUNT: "1200" typed as text added nothing to the file's total.
+            return None
         return _number(value)
 
     def run(text: str, depth: int) -> Decimal:
         parser = _Parser(text[1:], cell, depth)
+        memo.spend(len(parser.tokens))
         value = parser.expression()
         if parser.at != len(parser.tokens):
             raise _Uncomputable("unexpected text after the formula")

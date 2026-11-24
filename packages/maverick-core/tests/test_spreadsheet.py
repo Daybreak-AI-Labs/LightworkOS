@@ -361,3 +361,59 @@ def test_a_write_reports_what_the_file_holds_with_its_formulas_worked_out(tmp_pa
     # A CSV holds no formulas: it shows what was stored.
     csv_out = ss._run({"op": "write", "path": str(tmp_path / "t.csv"), "rows": [["a", "b"], [1, "=A2*2"]]})
     assert csv_out.endswith("What the file now holds:\na,b\n1,'=A2*2"), csv_out
+
+
+@pytest.mark.timeout(20)
+def test_a_long_schedules_read_back_is_quick_and_right():
+    # Review: each balance of an amortization schedule reads the balance
+    # above twice, so the read-back of a 360-month schedule's first rows
+    # worked the formulas out afresh, doubling with every row: about twelve
+    # minutes of the agent's own process after the file was already saved.
+    import time
+    from decimal import Decimal
+
+    from maverick.sheet_formulas import plain_number
+
+    rows = [["Month", "Payment", "Interest", "Principal", "Balance"], [0, "", "", "", 200000]]
+    rows += [[r - 2, 1199.10, f"=E{r - 1}*0.005", f"=B{r}-C{r}", f"=E{r - 1}-D{r}"] for r in range(3, 363)]
+    started = time.monotonic()
+    held = ss._readback({None: rows})
+    assert time.monotonic() - started < 1.0
+    balance = Decimal(200000)
+    for _month in range(23):
+        interest = balance * Decimal("0.005")
+        principal = Decimal("1199.1") - interest
+        balance -= principal
+    lines = held.splitlines()
+    assert lines[-2] == ",".join(str(v) for v in (23, 1199.1, *map(plain_number, (interest, principal, balance))))
+    assert lines[-1] == "... 337 more rows"
+
+
+@pytest.mark.timeout(20)
+def test_a_read_back_shows_formulas_as_written_once_its_work_runs_out():
+    # Each of these sums reads 100,000 cells; past the read-back's cap on work
+    # the rest are shown as written instead of holding up the tool.
+    import time
+
+    rows = [[1] + ["=SUM(A1:A100000)"] * 8 for _ in range(25)]
+    started = time.monotonic()
+    lines = ss._readback({None: rows}).splitlines()
+    assert time.monotonic() - started < 5.0
+    assert lines[2].startswith("1,25,") and lines[-1].endswith(",=SUM(A1:A100000)"), lines[2]
+
+
+def test_a_read_back_shows_a_workbook_as_the_file_holds_it(tmp_path):
+    # Review: rows [North, "1200"], [South, "-300"], [Total, =SUM(B2:B3)] read
+    # back as "South,-300" and "Total,900", but the file holds both figures as
+    # text ("-300" neutralised to '-300) and Excel's total is 0. A lookup and
+    # another sheet's cell, neutralised to text, were shown as live formulas.
+    pytest.importorskip("openpyxl")
+    rows = [["Region", "Sales"], ["North", "1200"], ["South", "-300"], ["Total", "=SUM(B2:B3)"]]
+    out = ss._run({"op": "write", "path": str(tmp_path / "r.xlsx"), "rows": rows})
+    held = out.split("What the file now holds (formulas worked out):\n", 1)[1]
+    assert held.splitlines() == ["Region,Sales", "North,1200", "South,'-300", "Total,0"], held
+    assert held + "\n" == ss.xlsx_bytes_as_csv((tmp_path / "r.xlsx").read_bytes())
+    rows = [["=VLOOKUP(A2,Codes!A:B,2,FALSE)"], ["=Detail!C2"], [-300], ["=A3*2"]]
+    out = ss._run({"op": "write", "path": str(tmp_path / "v.xlsx"), "rows": rows})
+    held = out.split("What the file now holds (formulas worked out):\n", 1)[1]
+    assert held.splitlines() == ['"\'=VLOOKUP(A2,Codes!A:B,2,FALSE)"', "'=Detail!C2", "-300", "-600"], held
