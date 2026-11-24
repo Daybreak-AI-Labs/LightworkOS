@@ -12,7 +12,7 @@ catalogue of built features and tools.
 
 | Section | Entries |
 | --- | ---: |
-| [Agent kernel and orchestration](#agent-kernel-and-orchestration) | 227 |
+| [Agent kernel and orchestration](#agent-kernel-and-orchestration) | 231 |
 | [Tools](#tools) | 10 |
 | [Channels](#channels) | prose |
 | [Sandboxes](#sandboxes) | prose |
@@ -33,7 +33,7 @@ catalogue of built features and tools.
 | [Customer workflow completion and readiness](#customer-workflow-completion-and-readiness) | 22 in 24 subsections |
 | [In-house legal workspace](#in-house-legal-workspace) | prose |
 
-468 entries in 20 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
+472 entries in 20 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
 <!-- toc:end -->
 
 ## Agent kernel and orchestration
@@ -327,6 +327,38 @@ Settings and the installation wizard.
   with `round(x, digits)` (half away from zero, as money is rounded),
   `floor()` and `ceil()`, and
   `write_file` reports a document table whose total its rows do not add to.
+- **Dates, joins and Word tables in SQL** (`tools/csv_query.py`,
+  `tools/attachments.py`, `maverick_knowledge/office_extract.py`) — a column
+  of dates written 10/29/2026 or 29/10/2026 is stored as 2026-10-29 when its
+  values show which part is the day, so `julianday()` reads it (an aging
+  report's every balance had fallen into 90+); a column whose order the data
+  does not show is kept and named when a date function runs, and a date
+  function empty in every row says why. A percent column holding 15 for 15%
+  that a query uses in arithmetic without dividing by 100 gets a note, and
+  `round` rounds half away from zero on the figure as written (SQLite's gave
+  41.17 for 41.175). `hours('7:00-15:30')` and 12-hour times work. In
+  `read_attachment`'s `sql`, the task's other attached files are tables named
+  after the file (a workbook's sheets also `<name>_<sheet>`), so one query
+  joins sales to a cost workbook. A Word document's tables are queried with
+  `sql` (`table` picks one), and its text companion keeps each table row on
+  one line with blank cells in place (one cell per line had dropped them).
+- **Dates in `compute`** (`tools/compute.py`) — an expression that calls
+  SQLite's date functions (`date('2026-01-31', '-30 days')`,
+  `julianday(b) - julianday(a)`) is worked out in a private in-memory
+  database that allows functions only; a bare word or arithmetic on date
+  text is refused, since SQLite reads "date('2030-03-31') - 180 days" as
+  1850. A lease's renewal deadline had been counted by hand a day late.
+- **A written spreadsheet reports what it holds** (`tools/spreadsheet.py`,
+  `verifier.py`) — a `spreadsheet` write ends with the file's rows (25 per
+  sheet, formulas worked out), so the agent and the verifier see the
+  delivered numbers; the verifier checks a delivered file's figures and that
+  its parts agree, and does not accept an impossible figure blamed on the
+  data. An aging summary and a depreciation schedule had been wrong while
+  the answer named only the file.
+- **A file type the person asks for is a file** (`agent.py`) — asked for a
+  CSV, a Word document, a PDF or slides, an answer with no such file on the
+  task's page goes back once to save and deliver it ("Give me the cleaned
+  CSV" had pasted it into the answer).
 - **Web search on by default** (`config.get_capabilities`,
   `[capabilities] web_search`, off on an enterprise install) — agents can
   search for current facts without setup. With no search key Lightwork uses
