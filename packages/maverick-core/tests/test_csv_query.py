@@ -185,22 +185,25 @@ def test_dates_read_as_iso_get_a_note_when_the_query_names_the_column():
 
 
 def test_one_columns_day_month_order_reads_the_columns_that_do_not_show_it():
-    # invoices.csv shows its dates are month first (10/29/2026); payments.csv
-    # holds only 10/05/2026 and 11/02/2026, which could be either. Read one
-    # way and not the other, the join on date matched nothing.
+    # Within one file, due shows its dates are month first (10/29/2026) and
+    # paid_on (10/05/2026, 12/01/2026) could be either. Read one way and not
+    # the other, WHERE paid_on > due compared 2026-11-15 with 12/01/2026.
+    one = "invoice,due,paid_on\nA1,10/29/2026,10/05/2026\nA2,11/15/2026,12/01/2026\n"
+    out = query_tables({"data": ("one.csv", one)}, "SELECT invoice, paid_on FROM data WHERE paid_on > due")
+    assert out.splitlines()[:2] == ["invoice,paid_on", "A2,2026-12-01"]
+    # The borrowed order is a guess, so the note says whose order it is.
+    assert ("data.paid_on holds dates written like 10/05/2026, and none of them shows whether the day or "
+            "the month comes first; this query reads them month first, as data.due does (10/29/2026), "
+            "so 10/05/2026 is 2026-10-05 (YYYY-MM-DD). If they are written the other way, ask which it is.") in out
+    # Another file's order is not borrowed: two files can come from two
+    # systems. The join matches nothing, and the notes say why.
     invoices = "invoice,amount,date\nA1,100,10/05/2026\nA2,200,10/29/2026\n"
     payments = "paid,date\n100,10/05/2026\n50,11/02/2026\n"
     out = query_tables({"invoices": ("invoices.csv", invoices), "payments": ("payments.csv", payments)},
                        "SELECT i.invoice, i.amount, p.paid FROM invoices i JOIN payments p ON p.date = i.date")
-    assert out.splitlines()[:2] == ["invoice,amount,paid", "A1,100,100"]
-    # The borrowed order is a guess, so the note says whose order it is.
-    assert ("payments.date holds dates written like 10/05/2026, and none of them shows whether the day or "
-            "the month comes first; this query reads them month first, as invoices.date does (10/29/2026), "
-            "so 10/05/2026 is 2026-10-05 (YYYY-MM-DD). If they are written the other way, ask which it is.") in out
-    # The same within one file: due shows the order, paid_on does not.
-    one = "invoice,due,paid_on\nA1,10/29/2026,10/05/2026\nA2,11/15/2026,12/01/2026\n"
-    assert _query(one, "SELECT invoice, paid_on FROM data WHERE paid_on > due")[:2] == [
-        "invoice,paid_on", "A2,2026-12-01"]
+    assert out.splitlines()[0] == "invoice,amount,paid" and "A1,100,100" not in out
+    assert "invoices.date holds dates written like 10/05/2026; queries read them as 2026-10-05" in out
+    assert "payments.date (such as '10/05/2026') was left as written" in out and "Ask which it is" in out
     assert _query("a,c\n29/10/2026,03/04/2026\n", "SELECT a, c FROM data")[:2] == ["a,c", "2026-10-29,2026-04-03"]
     # Columns that disagree leave the undecided one as written.
     assert _query("a,b,c\n29/10/2026,10/29/2026,03/04/2026\n", "SELECT a, b, c FROM data")[:2] == [
@@ -317,3 +320,54 @@ def test_a_deeply_nested_query_is_refused_at_once():
     out = _query("d\nOct 1 2026\n", sql)
     assert out[0].startswith("ERROR") and "parser stack overflow" in out[0]
     assert time.monotonic() - started < 3
+
+
+def test_another_files_day_month_order_never_rewrites_dates_a_query_compares():
+    # Review: a European bank file's 05/10/2026 (5 October) read month first
+    # because a US invoice file in the same reconciliation showed 10/29/2026;
+    # the lag came back -172 days where it is -24, with only a hedged note.
+    us = "invoice,date,amount\nA1,10/29/2026,100\nA2,11/03/2026,50\n"
+    eu = "txn,booked,amount\nT1,05/10/2026,100\nT2,03/11/2026,50\n"
+    out = query_tables({"us_invoices": ("us.csv", us), "eu_bank": ("eu.csv", eu)},
+                       "SELECT e.txn, julianday(e.booked) - julianday(u.date) AS lag "
+                       "FROM eu_bank e JOIN us_invoices u ON e.amount = u.amount").splitlines()
+    assert out[:3] == ["txn,lag", "T1,", "T2,"]
+    assert any("eu_bank.booked (such as '05/10/2026') was left as written" in line for line in out)
+
+
+def test_a_wrapped_or_renamed_date_column_still_explains_an_empty_result():
+    # Review: once the note was kept to a column a date function is given
+    # directly, a column wrapped in substr, trim or coalesce, or renamed in a
+    # CTE, gave an empty result with no word on why.
+    stamped = "ts,amount\n10/29/2026 10:00,5\n11/02/2026 09:00,7\n"
+    out = _query(stamped, "SELECT date(substr(ts, 1, 10)) AS day, SUM(amount) AS total FROM data GROUP BY day")
+    assert out[:2] == ["day,total", ",12"]
+    assert any("data.ts holds values such as '10/29/2026 10:00'" in line for line in out), out
+    spelled = "d,paid_on\nOct 29 2026,\nNov 2 2026,\n"
+    for sql in ("SELECT julianday('2026-11-24') - julianday(trim(d)) AS age FROM data",
+                "SELECT date(coalesce(paid_on, d)) AS settled FROM data",
+                "WITH x AS (SELECT d AS day FROM data) SELECT date(day, '+30 days') AS due FROM x"):
+        out = _query(spelled, sql)
+        assert any("data.d holds values such as 'Oct 29 2026'" in line for line in out), (sql, out)
+
+
+def test_a_query_that_filters_out_an_unreadable_value_gets_no_note():
+    # Review: the whole column was checked, so a query that already left out
+    # the placeholder 'TBD' was told the column held values the date
+    # functions could not read. Left in, the row's empty age still says why.
+    text = "invoice,due\nA1,2026-10-01\nA2,2026-11-15\nA3,TBD\n"
+    assert _query(text, "SELECT invoice, julianday('2026-11-24') - julianday(due) AS age FROM data "
+                        "WHERE due <> 'TBD'") == ["invoice,age", "A1,54.0", "A2,9.0"]
+    out = _query(text, "SELECT invoice, julianday('2026-11-24') - julianday(due) AS age FROM data")
+    assert out[3] == "A3," and "data.due holds values such as 'TBD'" in out[4]
+
+
+def test_date_notes_take_milliseconds_on_a_long_query_over_many_tables():
+    # Review: each qualified date argument rescanned the whole query for its
+    # alias: 1,990 calls over ten tables took 16 seconds, sixty tables 87.
+    tables = {f"t{n}": (f"t{n}.csv", "d,a\n2026-10-01,1\n") for n in range(10)}
+    calls = ", ".join(f"julianday(x{n % 10}.d)" for n in range(1990))
+    sql = f"SELECT {calls} FROM " + ", ".join(f"t{n} x{n}" for n in range(10))
+    started = time.monotonic()
+    assert not query_tables(tables, sql).startswith("ERROR")
+    assert time.monotonic() - started < 2
