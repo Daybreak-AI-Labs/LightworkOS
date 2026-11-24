@@ -146,6 +146,29 @@
     } catch (error) { if (captured === epoch && stamp === JSON.stringify(timetable()) && !busy) say(error.message, true); }
   }
   function schedulePreview() { sync(); clearTimeout(previewTimer); previewTimer = setTimeout(preview, 300); }
+  // A schedule an agent proposed on a task opens here filled in (what=task,
+  // text, title, cron, zone): the person reviews and creates it as usual.
+  let proposed = null;
+  try {
+    const query = new URLSearchParams(location.search);
+    if (query.get('what') === 'task' && query.get('text')) proposed = query;
+  } catch (_) { proposed = null; }
+  function applyProposal() {
+    if (!proposed) return;
+    const query = proposed; proposed = null;
+    const radio = form.querySelector('input[name="what"][value="task"]');
+    if (radio) radio.checked = true;
+    $('text').value = query.get('text').slice(0, 16000);
+    if (query.get('title')) $('title').value = query.get('title').slice(0, 200);
+    if (query.get('cron')) {
+      $('advanced').value = query.get('cron').slice(0, 120);
+      const details = $('advanced').closest('details');
+      if (details) details.open = true;
+    }
+    // No zone in the proposal means UTC, so the hour is not shifted.
+    const zone = query.get('zone') || 'UTC';
+    if (Array.from($('zone').options).some(o => o.value === zone)) $('zone').value = zone;
+  }
   async function load() {
     const captured = epoch;
     let loaded;
@@ -173,6 +196,7 @@
     zone.value = zones.includes(local) ? local : 'UTC';
     // Lists are filled now, so what was typed before a reload can go back in.
     if (fields) { fields.restore(form); params(); fields.restore(form); }
+    applyProposal();
     schedulePreview();
   }
   form.addEventListener('change', event => { cancelReview(); if (event.target === $('workflow')) params(); schedulePreview(); });

@@ -837,7 +837,7 @@ CORE_TOOL_NAMES = frozenset({
     # repo understanding
     "repo_map", "dep_graph",
     # interaction + attachments
-    "ask_user", "request_decision", "list_attachments", "read_attachment",
+    "ask_user", "request_decision", "propose_schedule", "list_attachments", "read_attachment",
     # web / docs / media basics
     "http_fetch", "web_search", "read_pdf", "view_image",
     # memory + run introspection
@@ -1149,6 +1149,9 @@ def base_registry(
         reg, sandbox, lambda sb: str_replace_editor(sb, goal_id=goal_id, world=world), has_local_workdir)
     # After the first ten core tools, whose order limited provider catalogs rely on.
     reg.register(request_decision(world, goal_id=goal_id))
+    from .propose_schedule import propose_schedule
+
+    reg.register(propose_schedule(world, goal_id=goal_id))
     _register_local_workspace_tool(
         reg, sandbox, lambda sb: deliver_file(sb, goal_id, world), has_local_workdir)
     # Governed session kernel. Registered ONLY when the operator has turned

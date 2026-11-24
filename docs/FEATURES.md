@@ -12,7 +12,7 @@ catalogue of built features and tools.
 
 | Section | Entries |
 | --- | ---: |
-| [Agent kernel and orchestration](#agent-kernel-and-orchestration) | 223 |
+| [Agent kernel and orchestration](#agent-kernel-and-orchestration) | 224 |
 | [Tools](#tools) | 10 |
 | [Channels](#channels) | prose |
 | [Sandboxes](#sandboxes) | prose |
@@ -33,7 +33,7 @@ catalogue of built features and tools.
 | [Customer workflow completion and readiness](#customer-workflow-completion-and-readiness) | 22 in 24 subsections |
 | [In-house legal workspace](#in-house-legal-workspace) | prose |
 
-464 entries in 20 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
+465 entries in 20 sections. This block is generated: `python scripts/features_toc.py --write` (the test suite fails when it is stale).
 <!-- toc:end -->
 
 ## Agent kernel and orchestration
@@ -281,6 +281,15 @@ Settings and the installation wizard.
   percent columns and formula columns are left alone. A figure that garbles
   the cents of one a tool returned (the tool said 1,647.38, the answer
   1,647.56) goes back the same way.
+- **Agents propose schedules; a person creates them** (`schedule_proposals.py`,
+  `tools/propose_schedule.py`) — asked for recurring work ("every Monday at
+  9am ..."), an agent records a proposal: the work each run does, a checked
+  five-part timetable and an optional time zone. The task page shows it in
+  plain words with "Review and create this schedule", which opens the
+  Automations form filled in; nothing runs until the person creates it there,
+  under the same permission and review as any schedule. A run a schedule
+  started cannot propose another, and with `[features] scheduling = false`
+  the agent says an administrator can turn automations on.
 - **Web search on by default** (`config.get_capabilities`,
   `[capabilities] web_search`, off on an enterprise install) — agents can
   search for current facts without setup. With no search key Lightwork uses

@@ -87,8 +87,9 @@ def test_core_tool_names_per_role():
     for core in (orch, coder, researcher, worker):
         assert kernel <= core
         # 47: deliver_file joined the core so a requested file can reach the
-        # person; agents told to call it could not see it.
-        assert 30 <= len(core) <= 47, sorted(core)
+        # person; agents told to call it could not see it. 48:
+        # propose_schedule, so "every Monday at 9am ..." is not a dead end.
+        assert 30 <= len(core) <= 48, sorted(core)
     assert orch >= CORE_TOOL_NAMES and coder >= CORE_TOOL_NAMES
     assert {"spawn_subagent", "spawn_swarm", "spawn_specialist", "list_specialists"} <= orch
     assert {"apply_patch", "repo_map", "dep_graph", "preview_diff"} <= coder

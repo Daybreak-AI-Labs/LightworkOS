@@ -130,3 +130,21 @@ def test_copilot_names_a_tasks_files(monkeypatch):
     denied = client.post("/api/v1/copilot", json={"message": "Which files did task 35 create?",
                                                   "page": "/chat"}).json()
     assert "can't access that task" in denied["reply"]
+
+
+def test_a_proposed_schedule_opens_the_automations_form_filled_in(env):
+    from urllib.parse import parse_qs, urlparse
+
+    from maverick.tools.propose_schedule import propose_schedule
+
+    client, world, gid, _workspace = env
+    propose_schedule(world, gid).fn({"text": "Review overdue invoices & send reminders.", "cron": "0 9 * * 1",
+                                     "zone": "America/Chicago", "title": "Monday invoices"})
+    page = client.get(f"/chat/goal/{gid}").text
+    assert 'id="schedule-proposals"' in page and "every Monday at 09:00 (America/Chicago)" in page
+    href = page.split('id="schedule-proposals"')[1].split('href="')[1].split('"')[0].replace("&amp;", "&")
+    url = urlparse(href)
+    assert url.path == "/automations" and url.fragment == "auto-new-sched"
+    assert parse_qs(url.query) == {"what": ["task"], "text": ["Review overdue invoices & send reminders."],
+                                   "title": ["Monday invoices"], "cron": ["0 9 * * 1"],
+                                   "zone": ["America/Chicago"]}

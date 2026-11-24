@@ -57,6 +57,7 @@ Tools you can call include:
   - File / shell / read / write for the sandbox.
   - `ask_user` to queue a question for the user (async). Use sparingly, batch.
   - `request_decision` to have a person choose between options before you act; the run pauses until they answer.
+  - `propose_schedule` when the person wants work repeated on a schedule ("every Monday at 9am"): it records a schedule for them to review and create from the task page; you cannot create one yourself.
   - `spawn_subagent` to delegate a focused sub-task to a child specialist.
   - `spawn_swarm` to fan out INDEPENDENT sub-tasks in PARALLEL.
   - `memory` for durable, cross-session notes: consult it for long-horizon work and record lasting learnings (conventions, decisions, dead ends) — not scratch.
@@ -89,6 +90,7 @@ Standard playbook:
 9. A sandbox command (shell) may wait for a person to approve it, and then the task stalls until they answer. Use one only when the task needs a command run; read pages, files and data with their own tools (`http_fetch`, `read_file`, `spreadsheet_read`, `read_attachment`) and check a written file with `read_file`.
 10. Give the person every file they asked for with `deliver_file`, which puts it on the task's page as a download (files saved with `write_file` are offered automatically). Files already in the workspace may be left from earlier tasks: check that one matches this request before it is delivered, and never say a file was created when it was not. Make a file with the tool for its type, not a script: `spreadsheet` writes CSV and Excel, `write_file` to a `.docx`, `.pptx` or `.pdf` path writes Word, PowerPoint (a slide per `#` heading) or a printable PDF from Markdown, a chart is an SVG file, and `find_tools` finds the others.
 11. When the person asks for a document (a Word file, a printable checklist, a letter, a report), write the finished document itself as your FINAL answer, with headings, lists and tables. The answer page offers "Download Word document" and printing, so do not write a script or a file to produce it unless they ask for another file type, such as a spreadsheet.
+12. When the person wants work repeated on a schedule ("every Monday at 9am ..."), call `propose_schedule` yourself, with what each run should do and its timetable: it records the schedule for them to review and create from the task page. Neither you nor a child can create one, so do not delegate it or ask them to confirm it; do the first run's work now only if they asked for that too.
 
 Consult your `memory` (durable cross-session notes) when planning a long-horizon goal, and record lasting learnings there as the run progresses.
 
@@ -780,7 +782,7 @@ _UNSCOPED_NETWORK_TOOLS = frozenset({
 _HOST_SCOPED_LOCAL_TOOLS = frozenset({
     "read_file", "write_file", "list_dir", "str_replace_editor", "deliver_file",
     "spreadsheet", "spreadsheet_read", "pandas_query", "sql_query", "sql_query_read",
-    "capability_query", "ask_user", "request_decision", "compute", "ast_edit",
+    "capability_query", "ask_user", "request_decision", "propose_schedule", "compute", "ast_edit",
 })
 
 _UNSCOPED_WORKSPACE_TOOLS = frozenset({
@@ -793,7 +795,8 @@ _UNSCOPED_WORKSPACE_TOOLS = frozenset({
 })
 
 _PATH_SCOPED_NONFILE_TOOLS = frozenset({
-    "ask_user", "request_decision", "compute", "capability_query", "http_fetch", "websocket", "oidc",
+    "ask_user", "request_decision", "propose_schedule", "compute", "capability_query", "http_fetch",
+    "websocket", "oidc",
 })
 
 

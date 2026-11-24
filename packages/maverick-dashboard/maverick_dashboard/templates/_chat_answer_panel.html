@@ -142,6 +142,15 @@
           <p class="muted">{{ ui("Each file downloads exactly as this task saved it. If something changed it since, Lightwork tells you instead.") }}</p>
           {% else %}<p class="muted">{{ task_files_note }}</p>{% endif %}
         </section>{% endif %}
+        {% if schedule_proposals %}<section id="schedule-proposals" class="task-files" aria-labelledby="schedule-proposals-title">
+          <h3 id="schedule-proposals-title">{{ ui('Proposed schedules') }}</h3>
+          <ul class="task-files__list">{% for p in schedule_proposals %}
+            <li><strong lang="und" dir="auto" data-user-content>{{ p.title }}</strong>, {{ p.when }}<br>
+              <span class="muted" lang="und" dir="auto" data-user-content>{{ p.text }}</span><br>
+              <a class="btn btn--ghost" href="{{ p.href }}">{{ ui('Review and create this schedule') }}</a></li>{% endfor %}
+          </ul>
+          <p class="muted">{{ ui("Nothing runs until you create the schedule. You can change it before you do.") }}</p>
+        </section>{% endif %}
         {% if can_operate %}
         <div id="edit-box" style="display:none; margin-top: var(--space-3);">
           <textarea lang="und" dir="auto" data-user-content id="edit-text" class="input" rows="8" aria-label="Edit the deliverable"

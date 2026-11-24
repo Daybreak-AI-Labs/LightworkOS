@@ -13935,9 +13935,10 @@ def download_chat_answer(request: Request, goal_id: int, turn_id: int | None = N
         },
     )
 def _task_files_context(w, goal) -> dict:
+    from .schedule_proposals_view import context as proposals_context
     from .task_files_view import context as task_files_context
 
-    return task_files_context(w, goal)
+    return {**task_files_context(w, goal), **proposals_context(w, goal)}
 
 
 @app.get("/chat/goal/{goal_id}/task-files/{number}")
