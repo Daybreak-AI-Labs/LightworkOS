@@ -175,7 +175,9 @@ def read_attachment_tool(world, goal_id: int | None, sandbox=None) -> Tool:
         if args.get("sql"):
             return query_table(match.filename, match.mime, text, str(args["sql"]), others)
         shown = _window(text, args)
-        if _is_csv(match.filename, match.mime) or _companion_source(world, goal_id, match) is not None:
+        if _is_csv(match.filename, match.mime):
+            shown += _clock_note(shown, csv=True)
+        elif _companion_source(world, goal_id, match) is not None:
             shown += _clock_note(shown)
         return shown
 
@@ -372,7 +374,7 @@ _CLOCK_RANGE = re.compile(r"(?<![\d:])\d{1,2}:\d{2}(?:\s*[AaPp]\.?[Mm]\.?)?\s*[-
                           r"(?:\s*[AaPp]\.?[Mm]\.?)?(?![\d:])")
 
 
-def _clock_note(shown: str) -> str:
+def _clock_note(shown: str, csv: bool = False) -> str:
     """A note pointing at `sql` and hours() when a table the read returns
     holds shift times. Live: read as text, a Word timesheet's 7:00-15:30
     shifts were worked out by hand as 7.5 paid hours, then 45.25 for a
@@ -380,7 +382,7 @@ def _clock_note(shown: str) -> str:
     counts: a lease's "quiet hours are 10:00 PM - 7:00 AM" is no timesheet."""
     for found in _CLOCK_RANGE.finditer(shown):
         line = shown[shown.rfind("\n", 0, found.start()) + 1:shown.find("\n", found.end()) % (len(shown) + 1)]
-        if line.count("|") >= 2 or line.count(",") >= 2 or line.count("\t") >= 2:
+        if csv or line.count("|") >= 2 or line.count(",") >= 2 or line.count("\t") >= 2:
             from .csv_query import shift_note
             note = shift_note(found.group(0), "this table", "shift")
             if note:
