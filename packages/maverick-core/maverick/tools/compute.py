@@ -42,7 +42,8 @@ _COMPUTE_SCHEMA: dict[str, Any] = {
         "expr": {
             "type": "string",
             "description": ("The expression. Examples: 'sin(pi/4)', 'x**2 + 3*x', '1000*(1+0.05/12)^(-60)' (^ is power), "
-                            "'sum([4850.00, -1245.60, 2317.45])' to add a list of figures."),
+                            "'sum([4850.00, -1245.60, 2317.45])' to add a list of figures, 'round(x, 2)' "
+                            "(half away from zero), 'round(x/0.25)*0.25' for the nearest quarter, floor() and ceil()."),
         },
         "equation": {
             "type": "string",
@@ -131,6 +132,7 @@ def _evaluate_fallback(expr: str) -> str:
         "sin": math.sin, "cos": math.cos, "tan": math.tan,
         "sqrt": math.sqrt, "log": math.log, "exp": math.exp,
         "abs": abs, "min": min, "max": max,
+        "round": _round_half_up, "floor": math.floor, "ceil": math.ceil, "ceiling": math.ceil,
     }
     if len(expr) > _FALLBACK_MAX_LEN:
         raise ValueError(f"expression longer than {_FALLBACK_MAX_LEN} characters")
@@ -165,8 +167,37 @@ _ALLOWED_EXPR_RE = re.compile(r"^[0-9A-Za-z_+\-*/%^().,=\s]*$")
 _ALLOWED_FUNCS = {
     "sin", "cos", "tan", "asin", "acos", "atan", "atan2",
     "sinh", "cosh", "tanh", "exp", "log", "sqrt", "Abs", "abs",
-    "min", "max",
+    "min", "max", "round", "floor", "ceil", "ceiling",
 }
+# Rounding to the cent or the nearest $0.25 was refused as "function not
+# allowed", and an agent rounded a price list by hand, wrongly. round() is
+# half away from zero, as money is rounded (Python's own rounds 2.5 to 2);
+# its digits are bounded so it cannot build a huge number.
+_MAX_ROUND_DIGITS = 15
+
+
+def _round_digits(digits) -> int:
+    value = int(digits)
+    if value != digits or abs(value) > _MAX_ROUND_DIGITS:
+        raise ValueError(f"round() takes a whole number of digits up to {_MAX_ROUND_DIGITS}")
+    return value
+
+
+def _round_half_up(value, digits=0):
+    """round() for the no-SymPy fallback: half away from zero, in decimals."""
+    from decimal import ROUND_HALF_UP, Decimal
+
+    places = _round_digits(digits)
+    result = Decimal(repr(float(value))).quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_UP)
+    return float(result)
+
+
+def _sympy_round(value, digits=0):
+    """round() for SymPy: half away from zero, exact on rationals."""
+    import sympy
+
+    scale = sympy.Integer(10) ** _round_digits(digits)
+    return sympy.sign(value) * sympy.floor(sympy.Abs(value) * scale + sympy.Rational(1, 2)) / scale
 _ALLOWED_CONSTS = {"pi", "e", "tau", "E", "I", "oo"}
 _ALLOWED_SYMBOLS = {"x", "y", "z", "t", "u", "v"}
 
@@ -206,6 +237,7 @@ def _safe_parse_expr(expr: str, *, evaluate: bool, exact: bool = False):
         "exp": sympy.exp, "log": sympy.log, "sqrt": sympy.sqrt,
         "Abs": sympy.Abs, "abs": sympy.Abs,
         "min": sympy.Min, "max": sympy.Max,
+        "round": _sympy_round, "floor": sympy.floor, "ceil": sympy.ceiling, "ceiling": sympy.ceiling,
     })
     # NOTE: do NOT pass global_dict={"__builtins__": {}} here. sympy's
     # parser emits an AST that references sympy's auto-injected names

@@ -323,7 +323,9 @@ Settings and the installation wizard.
   column stays ''. `hours(start, end)` gives the hours between two HH:MM
   times, past midnight when the end is not after the start, and
   `overlap(start, end, from, to)` the hours inside a daily window such as a
-  22:00-06:00 night premium. `compute` also adds `sum([a, b, c])`, and
+  22:00-06:00 night premium. `compute` also adds `sum([a, b, c])`, rounds
+  with `round(x, digits)` (half away from zero, as money is rounded),
+  `floor()` and `ceil()`, and
   `write_file` reports a document table whose total its rows do not add to.
 - **Web search on by default** (`config.get_capabilities`,
   `[capabilities] web_search`, off on an enterprise install) — agents can
