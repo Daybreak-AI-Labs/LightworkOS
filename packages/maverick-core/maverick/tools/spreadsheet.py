@@ -840,6 +840,9 @@ def spreadsheet_read(sandbox=None) -> Tool:
                      "file's first sheet). Use query for "
                      "totals, duplicates and cross-file checks instead of comparing by eye; "
                      "hours(start, end) and overlap(start, end, from, to) work out clock times. "
+                     "A query reads dates written 10/29/2026 or 29/10/2026 as 2026-10-29 "
+                     "(YYYY-MM-DD) once the files show which part is the day, though op=read "
+                     "shows them as written; compare, filter and group on that form. "
                      "Cannot write, edit or recalculate. Formula cells include cached values "
                      "and freshness status. Draft proposed changes in the response for a "
                      "human to apply."),

@@ -84,12 +84,13 @@ def test_dates_written_month_first_or_day_first_become_iso_when_the_data_shows_t
     # "10/29/2026", a CASE fell through to ELSE '90+', and the summary put
     # every customer's balance in 90+ days past due.
     text = "invoice,invoice_date,due\nA,10/29/2026,11/13/2026\nB,8/4/2026,9/3/2026\nC,,\n"
-    assert _query(text, "SELECT invoice, invoice_date, julianday('2026-11-24') - julianday(due) AS late "
-                        "FROM data") == ["invoice,invoice_date,late", "A,2026-10-29,11.0",
-                                         "B,2026-08-04,82.0", "C,,"]
+    out = _query(text, "SELECT invoice, invoice_date, julianday('2026-11-24') - julianday(due) AS late FROM data")
+    assert out[:4] == ["invoice,invoice_date,late", "A,2026-10-29,11.0", "B,2026-08-04,82.0", "C,,"]
+    assert "data.invoice_date holds dates written like 10/29/2026; queries read them as 2026-10-29" in out[4]
+    assert "data.due holds dates written like 11/13/2026; queries read them as 2026-11-13" in out[5]
     day_first = "d\n29/10/2026\n03.04.2026\n"
-    assert _query(day_first, "SELECT d FROM data") == ["d", "2026-10-29", "2026-04-03"]
-    assert _query("d\n2026/10/29\n2026/1/5\n", "SELECT d FROM data") == ["d", "2026-10-29", "2026-01-05"]
+    assert _query(day_first, "SELECT d FROM data")[:3] == ["d", "2026-10-29", "2026-04-03"]
+    assert _query("d\n2026/10/29\n2026/1/5\n", "SELECT d FROM data")[:3] == ["d", "2026-10-29", "2026-01-05"]
     # Not dates in every row, or an impossible date: left as written.
     assert _query("d\n10/29/2026\nsoon\n", "SELECT d FROM data") == ["d", "10/29/2026", "soon"]
     assert _query("d\n02/30/2026\n10/29/2026\n", "SELECT d FROM data") == ["d", "02/30/2026", "10/29/2026"]
@@ -107,7 +108,8 @@ def test_dates_whose_order_the_data_does_not_show_are_kept_and_named_when_a_date
 def test_a_date_function_empty_in_every_row_says_why():
     out = _query("d\nOct 29 2026\nNov 2 2026\n", "SELECT date(d, '+30 days') AS due FROM data")
     assert out[:3] == ["due", '""', '""']
-    assert "due is empty in every row" in "\n".join(out[3:]) and "YYYY-MM-DD" in "\n".join(out[3:])
+    note = "\n".join(out[3:])
+    assert "data.d holds values such as 'Oct 29 2026'" in note and "YYYY-MM-DD" in note
     assert len(_query("d\n2026-10-29\n", "SELECT date(d, '+30 days') AS due FROM data")) == 2
 
 
@@ -154,3 +156,90 @@ def test_a_blank_number_used_in_arithmetic_gets_a_note():
     assert fine == ["customer,open", "A,130.0", "B,70.0"]
     assert len(_query(text, "SELECT AVG(paid) AS a, MAX(paid) AS m FROM data")) == 2
     assert len(_query(text, 'SELECT SUM(amount - IFNULL("paid", 0)) AS t FROM data')) == 2
+
+
+def test_dates_read_as_iso_get_a_note_when_the_query_names_the_column():
+    # The agent sees 10/29/2026 when it reads the file, so WHERE date =
+    # '10/29/2026' and GROUP BY substr(date, 1, 2) silently matched nothing
+    # or grouped on the year once the column was read as 2026-10-29.
+    text = "invoice,date,amount\nA1,10/29/2026,100\nA2,10/30/2026,50\nA3,11/02/2026,75\n"
+    note = ("Note: data.date holds dates written like 10/29/2026; queries read them as 2026-10-29 "
+            "(YYYY-MM-DD), so compare, filter and group on that form.")
+    assert _query(text, "SELECT SUM(amount) AS total FROM data WHERE date = '10/29/2026'") == [
+        "total", '""', note]
+    assert _query(text, 'SELECT SUM(amount) AS total FROM data WHERE "date" LIKE \'10/%\'')[2] == note
+    assert _query(text, "SELECT SUM(amount) AS total FROM data WHERE date = '2026-10-29'") == [
+        "total", "100", note]
+    assert _query(text, "SELECT substr(d.date, 1, 7) AS month, SUM(amount) AS total FROM data d "
+                        "GROUP BY month") == ["month,total", "2026-10,150", "2026-11,75", note]
+    # A query that does not name the column, or only calls date(), has no note.
+    assert _query(text, "SELECT SUM(amount) AS total FROM data") == ["total", "225"]
+    assert _query(text, "SELECT date('2026-10-29', '+1 day') AS next FROM data LIMIT 1") == [
+        "next", "2026-10-30"]
+    # spreadsheet_read's op=query reads dates the same way and says so.
+    from maverick.tools.spreadsheet import spreadsheet_read
+    description = spreadsheet_read().description
+    assert "10/29/2026" in description and "2026-10-29" in description
+
+
+def test_one_columns_day_month_order_reads_the_columns_that_do_not_show_it():
+    # invoices.csv shows its dates are month first (10/29/2026); payments.csv
+    # holds only 10/05/2026 and 11/02/2026, which could be either. Read one
+    # way and not the other, the join on date matched nothing.
+    invoices = "invoice,amount,date\nA1,100,10/05/2026\nA2,200,10/29/2026\n"
+    payments = "paid,date\n100,10/05/2026\n50,11/02/2026\n"
+    out = query_tables({"invoices": ("invoices.csv", invoices), "payments": ("payments.csv", payments)},
+                       "SELECT i.invoice, i.amount, p.paid FROM invoices i JOIN payments p ON p.date = i.date")
+    assert out.splitlines()[:2] == ["invoice,amount,paid", "A1,100,100"]
+    assert "payments.date holds dates written like 10/05/2026; queries read them as 2026-10-05" in out
+    # The same within one file: due shows the order, paid_on does not.
+    one = "invoice,due,paid_on\nA1,10/29/2026,10/05/2026\nA2,11/15/2026,12/01/2026\n"
+    assert _query(one, "SELECT invoice, paid_on FROM data WHERE paid_on > due")[:2] == [
+        "invoice,paid_on", "A2,2026-12-01"]
+    assert _query("a,c\n29/10/2026,03/04/2026\n", "SELECT a, c FROM data")[:2] == ["a,c", "2026-10-29,2026-04-03"]
+    # Columns that disagree leave the undecided one as written.
+    assert _query("a,b,c\n29/10/2026,10/29/2026,03/04/2026\n", "SELECT a, b, c FROM data")[:2] == [
+        "a,b,c", "2026-10-29,2026-10-29,03/04/2026"]
+
+
+def test_round_never_fails_a_query():
+    # ROUND(amount, 2) on 1e30 asked Decimal for 33 digits, raised, and the
+    # whole query failed where SQLite's own ROUND gave the figure back.
+    assert _query("item,amount\na,12.5\nb,1e30\n", "SELECT item, ROUND(amount, 2) AS r FROM data") == [
+        "item,r", "a,12.5", "b,1e+30"]
+    assert _query("sample,value\na,0.5\nb,123456789012345.678\n",
+                  "SELECT sample, ROUND(value, 15) AS r FROM data") == ["sample,r", "a,0.5", "b,123456789012345.67"]
+    assert _query("x\n5\n", "SELECT ROUND(x, NULL) AS r, ROUND(x) AS s FROM data") == ["r,s", ",5.0"]
+    assert not query_tables({"data": ("d.csv", "x\n5\n")}, "SELECT ROUND(x, 1e999) FROM data").startswith("ERROR")
+    # A failure on a later row is an ERROR result, not an exception.
+    out = query_tables({"data": ("d.csv", "x\n1\n-9223372036854775808\n")}, "SELECT abs(x) AS a FROM data")
+    assert out.startswith("ERROR") and "integer overflow" in out
+
+
+def test_a_date_note_names_only_a_column_the_date_functions_cannot_read():
+    # Correct queries over YYYY-MM-DD dates were told the date functions
+    # could not read them because a total over no rows, or a column the WHERE
+    # made NULL, came back empty.
+    text = "invoice,due,amount,paid\nA1,2026-10-01,100,\nA2,2026-11-15,50,50\n"
+    assert _query(text, "SELECT SUM(amount) AS december FROM data WHERE date(due) >= '2026-12-01'") == [
+        "december", '""']
+    assert _query(text, "SELECT invoice, amount, paid, julianday('2026-11-24') - julianday(due) AS days "
+                        "FROM data WHERE paid IS NULL") == ["invoice,amount,paid,days", "A1,100,,54.0"]
+    # A column of dates whose order is unknown is named only when the query reads it.
+    assert _query("d,due\n03/04/2026,2026-10-01\n", "SELECT julianday(due) AS j FROM data") == ["j", "2461314.5"]
+    # A filter over dates SQLite cannot read leaves no empty column, but still gets a note.
+    out = _query("d\nOct 29 2026\nNov 2 2026\n", "SELECT COUNT(*) AS n FROM data WHERE julianday(d) > 0")
+    assert out[:2] == ["n", "0"] and "data.d" in out[2] and "'Oct 29 2026'" in out[2]
+
+
+def test_blank_counts_are_per_table():
+    # The file read as data was also loaded under its own name, and the note
+    # added the two tables' blanks together: "paid is blank in 4 rows" for 2.
+    text = "invoice,amount,paid\nA1,100,\nA2,50,50\nA3,70,\n"
+    out = query_tables({"data": ("ar_aging.csv", text), "ar_aging": ("ar_aging.csv", text)},
+                       "SELECT invoice, amount - paid AS open FROM ar_aging")
+    assert "data.paid is blank in 2 rows" in out and "ar_aging.paid is blank in 2 rows" in out
+    assert "4 rows" not in out
+    out = query_tables({"invoices": ("i.csv", text), "payments": ("p.csv", "invoice,paid\nA1,\nA2,50\n")},
+                       "SELECT i.invoice, i.amount - p.paid AS open FROM invoices i JOIN payments p USING (invoice)")
+    assert "invoices.paid is blank in 2 rows" in out and "payments.paid is blank in 1 row," in out
